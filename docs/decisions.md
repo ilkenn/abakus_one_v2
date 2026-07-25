@@ -130,3 +130,64 @@ project-specific evidence, not generic vendor preference. The remaining 18% is h
 deliberately: no hands-on technical spike was performed (this is codebase- and
 documentation-evidence-based analysis), and Firestore's cost predictability and relational-
 reporting fit remain unproven against real production data.
+
+---
+
+## ADR-006 — Router Package Selection
+
+- Date: 2026-07-25
+- Status: Accepted
+
+### Decision
+Adopt `go_router` as Abaküs One's routing solution, implemented in `lib/core/router/`.
+
+### Context
+No router package exists in `pubspec.yaml` today; every screen transition is a raw
+`Navigator.push(MaterialPageRoute(...))`, and `core/router/{app_router,app_routes,app_shell}.dart`
+are empty placeholders. Evaluated against every dimension named for this decision:
+
+- **Android/iOS/web/Windows/macOS/Linux**: `go_router` is built on Flutter's own platform-agnostic
+  `Router` API — behaves identically across all six current build targets.
+- **Deep linking**: first-class path-based route parsing from incoming URIs/intents, satisfying
+  `docs/master_roadmap.md` F-001's completion criteria that named routes be reachable by URL/path.
+- **Authentication and onboarding redirects**: `GoRouter`'s top-level and per-route `redirect`
+  callbacks are purpose-built for exactly this — checking session/auth state and returning a
+  redirect target, independent of any specific screen's widget code.
+- **Role-based navigation**: the same `redirect` mechanism extends to role checks; the route tree
+  is not forced into a single shape, so future role-gated branches (or entirely separate route
+  trees for future Kitchen/Courier/Admin targets per `docs/module_catalog.md`) fit without a
+  redesign.
+- **Customer/courier/kitchen/staff/manager/admin experiences**: only the customer experience
+  exists today; `go_router`'s route-tree model scales to the others without requiring a different
+  router technology per role/app target later.
+- **Nested navigation and persistent bottom navigation**: `StatefulShellRoute.indexedStack` is
+  built specifically for a persistent bottom nav bar with an independent nested navigator per tab
+  — a direct fit for the existing `MainScreen`/`MainNavigationScreen` pattern.
+- **Browser URL behavior**: syncs the browser address bar on web, supports back/forward
+  navigation correctly, and re-parses the current path on refresh (refresh-safe deep links).
+- **Testability**: `redirect` logic is plain functions testable without pumping a widget tree;
+  route resolution is testable via `GoRouter.routerConfig` — keeps guard/redirect logic separate
+  from and independently testable from presentation widgets.
+- **Long-term maintenance**: maintained by the Flutter team itself as the framework's own
+  recommended navigation solution — the lowest long-term-abandonment risk among the alternatives.
+
+**Alternatives considered and rejected**:
+- `auto_route` — comparably capable, but its idiomatic usage relies on `build_runner` code
+  generation, which this project explicitly has none of today (`CLAUDE.md`: "No code generation
+  step"). Adopting it would mean adding a build step as an unstated side effect of a routing
+  decision — a larger change than this task's scope.
+- `Beamer` — smaller community and maintenance footprint than `go_router`, no compelling advantage
+  for this project's needs.
+- Hand-rolled Navigator 2.0 (`RouterDelegate`/`RouteInformationParser`) — maximum control, but the
+  highest complexity and ongoing maintenance burden; fails "prefer the simplest solution."
+- Staying on Navigator 1.0 with named routes only — simplest in isolation, but doesn't cleanly
+  support redirects/guards, nested shell navigation, or reliable web URL sync, so it doesn't fully
+  satisfy the stated requirements — simplicity is only the tiebreaker among solutions that do.
+
+### Consequences
+- `go_router` is added to `pubspec.yaml` as the only new dependency for this task.
+- `lib/core/router/{app_router,app_routes,app_shell}.dart` are implemented against it in P1-010,
+  scoped to the Splash → Onboarding → Login → Main navigation flow only — not a full migration of
+  every existing feature screen (tracked separately, per the approved Phase 1 backlog).
+- Redirect/guard logic (session validity, OTP verification, guest continuation) is implemented as
+  plain, independently testable functions, not embedded in screen widgets.
