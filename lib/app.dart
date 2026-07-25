@@ -1,17 +1,18 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
-import 'features/navigation/presentation/screens/splash_screen.dart';
 
-class AbakusApp extends StatelessWidget {
+class AbakusApp extends ConsumerWidget {
   const AbakusApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
+  Widget build(BuildContext context, WidgetRef ref) {
+    return MaterialApp.router(
       title: 'Abaküs One',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      home: const SplashScreen(),
+      routerConfig: ref.watch(appRouterProvider),
     );
   }
 }

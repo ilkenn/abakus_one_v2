@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_radius.dart';
-import '../../../auth/presentation/screens/login_screen.dart';
 import '../provider/onboarding_provider.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
@@ -31,9 +32,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   void _navigateToLogin() {
     ref.read(onboardingCompleteProvider.notifier).completeOnboarding();
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
-    );
+    context.go(AppRoutes.login);
   }
 
   @override

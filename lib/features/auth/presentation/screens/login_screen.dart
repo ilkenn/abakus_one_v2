@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
-import '../../../navigation/presentation/screens/main_navigation_screen.dart';
 import '../../domain/phone_number.dart';
 import '../providers/auth_provider.dart';
-import 'otp_screen.dart';
 
 /// MVP customer authentication is phone number + OTP only — no email, no
 /// password. See `docs/master_spec_migration.md` for the Authentication
@@ -43,19 +43,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         );
     if (!mounted || !sent) return;
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const OtpScreen()),
-    );
+    context.push(AppRoutes.otp);
   }
 
   void _continueAsGuest() {
     ref.read(authProvider.notifier).loginAsGuest();
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
-      (route) => false,
-    );
+    context.go(AppRoutes.main);
   }
 
   @override

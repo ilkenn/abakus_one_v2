@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:abakus_one_v2/core/router/app_routes.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/development_local_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
@@ -286,11 +288,36 @@ void main() {
   );
 
   group('mevcut davranislar (regresyon)', () {
+    /// [LoginScreen] and [OtpScreen] now navigate via `go_router`
+    /// (`context.push`/`context.go`), so this group needs a `GoRouter`
+    /// ancestor rather than the bare `MaterialApp(home: ...)` it used
+    /// pre-P1-010 — unlike this file's other groups, which reach
+    /// `OtpScreen` directly and never hit a code path that navigates.
+    GoRouter testRouter() {
+      return GoRouter(
+        initialLocation: AppRoutes.login,
+        routes: [
+          GoRoute(
+            path: AppRoutes.login,
+            builder: (context, state) => const LoginScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.otp,
+            builder: (context, state) => const OtpScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.main,
+            builder: (context, state) => const MainNavigationScreen(),
+          ),
+        ],
+      );
+    }
+
     Future<void> pumpFromLogin(WidgetTester tester) async {
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
-          child: const MaterialApp(home: LoginScreen()),
+          child: MaterialApp.router(routerConfig: testRouter()),
         ),
       );
       await tester.pumpAndSettle();

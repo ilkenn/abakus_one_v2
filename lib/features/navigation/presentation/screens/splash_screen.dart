@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
-import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../onboarding/presentation/provider/onboarding_provider.dart';
-import '../../../onboarding/presentation/screens/onboarding_screen.dart';
 import '../widgets/splash_abacus_animation.dart';
-import 'main_navigation_screen.dart';
 
 /// The app's boot screen — a staged, cinematic brand reveal: wooden frame →
 /// beads cascade and settle → "Abaküs" wordmark → tagline → soft fade into
@@ -86,26 +85,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   void _navigateToNext() {
     final isAuthenticated = ref.read(authProvider).isAuthenticated;
-    final Widget nextScreen;
     if (isAuthenticated) {
-      nextScreen = const MainNavigationScreen();
-    } else {
-      final isOnboardingCompleted = ref.read(onboardingCompleteProvider);
-      nextScreen = isOnboardingCompleted
-          ? const LoginScreen()
-          : const OnboardingScreen();
+      context.go(AppRoutes.main);
+      return;
     }
-
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 450),
-        pageBuilder: (context, animation, secondaryAnimation) => nextScreen,
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-      ),
-    );
+    final isOnboardingCompleted = ref.read(onboardingCompleteProvider);
+    context.go(isOnboardingCompleted ? AppRoutes.login : AppRoutes.onboarding);
   }
 
   @override

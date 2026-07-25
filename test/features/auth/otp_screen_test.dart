@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:abakus_one_v2/core/router/app_routes.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/development_local_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
@@ -19,6 +21,31 @@ class _FakeSessionStorage implements SessionStorage {
   Future<void> clearSession() async => stored = null;
 }
 
+/// A minimal test-local route table covering only the routes this file's
+/// scenarios actually reach — screens now navigate via `go_router`
+/// (`context.push`/`context.go`/`context.pop`), so they need a `GoRouter`
+/// ancestor, not the bare `MaterialApp(home: ...)` this file used
+/// pre-P1-010.
+GoRouter _testRouter() {
+  return GoRouter(
+    initialLocation: AppRoutes.login,
+    routes: [
+      GoRoute(
+        path: AppRoutes.login,
+        builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.otp,
+        builder: (context, state) => const OtpScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.main,
+        builder: (context, state) => const MainNavigationScreen(),
+      ),
+    ],
+  );
+}
+
 /// Reaches OtpScreen the same way a real user would: through LoginScreen,
 /// so `AuthState.pendingPhoneNumber` is genuinely set by the flow rather
 /// than injected directly.
@@ -32,7 +59,7 @@ Future<void> _pumpOtpScreen(WidgetTester tester) async {
           ),
         ),
       ],
-      child: const MaterialApp(home: LoginScreen()),
+      child: MaterialApp.router(routerConfig: _testRouter()),
     ),
   );
   await tester.pumpAndSettle();

@@ -2,11 +2,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/theme/app_theme_constants.dart';
-import '../../../navigation/presentation/screens/main_navigation_screen.dart';
 import '../../data/repositories/development_local_auth_repository.dart';
 import '../../domain/models/otp_challenge.dart';
 import '../providers/auth_provider.dart';
@@ -48,15 +49,11 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     final result = await ref.read(otpProvider.notifier).submit();
     if (!mounted || result != OtpVerificationResult.success) return;
 
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
-      (route) => false,
-    );
+    context.go(AppRoutes.main);
   }
 
   void _changePhoneNumber() {
-    Navigator.pop(context);
+    context.pop();
   }
 
   @override

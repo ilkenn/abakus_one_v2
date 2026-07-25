@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:abakus_one_v2/core/router/app_routes.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/development_local_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
@@ -26,6 +28,30 @@ class _CompletedOnboardingNotifier extends OnboardingCompleteNotifier {
   bool build() => true;
 }
 
+/// A minimal test-local route table covering only the routes this file's
+/// scenarios reach — [SplashScreen] now navigates via `go_router`
+/// (`context.go`), so it needs a `GoRouter` ancestor, not the bare
+/// `MaterialApp(home: ...)` this file used pre-P1-010.
+GoRouter _testRouter() {
+  return GoRouter(
+    initialLocation: AppRoutes.splash,
+    routes: [
+      GoRoute(
+        path: AppRoutes.splash,
+        builder: (context, state) => const SplashScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.login,
+        builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.main,
+        builder: (context, state) => const MainNavigationScreen(),
+      ),
+    ],
+  );
+}
+
 void main() {
   testWidgets(
     'kalici gecerli oturum varsa Splash MainNavigationScreen\'e gecer',
@@ -45,7 +71,7 @@ void main() {
               DevelopmentLocalAuthRepository(sessionStorage: storage),
             ),
           ],
-          child: const MaterialApp(home: SplashScreen()),
+          child: MaterialApp.router(routerConfig: _testRouter()),
         ),
       );
 
@@ -72,7 +98,7 @@ void main() {
               _CompletedOnboardingNotifier.new,
             ),
           ],
-          child: const MaterialApp(home: SplashScreen()),
+          child: MaterialApp.router(routerConfig: _testRouter()),
         ),
       );
 
