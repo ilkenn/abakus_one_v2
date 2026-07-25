@@ -1,0 +1,27 @@
+import '../../domain/models/payment_enums.dart';
+import '../../domain/models/payment_request.dart';
+import '../../domain/models/payment_result.dart';
+import 'payment_provider_adapter.dart';
+
+class PluxeePaymentAdapter implements PaymentProviderAdapter {
+  @override
+  Future<PaymentResult> processPayment(PaymentRequest request) async {
+    return const PaymentResult(
+      transactionId: '',
+      status: PaymentStatus.notConfigured,
+      errorMessage: 'Pluxee entegrasyonu henüz yapılandırılmadı.',
+    );
+  }
+
+  @override
+  Future<PaymentResult> refundPayment(
+    String transactionId,
+    double amount,
+  ) async {
+    return const PaymentResult(
+      transactionId: '',
+      status: PaymentStatus.notConfigured,
+      errorMessage: 'Pluxee entegrasyonu henüz yapılandırılmadı.',
+    );
+  }
+}

@@ -1,0 +1,37 @@
+name: abakus_one_v2
+description: "Abakus Bowl Application"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  firebase_core: ^4.12.1
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.5.1
+  flutter_secure_storage: ^10.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/onboarding/
+    - assets/images/menu/
+    - assets/images/products/
+    - assets/images/products/Proteinler/
+    - assets/images/products/Karbonhidratlar/
+    - assets/images/products/Salatalar/
+    - assets/images/products/Sebzeler/
+    - assets/images/products/Meyveler/
+    - assets/images/products/Turşular/
+    - assets/images/products/Peynirler/
+    - assets/images/products/Diğerleri/
+    - assets/images/products/Soslar/
+    - assets/images/bowl/
+    - assets/images/bowl/layers/
