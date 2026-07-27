@@ -240,3 +240,57 @@ inside this repository (doing so would mean attempting a direct push to `main` t
 rejected, which this same sprint explicitly prohibits). Treat the ruleset's exact GitHub-side
 configuration as **Inferred**, not independently confirmed, until it's checked directly (e.g. via the
 GitHub UI/API or a deliberate, approved test) in a future session.
+
+---
+
+## ADR-008 — App Check Provider Policy
+
+- Date: 2026-07-27
+- Status: Accepted
+
+### Decision
+ADR-005 already committed to Firebase App Check for multi-tenant isolation but did not name concrete
+providers per platform. Phase 2 Sprint 2 (Runtime Configuration & Firebase Safety Foundation) settles
+that choice:
+
+- **Android**: Play Integrity in staging/production; the debug provider only in
+  `AppEnvironment.development`.
+- **iOS/macOS**: App Attest with DeviceCheck fallback (`AppleAppAttestWithDeviceCheckFallbackProvider`)
+  in staging/production; the debug provider only in development.
+- **Web**: reCAPTCHA Enterprise (`ReCaptchaEnterpriseProvider`), gated on a site key that has not
+  been provisioned yet — the integration point exists (`FirebaseAppCheckService._activateWeb`) but
+  stays unactivated (logged, not thrown) until a real site key is supplied. No key is hardcoded.
+- **Windows**: `firebase_app_check` 0.4.5+2 supports *only* the debug provider on Windows (the
+  desktop C++ SDK has no Play-Integrity/DeviceCheck equivalent — confirmed directly from
+  `WindowsAppCheckProvider`'s own doc comment in the installed package source, not assumed).
+  Activating it in staging/production would mean silently running a debug provider there, which
+  contradicts this same sprint's explicit requirement. Windows therefore only activates App Check in
+  development; staging/production leave it unactivated (logged) rather than fake a production
+  posture the platform doesn't have yet.
+- **Linux/Fuchsia**: unsupported by `firebase_app_check` — an intentional no-op (logged), consistent
+  with how Firebase/FlutterFire already has no app registration for Linux at all (ADR-005/Sprint 1).
+
+Provider selection is internal to `FirebaseAppCheckService.initialize()`, driven only by
+`AppEnvironmentConfig.allowsDebugTooling` (`true` only for `development`) — no public parameter lets
+a caller request a debug provider, so a debug provider reaching production isn't just discouraged by
+convention, there is no code path that produces it.
+
+### Context
+Verified directly against the installed package sources (`firebase_app_check` 0.4.5+2,
+`firebase_app_check_platform_interface` 0.4.1+2) rather than assumed from general Firebase knowledge,
+since the exact provider class names/constructors and Windows's real limitation are implementation
+details that change between plugin versions.
+
+### Consequences
+- Enabling App Check **enforcement** in the Firebase Console remains out of scope for this sprint
+  (explicitly forbidden) — this ADR covers application-side provider selection only.
+- Obtaining and wiring a real reCAPTCHA Enterprise site key for Web is separate, future, approved
+  work; until then Web App Check stays inactive.
+- If a future `firebase_app_check` release adds a non-debug Windows provider, this ADR's Windows
+  branch should be revisited rather than left stale.
+
+### Confidence
+85%. The provider class names, constructors, and Windows limitation are directly read from the
+installed package source (Verified), not inferred. The main residual uncertainty is whether a future
+plugin upgrade changes these APIs or adds Windows support, which would need this ADR revisited, not
+the current implementation being wrong today.
