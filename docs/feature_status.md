@@ -48,19 +48,35 @@ feature is the natural place to adopt these foundations for real, not before.
 
 ### Known limitations carried into Phase 2
 
-- Firebase is not initialized (`Firebase.initializeApp()` is never called).
-- No Firebase product SDK beyond `firebase_core` is integrated (no Auth/Firestore/Crashlytics/Remote
-  Config/Analytics/Messaging/Storage package).
+State as of Phase 1 closure (P1-015). **Corrected post-Sprint-1/Sprint-2** — two bullets below were
+true at Phase 1 closure but are no longer accurate; each is marked rather than silently rewritten, so
+this section stays an honest historical record:
+
+- ~~Firebase is not initialized (`Firebase.initializeApp()` is never called).~~ **No longer true**:
+  `FirebaseBootstrapService` (P2-003) calls it from `lib/bootstrap/app_bootstrap.dart`, gated by
+  `AppEnvironment.current`.
+- No Firebase product SDK beyond `firebase_core` is integrated (no Auth/Firestore/Crashlytics/
+  Messaging/Storage package). *Remote Config and App Check are now integrated (Sprint 2, see below)
+  — the rest of this bullet still holds.*
 - iOS Firebase configuration (`GoogleService-Info.plist`) is incomplete.
 - Crash reporting remains `NoOp` — no vendor is wired behind `CrashReportingService`.
-- Remote Config has no vendor implementation — `RemoteConfigService` is `NoOp`-backed only.
-- Feature flags have no real production values — every flag resolves through the `NoOp` chain.
+- ~~Remote Config has no vendor implementation — `RemoteConfigService` is `NoOp`-backed only.~~ **No
+  longer true**: `FirebaseRemoteConfigService` (P2-2.4) is the real implementation, used whenever
+  Firebase bootstrap succeeded; `NoOpRemoteConfigService` remains the fallback otherwise (including
+  every `flutter test` run).
+- Feature flags have real remote-config-backed values available (Sprint 2), but nothing in the UI
+  reads them yet — no customer-facing feature was activated this sprint.
 - `MainNavigationScreen` is not yet a nested shell — no deep-linkable per-tab routes; it remains a
   single opaque `go_router` route (`AppRoutes.main`).
 - No current feature consumes the `Failure`/`ErrorMapper`/`LoggingService` foundation at a production
   boundary (no repository throws/returns `Failure`; no screen renders one).
-- Development, staging, and production are planned to use separate Firebase projects, but only the
-  single `abakusone` project exists — that split is not yet provisioned.
+- ~~Development, staging, and production are planned to use separate Firebase projects, but only the
+  single `abakusone` project exists — that split is not yet provisioned.~~ **No longer true**: all
+  three projects (`abakus-one-dev`, `abakus-one-staging`, `abakusone`) were provisioned in Phase 2
+  Sprint 1.
+- App Check is integrated application-side (Sprint 2) but **enforcement is not enabled in the
+  Firebase Console** for any project — tokens are generated but nothing rejects unattested requests
+  yet. That Console change remains explicitly out of scope until separately approved.
 
 ### Phase 1 Exit Verification (P1-015)
 
@@ -129,6 +145,17 @@ Environment Foundation) in progress.
 | P2-001 — Provision development & staging Firebase projects | DONE | Two new Firebase projects provisioned via `firebase projects:create`: `abakus-one-dev` (project number `203808038574`) and `abakus-one-staging` (project number `915484005258`). *Corrected — see the post-Sprint-1 cleanup note below*: the original note here claimed Windows shares the Web app registration; that was wrong. Every project (`abakusone` included) registers **four distinct apps** — Android, iOS (shared with macOS), Web, and **Windows as its own separate web-type app registration**, each with a distinct Firebase App ID. Linux has no app registration on any project — Firebase/FlutterFire has no Linux support at all (confirmed: `DefaultFirebaseOptions.currentPlatform` throws `UnsupportedError` for Linux in every generated options file), so there is nothing to register there, not a convention choice. |
 | P2-001/P2-002 cleanup — permanent package identifiers | DONE | The temporary `com.example.abakus_one_v2` (Android) / `com.example.abakusOneV2` (iOS/macOS) identifiers used during Sprint 1 provisioning are replaced with the permanent production identifier **`com.abakus.one`**, everywhere the identifier appears: Android `applicationId`/`namespace` + the `MainActivity.kt` package/folder, iOS/macOS `PRODUCT_BUNDLE_IDENTIFIER` (Xcode project + macOS's `AppInfo.xcconfig`), Linux's GTK `APPLICATION_ID` (`linux/CMakeLists.txt`), and Windows' `CompanyName`/`LegalCopyright` (`windows/runner/Runner.rc` — `FileDescription`/`InternalName`/`OriginalFilename`/`ProductName`, the `abakus_one_v2` *binary* name, is a separate concern and was deliberately left as-is). Firebase package/bundle IDs are immutable once an app is registered, so migrating Firebase (all three projects, including production) required registering 6 new apps (Android + iOS/macOS-shared, × 3 projects) under `com.abakus.one` and regenerating every FlutterFire options file (`lib/firebase_options.dart`, `_development.dart`, `_staging.dart`) and native config file (`google-services.json` ×4, `GoogleService-Info.plist` ×3) against them — re-verified against Gradle's own `process<Flavor>DebugGoogleServices` tasks, all passing. **The original 6 `com.example.*` app registrations (2 per project × 3 projects, including production) have since been deleted from the Firebase Console** (manually, by the user) — verified via `firebase apps:list` on all three projects before regenerating a second time: each now shows exactly 4 apps (android + ios, both `com.abakus.one`, plus the existing web + windows apps), and every regenerated `google-services.json` now carries exactly one `client` entry, not two. A repo-wide `git grep "com.example"` after this second regeneration returns no live identifier — the only remaining matches are this note and one code comment, both describing the migration's history. |
 | Firebase cleanup — `abakus-one-dev-4bf2e` | DONE (documentation only) | Confirmed unused: no apps were ever registered on it (verified via `firebase apps:list --project abakus-one-dev-4bf2e` → "No apps found"), and nothing in this repository references its project ID (verified by repo-wide grep). **It can now be safely deleted from the Firebase Console** — Console → Project Settings → General → "Delete project" (or `firebase projects:delete abakus-one-dev-4bf2e` via CLI, if preferred). Not deleted by this session — Google Cloud project deletion is a consequential, semi-irreversible action on the user's own account, left for explicit user action rather than performed automatically, consistent with how this same orphan was originally flagged in P2-001. |
+
+Sprint 2 (Runtime Configuration & Firebase Safety Foundation) — branch `phase-2/sprint-2-runtime-foundation`.
+
+| Task | Status | Note |
+|---|---|---|
+| P2-2.1 — App Environment Foundation | DONE | `AppEnvironmentConfig` gains `firebaseProjectId` (matches `firebase.json`'s provisioned project IDs) and `allowsDebugTooling` (`true` only for `development`) — both were placeholders/absent before Sprint 1 provisioned real projects. `appEnvironmentConfigProvider` added so environment identity is test-overridable like every other foundation service. |
+| P2-2.2 — Dependency Injection Foundation | DONE | No second DI system introduced (no GetIt/injectable — verified by repo-wide grep, zero hits). Follows the existing per-service `*_provider.dart` colocation convention rather than a new centralized directory. New providers: `appEnvironmentConfigProvider`, `appCheckServiceProvider`; `featureFlagsServiceProvider`/`remoteConfigServiceProvider` already existed and now resolve to real implementations once Firebase is ready. |
+| P2-2.3 — Feature Flags Foundation | DONE | `FeatureFlagsService` interface extended with `getString`, `getInt`, `isInitialized` (previously boolean-only). `FeatureFlagsKeys` fully replaced — old keys (`loyalty`, `campaigns`, `reservations`, `delivery`, `qr`, `customBowl`) removed with no parallel aliases, per explicit architecture decision — new keys: `otpLoginEnabled`, `bowlBuilderEnabled`, `fortuneWheelEnabled`, `reservationsEnabled`, `qrScannerEnabled`. `FeatureFlagsDefaults` documents each flag's safe default: `otpLoginEnabled` defaults `true` (the app's only existing, already-shipped auth flow — defaulting it off on a Remote Config outage would make the app unusable); the four unbuilt features default `false`. `RemoteConfigFeatureFlagsService` (unchanged class, per explicit decision not to introduce a duplicate `FirebaseRemoteConfigFeatureFlagsService`) remains the sole file mapping public flag names to remote-config parameter keys. |
+| P2-2.4 — Remote Config Foundation | DONE | `FirebaseRemoteConfigService` is the first real `RemoteConfigService` implementation, isolating all `firebase_remote_config` knowledge inside `remote_config/remote_config_client.dart` (the SDK adapter) and itself. Environment-aware fetch policy (`RemoteConfigFetchPolicy`): development 1 min / staging 1 hr / production 12 hr minimum fetch interval. Every method catches and logs (never throws) — a fetch/activate/init failure leaves safe caller-supplied defaults in place rather than blocking startup. `remoteConfigServiceProvider` resolves to it only once `firebaseReadyProvider` is true; falls back to `NoOpRemoteConfigService` otherwise (including every `flutter test` run). No business logic added to this service, per explicit instruction. `firebase_remote_config: ^6.5.5` added (resolved via `flutter pub add`, not guessed). |
+| P2-2.5 — App Check Foundation | DONE | `AppCheckService`/`NoOpAppCheckService`/`FirebaseAppCheckService` added — see `docs/decisions.md` ADR-008 for the full per-platform provider policy (Play Integrity / App Attest+DeviceCheck fallback / reCAPTCHA Enterprise-prepared / Windows-debug-only-in-development / Linux-Fuchsia-no-op). Provider selection is internal to `initialize()`, driven only by `AppEnvironmentConfig.allowsDebugTooling` — no code path can select a debug provider in production. Firebase Console enforcement was **not** enabled (out of scope this sprint). `firebase_app_check: ^0.4.5+2` added (resolved via `flutter pub add`). |
+| P2-2.6 — Runtime bootstrap orchestrator | DONE | `lib/bootstrap/app_bootstrap.dart` (previously an empty placeholder file, zero references anywhere) is now `bootstrapApp()`: the single ordered sequence — `WidgetsFlutterBinding.ensureInitialized()` → `FirebaseBootstrapService.initialize()` → resolve and `initialize()` the feature-flags/remote-config/App-Check services for that result. `lib/main.dart` now only calls `bootstrapApp()` and starts `ProviderScope` with the returned `providerOverrides` — all sequencing logic moved out of `main.dart`. |
 
 | Özellik | Durum | Not |
 |---|---|---|
