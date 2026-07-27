@@ -294,3 +294,79 @@ details that change between plugin versions.
 installed package source (Verified), not inferred. The main residual uncertainty is whether a future
 plugin upgrade changes these APIs or adds Windows support, which would need this ADR revisited, not
 the current implementation being wrong today.
+
+---
+
+## ADR-009 — POS Domain Foundation: New `Order` Aggregate, `Money`, and Tax Model
+
+- Date: 2026-07-28
+- Status: Accepted
+
+### Decision
+Phase 3 Sprint 3A introduces a new, shared order-domain foundation for POS, Kitchen Display,
+Courier, Customer App, and Admin, built as **pure Dart, Flutter/Firebase/Riverpod-free domain
+code**:
+
+- A new `Order` aggregate (`lib/features/orders/domain/models/order.dart`), deliberately **separate
+  from the legacy `OrderModel`** — not a migration or replacement this sprint. `OrderModel` remains
+  the customer-app's own read model; a future migration is separate, out-of-scope work.
+- `Money` (`lib/shared/models/money.dart`): integer minor units only, `Currency`-typed
+  (`tryLira`/`eur`/`usd`), never `double`, arithmetic across mismatched currencies throws.
+- `MoneyRounding.halfAwayFromZero` (`lib/shared/models/money_rounding.dart`): the one Round Half
+  Away From Zero implementation every fractional computation (VAT, discounts, currency conversion)
+  uses.
+- `BusinessRuleViolation` (`lib/core/errors/business_rule_violation.dart`): a new sealed hierarchy,
+  distinct from `Failure`, for domain/business-rule validation failures (negative totals, invalid
+  status transitions, currency mismatches, unsatisfied modifier rules, ...). Placed in `core/errors/`
+  rather than `features/orders/domain/` specifically so `shared/models/money.dart` can depend on it
+  without violating the `shared -> feature` import restriction — every field that would otherwise
+  need a feature-layer enum type (`OrderStatus`, `OrderChannel`) carries that value's raw `.name`
+  string instead, the same pattern `OrderAuditEntry.previousValue`/`newValue` already uses.
+- `TaxRate`/`TaxPolicy`/`TaxSnapshot`, VAT-inclusive per BR-TAX-001/002 (see `docs/business_rules.md`
+  for the full rule set and the deliberately-unresolved discount/fee/tip tax-treatment questions).
+- `Currency`/`ExchangeRateSnapshot`/`ExchangeRatePolicy`/`ExchangeRateProvider`
+  (`lib/shared/models/`), implementing the approved multi-currency payment decision (BR-PAY-006
+  through BR-PAY-010).
+- `ModifierValidator`, `Discount`/`DiscountStackingPolicy`, `PaymentIntent`/`PaymentSplit`, `Receipt`,
+  and `CartToOrderMapper` — all under `lib/features/orders/domain/`, reusing every existing shared
+  type (`OrderStatus`, `OrderChannel`, `OrderActor`, `CourierVisibility`, `OrderTimestamps`,
+  `OrderAuditEntry`, `PaymentMethodType`, `PaymentStatus`, `ModifierGroup`, `ModifierOption`,
+  `CartItem`) rather than duplicating any of them.
+
+### Context
+`docs/business_rules.md`'s existing rule inventory and `docs/order_lifecycle_architecture.md`/
+`docs/table_qr_architecture.md`'s prior domain foundations were read in full before any code was
+written (see this session's pre-implementation findings report). No existing model in this codebase
+used integer-minor-unit money, a typed id, or a VAT concept — every one of `OrderModel`,
+`OrderItemSnapshot`, `CartItem`, `MenuProduct`, `ModifierOption`, `PaymentRequest` uses `double` for
+money, and no tax rate/policy existed anywhere in the codebase or its docs prior to this sprint's
+explicit approval.
+
+### Consequences
+- `PriceCalculator` is explicitly documented as **non-authoritative** — a client-side estimate for
+  immediate UI feedback and offline POS order-taking, per the already-DECIDED BR-PRICE-002
+  (server-authoritative pricing, enforcement is ROADMAP) and `docs/domain_architecture.md`'s "money
+  math never lives on the mobile client" principle. Nothing in this codebase treats its output as
+  final.
+- `OrderId`/`OrderNumber`/`Receipt.receiptNumber` are externally supplied — no ID-generation
+  mechanism was added (no `uuid` dependency, no generator). Real generation (a collision-safe id, a
+  server-coordinated sequential order number) is separate, unresolved, future work.
+- Tax treatment of an order-level discount, service/delivery/packaging fees, and tips was left
+  explicitly unresolved (BR-TAX-005/006/007) rather than assumed — `PriceCalculator`'s
+  `taxableBase`/`vatAmount` are the sum of each line's own frozen `TaxSnapshot` only.
+- Discount stacking remains unresolved (pre-existing BR-PROMO-003/004/005); `SingleDiscountOnlyPolicy`
+  is the only concrete `DiscountStackingPolicy`, refusing more than one order-level discount rather
+  than guessing a rule.
+- No marketplace `OrderChannel` value or per-channel price field was added — BR-CHANNEL-003/
+  BR-MKTPRICE-002 remain open gaps, reported rather than silently filled.
+- `firebase_app_check`/`firebase_remote_config` (ADR-005/ADR-008) are unaffected; this ADR adds no
+  new pub dependency.
+
+### Confidence
+88%. The domain-modeling choices (Money's integer-minor-unit shape, the sealed
+`BusinessRuleViolation` hierarchy, VAT extraction formula, exchange-rate snapshot shape) are directly
+specified by the user's approved architecture decisions, not inferred. The main residual uncertainty
+is in judgment calls made to bridge legacy `double`-based models (`CartItem`'s `extraCostPerUnit`
+folded into `OrderLine.unitPrice`; legacy protein/sauce/extra/removed fields flattened into
+`kitchenNote` text) — documented inline at each call site, but not separately re-confirmed with the
+user field-by-field.

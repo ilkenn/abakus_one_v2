@@ -33,8 +33,8 @@ Every rule in this document carries exactly one status:
 assigned sequentially within a category and are **never reused** — if a rule is later superseded or
 removed, its ID is retired, not reassigned to a different rule. Category prefixes used in this
 document: `ROLE`, `CHANNEL`, `ORDER`, `STATE`, `TABLE`, `MENU`, `MOD`, `BOWL`, `PRICE`, `MKTPRICE`,
-`PROMO`, `PAY`, `REFUND`, `KITCHEN`, `COURIER`, `STAFF`, `STOCK`, `BRANCH`, `MKT`, `AUDIT`, `PROFIT`,
-`EDGE`.
+`TAX`, `PROMO`, `PAY`, `REFUND`, `KITCHEN`, `COURIER`, `STAFF`, `STOCK`, `BRANCH`, `MKT`, `AUDIT`,
+`PROFIT`, `EDGE`.
 
 Each rule entry states an **Owner Agent** (who to consult/update when the rule changes — usually
 `restaurant_domain`, occasionally a specialist agent for cross-cutting concerns like payment-data
@@ -105,6 +105,41 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   alters an existing order.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Orders, Menu
+
+### BR-ORDER-004 — Shared `Order` aggregate (Phase 3 Sprint 3A)
+- **Status**: VERIFIED
+- **Rule**: `Order` (`lib/features/orders/domain/models/order.dart`) is a new, separate domain
+  aggregate — the shared foundation POS, Kitchen Display, Courier, Customer App, and Admin are
+  meant to build on. It is **not** a replacement or migration of the legacy `OrderModel`
+  (customer-app-specific, carries UI/review/rating fields with no place in a cross-channel
+  aggregate); the two coexist, and no mapping between them exists yet. Reuses `OrderStatus`/
+  `OrderStatusTransitions`, `OrderChannel`, `OrderActor`, `CourierVisibility`, `OrderTimestamps`,
+  and `OrderAuditEntry` (as the aggregate's own immutable status history) rather than duplicating
+  any of them. Carries `OrderId`/`OrderNumber` (both externally supplied — see BR-ORDER-005) and a
+  `version` field starting at 1, incrementing on every status transition.
+- **Owner Agent**: restaurant_domain (rule) / flutter_architect (implementation)
+- **Related Modules**: Orders, POS, Kitchen, Courier, Staff/Admin
+
+### BR-ORDER-005 — Order/receipt identifiers are externally supplied
+- **Status**: DECIDED
+- **Rule**: `OrderId`, `OrderNumber`, and a `Receipt`'s `receiptNumber` are all externally supplied,
+  non-empty-validated values — no ID-generation mechanism exists anywhere in this codebase (every
+  id today is a literal in mock data; no `uuid` package or equivalent is a dependency). Generating a
+  real, collision-safe `OrderId`, and a real sequential `OrderNumber` scheme (which needs
+  server-side coordination), are both separate, unresolved, future work.
+- **Owner Agent**: restaurant_domain (decision) / firebase_engineer (future generation mechanism)
+- **Related Modules**: Orders, POS
+
+### BR-ORDER-006 — `OrderLine` money and snapshot shape
+- **Status**: VERIFIED
+- **Rule**: `OrderLine` (`lib/features/orders/domain/models/order_line.dart`) replaces
+  `OrderItemSnapshot`'s role within the new `Order` aggregate — every money field is a `Money`
+  (integer minor units, never `double`), and separates `kitchenNote`/`customerNote` (previously a
+  single combined `note`/`notes` field on `CartItem`/`OrderItemSnapshot`). `unitPrice`,
+  `modifierTotal`, `lineSubtotal`, `lineDiscount`, `lineTotal`, and the line's `TaxSnapshot` are all
+  computed once, deterministically, at construction — never independently supplied.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS
 
 ### BR-ORDER-003 — Idempotency fields
 - **Status**: VERIFIED (fields exist) / ROADMAP (backend enforcement)
@@ -250,6 +285,18 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Menu, Bowl Builder
 
+### BR-MOD-004 — Quantity-aware modifier selection (Phase 3 Sprint 3A)
+- **Status**: VERIFIED
+- **Rule**: `ModifierValidator`/`OrderLineModifierSelection`
+  (`lib/features/orders/domain/modifiers/`, `lib/features/orders/domain/models/
+  order_line_modifier_selection.dart`) add quantity-aware modifier selections — e.g. "extra cheese
+  ×2" counts as 2 toward a group's min/max, the same as two distinct option selections. Neither
+  `ModifierGroup`/`ModifierOption` nor the existing `SelectedModifier` support this; it's new
+  capability at the order-line level only, strictly additive (every existing modifier dataset has
+  quantity 1 per selection).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, Orders, POS
+
 # Build Your Own Bowl Rules
 
 ### BR-BOWL-001 — Starting price and no-category-required
@@ -314,6 +361,70 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain (decision) / flutter_architect (model change)
 - **Related Modules**: Menu, Orders
 
+# VAT and Tax Rules
+
+### BR-TAX-001 — VAT-inclusive pricing
+- **Status**: DECIDED
+- **Rule**: All menu and sales prices are always VAT-inclusive (gross). `Money` values throughout
+  the domain layer represent gross, customer-facing amounts; VAT is extracted from a gross amount,
+  never added on top of a displayed price.
+- **Owner Agent**: restaurant_domain (decision) / flutter_architect (implementation, `TaxRate`)
+- **Related Modules**: Orders, Menu, Payments
+
+### BR-TAX-002 — Default VAT rate is 10%
+- **Status**: DECIDED
+- **Rule**: The configured default VAT rate is 10.00%. Extraction formula:
+  `vatAmount = grossAmount * rate / (100 + rate)`; `taxableBase = grossAmount - vatAmount`. The rate
+  lives in exactly one place (`TaxPolicy.defaultRate`,
+  `lib/features/orders/domain/pricing/tax_policy.dart`) — no other file contains the literal `10`
+  for VAT purposes.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, Menu
+
+### BR-TAX-003 — Round Half Away From Zero on minor units
+- **Status**: DECIDED
+- **Rule**: Every fractional monetary computation (VAT extraction, percentage discounts, currency
+  conversion) rounds ties away from zero at the minor-unit (kuruş/cents) level — one shared
+  implementation (`MoneyRounding.halfAwayFromZero`,
+  `lib/shared/models/money_rounding.dart`), never ad hoc per call site.
+- **Owner Agent**: restaurant_domain (decision) / flutter_architect (implementation)
+- **Related Modules**: Orders, Payments
+
+### BR-TAX-004 — Historical VAT rate immutability
+- **Status**: VERIFIED
+- **Rule**: `TaxRate`/`taxableBase`/`vatAmount` are snapshotted onto each `OrderLine` at order-
+  creation time (`TaxSnapshot`, `lib/features/orders/domain/pricing/tax_snapshot.dart`). A later
+  change to `TaxPolicy.defaultRate` never alters an already-created order's frozen line snapshots.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders
+
+### BR-TAX-005 — Order-level discount's effect on VAT
+- **Status**: UNRESOLVED
+- **Rule**: `PriceCalculator`'s `taxableBase`/`vatAmount` are the sum of each line's own frozen
+  `TaxSnapshot` (computed from that line's gross total, itself already net of any *line-level*
+  discount). An order-level `Discount` (applied on top of the summed lines) currently has **no**
+  effect on the reported `taxableBase`/`vatAmount` — this is a deliberate, documented default for
+  Sprint 3A, not a confirmed business rule. Whether an order-level discount should proportionally
+  reduce the VAT figure is undecided.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, Payments
+
+### BR-TAX-006 — Service/delivery/packaging fee tax treatment
+- **Status**: UNRESOLVED
+- **Rule**: `PriceBreakdown.serviceFee`/`deliveryFee`/`packagingFee` are added to the grand total as
+  flat gross amounts and are not run through VAT extraction (no VAT figure is computed for them).
+  Whether these fees are themselves VAT-inclusive, VAT-exempt, or taxed at a different rate is
+  undecided.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, Payments
+
+### BR-TAX-007 — Tip tax treatment
+- **Status**: UNRESOLVED
+- **Rule**: `PriceBreakdown.tip` is added to the grand total as a flat gross amount with no VAT
+  computed against it. Whether a tip is subject to VAT at all is undecided.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, Payments
+
 # Marketplace Pricing
 
 ### BR-MKTPRICE-001 — Marketplace price may differ from in-store price
@@ -344,6 +455,17 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Rule**: `CampaignDetailScreen` supports coupon claiming against mock campaign data.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Campaigns
+
+### BR-PROMO-006 — `Discount` value objects and stacking abstraction (Phase 3 Sprint 3A)
+- **Status**: VERIFIED (value objects) — no campaign engine
+- **Rule**: `Discount` (`lib/features/orders/domain/discounts/discount.dart`) models a fixed-amount
+  or percentage discount at line or order scope — value object only, no coupon lookup/eligibility
+  check/campaign engine. `DiscountStackingPolicy` is an abstraction with exactly one implementation,
+  `SingleDiscountOnlyPolicy`, which refuses more than one order-level discount outright. This does
+  **not** resolve BR-PROMO-003/004/005 — it exists so calling code has one seam to depend on without
+  guessing a real stacking rule.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Campaigns, Orders, POS
 
 ### BR-PROMO-003 — Coupon + Boncuk stacking
 - **Status**: UNRESOLVED
@@ -397,6 +519,53 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Rule**: The app's actual PCI DSS compliance scope/path is not yet decided.
 - **Owner Agent**: security_engineer
 - **Related Modules**: Payments
+
+### BR-PAY-006 — Supported payment currencies
+- **Status**: DECIDED
+- **Rule**: Three currencies are modeled: TRY, EUR, USD (`Currency`,
+  `lib/shared/models/currency.dart`). Accounting and menu pricing remain TRY-based; EUR/USD exist
+  only to represent an actual foreign-currency payment amount and its informational receipt
+  equivalent. Currency conversion applies only at the payment boundary — order prices, discounts,
+  VAT calculations, and receipts remain TRY-based.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments, Orders
+
+### BR-PAY-007 — Business acceptance exchange rate
+- **Status**: DECIDED
+- **Rule**: A foreign-currency payment's business acceptance rate is
+  `acceptanceRate = marketSellingRate - fixedMargin`, where `marketSellingRate` is the source
+  currency's daily market selling rate against TRY and the default `fixedMargin` is 5.00 TRY
+  (`ExchangeRatePolicy.fixedMargin`, `lib/shared/models/exchange_rate_policy.dart`). A computed
+  acceptance rate of zero or less is rejected outright, never silently accepted.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments
+
+### BR-PAY-008 — Historical exchange-rate immutability
+- **Status**: VERIFIED
+- **Rule**: Every foreign-currency `PaymentSplit` stores its own `ExchangeRateSnapshot` (source/
+  target currency, market rate, margin, acceptance rate, timestamp, source), captured once at
+  payment time. Historical payments are never recalculated using a newer rate.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments
+
+### BR-PAY-009 — Daily rate retrieval is out of scope
+- **Status**: ROADMAP
+- **Rule**: `ExchangeRateProvider` (`lib/shared/models/exchange_rate_snapshot.dart`) is an
+  abstraction only — no real daily-rate retrieval/provider integration exists. Every
+  `ExchangeRateSnapshot` in this codebase today must be constructed from a manually-supplied rate.
+- **Owner Agent**: firebase_engineer (future integration) / restaurant_domain (rate-source policy)
+- **Related Modules**: Payments
+
+### BR-PAY-010 — Informational receipt currency equivalents
+- **Status**: DECIDED
+- **Rule**: Every receipt displays informational EUR/USD equivalents of the TRY total, computed
+  using the current business acceptance rate. These values are explicitly non-binding and not
+  guaranteed — the actual exchange rate is determined at the moment of payment. If payment is
+  actually made in EUR/USD, that payment's own applied exchange-rate snapshot is stored and shown
+  separately from the informational equivalents (see `Receipt.informationalEquivalents` vs.
+  `Receipt.paymentSummary`).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments, Orders
 
 # Refund, Cancellation, and Order Correction Rules
 
@@ -708,6 +877,9 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 | BR-TABLE-004 | Are table transfer, table merge, and split-bill supported at all? |
 | BR-BOWL-004 | What are the real Bowl Builder "Extra" (second-unit) surcharge prices? |
 | BR-MKTPRICE-002 | How/where is a marketplace-specific price stored per product? |
+| BR-TAX-005 | Should an order-level discount proportionally reduce the reported VAT figure? |
+| BR-TAX-006 | Are service/delivery/packaging fees VAT-inclusive, VAT-exempt, or taxed at a different rate? |
+| BR-TAX-007 | Is a tip subject to VAT? |
 | BR-PROMO-003 | Can coupons and Boncuk be used together? |
 | BR-PROMO-004 | Can multiple discounts or campaigns stack? |
 | BR-PROMO-005 | What is a campaign's channel/branch/product eligibility scope? |
@@ -825,6 +997,34 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Related Modules**: Menu, Bowl Builder
 - **Business Rule IDs**: BR-MOD-001
 
+### DL-011 — VAT-inclusive pricing, 10% default rate, Round Half Away From Zero
+- **Decision**: All menu/sales prices are VAT-inclusive; the default VAT rate is 10%, extracted from
+  a gross amount via `vatAmount = grossAmount * rate / (100 + rate)`; fractional minor-unit results
+  round half away from zero.
+- **Status**: DECIDED
+- **Source**: User, Phase 3 Sprint 3A architecture approval.
+- **Date**: 2026-07-28
+- **Consequences**: `TaxRate`/`TaxPolicy`/`MoneyRounding` implement this exactly; every VAT/discount/
+  currency-conversion computation in the domain layer uses the same rounding rule. Tax treatment of
+  order-level discounts, service/delivery/packaging fees, and tips was explicitly left unresolved
+  (BR-TAX-005/006/007) rather than assumed.
+- **Related Modules**: Orders, Menu, Payments
+- **Business Rule IDs**: BR-TAX-001, BR-TAX-002, BR-TAX-003, BR-TAX-004
+
+### DL-012 — Multi-currency payment (TRY/EUR/USD) and business acceptance rate
+- **Decision**: Payments may be tendered in TRY, EUR, or USD; a foreign-currency payment settles at
+  `acceptanceRate = marketSellingRate - 5.00 TRY` (fixed margin), computed and frozen per payment.
+  Accounting/menu pricing/VAT/receipts remain TRY-based; conversion applies only at the payment
+  boundary. Every receipt shows an informational, non-binding EUR/USD equivalent of the TRY total.
+- **Status**: DECIDED
+- **Source**: User, Phase 3 Sprint 3A architecture approval.
+- **Date**: 2026-07-28
+- **Consequences**: `Currency`/`ExchangeRateSnapshot`/`ExchangeRatePolicy`/`PaymentSplit` implement
+  this. `ExchangeRateProvider` (daily rate retrieval) is an abstraction only — no real provider
+  integration exists (BR-PAY-009, ROADMAP).
+- **Related Modules**: Payments, Orders
+- **Business Rule IDs**: BR-PAY-006, BR-PAY-007, BR-PAY-008, BR-PAY-009, BR-PAY-010
+
 ### DL-010 — Profitability/loss-prevention evaluation requirement
 - **Decision**: Every operational rule must be evaluated for profitability and loss prevention.
 - **Status**: DECIDED
@@ -841,6 +1041,22 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v1.1 — 2026-07-28
+- **Version**: 1.1
+- **Date**: 2026-07-28
+- **Summary**: Phase 3 Sprint 3A (POS Domain Foundation). Added the `TAX` category and BR-TAX-001
+  through BR-TAX-007 (VAT-inclusive pricing, default 10% rate, rounding policy, historical rate
+  immutability; discount/fee/tip VAT treatment left UNRESOLVED). Added BR-PAY-006 through BR-PAY-010
+  (multi-currency payment: TRY/EUR/USD, business acceptance rate, historical rate immutability,
+  daily-rate-retrieval-out-of-scope, informational receipt equivalents). Added BR-ORDER-004/005/006
+  (new shared `Order` aggregate, externally-supplied identifiers, `OrderLine` shape), BR-MOD-004
+  (quantity-aware modifier validation), BR-PROMO-006 (`Discount` value objects + stacking
+  abstraction). Logged DL-011/DL-012.
+- **Author**: Claude, at the user's direction (ChatGPT as lead architect, this session).
+- **Reason**: Record the new domain-model business rules and their provenance as durably as every
+  prior rule in this document, and explicitly surface the tax-treatment questions this sprint
+  deliberately left open rather than silently deciding.
 
 ### v1.0 — 2026-07-25
 - **Version**: 1.0
