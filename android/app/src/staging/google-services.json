@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "915484005258",
+    "project_id": "abakus-one-staging",
+    "storage_bucket": "abakus-one-staging.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:915484005258:android:252d6c9b0a21b258662e73",
+        "android_client_info": {
+          "package_name": "com.example.abakus_one_v2"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD2vhuLB60hoK4AFlspwEFRaooFt9HGuKo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -35,6 +35,25 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // Environment flavors (Phase 2, P2-002) — orthogonal to buildTypes above:
+    // a build is always both a flavor (which Firebase project/environment)
+    // and a build type (debug/release), never one in place of the other.
+    // Each flavor shares the same applicationId (matches the package name
+    // registered for all three Firebase Android apps) and picks up its
+    // Firebase config from android/app/src/<flavor>/google-services.json.
+    flavorDimensions += "environment"
+    productFlavors {
+        create("development") {
+            dimension = "environment"
+        }
+        create("staging") {
+            dimension = "environment"
+        }
+        create("production") {
+            dimension = "environment"
+        }
+    }
 }
 
 kotlin {
