@@ -119,7 +119,14 @@ commit (`101afbd`).
   No P1-0xx task's own test requirements named a direct `RemoteConfigService` test file, and the `NoOp`
   implementation's behavior is trivial and covered transitively. Noted for a future task, not fixed here.
 
-## Özellikler
+## Phase 2 — Identity, Authentication & Environment Foundations (P2-0xx)
+
+Tracked under the same informal `P2-0xx` sprint numbering established for Phase 1. Sprint 1 (Firebase
+Environment Foundation) in progress.
+
+| Task | Status | Note |
+|---|---|---|
+| P2-001 — Provision development & staging Firebase projects | DONE | Two new Firebase projects provisioned via `firebase projects:create`: `abakus-one-dev` (project number `203808038574`) and `abakus-one-staging` (project number `915484005258`). Each registered with the same three platform apps production (`abakusone`) actually has (Android `com.example.abakus_one_v2`, iOS/macOS-shared bundle `com.example.abakusOneV2`, Web) — Linux and a separate Windows app were not registered, matching `abakusone`'s own pattern (Windows reuses the Web app registration there; the new projects follow the same convention once P2-002 wires flavor selection). No application code changed by this task — see Sprint 1 report for the full provisioning log, including one orphaned duplicate project (`abakus-one-dev-4bf2e`) created by a failed first attempt and flagged for the user to delete, not deleted automatically. |
 
 | Özellik | Durum | Not |
 |---|---|---|
