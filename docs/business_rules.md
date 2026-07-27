@@ -520,13 +520,19 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: security_engineer
 - **Related Modules**: Payments
 
-### BR-PAY-006 — Supported payment currencies
+### BR-PAY-006 — Supported payment currencies, extensible catalog
 - **Status**: DECIDED
-- **Rule**: Three currencies are modeled: TRY, EUR, USD (`Currency`,
-  `lib/shared/models/currency.dart`). Accounting and menu pricing remain TRY-based; EUR/USD exist
-  only to represent an actual foreign-currency payment amount and its informational receipt
-  equivalent. Currency conversion applies only at the payment boundary — order prices, discounts,
-  VAT calculations, and receipts remain TRY-based.
+- **Rule**: Three currencies are initially configured: TRY, EUR, USD (`Currency`,
+  `lib/shared/models/currency.dart`). `Currency` is a data class, not an enum — every currency
+  carries ISO 4217 code, display name, symbol, decimal digits, `isDefault`, `isActive`, and
+  `isAcceptedByBusiness`. Enabling a future currency (GBP, CHF, SAR, AED, ...) is a data addition
+  (one more `static const Currency` entry in `Currency.all`) — no business logic (`Money`,
+  `PriceCalculator`, `ExchangeRateSnapshot`, `PaymentSplit`, ...) switches on which currency it is,
+  so none of it needs to change. Accounting and menu pricing remain in `Currency.accountingCurrency`
+  (TRY, `isDefault: true`); a currency may only be tendered as payment or shown as an informational
+  receipt equivalent if `isAcceptedByBusiness` is `true`. Currency conversion applies only at the
+  payment boundary — order prices, discounts, VAT calculations, and receipts remain accounting-
+  currency-based.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Payments, Orders
 
@@ -550,22 +556,42 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 
 ### BR-PAY-009 — Daily rate retrieval is out of scope
 - **Status**: ROADMAP
-- **Rule**: `ExchangeRateProvider` (`lib/shared/models/exchange_rate_snapshot.dart`) is an
-  abstraction only — no real daily-rate retrieval/provider integration exists. Every
-  `ExchangeRateSnapshot` in this codebase today must be constructed from a manually-supplied rate.
+- **Rule**: `ExchangeRateProvider` (`lib/shared/models/exchange_rate_provider.dart`) is an
+  abstraction only — `getTodayRate(currency)` (latest known rate, for current receipt estimations
+  and any live cashier display), `getRateAt(currency, at)` (a historical lookup, e.g. for
+  reporting — **never** used to recompute a past payment; a `PaymentSplit` always uses its own
+  already-captured `ExchangeRateSnapshot`), and `refreshRates()` (forces a re-fetch). No real
+  implementation exists — every `ExchangeRateSnapshot` in this codebase today must be constructed
+  from a manually-supplied rate.
 - **Owner Agent**: firebase_engineer (future integration) / restaurant_domain (rate-source policy)
 - **Related Modules**: Payments
 
 ### BR-PAY-010 — Informational receipt currency equivalents
 - **Status**: DECIDED
-- **Rule**: Every receipt displays informational EUR/USD equivalents of the TRY total, computed
-  using the current business acceptance rate. These values are explicitly non-binding and not
+- **Rule**: Every receipt displays informational equivalents of the accounting-currency total in
+  every currency the business currently accepts (`Currency.acceptedForeignCurrencies` — EUR and USD
+  today), computed using the current business acceptance rate
+  (`ForeignCurrencyEquivalentsCalculator`, `lib/features/orders/domain/receipt/
+  foreign_currency_equivalents_calculator.dart`). These values are explicitly non-binding and not
   guaranteed — the actual exchange rate is determined at the moment of payment. If payment is
-  actually made in EUR/USD, that payment's own applied exchange-rate snapshot is stored and shown
-  separately from the informational equivalents (see `Receipt.informationalEquivalents` vs.
-  `Receipt.paymentSummary`).
+  actually made in a foreign currency, that payment's own applied exchange-rate snapshot is stored
+  and shown separately from the informational equivalents (see `Receipt.informationalEquivalents`
+  vs. `Receipt.paymentSummary`). A currency whose rate isn't currently available is omitted from the
+  informational list rather than a fabricated estimate being shown.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Payments, Orders
+
+### BR-PAY-011 — Cashier live currency display is UI work, not yet built
+- **Status**: ROADMAP
+- **Rule**: The approved requirement that a cashier screen show "Total (accounting currency) /
+  Approximate EUR / Approximate USD" for an open order, updating automatically whenever exchange
+  rates refresh, needs a presentation-layer (Riverpod/UI) component that doesn't exist yet — POS UI
+  remains explicitly out of scope for Phase 3 Sprint 3A. The domain primitives such a screen would
+  be built on already exist and are tested (`ExchangeRateProvider.getTodayRate`/`.refreshRates`,
+  `ForeignCurrencyEquivalentsCalculator.build`) — reported as the concrete gap, not silently left
+  unaddressed.
+- **Owner Agent**: flutter_architect (future UI) / restaurant_domain (rule)
+- **Related Modules**: Payments, Staff/Admin
 
 # Refund, Cancellation, and Order Correction Rules
 
@@ -1025,6 +1051,26 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Related Modules**: Payments, Orders
 - **Business Rule IDs**: BR-PAY-006, BR-PAY-007, BR-PAY-008, BR-PAY-009, BR-PAY-010
 
+### DL-013 — Extensible Currency model and richer ExchangeRateProvider
+- **Decision**: `Currency` is redesigned from a closed enum into an extensible data class (ISO
+  code, display name, symbol, decimal digits, `isDefault`, `isActive`, `isAcceptedByBusiness`) so a
+  future currency can be enabled without changing any business logic. `ExchangeRateProvider` is
+  redefined to expose `getTodayRate`, `getRateAt`, and `refreshRates` (previously a single
+  `currentRate` method). Every receipt/adisyon must always print an estimated equivalent for every
+  currency the business currently accepts; a live cashier display showing the same, auto-updating on
+  refresh, is approved as a requirement but its UI implementation remains ROADMAP (BR-PAY-011).
+- **Status**: DECIDED
+- **Source**: User, Phase 3 Sprint 3A architecture refinement approval.
+- **Date**: 2026-07-28
+- **Consequences**: `Currency`'s constructor is public (a genuine value type, like `Money`) rather
+  than restricted to `currency.dart` — the canonical, business-recognized set remains `Currency.all`;
+  ad hoc construction is supported for tests/edge cases, not a second registration path.
+  `ForeignCurrencyEquivalentsCalculator` is the new shared computation both `Receipt` and a future
+  cashier display are meant to use. Supersedes DL-012's `ExchangeRateProvider` shape, not its
+  acceptance-rate formula or TRY-based-accounting principle, both unchanged.
+- **Related Modules**: Payments, Orders, Staff/Admin
+- **Business Rule IDs**: BR-PAY-006, BR-PAY-009, BR-PAY-010, BR-PAY-011
+
 ### DL-010 — Profitability/loss-prevention evaluation requirement
 - **Decision**: Every operational rule must be evaluated for profitability and loss prevention.
 - **Status**: DECIDED
@@ -1041,6 +1087,17 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v1.2 — 2026-07-28
+- **Version**: 1.2
+- **Date**: 2026-07-28
+- **Summary**: Phase 3 Sprint 3A architecture refinement — extensible `Currency` model and richer
+  `ExchangeRateProvider`. Revised BR-PAY-006 (extensible catalog, not a fixed 3-currency enum) and
+  BR-PAY-009 (`getTodayRate`/`getRateAt`/`refreshRates` shape). Added BR-PAY-011 (cashier live
+  display is an approved requirement, UI implementation ROADMAP). Logged DL-013.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the currency-model architecture refinement and its rationale, and explicitly
+  flag the cashier-UI gap this refinement's domain primitives support but do not themselves close.
 
 ### v1.1 — 2026-07-28
 - **Version**: 1.1

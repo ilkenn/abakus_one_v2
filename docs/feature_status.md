@@ -188,3 +188,17 @@ category, extended `PAY`/`ORDER`/`MOD`/`PROMO` rules) for full rationale.
 provider integration, admin overrides, real ID/order-number generation, real daily exchange-rate
 retrieval (`ExchangeRateProvider` has no implementation), printer integration, campaign/coupon
 engine, discount stacking rules, marketplace `OrderChannel` value or per-channel pricing.
+
+### Sprint 3A follow-up — Extensible Currency model (same day)
+
+Architecture refinement approved and implemented the same day, before Sprint 3A closed out. See
+`docs/decisions.md` ADR-010 and `docs/business_rules.md` BR-PAY-006/009/010/011 (revised), DL-013.
+
+| Task | Status | Note |
+|---|---|---|
+| Extensible `Currency` | DONE | `Currency` (`lib/shared/models/currency.dart`) redesigned from a closed enum into a data class — ISO code, display name, symbol, decimal digits, `isDefault`, `isActive`, `isAcceptedByBusiness`. `Currency.all` is the canonical registry (TRY/EUR/USD); enabling GBP/CHF/SAR/AED-style future currencies is a one-line data addition, no business-logic change. Public constructor (like `Money`) rather than file-restricted. |
+| `ExchangeRateProvider` (richer shape) | DONE | Moved to its own file (`lib/shared/models/exchange_rate_provider.dart`); now exposes `getTodayRate`/`getRateAt`/`refreshRates` (previously one `currentRate` method). Still an abstraction only — no implementation. |
+| `ExchangeRateSnapshot.convertFromTry` | DONE | Exact inverse of the existing `convertToTry` — TRY-total-to-foreign-currency conversion, the computation both `Receipt` and a future cashier display need. |
+| `ForeignCurrencyEquivalentsCalculator` | DONE | `lib/features/orders/domain/receipt/foreign_currency_equivalents_calculator.dart` — builds one equivalent per `Currency.acceptedForeignCurrencies` using `ExchangeRateProvider.getTodayRate`; omits (never fabricates) a currency whose rate isn't available. Not `Receipt`-specific — the same primitive a future cashier live display would reuse. `Receipt.issue(...)` is a new convenience factory wiring it in automatically. |
+| `CurrencyNotAcceptedViolation` | DONE | New `BusinessRuleViolation` — rejects capturing a rate or tendering a payment in a currency with `isAcceptedByBusiness == false`. |
+| Cashier live currency display | **ROADMAP** | Approved requirement (Total/Approximate EUR/Approximate USD, auto-updating on rate refresh) — needs a presentation-layer (Riverpod/UI) component. POS UI remains out of scope this sprint; the domain primitives it would be built on (`ExchangeRateProvider`, `ForeignCurrencyEquivalentsCalculator`) already exist and are tested. See BR-PAY-011. |

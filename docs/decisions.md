@@ -370,3 +370,60 @@ is in judgment calls made to bridge legacy `double`-based models (`CartItem`'s `
 folded into `OrderLine.unitPrice`; legacy protein/sauce/extra/removed fields flattened into
 `kitchenNote` text) — documented inline at each call site, but not separately re-confirmed with the
 user field-by-field.
+
+---
+
+## ADR-010 — Extensible `Currency` Model and Richer `ExchangeRateProvider`
+
+- Date: 2026-07-28
+- Status: Accepted
+
+### Decision
+Refines ADR-009's `Currency` (previously a closed 3-value enum) into an extensible data class:
+every currency carries ISO 4217 code, display name, symbol, decimal digits, `isDefault`, `isActive`,
+and `isAcceptedByBusiness`. `Currency.all` is the canonical registry (TRY/EUR/USD initially);
+enabling a future currency (GBP, CHF, SAR, AED, ...) means adding one `static const Currency` entry
+there — no business logic (`Money`, `PriceCalculator`, `ExchangeRateSnapshot`, `PaymentSplit`, ...)
+switches on which currency it is, so none of it changes. The constructor is public (a genuine value
+type, like `Money`), not restricted to `currency.dart` — this both matches `Money`'s own design and
+makes the `isAcceptedByBusiness`-rejection paths in `ExchangeRateSnapshot.capture`/`PaymentSplit
+.foreignCurrency` independently testable without needing a real not-yet-accepted currency in the
+production catalog.
+
+`ExchangeRateProvider` (moved to its own file, `lib/shared/models/exchange_rate_provider.dart`) is
+redefined from a single `currentRate(currency)` method to three: `getTodayRate(currency)` (latest
+known rate — current receipt estimations, live cashier display), `getRateAt(currency, at)`
+(historical lookup only — reporting, never used to recompute a past payment), and `refreshRates()`
+(forces a re-fetch).
+
+`ExchangeRateSnapshot` gains `convertFromTry` — the exact inverse of the existing `convertToTry` —
+and `ForeignCurrencyEquivalentsCalculator` (`lib/features/orders/domain/receipt/
+foreign_currency_equivalents_calculator.dart`) is new: it builds the "every accepted foreign
+currency, using today's rate" list `Receipt` needs, and is deliberately not `Receipt`-specific so a
+future cashier live display can reuse the exact same computation. `Receipt.issue(...)` is a new
+convenience factory that wires this in automatically.
+
+### Context
+The approved refinement explicitly named "extensible... without changing business logic" and a
+3-method `ExchangeRateProvider` shape, plus a cashier-UI requirement. POS UI remains out of scope
+for this sprint (unchanged from ADR-009); the cashier requirement is recorded as an approved,
+not-yet-built requirement (`docs/business_rules.md` BR-PAY-011), not silently dropped.
+
+### Consequences
+- `CurrencyNotAcceptedViolation` added to the `BusinessRuleViolation` hierarchy.
+- All domain code that previously referenced the concrete `Currency.tryLira` for "the accounting
+  currency" now reads `Currency.accountingCurrency` instead (a generic lookup by `isDefault`) —
+  `Currency.tryLira` itself is unchanged and still usable where a specific currency is genuinely
+  meant.
+- No cashier UI, Riverpod provider, or reactive stream was built — `ExchangeRateProvider`/
+  `ForeignCurrencyEquivalentsCalculator` are the domain primitives such a screen would poll or wrap,
+  documented as such, not implemented.
+- No new pub dependency.
+
+### Confidence
+86%. The field list, extensibility requirement, and three-method provider shape are directly
+specified by the user's approved refinement. The residual uncertainty is in two judgment calls not
+explicitly specified: making `Currency`'s constructor public (chosen for consistency with `Money`
+and for testability, rather than keeping it private with a separate test-only construction path),
+and catching/omitting (rather than propagating) a per-currency rate failure inside
+`ForeignCurrencyEquivalentsCalculator.build` so one missing rate never blocks printing a receipt.
