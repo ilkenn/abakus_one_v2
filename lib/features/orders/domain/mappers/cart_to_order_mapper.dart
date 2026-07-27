@@ -59,7 +59,7 @@ abstract final class CartToOrderMapper {
     final lines = cartItems.map((item) => _mapLine(item, taxRate)).toList();
     final pricing = PriceCalculator.calculate(
       lines: lines,
-      currency: Currency.tryLira,
+      currency: Currency.accountingCurrency,
       discount: orderLevelDiscount,
       serviceFee: serviceFee,
       deliveryFee: deliveryFee,

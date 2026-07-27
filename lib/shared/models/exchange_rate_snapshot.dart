@@ -29,15 +29,16 @@ class ExchangeRateSnapshot {
   /// The foreign currency this rate converts *from*.
   final Currency sourceCurrency;
 
-  /// The currency this rate converts *to* — always [Currency.tryLira] in
-  /// this app (see the approved decision: "Accounting and menu pricing
-  /// remain TRY-based"). Modeled as an explicit field rather than assumed
-  /// implicitly, so a snapshot is self-describing without the reader
-  /// having to know that rule.
+  /// The currency this rate converts *to* — always
+  /// [Currency.accountingCurrency] in this app (see the approved decision:
+  /// "Accounting and menu pricing remain TRY-based"). Modeled as an
+  /// explicit field rather than assumed implicitly, so a snapshot is
+  /// self-describing without the reader having to know that rule.
   final Currency targetCurrency;
 
-  /// [sourceCurrency]'s daily market selling rate against TRY, expressed
-  /// as a TRY [Money] amount per one whole unit of [sourceCurrency] (e.g.
+  /// [sourceCurrency]'s daily market selling rate against
+  /// [Currency.accountingCurrency], expressed as a [Money] amount (in that
+  /// accounting currency) per one whole unit of [sourceCurrency] (e.g.
   /// 47.00 TRY per 1 EUR).
   final Money marketSellingRate;
 
@@ -57,14 +58,17 @@ class ExchangeRateSnapshot {
 
   /// Free-text provenance of [marketSellingRate] (e.g. a bank name, "manual
   /// entry") — no real rate provider is integrated yet (see
-  /// [ExchangeRateProvider]), so this is deliberately not a closed enum.
+  /// `ExchangeRateProvider`), so this is deliberately not a closed enum.
   final String rateSource;
 
   /// Captures a new snapshot, computing and validating [acceptanceRate].
   ///
   /// Throws [UnsupportedExchangeRateCurrencyViolation] if [sourceCurrency]
-  /// is TRY (nothing to convert) or if [marketSellingRate]/[fixedMargin]
-  /// aren't themselves TRY-denominated. Throws
+  /// is the accounting currency (nothing to convert) or if
+  /// [marketSellingRate]/[fixedMargin] aren't themselves denominated in it.
+  /// Throws [CurrencyNotAcceptedViolation] if `sourceCurrency
+  /// .isAcceptedByBusiness` is `false` — a rate is never captured for a
+  /// currency the business doesn't currently accept. Throws
   /// [NonPositiveAcceptanceRateViolation] if the computed acceptance rate
   /// would be zero or negative (a market rate that doesn't clear the fixed
   /// margin is refused outright, never silently accepted at a worse rate).
@@ -75,23 +79,27 @@ class ExchangeRateSnapshot {
     required DateTime rateTimestamp,
     required String rateSource,
   }) {
-    if (sourceCurrency == Currency.tryLira) {
+    final accountingCurrency = Currency.accountingCurrency;
+    if (sourceCurrency == accountingCurrency) {
       throw UnsupportedExchangeRateCurrencyViolation(
         sourceCurrencyCode: sourceCurrency.isoCode,
-        targetCurrencyCode: Currency.tryLira.isoCode,
+        targetCurrencyCode: accountingCurrency.isoCode,
       );
     }
-    if (marketSellingRate.currency != Currency.tryLira) {
+    if (!sourceCurrency.isAcceptedByBusiness) {
+      throw CurrencyNotAcceptedViolation(currencyCode: sourceCurrency.isoCode);
+    }
+    if (marketSellingRate.currency != accountingCurrency) {
       throw UnsupportedExchangeRateCurrencyViolation(
         sourceCurrencyCode: marketSellingRate.currency.isoCode,
-        targetCurrencyCode: Currency.tryLira.isoCode,
+        targetCurrencyCode: accountingCurrency.isoCode,
       );
     }
     final margin = fixedMargin ?? ExchangeRatePolicy.fixedMargin;
-    if (margin.currency != Currency.tryLira) {
+    if (margin.currency != accountingCurrency) {
       throw UnsupportedExchangeRateCurrencyViolation(
         sourceCurrencyCode: margin.currency.isoCode,
-        targetCurrencyCode: Currency.tryLira.isoCode,
+        targetCurrencyCode: accountingCurrency.isoCode,
       );
     }
     final acceptance = marketSellingRate - margin;
@@ -103,7 +111,7 @@ class ExchangeRateSnapshot {
     }
     return ExchangeRateSnapshot._(
       sourceCurrency: sourceCurrency,
-      targetCurrency: Currency.tryLira,
+      targetCurrency: accountingCurrency,
       marketSellingRate: marketSellingRate,
       fixedMargin: margin,
       acceptanceRate: acceptance,
@@ -112,9 +120,10 @@ class ExchangeRateSnapshot {
     );
   }
 
-  /// Converts [foreignAmount] (must be in [sourceCurrency]) to TRY using
-  /// [acceptanceRate] — Round Half Away From Zero on minor units, per this
-  /// app's one rounding policy (`MoneyRounding`).
+  /// Converts [foreignAmount] (must be in [sourceCurrency]) to the
+  /// accounting currency using [acceptanceRate] — Round Half Away From
+  /// Zero on minor units, per this app's one rounding policy
+  /// (`MoneyRounding`). Used by a foreign-currency `PaymentSplit`.
   Money convertToTry(Money foreignAmount) {
     if (foreignAmount.currency != sourceCurrency) {
       throw CurrencyMismatchViolation(
@@ -126,7 +135,25 @@ class ExchangeRateSnapshot {
       foreignAmount.minorUnits * acceptanceRate.minorUnits,
       sourceCurrency.minorUnitsPerWhole,
     );
-    return Money(minorUnitsTry, Currency.tryLira);
+    return Money(minorUnitsTry, targetCurrency);
+  }
+
+  /// The inverse of [convertToTry]: converts [accountingAmount] (must be
+  /// in [targetCurrency]) into [sourceCurrency] using [acceptanceRate] —
+  /// the computation a "estimated EUR/USD equivalent" line on a receipt or
+  /// a cashier's live display uses. Also Round Half Away From Zero.
+  Money convertFromTry(Money accountingAmount) {
+    if (accountingAmount.currency != targetCurrency) {
+      throw CurrencyMismatchViolation(
+        expectedCurrencyCode: targetCurrency.isoCode,
+        actualCurrencyCode: accountingAmount.currency.isoCode,
+      );
+    }
+    final minorUnitsForeign = MoneyRounding.halfAwayFromZero(
+      accountingAmount.minorUnits * sourceCurrency.minorUnitsPerWhole,
+      acceptanceRate.minorUnits,
+    );
+    return Money(minorUnitsForeign, sourceCurrency);
   }
 
   @override
@@ -152,16 +179,4 @@ class ExchangeRateSnapshot {
         rateTimestamp,
         rateSource,
       );
-}
-
-/// Source of a current [ExchangeRateSnapshot] for a foreign [Currency].
-///
-/// **Abstraction only** — no implementation exists this sprint. Daily rate
-/// retrieval/provider integration is explicitly out of scope for Phase 3
-/// Sprint 3A (see `docs/feature_status.md`); this interface exists so the
-/// payment and receipt code that needs "the current rate" has one seam to
-/// depend on, rather than being written against a concrete vendor that
-/// doesn't exist yet.
-abstract interface class ExchangeRateProvider {
-  Future<ExchangeRateSnapshot> currentRate(Currency currency);
 }

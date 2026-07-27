@@ -33,9 +33,9 @@ class Money implements Comparable<Money> {
   /// away from zero, matching this app's one rounding policy everywhere
   /// else.
   factory Money.fromLegacyDoubleTry(double amountInTry) {
-    final minorUnits =
-        (amountInTry * Currency.tryLira.minorUnitsPerWhole).round();
-    return Money(minorUnits, Currency.tryLira);
+    final currency = Currency.accountingCurrency;
+    final minorUnits = (amountInTry * currency.minorUnitsPerWhole).round();
+    return Money(minorUnits, currency);
   }
 
   final int minorUnits;
@@ -102,7 +102,7 @@ class Money implements Comparable<Money> {
 
   @override
   String toString() {
-    final digits = currency.minorUnitDigits;
+    final digits = currency.decimalDigits;
     final whole = minorUnits ~/ currency.minorUnitsPerWhole;
     final fraction = minorUnits.abs() % currency.minorUnitsPerWhole;
     return '${currency.isoCode} $whole.${fraction.toString().padLeft(digits, '0')}';

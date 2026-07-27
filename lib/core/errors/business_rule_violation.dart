@@ -295,3 +295,16 @@ final class ForeignCurrencyPaymentMissingExchangeRateViolation
   String get description =>
       'Payment in $currencyCode requires an ExchangeRateSnapshot';
 }
+
+/// A `Currency` with `isAcceptedByBusiness == false` was used somewhere
+/// that requires business acceptance — capturing an `ExchangeRateSnapshot`
+/// for it, or tendering a `PaymentSplit` in it.
+final class CurrencyNotAcceptedViolation extends BusinessRuleViolation {
+  const CurrencyNotAcceptedViolation({required this.currencyCode});
+
+  final String currencyCode;
+
+  @override
+  String get description =>
+      'Currency $currencyCode is not currently accepted by the business';
+}

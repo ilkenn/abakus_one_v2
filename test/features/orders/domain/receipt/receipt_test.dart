@@ -7,9 +7,30 @@ import 'package:abakus_one_v2/features/orders/domain/receipt/payment_summary_lin
 import 'package:abakus_one_v2/features/orders/domain/receipt/receipt.dart';
 import 'package:abakus_one_v2/features/payment/domain/models/payment_enums.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
+import 'package:abakus_one_v2/shared/models/exchange_rate_provider.dart';
 import 'package:abakus_one_v2/shared/models/exchange_rate_snapshot.dart';
 import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+class _FakeExchangeRateProvider implements ExchangeRateProvider {
+  _FakeExchangeRateProvider(this._rates);
+
+  final Map<String, ExchangeRateSnapshot> _rates;
+
+  @override
+  Future<ExchangeRateSnapshot> getTodayRate(Currency currency) async {
+    final rate = _rates[currency.isoCode];
+    if (rate == null) throw StateError('no rate for ${currency.isoCode}');
+    return rate;
+  }
+
+  @override
+  Future<ExchangeRateSnapshot> getRateAt(Currency currency, DateTime at) =>
+      getTodayRate(currency);
+
+  @override
+  Future<void> refreshRates() async {}
+}
 
 void main() {
   final summary = PriceCalculator.calculate(
@@ -127,6 +148,46 @@ void main() {
       expect(receipt.informationalEquivalents.single.currency, Currency.eur);
       expect(receipt.informationalEquivalents.single.amount.currency,
           Currency.eur);
+    });
+  });
+
+  group('Receipt.issue', () {
+    test(
+        'automatically populates informationalEquivalents via the given ExchangeRateProvider',
+        () async {
+      final provider = _FakeExchangeRateProvider({
+        'EUR': ExchangeRateSnapshot.capture(
+          sourceCurrency: Currency.eur,
+          marketSellingRate: Money.fromWhole(47, Currency.tryLira),
+          rateTimestamp: DateTime(2026, 7, 28),
+          rateSource: 'manual',
+        ),
+        'USD': ExchangeRateSnapshot.capture(
+          sourceCurrency: Currency.usd,
+          marketSellingRate: Money.fromWhole(41, Currency.tryLira),
+          rateTimestamp: DateTime(2026, 7, 28),
+          rateSource: 'manual',
+        ),
+      });
+      final summaryWithTotal = PriceCalculator.calculate(
+        lines: const [],
+        currency: Currency.tryLira,
+        tip: Money.fromWhole(650, Currency.tryLira),
+      );
+
+      final receipt = await Receipt.issue(
+        receiptNumber: 'R-002',
+        orderId: OrderId('order-1'),
+        orderNumber: OrderNumber('A-001'),
+        issuedAt: DateTime(2026, 7, 28),
+        summary: summaryWithTotal,
+        exchangeRateProvider: provider,
+      );
+
+      expect(
+        receipt.informationalEquivalents.map((e) => e.currency),
+        [Currency.eur, Currency.usd],
+      );
     });
   });
 }

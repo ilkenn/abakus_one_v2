@@ -77,6 +77,29 @@ void main() {
         throwsA(isA<UnsupportedExchangeRateCurrencyViolation>()),
       );
     });
+
+    test('rejects a source currency the business does not currently accept',
+        () {
+      const notAccepted = Currency(
+        isoCode: 'GBP',
+        displayName: 'Sterlin',
+        symbol: '£',
+        decimalDigits: 2,
+        isDefault: false,
+        isActive: true,
+        isAcceptedByBusiness: false,
+      );
+
+      expect(
+        () => ExchangeRateSnapshot.capture(
+          sourceCurrency: notAccepted,
+          marketSellingRate: Money.fromWhole(55, Currency.tryLira),
+          rateTimestamp: timestamp,
+          rateSource: 'manual',
+        ),
+        throwsA(isA<CurrencyNotAcceptedViolation>()),
+      );
+    });
   });
 
   group('ExchangeRateSnapshot.convertToTry', () {
@@ -133,6 +156,54 @@ void main() {
       expect(
         firstSnapshot.convertToTry(Money.fromWhole(20, Currency.eur)),
         firstSettlement,
+      );
+    });
+  });
+
+  group('ExchangeRateSnapshot.convertFromTry', () {
+    test(
+        '650.00 TRY at a 42.00 acceptance rate is ~15.48 EUR (worked receipt example)',
+        () {
+      final snapshot = ExchangeRateSnapshot.capture(
+        sourceCurrency: Currency.eur,
+        marketSellingRate: Money.fromWhole(47, Currency.tryLira),
+        rateTimestamp: timestamp,
+        rateSource: 'manual',
+      );
+
+      final equivalent =
+          snapshot.convertFromTry(Money.fromWhole(650, Currency.tryLira));
+
+      expect(equivalent, const Money(1548, Currency.eur));
+    });
+
+    test('is the exact inverse of convertToTry for a round-trippable amount',
+        () {
+      final snapshot = ExchangeRateSnapshot.capture(
+        sourceCurrency: Currency.eur,
+        marketSellingRate: Money.fromWhole(47, Currency.tryLira),
+        rateTimestamp: timestamp,
+        rateSource: 'manual',
+      );
+      final originalEur = Money.fromWhole(20, Currency.eur);
+
+      final tryAmount = snapshot.convertToTry(originalEur);
+      final backToEur = snapshot.convertFromTry(tryAmount);
+
+      expect(backToEur, originalEur);
+    });
+
+    test('rejects an amount not in the snapshot\'s targetCurrency', () {
+      final snapshot = ExchangeRateSnapshot.capture(
+        sourceCurrency: Currency.eur,
+        marketSellingRate: Money.fromWhole(47, Currency.tryLira),
+        rateTimestamp: timestamp,
+        rateSource: 'manual',
+      );
+
+      expect(
+        () => snapshot.convertFromTry(Money.fromWhole(650, Currency.usd)),
+        throwsA(isA<CurrencyMismatchViolation>()),
       );
     });
   });

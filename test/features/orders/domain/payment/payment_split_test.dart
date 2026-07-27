@@ -71,6 +71,28 @@ void main() {
       );
     });
 
+    test('rejects an amount in a currency the business does not accept', () {
+      const notAccepted = Currency(
+        isoCode: 'GBP',
+        displayName: 'Sterlin',
+        symbol: '£',
+        decimalDigits: 2,
+        isDefault: false,
+        isActive: true,
+        isAcceptedByBusiness: false,
+      );
+
+      expect(
+        () => PaymentSplit.foreignCurrency(
+          id: 's2',
+          method: PaymentMethodType.creditCard,
+          amount: Money.fromWhole(20, notAccepted),
+          exchangeRate: snapshot,
+        ),
+        throwsA(isA<CurrencyNotAcceptedViolation>()),
+      );
+    });
+
     test('a later, newer snapshot never recalculates an already-created split',
         () {
       final split = PaymentSplit.foreignCurrency(

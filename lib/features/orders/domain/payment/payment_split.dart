@@ -7,9 +7,10 @@ import '../../../payment/domain/models/payment_enums.dart';
 /// One portion of a split payment against a [PaymentIntent].
 ///
 /// [amount] is tendered — the currency and amount the customer actually
-/// paid in, which may be TRY or a foreign currency ([Currency.eur]/
-/// [Currency.usd]). [settlementAmount] is always TRY: the amount this
-/// split actually settles against the order's TRY balance. For a TRY
+/// paid in, which may be the accounting currency (TRY) or any currency
+/// with `Currency.isAcceptedByBusiness == true` (EUR/USD today).
+/// [settlementAmount] is always the accounting currency: the amount this
+/// split actually settles against the order's balance. For a same-currency
 /// split the two are equal; for a foreign-currency split,
 /// [settlementAmount] is [amount] converted via [exchangeRate]
 /// (`ExchangeRateSnapshot.convertToTry`) — see the class's two named
@@ -29,16 +30,17 @@ class PaymentSplit {
     this.exchangeRate,
   });
 
-  /// TRY payment — no currency conversion involved. [amount] must already
-  /// be TRY.
+  /// A payment already in the accounting currency — no conversion
+  /// involved. [amount] must already be in `Currency.accountingCurrency`.
   factory PaymentSplit.tryLira({
     required String id,
     required PaymentMethodType method,
     required Money amount,
   }) {
-    if (amount.currency != Currency.tryLira) {
+    final accountingCurrency = Currency.accountingCurrency;
+    if (amount.currency != accountingCurrency) {
       throw CurrencyMismatchViolation(
-        expectedCurrencyCode: Currency.tryLira.isoCode,
+        expectedCurrencyCode: accountingCurrency.isoCode,
         actualCurrencyCode: amount.currency.isoCode,
       );
     }
@@ -51,18 +53,23 @@ class PaymentSplit {
   }
 
   /// Foreign-currency payment. [amount] must be in [exchangeRate]'s
-  /// `sourceCurrency`; [settlementAmount] is computed immediately via
-  /// `ExchangeRateSnapshot.convertToTry` and frozen from that point on.
+  /// `sourceCurrency`, and that currency must have
+  /// `isAcceptedByBusiness == true`; [settlementAmount] is computed
+  /// immediately via `ExchangeRateSnapshot.convertToTry` and frozen from
+  /// that point on.
   factory PaymentSplit.foreignCurrency({
     required String id,
     required PaymentMethodType method,
     required Money amount,
     required ExchangeRateSnapshot exchangeRate,
   }) {
-    if (amount.currency == Currency.tryLira) {
-      throw const ForeignCurrencyPaymentMissingExchangeRateViolation(
-        currencyCode: 'TRY',
+    if (amount.currency == Currency.accountingCurrency) {
+      throw ForeignCurrencyPaymentMissingExchangeRateViolation(
+        currencyCode: Currency.accountingCurrency.isoCode,
       );
+    }
+    if (!amount.currency.isAcceptedByBusiness) {
+      throw CurrencyNotAcceptedViolation(currencyCode: amount.currency.isoCode);
     }
     return PaymentSplit._(
       id: id,
@@ -79,14 +86,15 @@ class PaymentSplit {
   /// The amount tendered, in whatever currency was actually paid.
   final Money amount;
 
-  /// Always TRY — what this split settles against the order balance.
+  /// Always the accounting currency — what this split settles against the
+  /// order balance.
   final Money settlementAmount;
 
   /// The exchange-rate snapshot used to compute [settlementAmount] from
   /// [amount] — present if and only if [amount] is a foreign currency.
   final ExchangeRateSnapshot? exchangeRate;
 
-  bool get isForeignCurrency => amount.currency != Currency.tryLira;
+  bool get isForeignCurrency => amount.currency != Currency.accountingCurrency;
 
   @override
   bool operator ==(Object other) {

@@ -1,8 +1,10 @@
 import '../../../../core/errors/business_rule_violation.dart';
+import '../../../../shared/models/exchange_rate_provider.dart';
 import '../models/order_id.dart';
 import '../models/order_number.dart';
 import '../pricing/price_breakdown.dart';
 import 'foreign_currency_equivalent.dart';
+import 'foreign_currency_equivalents_calculator.dart';
 import 'payment_summary_line.dart';
 import 'receipt_business_details.dart';
 
@@ -40,6 +42,36 @@ class Receipt {
       summary: summary,
       paymentSummary: List.unmodifiable(paymentSummary),
       informationalEquivalents: List.unmodifiable(informationalEquivalents),
+      businessDetails: businessDetails,
+    );
+  }
+
+  /// Convenience factory that populates [informationalEquivalents]
+  /// automatically via [ForeignCurrencyEquivalentsCalculator.build], so a
+  /// real call site satisfies "every receipt must always print" its
+  /// EUR/USD equivalents without doing that wiring itself.
+  static Future<Receipt> issue({
+    required String receiptNumber,
+    required OrderId orderId,
+    required OrderNumber orderNumber,
+    required DateTime issuedAt,
+    required PriceBreakdown summary,
+    required ExchangeRateProvider exchangeRateProvider,
+    List<PaymentSummaryLine> paymentSummary = const [],
+    ReceiptBusinessDetails businessDetails = const ReceiptBusinessDetails(),
+  }) async {
+    final equivalents = await ForeignCurrencyEquivalentsCalculator.build(
+      accountingTotal: summary.grandTotal,
+      provider: exchangeRateProvider,
+    );
+    return Receipt(
+      receiptNumber: receiptNumber,
+      orderId: orderId,
+      orderNumber: orderNumber,
+      issuedAt: issuedAt,
+      summary: summary,
+      paymentSummary: paymentSummary,
+      informationalEquivalents: equivalents,
       businessDetails: businessDetails,
     );
   }

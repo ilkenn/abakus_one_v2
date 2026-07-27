@@ -41,7 +41,7 @@ class PaymentIntent {
   /// Sum of every split's [PaymentSplit.settlementAmount] (always TRY).
   Money get totalSettled {
     return splits.fold<Money>(
-      Money.zero(Currency.tryLira),
+      Money.zero(Currency.accountingCurrency),
       (sum, split) => sum + split.settlementAmount,
     );
   }

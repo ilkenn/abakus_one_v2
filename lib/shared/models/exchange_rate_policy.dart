@@ -9,5 +9,6 @@ import 'money.dart';
 abstract final class ExchangeRatePolicy {
   ExchangeRatePolicy._();
 
-  static final Money fixedMargin = Money.fromWhole(5, Currency.tryLira);
+  static final Money fixedMargin =
+      Money.fromWhole(5, Currency.accountingCurrency);
 }
