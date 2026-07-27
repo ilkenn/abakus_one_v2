@@ -191,3 +191,52 @@ are empty placeholders. Evaluated against every dimension named for this decisio
   every existing feature screen (tracked separately, per the approved Phase 1 backlog).
 - Redirect/guard logic (session validity, OTP verification, guest continuation) is implemented as
   plain, independently testable functions, not embedded in screen widgets.
+
+**Implementation status**: Done (P1-010). `app_shell.dart` was deliberately left an empty, documented
+no-op — `MainNavigationScreen` stays a single opaque route rather than a `StatefulShellRoute`, since
+giving it nested per-tab routes would mean redesigning its existing internal tab-switching logic,
+which was out of P1-010's scope. Migrating the rest of the app's screens onto `go_router`, and that
+`StatefulShellRoute` migration, remain open, separately-approved future work.
+
+---
+
+## ADR-007 — Branch Protection & CI Quality Gate
+
+- Date: 2026-07-27
+- Status: Accepted
+
+### Decision
+`main` is protected by a GitHub ruleset: a pull request is required to merge, the `quality` status
+check defined in `.github/workflows/ci.yml` (P1-004 — `dart format --set-exit-if-changed`,
+`flutter analyze`, `flutter test`) must pass, and direct pushes to `main` are rejected.
+
+### Context
+P1-005 (Branch Protection) was blocked for the first part of Phase 1 because no GitHub remote
+existed yet (see `CLAUDE.md`'s prior "not a git repository" state, corrected as part of this same
+closure sprint). A remote (`origin` → `https://github.com/ilkenn/abakus_one_v2.git`) was added and
+`main` pushed outside this session; the ruleset described above was then configured directly on
+GitHub (not through a file this repository tracks — GitHub rulesets are repository settings, not
+committed configuration). This ADR exists so the decision and its shape are recorded here per
+`ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded principle, even though no local file diff
+produced it.
+
+### Consequences
+- Every change to `main` from this point forward — including this closure sprint's own P1-014/P1-015
+  work — goes through a branch and a pull request; nothing is committed directly to `main` again.
+- The CI job in `.github/workflows/ci.yml` must keep its job name as `quality` (or the ruleset's
+  required-check configuration must be updated to match, on GitHub, outside this repository) —
+  renaming the job without updating the ruleset would silently disable the gate.
+- P1-005 is complete. There is no remaining blocker on it.
+- Configuring *additional* ruleset rules (required reviewer count, CODEOWNERS, linear-history
+  enforcement, etc.) beyond what's described above is future, separately-approved work, not implied
+  by this ADR.
+
+### Confidence
+70%. The `quality` job name and its exact checks are directly verified against
+`.github/workflows/ci.yml` in this repository. The ruleset's existence and shape (PR required, that
+check required, direct pushes rejected) is stated by the user and consistent with this session being
+explicitly redirected onto a branch-and-PR workflow — but has not been independently verified from
+inside this repository (doing so would mean attempting a direct push to `main` to confirm it's
+rejected, which this same sprint explicitly prohibits). Treat the ruleset's exact GitHub-side
+configuration as **Inferred**, not independently confirmed, until it's checked directly (e.g. via the
+GitHub UI/API or a deliberate, approved test) in a future session.

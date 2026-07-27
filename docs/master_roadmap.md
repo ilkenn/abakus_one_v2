@@ -39,6 +39,11 @@
 - Web/admin impact: Router choice should be one that also works for `WEB` (e.g. supports web URL sync) to avoid a second migration later.
 - Test requirements: Route-guard unit tests; navigation-flow widget tests for the app's core paths.
 - Completion criteria: No screen uses a raw `MaterialPageRoute` for a route that has a name; deep-linkable routes are reachable by URL/path.
+- **Status (Phase 1 closure, P1-014)**: Package decision and foundation done (`go_router`, ADR-006;
+  P1-009/P1-010) — the empty placeholders no longer exist. **Not yet fully complete** against this
+  item's own completion criteria: only Splash/Onboarding/Login/OTP/Main are migrated; every other
+  screen still uses raw `MaterialPageRoute`. Remaining work (full-app migration, `StatefulShellRoute`
+  for `MainNavigationScreen`) stays open under this same F-001 entry.
 
 #### F-002 — Backend Platform Decision (ADR)
 - Description: Formal architecture decision record covering hosting, database engine, API style (REST/GraphQL), multi-tenancy pattern (shared schema vs. schema-per-tenant vs. DB-per-tenant), and background job infrastructure.
@@ -65,6 +70,13 @@
 - Web/admin impact: Shared pattern should be reused by `WEB` if Flutter Web is chosen (see `WEB-001`).
 - Test requirements: Unit tests for `ErrorMapper` covering each `Failure` type; a template widget test pattern other screens' tests can copy.
 - Completion criteria: All currently-empty files listed above are implemented and at least one real screen is migrated to use them as a reference pattern.
+- **Status (Phase 1 closure, P1-014)**: `failure.dart`/`error_mapper.dart` implemented and unit-tested
+  per-`Failure`-type (P1-011/P1-012); `app_exception.dart`, `core/utils/*`, `core/extensions/*`, and
+  `core/config/asset_paths.dart` remain empty — out of P1-011/P1-012's scope. **Not yet complete**
+  against this item's own completion criteria: no real screen has been migrated to use `Failure`/
+  `ErrorMapper` as a reference pattern yet (explicitly deferred — each P1-011/P1-012 task was scoped
+  to "do not migrate existing features"). That migration is the natural next increment under this
+  same F-003 entry.
 
 #### F-004 — Push Notification Infrastructure
 - Description: Integrate a real push provider (e.g. FCM/APNs) behind the app's existing `NotificationService` seam, replacing the current `MockNotificationRepository`.
@@ -91,6 +103,9 @@
 - Web/admin impact: None.
 - Test requirements: N/A (this item builds the test-running infrastructure itself).
 - Completion criteria: A pull request cannot merge with failing analyze/test/format checks.
+- **Status (Phase 1 closure, P1-014)**: Done. `.github/workflows/ci.yml` (P1-004) runs format/
+  analyze/test on every push/PR to `main`; `main` is protected by a GitHub ruleset requiring the
+  `quality` check to pass before merge (P1-005, ADR-007). This item's completion criterion is met.
 
 ---
 
@@ -196,7 +211,7 @@
 - Completion criteria: A deployed, reachable API serving real data for at least the entities listed above, with migrations under version control.
 
 #### BE-002 — Environment Separation & Deployment Pipeline
-- Description: Dev/staging/production environment separation with a repeatable deployment process, replacing the current single-environment (nonexistent) setup — the currently-empty `app_environment.dart`/`app_environment_config.dart` are the client-side half of this.
+- Description: Dev/staging/production environment separation with a repeatable deployment process, replacing the current single-environment (nonexistent) setup — `app_environment.dart`/`app_environment_config.dart` are the client-side half of this.
 - Priority: P0
 - Dependencies: BE-001
 - Business value: Prevents development/testing activity from ever touching real tenant data.
@@ -207,6 +222,12 @@
 - Web/admin impact: Same environment separation.
 - Test requirements: Deployment smoke tests per environment.
 - Completion criteria: A change can be deployed to staging, verified, and promoted to production without manual, undocumented steps.
+- **Status (Phase 1 closure, P1-014)**: Client-side half only is done (P1-006) — `AppEnvironment`/
+  `AppEnvironmentConfig` resolve via `--dart-define=ENVIRONMENT`, tested. Everything backend-side
+  (secrets management, deployment automation, per-environment Firebase projects — see
+  `CLAUDE.md` §5) remains **not started**; this item's actual completion criterion (deployable
+  staging→production promotion) is far from met. Treat this as a known Phase 2 entry condition, not
+  something P1-006 satisfies.
 
 #### BE-003 — Client Networking & Repository Layer
 - Description: Real HTTP client, typed API models, and repository implementations replacing every in-memory `Notifier`'s current mock data source, built on top of `F-003`'s error-handling foundation.
