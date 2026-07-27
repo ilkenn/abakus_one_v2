@@ -12,14 +12,17 @@ import 'log_level.dart';
 /// boundary to expose. A call to [log] must never throw — an
 /// implementation that also can't guarantee that isn't safe to install.
 ///
-/// [context] values are redacted (see `log_redactor.dart`) by
-/// implementations before they reach any sink, matched by *key name*
-/// only (`token`, `password`, `otp`, `phone`, ...). [message] and [error]
-/// are plain text and are **not** scanned for sensitive content — per
-/// `docs/architecture_bible.md` §11 ("no tokens/phone numbers/personal
-/// data in logs"), callers must never interpolate a secret, OTP value,
-/// token, or personal-data value directly into [message]; put it in
-/// [context] instead, where it can actually be redacted.
+/// Every field an implementation actually prints is sanitized first (see
+/// `log_redactor.dart`): [context] by key name (`token`, `password`,
+/// `otp`, `phone`, ...), [message] and [error]'s text by a small set of
+/// recognizable patterns (bearer/labeled tokens, emails, long digit runs
+/// that look like phone/card numbers). Pattern-based text redaction is
+/// necessarily incomplete — it catches recognizable *shapes*, not
+/// arbitrary sensitive meaning — so per `docs/architecture_bible.md` §11
+/// ("no tokens/phone numbers/personal data in logs"), callers should
+/// still prefer passing a sensitive value via [context] over
+/// interpolating it into [message] wherever practical; [context]'s
+/// key-based redaction is the more reliable of the two.
 abstract interface class LoggingService {
   void log(
     LogLevel level,

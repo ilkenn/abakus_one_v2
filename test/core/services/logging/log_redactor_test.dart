@@ -64,4 +64,96 @@ void main() {
       expect(result['password'], LogRedactor.redactedValue);
     });
   });
+
+  group('LogRedactor.sanitizeText', () {
+    test('redacts a Bearer token', () {
+      final result = LogRedactor.sanitizeText(
+        'Authorization header: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def',
+      );
+
+      expect(result, isNot(contains('eyJhbGciOiJIUzI1NiJ9')));
+      expect(result, contains('Bearer ${LogRedactor.redactedValue}'));
+    });
+
+    test('Bearer matching is case-insensitive', () {
+      final result = LogRedactor.sanitizeText('bearer abc123xyz');
+      expect(result, isNot(contains('abc123xyz')));
+    });
+
+    test('redacts a labeled token value (key=value shape)', () {
+      final result =
+          LogRedactor.sanitizeText('request failed: token=abc123xyz');
+      expect(result, isNot(contains('abc123xyz')));
+      expect(result, contains(LogRedactor.redactedValue));
+    });
+
+    test('redacts a labeled password value (key: value shape)', () {
+      final result =
+          LogRedactor.sanitizeText('login attempt password: hunter2');
+      expect(result, isNot(contains('hunter2')));
+      expect(result, contains(LogRedactor.redactedValue));
+    });
+
+    test('redacts a labeled OTP value', () {
+      final result = LogRedactor.sanitizeText('otp verification otp=482913');
+      expect(result, isNot(contains('482913')));
+      expect(result, contains(LogRedactor.redactedValue));
+    });
+
+    test('redacts a labeled PIN and CVV value', () {
+      final pinResult = LogRedactor.sanitizeText('card pin=1234 entered');
+      final cvvResult = LogRedactor.sanitizeText('cvv: 123 submitted');
+
+      expect(pinResult, isNot(contains('1234')));
+      expect(cvvResult, isNot(contains('123 submitted')));
+    });
+
+    test('redacts an email address', () {
+      final result = LogRedactor.sanitizeText(
+        'password reset requested for kullanici@example.com',
+      );
+
+      expect(result, isNot(contains('kullanici@example.com')));
+      expect(result, contains(LogRedactor.redactedValue));
+    });
+
+    test('redacts a phone-number-shaped digit run', () {
+      final result = LogRedactor.sanitizeText(
+        'OTP sent to +905321234567 successfully',
+      );
+
+      expect(result, isNot(contains('905321234567')));
+      expect(result, contains(LogRedactor.redactedValue));
+    });
+
+    test('redacts a card-number-shaped digit run', () {
+      final result = LogRedactor.sanitizeText(
+        'payment attempted with 4111 1111 1111 1111',
+      );
+
+      expect(result, isNot(contains('4111 1111 1111 1111')));
+      expect(result, contains(LogRedactor.redactedValue));
+    });
+
+    test('leaves ordinary text with no sensitive shape untouched', () {
+      const text = 'user tapped checkout on OrderSummaryScreen';
+      expect(LogRedactor.sanitizeText(text), text);
+    });
+
+    test('redacts every sensitive shape present in a single message', () {
+      final result = LogRedactor.sanitizeText(
+        'user test@example.com failed login: password=hunter2, '
+        'phone +905321234567, Bearer abc.def.ghi',
+      );
+
+      expect(result, isNot(contains('test@example.com')));
+      expect(result, isNot(contains('hunter2')));
+      expect(result, isNot(contains('905321234567')));
+      expect(result, isNot(contains('abc.def.ghi')));
+    });
+
+    test('an empty string sanitizes to an empty string', () {
+      expect(LogRedactor.sanitizeText(''), '');
+    });
+  });
 }

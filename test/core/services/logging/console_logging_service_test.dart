@@ -69,6 +69,31 @@ void main() {
       expect(printed.single, isNot(contains('context:')));
     });
 
+    test('redacts sensitive data embedded directly in the message text', () {
+      service.log(
+        LogLevel.warning,
+        'login failed for user with token=abc123xyz and '
+        'phone +905321234567',
+      );
+
+      expect(printed.single, isNot(contains('abc123xyz')));
+      expect(printed.single, isNot(contains('905321234567')));
+      expect(printed.single, contains('[REDACTED]'));
+    });
+
+    test('redacts sensitive data embedded in the error text', () {
+      service.log(
+        LogLevel.error,
+        'checkout failed',
+        error: Exception('payment declined for card 4111 1111 1111 1111, '
+            'contact test@example.com'),
+      );
+
+      expect(printed.single, isNot(contains('4111 1111 1111 1111')));
+      expect(printed.single, isNot(contains('test@example.com')));
+      expect(printed.single, contains('[REDACTED]'));
+    });
+
     test(
         'never throws even if the underlying debugPrint implementation '
         'throws', () {
