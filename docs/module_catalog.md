@@ -45,7 +45,7 @@
 - **Core capabilities**: API layer (REST/GraphQL), primary datastore, migrations, environment separation (dev/staging/prod), background job runner (for sync, reports, notifications).
 - **Domain dependencies**: All — this is the substrate everything else is built on.
 - **Backend requirements**: This module *is* the backend requirement. Needs an explicit technology decision (see roadmap item `BE-001`) covering hosting, database engine, API style, and job queue.
-- **Flutter requirements**: A real HTTP client, typed API models, retry/error handling per the architecture bible's `Failure`/`ErrorMapper` pattern (currently unimplemented empty files).
+- **Flutter requirements**: A real HTTP client, typed API models, retry/error handling per the architecture bible's `Failure`/`ErrorMapper` pattern (foundation implemented — `core/errors/{failure,error_mapper}.dart`, P1-011/P1-012 — but not yet consumed by any repository; this module is the first expected real consumer).
 - **Security requirements**: TLS everywhere, secrets management, DB encryption at rest, backup encryption.
 - **Analytics requirements**: API latency/error-rate observability (see `PLAT`).
 - **Offline requirements**: Defines the sync contract every offline-capable module builds against.
@@ -120,7 +120,7 @@
 - **Core capabilities**: Browse, customize, cart, checkout, order tracking, loyalty, campaigns, favorites, reservations — largely UI-complete as prototypes today; needs to be re-plumbed onto real backend data per module.
 - **Domain dependencies**: Nearly all customer-facing entities: `Menu` → `Order`, `Loyalty`, `Campaign`, `Reservation`.
 - **Backend requirements**: Consumes `BE`, `CMS`, `IA`, `CRM` APIs; no new backend capability of its own.
-- **Flutter requirements**: Replace all in-memory mock providers with real API-backed repositories; adopt the (currently empty) `core/errors` failure model and a real router; add persistence for cart/session across restarts.
+- **Flutter requirements**: Replace all in-memory mock providers with real API-backed repositories; adopt the `core/errors` failure model (implemented, P1-011/P1-012, not yet consumed here) and migrate this module's screens onto the `go_router` foundation (implemented for Splash/Onboarding/Login/Main only, P1-010 — this module's ~20+ other screens are still on raw `Navigator`); add persistence for cart/session across restarts.
 - **Security requirements**: Standard client hardening — certificate pinning consideration, no sensitive data in logs, secure storage for tokens/saved cards.
 - **Analytics requirements**: Full funnel instrumentation (currently zero events fire anywhere) — browse → cart → checkout → order.
 - **Offline requirements**: Cart should survive connectivity loss; menu browsing should degrade gracefully to last-cached data.

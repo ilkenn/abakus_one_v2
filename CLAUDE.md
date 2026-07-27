@@ -6,14 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Abaküs is a Flutter customer app for a bowl-food restaurant and its loyalty program (package name
 `abakus_one_v2`; the customer-facing brand name is **Abaküs** only — never show the technical
-project name in UI). User-facing text is Turkish; code (identifiers, comments) is English. Not a
-git repository.
+project name in UI). User-facing text is Turkish; code (identifiers, comments) is English. This is
+a git repository (`origin` → `https://github.com/ilkenn/abakus_one_v2.git`); `main` is protected by
+an active GitHub ruleset — see §11.
 
 **Current state**: a design-system-consistent UI prototype of the customer ordering experience —
 onboarding → browse → cart → checkout → orders → loyalty → campaigns → profile — running entirely
-against in-memory mock data, with no backend of any kind. See
+against in-memory mock data, with no backend of any kind. Layered on top of that prototype, Phase 1
+(P1-001–P1-013, closed out by P1-014/P1-015) added foundational cross-cutting infrastructure — CI,
+environment separation, a router foundation, a `Failure`/`ErrorMapper` model, and a logging/
+redaction foundation — without changing the no-backend reality above; see
+[docs/feature_status.md](docs/feature_status.md) for the Phase 1 summary and
 [docs/current_state_audit.md](docs/current_state_audit.md) for the authoritative, evidence-backed
-breakdown of what's real vs. placeholder.
+breakdown of what's real vs. placeholder (note: that audit predates Phase 1 and is being corrected
+incrementally — check specific claims against current source, not just that document, when in doubt).
 
 **Development phase order**: Authentication → Customer App → Restaurant Operations → Admin Panel →
 Integrations → Production Hardening. Work stays within the current phase — don't start later-phase
@@ -21,7 +27,12 @@ work (e.g. Admin Panel) while an earlier phase is still incomplete unless explic
 -range product/architecture direction lives in [docs/master_roadmap.md](docs/master_roadmap.md),
 [docs/domain_architecture.md](docs/domain_architecture.md), and
 [docs/module_catalog.md](docs/module_catalog.md) — treat these as planning input, not as work
-authorized to start.
+authorized to start. Note: the informal `P1-0xx` task IDs used above and in
+[docs/decisions.md](docs/decisions.md)/[docs/feature_status.md](docs/feature_status.md) for this
+session's foundation/governance sprints are a separate, ad hoc numbering — distinct from this
+phase-order list and from `docs/master_roadmap.md`'s own `Phase 1 — Identity and Authorization`
+(which has not started; login is still fully mocked). Completing `P1-0xx` foundation work does not
+mean the Authentication phase has begun.
 
 ## 2. Commands
 
@@ -36,7 +47,8 @@ flutter run                            # run the app
 ```
 
 No code generation step (no `build_runner`/`freezed`/`json_serializable` in `pubspec.yaml`). Runtime
-deps are minimal: `flutter_riverpod` and `flutter_secure_storage`.
+deps: `flutter_riverpod`, `flutter_secure_storage`, `go_router` (ADR-006), and `firebase_core`
+(added, not yet initialized — see §5). Still minimal; never add one without a recorded reason.
 
 ## 3. Architecture Principles
 
@@ -46,17 +58,25 @@ Allowed dependency direction: `presentation -> domain`, `data -> domain`. Forbid
 another feature's presentation files directly. Cross-feature needs go into `core/` (technical) or
 `shared/` (widgets/models used by 2+ features).
 
-**`lib/core` is mostly unimplemented scaffolding, not a working backbone.** Only `core/theme/*`
-(AppColors/AppTypography/AppSpacing/AppRadius/AppShadows/AppTheme) is actually built and consistently
-used. `core/router/{app_router,app_routes,app_shell}.dart`, `core/config/*`, `core/errors/*`,
-`core/extensions/*`, and `core/utils/*` are empty placeholder files — do not assume they contain
-logic just because they exist. Same caveat applies to `shared/models/*` and `lib/bootstrap/*` (empty).
+**Much of `lib/core` is still unimplemented scaffolding, but less than before Phase 1.**
+`core/theme/*` (AppColors/AppTypography/AppSpacing/AppRadius/AppShadows/AppTheme) is fully built and
+consistently used, as before. Phase 1 also implemented real foundations in `core/router/*` (P1-010),
+`core/errors/*` (P1-011 `Failure`, P1-012 `ErrorMapper`), `core/services/logging/*` (P1-013), and
+`core/config/app_environment_config.dart`/`lib/bootstrap/app_environment.dart` (P1-006) — each is a
+genuine, tested implementation, not a stub, but each is also a *foundation only*: no existing feature
+screen/repository consumes the router beyond the entry flow, or the `Failure`/`ErrorMapper`/logging
+types, yet (see §5 and §10). `lib/bootstrap/app_bootstrap.dart`, `core/config/{app_constants,
+asset_paths}.dart`, `core/extensions/*`, and `core/utils/*` remain empty placeholder files — do not
+assume they contain logic just because they exist. Same caveat applies to `shared/models/*`.
 
-**Navigation is not routed.** There is no named-route table and no router in effect: every screen
-transition is a raw `Navigator.push(MaterialPageRoute(...))`. The real app root is `lib/app.dart`
-(bare `MaterialApp` with `home: SplashScreen()`), wired from `lib/main.dart`. Building a real router
-is planned (`docs/master_roadmap.md` item F-001) but is an architecture change — do not start it
-without explicit approval (see §15).
+**Navigation is routed only at the entry-flow layer.** `go_router` (ADR-006) drives
+Splash → Onboarding → Login → OTP → Main via `core/router/{app_router,app_routes,app_route_guard}
+.dart` (P1-010); `lib/app.dart` is `MaterialApp.router`, wired from `lib/main.dart`. Every other
+in-app screen transition (menu, cart, checkout, orders, profile, etc.) is still a raw
+`Navigator.push(MaterialPageRoute(...))`. Migrating the rest of the app onto `go_router`, and giving
+`MainNavigationScreen` a nested `StatefulShellRoute` for deep-linkable tabs (deliberately deferred in
+P1-010 to avoid redesigning that screen), are both still open, architecture-change-sized work — do
+not start either without explicit approval (see §15).
 
 **Canonical vs. duplicate/obsolete screens** — several features have two implementations where only
 one is actually reachable/used; prefer the canonical one and don't extend the obsolete one:
@@ -74,8 +94,11 @@ Never delete obsolete/orphaned files or folders on your own initiative — repor
 decide (see §14).
 
 **Everything is client-side, in-memory mock data — there is no backend.** No `http`/`dio`, no
-database package, no real auth (`LoginScreen` accepts any non-empty phone/password), no persistence
-across restarts except where `flutter_secure_storage` is used directly.
+database package. Auth is phone + OTP only (`LoginScreen`/`OtpScreen`/`AuthNotifier`) with no
+password field at all; `DevelopmentLocalAuthRepository` simulates OTP delivery/verification locally
+in debug/profile builds, and `ProductionUnavailableAuthRepository` fails closed in release builds —
+there is still no real backend issuing tokens. No persistence across restarts except where
+`flutter_secure_storage` is used directly (the auth session).
 
 Full layering/dependency detail (including the exhaustive folder-responsibility table) lives in
 [docs/architecture_bible.md](docs/architecture_bible.md) §2–4 — this section summarizes it, not
@@ -115,19 +138,31 @@ Full detail: [docs/architecture_bible.md](docs/architecture_bible.md) §5 (state
 
 ## 5. Firebase Standards
 
-A Firebase project exists (`firebase.json`, `lib/firebase_options.dart`, project `abakusone`) but is
-**not integrated**: no `firebase_*` package in `pubspec.yaml`, no `Firebase.initializeApp()` call in
-`main.dart`. Treat Firebase as configured-but-dormant, not available.
+A Firebase project exists (`firebase.json`, `lib/firebase_options.dart`, project `abakusone`) and
+`firebase_core` is an added dependency (P1-003), but Firebase is still **not integrated**: no
+`Firebase.initializeApp()` call anywhere in `main.dart`, no other `firebase_*` product package added,
+and iOS Firebase configuration (`GoogleService-Info.plist`) is incomplete. Treat Firebase as
+present-but-dormant, not available. Separate Firebase projects for development/staging/production
+are planned but **not yet provisioned** — only the single `abakusone` project exists today.
 
-Analytics, crash reporting, and remote config each already have a clean interface + `NoOp*`
-implementation wired through a provider (`features/analytics/**`,
-`core/services/crash_reporting/**`, `core/services/remote_config/**`) — the seam exists, no vendor
-SDK sits behind it, and no event is ever actually sent anywhere today.
+Analytics, crash reporting, remote config, feature flags, and logging each have a clean interface +
+`NoOp*`/local implementation wired through a Riverpod provider (`features/analytics/**`,
+`core/services/{crash_reporting,remote_config,feature_flags,logging}/**`) — for analytics/crash-
+reporting/remote-config specifically, the seam exists but no vendor SDK sits behind it and no event
+is ever actually sent anywhere today (crash reporting remains `NoOp`; remote config has no vendor
+implementation). `FeatureFlagsService` (P1-007) is the **sole** app-facing API for boolean feature
+availability — UI/routing/business logic must never read a flag from `RemoteConfigService` directly.
+`RemoteConfigService` is a generic remote-value source only; `RemoteConfigFeatureFlagsService`
+(P1-008) is the one adapter allowed to bridge the two. Feature flags have no real production values
+yet — every flag currently resolves through the `NoOp` chain. Logging (`LoggingService`, P1-013) is
+local-only (console in debug, silent in release) and redacts sensitive values from context, message,
+and rendered error text (`LogRedactor`) before anything is printed — it is not a reporting boundary;
+`CrashReportingService` remains that, unimplemented (`NoOp`).
 
 Wiring any real Firebase service (Auth, Firestore, Analytics, Crashlytics, Remote Config, App
 Hosting, etc.) is an **architecture change**: it must be raised explicitly and approved before
 implementation (§15's No Silent Decisions rule), not bolted on ad hoc while working on an unrelated
-screen. When that work starts, use the relevant `firebase:*` skills (§11) rather than hand-rolling
+screen. When that work starts, use the relevant `firebase:*` skills (§12) rather than hand-rolling
 setup steps.
 
 ## 6. Material 3 & Design Token Rules
@@ -179,7 +214,12 @@ Full detail: [docs/architecture_bible.md](docs/architecture_bible.md) §15.
 
 Rules that apply **today**: no API keys or secrets in source code; tokens go through
 `flutter_secure_storage`, not plain state or shared preferences; no tokens, phone numbers, or other
-personal data in logs.
+personal data in logs — anything logged through `LoggingService` has this enforced mechanically by
+`LogRedactor` (P1-013): context-map values by key name, and message/rendered-error text by pattern
+(bearer/labeled tokens, emails, phone/card-shaped digit runs). Raw exception text/stack traces are
+never shown to the user — `ErrorMapper` (P1-012) is the one boundary allowed to translate a thrown
+exception into a `Failure`'s user-facing message; no screen should render an exception's `toString()`
+directly.
 
 Rules that are currently **forward-looking** (no real backend/auth exists yet, so nothing enforces
 them yet — apply them once that work starts, don't treat their absence today as a gap to silently
@@ -191,11 +231,21 @@ Full detail: [docs/architecture_bible.md](docs/architecture_bible.md) §16.
 
 ## 10. Testing & Quality Gates
 
-**Current baseline** (see [docs/current_state_audit.md](docs/current_state_audit.md) §6): 6 tests
-total — 1 app-launch smoke test, 5 widget tests covering navigation consolidation. Zero unit tests
-exist for business logic (`CartNotifier`, `LoyaltyNotifier`, `CampaignsNotifier`,
-`FavoritesNotifier`, `OrdersNotifier`, validators, formatters). Zero integration tests;
-`integration_test/` is empty. No CI configuration exists (no git repo to run one against yet).
+**As of Phase 1 closure** (P1-014/P1-015): 399 tests (see [docs/feature_status.md](docs/feature_status.md)
+for the exact count as of the last sprint) — up from the pre-Phase-1 baseline of 6 that
+[docs/current_state_audit.md](docs/current_state_audit.md) §6 audited (1 smoke test + 5 navigation
+widget tests). The increase is almost entirely Phase 1 foundation coverage (environment config,
+feature flags, remote-config bridging, router guard/resolution, `Failure`, `ErrorMapper`, logging/
+redaction) plus the pre-existing navigation suite — **not** newly-added business-logic coverage for
+existing features. Zero unit tests still exist for `CartNotifier`, `LoyaltyNotifier`,
+`CampaignsNotifier`, `FavoritesNotifier`, `OrdersNotifier`, or any validator/formatter outside what
+P1-006–P1-013 added directly. Zero integration tests; `integration_test/` is still empty. Treat the
+test count as a floor, not a target — it will keep moving.
+
+CI (`.github/workflows/ci.yml`, P1-004) runs `dart format --set-exit-if-changed`, `flutter analyze`,
+and `flutter test` on every push/PR touching `main`. `main` is protected (P1-005): a GitHub ruleset
+requires a pull request and a passing `quality` status check before merge; direct pushes to `main`
+are rejected.
 
 Treat this as the honest starting point, not a target — don't claim a feature is "tested" because
 similar untested code already ships elsewhere. Minimum expectation going forward, per
@@ -206,14 +256,17 @@ before any task is considered done — no exceptions, no "will fix later."
 
 ## 11. Git Workflow
 
-**This is not currently a git repository.** The rules below are the convention to adopt once one is
-initialized — they describe intended future practice, not something to retrofit or assume is already
-happening.
+**This is a git repository.** `origin` → `https://github.com/ilkenn/abakus_one_v2.git`. `main` is
+protected by an active GitHub ruleset (since the Phase 1 closure sprint): pull request required, the
+`quality` CI status check (`.github/workflows/ci.yml` — format/analyze/test) must pass, direct pushes
+to `main` are rejected.
 
+- Work happens on a branch created from the latest `origin/main` (e.g. `phase-1/closure`) — never
+  directly on `main`.
 - Small, scoped commits with messages that explain *why*, not just *what*.
 - Never skip hooks (`--no-verify`) or bypass signing without explicit user instruction.
-- Never force-push to `main`/`master`.
-- Feature branches once more than one contributor (human or AI) is working concurrently.
+- Never force-push to `main`/`master`, and never bypass the ruleset (no admin override, no
+  `--no-verify` around it) without explicit user instruction.
 - Destructive operations (`reset --hard`, history rewrites, branch deletion) require explicit user
   confirmation every time, matching the no-silent-decisions rule in §15.
 
@@ -326,10 +379,11 @@ the rules docs about what currently exists:
   (layering, state management rules, router/design-token/naming/error-handling/testing conventions,
   Definition of Done).
 - [docs/decisions.md](docs/decisions.md) — ADRs (e.g., brand name vs. package name, feature-first
-  architecture). State management (Riverpod) is already the de facto dependency in use even though
-  no ADR has formally ratified it yet.
-- [docs/feature_status.md](docs/feature_status.md) — current in-progress work (Table QR Ordering
-  domain foundation, Order Lifecycle domain foundation); see
+  architecture, backend platform, router package, branch protection). State management (Riverpod) is
+  already the de facto dependency in use even though no ADR has formally ratified it yet.
+- [docs/feature_status.md](docs/feature_status.md) — the Phase 1 foundation/governance summary
+  (P1-001–P1-015) at the top, plus current in-progress product work (Table QR Ordering domain
+  foundation, Order Lifecycle domain foundation); see
   [docs/table_qr_architecture.md](docs/table_qr_architecture.md) and
   [docs/order_lifecycle_architecture.md](docs/order_lifecycle_architecture.md) for the domain models
   involved.
