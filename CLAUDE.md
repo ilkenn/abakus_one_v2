@@ -80,9 +80,12 @@ not start either without explicit approval (see §15).
 
 **Canonical vs. duplicate/obsolete screens** — several features have two implementations where only
 one is actually reachable/used; prefer the canonical one and don't extend the obsolete one:
-- Navigation shell/splash: canonical = `features/navigation/...` (`MainScreen`, its splash).
-  `features/main/presentation/providers/navigation_provider.dart` and `features/splash/...` are
-  obsolete, zero-reference duplicates.
+- Navigation shell/splash: canonical = `features/navigation/...` (class `MainNavigationScreen`, its
+  splash) — reached today only via `go_router`'s `AppRoutes.main` (P1-010). *Corrected P1-015: this
+  bullet previously named the canonical class `MainScreen`, which is actually a different,
+  zero-reference class in `features/main/presentation/screens/main_screen.dart`.*
+  `features/main/presentation/{screens/main_screen.dart,providers/navigation_provider.dart}` and
+  `features/splash/...` are obsolete, zero-reference duplicates.
 - Notification settings: canonical = `features/notifications/...` (wired into
   `ProfileScreen`/`NotificationsScreen`). `features/profile/presentation/screens/
   notification_settings_screen.dart` + its provider are a fully-built but unreferenced duplicate.

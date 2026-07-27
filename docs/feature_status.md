@@ -62,6 +62,63 @@ feature is the natural place to adopt these foundations for real, not before.
 - Development, staging, and production are planned to use separate Firebase projects, but only the
   single `abakusone` project exists — that split is not yet provisioned.
 
+### Phase 1 Exit Verification (P1-015)
+
+Performed on branch `phase-1/closure`, from `origin/main` @ `659af69`, after P1-014's documentation
+commit (`101afbd`).
+
+**Standard checks**
+
+| Check | Result |
+|---|---|
+| `git status` | Clean; branch `phase-1/closure` ahead of `origin/main`. |
+| `git log` P1-001–P1-014 | All present: baseline (`a90d26c`) through P1-014 (`101afbd`); P1-005 has no dedicated commit (GitHub-side ruleset config, not a file change — see ADR-007). |
+| `flutter pub get` | Resolves cleanly. |
+| `dart format --output=none --set-exit-if-changed lib test integration_test` | 305 files, 0 changed — exit 0. |
+| `flutter analyze` | No issues found. |
+| `flutter test` | **399 tests, all passing.** |
+| `.github/workflows/ci.yml` vs. local commands | Matches exactly: `flutter pub get` → `dart format --output=none --set-exit-if-changed lib test integration_test` → `flutter analyze` → `flutter test`, job name `quality`. |
+| Remote exists / `origin/main` reachable | `origin` → `https://github.com/ilkenn/abakus_one_v2.git`; `git ls-remote --heads origin main` resolves to `659af69`. |
+| Current branch is not `main` | `phase-1/closure`. |
+| Dependency scope | `pubspec.yaml` runtime deps: `flutter_riverpod`, `flutter_secure_storage`, `go_router`, `firebase_core` — all four trace to an approved task (baseline, P1-009, P1-003). No unapproved addition. |
+| No `Firebase.initializeApp()` | Confirmed — the only match for the string is inside a doc-comment usage example in the auto-generated `lib/firebase_options.dart`, not a real call site. |
+| No unauthorized Firebase product package | Confirmed — `firebase_core` only. |
+| No analysis exclusion introduced | `analysis_options.yaml` unchanged from the default `flutter_lints` include; no `exclude:` key, no new `// ignore_for_file` outside the pre-existing, auto-generated `firebase_options.dart`. |
+| Routing / feature-flags / failures / mapper / logging / redaction tests exist | `test/core/router/{app_route_guard_test,app_router_test}.dart`, `test/core/services/feature_flags/*` (3 files), `test/core/errors/{failure_test,error_mapper_test}.dart`, `test/core/services/logging/*` (4 files, including `log_redactor_test.dart`'s free-text-redaction coverage). One gap noted below (remote_config has no dedicated unit test file). |
+| Documentation matches implementation | Verified via P1-014's corrections; one additional pre-existing (not Phase-1-caused) inaccuracy found and fixed during this pass — see Corrective changes below. |
+| No unresolved Critical/High issue | None found. |
+
+**Focused architecture checks**
+
+| Check | Result |
+|---|---|
+| No presentation/domain import of a vendor-specific exception type | Confirmed — the only `PlatformException`/`FirebaseException`/`dart:io` references in `lib/` outside `core/errors/error_mapper.dart` are `profile_screen.dart`'s `dart:io` import, which is for `File` (a local profile-picture path), not an exception type. |
+| `FeatureFlagsService` is the sole app-facing boolean-flag API | Confirmed — `RemoteConfigService`/`remoteConfigServiceProvider` are referenced only inside `core/services/{remote_config,feature_flags}/*`; no feature/UI code touches them directly. |
+| `RemoteConfigService` remains a generic configuration source | Confirmed — `RemoteConfigKeys` holds only `maintenanceMode`/`minimumAppVersion`/`forceUpdate`; the `FeatureFlagsKeys` ↔ remote-config-key mapping is private to `RemoteConfigFeatureFlagsService`, and its 6 entries match `FeatureFlagsKeys` exactly (cross-checked). |
+| `ErrorMapper` has no `BuildContext` dependency | Confirmed — pure static function, no widget import, no context parameter. |
+| Raw exception strings are not exposed to users | Confirmed — every `catch` in `lib/` either discards the exception (`catch (_)`) or catches a specific typed exception mapped to a hardcoded Turkish message; none render `e.toString()`. |
+| Logging redacts context, message, and rendered error text | Confirmed by `console_logging_service_test.dart`'s dedicated message/error redaction tests (added in the P1-013 correction) and `log_redactor_test.dart`'s pattern coverage. |
+| `MainNavigationScreen` cannot be reached via an unauthenticated direct shortcut | Confirmed — its only instantiation site in `lib/` is `app_router.dart`'s `AppRoutes.main` `GoRoute`, gated by `AppRouteGuard.resolve()` (not-signed-in + `/main` → redirected to `/splash`); no other screen constructs it directly. |
+| CI requires format, analyze, and test | Confirmed (see standard checks above). |
+| Protected-`main` workflow requires PR + `quality` check | **Inferred, not independently verified from inside this repository** — confirming it directly would mean attempting a rejected direct push to `main`, which this same sprint prohibits. Stated by the user and consistent with this session being redirected onto a branch/PR workflow; see ADR-007's Confidence note. Recommend a follow-up check via the GitHub UI/API in a later session. |
+
+**Corrective changes made during this pass**
+
+- `CLAUDE.md`'s canonical-vs-obsolete navigation bullet named the canonical class `MainScreen`; the
+  actual canonical, reachable class is `MainNavigationScreen` (`features/navigation/...`) — `MainScreen`
+  is itself a separate, zero-reference obsolete class in `features/main/presentation/screens/
+  main_screen.dart`, previously missing from the obsolete list entirely. Corrected in place. Pre-existing
+  inaccuracy, not caused by Phase 1; found incidentally while verifying the "no unauthenticated shortcut
+  to `MainNavigationScreen`" architecture check.
+- No code defects found; no source-code corrective commit was needed.
+
+**Minor gap noted, not fixed (Low severity, not a Phase 1 defect)**
+
+- `RemoteConfigService`/`NoOpRemoteConfigService` have no dedicated unit test file — they're exercised
+  indirectly through `remote_config_feature_flags_service_test.dart` and `feature_flags_provider_test.dart`.
+  No P1-0xx task's own test requirements named a direct `RemoteConfigService` test file, and the `NoOp`
+  implementation's behavior is trivial and covered transitively. Noted for a future task, not fixed here.
+
 ## Özellikler
 
 | Özellik | Durum | Not |
