@@ -21,9 +21,12 @@ void main() {
 
       final service = container.read(featureFlagsServiceProvider);
 
-      expect(service.isEnabled(FeatureFlagsKeys.loyalty), isFalse);
+      expect(service.isEnabled(FeatureFlagsKeys.bowlBuilderEnabled), isFalse);
       expect(
-        service.isEnabled(FeatureFlagsKeys.loyalty, defaultValue: true),
+        service.isEnabled(
+          FeatureFlagsKeys.bowlBuilderEnabled,
+          defaultValue: true,
+        ),
         isTrue,
       );
     });

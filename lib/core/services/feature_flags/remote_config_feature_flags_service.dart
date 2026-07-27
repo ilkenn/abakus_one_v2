@@ -10,30 +10,42 @@ import 'feature_flags_service.dart';
 /// [FeatureFlagsKeys] only, never to [RemoteConfigService] or
 /// `RemoteConfigKeys` directly. The mapping from a public
 /// [FeatureFlagsKeys] name to the underlying remote-config parameter key
-/// is intentionally private to this file (see [_remoteConfigKeyFor]) —
+/// is intentionally private to this file (see [_remoteConfigKeyByFlag]) —
 /// no other file has any reason to know those key strings.
 ///
 /// Not vendor-specific: this class depends only on the abstract
 /// [RemoteConfigService] interface, so it behaves identically whether
-/// that interface is backed by `NoOpRemoteConfigService` (today) or a
-/// real vendor (once one is wired) — swapping the vendor later never
-/// requires touching this class.
+/// that interface is backed by `NoOpRemoteConfigService` or
+/// `FirebaseRemoteConfigService` — swapping the vendor never requires
+/// touching this class. All Firebase-specific knowledge stays isolated
+/// inside `RemoteConfigService`'s Firebase-backed implementation, not
+/// here.
 class RemoteConfigFeatureFlagsService implements FeatureFlagsService {
-  const RemoteConfigFeatureFlagsService(this._remoteConfig);
+  RemoteConfigFeatureFlagsService(this._remoteConfig);
 
   final RemoteConfigService _remoteConfig;
+  bool _isInitialized = false;
 
   static const Map<String, String> _remoteConfigKeyByFlag = {
-    FeatureFlagsKeys.loyalty: 'loyalty_enabled',
-    FeatureFlagsKeys.campaigns: 'campaigns_enabled',
-    FeatureFlagsKeys.reservations: 'reservations_enabled',
-    FeatureFlagsKeys.delivery: 'delivery_enabled',
-    FeatureFlagsKeys.qr: 'qr_enabled',
-    FeatureFlagsKeys.customBowl: 'custom_bowl_enabled',
+    FeatureFlagsKeys.otpLoginEnabled: 'otp_login_enabled',
+    FeatureFlagsKeys.bowlBuilderEnabled: 'bowl_builder_enabled',
+    FeatureFlagsKeys.fortuneWheelEnabled: 'fortune_wheel_enabled',
+    FeatureFlagsKeys.reservationsEnabled: 'reservations_enabled',
+    FeatureFlagsKeys.qrScannerEnabled: 'qr_scanner_enabled',
   };
 
   @override
-  Future<void> initialize() => _remoteConfig.initialize();
+  bool get isInitialized => _isInitialized;
+
+  @override
+  Future<void> initialize() async {
+    // RemoteConfigService implementations never throw from initialize()
+    // (see FirebaseRemoteConfigService) — this await completing is enough
+    // to mark this service initialized, even if the underlying fetch
+    // itself failed and fell back to defaults.
+    await _remoteConfig.initialize();
+    _isInitialized = true;
+  }
 
   @override
   bool isEnabled(String key, {bool defaultValue = false}) {
@@ -45,5 +57,22 @@ class RemoteConfigFeatureFlagsService implements FeatureFlagsService {
       return defaultValue;
     }
     return _remoteConfig.getBool(remoteConfigKey, defaultValue: defaultValue);
+  }
+
+  @override
+  String getString(String key, {String defaultValue = ''}) {
+    final remoteConfigKey = _remoteConfigKeyByFlag[key];
+    if (remoteConfigKey == null) return defaultValue;
+    return _remoteConfig.getString(
+      remoteConfigKey,
+      defaultValue: defaultValue,
+    );
+  }
+
+  @override
+  int getInt(String key, {int defaultValue = 0}) {
+    final remoteConfigKey = _remoteConfigKeyByFlag[key];
+    if (remoteConfigKey == null) return defaultValue;
+    return _remoteConfig.getInt(remoteConfigKey, defaultValue: defaultValue);
   }
 }

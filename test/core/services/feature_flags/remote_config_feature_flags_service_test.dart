@@ -5,23 +5,31 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('RemoteConfigFeatureFlagsService', () {
-    const service = RemoteConfigFeatureFlagsService(
-      NoOpRemoteConfigService(),
-    );
+    late RemoteConfigFeatureFlagsService service;
 
-    test('initialize delegates to the underlying RemoteConfigService',
+    setUp(() {
+      service =
+          RemoteConfigFeatureFlagsService(const NoOpRemoteConfigService());
+    });
+
+    test('isInitialized is false before initialize is called', () {
+      expect(service.isInitialized, isFalse);
+    });
+
+    test(
+        'initialize delegates to the underlying RemoteConfigService and sets isInitialized',
         () async {
       await expectLater(service.initialize(), completes);
+      expect(service.isInitialized, isTrue);
     });
 
     group('isEnabled is deterministic and fail-safe for every known flag', () {
       const knownFlags = [
-        FeatureFlagsKeys.loyalty,
-        FeatureFlagsKeys.campaigns,
-        FeatureFlagsKeys.reservations,
-        FeatureFlagsKeys.delivery,
-        FeatureFlagsKeys.qr,
-        FeatureFlagsKeys.customBowl,
+        FeatureFlagsKeys.otpLoginEnabled,
+        FeatureFlagsKeys.bowlBuilderEnabled,
+        FeatureFlagsKeys.fortuneWheelEnabled,
+        FeatureFlagsKeys.reservationsEnabled,
+        FeatureFlagsKeys.qrScannerEnabled,
       ];
 
       for (final flag in knownFlags) {
@@ -32,17 +40,39 @@ void main() {
       }
     });
 
-    test('an unrecognized flag name returns the given defaultValue', () {
+    test(
+        'an unrecognized flag name returns the given defaultValue for isEnabled/getString/getInt',
+        () {
       expect(service.isEnabled('not_a_real_flag'), isFalse);
+      expect(service.isEnabled('not_a_real_flag', defaultValue: true), isTrue);
+      expect(service.getString('not_a_real_flag'), '');
       expect(
-        service.isEnabled('not_a_real_flag', defaultValue: true),
-        isTrue,
+        service.getString('not_a_real_flag', defaultValue: 'fallback'),
+        'fallback',
+      );
+      expect(service.getInt('not_a_real_flag'), 0);
+      expect(service.getInt('not_a_real_flag', defaultValue: 7), 7);
+    });
+
+    test(
+        'getString/getInt fall back to defaultValue for known flags (NoOp-backed)',
+        () {
+      expect(
+        service.getString(
+          FeatureFlagsKeys.bowlBuilderEnabled,
+          defaultValue: 'fallback',
+        ),
+        'fallback',
+      );
+      expect(
+        service.getInt(FeatureFlagsKeys.bowlBuilderEnabled, defaultValue: 7),
+        7,
       );
     });
 
     test('repeated calls are deterministic', () {
-      final first = service.isEnabled(FeatureFlagsKeys.loyalty);
-      final second = service.isEnabled(FeatureFlagsKeys.loyalty);
+      final first = service.isEnabled(FeatureFlagsKeys.otpLoginEnabled);
+      final second = service.isEnabled(FeatureFlagsKeys.otpLoginEnabled);
       expect(first, second);
     });
   });
