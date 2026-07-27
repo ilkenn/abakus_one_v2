@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:204562003593:android:7e5355ab0465300b873858",
+        "android_client_info": {
+          "package_name": "com.abakus.one"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB-RGdwKzQ8ghjaR8kqBhQYV3DgziawGJA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:204562003593:android:8b56051c2c53b3ce873858",
         "android_client_info": {
           "package_name": "com.example.abakus_one_v2"

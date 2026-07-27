@@ -9,7 +9,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.example.abakusOneV2</string>
+	<string>com.abakus.one</string>
 	<key>PROJECT_ID</key>
 	<string>abakusone</string>
 	<key>STORAGE_BUCKET</key>
@@ -25,6 +25,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:204562003593:ios:3628ade0942b2147873858</string>
+	<string>1:204562003593:ios:c7a297583571170a873858</string>
 </dict>
 </plist>

@@ -1,4 +1,4 @@
-package com.example.abakus_one_v2
+package com.abakus.one
 
 import io.flutter.embedding.android.FlutterActivity
 

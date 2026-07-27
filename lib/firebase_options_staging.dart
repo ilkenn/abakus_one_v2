@@ -52,28 +52,26 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyD2vhuLB60hoK4AFlspwEFRaooFt9HGuKo',
-    appId: '1:915484005258:android:252d6c9b0a21b258662e73',
+    appId: '1:915484005258:android:b552043f766bae85662e73',
     messagingSenderId: '915484005258',
     projectId: 'abakus-one-staging',
     storageBucket: 'abakus-one-staging.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyBXgvu80sDbGA7Lwc2xhUGCanOd7W3FCnM',
-    appId: '1:915484005258:ios:9a552e4bb2549dd3662e73',
+    appId: '1:915484005258:ios:4b661d1cd01730d3662e73',
     messagingSenderId: '915484005258',
     projectId: 'abakus-one-staging',
     storageBucket: 'abakus-one-staging.firebasestorage.app',
-    iosBundleId: 'com.example.abakusOneV2',
+    iosBundleId: 'com.abakus.one',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyBXgvu80sDbGA7Lwc2xhUGCanOd7W3FCnM',
-    appId: '1:915484005258:ios:9a552e4bb2549dd3662e73',
+    appId: '1:915484005258:ios:4b661d1cd01730d3662e73',
     messagingSenderId: '915484005258',
     projectId: 'abakus-one-staging',
     storageBucket: 'abakus-one-staging.firebasestorage.app',
-    iosBundleId: 'com.example.abakusOneV2',
+    iosBundleId: 'com.abakus.one',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
