@@ -97,6 +97,7 @@ class _ClosedAccountDetailScreenState
     final result = await ref
         .read(closedAccountDetailProvider.notifier)
         .requestDuplicateReceipt(
+          authorizationPolicy: widget.authorizationPolicy,
           order: widget.order,
           requestedByStaffId: widget.viewerStaffId,
           requestId: 'req-$_duplicateReceiptRequestCount',

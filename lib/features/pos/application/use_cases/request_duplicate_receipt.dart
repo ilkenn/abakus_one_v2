@@ -1,3 +1,4 @@
+import '../../../../core/errors/business_rule_violation.dart';
 import '../../../../core/utils/clock.dart';
 import '../../../orders/domain/models/order_actor.dart';
 import '../../../orders/domain/models/order_id.dart';
@@ -5,6 +6,8 @@ import '../../../orders/domain/receipt/receipt.dart';
 import '../../data/closure_audit_entry_repository.dart';
 import '../../domain/audit/closure_audit_entry.dart';
 import '../../domain/audit/closure_audit_event_type.dart';
+import '../../domain/authorization/pos_authorization_policy.dart';
+import '../../domain/authorization/pos_authorized_action.dart';
 import '../../domain/receipts/receipt_print_provider.dart';
 import '../../domain/receipts/receipt_print_result.dart';
 
@@ -22,13 +25,16 @@ import '../../domain/receipts/receipt_print_result.dart';
 class RequestDuplicateReceipt {
   const RequestDuplicateReceipt({
     required Clock clock,
+    required PosAuthorizationPolicy authorizationPolicy,
     required ClosureAuditEntryRepository auditRepository,
     required ReceiptPrintProvider printProvider,
   })  : _clock = clock,
+        _authorizationPolicy = authorizationPolicy,
         _auditRepository = auditRepository,
         _printProvider = printProvider;
 
   final Clock _clock;
+  final PosAuthorizationPolicy _authorizationPolicy;
   final ClosureAuditEntryRepository _auditRepository;
   final ReceiptPrintProvider _printProvider;
 
@@ -36,12 +42,29 @@ class RequestDuplicateReceipt {
   /// in this codebase, never generated from a timestamp/random value here.
   /// It disambiguates repeated duplicate-receipt requests for the same
   /// [receipt] in the audit trail.
+  ///
+  /// Requires [PosAuthorizedAction.reprintOrDuplicateReceipt] — added
+  /// Phase 3 Sprint 3D to close a gap this use case originally shipped
+  /// with (Sprint 3C) before that action existed. Throws
+  /// [AuthorizationDeniedViolation] if denied; no audit entry or print
+  /// attempt happens in that case.
   Future<ReceiptPrintResult> call({
     required OrderId orderId,
     required Receipt receipt,
     required String requestedByStaffId,
     required String requestId,
   }) async {
+    final authResult = await _authorizationPolicy.authorize(
+      action: PosAuthorizedAction.reprintOrDuplicateReceipt,
+      actorStaffId: requestedByStaffId,
+      context: {'orderId': orderId.value},
+    );
+    if (!authResult.granted) {
+      throw AuthorizationDeniedViolation(
+        actionName: PosAuthorizedAction.reprintOrDuplicateReceipt.name,
+      );
+    }
+
     final result = await _printProvider.print(receipt);
     final now = _clock.now();
 

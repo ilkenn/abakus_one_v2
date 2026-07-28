@@ -95,6 +95,7 @@ class ClosedAccountDetailController extends Notifier<ClosedAccountDetailState> {
   }
 
   Future<ReceiptPrintResult?> requestDuplicateReceipt({
+    required PosAuthorizationPolicy authorizationPolicy,
     required Order order,
     required String requestedByStaffId,
     required String requestId,
@@ -109,21 +110,27 @@ class ClosedAccountDetailController extends Notifier<ClosedAccountDetailState> {
       issuedAt: clock.now(),
       summary: order.pricing,
     );
-    final result = await RequestDuplicateReceipt(
-      clock: clock,
-      auditRepository: ref.read(closureAuditEntryRepositoryProvider),
-      printProvider: ref.read(receiptPrintProviderProvider),
-    )(
-      orderId: order.id,
-      receipt: receipt,
-      requestedByStaffId: requestedByStaffId,
-      requestId: requestId,
-    );
-    final entries = await ref
-        .read(closureAuditEntryRepositoryProvider)
-        .findByOrderId(order.id);
-    state = state.copyWith(auditEntries: entries, isBusy: false);
-    return result;
+    try {
+      final result = await RequestDuplicateReceipt(
+        clock: clock,
+        authorizationPolicy: authorizationPolicy,
+        auditRepository: ref.read(closureAuditEntryRepositoryProvider),
+        printProvider: ref.read(receiptPrintProviderProvider),
+      )(
+        orderId: order.id,
+        receipt: receipt,
+        requestedByStaffId: requestedByStaffId,
+        requestId: requestId,
+      );
+      final entries = await ref
+          .read(closureAuditEntryRepositoryProvider)
+          .findByOrderId(order.id);
+      state = state.copyWith(auditEntries: entries, isBusy: false);
+      return result;
+    } on BusinessRuleViolation catch (violation) {
+      state = state.copyWith(isBusy: false, error: violation.description);
+      return null;
+    }
   }
 }
 
