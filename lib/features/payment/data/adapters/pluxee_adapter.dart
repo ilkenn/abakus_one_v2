@@ -1,3 +1,4 @@
+import '../../../../shared/models/money.dart';
 import '../../domain/models/payment_enums.dart';
 import '../../domain/models/payment_request.dart';
 import '../../domain/models/payment_result.dart';
@@ -16,7 +17,7 @@ class PluxeePaymentAdapter implements PaymentProviderAdapter {
   @override
   Future<PaymentResult> refundPayment(
     String transactionId,
-    double amount,
+    Money amount,
   ) async {
     return const PaymentResult(
       transactionId: '',

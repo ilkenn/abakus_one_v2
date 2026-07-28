@@ -4,13 +4,13 @@ import '../../domain/models/payment_request.dart';
 import '../../domain/models/payment_result.dart';
 import 'payment_provider_adapter.dart';
 
-class MultinetPaymentAdapter implements PaymentProviderAdapter {
+class MetropolCardPaymentAdapter implements PaymentProviderAdapter {
   @override
   Future<PaymentResult> processPayment(PaymentRequest request) async {
     return const PaymentResult(
       transactionId: '',
       status: PaymentStatus.notConfigured,
-      errorMessage: 'Multinet entegrasyonu henüz yapılandırılmadı.',
+      errorMessage: 'MetropolCard entegrasyonu henüz yapılandırılmadı.',
     );
   }
 
@@ -22,7 +22,7 @@ class MultinetPaymentAdapter implements PaymentProviderAdapter {
     return const PaymentResult(
       transactionId: '',
       status: PaymentStatus.notConfigured,
-      errorMessage: 'Multinet entegrasyonu henüz yapılandırılmadı.',
+      errorMessage: 'MetropolCard entegrasyonu henüz yapılandırılmadı.',
     );
   }
 }
