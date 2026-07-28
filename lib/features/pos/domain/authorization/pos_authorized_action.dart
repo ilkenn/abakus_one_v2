@@ -7,7 +7,9 @@
 /// introducing a second authorization contract — `PosAuthorizationPolicy`
 /// was already deliberately generic ("an action, an actor, a context"),
 /// not payment-specific, so extending it here is additive, not a scope
-/// violation (`docs/decisions.md` ADR-013).
+/// violation (`docs/decisions.md` ADR-013). The Phase 3 Sprint 3E cash-
+/// management values (`reviewCashReconciliation` onward) extend it again
+/// for the same reason (`docs/decisions.md` ADR-014).
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -21,4 +23,6 @@ enum PosAuthorizedAction {
   packageCompletionOverride,
   reprintOrDuplicateReceipt,
   operationalCorrection,
+  reviewCashReconciliation,
+  recordCashAdjustment,
 }

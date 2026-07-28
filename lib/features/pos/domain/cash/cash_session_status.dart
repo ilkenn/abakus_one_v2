@@ -1,9 +1,9 @@
 /// Lifecycle status of a [CashSession].
 ///
-/// `active` covers both "movements being recorded" and "a rejected count
-/// waiting for a recount" — a session returns to `active` from `rejected`
-/// rather than a separate resubmission state, since both are exactly "the
-/// cashier may still record movements and submit a count."
+/// `active` and `rejected` are both "the cashier may still record
+/// movements and submit/resubmit a count" states — `SubmitCashCount`
+/// accepts either directly into `pendingApproval` (a rejected session
+/// never needs a separate "reactivate" step before a recount).
 enum CashSessionStatus { active, pendingApproval, approved, rejected, closed }
 
 /// The cash session state machine: which [CashSessionStatus] transitions
@@ -18,7 +18,7 @@ abstract final class CashSessionStatusTransitions {
       CashSessionStatus.approved,
       CashSessionStatus.rejected,
     },
-    CashSessionStatus.rejected: {CashSessionStatus.active},
+    CashSessionStatus.rejected: {CashSessionStatus.pendingApproval},
     CashSessionStatus.approved: {CashSessionStatus.closed},
     CashSessionStatus.closed: {},
   };

@@ -23,13 +23,14 @@ import '../identity/cash_count_id_generator.dart';
 /// retroactively change what an already-submitted count's expected
 /// figure was.
 ///
-/// Transitions the session `active -> pendingApproval`
-/// (`CashSessionStatusTransitions`). **Never overwrites a previous
-/// count** — every call appends a brand-new [CashCount], even a recount
-/// after a rejection.
+/// Transitions the session to `pendingApproval` from either `active` or
+/// `rejected` (`CashSessionStatusTransitions`) — a rejected session needs
+/// no separate "reactivate" step before a recount. **Never overwrites a
+/// previous count** — every call appends a brand-new [CashCount], even a
+/// recount after a rejection.
 ///
-/// Throws [CashSessionNotActiveViolation] if the session isn't
-/// [CashSessionStatus.active].
+/// Throws [CashSessionNotActiveViolation] if the session is neither
+/// [CashSessionStatus.active] nor [CashSessionStatus.rejected].
 class SubmitCashCount {
   const SubmitCashCount({
     required Clock clock,
@@ -65,7 +66,8 @@ class SubmitCashCount {
         id: sessionId,
       );
     }
-    if (session.status != CashSessionStatus.active) {
+    if (session.status != CashSessionStatus.active &&
+        session.status != CashSessionStatus.rejected) {
       throw CashSessionNotActiveViolation(
         sessionId: sessionId,
         statusName: session.status.name,

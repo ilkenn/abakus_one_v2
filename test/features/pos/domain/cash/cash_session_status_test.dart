@@ -29,10 +29,12 @@ void main() {
       );
     });
 
-    test('rejected returns only to active (recount)', () {
+    test(
+        'rejected returns only to pendingApproval (recount, no reactivate step)',
+        () {
       expect(
         CashSessionStatusTransitions.canTransition(
-            CashSessionStatus.rejected, CashSessionStatus.active),
+            CashSessionStatus.rejected, CashSessionStatus.pendingApproval),
         isTrue,
       );
       expect(
