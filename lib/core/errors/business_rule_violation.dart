@@ -623,3 +623,79 @@ final class InvalidChannelOperationalStateTransitionViolation
       'Invalid channel operational state transition: $fromStateName -> '
       '$toStateName';
 }
+
+/// A caller referenced a `CashDrawer`/`CashSession`/`CashMovement`/
+/// `CashCount`/`CashReconciliation`/`CashAdjustment` id that does not
+/// exist in the relevant repository (Phase 3 Sprint 3E).
+final class UnknownCashEntityViolation extends BusinessRuleViolation {
+  const UnknownCashEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// `OpenCashDrawer` was called for a drawer that already has a
+/// non-closed `CashSession` — only one active session per drawer is ever
+/// permitted.
+final class CashSessionAlreadyActiveViolation extends BusinessRuleViolation {
+  const CashSessionAlreadyActiveViolation({required this.drawerId});
+
+  final String drawerId;
+
+  @override
+  String get description =>
+      'Drawer "$drawerId" already has an active cash session';
+}
+
+/// A `CashMovement`/`CashCount` was attempted against a `CashSession`
+/// that isn't `CashSessionStatus.active` — movements and new counts may
+/// only be recorded while a session is actively being worked.
+final class CashSessionNotActiveViolation extends BusinessRuleViolation {
+  const CashSessionNotActiveViolation({
+    required this.sessionId,
+    required this.statusName,
+  });
+
+  final String sessionId;
+  final String statusName;
+
+  @override
+  String get description =>
+      'Cash session "$sessionId" is not active (status: $statusName)';
+}
+
+/// A `CashSession` transition that `CashSessionStatusTransitions
+/// .canTransition` does not permit was attempted.
+final class InvalidCashSessionTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidCashSessionTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid cash session transition: $fromStatusName -> $toStatusName';
+}
+
+/// A staff member attempted to approve/reject their own `CashCount` (as
+/// a `CashReconciliation`) or their own requested `CashAdjustment` —
+/// self-approval is never permitted, regardless of role.
+final class SelfApprovalNotAllowedViolation extends BusinessRuleViolation {
+  const SelfApprovalNotAllowedViolation({required this.staffId});
+
+  final String staffId;
+
+  @override
+  String get description =>
+      'Staff member "$staffId" cannot approve their own submission';
+}
