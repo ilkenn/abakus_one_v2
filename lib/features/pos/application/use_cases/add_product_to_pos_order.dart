@@ -6,7 +6,9 @@ import '../../../menu/domain/models/selected_modifier.dart';
 import '../../../orders/domain/modifiers/modifier_selection_input.dart';
 import '../../../orders/domain/modifiers/modifier_validation_result.dart';
 import '../../../orders/domain/modifiers/modifier_validator.dart';
+import '../../domain/models/pos_order_line_draft.dart';
 import '../../domain/models/pos_order_session.dart';
+import '../identity/pos_order_line_draft_id_generator.dart';
 import 'calculate_pos_order_totals.dart';
 
 /// Adds one [MenuProduct] (with its selected modifiers) as a new line to a
@@ -19,12 +21,21 @@ import 'calculate_pos_order_totals.dart';
 /// same domain validator POS and every other channel share. Throws the
 /// first [BusinessRuleViolation] `ModifierValidator` reports; the line is
 /// never partially added.
+///
+/// The new line's [PosOrderLineDraft.id] is generated here, via
+/// [PosOrderLineDraftIdGenerator] — the UI never generates or sees it, it
+/// only calls this use case (Phase 3 Sprint 3C, `docs/decisions.md`
+/// ADR-012).
 class AddProductToPosOrder {
-  const AddProductToPosOrder({required Clock clock})
-      : _clock = clock,
+  const AddProductToPosOrder({
+    required Clock clock,
+    required PosOrderLineDraftIdGenerator draftIdGenerator,
+  })  : _clock = clock,
+        _draftIdGenerator = draftIdGenerator,
         _calculateTotals = const CalculatePosOrderTotals();
 
   final Clock _clock;
+  final PosOrderLineDraftIdGenerator _draftIdGenerator;
   final CalculatePosOrderTotals _calculateTotals;
 
   PosOrderSession call({
@@ -60,7 +71,7 @@ class AddProductToPosOrder {
       }
     }
 
-    final line = CartItem(
+    final item = CartItem(
       id: product.id,
       name: product.name,
       desc: product.description,
@@ -69,9 +80,13 @@ class AddProductToPosOrder {
       selectedModifiers: selectedModifiers,
       note: note,
     );
+    final draft = PosOrderLineDraft(
+      id: _draftIdGenerator.nextDraftId(),
+      item: item,
+    );
 
     final updated = session.copyWith(
-      lines: [...session.lines, line],
+      lines: [...session.lines, draft],
       lastUpdatedAt: _clock.now(),
     );
     return updated.copyWith(pricing: _calculateTotals(updated));

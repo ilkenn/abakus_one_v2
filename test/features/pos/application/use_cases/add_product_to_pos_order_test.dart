@@ -1,14 +1,20 @@
-import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
+﻿import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_group.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_option.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/selected_modifier.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
+import 'package:abakus_one_v2/features/pos/application/identity/pos_order_line_draft_id_generator.dart';
 import 'package:abakus_one_v2/features/pos/application/use_cases/add_product_to_pos_order.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../test_support/fake_clock.dart';
 import '../../test_support/pos_test_fixtures.dart';
+
+AddProductToPosOrder _useCase(FakeClock clock) => AddProductToPosOrder(
+      clock: clock,
+      draftIdGenerator: SequentialPosOrderLineDraftIdGenerator(),
+    );
 
 const _simpleProduct = MenuProduct(
   id: 'prod_ayran',
@@ -47,12 +53,12 @@ void main() {
     test('adds a line and recalculates totals', () {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final session = buildTestSession(openedAt: clock.now());
-      final useCase = AddProductToPosOrder(clock: clock);
+      final useCase = _useCase(clock);
 
       final updated = useCase(session: session, product: _simpleProduct);
 
       expect(updated.lines, hasLength(1));
-      expect(updated.lines.single.name, 'Ayran');
+      expect(updated.lines.single.item.name, 'Ayran');
       expect(updated.pricing.grossSubtotal.isPositive, isTrue);
     });
 
@@ -61,7 +67,7 @@ void main() {
       final session = buildTestSession(openedAt: clock.now());
       clock.advance(const Duration(minutes: 3));
 
-      final updated = AddProductToPosOrder(clock: clock)(
+      final updated = _useCase(clock)(
         session: session,
         product: _simpleProduct,
       );
@@ -74,7 +80,7 @@ void main() {
       final session = buildTestSession(openedAt: clock.now());
 
       expect(
-        () => AddProductToPosOrder(clock: clock)(
+        () => _useCase(clock)(
           session: session,
           product: _simpleProduct,
           quantity: 0,
@@ -89,7 +95,7 @@ void main() {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final session = buildTestSession(openedAt: clock.now());
 
-      final updated = AddProductToPosOrder(clock: clock)(
+      final updated = _useCase(clock)(
         session: session,
         product: _bowlWithProtein,
         selectedModifiers: const [
@@ -111,7 +117,7 @@ void main() {
       final session = buildTestSession(openedAt: clock.now());
 
       expect(
-        () => AddProductToPosOrder(clock: clock)(
+        () => _useCase(clock)(
           session: session,
           product: _bowlWithProtein,
         ),
@@ -124,7 +130,7 @@ void main() {
       final session = buildTestSession(openedAt: clock.now());
 
       expect(
-        () => AddProductToPosOrder(clock: clock)(
+        () => _useCase(clock)(
           session: session,
           product: _bowlWithProtein,
           selectedModifiers: const [
@@ -146,7 +152,7 @@ void main() {
       final session = buildTestSession(openedAt: clock.now());
 
       try {
-        AddProductToPosOrder(clock: clock)(
+        _useCase(clock)(
           session: session,
           product: _bowlWithProtein,
         );
@@ -182,7 +188,7 @@ void main() {
       );
 
       expect(
-        () => AddProductToPosOrder(clock: clock)(
+        () => _useCase(clock)(
           session: session,
           product: product,
           selectedModifiers: const [

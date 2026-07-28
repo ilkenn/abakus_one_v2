@@ -1,15 +1,13 @@
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../../../core/utils/clock.dart';
-import '../../../../shared/models/currency.dart';
-import '../../../../shared/models/money.dart';
+import '../../../orders/domain/discounts/discount.dart';
 import '../../../orders/domain/identity/order_identity.dart';
-import '../../../orders/domain/mappers/cart_line_mapper.dart';
 import '../../../orders/domain/mappers/cart_to_order_mapper.dart';
 import '../../../orders/domain/models/order.dart';
 import '../../../orders/domain/models/order_actor.dart';
 import '../../../orders/domain/models/order_status.dart';
-import '../../../orders/domain/pricing/tax_policy.dart';
 import '../../data/pos_order_repository.dart';
+import '../../domain/models/discount_snapshot.dart';
 import '../../domain/models/pos_order_session.dart';
 
 /// Freezes a [PosOrderSession] into a real [Order] and persists it.
@@ -26,7 +24,8 @@ import '../../domain/models/pos_order_session.dart';
 /// 2. Obtain a real identity via [OrderIdentityProvider] — never a
 ///    timestamp/random value/UUID invented here.
 /// 3. Map the session to an [Order] via [CartToOrderMapper] (status
-///    [OrderStatus.created], per-line and order-level notes snapshotted).
+///    [OrderStatus.created], per-line/order-level notes and discounts
+///    snapshotted).
 /// 4. Transition `created -> pendingConfirmation` (the one valid next
 ///    state — see `OrderStatusTransitions`), actor [OrderActor.staff],
 ///    which appends the required [OrderAuditEntry] via `Order.transitionTo`
@@ -60,18 +59,23 @@ class SubmitPosOrder {
     final orderNumber = await _identityProvider.nextOrderNumber();
     final now = _clock.now();
 
-    final discountAmount = _discountAmountFor(session);
+    final lineDiscounts = [
+      for (final draft in session.lines)
+        _activeLineDiscount(session.discounts, draft.id)?.discountAmount,
+    ];
+    final orderDiscountAmount = _activeOrderDiscount(session.discounts)?.discountAmount;
 
     var order = CartToOrderMapper.map(
       orderId: orderId,
       orderNumber: orderNumber,
-      cartItems: session.lines,
+      cartItems: [for (final draft in session.lines) draft.item],
+      lineDiscounts: lineDiscounts,
       channel: session.channel,
       branchId: session.branchId,
       restaurantId: _restaurantId,
       tableId: session.tableId,
       tableSessionId: session.tableSessionId,
-      orderLevelDiscount: discountAmount,
+      orderLevelDiscount: orderDiscountAmount,
       serviceFee: session.fees,
       tip: session.tip,
       now: now,
@@ -95,16 +99,23 @@ class SubmitPosOrder {
     return persisted;
   }
 
-  Money? _discountAmountFor(PosOrderSession session) {
-    final discount = session.discount;
-    if (discount == null) return null;
-    final previewLines = session.lines
-        .map((item) => CartLineMapper.mapLine(item, TaxPolicy.defaultRate))
-        .toList();
-    final grossSubtotal = previewLines.fold<Money>(
-      Money.zero(Currency.accountingCurrency),
-      (sum, line) => sum + line.lineTotal,
-    );
-    return discount.amountFor(grossSubtotal);
+  static DiscountSnapshot? _activeLineDiscount(
+    List<DiscountSnapshot> discounts,
+    String orderLineDraftId,
+  ) {
+    for (final discount in discounts) {
+      if (discount.scope == DiscountScope.line &&
+          discount.targetOrderLineId == orderLineDraftId) {
+        return discount;
+      }
+    }
+    return null;
+  }
+
+  static DiscountSnapshot? _activeOrderDiscount(List<DiscountSnapshot> discounts) {
+    for (final discount in discounts) {
+      if (discount.scope == DiscountScope.order) return discount;
+    }
+    return null;
   }
 }

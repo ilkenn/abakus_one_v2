@@ -1,6 +1,7 @@
 import 'package:abakus_one_v2/features/cart/domain/models/cart_item.dart';
 import 'package:abakus_one_v2/features/orders/domain/discounts/discount.dart';
 import 'package:abakus_one_v2/features/pos/application/use_cases/calculate_pos_order_totals.dart';
+import 'package:abakus_one_v2/features/pos/domain/models/discount_snapshot.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
 import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,8 +12,10 @@ void main() {
   group('CalculatePosOrderTotals', () {
     test('computes gross subtotal and grand total from session lines', () {
       final session = buildTestSession().copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 2),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 2),
+          ),
         ],
       );
 
@@ -24,8 +27,10 @@ void main() {
 
     test('includes fees and tip in the grand total', () {
       final session = buildTestSession().copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
         fees: Money.fromWhole(5, Currency.tryLira),
         tip: Money.fromWhole(15, Currency.tryLira),
@@ -39,21 +44,60 @@ void main() {
       expect(pricing.tip, Money.fromWhole(15, Currency.tryLira));
     });
 
-    test('applies the session discount against the gross subtotal', () {
+    test('applies the active order-scoped discount snapshot against the gross subtotal', () {
       final session = buildTestSession().copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
-        discount: Discount.fixedAmount(
-          id: 'd1',
-          scope: DiscountScope.order,
-          amount: Money.fromWhole(20, Currency.tryLira),
-        ),
+        discounts: [
+          DiscountSnapshot.fixedAmount(
+            discountId: 'd1',
+            discountName: 'Manager comp',
+            discountAmount: Money.fromWhole(20, Currency.tryLira),
+            scope: DiscountScope.order,
+            appliedByStaffId: 'staff-1',
+            appliedAt: DateTime(2026, 7, 29),
+          ),
+        ],
       );
 
       final pricing = const CalculatePosOrderTotals()(session);
 
       expect(pricing.grandTotal, Money.fromWhole(80, Currency.tryLira));
+    });
+
+    test('applies a line-scoped discount snapshot only to its own line', () {
+      final session = buildTestSession().copyWith(
+        lines: [
+          buildTestLineDraft(
+            id: 'line-1',
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
+          buildTestLineDraft(
+            id: 'line-2',
+            item: const CartItem(id: 'p2', name: 'Ayran', desc: '', price: 50.0, quantity: 1),
+          ),
+        ],
+        discounts: [
+          DiscountSnapshot.percentage(
+            discountId: 'd1',
+            discountName: '%10',
+            percentageBasisPoints: 1000,
+            discountAmount: Money.fromWhole(10, Currency.tryLira),
+            scope: DiscountScope.line,
+            targetOrderLineId: 'line-1',
+            appliedByStaffId: 'staff-1',
+            appliedAt: DateTime(2026, 7, 29),
+          ),
+        ],
+      );
+
+      final pricing = const CalculatePosOrderTotals()(session);
+
+      // line-1: 100 - 10 = 90; line-2: 50 unaffected. Total = 140.
+      expect(pricing.grossSubtotal, Money.fromWhole(140, Currency.tryLira));
     });
 
     test('never invents an OrderId/OrderNumber (pure preview, no CartToOrderMapper call)', () {

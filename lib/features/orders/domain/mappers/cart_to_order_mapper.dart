@@ -46,6 +46,14 @@ abstract final class CartToOrderMapper {
     String? tableSessionId,
     String? guestSessionId,
     TaxRate taxRate = TaxPolicy.defaultRate,
+
+    /// Per-line discounts, index-aligned with [cartItems] — `null`/absent
+    /// means no line carries one. `null` at a given index means that line
+    /// has no discount. Kept as a parallel list (rather than changing
+    /// [cartItems]'s element type) so this mapper stays usable by any
+    /// caller with plain `CartItem`s, not just POS (`docs/decisions.md`
+    /// ADR-012).
+    List<Money?>? lineDiscounts,
     Money? orderLevelDiscount,
     Money? serviceFee,
     Money? deliveryFee,
@@ -58,10 +66,19 @@ abstract final class CartToOrderMapper {
     if (cartItems.isEmpty) {
       throw const EmptyOrderViolation();
     }
+    assert(
+      lineDiscounts == null || lineDiscounts.length == cartItems.length,
+      'lineDiscounts must be index-aligned with cartItems when given',
+    );
 
-    final lines = cartItems
-        .map((item) => CartLineMapper.mapLine(item, taxRate))
-        .toList();
+    final lines = [
+      for (var i = 0; i < cartItems.length; i++)
+        CartLineMapper.mapLine(
+          cartItems[i],
+          taxRate,
+          lineDiscount: lineDiscounts == null ? null : lineDiscounts[i],
+        ),
+    ];
     final pricing = PriceCalculator.calculate(
       lines: lines,
       currency: Currency.accountingCurrency,

@@ -1,8 +1,8 @@
-import '../../../orders/domain/discounts/discount.dart';
 import '../../../orders/domain/models/order_channel.dart';
 import '../../../orders/domain/pricing/price_breakdown.dart';
-import '../../../cart/domain/models/cart_item.dart';
 import '../../../../shared/models/money.dart';
+import 'discount_snapshot.dart';
+import 'pos_order_line_draft.dart';
 
 /// An immutable, in-progress POS order — the cashier's working "cart" for
 /// one customer/table, from [openedAt] until it's either submitted
@@ -13,21 +13,27 @@ import '../../../../shared/models/money.dart';
 /// freeze it into an `Order` only once the cashier submits (approved
 /// architecture decision, Phase 3 Sprint 3B).
 ///
-/// [lines] reuses the customer app's own `CartItem` type directly (not a
-/// POS-specific line type) — it already carries everything a line needs
-/// (product identity, price, modifiers, quantity, note) and is exactly
-/// what `CartLineMapper`/`CartToOrderMapper` already accept, so no
-/// duplicate cart-line model was introduced. This session's own state is
-/// fully isolated from the customer-facing `cartProvider`/`CartNotifier`:
-/// a cashier's in-progress order never reads or writes the customer app's
-/// cart.
+/// [lines] is a list of [PosOrderLineDraft] (Phase 3 Sprint 3C) — each
+/// wrapping the customer app's own `CartItem` with a stable, session-local
+/// id, so line-targeted operations (quantity update, remove, a line
+/// discount's `targetOrderLineId`) never depend on array position. This
+/// session's own state is fully isolated from the customer-facing
+/// `cartProvider`/`CartNotifier`: a cashier's in-progress order never
+/// reads or writes the customer app's cart.
+///
+/// [discounts] replaces the single `discount` field from Sprint 3B — an
+/// immutable list of [DiscountSnapshot]s, at most one per line
+/// (`targetOrderLineId`) and at most one order-scoped (see
+/// `docs/decisions.md` ADR-012). `SetPosDiscount` is the only use case
+/// allowed to mutate this list, and always replaces rather than stacks.
 ///
 /// [openedByStaffId] is the **canonical** staff-identity field — there is
 /// deliberately no second `staffId` field anywhere on this class.
 class PosOrderSession {
-  /// Builds a session, defensively copying [lines] into an unmodifiable
-  /// list so a caller's later mutation of the list they passed in can
-  /// never reach back into this (supposedly immutable) session.
+  /// Builds a session, defensively copying [lines]/[discounts] into
+  /// unmodifiable lists so a caller's later mutation of the list they
+  /// passed in can never reach back into this (supposedly immutable)
+  /// session.
   factory PosOrderSession({
     required String sessionId,
     required DateTime openedAt,
@@ -37,10 +43,10 @@ class PosOrderSession {
     required OrderChannel channel,
     String? tableId,
     String? tableSessionId,
-    List<CartItem> lines = const [],
+    List<PosOrderLineDraft> lines = const [],
     String customerNote = '',
     String kitchenNote = '',
-    Discount? discount,
+    List<DiscountSnapshot> discounts = const [],
     required Money fees,
     required Money tip,
     required PriceBreakdown pricing,
@@ -57,7 +63,7 @@ class PosOrderSession {
       lines: List.unmodifiable(lines),
       customerNote: customerNote,
       kitchenNote: kitchenNote,
-      discount: discount,
+      discounts: List.unmodifiable(discounts),
       fees: fees,
       tip: tip,
       pricing: pricing,
@@ -76,7 +82,7 @@ class PosOrderSession {
     required this.lines,
     required this.customerNote,
     required this.kitchenNote,
-    this.discount,
+    required this.discounts,
     required this.fees,
     required this.tip,
     required this.pricing,
@@ -109,7 +115,7 @@ class PosOrderSession {
 
   /// Defensively copied to an unmodifiable list at construction — see the
   /// factory constructor's own doc comment.
-  final List<CartItem> lines;
+  final List<PosOrderLineDraft> lines;
 
   /// Order-level notes — distinct from any individual line's own note
   /// (`CartItem.note`, which becomes `OrderLine.customerNote` per line).
@@ -119,31 +125,31 @@ class PosOrderSession {
   /// line's own kitchen note.
   final String kitchenNote;
 
-  /// At most one order-level discount — this session's data shape has no
-  /// slot for a second one, which is exactly why `DiscountStackingPolicy`
-  /// (multiple-discount resolution) isn't invoked here: there's
-  /// structurally never more than one candidate to resolve between.
-  final Discount? discount;
+  /// Every currently-active discount on this session — at most one entry
+  /// per `targetOrderLineId`, and at most one with `scope ==
+  /// DiscountScope.order`. `SetPosDiscount` enforces both invariants; this
+  /// class itself only guarantees the list is defensively copied.
+  final List<DiscountSnapshot> discounts;
 
   /// A single, undifferentiated fee amount — this sprint doesn't split it
   /// into service/delivery/packaging (see `CalculatePosOrderTotals`'s doc
   /// comment for how it's passed through to `PriceCalculator`). Always in
   /// `Currency.accountingCurrency` (TRY) — POS pricing never touches a
-  /// foreign currency; only payment does (out of scope this sprint).
+  /// foreign currency; only payment does.
   final Money fees;
 
   final Money tip;
 
   /// Recomputed by `CalculatePosOrderTotals` after every mutation that
-  /// could affect it (lines, discount, fees, tip) — never grows stale
-  /// relative to [lines]/[discount]/[fees]/[tip].
+  /// could affect it (lines, discounts, fees, tip) — never grows stale
+  /// relative to [lines]/[discounts]/[fees]/[tip].
   final PriceBreakdown pricing;
 
   /// Delegates to the factory constructor, so every field — including a
-  /// new [lines] value — goes through the same defensive-copy path as
-  /// initial construction. [openedAt] has no override parameter: nothing
-  /// outside [PosOrderSession] itself may change it once set (see its own
-  /// doc comment).
+  /// new [lines]/[discounts] value — goes through the same defensive-copy
+  /// path as initial construction. [openedAt] has no override parameter:
+  /// nothing outside [PosOrderSession] itself may change it once set (see
+  /// its own doc comment).
   PosOrderSession copyWith({
     DateTime? lastUpdatedAt,
     String? openedByStaffId,
@@ -153,11 +159,10 @@ class PosOrderSession {
     bool clearTableId = false,
     String? tableSessionId,
     bool clearTableSessionId = false,
-    List<CartItem>? lines,
+    List<PosOrderLineDraft>? lines,
     String? customerNote,
     String? kitchenNote,
-    Discount? discount,
-    bool clearDiscount = false,
+    List<DiscountSnapshot>? discounts,
     Money? fees,
     Money? tip,
     PriceBreakdown? pricing,
@@ -176,7 +181,7 @@ class PosOrderSession {
       lines: lines ?? this.lines,
       customerNote: customerNote ?? this.customerNote,
       kitchenNote: kitchenNote ?? this.kitchenNote,
-      discount: clearDiscount ? null : (discount ?? this.discount),
+      discounts: discounts ?? this.discounts,
       fees: fees ?? this.fees,
       tip: tip ?? this.tip,
       pricing: pricing ?? this.pricing,

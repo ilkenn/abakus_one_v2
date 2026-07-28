@@ -14,7 +14,11 @@ import '../pricing/tax_rate.dart';
 abstract final class CartLineMapper {
   CartLineMapper._();
 
-  static OrderLine mapLine(CartItem item, TaxRate taxRate) {
+  static OrderLine mapLine(
+    CartItem item,
+    TaxRate taxRate, {
+    Money? lineDiscount,
+  }) {
     // item.price and item.extraCostPerUnit are both already "per unit"
     // gross TRY amounts (see CartItem.unitPrice's own doc comment) —
     // folded together here, since OrderLine has no field shaped to carry
@@ -58,6 +62,7 @@ abstract final class CartLineMapper {
       modifiers: modifierSelections,
       quantity: item.quantity,
       unitPrice: unitPrice,
+      lineDiscount: lineDiscount,
       taxRate: taxRate,
       kitchenNote: kitchenNoteParts.join(' | '),
       customerNote: item.note,

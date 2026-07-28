@@ -1,5 +1,7 @@
+import 'package:abakus_one_v2/features/cart/domain/models/cart_item.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/pricing/price_calculator.dart';
+import 'package:abakus_one_v2/features/pos/domain/models/pos_order_line_draft.dart';
 import 'package:abakus_one_v2/features/pos/domain/models/pos_order_session.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
 import 'package:abakus_one_v2/shared/models/money.dart';
@@ -26,4 +28,14 @@ PosOrderSession buildTestSession({
     tip: Money.zero(Currency.tryLira),
     pricing: PriceCalculator.calculate(lines: const [], currency: Currency.tryLira),
   );
+}
+
+/// Wraps a [CartItem] into a [PosOrderLineDraft] with a fixed, predictable
+/// id for tests that don't care about `PosOrderLineDraftIdGenerator`
+/// itself — most use-case/controller tests build lines this way.
+PosOrderLineDraft buildTestLineDraft({
+  String id = 'line-1',
+  required CartItem item,
+}) {
+  return PosOrderLineDraft(id: id, item: item);
 }

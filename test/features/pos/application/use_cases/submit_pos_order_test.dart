@@ -6,6 +6,7 @@ import 'package:abakus_one_v2/features/orders/domain/models/order_actor.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
 import 'package:abakus_one_v2/features/pos/application/use_cases/submit_pos_order.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_order_repository.dart';
+import 'package:abakus_one_v2/features/pos/domain/models/discount_snapshot.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
 import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,8 +22,10 @@ void main() {
       final identityProvider = InMemoryOrderIdentityProvider();
       final session = buildTestSession(sessionId: 'session-1', openedAt: clock.now())
           .copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
       );
 
@@ -42,8 +45,10 @@ void main() {
     test('appends exactly one OrderAuditEntry recording created -> pendingConfirmation, actor staff', () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final session = buildTestSession(openedAt: clock.now()).copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
       );
 
@@ -64,8 +69,10 @@ void main() {
     test('never skips directly from created to confirmed', () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final session = buildTestSession(openedAt: clock.now()).copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
       );
 
@@ -84,8 +91,10 @@ void main() {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final identityProvider = InMemoryOrderIdentityProvider(prefix: 'test');
       final session = buildTestSession(openedAt: clock.now()).copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
       );
 
@@ -103,8 +112,10 @@ void main() {
     test('snapshots order-level customerNote/kitchenNote from the session', () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final session = buildTestSession(openedAt: clock.now()).copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
         customerNote: 'Zile basmayın',
         kitchenNote: 'Acil',
@@ -121,17 +132,24 @@ void main() {
       expect(order.kitchenNote, 'Acil');
     });
 
-    test('applies the session discount to the resulting PriceBreakdown', () async {
+    test('applies the order-scoped discount snapshot to the resulting PriceBreakdown', () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final session = buildTestSession(openedAt: clock.now()).copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
-        discount: Discount.fixedAmount(
-          id: 'd1',
-          scope: DiscountScope.order,
-          amount: Money.fromWhole(10, Currency.tryLira),
-        ),
+        discounts: [
+          DiscountSnapshot.fixedAmount(
+            discountId: 'd1',
+            discountName: 'Manager comp',
+            discountAmount: Money.fromWhole(10, Currency.tryLira),
+            scope: DiscountScope.order,
+            appliedByStaffId: 'staff-1',
+            appliedAt: DateTime(2026, 7, 29),
+          ),
+        ],
       );
 
       final order = await SubmitPosOrder(
@@ -145,12 +163,48 @@ void main() {
       expect(order.pricing.grandTotal, Money.fromWhole(90, Currency.tryLira));
     });
 
+    test('applies a line-scoped discount snapshot to only its own OrderLine', () async {
+      final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
+      final session = buildTestSession(openedAt: clock.now()).copyWith(
+        lines: [
+          buildTestLineDraft(
+            id: 'line-1',
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
+        ],
+        discounts: [
+          DiscountSnapshot.percentage(
+            discountId: 'd1',
+            discountName: '%10',
+            percentageBasisPoints: 1000,
+            discountAmount: Money.fromWhole(10, Currency.tryLira),
+            scope: DiscountScope.line,
+            targetOrderLineId: 'line-1',
+            appliedByStaffId: 'staff-1',
+            appliedAt: DateTime(2026, 7, 29),
+          ),
+        ],
+      );
+
+      final order = await SubmitPosOrder(
+        clock: clock,
+        identityProvider: InMemoryOrderIdentityProvider(),
+        repository: InMemoryPosOrderRepository(),
+        restaurantId: 'restaurant-abakus',
+      ).call(session);
+
+      expect(order.lines.single.lineDiscount, Money.fromWhole(10, Currency.tryLira));
+      expect(order.pricing.grandTotal, Money.fromWhole(90, Currency.tryLira));
+    });
+
     test('persists via PosOrderRepository.submitOrder', () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final repository = InMemoryPosOrderRepository();
       final session = buildTestSession(openedAt: clock.now()).copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
       );
 
@@ -169,8 +223,10 @@ void main() {
       final repository = InMemoryPosOrderRepository();
       final session = buildTestSession(sessionId: 'session-1', openedAt: clock.now())
           .copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
       );
       await repository.saveDraft('session-1', session);
@@ -207,8 +263,10 @@ void main() {
       final repository = InMemoryPosOrderRepository();
       final session = buildTestSession(sessionId: 'session-1', openedAt: clock.now())
           .copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
       );
       await repository.saveDraft('session-1', session);
@@ -232,8 +290,10 @@ void main() {
       final repository = InMemoryPosOrderRepository();
       final session = buildTestSession(sessionId: 'session-1', openedAt: clock.now())
           .copyWith(
-        lines: const [
-          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        lines: [
+          buildTestLineDraft(
+            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+          ),
         ],
       );
       await repository.saveDraft('session-1', session);

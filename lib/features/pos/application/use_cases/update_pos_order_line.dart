@@ -4,8 +4,9 @@ import '../../domain/models/pos_order_session.dart';
 import 'calculate_pos_order_totals.dart';
 
 /// Updates the quantity and/or note of an existing line in a
-/// [PosOrderSession], identified by its position in
-/// [PosOrderSession.lines].
+/// [PosOrderSession], identified by its stable
+/// `PosOrderLineDraft.id` — never an array index (Phase 3 Sprint 3C,
+/// `docs/decisions.md` ADR-012).
 class UpdatePosOrderLine {
   const UpdatePosOrderLine({required Clock clock})
       : _clock = clock,
@@ -16,19 +17,18 @@ class UpdatePosOrderLine {
 
   /// Throws [NonPositiveQuantityViolation] if [quantity] is given and not
   /// positive (use `RemovePosOrderLine` to remove a line instead of
-  /// setting its quantity to zero). Throws [UnknownModifierOptionViolation]-
-  /// shaped-but-generic index errors via a plain `RangeError` if
-  /// [lineIndex] is out of bounds — that's a caller/UI bug, not a domain
-  /// business-rule violation, so it isn't mapped through
-  /// [BusinessRuleViolation].
+  /// setting its quantity to zero). Throws [UnknownOrderLineDraftViolation]
+  /// if no line with [orderLineDraftId] exists in [session] — a real
+  /// state-consistency violation now that line identity is stable, not a
+  /// caller/UI bug.
   PosOrderSession call({
     required PosOrderSession session,
-    required int lineIndex,
+    required String orderLineDraftId,
     int? quantity,
     String? note,
   }) {
-    if (lineIndex < 0 || lineIndex >= session.lines.length) {
-      throw RangeError.index(lineIndex, session.lines, 'lineIndex');
+    if (!session.lines.any((draft) => draft.id == orderLineDraftId)) {
+      throw UnknownOrderLineDraftViolation(orderLineDraftId: orderLineDraftId);
     }
     if (quantity != null && quantity <= 0) {
       throw NonPositiveQuantityViolation(
@@ -38,14 +38,16 @@ class UpdatePosOrderLine {
     }
 
     final updatedLines = [
-      for (var i = 0; i < session.lines.length; i++)
-        if (i == lineIndex)
-          session.lines[i].copyWith(
-            quantity: quantity ?? session.lines[i].quantity,
-            note: note ?? session.lines[i].note,
+      for (final draft in session.lines)
+        if (draft.id == orderLineDraftId)
+          draft.copyWith(
+            item: draft.item.copyWith(
+              quantity: quantity ?? draft.item.quantity,
+              note: note ?? draft.item.note,
+            ),
           )
         else
-          session.lines[i],
+          draft,
     ];
 
     final updated = session.copyWith(
