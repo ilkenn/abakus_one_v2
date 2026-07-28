@@ -296,6 +296,179 @@ final class ForeignCurrencyPaymentMissingExchangeRateViolation
       'Payment in $currencyCode requires an ExchangeRateSnapshot';
 }
 
+/// A `DiscountSnapshot` with `scope == DiscountScope.line` was constructed
+/// with no `targetOrderLineId`.
+final class LineDiscountMissingTargetViolation extends BusinessRuleViolation {
+  const LineDiscountMissingTargetViolation();
+
+  @override
+  String get description =>
+      'A line-scoped discount snapshot must carry a targetOrderLineId';
+}
+
+/// A `DiscountSnapshot` with `scope == DiscountScope.order` was
+/// constructed with a `targetOrderLineId` — an order-level discount never
+/// targets one specific line.
+final class OrderDiscountMustNotTargetLineViolation
+    extends BusinessRuleViolation {
+  const OrderDiscountMustNotTargetLineViolation();
+
+  @override
+  String get description =>
+      'An order-scoped discount snapshot must not carry a targetOrderLineId';
+}
+
+/// A `PosOrderLineDraft`/`OrderLine` was looked up by an `orderLineDraftId`
+/// that doesn't exist in the current session — a stale reference (e.g. the
+/// line was already removed), not a valid index-out-of-bounds situation
+/// (see `docs/decisions.md` ADR-012 on why line targeting moved off array
+/// index).
+final class UnknownOrderLineDraftViolation extends BusinessRuleViolation {
+  const UnknownOrderLineDraftViolation({required this.orderLineDraftId});
+
+  final String orderLineDraftId;
+
+  @override
+  String get description =>
+      'No line with orderLineDraftId "$orderLineDraftId" exists in this session';
+}
+
+/// A non-cash `PaymentSplit` was added that would push
+/// `PaymentSession.totalSettled` beyond `totalAmount` — only a cash split
+/// may exceed the remaining balance (the excess becomes change).
+final class NonCashOverpaymentViolation extends BusinessRuleViolation {
+  const NonCashOverpaymentViolation({
+    required this.methodId,
+    required this.overpaidMinorUnits,
+  });
+
+  final String methodId;
+  final int overpaidMinorUnits;
+
+  @override
+  String get description =>
+      'Payment method "$methodId" cannot overpay by $overpaidMinorUnits '
+      'minor units — only cash may exceed the remaining balance';
+}
+
+/// `CompletePaymentSession` was called while `PaymentSession.remainingAmount`
+/// is not zero.
+final class PaymentSessionNotReadyViolation extends BusinessRuleViolation {
+  const PaymentSessionNotReadyViolation({required this.remainingMinorUnits});
+
+  final int remainingMinorUnits;
+
+  @override
+  String get description =>
+      'Payment session is not ready to complete: $remainingMinorUnits '
+      'minor units still remaining';
+}
+
+/// A `PaymentSplit` for a method with `requiresReferenceNumberAtCapture ==
+/// true` was completed with no reference number recorded.
+final class MissingPaymentReferenceViolation extends BusinessRuleViolation {
+  const MissingPaymentReferenceViolation({required this.methodId});
+
+  final String methodId;
+
+  @override
+  String get description =>
+      'Payment method "$methodId" requires a reference number';
+}
+
+/// A `PaymentSplit` for a method with `requiresApprovalAtCapture == true`
+/// was completed with no granted `ApprovalResult` on record.
+final class PaymentMethodNotApprovedViolation extends BusinessRuleViolation {
+  const PaymentMethodNotApprovedViolation({required this.methodId});
+
+  final String methodId;
+
+  @override
+  String get description =>
+      'Payment method "$methodId" requires approval that was not granted';
+}
+
+/// A provider-processed `PaymentSplit` was completed while its
+/// `PaymentResult.status` was not `success`.
+final class ProviderTransactionNotSuccessfulViolation
+    extends BusinessRuleViolation {
+  const ProviderTransactionNotSuccessfulViolation({
+    required this.splitId,
+    required this.statusName,
+  });
+
+  final String splitId;
+  final String statusName;
+
+  @override
+  String get description =>
+      'Split "$splitId" has a non-successful provider result: $statusName';
+}
+
+/// A caller supplied an `expectedRevision` that no longer matches the
+/// current stored revision of a `PaymentSession`/`OrderClosure` —
+/// optimistic-concurrency guard against a stale concurrent mutation.
+final class StaleRevisionViolation extends BusinessRuleViolation {
+  const StaleRevisionViolation({
+    required this.expectedRevision,
+    required this.actualRevision,
+  });
+
+  final int expectedRevision;
+  final int actualRevision;
+
+  @override
+  String get description =>
+      'Stale revision: expected $expectedRevision but current is $actualRevision';
+}
+
+/// A closure lifecycle transition (`OrderClosure.lifecycleStatus`) that
+/// `OrderClosureLifecycleTransitions.canTransition` does not permit was
+/// attempted.
+final class InvalidOrderClosureTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidOrderClosureTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid order closure transition: $fromStatusName -> $toStatusName';
+}
+
+/// A refund/void was requested for more than the still-refundable amount
+/// (settled minus already refunded/voided).
+final class RefundExceedsRefundableAmountViolation
+    extends BusinessRuleViolation {
+  const RefundExceedsRefundableAmountViolation({
+    required this.requestedMinorUnits,
+    required this.refundableMinorUnits,
+  });
+
+  final int requestedMinorUnits;
+  final int refundableMinorUnits;
+
+  @override
+  String get description =>
+      'Refund of $requestedMinorUnits minor units exceeds the refundable '
+      'amount of $refundableMinorUnits minor units';
+}
+
+/// A `PosAuthorizationPolicy` denied (or a manager-approval requirement was
+/// not satisfied for) an action that requires it.
+final class AuthorizationDeniedViolation extends BusinessRuleViolation {
+  const AuthorizationDeniedViolation({required this.actionName});
+
+  final String actionName;
+
+  @override
+  String get description => 'Authorization denied for action "$actionName"';
+}
+
 /// A `Currency` with `isAcceptedByBusiness == false` was used somewhere
 /// that requires business acceptance — capturing an `ExchangeRateSnapshot`
 /// for it, or tendering a `PaymentSplit` in it.
