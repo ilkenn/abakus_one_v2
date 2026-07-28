@@ -405,6 +405,48 @@ final class ProviderTransactionNotSuccessfulViolation
       'Split "$splitId" has a non-successful provider result: $statusName';
 }
 
+/// `AddPaymentSplit`/`RemovePaymentSplit` was called against a
+/// `PaymentSession` whose status is not `collecting`/`readyToComplete` —
+/// e.g. already `completed`/`cancelled`, or mid-`completing`.
+final class PaymentSessionNotEditableViolation extends BusinessRuleViolation {
+  const PaymentSessionNotEditableViolation({required this.statusName});
+
+  final String statusName;
+
+  @override
+  String get description =>
+      'Payment session is not editable in status "$statusName"';
+}
+
+/// `RemovePaymentSplit` was called with a `splitId` that doesn't exist in
+/// the session.
+final class UnknownPaymentSplitViolation extends BusinessRuleViolation {
+  const UnknownPaymentSplitViolation({required this.splitId});
+
+  final String splitId;
+
+  @override
+  String get description => 'No split with id "$splitId" exists in this session';
+}
+
+/// A `PaymentSession` was asked to move from one `PaymentSessionStatus` to
+/// another that `PaymentSessionStatusTransitions.canTransition` does not
+/// permit.
+final class InvalidPaymentSessionStatusTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidPaymentSessionStatusTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid payment session status transition: $fromStatusName -> $toStatusName';
+}
+
 /// A caller supplied an `expectedRevision` that no longer matches the
 /// current stored revision of a `PaymentSession`/`OrderClosure` —
 /// optimistic-concurrency guard against a stale concurrent mutation.
