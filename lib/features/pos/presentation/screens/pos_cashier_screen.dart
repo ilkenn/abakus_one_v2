@@ -18,9 +18,12 @@ import '../../../menu/domain/models/menu_product.dart';
 import '../../../menu/domain/models/modifier_group.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
 import '../../../menu/presentation/providers/menu_catalog_provider.dart';
+import '../../../orders/domain/discounts/discount.dart';
 import '../../../orders/domain/models/order.dart';
 import '../../../orders/domain/models/order_channel.dart';
 import '../../../orders/domain/receipt/foreign_currency_equivalent.dart';
+import '../../domain/models/discount_preset.dart';
+import '../../domain/models/discount_preset_seed_data.dart';
 import '../../domain/models/pos_order_session.dart';
 import '../providers/pos_foreign_currency_equivalents_provider.dart';
 import '../providers/pos_order_session_provider.dart';
@@ -509,7 +512,7 @@ class _ModifierSelectionSheetState extends State<_ModifierSelectionSheet> {
   }
 }
 
-class _OrderPanel extends ConsumerWidget {
+class _OrderPanel extends ConsumerStatefulWidget {
   const _OrderPanel({
     required this.session,
     required this.isSubmitting,
@@ -527,8 +530,30 @@ class _OrderPanel extends ConsumerWidget {
   final String restaurantId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_OrderPanel> createState() => _OrderPanelState();
+}
+
+class _OrderPanelState extends ConsumerState<_OrderPanel> {
+  /// Which line quick-discount presets currently target — UI-only
+  /// selection state, not part of `PosOrderSession` itself.
+  String? _selectedLineId;
+
+  @override
+  void didUpdateWidget(covariant _OrderPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If the selected line was removed, clear the selection rather than
+    // silently pointing quick-discount presets at a line that no longer
+    // exists.
+    if (_selectedLineId != null &&
+        !widget.session.lines.any((draft) => draft.id == _selectedLineId)) {
+      _selectedLineId = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final notifier = ref.read(posOrderSessionProvider.notifier);
+    final session = widget.session;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -554,46 +579,73 @@ class _OrderPanel extends ConsumerWidget {
                     message: 'Siparişe henüz ürün eklenmedi',
                   )
                 else
-                  for (var index = 0; index < session.lines.length; index++)
+                  for (final draft in session.lines)
                     Padding(
                       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                       child: _CartLineTile(
-                        name: session.lines[index].name,
-                        quantity: session.lines[index].quantity,
-                        lineTotal: session.lines[index].totalRowPrice,
+                        name: draft.item.name,
+                        quantity: draft.item.quantity,
+                        lineTotal: draft.item.totalRowPrice,
+                        isSelected: draft.id == _selectedLineId,
+                        discountLabel: _activeLineDiscountLabel(session, draft.id),
+                        onTap: () => setState(() {
+                          _selectedLineId =
+                              _selectedLineId == draft.id ? null : draft.id;
+                        }),
                         onIncrement: () => notifier.updateLine(
-                          lineIndex: index,
-                          quantity: session.lines[index].quantity + 1,
+                          orderLineDraftId: draft.id,
+                          quantity: draft.item.quantity + 1,
                         ),
-                        onDecrement: session.lines[index].quantity > 1
+                        onDecrement: draft.item.quantity > 1
                             ? () => notifier.updateLine(
-                                  lineIndex: index,
-                                  quantity: session.lines[index].quantity - 1,
+                                  orderLineDraftId: draft.id,
+                                  quantity: draft.item.quantity - 1,
                                 )
                             : null,
-                        onRemove: () => notifier.removeLine(index),
+                        onRemove: () => notifier.removeLine(draft.id),
                       ),
                     ),
+                if (session.lines.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  _QuickDiscountBar(
+                    enabled: _selectedLineId != null,
+                    hasActiveDiscount: _selectedLineId != null &&
+                        _activeLineDiscountLabel(session, _selectedLineId!) !=
+                            null,
+                    onPresetTap: (preset) => notifier.setDiscount(
+                      scope: DiscountScope.line,
+                      targetOrderLineId: _selectedLineId,
+                      preset: preset,
+                      appliedByStaffId: session.openedByStaffId,
+                    ),
+                    onClearTap: () => notifier.setDiscount(
+                      scope: DiscountScope.line,
+                      targetOrderLineId: _selectedLineId,
+                      preset: null,
+                      appliedByStaffId: session.openedByStaffId,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.sm),
                 TextField(
-                  controller: customerNoteController,
+                  controller: widget.customerNoteController,
                   decoration: const InputDecoration(labelText: 'Müşteri Notu'),
                   onChanged: (value) =>
                       notifier.updateNotes(customerNote: value),
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 TextField(
-                  controller: kitchenNoteController,
+                  controller: widget.kitchenNoteController,
                   decoration: const InputDecoration(labelText: 'Mutfak Notu'),
                   onChanged: (value) =>
                       notifier.updateNotes(kitchenNote: value),
                 ),
                 const SizedBox(height: AppSpacing.md),
                 _PriceSummary(session: session),
-                if (errorMessage != null)
+                if (widget.errorMessage != null)
                   Padding(
                     padding: const EdgeInsets.only(top: AppSpacing.sm),
-                    child: ErrorView(message: errorMessage!),
+                    child: ErrorView(message: widget.errorMessage!),
                   ),
               ],
             ),
@@ -605,7 +657,8 @@ class _OrderPanel extends ConsumerWidget {
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: isSubmitting ? null : notifier.cancelSession,
+                  onPressed:
+                      widget.isSubmitting ? null : notifier.cancelSession,
                   child: const Text('Siparişi Temizle'),
                 ),
               ),
@@ -613,10 +666,10 @@ class _OrderPanel extends ConsumerWidget {
               Expanded(
                 flex: 2,
                 child: ElevatedButton(
-                  onPressed: isSubmitting || session.lines.isEmpty
+                  onPressed: widget.isSubmitting || session.lines.isEmpty
                       ? null
-                      : () => notifier.submit(restaurantId: restaurantId),
-                  child: isSubmitting
+                      : () => notifier.submit(restaurantId: widget.restaurantId),
+                  child: widget.isSubmitting
                       ? const SizedBox(
                           width: 20,
                           height: 20,
@@ -634,6 +687,66 @@ class _OrderPanel extends ConsumerWidget {
       ],
     );
   }
+
+  /// Reads (never computes) the already-frozen discount amount for
+  /// [orderLineDraftId], if any — all financial math happens in
+  /// `SetPosDiscount`, never here.
+  String? _activeLineDiscountLabel(PosOrderSession session, String orderLineDraftId) {
+    for (final discount in session.discounts) {
+      if (discount.scope == DiscountScope.line &&
+          discount.targetOrderLineId == orderLineDraftId) {
+        return '${discount.discountName} indirim: -${discount.discountAmount}';
+      }
+    }
+    return null;
+  }
+}
+
+class _QuickDiscountBar extends StatelessWidget {
+  const _QuickDiscountBar({
+    required this.enabled,
+    required this.hasActiveDiscount,
+    required this.onPresetTap,
+    required this.onClearTap,
+  });
+
+  final bool enabled;
+  final bool hasActiveDiscount;
+  final ValueChanged<DiscountPreset> onPresetTap;
+  final VoidCallback onClearTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          enabled
+              ? 'Hızlı indirim (seçili ürüne uygulanır)'
+              : 'Hızlı indirim uygulamak için önce bir ürün seçin',
+          style: AppTypography.bodySmall.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Wrap(
+          spacing: AppSpacing.xs,
+          children: [
+            for (final preset in DiscountPresetSeedData.all)
+              OutlinedButton(
+                onPressed: enabled ? () => onPresetTap(preset) : null,
+                child: Text(preset.name),
+              ),
+            if (hasActiveDiscount)
+              TextButton(
+                onPressed: enabled ? onClearTap : null,
+                child: const Text('İndirimi Kaldır'),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 class _CartLineTile extends StatelessWidget {
@@ -641,6 +754,9 @@ class _CartLineTile extends StatelessWidget {
     required this.name,
     required this.quantity,
     required this.lineTotal,
+    required this.isSelected,
+    required this.discountLabel,
+    required this.onTap,
     required this.onIncrement,
     required this.onDecrement,
     required this.onRemove,
@@ -649,47 +765,62 @@ class _CartLineTile extends StatelessWidget {
   final String name;
   final int quantity;
   final double lineTotal;
+  final bool isSelected;
+  final String? discountLabel;
+  final VoidCallback onTap;
   final VoidCallback onIncrement;
   final VoidCallback? onDecrement;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
-    return AppCard(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(name, style: AppTypography.bodyLarge),
-                Text(
-                  '${lineTotal.toStringAsFixed(2)} TL',
-                  style: AppTypography.bodySmall.copyWith(
-                    color: AppColors.textSecondary,
+    return InkWell(
+      borderRadius: AppRadius.kMedium,
+      onTap: onTap,
+      child: AppCard(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        borderColor: isSelected ? AppColors.primary : null,
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name, style: AppTypography.bodyLarge),
+                  Text(
+                    '${lineTotal.toStringAsFixed(2)} TL',
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
-                ),
-              ],
+                  if (discountLabel != null)
+                    Text(
+                      discountLabel!,
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.success,
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.remove_circle_outline),
-            onPressed: onDecrement,
-          ),
-          Text('$quantity', style: AppTypography.bodyLarge),
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline),
-            onPressed: onIncrement,
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline, color: AppColors.error),
-            onPressed: onRemove,
-          ),
-        ],
+            IconButton(
+              icon: const Icon(Icons.remove_circle_outline),
+              onPressed: onDecrement,
+            ),
+            Text('$quantity', style: AppTypography.bodyLarge),
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline),
+              onPressed: onIncrement,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: AppColors.error),
+              onPressed: onRemove,
+            ),
+          ],
+        ),
       ),
     );
   }

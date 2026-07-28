@@ -208,4 +208,50 @@ void main() {
       expect(button.onPressed, isNotNull);
     });
   });
+
+  group('PosCashierScreen — quick product discount', () {
+    testWidgets('preset buttons are disabled until a line is selected', (
+      tester,
+    ) async {
+      await pumpCashier(tester);
+      await tapProduct(tester, 'Mexifit Bowl');
+
+      expect(
+        find.text('Hızlı indirim uygulamak için önce bir ürün seçin'),
+        findsOneWidget,
+      );
+      final preset = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, '%10'),
+      );
+      expect(preset.onPressed, isNull);
+    });
+
+    testWidgets('selecting a line enables the presets and applying one shows the discount', (
+      tester,
+    ) async {
+      await pumpCashier(tester);
+      await tapProduct(tester, 'Mexifit Bowl');
+
+      // The cart line tile (not the product-grid tile) is the InkWell
+      // ancestor of its quantity-decrement icon — a distinguishing marker
+      // since "Mexifit Bowl" text now also appears in the product grid.
+      final cartLineInkWell = find.ancestor(
+        of: find.byIcon(Icons.remove_circle_outline),
+        matching: find.byType(InkWell),
+      );
+      await tester.tap(cartLineInkWell.first);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Hızlı indirim (seçili ürüne uygulanır)'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.widgetWithText(OutlinedButton, '%10'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('%10 indirim'), findsOneWidget);
+      expect(find.text('İndirimi Kaldır'), findsOneWidget);
+    });
+  });
 }

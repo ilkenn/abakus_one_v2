@@ -1,8 +1,10 @@
 import 'package:abakus_one_v2/core/utils/clock_provider.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
+import 'package:abakus_one_v2/features/orders/domain/discounts/discount.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/pos/application/errors/pos_application_error.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_order_repository.dart';
+import 'package:abakus_one_v2/features/pos/domain/models/discount_preset_seed_data.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_order_session_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -180,6 +182,114 @@ void main() {
       final recovered = container.read(posOrderSessionProvider);
       expect(recovered.status, PosOrderSessionStatus.submitted);
       expect(recovered.submittedOrder, isNotNull);
+    });
+  });
+
+  group('PosOrderSessionController — id-based line operations', () {
+    test('updateLine changes the quantity of the line with the given draft id', () async {
+      startSession(container);
+      final notifier = container.read(posOrderSessionProvider.notifier);
+      await notifier.addProduct(product: _simpleProduct);
+      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+
+      await notifier.updateLine(orderLineDraftId: draftId, quantity: 3);
+
+      final state = container.read(posOrderSessionProvider);
+      expect(state.status, PosOrderSessionStatus.editing);
+      expect(state.session!.lines.single.item.quantity, 3);
+    });
+
+    test('removeLine removes the line with the given draft id', () async {
+      startSession(container);
+      final notifier = container.read(posOrderSessionProvider.notifier);
+      await notifier.addProduct(product: _simpleProduct);
+      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+
+      await notifier.removeLine(draftId);
+
+      final state = container.read(posOrderSessionProvider);
+      expect(state.session!.lines, isEmpty);
+    });
+
+    test('an unknown draft id surfaces a validation failure, session preserved', () async {
+      startSession(container);
+      final notifier = container.read(posOrderSessionProvider.notifier);
+      await notifier.addProduct(product: _simpleProduct);
+
+      await notifier.removeLine('nonexistent-draft-id');
+
+      final state = container.read(posOrderSessionProvider);
+      expect(state.status, PosOrderSessionStatus.failure);
+      expect(state.error, isA<PosValidationError>());
+      expect(state.session!.lines, hasLength(1));
+    });
+  });
+
+  group('PosOrderSessionController — setDiscount', () {
+    test('sets a line-scoped discount targeting a specific line', () async {
+      startSession(container);
+      final notifier = container.read(posOrderSessionProvider.notifier);
+      await notifier.addProduct(product: _simpleProduct);
+      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+
+      await notifier.setDiscount(
+        scope: DiscountScope.line,
+        targetOrderLineId: draftId,
+        preset: DiscountPresetSeedData.tenPercent,
+        appliedByStaffId: 'staff-1',
+      );
+
+      final state = container.read(posOrderSessionProvider);
+      expect(state.status, PosOrderSessionStatus.editing);
+      expect(state.session!.discounts, hasLength(1));
+      expect(state.session!.discounts.single.targetOrderLineId, draftId);
+    });
+
+    test('setting a new discount on the same line replaces the previous one', () async {
+      startSession(container);
+      final notifier = container.read(posOrderSessionProvider.notifier);
+      await notifier.addProduct(product: _simpleProduct);
+      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+
+      await notifier.setDiscount(
+        scope: DiscountScope.line,
+        targetOrderLineId: draftId,
+        preset: DiscountPresetSeedData.fivePercent,
+        appliedByStaffId: 'staff-1',
+      );
+      await notifier.setDiscount(
+        scope: DiscountScope.line,
+        targetOrderLineId: draftId,
+        preset: DiscountPresetSeedData.twentyPercent,
+        appliedByStaffId: 'staff-1',
+      );
+
+      final state = container.read(posOrderSessionProvider);
+      expect(state.session!.discounts, hasLength(1));
+      expect(state.session!.discounts.single.percentageBasisPoints, 2000);
+    });
+
+    test('setDiscount with preset: null clears the active discount', () async {
+      startSession(container);
+      final notifier = container.read(posOrderSessionProvider.notifier);
+      await notifier.addProduct(product: _simpleProduct);
+      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+      await notifier.setDiscount(
+        scope: DiscountScope.line,
+        targetOrderLineId: draftId,
+        preset: DiscountPresetSeedData.tenPercent,
+        appliedByStaffId: 'staff-1',
+      );
+
+      await notifier.setDiscount(
+        scope: DiscountScope.line,
+        targetOrderLineId: draftId,
+        preset: null,
+        appliedByStaffId: 'staff-1',
+      );
+
+      final state = container.read(posOrderSessionProvider);
+      expect(state.session!.discounts, isEmpty);
     });
   });
 

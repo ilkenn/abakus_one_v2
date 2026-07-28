@@ -10,16 +10,18 @@ import '../../../orders/domain/models/order_channel.dart';
 import '../../../orders/presentation/providers/order_identity_provider.dart';
 import '../../application/errors/pos_application_error.dart';
 import '../../application/use_cases/add_product_to_pos_order.dart';
-import '../../application/use_cases/apply_pos_discount.dart';
 import '../../application/use_cases/calculate_pos_order_totals.dart';
 import '../../application/use_cases/cancel_pos_order_session.dart';
 import '../../application/use_cases/remove_pos_order_line.dart';
+import '../../application/use_cases/set_pos_discount.dart';
 import '../../application/use_cases/start_pos_order.dart';
 import '../../application/use_cases/submit_pos_order.dart';
 import '../../application/use_cases/update_pos_order_line.dart';
 import '../../application/use_cases/update_pos_order_notes.dart';
+import '../../domain/models/discount_preset.dart';
 import '../../domain/models/pos_order_session.dart';
 import 'pos_dependencies_provider.dart';
+import 'pos_order_line_draft_id_generator_provider.dart';
 
 enum PosOrderSessionStatus { idle, editing, submitting, submitted, failure }
 
@@ -114,7 +116,10 @@ class PosOrderSessionController extends Notifier<PosOrderSessionState> {
     final session = state.session;
     if (session == null || _isBusy) return;
     await _applyMutation(
-      () => AddProductToPosOrder(clock: ref.read(clockProvider)).call(
+      () => AddProductToPosOrder(
+        clock: ref.read(clockProvider),
+        draftIdGenerator: ref.read(posOrderLineDraftIdGeneratorProvider),
+      ).call(
         session: session,
         product: product,
         selectedModifiers: selectedModifiers,
@@ -125,7 +130,7 @@ class PosOrderSessionController extends Notifier<PosOrderSessionState> {
   }
 
   Future<void> updateLine({
-    required int lineIndex,
+    required String orderLineDraftId,
     int? quantity,
     String? note,
   }) async {
@@ -134,31 +139,44 @@ class PosOrderSessionController extends Notifier<PosOrderSessionState> {
     await _applyMutation(
       () => UpdatePosOrderLine(clock: ref.read(clockProvider)).call(
         session: session,
-        lineIndex: lineIndex,
+        orderLineDraftId: orderLineDraftId,
         quantity: quantity,
         note: note,
       ),
     );
   }
 
-  Future<void> removeLine(int lineIndex) async {
+  Future<void> removeLine(String orderLineDraftId) async {
     final session = state.session;
     if (session == null || _isBusy) return;
     await _applyMutation(
       () => RemovePosOrderLine(clock: ref.read(clockProvider)).call(
         session: session,
-        lineIndex: lineIndex,
+        orderLineDraftId: orderLineDraftId,
       ),
     );
   }
 
-  Future<void> applyDiscount(Discount? discount) async {
+  /// Sets (or, with `preset: null`, clears) the active discount for one
+  /// target — a specific line ([DiscountScope.line], [targetOrderLineId]
+  /// required) or the whole order ([DiscountScope.order],
+  /// [targetOrderLineId] must be omitted). [appliedByStaffId] is always
+  /// required — never generated or guessed here.
+  Future<void> setDiscount({
+    required DiscountScope scope,
+    String? targetOrderLineId,
+    required DiscountPreset? preset,
+    required String appliedByStaffId,
+  }) async {
     final session = state.session;
     if (session == null || _isBusy) return;
     await _applyMutation(
-      () => ApplyPosDiscount(clock: ref.read(clockProvider)).call(
+      () => SetPosDiscount(clock: ref.read(clockProvider)).call(
         session: session,
-        discount: discount,
+        scope: scope,
+        targetOrderLineId: targetOrderLineId,
+        preset: preset,
+        appliedByStaffId: appliedByStaffId,
       ),
     );
   }
