@@ -524,3 +524,102 @@ final class CurrencyNotAcceptedViolation extends BusinessRuleViolation {
   String get description =>
       'Currency $currencyCode is not currently accepted by the business';
 }
+
+/// A `Check`/`TableSession` lifecycle transition that the relevant
+/// transitions table does not permit was attempted (Phase 3 Sprint 3D).
+final class InvalidCheckStatusTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidCheckStatusTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid check status transition: $fromStatusName -> $toStatusName';
+}
+
+/// A `TableSession` was asked to close while at least one of its `Check`s
+/// is not yet resolved (submitted-and-closed, or cancelled).
+final class TableSessionNotReadyToCloseViolation extends BusinessRuleViolation {
+  const TableSessionNotReadyToCloseViolation({
+    required this.unresolvedCheckCount,
+  });
+
+  final int unresolvedCheckCount;
+
+  @override
+  String get description =>
+      'Table session cannot close: $unresolvedCheckCount check(s) still '
+      'unresolved';
+}
+
+/// A caller referenced a `Check`/`FloorPlan`/`RestaurantTable`/
+/// `ChannelOperationPolicy`/`PackagePreparation`/`KitchenTicket` id that
+/// does not exist in the relevant repository.
+final class UnknownRestaurantOperationsEntityViolation
+    extends BusinessRuleViolation {
+  const UnknownRestaurantOperationsEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// An operation that requires a `Check` to still be open (editable,
+/// pre-submission) was attempted against one that has already been
+/// submitted or cancelled.
+final class CheckNotOpenViolation extends BusinessRuleViolation {
+  const CheckNotOpenViolation({required this.checkId});
+
+  final String checkId;
+
+  @override
+  String get description => 'Check "$checkId" is not open';
+}
+
+/// A `PackagePreparation` lifecycle transition that
+/// `PackagePreparationTransitions.canTransition` does not permit was
+/// attempted.
+final class InvalidPackagePreparationTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidPackagePreparationTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid package preparation transition: $fromStatusName -> '
+      '$toStatusName';
+}
+
+/// A `ChannelOperationalState` transition that
+/// `ChannelOperationalStateTransitions.canTransition` does not permit was
+/// attempted.
+final class InvalidChannelOperationalStateTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidChannelOperationalStateTransitionViolation({
+    required this.fromStateName,
+    required this.toStateName,
+  });
+
+  final String fromStateName;
+  final String toStateName;
+
+  @override
+  String get description =>
+      'Invalid channel operational state transition: $fromStateName -> '
+      '$toStateName';
+}

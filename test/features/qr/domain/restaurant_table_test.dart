@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/qr/domain/models/restaurant_table.dart';
+import 'package:abakus_one_v2/features/restaurant/domain/models/table_shape.dart';
 
 RestaurantTable buildTable({
   TableStatus status = TableStatus.available,
@@ -8,6 +9,7 @@ RestaurantTable buildTable({
   return RestaurantTable(
     id: 'table_1',
     branchId: 'branch_1',
+    floorPlanId: 'floor_1',
     displayName: 'Masa 1',
     areaName: 'Teras',
     capacity: 4,
@@ -52,5 +54,35 @@ void main() {
     expect(updated.status, TableStatus.cleaning);
     expect(updated.id, table.id);
     expect(updated.displayName, table.displayName);
+  });
+
+  group('floor plan layout fields (Phase 3 Sprint 3D)', () {
+    test('default to an unplaced square when not supplied', () {
+      final table = buildTable();
+
+      expect(table.positionX, 0);
+      expect(table.positionY, 0);
+      expect(table.shape, TableShape.square);
+      expect(table.rotationDegrees, 0);
+      expect(table.width, 80);
+      expect(table.height, 80);
+    });
+
+    test('copyWith updates position/shape/rotation independently', () {
+      final table = buildTable();
+
+      final placed = table.copyWith(
+        positionX: 120,
+        positionY: 40,
+        shape: TableShape.round,
+        rotationDegrees: 45,
+      );
+
+      expect(placed.positionX, 120);
+      expect(placed.positionY, 40);
+      expect(placed.shape, TableShape.round);
+      expect(placed.rotationDegrees, 45);
+      expect(placed.width, table.width);
+    });
   });
 }
