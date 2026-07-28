@@ -56,4 +56,31 @@ void main() {
       }
     });
   });
+
+  group('PaymentService.executeRefund', () {
+    test('routes to the matching provider adapter (not configured today)', () async {
+      final service = PaymentService();
+
+      final result = await service.executeRefund(
+        method: PaymentMethodSnapshot.capture(PaymentMethodSeedData.pluxee),
+        transactionId: 'txn-1',
+        amount: Money.fromWhole(50, Currency.tryLira),
+      );
+
+      expect(result.status, PaymentStatus.notConfigured);
+    });
+
+    test('fails cleanly for a manual method with no providerId', () async {
+      final service = PaymentService();
+
+      final result = await service.executeRefund(
+        method: PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash),
+        transactionId: 'txn-1',
+        amount: Money.fromWhole(50, Currency.tryLira),
+      );
+
+      expect(result.status, PaymentStatus.failed);
+      expect(result.errorMessage, contains('manuel'));
+    });
+  });
 }

@@ -8,7 +8,9 @@ import '../../data/adapters/payment_provider_adapter.dart';
 import '../../data/adapters/pluxee_adapter.dart';
 import '../../data/adapters/setcard_adapter.dart';
 import '../../data/adapters/stripe_adapter.dart';
+import '../../../../shared/models/money.dart';
 import '../../domain/models/payment_enums.dart';
+import '../../domain/models/payment_method_snapshot.dart';
 import '../../domain/models/payment_provider_id.dart';
 import '../../domain/models/payment_request.dart';
 import '../../domain/models/payment_result.dart';
@@ -59,5 +61,36 @@ class PaymentService {
       );
     }
     return adapter.processPayment(request);
+  }
+
+  /// Routes a refund/reversal request to the adapter matching
+  /// [method]'s provider — the counterpart to [executePayment] for
+  /// `VoidPayment`. Same providerless-method handling: never called for a
+  /// manual method by any caller in this codebase, but fails cleanly
+  /// (not a thrown exception) if it ever is.
+  Future<PaymentResult> executeRefund({
+    required PaymentMethodSnapshot method,
+    required String transactionId,
+    required Money amount,
+  }) async {
+    final providerId = method.providerId;
+    if (providerId == null) {
+      return PaymentResult(
+        transactionId: '',
+        status: PaymentStatus.failed,
+        errorMessage:
+            '${method.displayName} manuel kaydedilen bir yöntemdir, '
+            'bir ödeme sağlayıcısına yönlendirilemez.',
+      );
+    }
+    final adapter = _adapters[providerId];
+    if (adapter == null) {
+      return PaymentResult(
+        transactionId: '',
+        status: PaymentStatus.failed,
+        errorMessage: '${providerId.name} için bir ödeme adaptörü bulunamadı.',
+      );
+    }
+    return adapter.refundPayment(transactionId, amount);
   }
 }
