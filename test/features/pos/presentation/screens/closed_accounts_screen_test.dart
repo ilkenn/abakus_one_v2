@@ -24,7 +24,9 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [orderClosureRepositoryProvider.overrideWithValue(repository)],
+        overrides: [
+          orderClosureRepositoryProvider.overrideWithValue(repository)
+        ],
         child: MaterialApp(
           home: ClosedAccountsScreen(
             branchId: 'branch-1',
@@ -38,10 +40,12 @@ void main() {
     return repository;
   }
 
-  testWidgets('shows a denial message when authorization is not granted', (tester) async {
+  testWidgets('shows a denial message when authorization is not granted',
+      (tester) async {
     await pumpScreen(
       tester,
-      authorization: const AuthorizationResult(granted: false, reason: 'Yönetici değilsiniz'),
+      authorization: const AuthorizationResult(
+          granted: false, reason: 'Yönetici değilsiniz'),
     );
 
     expect(find.text('Yönetici değilsiniz'), findsOneWidget);
@@ -68,7 +72,8 @@ void main() {
   });
 
   testWidgets('an empty repository shows the empty-state view', (tester) async {
-    await pumpScreen(tester, authorization: const AuthorizationResult(granted: true));
+    await pumpScreen(tester,
+        authorization: const AuthorizationResult(granted: true));
 
     expect(find.text('Kapatılmış hesap bulunamadı'), findsOneWidget);
   });

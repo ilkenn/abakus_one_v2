@@ -84,7 +84,8 @@ class DiscountSnapshot {
     required this.appliedAt,
   });
 
-  static void _validateScopeTarget(DiscountScope scope, String? targetOrderLineId) {
+  static void _validateScopeTarget(
+      DiscountScope scope, String? targetOrderLineId) {
     if (scope == DiscountScope.line && targetOrderLineId == null) {
       throw const LineDiscountMissingTargetViolation();
     }

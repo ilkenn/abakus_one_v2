@@ -36,13 +36,16 @@ void main() {
           PaymentRequest(
             orderId: 'order-1',
             amount: Money.fromWhole(100, Currency.tryLira),
-            method: PaymentMethodSnapshot.capture(PaymentMethodSeedData.creditCard),
+            method:
+                PaymentMethodSnapshot.capture(PaymentMethodSeedData.creditCard),
           ),
         );
         expect(result.status, PaymentStatus.notConfigured);
       });
 
-      test('${entry.key}: refundPayment accepts Money and returns notConfigured', () async {
+      test(
+          '${entry.key}: refundPayment accepts Money and returns notConfigured',
+          () async {
         final result = await entry.value.refundPayment(
           'txn-1',
           Money.fromWhole(50, Currency.tryLira),

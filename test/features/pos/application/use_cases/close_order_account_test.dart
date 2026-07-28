@@ -13,7 +13,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../test_support/fake_clock.dart';
 
-OrderClosure _paymentInProgressClosure({int reopenCount = 0, int revision = 2}) {
+OrderClosure _paymentInProgressClosure(
+    {int reopenCount = 0, int revision = 2}) {
   return OrderClosure(
     closureId: 'c1',
     orderId: OrderId('order-1'),
@@ -41,7 +42,8 @@ void main() {
       final auditRepository = InMemoryClosureAuditEntryRepository();
       final closure = _paymentInProgressClosure();
 
-      final updated = await CloseOrderAccount(clock: clock, auditRepository: auditRepository)(
+      final updated = await CloseOrderAccount(
+          clock: clock, auditRepository: auditRepository)(
         closure: closure,
         paymentSession: _completedSession(),
         expectedRevision: closure.revision,
@@ -61,7 +63,8 @@ void main() {
       final auditRepository = InMemoryClosureAuditEntryRepository();
       final closure = _paymentInProgressClosure(reopenCount: 1);
 
-      final updated = await CloseOrderAccount(clock: clock, auditRepository: auditRepository)(
+      final updated = await CloseOrderAccount(
+          clock: clock, auditRepository: auditRepository)(
         closure: closure,
         paymentSession: _completedSession(),
         expectedRevision: closure.revision,
@@ -73,7 +76,8 @@ void main() {
       expect(events.single.type, ClosureAuditEventType.orderReclosed);
     });
 
-    test('rejects closing while the payment session is not completed', () async {
+    test('rejects closing while the payment session is not completed',
+        () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final auditRepository = InMemoryClosureAuditEntryRepository();
       final closure = _paymentInProgressClosure();

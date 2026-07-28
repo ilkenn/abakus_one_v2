@@ -25,6 +25,7 @@ class LocalAssetPaymentMethodIconSource implements PaymentMethodIconSource {
   ImageProvider resolve(String iconAssetPath) => AssetImage(iconAssetPath);
 }
 
-final paymentMethodIconSourceProvider = Provider<PaymentMethodIconSource>((ref) {
+final paymentMethodIconSourceProvider =
+    Provider<PaymentMethodIconSource>((ref) {
   return const LocalAssetPaymentMethodIconSource();
 });

@@ -218,13 +218,16 @@ void main() {
   });
 
   group('Order — order-level notes (Phase 3 Sprint 3B)', () {
-    test('customerNote and kitchenNote default to empty, preserving existing callers', () {
+    test(
+        'customerNote and kitchenNote default to empty, preserving existing callers',
+        () {
       final order = _buildOrder();
       expect(order.customerNote, '');
       expect(order.kitchenNote, '');
     });
 
-    test('customerNote and kitchenNote are distinct from any line-level note', () {
+    test('customerNote and kitchenNote are distinct from any line-level note',
+        () {
       final line = OrderLine.create(
         productId: 'p1',
         productName: 'Bowl',
@@ -257,7 +260,8 @@ void main() {
       expect(order.lines.single.kitchenNote, 'Acil');
     });
 
-    test('copyWith preserves notes when not given, updates them when given', () {
+    test('copyWith preserves notes when not given, updates them when given',
+        () {
       final order = _buildOrder().copyWith(
         customerNote: 'Original customer note',
         kitchenNote: 'Original kitchen note',

@@ -116,9 +116,10 @@ class _PosCashierScreenState extends ConsumerState<PosCashierScreen> {
     final state = ref.watch(posOrderSessionProvider);
 
     ref.listen<PosOrderSessionState>(posOrderSessionProvider, (previous, next) {
-      final justSubmitted = previous?.status != PosOrderSessionStatus.submitted &&
-          next.status == PosOrderSessionStatus.submitted &&
-          next.submittedOrder != null;
+      final justSubmitted =
+          previous?.status != PosOrderSessionStatus.submitted &&
+              next.status == PosOrderSessionStatus.submitted &&
+              next.submittedOrder != null;
       if (justSubmitted) {
         _openPaymentScreen(next.submittedOrder!);
       }
@@ -174,7 +175,8 @@ class _PosCashierScreenState extends ConsumerState<PosCashierScreen> {
 }
 
 class _SubmittedOrderView extends StatelessWidget {
-  const _SubmittedOrderView({required this.order, required this.onStartNewOrder});
+  const _SubmittedOrderView(
+      {required this.order, required this.onStartNewOrder});
 
   final Order order;
   final VoidCallback onStartNewOrder;
@@ -351,7 +353,8 @@ class _ProductPanelState extends ConsumerState<_ProductPanel> {
                   itemCount: visibleProducts.length,
                   itemBuilder: (context, index) {
                     final product = visibleProducts[index];
-                    return _ProductTile(product: product, session: widget.session);
+                    return _ProductTile(
+                        product: product, session: widget.session);
                   },
                 ),
         ),
@@ -396,21 +399,21 @@ class _ProductTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return InkWell(
       borderRadius: AppRadius.kMedium,
-      onTap: !product.isAvailable
-          ? null
-          : () => _handleTap(context, ref),
+      onTap: !product.isAvailable ? null : () => _handleTap(context, ref),
       child: AppCard(
         padding: const EdgeInsets.all(AppSpacing.sm),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: ProductImage(imageKey: product.imageKey, width: double.infinity),
+              child: ProductImage(
+                  imageKey: product.imageKey, width: double.infinity),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
               product.name,
-              style: AppTypography.bodyMedium.copyWith(fontWeight: FontWeight.bold),
+              style: AppTypography.bodyMedium
+                  .copyWith(fontWeight: FontWeight.bold),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -498,7 +501,8 @@ class _ModifierSelectionSheetState extends State<_ModifierSelectionSheet> {
                         const SizedBox(height: AppSpacing.xs),
                         for (final option in group.options)
                           Padding(
-                            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                            padding:
+                                const EdgeInsets.only(bottom: AppSpacing.xs),
                             child: OptionSelectionCard(
                               name: option.name,
                               extraPrice: option.extraPrice,
@@ -624,7 +628,8 @@ class _OrderPanelState extends ConsumerState<_OrderPanel> {
                         quantity: draft.item.quantity,
                         lineTotal: draft.item.totalRowPrice,
                         isSelected: draft.id == _selectedLineId,
-                        discountLabel: _activeLineDiscountLabel(session, draft.id),
+                        discountLabel:
+                            _activeLineDiscountLabel(session, draft.id),
                         onTap: () => setState(() {
                           _selectedLineId =
                               _selectedLineId == draft.id ? null : draft.id;
@@ -705,7 +710,8 @@ class _OrderPanelState extends ConsumerState<_OrderPanel> {
                 child: ElevatedButton(
                   onPressed: widget.isSubmitting || session.lines.isEmpty
                       ? null
-                      : () => notifier.submit(restaurantId: widget.restaurantId),
+                      : () =>
+                          notifier.submit(restaurantId: widget.restaurantId),
                   child: widget.isSubmitting
                       ? const SizedBox(
                           width: 20,
@@ -728,7 +734,8 @@ class _OrderPanelState extends ConsumerState<_OrderPanel> {
   /// Reads (never computes) the already-frozen discount amount for
   /// [orderLineDraftId], if any — all financial math happens in
   /// `SetPosDiscount`, never here.
-  String? _activeLineDiscountLabel(PosOrderSession session, String orderLineDraftId) {
+  String? _activeLineDiscountLabel(
+      PosOrderSession session, String orderLineDraftId) {
     for (final discount in session.discounts) {
       if (discount.scope == DiscountScope.line &&
           discount.targetOrderLineId == orderLineDraftId) {
@@ -879,7 +886,8 @@ class _PriceSummary extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _SummaryRow(label: 'Ara Toplam', amount: pricing.grossSubtotal),
-          _SummaryRow(label: 'İndirim', amount: pricing.discount, isNegative: true),
+          _SummaryRow(
+              label: 'İndirim', amount: pricing.discount, isNegative: true),
           _SummaryRow(label: 'Hizmet Bedeli', amount: pricing.serviceFee),
           _SummaryRow(label: 'Bahşiş', amount: pricing.tip),
           _SummaryRow(label: 'KDV', amount: pricing.vatAmount),

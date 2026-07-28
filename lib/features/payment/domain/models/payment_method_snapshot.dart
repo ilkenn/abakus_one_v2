@@ -95,9 +95,11 @@ class PaymentMethodSnapshot {
             other.brandColorValue == brandColorValue &&
             other.reportingCategory == reportingCategory &&
             other.providerId == providerId &&
-            other.supportsSplitPaymentAtCapture == supportsSplitPaymentAtCapture &&
+            other.supportsSplitPaymentAtCapture ==
+                supportsSplitPaymentAtCapture &&
             other.supportsRefundAtCapture == supportsRefundAtCapture &&
-            other.requiresReferenceNumberAtCapture == requiresReferenceNumberAtCapture &&
+            other.requiresReferenceNumberAtCapture ==
+                requiresReferenceNumberAtCapture &&
             other.requiresApprovalAtCapture == requiresApprovalAtCapture &&
             other.transactionReference == transactionReference &&
             other.authorizationCode == authorizationCode &&

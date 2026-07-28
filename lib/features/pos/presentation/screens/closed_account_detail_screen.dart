@@ -48,10 +48,12 @@ class ClosedAccountDetailScreen extends ConsumerStatefulWidget {
   final String viewerStaffId;
 
   @override
-  ConsumerState<ClosedAccountDetailScreen> createState() => _ClosedAccountDetailScreenState();
+  ConsumerState<ClosedAccountDetailScreen> createState() =>
+      _ClosedAccountDetailScreenState();
 }
 
-class _ClosedAccountDetailScreenState extends ConsumerState<ClosedAccountDetailScreen> {
+class _ClosedAccountDetailScreenState
+    extends ConsumerState<ClosedAccountDetailScreen> {
   AuthorizationResult? _authorization;
   int _duplicateReceiptRequestCount = 0;
 
@@ -92,7 +94,9 @@ class _ClosedAccountDetailScreenState extends ConsumerState<ClosedAccountDetailS
 
   Future<void> _requestDuplicateReceipt() async {
     _duplicateReceiptRequestCount += 1;
-    final result = await ref.read(closedAccountDetailProvider.notifier).requestDuplicateReceipt(
+    final result = await ref
+        .read(closedAccountDetailProvider.notifier)
+        .requestDuplicateReceipt(
           order: widget.order,
           requestedByStaffId: widget.viewerStaffId,
           requestId: 'req-$_duplicateReceiptRequestCount',
@@ -121,7 +125,8 @@ class _ClosedAccountDetailScreenState extends ConsumerState<ClosedAccountDetailS
             ? const LoadingView(message: 'Yetki kontrol ediliyor...')
             : !authorization.granted
                 ? ErrorView(
-                    message: authorization.reason ?? 'Bu ekranı görüntüleme yetkiniz yok.',
+                    message: authorization.reason ??
+                        'Bu ekranı görüntüleme yetkiniz yok.',
                   )
                 : state.closure == null
                     ? const LoadingView()
@@ -153,21 +158,25 @@ class _ClosedAccountDetailScreenState extends ConsumerState<ClosedAccountDetailS
                             const SizedBox(height: AppSpacing.md),
                             if (state.error != null)
                               Padding(
-                                padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                                padding: const EdgeInsets.only(
+                                    bottom: AppSpacing.md),
                                 child: ErrorView(message: state.error!),
                               ),
                             Row(
                               children: [
                                 Expanded(
                                   child: OutlinedButton(
-                                    onPressed: state.isBusy ? null : _requestReopen,
+                                    onPressed:
+                                        state.isBusy ? null : _requestReopen,
                                     child: const Text('Yeniden Aç'),
                                   ),
                                 ),
                                 const SizedBox(width: AppSpacing.sm),
                                 Expanded(
                                   child: OutlinedButton(
-                                    onPressed: state.isBusy ? null : _requestDuplicateReceipt,
+                                    onPressed: state.isBusy
+                                        ? null
+                                        : _requestDuplicateReceipt,
                                     child: const Text('Fiş Tekrar Yazdır'),
                                   ),
                                 ),
@@ -178,13 +187,16 @@ class _ClosedAccountDetailScreenState extends ConsumerState<ClosedAccountDetailS
                             const SizedBox(height: AppSpacing.sm),
                             for (final entry in state.auditEntries)
                               Padding(
-                                padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                                padding: const EdgeInsets.only(
+                                    bottom: AppSpacing.xs),
                                 child: AppCard(
                                   padding: const EdgeInsets.all(AppSpacing.sm),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Text(entry.type.name, style: AppTypography.bodyMedium),
+                                      Text(entry.type.name,
+                                          style: AppTypography.bodyMedium),
                                       Text(
                                         entry.description,
                                         style: AppTypography.bodySmall.copyWith(

@@ -61,11 +61,13 @@ abstract final class PaymentSessionStatusTransitions {
     },
   };
 
-  static bool canTransition(PaymentSessionStatus from, PaymentSessionStatus to) {
+  static bool canTransition(
+      PaymentSessionStatus from, PaymentSessionStatus to) {
     return _allowed[from]?.contains(to) ?? false;
   }
 
-  static Set<PaymentSessionStatus> allowedNextStates(PaymentSessionStatus from) {
+  static Set<PaymentSessionStatus> allowedNextStates(
+      PaymentSessionStatus from) {
     return _allowed[from] ?? const {};
   }
 }

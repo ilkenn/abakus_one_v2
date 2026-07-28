@@ -14,7 +14,8 @@ void main() {
       final session = buildTestSession().copyWith(
         lines: [
           buildTestLineDraft(
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 2),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 2),
           ),
         ],
       );
@@ -29,7 +30,8 @@ void main() {
       final session = buildTestSession().copyWith(
         lines: [
           buildTestLineDraft(
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
         ],
         fees: Money.fromWhole(5, Currency.tryLira),
@@ -44,11 +46,14 @@ void main() {
       expect(pricing.tip, Money.fromWhole(15, Currency.tryLira));
     });
 
-    test('applies the active order-scoped discount snapshot against the gross subtotal', () {
+    test(
+        'applies the active order-scoped discount snapshot against the gross subtotal',
+        () {
       final session = buildTestSession().copyWith(
         lines: [
           buildTestLineDraft(
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
         ],
         discounts: [
@@ -73,11 +78,13 @@ void main() {
         lines: [
           buildTestLineDraft(
             id: 'line-1',
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
           buildTestLineDraft(
             id: 'line-2',
-            item: const CartItem(id: 'p2', name: 'Ayran', desc: '', price: 50.0, quantity: 1),
+            item: const CartItem(
+                id: 'p2', name: 'Ayran', desc: '', price: 50.0, quantity: 1),
           ),
         ],
         discounts: [
@@ -100,7 +107,9 @@ void main() {
       expect(pricing.grossSubtotal, Money.fromWhole(140, Currency.tryLira));
     });
 
-    test('never invents an OrderId/OrderNumber (pure preview, no CartToOrderMapper call)', () {
+    test(
+        'never invents an OrderId/OrderNumber (pure preview, no CartToOrderMapper call)',
+        () {
       // If this were implemented via CartToOrderMapper.map(), an empty
       // session would throw EmptyOrderViolation. It must not.
       final session = buildTestSession();

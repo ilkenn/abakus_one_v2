@@ -20,7 +20,8 @@ Order _buildOrder() {
     orderId: OrderId('order-1'),
     orderNumber: OrderNumber('A-001'),
     cartItems: const [
-      CartItem(id: 'p1', name: 'Mexifit Bowl', desc: '', price: 194.0, quantity: 1),
+      CartItem(
+          id: 'p1', name: 'Mexifit Bowl', desc: '', price: 194.0, quantity: 1),
     ],
     channel: OrderChannel.dineInStaff,
     branchId: 'branch-1',
@@ -44,7 +45,8 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          clockProvider.overrideWithValue(FakeClock(DateTime(2026, 7, 29, 12, 0))),
+          clockProvider
+              .overrideWithValue(FakeClock(DateTime(2026, 7, 29, 12, 0))),
           paymentSessionRepositoryProvider.overrideWithValue(repository),
         ],
         child: MaterialApp(
@@ -67,7 +69,9 @@ void main() {
   }
 
   group('PosPaymentScreen — layout', () {
-    testWidgets('phone width stacks the summary and collection panels vertically', (tester) async {
+    testWidgets(
+        'phone width stacks the summary and collection panels vertically',
+        (tester) async {
       await pumpPayment(tester, viewportSize: const Size(400, 900));
 
       expect(find.byType(VerticalDivider), findsNothing);
@@ -87,7 +91,9 @@ void main() {
   });
 
   group('PosPaymentScreen — amount highlight', () {
-    testWidgets('shows Toplam/Tahsil Edilen/Kalan and updates live after a split', (tester) async {
+    testWidgets(
+        'shows Toplam/Tahsil Edilen/Kalan and updates live after a split',
+        (tester) async {
       await pumpPayment(tester);
 
       expect(find.text('Toplam'), findsOneWidget);
@@ -114,7 +120,9 @@ void main() {
   });
 
   group('PosPaymentScreen — split payment to completion', () {
-    testWidgets('completing is disabled until fully settled, then enabled and succeeds', (tester) async {
+    testWidgets(
+        'completing is disabled until fully settled, then enabled and succeeds',
+        (tester) async {
       await pumpPayment(tester);
 
       final completeButton = tester.widget<ElevatedButton>(
@@ -131,14 +139,16 @@ void main() {
       );
       expect(enabledButton.onPressed, isNotNull);
 
-      await tapVisible(tester, find.widgetWithText(ElevatedButton, 'Ödemeyi Tamamla'));
+      await tapVisible(
+          tester, find.widgetWithText(ElevatedButton, 'Ödemeyi Tamamla'));
 
       expect(find.text('Ödeme Tamamlandı'), findsOneWidget);
     });
   });
 
   group('PosPaymentScreen — calculator', () {
-    testWidgets('never changes the amount field until Uygula is tapped', (tester) async {
+    testWidgets('never changes the amount field until Uygula is tapped',
+        (tester) async {
       await pumpPayment(tester);
 
       await tapVisible(tester, find.byIcon(Icons.calculate_outlined));
@@ -148,13 +158,15 @@ void main() {
       await tester.tap(find.widgetWithText(OutlinedButton, '0'));
       await tester.pumpAndSettle();
 
-      final amountFieldBeforeApply = tester.widget<TextField>(find.byType(TextField).first);
+      final amountFieldBeforeApply =
+          tester.widget<TextField>(find.byType(TextField).first);
       expect(amountFieldBeforeApply.controller!.text, isEmpty);
 
       await tester.tap(find.widgetWithText(ElevatedButton, 'Uygula'));
       await tester.pumpAndSettle();
 
-      final amountFieldAfterApply = tester.widget<TextField>(find.byType(TextField).first);
+      final amountFieldAfterApply =
+          tester.widget<TextField>(find.byType(TextField).first);
       expect(amountFieldAfterApply.controller!.text, '100.00');
     });
   });

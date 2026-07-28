@@ -49,10 +49,12 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          clockProvider.overrideWithValue(FakeClock(DateTime(2026, 7, 29, 12, 0))),
+          clockProvider
+              .overrideWithValue(FakeClock(DateTime(2026, 7, 29, 12, 0))),
           posOrderRepositoryProvider.overrideWithValue(repository),
           if (exchangeRateProvider != null)
-            exchangeRateProviderProvider.overrideWithValue(exchangeRateProvider),
+            exchangeRateProviderProvider
+                .overrideWithValue(exchangeRateProvider),
         ],
         child: const MaterialApp(
           home: PosCashierScreen(
@@ -93,7 +95,8 @@ void main() {
       expect(orderTop.dy, greaterThan(productsTop.dy));
     });
 
-    testWidgets('desktop width places the product and order panels side by side', (
+    testWidgets(
+        'desktop width places the product and order panels side by side', (
       tester,
     ) async {
       await pumpCashier(
@@ -125,7 +128,8 @@ void main() {
       },
     );
 
-    testWidgets('submitting an order opens the payment screen for the new order', (
+    testWidgets(
+        'submitting an order opens the payment screen for the new order', (
       tester,
     ) async {
       await pumpCashier(tester);
@@ -141,7 +145,8 @@ void main() {
       expect(repository.draftIds, isEmpty);
     });
 
-    testWidgets('navigating back from the payment screen shows the confirmation view', (
+    testWidgets(
+        'navigating back from the payment screen shows the confirmation view', (
       tester,
     ) async {
       await pumpCashier(tester);
@@ -211,7 +216,8 @@ void main() {
       expect(find.text('Döviz kuru şu anda kullanılamıyor'), findsNothing);
     });
 
-    testWidgets('submission remains allowed when exchange rates are unavailable', (
+    testWidgets(
+        'submission remains allowed when exchange rates are unavailable', (
       tester,
     ) async {
       await pumpCashier(tester);
@@ -242,7 +248,9 @@ void main() {
       expect(preset.onPressed, isNull);
     });
 
-    testWidgets('selecting a line enables the presets and applying one shows the discount', (
+    testWidgets(
+        'selecting a line enables the presets and applying one shows the discount',
+        (
       tester,
     ) async {
       await pumpCashier(tester);

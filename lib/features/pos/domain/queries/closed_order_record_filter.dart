@@ -24,7 +24,8 @@ class ClosedOrderRecordFilter {
 
   bool matches(OrderClosure closure) {
     final closedAt = closure.closedAt;
-    if (closedFrom != null && (closedAt == null || closedAt.isBefore(closedFrom!))) {
+    if (closedFrom != null &&
+        (closedAt == null || closedAt.isBefore(closedFrom!))) {
       return false;
     }
     if (closedTo != null && (closedAt == null || closedAt.isAfter(closedTo!))) {

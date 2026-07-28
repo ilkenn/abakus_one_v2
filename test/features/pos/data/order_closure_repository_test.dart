@@ -30,8 +30,10 @@ void main() {
 
     test('findByClosureId returns the highest-revision entry', () async {
       final repository = InMemoryOrderClosureRepository();
-      await repository.save(_closure(revision: 1, status: OrderClosureLifecycleStatus.open));
-      await repository.save(_closure(revision: 2, status: OrderClosureLifecycleStatus.closed));
+      await repository.save(
+          _closure(revision: 1, status: OrderClosureLifecycleStatus.open));
+      await repository.save(
+          _closure(revision: 2, status: OrderClosureLifecycleStatus.closed));
 
       final found = await repository.findByClosureId('c1');
 
@@ -39,10 +41,13 @@ void main() {
       expect(found.lifecycleStatus, OrderClosureLifecycleStatus.closed);
     });
 
-    test('findCurrentByOrderId returns the highest-revision entry for that order', () async {
+    test(
+        'findCurrentByOrderId returns the highest-revision entry for that order',
+        () async {
       final repository = InMemoryOrderClosureRepository();
       await repository.save(_closure(revision: 1));
-      await repository.save(_closure(revision: 2, status: OrderClosureLifecycleStatus.paymentInProgress));
+      await repository.save(_closure(
+          revision: 2, status: OrderClosureLifecycleStatus.paymentInProgress));
 
       final current = await repository.findCurrentByOrderId(OrderId('order-1'));
 
@@ -52,8 +57,10 @@ void main() {
     test('findHistoryByOrderId returns every revision, oldest first', () async {
       final repository = InMemoryOrderClosureRepository();
       await repository.save(_closure(revision: 1));
-      await repository.save(_closure(revision: 2, status: OrderClosureLifecycleStatus.paymentInProgress));
-      await repository.save(_closure(revision: 3, status: OrderClosureLifecycleStatus.closed));
+      await repository.save(_closure(
+          revision: 2, status: OrderClosureLifecycleStatus.paymentInProgress));
+      await repository.save(
+          _closure(revision: 3, status: OrderClosureLifecycleStatus.closed));
 
       final history = await repository.findHistoryByOrderId(OrderId('order-1'));
 
@@ -65,14 +72,21 @@ void main() {
     test('returns null for an unknown closure/order', () async {
       final repository = InMemoryOrderClosureRepository();
       expect(await repository.findByClosureId('nonexistent'), isNull);
-      expect(await repository.findCurrentByOrderId(OrderId('nonexistent')), isNull);
+      expect(await repository.findCurrentByOrderId(OrderId('nonexistent')),
+          isNull);
     });
 
-    test('findAllCurrent returns the latest revision of every distinct closureId', () async {
+    test(
+        'findAllCurrent returns the latest revision of every distinct closureId',
+        () async {
       final repository = InMemoryOrderClosureRepository();
       await repository.save(_closure(closureId: 'c1', revision: 1));
-      await repository.save(_closure(closureId: 'c1', revision: 2, status: OrderClosureLifecycleStatus.closed));
-      await repository.save(_closure(closureId: 'c2', orderId: 'order-2', revision: 1));
+      await repository.save(_closure(
+          closureId: 'c1',
+          revision: 2,
+          status: OrderClosureLifecycleStatus.closed));
+      await repository
+          .save(_closure(closureId: 'c2', orderId: 'order-2', revision: 1));
 
       final current = await repository.findAllCurrent();
 

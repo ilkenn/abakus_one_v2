@@ -71,7 +71,8 @@ class _PosPaymentScreenState extends ConsumerState<PosPaymentScreen> {
             ? const LoadingView(message: 'Ödeme oturumu başlatılıyor...')
             : state.session!.status == PaymentSessionStatus.completed
                 ? _PaymentCompletedView(session: state.session!)
-                : _PaymentEditingLayout(order: widget.order, session: state.session!),
+                : _PaymentEditingLayout(
+                    order: widget.order, session: state.session!),
       ),
     );
   }
@@ -90,13 +91,15 @@ class _PaymentCompletedView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 72),
+            const Icon(Icons.check_circle_rounded,
+                color: AppColors.success, size: 72),
             const SizedBox(height: AppSpacing.md),
             const Text('Ödeme Tamamlandı', style: AppTypography.titleLarge),
             const SizedBox(height: AppSpacing.sm),
             Text(
               '${session.totalSettled}',
-              style: AppTypography.bodyLarge.copyWith(color: AppColors.textSecondary),
+              style: AppTypography.bodyLarge
+                  .copyWith(color: AppColors.textSecondary),
             ),
           ],
         ),
@@ -234,8 +237,12 @@ class _HighlightRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = (emphasize ? AppTypography.titleMedium : AppTypography.bodyMedium)
-        .copyWith(color: color ?? (emphasize ? AppColors.textPrimary : AppColors.textSecondary));
+    final style = (emphasize
+            ? AppTypography.titleMedium
+            : AppTypography.bodyMedium)
+        .copyWith(
+            color: color ??
+                (emphasize ? AppColors.textPrimary : AppColors.textSecondary));
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -260,10 +267,12 @@ class _PaymentCollectionPanel extends ConsumerStatefulWidget {
   final PaymentSession session;
 
   @override
-  ConsumerState<_PaymentCollectionPanel> createState() => _PaymentCollectionPanelState();
+  ConsumerState<_PaymentCollectionPanel> createState() =>
+      _PaymentCollectionPanelState();
 }
 
-class _PaymentCollectionPanelState extends ConsumerState<_PaymentCollectionPanel> {
+class _PaymentCollectionPanelState
+    extends ConsumerState<_PaymentCollectionPanel> {
   PaymentMethod _selectedMethod = PaymentMethodSeedData.cash;
   _CashEntryMode _cashEntryMode = _CashEntryMode.collectAmount;
   final _amountController = TextEditingController();
@@ -300,8 +309,9 @@ class _PaymentCollectionPanelState extends ConsumerState<_PaymentCollectionPanel
     final parsed = double.tryParse(_amountController.text.replaceAll(',', '.'));
     if (parsed == null || parsed <= 0) return;
     final amount = Money.fromLegacyDoubleTry(parsed);
-    final reference =
-        _referenceController.text.trim().isEmpty ? null : _referenceController.text.trim();
+    final reference = _referenceController.text.trim().isEmpty
+        ? null
+        : _referenceController.text.trim();
 
     await ref.read(paymentSessionProvider.notifier).addSplit(
           method: _selectedMethod,
@@ -349,18 +359,20 @@ class _PaymentCollectionPanelState extends ConsumerState<_PaymentCollectionPanel
                       Expanded(
                         child: ChoiceChip(
                           label: const Text('Tahsil Edilecek Tutar'),
-                          selected: _cashEntryMode == _CashEntryMode.collectAmount,
-                          onSelected: (_) =>
-                              setState(() => _cashEntryMode = _CashEntryMode.collectAmount),
+                          selected:
+                              _cashEntryMode == _CashEntryMode.collectAmount,
+                          onSelected: (_) => setState(() =>
+                              _cashEntryMode = _CashEntryMode.collectAmount),
                         ),
                       ),
                       const SizedBox(width: AppSpacing.sm),
                       Expanded(
                         child: ChoiceChip(
                           label: const Text('Müşterinin Verdiği Nakit'),
-                          selected: _cashEntryMode == _CashEntryMode.tenderedAmount,
-                          onSelected: (_) =>
-                              setState(() => _cashEntryMode = _CashEntryMode.tenderedAmount),
+                          selected:
+                              _cashEntryMode == _CashEntryMode.tenderedAmount,
+                          onSelected: (_) => setState(() =>
+                              _cashEntryMode = _CashEntryMode.tenderedAmount),
                         ),
                       ),
                     ],
@@ -372,9 +384,12 @@ class _PaymentCollectionPanelState extends ConsumerState<_PaymentCollectionPanel
                     Expanded(
                       child: TextField(
                         controller: _amountController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
                         decoration: InputDecoration(
-                          labelText: _isCash && _cashEntryMode == _CashEntryMode.tenderedAmount
+                          labelText: _isCash &&
+                                  _cashEntryMode ==
+                                      _CashEntryMode.tenderedAmount
                               ? 'Müşterinin Verdiği Nakit'
                               : 'Tutar',
                         ),
@@ -400,7 +415,8 @@ class _PaymentCollectionPanelState extends ConsumerState<_PaymentCollectionPanel
                     padding: const EdgeInsets.only(top: AppSpacing.sm),
                     child: TextField(
                       controller: _referenceController,
-                      decoration: const InputDecoration(labelText: 'Referans Numarası'),
+                      decoration:
+                          const InputDecoration(labelText: 'Referans Numarası'),
                     ),
                   ),
                 const SizedBox(height: AppSpacing.sm),
@@ -417,7 +433,8 @@ class _PaymentCollectionPanelState extends ConsumerState<_PaymentCollectionPanel
                 if (session.splits.isEmpty)
                   Text(
                     'Henüz ödeme eklenmedi',
-                    style: AppTypography.bodyMedium.copyWith(color: AppColors.textSecondary),
+                    style: AppTypography.bodyMedium
+                        .copyWith(color: AppColors.textSecondary),
                   )
                 else
                   for (final split in session.splits)
@@ -432,7 +449,8 @@ class _PaymentCollectionPanelState extends ConsumerState<_PaymentCollectionPanel
                           children: [
                             PaymentMethodLogo(
                               iconAssetPath: split.methodSnapshot.iconAssetPath,
-                              brandColorValue: split.methodSnapshot.brandColorValue,
+                              brandColorValue:
+                                  split.methodSnapshot.brandColorValue,
                               size: 28,
                             ),
                             const SizedBox(width: AppSpacing.sm),
@@ -443,7 +461,8 @@ class _PaymentCollectionPanelState extends ConsumerState<_PaymentCollectionPanel
                               ),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.close, color: AppColors.error),
+                              icon: const Icon(Icons.close,
+                                  color: AppColors.error),
                               onPressed: isBusy
                                   ? null
                                   : () => notifier.removeSplit(split.id),
@@ -475,7 +494,8 @@ class _PaymentCollectionPanelState extends ConsumerState<_PaymentCollectionPanel
               Expanded(
                 flex: 2,
                 child: ElevatedButton(
-                  onPressed: isBusy || session.status != PaymentSessionStatus.readyToComplete
+                  onPressed: isBusy ||
+                          session.status != PaymentSessionStatus.readyToComplete
                       ? null
                       : () => notifier.complete(),
                   child: isBusy
@@ -526,7 +546,8 @@ class _PaymentMethodCard extends StatelessWidget {
               size: 36,
             ),
             const SizedBox(height: AppSpacing.xs),
-            Text(method.name, style: AppTypography.bodySmall, textAlign: TextAlign.center),
+            Text(method.name,
+                style: AppTypography.bodySmall, textAlign: TextAlign.center),
           ],
         ),
       ),
@@ -567,7 +588,9 @@ class _CalculatorSheetState extends State<_CalculatorSheet> {
 
   void _backspace() {
     setState(() {
-      _display = _display.length > 1 ? _display.substring(0, _display.length - 1) : '0';
+      _display = _display.length > 1
+          ? _display.substring(0, _display.length - 1)
+          : '0';
     });
   }
 
@@ -582,7 +605,8 @@ class _CalculatorSheetState extends State<_CalculatorSheet> {
   void _applyOperator(String operatorSymbol) {
     setState(() {
       if (_pendingValue != null && _pendingOperator != null) {
-        _pendingValue = _compute(_pendingValue!, _currentValue, _pendingOperator!);
+        _pendingValue =
+            _compute(_pendingValue!, _currentValue, _pendingOperator!);
       } else {
         _pendingValue = _currentValue;
       }
@@ -594,7 +618,8 @@ class _CalculatorSheetState extends State<_CalculatorSheet> {
   void _equals() {
     setState(() {
       if (_pendingValue != null && _pendingOperator != null) {
-        _display = _compute(_pendingValue!, _currentValue, _pendingOperator!).toString();
+        _display = _compute(_pendingValue!, _currentValue, _pendingOperator!)
+            .toString();
         _pendingValue = null;
         _pendingOperator = null;
       }

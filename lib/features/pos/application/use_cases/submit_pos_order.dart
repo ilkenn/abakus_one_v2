@@ -63,7 +63,8 @@ class SubmitPosOrder {
       for (final draft in session.lines)
         _activeLineDiscount(session.discounts, draft.id)?.discountAmount,
     ];
-    final orderDiscountAmount = _activeOrderDiscount(session.discounts)?.discountAmount;
+    final orderDiscountAmount =
+        _activeOrderDiscount(session.discounts)?.discountAmount;
 
     var order = CartToOrderMapper.map(
       orderId: orderId,
@@ -112,7 +113,8 @@ class SubmitPosOrder {
     return null;
   }
 
-  static DiscountSnapshot? _activeOrderDiscount(List<DiscountSnapshot> discounts) {
+  static DiscountSnapshot? _activeOrderDiscount(
+      List<DiscountSnapshot> discounts) {
     for (final discount in discounts) {
       if (discount.scope == DiscountScope.order) return discount;
     }

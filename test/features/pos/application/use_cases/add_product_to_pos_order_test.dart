@@ -1,4 +1,4 @@
-﻿import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
+import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_group.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_option.dart';
@@ -42,7 +42,8 @@ const _bowlWithProtein = MenuProduct(
       maxSelections: 1,
       options: [
         ModifierOption(id: 'chicken', name: 'Izgara Tavuk', extraPrice: 40.0),
-        ModifierOption(id: 'beef', name: 'Dana', extraPrice: 70.0, isAvailable: false),
+        ModifierOption(
+            id: 'beef', name: 'Dana', extraPrice: 70.0, isAvailable: false),
       ],
     ),
   ],
@@ -90,7 +91,8 @@ void main() {
     });
   });
 
-  group('AddProductToPosOrder — modifier validation (reuses ModifierValidator)', () {
+  group('AddProductToPosOrder — modifier validation (reuses ModifierValidator)',
+      () {
     test('accepts a valid required-group selection', () {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final session = buildTestSession(openedAt: clock.now());
@@ -112,7 +114,9 @@ void main() {
       expect(updated.lines, hasLength(1));
     });
 
-    test('rejects adding the product when a required modifier group has no selection', () {
+    test(
+        'rejects adding the product when a required modifier group has no selection',
+        () {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final session = buildTestSession(openedAt: clock.now());
 
@@ -163,7 +167,9 @@ void main() {
       expect(session.lines, isEmpty);
     });
 
-    test('per-channel modifier availability is enforced through the session channel', () {
+    test(
+        'per-channel modifier availability is enforced through the session channel',
+        () {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       const qrOnlyGroup = ModifierGroup(
         id: 'qr_only',

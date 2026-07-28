@@ -44,7 +44,8 @@ class ClosedAccountsScreen extends ConsumerStatefulWidget {
   final String viewerStaffId;
 
   @override
-  ConsumerState<ClosedAccountsScreen> createState() => _ClosedAccountsScreenState();
+  ConsumerState<ClosedAccountsScreen> createState() =>
+      _ClosedAccountsScreenState();
 }
 
 class _ClosedAccountsScreenState extends ConsumerState<ClosedAccountsScreen> {
@@ -90,7 +91,8 @@ class _ClosedAccountsScreenState extends ConsumerState<ClosedAccountsScreen> {
             ? const LoadingView(message: 'Yetki kontrol ediliyor...')
             : !authorization.granted
                 ? ErrorView(
-                    message: authorization.reason ?? 'Bu ekranı görüntüleme yetkiniz yok.',
+                    message: authorization.reason ??
+                        'Bu ekranı görüntüleme yetkiniz yok.',
                   )
                 : _buildList(),
       ),
@@ -137,7 +139,8 @@ class _ClosedAccountsScreenState extends ConsumerState<ClosedAccountsScreen> {
               : ListView.separated(
                   padding: const EdgeInsets.all(AppSpacing.lg),
                   itemCount: filtered.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(height: AppSpacing.sm),
                   itemBuilder: (context, index) {
                     final closure = filtered[index];
                     return AppCard(
@@ -148,7 +151,8 @@ class _ClosedAccountsScreenState extends ConsumerState<ClosedAccountsScreen> {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(closure.orderId.value, style: AppTypography.bodyLarge),
+                              Text(closure.orderId.value,
+                                  style: AppTypography.bodyLarge),
                               Text(
                                 closure.closedByStaffId ?? '-',
                                 style: AppTypography.bodySmall.copyWith(
@@ -157,7 +161,8 @@ class _ClosedAccountsScreenState extends ConsumerState<ClosedAccountsScreen> {
                               ),
                             ],
                           ),
-                          Text(closure.lifecycleStatus.name, style: AppTypography.bodyMedium),
+                          Text(closure.lifecycleStatus.name,
+                              style: AppTypography.bodyMedium),
                         ],
                       ),
                     );

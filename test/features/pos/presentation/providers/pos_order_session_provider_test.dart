@@ -79,7 +79,8 @@ void main() {
           .read(posOrderSessionProvider.notifier)
           .addProduct(product: _simpleProduct);
 
-      expect(container.read(posOrderSessionProvider).status, PosOrderSessionStatus.idle);
+      expect(container.read(posOrderSessionProvider).status,
+          PosOrderSessionStatus.idle);
     });
 
     test('addProduct appends a line and stays in editing', () async {
@@ -94,7 +95,9 @@ void main() {
       expect(state.session!.lines, hasLength(1));
     });
 
-    test('a rejected mutation surfaces a failure without losing the session field on the next successful mutation', () async {
+    test(
+        'a rejected mutation surfaces a failure without losing the session field on the next successful mutation',
+        () async {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
 
@@ -112,7 +115,9 @@ void main() {
   });
 
   group('PosOrderSessionController — submit', () {
-    test('submit with no active session sets a failure state with PosNoActiveSessionError', () async {
+    test(
+        'submit with no active session sets a failure state with PosNoActiveSessionError',
+        () async {
       await container
           .read(posOrderSessionProvider.notifier)
           .submit(restaurantId: 'restaurant-abakus');
@@ -123,7 +128,9 @@ void main() {
       expect(state.session, isNull);
     });
 
-    test('submit with an empty session (no lines) fails and preserves the session', () async {
+    test(
+        'submit with an empty session (no lines) fails and preserves the session',
+        () async {
       startSession(container);
 
       await container
@@ -136,7 +143,9 @@ void main() {
       expect(state.session, isNotNull);
     });
 
-    test('a successful submission clears the session, keeps submittedOrder, and deletes the draft', () async {
+    test(
+        'a successful submission clears the session, keeps submittedOrder, and deletes the draft',
+        () async {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
       await notifier.addProduct(product: _simpleProduct);
@@ -150,7 +159,9 @@ void main() {
       expect(repository.draftIds, isNot(contains('session-1')));
     });
 
-    test('a second concurrent submit call is ignored while the first is in flight', () async {
+    test(
+        'a second concurrent submit call is ignored while the first is in flight',
+        () async {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
       await notifier.addProduct(product: _simpleProduct);
@@ -163,7 +174,9 @@ void main() {
       expect(repository.submittedOrders, hasLength(1));
     });
 
-    test('a failed submission (repository error) preserves the session and permits retry', () async {
+    test(
+        'a failed submission (repository error) preserves the session and permits retry',
+        () async {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
       await notifier.addProduct(product: _simpleProduct);
@@ -186,11 +199,13 @@ void main() {
   });
 
   group('PosOrderSessionController — id-based line operations', () {
-    test('updateLine changes the quantity of the line with the given draft id', () async {
+    test('updateLine changes the quantity of the line with the given draft id',
+        () async {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
       await notifier.addProduct(product: _simpleProduct);
-      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+      final draftId =
+          container.read(posOrderSessionProvider).session!.lines.single.id;
 
       await notifier.updateLine(orderLineDraftId: draftId, quantity: 3);
 
@@ -203,7 +218,8 @@ void main() {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
       await notifier.addProduct(product: _simpleProduct);
-      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+      final draftId =
+          container.read(posOrderSessionProvider).session!.lines.single.id;
 
       await notifier.removeLine(draftId);
 
@@ -211,7 +227,8 @@ void main() {
       expect(state.session!.lines, isEmpty);
     });
 
-    test('an unknown draft id surfaces a validation failure, session preserved', () async {
+    test('an unknown draft id surfaces a validation failure, session preserved',
+        () async {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
       await notifier.addProduct(product: _simpleProduct);
@@ -230,7 +247,8 @@ void main() {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
       await notifier.addProduct(product: _simpleProduct);
-      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+      final draftId =
+          container.read(posOrderSessionProvider).session!.lines.single.id;
 
       await notifier.setDiscount(
         scope: DiscountScope.line,
@@ -245,11 +263,13 @@ void main() {
       expect(state.session!.discounts.single.targetOrderLineId, draftId);
     });
 
-    test('setting a new discount on the same line replaces the previous one', () async {
+    test('setting a new discount on the same line replaces the previous one',
+        () async {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
       await notifier.addProduct(product: _simpleProduct);
-      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+      final draftId =
+          container.read(posOrderSessionProvider).session!.lines.single.id;
 
       await notifier.setDiscount(
         scope: DiscountScope.line,
@@ -273,7 +293,8 @@ void main() {
       startSession(container);
       final notifier = container.read(posOrderSessionProvider.notifier);
       await notifier.addProduct(product: _simpleProduct);
-      final draftId = container.read(posOrderSessionProvider).session!.lines.single.id;
+      final draftId =
+          container.read(posOrderSessionProvider).session!.lines.single.id;
       await notifier.setDiscount(
         scope: DiscountScope.line,
         targetOrderLineId: draftId,

@@ -35,8 +35,10 @@ void main() {
 
     test('findBySessionId returns the highest-revision entry', () async {
       final repository = InMemoryPaymentSessionRepository();
-      await repository.save(_session(revision: 1, status: PaymentSessionStatus.collecting));
-      await repository.save(_session(revision: 2, status: PaymentSessionStatus.completed));
+      await repository
+          .save(_session(revision: 1, status: PaymentSessionStatus.collecting));
+      await repository
+          .save(_session(revision: 2, status: PaymentSessionStatus.completed));
 
       final found = await repository.findBySessionId('ps1');
 
@@ -51,7 +53,9 @@ void main() {
   });
 
   group('InMemoryPaymentSessionRepository — findActiveByOrderId', () {
-    test('returns the latest revision when the most recent session is non-terminal', () async {
+    test(
+        'returns the latest revision when the most recent session is non-terminal',
+        () async {
       final repository = InMemoryPaymentSessionRepository();
       await repository.save(_session(status: PaymentSessionStatus.collecting));
 
@@ -61,7 +65,8 @@ void main() {
       expect(active!.status, PaymentSessionStatus.collecting);
     });
 
-    test('returns null when the most recently started session is completed', () async {
+    test('returns null when the most recently started session is completed',
+        () async {
       final repository = InMemoryPaymentSessionRepository();
       await repository.save(_session(status: PaymentSessionStatus.completed));
 
@@ -70,7 +75,8 @@ void main() {
       expect(active, isNull);
     });
 
-    test('returns null when the most recently started session is cancelled', () async {
+    test('returns null when the most recently started session is cancelled',
+        () async {
       final repository = InMemoryPaymentSessionRepository();
       await repository.save(_session(status: PaymentSessionStatus.cancelled));
 
@@ -79,7 +85,9 @@ void main() {
       expect(active, isNull);
     });
 
-    test('a later, freshly-started session becomes active even if an earlier one for the same order was cancelled', () async {
+    test(
+        'a later, freshly-started session becomes active even if an earlier one for the same order was cancelled',
+        () async {
       final repository = InMemoryPaymentSessionRepository();
       await repository.save(_session(
         id: 'ps1',
@@ -104,7 +112,9 @@ void main() {
   });
 
   group('InMemoryPaymentSessionRepository — findHistoryByOrderId', () {
-    test('returns every revision across every session for the order, oldest first', () async {
+    test(
+        'returns every revision across every session for the order, oldest first',
+        () async {
       final repository = InMemoryPaymentSessionRepository();
       await repository.save(_session(
         id: 'ps1',

@@ -21,10 +21,13 @@ import '../../test_support/fake_pos_authorization_policy.dart';
 
 void main() {
   group('CorrectPaymentMethod', () {
-    test('voids the original, records a same-amount replacement under the new method', () async {
+    test(
+        'voids the original, records a same-amount replacement under the new method',
+        () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final auditRepository = InMemoryClosureAuditEntryRepository();
-      final policy = FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
+      final policy =
+          FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
       final voidPayment = VoidPayment(
         clock: clock,
         authorizationPolicy: policy,
@@ -33,7 +36,8 @@ void main() {
       );
       final originalSplit = PaymentSplit.tryLira(
         id: 'split-1',
-        methodSnapshot: PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash),
+        methodSnapshot:
+            PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash),
         amount: Money.fromWhole(100, Currency.tryLira),
       );
 
@@ -53,16 +57,22 @@ void main() {
 
       expect(result.void_.status, PaymentVoidStatus.completed);
       expect(result.void_.originalSplitId, 'split-1');
-      expect(result.replacementSplit.methodSnapshot.paymentMethodId, 'credit_card');
+      expect(result.replacementSplit.methodSnapshot.paymentMethodId,
+          'credit_card');
       expect(result.replacementSplit.amount, originalSplit.amount);
-      expect(result.correction.correctionType, PaymentCorrectionType.paymentMethodCorrection);
+      expect(result.correction.correctionType,
+          PaymentCorrectionType.paymentMethodCorrection);
       expect(result.correction.originalPaymentId, 'split-1');
-      expect(result.correction.replacementPaymentId, result.replacementSplit.id);
+      expect(
+          result.correction.replacementPaymentId, result.replacementSplit.id);
 
       final events = await auditRepository.findByOrderId(OrderId('order-1'));
       expect(
         events.map((e) => e.type),
-        containsAll([ClosureAuditEventType.paymentVoided, ClosureAuditEventType.paymentMethodCorrected]),
+        containsAll([
+          ClosureAuditEventType.paymentVoided,
+          ClosureAuditEventType.paymentMethodCorrected
+        ]),
       );
     });
 
@@ -74,13 +84,15 @@ void main() {
       );
       final voidPayment = VoidPayment(
         clock: clock,
-        authorizationPolicy: FakePosAuthorizationPolicy(const AuthorizationResult(granted: true)),
+        authorizationPolicy: FakePosAuthorizationPolicy(
+            const AuthorizationResult(granted: true)),
         auditRepository: auditRepository,
         paymentService: PaymentService(),
       );
       final originalSplit = PaymentSplit.tryLira(
         id: 'split-1',
-        methodSnapshot: PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash),
+        methodSnapshot:
+            PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash),
         amount: Money.fromWhole(100, Currency.tryLira),
       );
 

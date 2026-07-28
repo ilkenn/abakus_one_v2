@@ -22,7 +22,8 @@ void main() {
       expect(refundable, Money.fromWhole(150, Currency.tryLira));
     });
 
-    test('never goes negative even if already-refunded somehow exceeds settled', () {
+    test('never goes negative even if already-refunded somehow exceeds settled',
+        () {
       final refundable = RefundCalculator.refundableAmount(
         settledAmount: Money.fromWhole(100, Currency.tryLira),
         alreadyRefundedAmount: Money.fromWhole(150, Currency.tryLira),
@@ -65,7 +66,9 @@ void main() {
       );
     });
 
-    test('rejects a second partial refund that would exceed what remains refundable', () {
+    test(
+        'rejects a second partial refund that would exceed what remains refundable',
+        () {
       expect(
         () => RefundCalculator.validateRefundRequest(
           requestedAmount: Money.fromWhole(60, Currency.tryLira),

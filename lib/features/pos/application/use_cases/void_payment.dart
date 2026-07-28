@@ -84,8 +84,9 @@ class VoidPayment {
         status: providerResult.status == PaymentStatus.success
             ? PaymentVoidStatus.completed
             : PaymentVoidStatus.rejected,
-        providerReversalReference:
-            providerResult.transactionId.isEmpty ? null : providerResult.transactionId,
+        providerReversalReference: providerResult.transactionId.isEmpty
+            ? null
+            : providerResult.transactionId,
       );
     } else {
       result = result.copyWith(status: PaymentVoidStatus.completed);

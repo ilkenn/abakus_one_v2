@@ -173,9 +173,12 @@ void main() {
   });
 
   group('CartToOrderMapper.map — order-level notes (Phase 3 Sprint 3B)', () {
-    test('snapshots customerNote and kitchenNote onto the Order, defaulting to empty', () {
+    test(
+        'snapshots customerNote and kitchenNote onto the Order, defaulting to empty',
+        () {
       final cartItems = [
-        const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        const CartItem(
+            id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
       ];
 
       final withoutNotes = CartToOrderMapper.map(

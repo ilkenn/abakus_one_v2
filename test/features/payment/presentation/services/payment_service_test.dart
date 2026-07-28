@@ -9,7 +9,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('PaymentService.executePayment', () {
-    test('routes a card-mapped provider method to its adapter (not configured today)', () async {
+    test(
+        'routes a card-mapped provider method to its adapter (not configured today)',
+        () async {
       final service = PaymentService();
       final request = PaymentRequest(
         orderId: 'order-1',
@@ -22,7 +24,9 @@ void main() {
       expect(result.status, PaymentStatus.notConfigured);
     });
 
-    test('fails cleanly for a manual method with no providerId, never invents one', () async {
+    test(
+        'fails cleanly for a manual method with no providerId, never invents one',
+        () async {
       final service = PaymentService();
       final request = PaymentRequest(
         orderId: 'order-1',
@@ -36,7 +40,8 @@ void main() {
       expect(result.errorMessage, contains('manuel'));
     });
 
-    test('routes every meal-card method to its own same-named provider adapter', () async {
+    test('routes every meal-card method to its own same-named provider adapter',
+        () async {
       final service = PaymentService();
       for (final method in [
         PaymentMethodSeedData.pluxee,
@@ -58,7 +63,8 @@ void main() {
   });
 
   group('PaymentService.executeRefund', () {
-    test('routes to the matching provider adapter (not configured today)', () async {
+    test('routes to the matching provider adapter (not configured today)',
+        () async {
       final service = PaymentService();
 
       final result = await service.executeRefund(

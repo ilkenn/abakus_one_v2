@@ -11,7 +11,9 @@ void main() {
       expect(ids.toSet(), hasLength(5));
     });
 
-    test('two separate instances can produce the same sequence value (only unique within one runtime)', () {
+    test(
+        'two separate instances can produce the same sequence value (only unique within one runtime)',
+        () {
       final a = SequentialPosOrderLineDraftIdGenerator();
       final b = SequentialPosOrderLineDraftIdGenerator();
 

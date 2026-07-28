@@ -25,7 +25,8 @@ PosOrderSession _buildSession({
     discounts: discounts,
     fees: Money.zero(Currency.tryLira),
     tip: Money.zero(Currency.tryLira),
-    pricing: PriceCalculator.calculate(lines: const [], currency: Currency.tryLira),
+    pricing:
+        PriceCalculator.calculate(lines: const [], currency: Currency.tryLira),
   );
 }
 
@@ -55,18 +56,23 @@ void main() {
         lines: [
           const PosOrderLineDraft(
             id: 'line-1',
-            item: CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100, quantity: 1),
+            item: CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100, quantity: 1),
           ),
         ],
       );
-      expect(() => session.lines.add(session.lines.first), throwsUnsupportedError);
+      expect(
+          () => session.lines.add(session.lines.first), throwsUnsupportedError);
     });
 
-    test('mutating the source list after construction does not affect the session', () {
+    test(
+        'mutating the source list after construction does not affect the session',
+        () {
       final sourceLines = <PosOrderLineDraft>[
         const PosOrderLineDraft(
           id: 'line-1',
-          item: CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100, quantity: 1),
+          item: CartItem(
+              id: 'p1', name: 'Bowl', desc: '', price: 100, quantity: 1),
         ),
       ];
       final session = _buildSession(lines: sourceLines);
@@ -74,7 +80,8 @@ void main() {
       sourceLines.add(
         const PosOrderLineDraft(
           id: 'line-2',
-          item: CartItem(id: 'p2', name: 'Ayran', desc: '', price: 25, quantity: 1),
+          item: CartItem(
+              id: 'p2', name: 'Ayran', desc: '', price: 25, quantity: 1),
         ),
       );
 
@@ -86,7 +93,8 @@ void main() {
       final newLines = <PosOrderLineDraft>[
         const PosOrderLineDraft(
           id: 'line-1',
-          item: CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100, quantity: 1),
+          item: CartItem(
+              id: 'p1', name: 'Bowl', desc: '', price: 100, quantity: 1),
         ),
       ];
       final updated = session.copyWith(lines: newLines);

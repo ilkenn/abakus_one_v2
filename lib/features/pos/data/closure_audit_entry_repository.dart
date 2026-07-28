@@ -17,7 +17,8 @@ abstract interface class ClosureAuditEntryRepository {
 
 /// In-memory [ClosureAuditEntryRepository] — the only implementation this
 /// sprint.
-class InMemoryClosureAuditEntryRepository implements ClosureAuditEntryRepository {
+class InMemoryClosureAuditEntryRepository
+    implements ClosureAuditEntryRepository {
   final Map<String, List<ClosureAuditEntry>> _eventsByOrderId = {};
 
   @override

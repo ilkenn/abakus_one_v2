@@ -37,7 +37,9 @@ void main() {
       );
     });
 
-    test('credit card has no provider pinned in seed data (business decision deferred)', () {
+    test(
+        'credit card has no provider pinned in seed data (business decision deferred)',
+        () {
       expect(PaymentMethodSeedData.creditCard.providerId, isNull);
     });
 

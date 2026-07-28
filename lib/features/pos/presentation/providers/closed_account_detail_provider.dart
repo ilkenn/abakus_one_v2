@@ -53,9 +53,14 @@ class ClosedAccountDetailController extends Notifier<ClosedAccountDetailState> {
   @override
   ClosedAccountDetailState build() => const ClosedAccountDetailState();
 
-  Future<void> load({required String closureId, required OrderId orderId}) async {
-    final closure = await ref.read(orderClosureRepositoryProvider).findByClosureId(closureId);
-    final entries = await ref.read(closureAuditEntryRepositoryProvider).findByOrderId(orderId);
+  Future<void> load(
+      {required String closureId, required OrderId orderId}) async {
+    final closure = await ref
+        .read(orderClosureRepositoryProvider)
+        .findByClosureId(closureId);
+    final entries = await ref
+        .read(closureAuditEntryRepositoryProvider)
+        .findByOrderId(orderId);
     state = state.copyWith(closure: closure, auditEntries: entries);
   }
 
@@ -79,9 +84,11 @@ class ClosedAccountDetailController extends Notifier<ClosedAccountDetailState> {
         performedByStaffId: performedByStaffId,
       );
       await ref.read(orderClosureRepositoryProvider).save(updated);
-      final entries =
-          await ref.read(closureAuditEntryRepositoryProvider).findByOrderId(closure.orderId);
-      state = state.copyWith(closure: updated, auditEntries: entries, isBusy: false);
+      final entries = await ref
+          .read(closureAuditEntryRepositoryProvider)
+          .findByOrderId(closure.orderId);
+      state = state.copyWith(
+          closure: updated, auditEntries: entries, isBusy: false);
     } on BusinessRuleViolation catch (violation) {
       state = state.copyWith(isBusy: false, error: violation.description);
     }
@@ -112,13 +119,16 @@ class ClosedAccountDetailController extends Notifier<ClosedAccountDetailState> {
       requestedByStaffId: requestedByStaffId,
       requestId: requestId,
     );
-    final entries = await ref.read(closureAuditEntryRepositoryProvider).findByOrderId(order.id);
+    final entries = await ref
+        .read(closureAuditEntryRepositoryProvider)
+        .findByOrderId(order.id);
     state = state.copyWith(auditEntries: entries, isBusy: false);
     return result;
   }
 }
 
 final closedAccountDetailProvider =
-    NotifierProvider<ClosedAccountDetailController, ClosedAccountDetailState>(() {
+    NotifierProvider<ClosedAccountDetailController, ClosedAccountDetailState>(
+        () {
   return ClosedAccountDetailController();
 });

@@ -123,7 +123,9 @@ void main() {
       );
     });
 
-    test('remaining completing after completed is rejected (no self/backward loop)', () {
+    test(
+        'remaining completing after completed is rejected (no self/backward loop)',
+        () {
       expect(
         PaymentSessionStatusTransitions.canTransition(
           PaymentSessionStatus.completed,

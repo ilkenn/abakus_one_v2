@@ -6,9 +6,11 @@ import '../../test_support/fake_pos_authorization_policy.dart';
 
 void main() {
   group('FakePosAuthorizationPolicy', () {
-    test('returns exactly the injected result, and never invents one', () async {
+    test('returns exactly the injected result, and never invents one',
+        () async {
       final policy = FakePosAuthorizationPolicy(
-        const AuthorizationResult(granted: true, requiresManagerApproval: false),
+        const AuthorizationResult(
+            granted: true, requiresManagerApproval: false),
       );
 
       final result = await policy.authorize(
@@ -22,7 +24,8 @@ void main() {
       expect(policy.lastActorStaffId, 'staff-1');
     });
 
-    test('a denial is reported as denial, not silently treated as granted', () async {
+    test('a denial is reported as denial, not silently treated as granted',
+        () async {
       final policy = FakePosAuthorizationPolicy(
         const AuthorizationResult(granted: false, reason: 'Not a manager'),
       );

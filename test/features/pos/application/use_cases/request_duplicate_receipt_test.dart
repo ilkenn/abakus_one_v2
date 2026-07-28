@@ -18,13 +18,16 @@ Receipt _buildReceipt() {
     orderId: OrderId('order-1'),
     orderNumber: OrderNumber('A-001'),
     issuedAt: DateTime(2026, 7, 29),
-    summary: PriceCalculator.calculate(lines: const [], currency: Currency.tryLira),
+    summary:
+        PriceCalculator.calculate(lines: const [], currency: Currency.tryLira),
   );
 }
 
 void main() {
   group('RequestDuplicateReceipt', () {
-    test('with the default NoOpReceiptPrintProvider, reports unavailable and still logs the request', () async {
+    test(
+        'with the default NoOpReceiptPrintProvider, reports unavailable and still logs the request',
+        () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final auditRepository = InMemoryClosureAuditEntryRepository();
 
@@ -42,10 +45,13 @@ void main() {
       expect(result.status, ReceiptPrintResultStatus.unavailable);
 
       final events = await auditRepository.findByOrderId(OrderId('order-1'));
-      expect(events.single.type, ClosureAuditEventType.duplicateReceiptRequested);
+      expect(
+          events.single.type, ClosureAuditEventType.duplicateReceiptRequested);
     });
 
-    test('two separate requestIds for the same receipt produce two distinct audit entries', () async {
+    test(
+        'two separate requestIds for the same receipt produce two distinct audit entries',
+        () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final auditRepository = InMemoryClosureAuditEntryRepository();
       final useCase = RequestDuplicateReceipt(

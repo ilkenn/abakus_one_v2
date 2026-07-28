@@ -38,7 +38,8 @@ class PaymentMethodLogo extends ConsumerWidget {
         child: Image(
           image: provider,
           fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => _placeholder(brandColor),
+          errorBuilder: (context, error, stackTrace) =>
+              _placeholder(brandColor),
         ),
       ),
     );
@@ -47,7 +48,8 @@ class PaymentMethodLogo extends ConsumerWidget {
   Widget _placeholder(Color brandColor) {
     return Container(
       color: brandColor.withValues(alpha: 0.12),
-      child: Icon(Icons.payments_outlined, color: brandColor, size: size * 0.55),
+      child:
+          Icon(Icons.payments_outlined, color: brandColor, size: size * 0.55),
     );
   }
 }

@@ -18,11 +18,13 @@ void main() {
         lines: [
           buildTestLineDraft(
             id: 'line-1',
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
           buildTestLineDraft(
             id: 'line-2',
-            item: const CartItem(id: 'p2', name: 'Ayran', desc: '', price: 25.0, quantity: 1),
+            item: const CartItem(
+                id: 'p2', name: 'Ayran', desc: '', price: 25.0, quantity: 1),
           ),
         ],
       );
@@ -42,11 +44,13 @@ void main() {
         lines: [
           buildTestLineDraft(
             id: 'line-1',
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
           buildTestLineDraft(
             id: 'line-2',
-            item: const CartItem(id: 'p2', name: 'Ayran', desc: '', price: 25.0, quantity: 1),
+            item: const CartItem(
+                id: 'p2', name: 'Ayran', desc: '', price: 25.0, quantity: 1),
           ),
         ],
       );
@@ -65,7 +69,8 @@ void main() {
         lines: [
           buildTestLineDraft(
             id: 'line-1',
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
         ],
       );
@@ -98,7 +103,8 @@ void main() {
         lines: [
           buildTestLineDraft(
             id: 'line-1',
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
         ],
         discounts: [

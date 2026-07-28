@@ -78,8 +78,7 @@ class PaymentService {
       return PaymentResult(
         transactionId: '',
         status: PaymentStatus.failed,
-        errorMessage:
-            '${method.displayName} manuel kaydedilen bir yöntemdir, '
+        errorMessage: '${method.displayName} manuel kaydedilen bir yöntemdir, '
             'bir ödeme sağlayıcısına yönlendirilemez.',
       );
     }

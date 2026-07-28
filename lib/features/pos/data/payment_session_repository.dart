@@ -81,8 +81,9 @@ class InMemoryPaymentSessionRepository implements PaymentSessionRepository {
     }
 
     if (mostRecentlyStarted == null) return null;
-    final isTerminal = mostRecentlyStarted.status == PaymentSessionStatus.completed ||
-        mostRecentlyStarted.status == PaymentSessionStatus.cancelled;
+    final isTerminal =
+        mostRecentlyStarted.status == PaymentSessionStatus.completed ||
+            mostRecentlyStarted.status == PaymentSessionStatus.cancelled;
     return isTerminal ? null : mostRecentlyStarted;
   }
 

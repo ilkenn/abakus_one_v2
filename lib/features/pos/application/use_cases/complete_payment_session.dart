@@ -60,12 +60,14 @@ class CompletePaymentSession {
       if (snapshot.requiresReferenceNumberAtCapture &&
           (snapshot.transactionReference == null ||
               snapshot.transactionReference!.isEmpty)) {
-        throw MissingPaymentReferenceViolation(methodId: snapshot.paymentMethodId);
+        throw MissingPaymentReferenceViolation(
+            methodId: snapshot.paymentMethodId);
       }
 
       if (snapshot.requiresApprovalAtCapture &&
           approvals[split.id]?.granted != true) {
-        throw PaymentMethodNotApprovedViolation(methodId: snapshot.paymentMethodId);
+        throw PaymentMethodNotApprovedViolation(
+            methodId: snapshot.paymentMethodId);
       }
 
       if (snapshot.providerId != null) {

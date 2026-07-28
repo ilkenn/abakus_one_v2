@@ -7,7 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('InMemoryClosureAuditEntryRepository', () {
-    test('appendEvent then findByOrderId returns events oldest first', () async {
+    test('appendEvent then findByOrderId returns events oldest first',
+        () async {
       final repository = InMemoryClosureAuditEntryRepository();
       final orderId = OrderId('order-1');
 
@@ -52,7 +53,8 @@ void main() {
         ),
       );
 
-      final eventsForOtherOrder = await repository.findByOrderId(OrderId('order-2'));
+      final eventsForOtherOrder =
+          await repository.findByOrderId(OrderId('order-2'));
 
       expect(eventsForOtherOrder, isEmpty);
     });
@@ -61,7 +63,8 @@ void main() {
       final repository = InMemoryClosureAuditEntryRepository();
       final events = await repository.findByOrderId(OrderId('order-1'));
 
-      expect(() => events.add(events.isEmpty ? _sampleEntry() : events.first), throwsUnsupportedError);
+      expect(() => events.add(events.isEmpty ? _sampleEntry() : events.first),
+          throwsUnsupportedError);
     });
   });
 }

@@ -16,7 +16,9 @@ abstract final class RefundCalculator {
     required Money alreadyRefundedAmount,
   }) {
     final refundable = settledAmount - alreadyRefundedAmount;
-    return refundable.isNegative ? Money.zero(settledAmount.currency) : refundable;
+    return refundable.isNegative
+        ? Money.zero(settledAmount.currency)
+        : refundable;
   }
 
   /// Throws [RefundExceedsRefundableAmountViolation] if [requestedAmount]

@@ -24,7 +24,8 @@ Order _buildOrder() {
     orderId: OrderId('order-1'),
     orderNumber: OrderNumber('A-001'),
     cartItems: const [
-      CartItem(id: 'p1', name: 'Mexifit Bowl', desc: '', price: 194.0, quantity: 1),
+      CartItem(
+          id: 'p1', name: 'Mexifit Bowl', desc: '', price: 194.0, quantity: 1),
     ],
     channel: OrderChannel.dineInStaff,
     branchId: 'branch-1',
@@ -58,8 +59,10 @@ void main() {
       ProviderScope(
         overrides: [
           orderClosureRepositoryProvider.overrideWithValue(closureRepository),
-          closureAuditEntryRepositoryProvider.overrideWithValue(auditRepository),
-          clockProvider.overrideWithValue(FakeClock(DateTime(2026, 7, 29, 12, 0))),
+          closureAuditEntryRepositoryProvider
+              .overrideWithValue(auditRepository),
+          clockProvider
+              .overrideWithValue(FakeClock(DateTime(2026, 7, 29, 12, 0))),
         ],
         child: MaterialApp(
           home: ClosedAccountDetailScreen(
@@ -72,28 +75,37 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    return (closureRepository: closureRepository, auditRepository: auditRepository);
+    return (
+      closureRepository: closureRepository,
+      auditRepository: auditRepository
+    );
   }
 
-  testWidgets('shows a denial message when authorization is not granted', (tester) async {
+  testWidgets('shows a denial message when authorization is not granted',
+      (tester) async {
     await pumpScreen(
       tester,
-      authorization: const AuthorizationResult(granted: false, reason: 'Yetkiniz yok'),
+      authorization:
+          const AuthorizationResult(granted: false, reason: 'Yetkiniz yok'),
     );
 
     expect(find.text('Yetkiniz yok'), findsOneWidget);
   });
 
-  testWidgets('shows closure status and metadata when authorized', (tester) async {
-    await pumpScreen(tester, authorization: const AuthorizationResult(granted: true));
+  testWidgets('shows closure status and metadata when authorized',
+      (tester) async {
+    await pumpScreen(tester,
+        authorization: const AuthorizationResult(granted: true));
 
     expect(find.textContaining('Durum: closed'), findsOneWidget);
     expect(find.textContaining('Kapatan: staff-9'), findsOneWidget);
     expect(find.textContaining('Yeniden açma sayısı: 0'), findsOneWidget);
   });
 
-  testWidgets('reopening via the dialog updates status and logs an audit entry', (tester) async {
-    final repos = await pumpScreen(tester, authorization: const AuthorizationResult(granted: true));
+  testWidgets('reopening via the dialog updates status and logs an audit entry',
+      (tester) async {
+    final repos = await pumpScreen(tester,
+        authorization: const AuthorizationResult(granted: true));
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'Yeniden Aç'));
     await tester.pumpAndSettle();
@@ -103,18 +115,23 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Durum: reopened'), findsOneWidget);
-    final events = await repos.auditRepository.findByOrderId(OrderId('order-1'));
+    final events =
+        await repos.auditRepository.findByOrderId(OrderId('order-1'));
     expect(events, isNotEmpty);
   });
 
-  testWidgets('requesting a duplicate receipt shows the print result and logs an audit entry', (tester) async {
-    final repos = await pumpScreen(tester, authorization: const AuthorizationResult(granted: true));
+  testWidgets(
+      'requesting a duplicate receipt shows the print result and logs an audit entry',
+      (tester) async {
+    final repos = await pumpScreen(tester,
+        authorization: const AuthorizationResult(granted: true));
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'Fiş Tekrar Yazdır'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Fiş yazdırma:'), findsOneWidget);
-    final events = await repos.auditRepository.findByOrderId(OrderId('order-1'));
+    final events =
+        await repos.auditRepository.findByOrderId(OrderId('order-1'));
     expect(events, isNotEmpty);
   });
 }

@@ -175,9 +175,8 @@ class PosOrderSession {
       branchId: branchId ?? this.branchId,
       channel: channel ?? this.channel,
       tableId: clearTableId ? null : (tableId ?? this.tableId),
-      tableSessionId: clearTableSessionId
-          ? null
-          : (tableSessionId ?? this.tableSessionId),
+      tableSessionId:
+          clearTableSessionId ? null : (tableSessionId ?? this.tableSessionId),
       lines: lines ?? this.lines,
       customerNote: customerNote ?? this.customerNote,
       kitchenNote: kitchenNote ?? this.kitchenNote,

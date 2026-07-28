@@ -85,9 +85,18 @@ void main() {
     test('splits across multiple different methods accumulate correctly', () {
       final useCase = _useCase();
       var session = _startSession();
-      session = useCase(session: session, method: PaymentMethodSeedData.cash, amount: Money.fromWhole(250, Currency.tryLira));
-      session = useCase(session: session, method: PaymentMethodSeedData.pluxee, amount: Money.fromWhole(300, Currency.tryLira));
-      session = useCase(session: session, method: PaymentMethodSeedData.creditCard, amount: Money.fromWhole(95, Currency.tryLira));
+      session = useCase(
+          session: session,
+          method: PaymentMethodSeedData.cash,
+          amount: Money.fromWhole(250, Currency.tryLira));
+      session = useCase(
+          session: session,
+          method: PaymentMethodSeedData.pluxee,
+          amount: Money.fromWhole(300, Currency.tryLira));
+      session = useCase(
+          session: session,
+          method: PaymentMethodSeedData.creditCard,
+          amount: Money.fromWhole(95, Currency.tryLira));
 
       expect(session.splits, hasLength(3));
       expect(session.remainingAmount.isZero, isTrue);
@@ -95,7 +104,8 @@ void main() {
     });
 
     test('rejects adding a split to a session that is not editable', () {
-      final session = _startSession().copyWith(status: PaymentSessionStatus.completed);
+      final session =
+          _startSession().copyWith(status: PaymentSessionStatus.completed);
 
       expect(
         () => _useCase()(
@@ -110,7 +120,8 @@ void main() {
 
   group('AddPaymentSplit — foreign currency', () {
     test('callForeignCurrency settles via the exchange rate snapshot', () {
-      final session = _startSession(total: Money.fromWhole(840, Currency.tryLira));
+      final session =
+          _startSession(total: Money.fromWhole(840, Currency.tryLira));
       final rate = ExchangeRateSnapshot.capture(
         sourceCurrency: Currency.eur,
         marketSellingRate: Money.fromWhole(47, Currency.tryLira),

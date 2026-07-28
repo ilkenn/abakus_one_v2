@@ -4,7 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('falls back to a brand-tinted icon when the asset does not exist', (tester) async {
+  testWidgets('falls back to a brand-tinted icon when the asset does not exist',
+      (tester) async {
     await tester.pumpWidget(
       const ProviderScope(
         child: MaterialApp(

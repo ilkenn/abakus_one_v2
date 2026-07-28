@@ -41,8 +41,8 @@ class CalculatePosOrderTotals {
         CartLineMapper.mapLine(
           draft.item,
           TaxPolicy.defaultRate,
-          lineDiscount: _activeLineDiscount(session.discounts, draft.id)
-              ?.discountAmount,
+          lineDiscount:
+              _activeLineDiscount(session.discounts, draft.id)?.discountAmount,
         ),
     ];
 

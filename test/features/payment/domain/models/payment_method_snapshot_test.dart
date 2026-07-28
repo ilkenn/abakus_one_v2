@@ -8,11 +8,13 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('PaymentMethodSnapshot.capture', () {
     test('freezes every field off the live PaymentMethod', () {
-      final snapshot = PaymentMethodSnapshot.capture(PaymentMethodSeedData.pluxee);
+      final snapshot =
+          PaymentMethodSnapshot.capture(PaymentMethodSeedData.pluxee);
 
       expect(snapshot.paymentMethodId, 'pluxee');
       expect(snapshot.displayName, 'Pluxee');
-      expect(snapshot.reportingCategory, PaymentMethodReportingCategory.mealCard);
+      expect(
+          snapshot.reportingCategory, PaymentMethodReportingCategory.mealCard);
       expect(snapshot.providerId, PaymentMethodSeedData.pluxee.providerId);
       expect(snapshot.supportsRefundAtCapture, isTrue);
     });
@@ -30,7 +32,9 @@ void main() {
       expect(snapshot.terminalId, 'terminal-1');
     });
 
-    test('a later mutation to a differently-constructed PaymentMethod of the same id never affects an already-captured snapshot', () {
+    test(
+        'a later mutation to a differently-constructed PaymentMethod of the same id never affects an already-captured snapshot',
+        () {
       const originalLikePluxee = PaymentMethod(
         id: 'pluxee',
         name: 'Pluxee',

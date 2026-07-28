@@ -14,7 +14,8 @@ void main() {
         lines: [
           buildTestLineDraft(
             id: 'line-1',
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
         ],
       );
@@ -34,7 +35,8 @@ void main() {
         lines: [
           buildTestLineDraft(
             id: 'line-1',
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
         ],
       );
@@ -54,7 +56,8 @@ void main() {
         lines: [
           buildTestLineDraft(
             id: 'line-1',
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
         ],
       );
@@ -67,7 +70,8 @@ void main() {
 
       // 100.00 TRY x 2 = 200.00 TRY = 20000 minor units.
       expect(updated.pricing.grossSubtotal.minorUnits, 20000);
-      expect(updated.pricing.grossSubtotal, isNot(session.pricing.grossSubtotal));
+      expect(
+          updated.pricing.grossSubtotal, isNot(session.pricing.grossSubtotal));
     });
 
     test('rejects a non-positive quantity', () {
@@ -76,7 +80,8 @@ void main() {
         lines: [
           buildTestLineDraft(
             id: 'line-1',
-            item: const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+            item: const CartItem(
+                id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
           ),
         ],
       );

@@ -130,10 +130,12 @@ class PaymentSessionController extends Notifier<PaymentSessionState> {
   /// not inside `CompletePaymentSession` — [state].isCompleting is already
   /// the single source of truth for "is a completion attempt in flight,"
   /// mirroring `PosOrderSessionController.submit`'s exact precedent.
-  Future<void> complete({Map<String, ApprovalResult> approvals = const {}}) async {
+  Future<void> complete(
+      {Map<String, ApprovalResult> approvals = const {}}) async {
     final session = state.session;
     if (session == null) {
-      state = state.copyWith(error: const PaymentNoActiveSessionError(), clearError: false);
+      state = state.copyWith(
+          error: const PaymentNoActiveSessionError(), clearError: false);
       return;
     }
     if (state.isCompleting) return;

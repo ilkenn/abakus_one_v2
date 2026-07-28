@@ -40,14 +40,16 @@ void main() {
 
     test('deleteDraft removes the stored draft', () async {
       final repository = InMemoryPosOrderRepository();
-      await repository.saveDraft('session-1', buildTestSession(sessionId: 'session-1'));
+      await repository.saveDraft(
+          'session-1', buildTestSession(sessionId: 'session-1'));
 
       await repository.deleteDraft('session-1');
 
       expect(await repository.getDraft('session-1'), isNull);
     });
 
-    test('does not generate a draftId itself — the caller supplies it entirely', () async {
+    test('does not generate a draftId itself — the caller supplies it entirely',
+        () async {
       final repository = InMemoryPosOrderRepository();
       await repository.saveDraft('caller-chosen-id', buildTestSession());
 

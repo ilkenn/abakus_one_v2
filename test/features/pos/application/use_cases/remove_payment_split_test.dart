@@ -22,7 +22,8 @@ void main() {
         orderId: OrderId('order-1'),
         totalAmount: Money.fromWhole(645, Currency.tryLira),
       );
-      return AddPaymentSplit(splitIdGenerator: SequentialPaymentSplitIdGenerator())(
+      return AddPaymentSplit(
+          splitIdGenerator: SequentialPaymentSplitIdGenerator())(
         session: session,
         method: PaymentMethodSeedData.cash,
         amount: Money.fromWhole(645, Currency.tryLira),
@@ -34,7 +35,8 @@ void main() {
       expect(session.status, PaymentSessionStatus.readyToComplete);
       final splitId = session.splits.single.id;
 
-      final updated = const RemovePaymentSplit()(session: session, splitId: splitId);
+      final updated =
+          const RemovePaymentSplit()(session: session, splitId: splitId);
 
       expect(updated.splits, isEmpty);
       expect(updated.status, PaymentSessionStatus.collecting);
@@ -45,7 +47,8 @@ void main() {
       final session = buildSessionWithOneSplit();
 
       expect(
-        () => const RemovePaymentSplit()(session: session, splitId: 'nonexistent'),
+        () => const RemovePaymentSplit()(
+            session: session, splitId: 'nonexistent'),
         throwsA(isA<UnknownPaymentSplitViolation>()),
       );
     });

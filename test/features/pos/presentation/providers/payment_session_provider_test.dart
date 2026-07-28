@@ -67,24 +67,31 @@ void main() {
       startSession(container);
       final notifier = container.read(paymentSessionProvider.notifier);
 
-      await notifier.addSplit(method: PaymentMethodSeedData.cash, amount: Money.fromWhole(200, Currency.tryLira));
+      await notifier.addSplit(
+          method: PaymentMethodSeedData.cash,
+          amount: Money.fromWhole(200, Currency.tryLira));
 
       final state = container.read(paymentSessionProvider);
       expect(state.session!.splits, hasLength(1));
       expect(state.session!.status, PaymentSessionStatus.collecting);
     });
 
-    test('adding a fully-settling cash split reaches readyToComplete', () async {
+    test('adding a fully-settling cash split reaches readyToComplete',
+        () async {
       startSession(container);
       final notifier = container.read(paymentSessionProvider.notifier);
 
-      await notifier.addSplit(method: PaymentMethodSeedData.cash, amount: Money.fromWhole(645, Currency.tryLira));
+      await notifier.addSplit(
+          method: PaymentMethodSeedData.cash,
+          amount: Money.fromWhole(645, Currency.tryLira));
 
       final state = container.read(paymentSessionProvider);
       expect(state.session!.status, PaymentSessionStatus.readyToComplete);
     });
 
-    test('a rejected non-cash overpay surfaces a validation error, session preserved', () async {
+    test(
+        'a rejected non-cash overpay surfaces a validation error, session preserved',
+        () async {
       startSession(container);
       final notifier = container.read(paymentSessionProvider.notifier);
 
@@ -101,8 +108,11 @@ void main() {
     test('removeSplit removes a split and drops back to collecting', () async {
       startSession(container);
       final notifier = container.read(paymentSessionProvider.notifier);
-      await notifier.addSplit(method: PaymentMethodSeedData.cash, amount: Money.fromWhole(645, Currency.tryLira));
-      final splitId = container.read(paymentSessionProvider).session!.splits.single.id;
+      await notifier.addSplit(
+          method: PaymentMethodSeedData.cash,
+          amount: Money.fromWhole(645, Currency.tryLira));
+      final splitId =
+          container.read(paymentSessionProvider).session!.splits.single.id;
 
       await notifier.removeSplit(splitId);
 
@@ -116,7 +126,9 @@ void main() {
     test('completing a fully-settled cash-only session succeeds', () async {
       startSession(container);
       final notifier = container.read(paymentSessionProvider.notifier);
-      await notifier.addSplit(method: PaymentMethodSeedData.cash, amount: Money.fromWhole(645, Currency.tryLira));
+      await notifier.addSplit(
+          method: PaymentMethodSeedData.cash,
+          amount: Money.fromWhole(645, Currency.tryLira));
 
       await notifier.complete();
 
@@ -126,10 +138,14 @@ void main() {
       expect(state.error, isNull);
     });
 
-    test('completing before remaining is zero fails, session preserved for retry', () async {
+    test(
+        'completing before remaining is zero fails, session preserved for retry',
+        () async {
       startSession(container);
       final notifier = container.read(paymentSessionProvider.notifier);
-      await notifier.addSplit(method: PaymentMethodSeedData.cash, amount: Money.fromWhole(200, Currency.tryLira));
+      await notifier.addSplit(
+          method: PaymentMethodSeedData.cash,
+          amount: Money.fromWhole(200, Currency.tryLira));
 
       await notifier.complete();
 
@@ -139,10 +155,14 @@ void main() {
       expect(state.isCompleting, isFalse);
     });
 
-    test('a second concurrent complete call is ignored while the first is in flight', () async {
+    test(
+        'a second concurrent complete call is ignored while the first is in flight',
+        () async {
       startSession(container);
       final notifier = container.read(paymentSessionProvider.notifier);
-      await notifier.addSplit(method: PaymentMethodSeedData.cash, amount: Money.fromWhole(645, Currency.tryLira));
+      await notifier.addSplit(
+          method: PaymentMethodSeedData.cash,
+          amount: Money.fromWhole(645, Currency.tryLira));
 
       final first = notifier.complete();
       final second = notifier.complete();
@@ -150,7 +170,8 @@ void main() {
       await second;
 
       expect(
-        repository.allRevisions.where((s) => s.status == PaymentSessionStatus.completed),
+        repository.allRevisions
+            .where((s) => s.status == PaymentSessionStatus.completed),
         hasLength(1),
       );
     });

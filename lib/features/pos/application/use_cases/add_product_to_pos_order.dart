@@ -56,8 +56,8 @@ class AddProductToPosOrder {
       final selectionsForGroup = selectedModifiers
           .where((modifier) => modifier.groupId == group.id)
           .map(
-            (modifier) =>
-                ModifierSelectionInput(optionId: modifier.optionId, quantity: 1),
+            (modifier) => ModifierSelectionInput(
+                optionId: modifier.optionId, quantity: 1),
           )
           .toList();
 

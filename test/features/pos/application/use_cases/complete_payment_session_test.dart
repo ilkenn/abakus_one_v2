@@ -32,14 +32,16 @@ const _approvalRequiredMethod = PaymentMethod(
 );
 
 void main() {
-  PaymentSession buildReadySession({required PaymentMethod method, String? transactionReference}) {
+  PaymentSession buildReadySession(
+      {required PaymentMethod method, String? transactionReference}) {
     final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
     final session = StartPaymentSession(clock: clock).call(
       sessionId: 'ps1',
       orderId: OrderId('order-1'),
       totalAmount: Money.fromWhole(100, Currency.tryLira),
     );
-    return AddPaymentSplit(splitIdGenerator: SequentialPaymentSplitIdGenerator())(
+    return AddPaymentSplit(
+        splitIdGenerator: SequentialPaymentSplitIdGenerator())(
       session: session,
       method: method,
       amount: Money.fromWhole(100, Currency.tryLira),
@@ -52,7 +54,8 @@ void main() {
       final session = buildReadySession(method: PaymentMethodSeedData.cash);
       final useCase = CompletePaymentSession(paymentService: PaymentService());
 
-      final completed = await useCase(session: session, expectedRevision: session.revision);
+      final completed =
+          await useCase(session: session, expectedRevision: session.revision);
 
       expect(completed.status, PaymentSessionStatus.completed);
       expect(completed.revision, session.revision + 1);
@@ -85,8 +88,10 @@ void main() {
       );
     });
 
-    test('rejects a method requiring a reference number with none recorded', () async {
-      final session = buildReadySession(method: PaymentMethodSeedData.bankTransfer);
+    test('rejects a method requiring a reference number with none recorded',
+        () async {
+      final session =
+          buildReadySession(method: PaymentMethodSeedData.bankTransfer);
       final useCase = CompletePaymentSession(paymentService: PaymentService());
 
       await expectLater(
@@ -95,14 +100,16 @@ void main() {
       );
     });
 
-    test('accepts a method requiring a reference number when one was recorded', () async {
+    test('accepts a method requiring a reference number when one was recorded',
+        () async {
       final session = buildReadySession(
         method: PaymentMethodSeedData.bankTransfer,
         transactionReference: 'EFT-12345',
       );
       final useCase = CompletePaymentSession(paymentService: PaymentService());
 
-      final completed = await useCase(session: session, expectedRevision: session.revision);
+      final completed =
+          await useCase(session: session, expectedRevision: session.revision);
 
       expect(completed.status, PaymentSessionStatus.completed);
     });
@@ -117,7 +124,8 @@ void main() {
       );
     });
 
-    test('accepts a method requiring approval when granted is supplied', () async {
+    test('accepts a method requiring approval when granted is supplied',
+        () async {
       final session = buildReadySession(method: _approvalRequiredMethod);
       final useCase = CompletePaymentSession(paymentService: PaymentService());
       final splitId = session.splits.single.id;
@@ -125,13 +133,18 @@ void main() {
       final completed = await useCase(
         session: session,
         expectedRevision: session.revision,
-        approvals: {splitId: const ApprovalResult(granted: true, approvedByStaffId: 'manager-1')},
+        approvals: {
+          splitId: const ApprovalResult(
+              granted: true, approvedByStaffId: 'manager-1')
+        },
       );
 
       expect(completed.status, PaymentSessionStatus.completed);
     });
 
-    test('rejects a provider-routed split since no real provider integration exists', () async {
+    test(
+        'rejects a provider-routed split since no real provider integration exists',
+        () async {
       final session = buildReadySession(method: PaymentMethodSeedData.pluxee);
       final useCase = CompletePaymentSession(paymentService: PaymentService());
 

@@ -23,10 +23,12 @@ OrderClosure _closedClosure({int revision = 3}) {
 
 void main() {
   group('ReopenClosedOrder', () {
-    test('reopens a closed record when authorized, incrementing reopenCount', () async {
+    test('reopens a closed record when authorized, incrementing reopenCount',
+        () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final auditRepository = InMemoryClosureAuditEntryRepository();
-      final policy = FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
+      final policy =
+          FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
       final closure = _closedClosure();
 
       final updated = await ReopenClosedOrder(
@@ -57,7 +59,10 @@ void main() {
       final closure = _closedClosure();
 
       await expectLater(
-        ReopenClosedOrder(clock: clock, authorizationPolicy: policy, auditRepository: auditRepository)(
+        ReopenClosedOrder(
+            clock: clock,
+            authorizationPolicy: policy,
+            auditRepository: auditRepository)(
           closure: closure,
           expectedRevision: closure.revision,
           reason: 'Test',
@@ -76,7 +81,10 @@ void main() {
       final closure = _closedClosure();
 
       await expectLater(
-        ReopenClosedOrder(clock: clock, authorizationPolicy: policy, auditRepository: auditRepository)(
+        ReopenClosedOrder(
+            clock: clock,
+            authorizationPolicy: policy,
+            auditRepository: auditRepository)(
           closure: closure,
           expectedRevision: closure.revision,
           reason: 'Test',
@@ -103,16 +111,19 @@ void main() {
         expectedRevision: closure.revision,
         reason: 'Test',
         performedByStaffId: 'staff-1',
-        approval: const ApprovalResult(granted: true, approvedByStaffId: 'manager-1'),
+        approval:
+            const ApprovalResult(granted: true, approvedByStaffId: 'manager-1'),
       );
 
       expect(updated.lifecycleStatus, OrderClosureLifecycleStatus.reopened);
     });
 
-    test('rejects reopening a record that is not currently closed/reclosed', () async {
+    test('rejects reopening a record that is not currently closed/reclosed',
+        () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final auditRepository = InMemoryClosureAuditEntryRepository();
-      final policy = FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
+      final policy =
+          FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
       final closure = OrderClosure(
         closureId: 'c1',
         orderId: OrderId('order-1'),
@@ -121,7 +132,10 @@ void main() {
       );
 
       await expectLater(
-        ReopenClosedOrder(clock: clock, authorizationPolicy: policy, auditRepository: auditRepository)(
+        ReopenClosedOrder(
+            clock: clock,
+            authorizationPolicy: policy,
+            auditRepository: auditRepository)(
           closure: closure,
           expectedRevision: closure.revision,
           reason: 'Test',

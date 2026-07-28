@@ -36,8 +36,8 @@ enum OrderClosureLifecycleStatus {
 abstract final class OrderClosureLifecycleTransitions {
   OrderClosureLifecycleTransitions._();
 
-  static const Map<OrderClosureLifecycleStatus, Set<OrderClosureLifecycleStatus>>
-      _allowed = {
+  static const Map<OrderClosureLifecycleStatus,
+      Set<OrderClosureLifecycleStatus>> _allowed = {
     OrderClosureLifecycleStatus.open: {
       OrderClosureLifecycleStatus.paymentInProgress,
       OrderClosureLifecycleStatus.cancelled,

@@ -426,7 +426,8 @@ final class UnknownPaymentSplitViolation extends BusinessRuleViolation {
   final String splitId;
 
   @override
-  String get description => 'No split with id "$splitId" exists in this session';
+  String get description =>
+      'No split with id "$splitId" exists in this session';
 }
 
 /// A `PaymentSession` was asked to move from one `PaymentSessionStatus` to

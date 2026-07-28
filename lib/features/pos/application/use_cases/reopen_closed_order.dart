@@ -67,7 +67,8 @@ class ReopenClosedOrder {
     }
     if (authResult.requiresManagerApproval && approval?.granted != true) {
       throw AuthorizationDeniedViolation(
-        actionName: '${PosAuthorizedAction.reopenOrder.name} (manager approval required)',
+        actionName:
+            '${PosAuthorizedAction.reopenOrder.name} (manager approval required)',
       );
     }
 

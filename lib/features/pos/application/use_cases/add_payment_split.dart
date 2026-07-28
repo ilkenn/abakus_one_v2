@@ -89,8 +89,7 @@ class AddPaymentSplit {
       if (wouldBeSettled > session.totalAmount) {
         throw NonCashOverpaymentViolation(
           methodId: split.methodSnapshot.paymentMethodId,
-          overpaidMinorUnits:
-              (wouldBeSettled - session.totalAmount).minorUnits,
+          overpaidMinorUnits: (wouldBeSettled - session.totalAmount).minorUnits,
         );
       }
     }

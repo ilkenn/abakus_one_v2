@@ -8,7 +8,8 @@ import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  final cashSnapshot = PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash);
+  final cashSnapshot =
+      PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash);
   final cardSnapshot =
       PaymentMethodSnapshot.capture(PaymentMethodSeedData.creditCard);
 

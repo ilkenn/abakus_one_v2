@@ -13,7 +13,8 @@ final orderClosureRepositoryProvider = Provider<OrderClosureRepository>((ref) {
 });
 
 /// The [ClosureAuditEntryRepository] currently in use.
-final closureAuditEntryRepositoryProvider = Provider<ClosureAuditEntryRepository>((ref) {
+final closureAuditEntryRepositoryProvider =
+    Provider<ClosureAuditEntryRepository>((ref) {
   return InMemoryClosureAuditEntryRepository();
 });
 

@@ -26,7 +26,8 @@ PosOrderSession buildTestSession({
     channel: channel,
     fees: Money.zero(Currency.tryLira),
     tip: Money.zero(Currency.tryLira),
-    pricing: PriceCalculator.calculate(lines: const [], currency: Currency.tryLira),
+    pricing:
+        PriceCalculator.calculate(lines: const [], currency: Currency.tryLira),
   );
 }
 

@@ -21,10 +21,12 @@ void main() {
     test('a manual method (no provider) completes synchronously', () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final auditRepository = InMemoryClosureAuditEntryRepository();
-      final policy = FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
+      final policy =
+          FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
       final split = PaymentSplit.tryLira(
         id: 'split-1',
-        methodSnapshot: PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash),
+        methodSnapshot:
+            PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash),
         amount: Money.fromWhole(100, Currency.tryLira),
       );
 
@@ -47,13 +49,17 @@ void main() {
       expect(events.single.type, ClosureAuditEventType.paymentVoided);
     });
 
-    test('a provider-routed method is rejected today (no real provider integration)', () async {
+    test(
+        'a provider-routed method is rejected today (no real provider integration)',
+        () async {
       final clock = FakeClock(DateTime(2026, 7, 29, 12, 0));
       final auditRepository = InMemoryClosureAuditEntryRepository();
-      final policy = FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
+      final policy =
+          FakePosAuthorizationPolicy(const AuthorizationResult(granted: true));
       final split = PaymentSplit.tryLira(
         id: 'split-1',
-        methodSnapshot: PaymentMethodSnapshot.capture(PaymentMethodSeedData.pluxee),
+        methodSnapshot:
+            PaymentMethodSnapshot.capture(PaymentMethodSeedData.pluxee),
         amount: Money.fromWhole(100, Currency.tryLira),
       );
 
@@ -80,7 +86,8 @@ void main() {
       );
       final split = PaymentSplit.tryLira(
         id: 'split-1',
-        methodSnapshot: PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash),
+        methodSnapshot:
+            PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash),
         amount: Money.fromWhole(100, Currency.tryLira),
       );
 

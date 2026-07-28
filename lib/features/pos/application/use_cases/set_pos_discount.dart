@@ -79,7 +79,8 @@ class SetPosDiscount {
     final baseAmount = scope == DiscountScope.line
         ? _lineGrossAmount(withoutExisting, targetOrderLineId!)
         : _calculateTotals(withoutExisting).grossSubtotal;
-    final discountAmount = baseAmount.scaledBy(preset.percentageBasisPoints, 10000);
+    final discountAmount =
+        baseAmount.scaledBy(preset.percentageBasisPoints, 10000);
 
     final snapshot = DiscountSnapshot.percentage(
       discountId: preset.id,

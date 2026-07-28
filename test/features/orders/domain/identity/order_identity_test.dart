@@ -31,7 +31,9 @@ void main() {
       expect(id.value, isNot(number.value));
     });
 
-    test('two separate instances can produce the same sequence value (only unique within one runtime)', () async {
+    test(
+        'two separate instances can produce the same sequence value (only unique within one runtime)',
+        () async {
       final providerA = InMemoryOrderIdentityProvider(prefix: 'a');
       final providerB = InMemoryOrderIdentityProvider(prefix: 'b');
 

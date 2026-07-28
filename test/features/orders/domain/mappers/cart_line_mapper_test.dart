@@ -8,7 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('CartLineMapper.mapLine', () {
     test('converts a CartItem into an OrderLine with a Money unit price', () {
-      const item = CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 2);
+      const item =
+          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 2);
 
       final line = CartLineMapper.mapLine(item, TaxPolicy.defaultRate);
 
@@ -18,7 +19,9 @@ void main() {
       expect(line.quantity, 2);
     });
 
-    test('is the same mapping CartToOrderMapper and CalculatePosOrderTotals both rely on (no duplicated logic)', () {
+    test(
+        'is the same mapping CartToOrderMapper and CalculatePosOrderTotals both rely on (no duplicated logic)',
+        () {
       const item = CartItem(
         id: 'p1',
         name: 'Bowl',
