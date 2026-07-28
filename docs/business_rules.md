@@ -521,13 +521,37 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Campaigns, Multi-Branch
 
+### BR-PROMO-007 — Quick product discount and per-target discount collection (Phase 3 Sprint 3C)
+- **Status**: VERIFIED
+- **Rule**: `PosOrderSession.discount` (a single nullable slot) is replaced with
+  `discounts: List<DiscountSnapshot>` — at most one active discount per line, at most one order-level
+  discount, both independently trackable (revises BR-PROMO-006's single-slot POS shape; the
+  `SingleDiscountOnlyPolicy` abstraction itself is untouched). `SetPosDiscount` always removes any
+  existing snapshot matching the same `(scope, targetOrderLineId)` before adding a new one — a second
+  application to the same target replaces it, never stacks. A quick discount preset (5/10/15/20/25%,
+  `DiscountPresetSeedData`) applies **only** to the selected product line — the preset buttons are
+  disabled with an explicit guidance message when no line is selected, preventing an accidental
+  whole-order discount. Percentage bases are computed by the use case itself (the line's own gross,
+  or the order's live gross subtotal excluding the target being replaced) — never in the widget.
+  Order-level discounting reuses the same `DiscountSnapshot` shape with `scope: order` and no line
+  target, so future order-level discount UI needs no new model.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Campaigns, Orders, POS
+
 # Payment Rules
 
-### BR-PAY-001 — Payment method types
+### BR-PAY-001 — Payment methods are an extensible catalog, not a closed enum (revised Phase 3 Sprint 3C)
 - **Status**: VERIFIED
-- **Rule**: `PaymentMethodType` defines `odeAl, pluxee, edenred, multinet, setcard, creditCard, cash`.
+- **Rule**: The closed `PaymentMethodType` enum (`odeAl, pluxee, edenred, multinet, setcard,
+  creditCard, cash`) has been **fully removed**. `PaymentMethod`
+  (`lib/features/payment/domain/models/payment_method.dart`) is a data class, not an enum, mirroring
+  BR-PAY-006's `Currency` redesign. `PaymentMethodSeedData.all` seeds 9 methods as data, not code:
+  Nakit (Cash), Kredi/Banka Kartı (Credit/Debit Card), Pluxee, Multinet, Setcard, Edenred,
+  MetropolCard, Havale/EFT (Bank Transfer), Hediye Çeki (Gift Voucher). Enabling a future payment
+  method (a new meal-card brand, a new digital wallet, ...) is a data addition (one more seed entry),
+  not a business-logic or enum change.
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Payments
+- **Related Modules**: Payments, POS
 
 ### BR-PAY-002 — Payment status values
 - **Status**: VERIFIED
@@ -535,10 +559,16 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Payments
 
-### BR-PAY-003 — Payment adapters are unconfigured
+### BR-PAY-003 — Payment adapters are unconfigured (revised Phase 3 Sprint 3C)
 - **Status**: VERIFIED
-- **Rule**: All 5 provider adapters (Edenred, Multinet, Ödeal, Pluxee, Setcard) return
-  `PaymentStatus.notConfigured` — no real payment processing exists today.
+- **Rule**: All 9 provider adapters (Edenred, Multinet, Ödeal, Pluxee, Setcard, plus Sprint 3C's
+  iyzico, Stripe, Adyen, MetropolCard) return `PaymentStatus.notConfigured` — no real payment
+  processing exists today. `PaymentProviderAdapter` and `PaymentRequest`/`PaymentResult` are fully
+  `Money`-typed (no `double` anywhere in the request/result shape, including `refundPayment`) —
+  revised this sprint per explicit instruction. `PaymentService` dispatches by `PaymentProviderId`
+  (technical integration), never by payment method — see BR-PAY-012. Manual methods (cash, bank
+  transfer, gift voucher) have `providerId == null` and are never routed through `PaymentService` at
+  all; no fake adapter was created for them (explicit instruction — see ADR-012).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Payments
 
@@ -631,6 +661,92 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: flutter_architect
 - **Related Modules**: Payments, Staff/Admin, POS
 
+### BR-PAY-012 — Payment Method vs. Payment Provider separation (Phase 3 Sprint 3C)
+- **Status**: VERIFIED
+- **Rule**: A `PaymentMethod` (BR-PAY-001, what a cashier selects/what appears on a receipt) is a
+  distinct concept from a `PaymentProviderId` (BR-PAY-003, the technical integration that may process
+  it). A method's optional `providerId` field is the only link between them. Cash, Bank Transfer, and
+  Gift Voucher have `providerId == null` and are always manually recorded — no adapter is invented for
+  them. Card and meal-card methods carry a `providerId` and are routed through `PaymentService` at
+  completion time (BR-PAY-015). `PaymentMethodReportingCategory` (`cash, card, mealCard,
+  bankTransfer, giftVoucher, unknown`) is a separate, closed classification used for reporting only —
+  it includes `unknown` specifically so a future category addition can never retroactively change the
+  meaning of an already-captured historical snapshot (BR-PAY-013).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments, POS
+
+### BR-PAY-013 — Historical payment method snapshot (Phase 3 Sprint 3C)
+- **Status**: VERIFIED
+- **Rule**: Every recorded payment (`PaymentSplit`) stores a frozen `PaymentMethodSnapshot`
+  (`PaymentMethodSnapshot.capture(method, ...)`) — paymentMethodId, displayName, iconAssetPath,
+  brandColorValue, reportingCategory, providerId, capability flags at capture time, plus optional
+  transactionReference/authorizationCode/terminalId for a future meal-card/POS-terminal integration.
+  A later edit to the live `PaymentMethod` catalog (renaming a method, changing its icon, retiring a
+  provider) never changes what an already-recorded payment/receipt/report shows — matches BR-PAY-008's
+  historical-exchange-rate-immutability precedent for the same underlying reason.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments, POS
+
+### BR-PAY-014 — Split payment, cash overpayment, and dual cash-entry mode (Phase 3 Sprint 3C)
+- **Status**: VERIFIED
+- **Rule**: A `PaymentSession` (BR-PAY-015) accepts an unlimited number of payment splits across
+  different methods. A non-cash split can never push `totalSettled` past the session total —
+  rejected as `NonCashOverpaymentViolation` before being added. A cash split is the only one allowed
+  to overpay; `PaymentSession.changeAmount` is then positive and shown as "Para Üstü." Cash entry
+  supports two cashier-facing modes on the same screen: (A) enter the amount to collect directly, or
+  (B) enter what the customer physically handed over — the screen computes Tahsil Edilen/Para Üstü
+  from it (e.g. Toplam 645 TL, Müşteri 1000 TL verdi → Tahsil 1000 TL, Para Üstü 355 TL). Both modes
+  produce the same kind of cash `PaymentSplit`; the distinction is UI-only, not a domain concept.
+  "Tahsil Edilen"/"Kalan"/"Para Üstü" update in real time as splits are added/removed.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments, POS
+
+### BR-PAY-015 — Payment session state machine, explicit completion only (Phase 3 Sprint 3C)
+- **Status**: VERIFIED
+- **Rule**: `PaymentSession` (`lib/features/pos/domain/models/payment_session.dart`, formerly named
+  `PaymentIntent` — see ADR-012) moves through `collecting → readyToComplete → completing →
+  {completed, failed}`, plus `collecting/readyToComplete → cancelled`. Completion is **never
+  automatic** just because the remaining amount reaches zero — `readyToComplete` only makes the
+  "Ödemeyi Tamamla" action available; an explicit `CompletePaymentSession` use case must run and
+  validates, in order: the caller's expected revision still matches (optimistic concurrency,
+  `StaleRevisionViolation`), remaining is exactly zero, every split requiring a reference number has
+  one, every split requiring approval has a granted `ApprovalResult`, and every provider-routed split
+  actually succeeded via `PaymentService` (`ProviderTransactionNotSuccessfulViolation` — always
+  throws today since no real provider integration exists yet, an honest limitation, not a bug). Only
+  a genuinely successful completion reaches `completed`; a rejected/failed attempt can retry
+  (`failed → completing`) or fall back to editing (`failed → collecting`) without losing the splits
+  already collected.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments, POS
+
+### BR-ORDER-009 — Stable per-line identity, no index-based line operations (Phase 3 Sprint 3C)
+- **Status**: VERIFIED
+- **Rule**: Every POS cart line carries a permanent, session-local `orderLineDraftId`
+  (`PosOrderLineDraft`, replacing `PosOrderSession.lines: List<CartItem>` with
+  `List<PosOrderLineDraft>`). Discount targeting, quantity updates, modifier updates, and line removal
+  all operate by this id — never by list index (the prior Sprint 3B approach). Referencing an id that
+  no longer exists in the session throws a typed `UnknownOrderLineDraftViolation` rather than the
+  previous `RangeError`. The id is generated only by `PosOrderLineDraftIdGenerator`
+  (application-layer, injected into `AddProductToPosOrder`) — never by the UI, and never by domain
+  code, matching BR-ORDER-005's identity-generation-ownership precedent.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS
+
+### BR-ORDER-010 — Closed account lifecycle: reopen, reclose, correction (Phase 3 Sprint 3C)
+- **Status**: DECIDED (domain + application) / ROADMAP (production authorization, routed navigation)
+- **Rule**: A submitted order's cashier-facing closure state is tracked by a new `OrderClosure`
+  aggregate (`lib/features/pos/domain/models/order_closure.dart`), deliberately separate from `Order`
+  itself (same reasoning as `PosOrderSession` staying separate from `Order` in Sprint 3B — see
+  ADR-012 for the name choice). Lifecycle: `open → paymentInProgress → {closed, cancelled, reclosed}`,
+  `closed → reopened`, `reopened → {paymentInProgress, cancelled}`, `reclosed → reopened`. A closure
+  becomes `reclosed` instead of `closed` once its `reopenCount` is greater than zero, so a single
+  `CloseOrderAccount` use case can pick the correct status without querying audit history. Reopening
+  requires a reason, a performing staff id, the expected revision (optimistic concurrency), and an
+  `AuthorizationResult` (BR-STAFF-002). A wrong payment method is never corrected by mutating the
+  original settled `PaymentSplit` — see BR-REFUND-007/008.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments, POS, Staff/Admin
+
 # Refund, Cancellation, and Order Correction Rules
 
 ### BR-REFUND-001 — Cancellation info shape
@@ -673,6 +789,37 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   voucher) is undecided.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Payments
+
+### BR-REFUND-007 — Refund foundation, full and partial (Phase 3 Sprint 3C)
+- **Status**: DECIDED (domain + application) / ROADMAP (UI, real provider refund execution)
+- **Rule**: `RefundIntent`/`RefundCalculator` (`lib/features/orders/domain/refunds/`) compute a
+  refundable amount and validate a refund request against it — a full refund is simply a request for
+  the entire refundable balance (`RefundType.full`), not a structurally different code path from a
+  partial one. A refund request exceeding the refundable amount is rejected
+  (`RefundExceedsRefundableAmountViolation`). No refund UI exists this sprint (explicit scope
+  boundary — see ADR-012); `PaymentService.executeRefund` exists and dispatches by `providerId` but
+  has no real provider behind it.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments, Orders
+
+### BR-REFUND-008 — Payment void and payment method correction, append-only (Phase 3 Sprint 3C)
+- **Status**: DECIDED (domain + application) / ROADMAP (dedicated correction/void UI)
+- **Rule**: A settled `PaymentSplit` is never directly mutated. Correcting a wrong payment method
+  produces: a `PaymentVoid` (`pending → {completed, rejected}` — manual methods complete
+  synchronously; a provider-routed split attempts a real reversal via `PaymentService.executeRefund`
+  and lands on `rejected` today, no real provider integration existing yet) against the original
+  split, plus a same-amount replacement `PaymentSplit` under the new method, plus a `PaymentCorrection`
+  record linking them (originalPaymentId, replacementPaymentId, previous/new `PaymentMethodSnapshot`,
+  reason, corrected-by, approval info, provider reversal reference). If the financial total doesn't
+  change, no new customer collection is made — only a controlled accounting correction. If a real
+  provider collection happened, a direct record correction is not allowed; void/refund must go
+  through the provider's own capability first. `PaymentCorrectionType` is a 5-value closed enum
+  (`paymentMethodCorrection, amountCorrection, referenceCorrection, splitMerge, splitSplit`) — only
+  `paymentMethodCorrection` is actually produced this sprint (`CorrectPaymentMethod`); the shape
+  stays open for the other four without a redesign. Every `CloseOrderAccount`/`ReopenClosedOrder`/
+  `VoidPayment`/`CorrectPaymentMethod` call appends its own `ClosureAuditEntry` — see BR-AUDIT-004.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payments, POS, Staff/Admin
 
 # Kitchen Operations
 
@@ -758,12 +905,23 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Staff/Admin, Orders
 
-### BR-STAFF-002 — Manager-approval gate on financial actions
-- **Status**: DECIDED
-- **Rule**: Refunds, voids, and comps above some threshold require manager approval. The gate's
-  existence is decided; its scope is defined by BR-STAFF-003.
+### BR-STAFF-002 — Manager-approval gate on financial actions (foundation added Phase 3 Sprint 3C)
+- **Status**: DECIDED (gate exists) / VERIFIED (contract) — thresholds remain **UNRESOLVED**
+  (BR-STAFF-003)
+- **Rule**: Refunds, voids, comps, and now closed-account actions (view, reopen, correct payment,
+  void payment, reclose — `PosAuthorizedAction`) require authorization above some threshold.
+  `PosAuthorizationPolicy` (`lib/features/pos/domain/authorization/pos_authorization_policy.dart`) is
+  the contract every such action calls through. **It deliberately has no production implementation
+  anywhere in `lib/` — not even a `NoOp` default.** Unlike a safe "unavailable" `NoOp` (e.g.
+  `UnavailableExchangeRateProvider`, `NoOpReceiptPrintProvider`), an auto-granting authorization
+  default would be an unsafe permission disguised as a placeholder. The two closed-account screens
+  require it as a mandatory constructor parameter (not a Riverpod-provider default), so they are
+  structurally uninstantiable from any real app flow today — `FakePosAuthorizationPolicy` exists only
+  under `test/`. A real actor/approval result must always be supplied externally once a real policy
+  is built; the app must never invent one. Approval thresholds themselves remain undecided
+  (BR-STAFF-003).
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Staff/Admin, Payments
+- **Related Modules**: Staff/Admin, Payments, POS
 
 ### BR-STAFF-003 — Approval thresholds
 - **Status**: UNRESOLVED
@@ -886,6 +1044,20 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Rule**: See BR-STAFF-003 — which actions require approval and at what threshold is undecided.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Staff/Admin, Payments
+
+### BR-AUDIT-004 — Closed-account audit trail is append-only, structurally (Phase 3 Sprint 3C)
+- **Status**: VERIFIED
+- **Rule**: `ClosureAuditEntry`/`ClosureAuditEntryRepository`
+  (`lib/features/pos/domain/audit/closure_audit_entry.dart`,
+  `lib/features/pos/data/closure_audit_entry_repository.dart`) record at least: paymentCompleted,
+  orderClosed, orderReopened, paymentVoided, paymentMethodCorrected, orderReclosed,
+  duplicateReceiptRequested. `ClosureAuditEntryRepository`'s interface has no update or delete
+  method at all — append-only is enforced by the contract's shape, not merely by convention, closing
+  the gap BR-AUDIT-002 flagged for `OrderAuditEntry`. Every `ClosureAuditEntry`/`OrderClosure`/
+  `PaymentSession`/`PaymentSplit`/`PaymentVoid`/`PaymentCorrection` remains append-only forever — a
+  correction or reopen always adds a new record, never edits or removes an old one.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Payments, POS, Staff/Admin
 
 # Profitability and Loss Prevention
 
@@ -1141,11 +1313,56 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Related Modules**: Orders, POS, Payments
 - **Business Rule IDs**: BR-ORDER-005, BR-ORDER-007, BR-ORDER-008, BR-PAY-011
 
+### DL-015 — Payment Foundation, POS Payment System, and Closed-Account Lifecycle
+- **Decision**: Builds a full payment collection, closure, reopen, correction, and authorization
+  foundation on top of Sprint 3A/3B: an extensible `PaymentMethod` seed model (replacing
+  `PaymentMethodType`) fully separated from `PaymentProviderId`; a `PaymentSession` (renamed from
+  `PaymentIntent`, no duplicate/alias) with an explicit-completion-only state machine; unlimited
+  split payments with cash-only overpayment/change and a dual cash-entry mode; a stable
+  `orderLineDraftId` per POS line (no more index-based line operations); a per-target
+  `DiscountSnapshot` collection (line + order, at most one each) replacing the single-slot discount;
+  a `PaymentMethodSnapshot` historical-record pattern; a domain-only refund foundation
+  (`RefundIntent`/`RefundCalculator`); and a full closed-account lifecycle (`OrderClosure`, reopen,
+  reclose, payment void, payment method correction, append-only audit trail, an authorization
+  contract with deliberately no production `NoOp`, and standalone closed-account screens).
+- **Status**: DECIDED
+- **Source**: User, Phase 3 Sprint 3C architecture approval (three rounds: initial approval with 15
+  binding decisions, a revision round rejecting the PaymentIntent-reuse proposal and adding the full
+  closed-account/correction/authorization scope, and a final approval with 15 additional binding
+  decisions).
+- **Date**: 2026-07-28
+- **Consequences**: See BR-PAY-001 (revised), BR-PAY-003 (revised), BR-PAY-012 through BR-PAY-015,
+  BR-ORDER-009, BR-ORDER-010, BR-PROMO-007, BR-REFUND-007, BR-REFUND-008, BR-AUDIT-004, BR-STAFF-002
+  (revised). `docs/decisions.md` ADR-012 records the full architecture, including every deviation
+  from a literal reading of the approval (aggregate naming, the `reopenCount`-based
+  closed-vs-reclosed status choice, the `Order`-by-id lookup gap) reported as deviations with
+  reasons, not silent choices.
+- **Related Modules**: Payments, Orders, POS, Staff/Admin
+- **Business Rule IDs**: BR-PAY-001, BR-PAY-003, BR-PAY-012, BR-PAY-013, BR-PAY-014, BR-PAY-015,
+  BR-ORDER-009, BR-ORDER-010, BR-PROMO-007, BR-REFUND-007, BR-REFUND-008, BR-AUDIT-004, BR-STAFF-002
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v1.4 — 2026-07-28
+- **Version**: 1.4
+- **Date**: 2026-07-28
+- **Summary**: Phase 3 Sprint 3C (Payment Foundation & POS Payment System). Revised BR-PAY-001
+  (extensible `PaymentMethod` seed catalog, `PaymentMethodType` fully removed) and BR-PAY-003 (9
+  Money-typed provider adapters, `providerId`-keyed dispatch). Added BR-PAY-012 through BR-PAY-015
+  (method/provider separation, historical snapshot, split/cash rules, payment session state
+  machine), BR-ORDER-009 (stable line identity), BR-ORDER-010 (closed-account lifecycle),
+  BR-PROMO-007 (quick product discount + per-target discount collection), BR-REFUND-007/008 (refund
+  foundation, void/correction), BR-AUDIT-004 (structurally append-only closure audit trail). Revised
+  BR-STAFF-002 (authorization contract now exists, deliberately with no production default; approval
+  thresholds remain UNRESOLVED per BR-STAFF-003). Logged DL-015.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the payment/closure/correction/authorization business rules this sprint's
+  three-round-approved architecture established, and revise the two rules (BR-PAY-001, BR-PAY-003)
+  that described a payment-method model this sprint replaced outright.
 
 ### v1.3 — 2026-07-28
 - **Version**: 1.3

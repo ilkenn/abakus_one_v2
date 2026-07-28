@@ -249,3 +249,63 @@ orders, production exchange-rate integration, customer-navigation integration (`
   explicitly to `nextOrderId()`/`nextOrderNumber()` only).
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-011 Consequences section.
+
+## Phase 3 — Payment Foundation & POS Payment System (Sprint 3C)
+
+Branch `phase-3/sprint-3c-payment-foundation`, from the tip of
+`phase-3/sprint-3b-pos-application-foundation`. Approved across three rounds (initial architecture,
+a revision round expanding scope to the full closed-account lifecycle, and a final round resolving
+remaining naming/shape questions — see `docs/business_rules.md` DL-015). Full architecture and every
+deviation: `docs/decisions.md` ADR-012.
+
+| Task | Status | Note |
+|---|---|---|
+| Extensible `PaymentMethod` model | DONE | `lib/features/payment/domain/models/payment_method.dart` — data class, not enum; `PaymentMethodSeedData.all` seeds 9 methods (Cash, Credit/Debit Card, Pluxee, Multinet, Setcard, Edenred, MetropolCard, Bank Transfer/EFT, Gift Voucher). `PaymentMethodType` fully removed, no alias. See BR-PAY-001 (revised). |
+| Payment Method / Payment Provider separation | DONE | `PaymentProviderId` (closed enum) stays the technical-integration identifier; `PaymentMethod.providerId` is the only link. Cash/Bank Transfer/Gift Voucher carry `providerId: null` and are never routed through `PaymentService` — no fake adapter written for them. See BR-PAY-012. |
+| `PaymentMethodSnapshot` | DONE | Frozen historical record (paymentMethodId, displayName, iconAssetPath, brandColorValue, reportingCategory, providerId, capability flags, transactionReference/authorizationCode/terminalId) captured onto every `PaymentSplit`. A later catalog edit never changes an already-recorded payment. See BR-PAY-013. |
+| `PaymentSession` (renamed from `PaymentIntent`) | DONE | `lib/features/pos/domain/models/payment_session.dart` — moved out of `orders/domain/payment/`, no duplicate/alias. `PaymentSessionStatus {collecting, readyToComplete, completing, completed, cancelled, failed}`; `completing`/`failed` are controller-only, never persisted on the domain object. Explicit `CompletePaymentSession` use case — completion is never automatic on zero-remaining. See BR-PAY-015, ADR-012. |
+| `PaymentSessionRepository` | DONE | Append-only, keeps every revision; `findBySessionId`/`findActiveByOrderId`/`findHistoryByOrderId`. |
+| Split payment + cash overpayment/change | DONE | Unlimited splits; non-cash can never push settled past total (`NonCashOverpaymentViolation`); only cash may overpay, producing `changeAmount`. Dual cash-entry mode (collect-amount vs. tendered-amount) on `PosPaymentScreen`, UI-only distinction. See BR-PAY-014. |
+| `PosOrderLineDraft` + `orderLineDraftId` | DONE | Stable per-line identity replaces Sprint 3B's index-based line operations; unknown-id access throws typed `UnknownOrderLineDraftViolation`. Generated only by `PosOrderLineDraftIdGenerator`, injected into `AddProductToPosOrder` — never by UI/domain code. See BR-ORDER-009. |
+| `DiscountSnapshot` collection + quick product discount | DONE | `PosOrderSession.discounts: List<DiscountSnapshot>` replaces the single-slot discount — at most one per line, at most one order-level. `SetPosDiscount` (renamed from the originally-proposed `ApplyPosDiscount`) always replaces, never stacks, at the same target. 5 seed presets (5/10/15/20/25%), disabled with guidance text until a line is selected. See BR-PROMO-007. |
+| Calculator | DONE | `PosPaymentScreen`'s `_CalculatorSheet` — sequential calculator (+,−,×,÷,decimal,backspace,clear); result only reaches the amount field via "Uygula", never automatically. |
+| Refund foundation | DONE (domain + application) / ROADMAP (UI) | `RefundIntent`/`RefundCalculator` (`lib/features/orders/domain/refunds/`) — full refund is simply a request for the entire refundable balance, not a separate code path; `RefundExceedsRefundableAmountViolation` on overreach. No refund UI. `PaymentService.executeRefund` added, dispatches by `providerId`, no real provider behind it. See BR-REFUND-007. |
+| Payment void + payment method correction | DONE (domain + application) / ROADMAP (dedicated UI) | `PaymentVoid {pending, completed, rejected}`; `CorrectPaymentMethod` composes void + same-amount replacement split + linking `PaymentCorrection` record — never changes the transacted amount. `PaymentCorrectionType` open to 5 kinds, only `paymentMethodCorrection` produced this sprint. See BR-REFUND-008. |
+| `OrderClosure` aggregate + lifecycle | DONE (domain + application) / ROADMAP (routed navigation) | New aggregate (name chosen over `ClosedOrderRecord` — matches the `Order*` family; see ADR-012), deliberately separate from `Order`. `open → paymentInProgress → {closed, cancelled, reclosed}`, `closed → reopened`, `reopened → {paymentInProgress, cancelled}`, `reclosed → reopened`. `reopenCount` lets one `CloseOrderAccount` use case pick `closed` vs. `reclosed` without a second use case. See BR-ORDER-010. |
+| `ClosureAuditEntry` / append-only audit trail | DONE | `ClosureAuditEntryRepository`'s interface has no update/delete method at all — append-only enforced structurally, not just by convention. Events: paymentCompleted, orderClosed, orderReopened, paymentVoided, paymentMethodCorrected, orderReclosed, duplicateReceiptRequested. See BR-AUDIT-004. |
+| `PosAuthorizationPolicy` | DONE (contract only, by design) | Gates viewClosedAccount/reopenOrder/correctPayment/voidPayment/recloseOrder. **No production implementation anywhere in `lib/`, not even a `NoOp`** — an auto-granting default would be an unsafe placeholder, unlike every other safe `NoOp` in this codebase. `FakePosAuthorizationPolicy` lives only under `test/`. Both closed-account screens require it as a mandatory constructor parameter, making them structurally uninstantiable from any real app flow today. See BR-STAFF-002 (revised). |
+| Duplicate receipt foundation | DONE | `ReceiptPrintProvider`/`NoOpReceiptPrintProvider` (a *safe* `NoOp` — printing has no security consequence) + `RequestDuplicateReceipt`, which always logs the request as an audit event regardless of print outcome. `requestId` externally supplied (never a timestamp — a mistake self-caught and fixed while writing this use case). |
+| `PosPaymentScreen` | DONE | Responsive (desktop/tablet 2-panel, phone stacked); Toplam/Tahsil Edilen/Kalan/Para Üstü highlighted and live-updating; method grid from `PaymentMethodSeedData.active`; reference-number field when required; split list; "Ödemeyi Tamamla" enabled only at `readyToComplete`. Two real `RenderFlex` overflow bugs found and fixed at phone width, same class as Sprint 3B's fix. |
+| `PosCashierScreen` → `PosPaymentScreen` wiring | DONE | `ref.listen` on the order-session controller's `submitted` transition opens the payment screen. Judged safe to wire directly since `PosCashierScreen` has zero route/consumer anywhere in the app — not a `go_router`/`MainNavigationScreen` change. Payment session id deterministically derived (`'<orderId>-payment'`). |
+| `ClosedAccountsScreen` / `ClosedAccountDetailScreen` | DONE (standalone) | Both require `PosAuthorizationPolicy` as a mandatory constructor parameter. List screen: status filter, empty/denied states. Detail screen: reopen (reason dialog) and duplicate-receipt actions wired to their use cases via `ClosedAccountDetailController`. Not wired to any route. Detail screen requires a caller-supplied `Order` — no `Order`-by-id repository exists in this codebase (flagged gap, not solved this sprint). Payment correction/void deliberately have no dedicated UI form this sprint. |
+| Tests | DONE | 881 tests total (up from Sprint 3B's 690), all passing. New coverage spans domain (`PaymentMethod`/`PaymentSession`/`PosOrderLineDraft`/`DiscountSnapshot`/`OrderClosure`/`ClosureAuditEntry`/`PaymentVoid`/`PaymentCorrection`/`RefundCalculator`), application (all new use cases), data (`PaymentSessionRepository`/`OrderClosureRepository`/`ClosureAuditEntryRepository` contracts), presentation (`PaymentSessionController`, both closed-account screens, `PosPaymentScreen`, updated `PosCashierScreen`), and adapters/services (9 provider adapters, `PaymentService` incl. `executeRefund`). `flutter analyze`: no issues. `dart format`: clean (72 files reformatted this sprint, 0 behavior change). |
+| Documentation | DONE | `docs/business_rules.md` v1.4 (BR-PAY-001/003 revised; BR-PAY-012–015, BR-ORDER-009/010, BR-PROMO-007, BR-REFUND-007/008, BR-AUDIT-004 added; BR-STAFF-002 revised; DL-015 logged); `docs/decisions.md` ADR-012; this entry. |
+
+**Explicitly out of scope this sprint** (per architecture approval): real payment/refund provider
+integrations (iyzico/Stripe/Adyen/Ödeal/Pluxee/Multinet/Setcard/Edenred/MetropolCard remain
+`notConfigured`), real brand logo assets (`flutter_svg` deliberately not added — seam only), a
+production `PosAuthorizationPolicy` implementation, routed navigation for the closed-account screens,
+an `Order`-by-id repository, dedicated payment-correction/void UI, refund UI, reporting/printer
+integration.
+
+### Deviations from the approved architecture (reported, not silent)
+
+- **`PaymentIntent` → `PaymentSession`**: renamed and moved, not aliased — the user explicitly
+  rejected reusing `PaymentIntent` in place; see ADR-012 for the full reasoning and the note that a
+  distinct provider-facing `PaymentIntent` concept may be reintroduced later.
+- **`ApplyPosDiscount` → `SetPosDiscount`**: a rename reflecting replace-not-stack semantics, per the
+  user's explicit condition for approving "keep it one use case."
+- **`OrderClosure` naming**: the user explicitly delegated this choice; `OrderClosure` was picked
+  over the originally-proposed `ClosedOrderRecord` to match the existing `Order*` value-object family
+  (`OrderCancellationInfo`, `OrderAuditEntry`, `OrderTimestamps`, `OrderChannel`).
+- **`reopenCount` instead of a second `RecloseOrderAccount` use case**: avoids near-duplicate use
+  cases differing only in target status; documented as a deliberate deviation from a literal reading
+  of the brief.
+- **`Order`-by-id lookup gap**: `ClosedAccountDetailScreen` needs a full `Order`, but no
+  order-by-id repository exists in this codebase. Not solved this sprint (would be scope creep) —
+  `Order` is a required caller-supplied constructor parameter instead, flagged here rather than
+  silently built around.
+- **Payment correction/void has no dedicated UI**: fully built and tested at the application layer,
+  not yet wired to any screen/form — a scope boundary, not an oversight.
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-012 Consequences section.
