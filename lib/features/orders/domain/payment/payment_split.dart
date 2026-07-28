@@ -2,9 +2,10 @@ import '../../../../core/errors/business_rule_violation.dart';
 import '../../../../shared/models/currency.dart';
 import '../../../../shared/models/exchange_rate_snapshot.dart';
 import '../../../../shared/models/money.dart';
-import '../../../payment/domain/models/payment_enums.dart';
+import '../../../payment/domain/models/payment_method_reporting_category.dart';
+import '../../../payment/domain/models/payment_method_snapshot.dart';
 
-/// One portion of a split payment against a [PaymentIntent].
+/// One portion of a split payment against a [PaymentSession].
 ///
 /// [amount] is tendered — the currency and amount the customer actually
 /// paid in, which may be the accounting currency (TRY) or any currency
@@ -21,10 +22,21 @@ import '../../../payment/domain/models/payment_enums.dart';
 /// once, at the moment this split is created, and [settlementAmount] is
 /// computed from it then — never re-derived later from a live/updated
 /// rate.
+///
+/// [methodSnapshot] carries everything about the [PaymentMethod] that
+/// mattered at the moment this split was recorded — never a live
+/// reference (`docs/decisions.md` ADR-012's append-only-financial-record
+/// principle: a later Admin Panel edit to the method catalog must never
+/// change what an already-recorded split reports).
+///
+/// **Append-only**: once created, a [PaymentSplit] is never mutated. A
+/// correction (wrong method) is a separate [PaymentVoid] +
+/// [PaymentCorrection] + a brand-new replacement [PaymentSplit] — never an
+/// edit to this one.
 class PaymentSplit {
   const PaymentSplit._({
     required this.id,
-    required this.method,
+    required this.methodSnapshot,
     required this.amount,
     required this.settlementAmount,
     this.exchangeRate,
@@ -34,7 +46,7 @@ class PaymentSplit {
   /// involved. [amount] must already be in `Currency.accountingCurrency`.
   factory PaymentSplit.tryLira({
     required String id,
-    required PaymentMethodType method,
+    required PaymentMethodSnapshot methodSnapshot,
     required Money amount,
   }) {
     final accountingCurrency = Currency.accountingCurrency;
@@ -46,7 +58,7 @@ class PaymentSplit {
     }
     return PaymentSplit._(
       id: id,
-      method: method,
+      methodSnapshot: methodSnapshot,
       amount: amount,
       settlementAmount: amount,
     );
@@ -59,7 +71,7 @@ class PaymentSplit {
   /// that point on.
   factory PaymentSplit.foreignCurrency({
     required String id,
-    required PaymentMethodType method,
+    required PaymentMethodSnapshot methodSnapshot,
     required Money amount,
     required ExchangeRateSnapshot exchangeRate,
   }) {
@@ -73,7 +85,7 @@ class PaymentSplit {
     }
     return PaymentSplit._(
       id: id,
-      method: method,
+      methodSnapshot: methodSnapshot,
       amount: amount,
       settlementAmount: exchangeRate.convertToTry(amount),
       exchangeRate: exchangeRate,
@@ -81,7 +93,7 @@ class PaymentSplit {
   }
 
   final String id;
-  final PaymentMethodType method;
+  final PaymentMethodSnapshot methodSnapshot;
 
   /// The amount tendered, in whatever currency was actually paid.
   final Money amount;
@@ -96,12 +108,18 @@ class PaymentSplit {
 
   bool get isForeignCurrency => amount.currency != Currency.accountingCurrency;
 
+  /// Whether this split's method is reported as `cash` — the only
+  /// category allowed to exceed the remaining balance (change is
+  /// calculated on the excess) per `docs/business_rules.md`.
+  bool get isCash =>
+      methodSnapshot.reportingCategory == PaymentMethodReportingCategory.cash;
+
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other is PaymentSplit &&
             other.id == id &&
-            other.method == method &&
+            other.methodSnapshot == methodSnapshot &&
             other.amount == amount &&
             other.settlementAmount == settlementAmount &&
             other.exchangeRate == exchangeRate);
@@ -109,5 +127,5 @@ class PaymentSplit {
 
   @override
   int get hashCode =>
-      Object.hash(id, method, amount, settlementAmount, exchangeRate);
+      Object.hash(id, methodSnapshot, amount, settlementAmount, exchangeRate);
 }

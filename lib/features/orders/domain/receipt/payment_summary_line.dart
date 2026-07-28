@@ -1,6 +1,6 @@
 import '../../../../shared/models/exchange_rate_snapshot.dart';
 import '../../../../shared/models/money.dart';
-import '../../../payment/domain/models/payment_enums.dart';
+import '../../../payment/domain/models/payment_method_snapshot.dart';
 
 /// One payment (one [PaymentSplit]) as shown on a printed receipt.
 ///
@@ -10,15 +10,20 @@ import '../../../payment/domain/models/payment_enums.dart';
 /// market rate/margin/acceptance rate) + [settlementAmount] (TRY) together
 /// cover exactly that; no separate fields duplicate what [exchangeRate]
 /// already carries.
+///
+/// [methodSnapshot] is the same frozen record the originating
+/// [PaymentSplit] carries — never a live [PaymentMethod] lookup, so a
+/// reprinted/duplicate receipt always reports what was true at payment
+/// time (`docs/decisions.md` ADR-012).
 class PaymentSummaryLine {
   const PaymentSummaryLine({
-    required this.method,
+    required this.methodSnapshot,
     required this.amount,
     required this.settlementAmount,
     this.exchangeRate,
   });
 
-  final PaymentMethodType method;
+  final PaymentMethodSnapshot methodSnapshot;
 
   /// As tendered — may be TRY or a foreign currency.
   final Money amount;

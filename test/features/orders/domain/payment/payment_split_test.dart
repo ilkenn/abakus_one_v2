@@ -1,34 +1,50 @@
 import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/features/orders/domain/payment/payment_split.dart';
-import 'package:abakus_one_v2/features/payment/domain/models/payment_enums.dart';
+import 'package:abakus_one_v2/features/payment/domain/models/payment_method_snapshot.dart';
+import 'package:abakus_one_v2/features/payment/domain/models/payment_method_seed_data.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
 import 'package:abakus_one_v2/shared/models/exchange_rate_snapshot.dart';
 import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  final cashSnapshot = PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash);
+  final cardSnapshot =
+      PaymentMethodSnapshot.capture(PaymentMethodSeedData.creditCard);
+
   group('PaymentSplit.tryLira', () {
     test('settlementAmount equals amount for a TRY split', () {
       final split = PaymentSplit.tryLira(
         id: 's1',
-        method: PaymentMethodType.cash,
+        methodSnapshot: cashSnapshot,
         amount: Money.fromWhole(100, Currency.tryLira),
       );
 
       expect(split.settlementAmount, split.amount);
       expect(split.exchangeRate, isNull);
       expect(split.isForeignCurrency, isFalse);
+      expect(split.isCash, isTrue);
     });
 
     test('rejects an amount not denominated in TRY', () {
       expect(
         () => PaymentSplit.tryLira(
           id: 's1',
-          method: PaymentMethodType.cash,
+          methodSnapshot: cashSnapshot,
           amount: Money.fromWhole(100, Currency.eur),
         ),
         throwsA(isA<CurrencyMismatchViolation>()),
       );
+    });
+
+    test('a card split is not reported as cash', () {
+      final split = PaymentSplit.tryLira(
+        id: 's1',
+        methodSnapshot: cardSnapshot,
+        amount: Money.fromWhole(100, Currency.tryLira),
+      );
+
+      expect(split.isCash, isFalse);
     });
   });
 
@@ -49,7 +65,7 @@ void main() {
         () {
       final split = PaymentSplit.foreignCurrency(
         id: 's2',
-        method: PaymentMethodType.creditCard,
+        methodSnapshot: cardSnapshot,
         amount: Money.fromWhole(20, Currency.eur),
         exchangeRate: snapshot,
       );
@@ -63,7 +79,7 @@ void main() {
       expect(
         () => PaymentSplit.foreignCurrency(
           id: 's2',
-          method: PaymentMethodType.creditCard,
+          methodSnapshot: cardSnapshot,
           amount: Money.fromWhole(20, Currency.tryLira),
           exchangeRate: snapshot,
         ),
@@ -85,7 +101,7 @@ void main() {
       expect(
         () => PaymentSplit.foreignCurrency(
           id: 's2',
-          method: PaymentMethodType.creditCard,
+          methodSnapshot: cardSnapshot,
           amount: Money.fromWhole(20, notAccepted),
           exchangeRate: snapshot,
         ),
@@ -97,7 +113,7 @@ void main() {
         () {
       final split = PaymentSplit.foreignCurrency(
         id: 's2',
-        method: PaymentMethodType.creditCard,
+        methodSnapshot: cardSnapshot,
         amount: Money.fromWhole(20, Currency.eur),
         exchangeRate: snapshot,
       );

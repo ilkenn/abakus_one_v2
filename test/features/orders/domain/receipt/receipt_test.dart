@@ -5,7 +5,8 @@ import 'package:abakus_one_v2/features/orders/domain/pricing/price_calculator.da
 import 'package:abakus_one_v2/features/orders/domain/receipt/foreign_currency_equivalent.dart';
 import 'package:abakus_one_v2/features/orders/domain/receipt/payment_summary_line.dart';
 import 'package:abakus_one_v2/features/orders/domain/receipt/receipt.dart';
-import 'package:abakus_one_v2/features/payment/domain/models/payment_enums.dart';
+import 'package:abakus_one_v2/features/payment/domain/models/payment_method_seed_data.dart';
+import 'package:abakus_one_v2/features/payment/domain/models/payment_method_snapshot.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
 import 'package:abakus_one_v2/shared/models/exchange_rate_provider.dart';
 import 'package:abakus_one_v2/shared/models/exchange_rate_snapshot.dart';
@@ -85,7 +86,8 @@ void main() {
         summary: summary,
         paymentSummary: [
           PaymentSummaryLine(
-            method: PaymentMethodType.creditCard,
+            methodSnapshot:
+                PaymentMethodSnapshot.capture(PaymentMethodSeedData.creditCard),
             amount: Money.fromWhole(20, Currency.eur),
             settlementAmount: Money.fromWhole(840, Currency.tryLira),
             exchangeRate: snapshot,
