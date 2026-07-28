@@ -68,6 +68,14 @@ class TableSession {
     return copyWith(checkIds: [...checkIds, checkId]);
   }
 
+  /// Removes [checkId] — used by `TransferCheck` (Phase 3 Sprint 3D) when
+  /// moving a check from this session to a different table's session. A
+  /// no-op if [checkId] isn't present.
+  TableSession withCheckRemoved(String checkId) {
+    if (!checkIds.contains(checkId)) return this;
+    return copyWith(checkIds: checkIds.where((id) => id != checkId).toList());
+  }
+
   TableSession closed({required DateTime at}) {
     return copyWith(status: TableSessionStatus.closed, closedAt: at);
   }

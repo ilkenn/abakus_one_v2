@@ -107,6 +107,21 @@ void main() {
     expect(updated.checkIds, ['check_1', 'check_2']);
   });
 
+  test('withCheckRemoved adisyonu listeden cikarir (Sprint 3D)', () {
+    final session = buildSession(checkIds: const ['check_1', 'check_2']);
+    final updated = session.withCheckRemoved('check_1');
+
+    expect(updated.checkIds, ['check_2']);
+  });
+
+  test('withCheckRemoved listede olmayan bir id icin no-op olur (Sprint 3D)',
+      () {
+    final session = buildSession(checkIds: const ['check_1']);
+    final updated = session.withCheckRemoved('missing');
+
+    expect(updated.checkIds, ['check_1']);
+  });
+
   test('canAcceptNewGuest yalnizca active durumda true doner', () {
     expect(
       buildSession(status: TableSessionStatus.active).canAcceptNewGuest,

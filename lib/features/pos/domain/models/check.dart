@@ -65,7 +65,18 @@ class Check {
   /// Optimistic-concurrency counter — starts at 1.
   final int revision;
 
+  /// Appends [guestSessionId] if not already present (idempotent, mirrors
+  /// `TableSession.withGuestAdded`) and bumps [revision].
+  Check withGuestAdded(String guestSessionId) {
+    if (guestSessionIds.contains(guestSessionId)) return this;
+    return copyWith(
+      guestSessionIds: [...guestSessionIds, guestSessionId],
+      revision: revision + 1,
+    );
+  }
+
   Check copyWith({
+    String? tableSessionId,
     List<String>? guestSessionIds,
     CheckStatus? status,
     String? posOrderSessionId,
@@ -75,7 +86,7 @@ class Check {
   }) {
     return Check(
       id: id,
-      tableSessionId: tableSessionId,
+      tableSessionId: tableSessionId ?? this.tableSessionId,
       branchId: branchId,
       guestSessionIds: guestSessionIds ?? this.guestSessionIds,
       status: status ?? this.status,
