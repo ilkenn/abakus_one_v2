@@ -427,3 +427,132 @@ explicitly specified: making `Currency`'s constructor public (chosen for consist
 and for testability, rather than keeping it private with a separate test-only construction path),
 and catching/omitting (rather than propagating) a per-currency rate failure inside
 `ForeignCurrencyEquivalentsCalculator.build` so one missing rate never blocks printing a receipt.
+
+---
+
+## ADR-011 — POS Application Layer and Basic Cashier Flow
+
+- Date: 2026-07-28
+- Status: Accepted
+
+### Decision
+Builds the first functional cashier order flow on top of ADR-009/ADR-010's domain foundation, adding
+an application layer between it and a new `PosCashierScreen`:
+
+- **`PosOrderSession`** (`lib/features/pos/domain/models/pos_order_session.dart`) — the in-progress
+  order a cashier is editing, a distinct value object from `Order` (not an `Order` in an early
+  status). Exhaustive field set: `sessionId`, `openedAt`, `lastUpdatedAt`, `openedByStaffId`,
+  `branchId`, `channel`, `tableId`/`tableSessionId`, `lines` (`CartItem`, reused rather than
+  duplicated), `customerNote`/`kitchenNote`, `discount`, `fees`, `tip`, `pricing`
+  (`PriceBreakdown`). `sessionId` is externally supplied; `openedAt` cannot change after
+  construction (no `copyWith` override parameter for it); every mutation bumps `lastUpdatedAt` via an
+  injected `Clock`; lines are defensively copied and unmodifiable.
+- **`Clock`** (`lib/core/utils/clock.dart`) — `abstract interface class Clock { DateTime now(); }` +
+  `SystemClock`, mirroring every other service-seam provider in this codebase. No domain/application
+  code calls `DateTime.now()` directly anymore in this sprint's new code.
+- **`OrderIdentityProvider`** (`lib/features/orders/domain/identity/order_identity.dart`) —
+  `nextOrderId()`/`nextOrderNumber()`, with `InMemoryOrderIdentityProvider` as the only
+  implementation (two independent counters, collision-safe only within one running instance — see
+  `docs/business_rules.md` BR-ORDER-005, revised). No `OrderId`/`OrderNumber` is ever constructed
+  from a timestamp, `Random`, or UUID anywhere in the new code.
+- **9 named application use cases** (`lib/features/pos/application/use_cases/`): `StartPosOrder`,
+  `AddProductToPosOrder`, `UpdatePosOrderLine`, `RemovePosOrderLine`, `ApplyPosDiscount`,
+  `UpdatePosOrderNotes`, `CalculatePosOrderTotals`, `SubmitPosOrder`, `CancelPosOrderSession` — each a
+  thin, testable wrapper reusing `ModifierValidator`, `PriceCalculator`, and a new
+  `CartLineMapper.mapLine` helper (extracted from `CartToOrderMapper`'s former private `_mapLine`, see
+  Consequences) rather than duplicating validation/pricing logic. `BusinessRuleViolation`s are mapped
+  to a new `PosApplicationError` sealed hierarchy at the use-case boundary, preserving the original
+  violation for diagnostics.
+- **`PosOrderRepository`** (`lib/features/pos/data/pos_order_repository.dart`) —
+  `saveDraft(draftId, session)` / `getDraft(draftId)` / `deleteDraft(draftId)` /
+  `submitOrder(Order)`. Never generates `draftId` itself; in practice the caller always passes
+  `PosOrderSession.sessionId`. `InMemoryPosOrderRepository` is the only implementation, with one-shot
+  failure injection (`failOnSaveDraft`/etc.) for retry testing.
+- **`PosOrderSessionController`** (`Notifier<PosOrderSessionState>`) — one immutable state class with
+  a `PosOrderSessionStatus { idle, editing, submitting, submitted, failure }` field (not a sealed
+  state union — matches this codebase's existing `AuthState`/`OtpState` shape, not a new pattern).
+  Owns the active session, delegates every mutation to a use case, saves a draft after each
+  successful edit, and is the sole place duplicate-submission prevention is enforced (see
+  Consequences).
+- **`PosCashierScreen`** (`lib/features/pos/presentation/screens/pos_cashier_screen.dart`) —
+  responsive two-panel (desktop/tablet, `AppBreakpoints.tablet`) / stacked (phone) layout: category
+  chips + product grid on one side, current order (lines, quantity controls, customer/kitchen notes,
+  price summary, cancel/submit) on the other. Standalone: no `go_router` route, no
+  `MainNavigationScreen` wiring, no staff-auth gate — directly constructible for tests and a future
+  staff-shell integration to push. Reuses `menuCategoriesProvider`/`menuProductsProvider`/
+  `MenuProduct` for its product source (no new menu repository) and the existing
+  `AppCard`/`LoadingView`/`ErrorView`/`EmptyView`/`AppSectionHeader`/`OptionSelectionCard`/
+  `ProductImage`/design-token set; follows this codebase's actual established convention of private
+  widget classes inline in the screen file (`menu_screen.dart`'s `_ProductListCard` pattern), since
+  the "reusable" `shared/widgets/*` component set for buttons/cards/forms is largely empty
+  placeholder files (see `docs/current_state_audit.md`).
+- **Submission lifecycle** (`SubmitPosOrder`): validate ≥1 line → obtain identity via
+  `OrderIdentityProvider` → map session to `Order` at `OrderStatus.created` → transition
+  `created → pendingConfirmation` (never skips to `confirmed`) with actor `OrderActor.staff` and an
+  appended `OrderAuditEntry` → persist via `PosOrderRepository.submitOrder` → delete the draft **only
+  after** successful persistence → return the submitted `Order`. On any failure, the draft is left
+  alone and the controller returns to `failure` status with the complete session still attached, so
+  the cashier can retry without re-entering anything.
+- **Exchange rates**: the production-default `ExchangeRateProvider` is `UnavailableExchangeRateProvider`
+  (`lib/shared/models/unavailable_exchange_rate_provider.dart`) — every method throws/no-ops rather
+  than inventing a rate. The cashier screen shows TRY amounts unconditionally and an approximate
+  EUR/USD row when a rate is available, or a non-blocking "unavailable" label otherwise; order
+  submission is never gated on a rate being available.
+
+### Context
+Approved as a 15-point architecture decision (branch, navigation, state shape, order-level notes,
+order/draft identity, `PosOrderSession`'s exact field list, time handling, the 9 use-case names, the
+totals-calculation constraint, the submission lifecycle, exchange rates, product source, cashier UI
+requirements, controller behavior, and an explicit out-of-scope list — see `docs/feature_status.md`
+Phase 3 Sprint 3B for the full checklist). POS/Kitchen/Courier UI and payment-provider integration
+were explicitly out of scope for ADR-009; this ADR is the first of that deferred UI work, scoped
+deliberately narrow (a single-cashier flow, no auth, no printer, no marketplace).
+
+### Consequences
+- **Order-level notes**: `Order` gains additive `customerNote`/`kitchenNote` fields (default `''`),
+  distinct from each `OrderLine`'s own note fields — see BR-ORDER-007. `CartToOrderMapper.map()` and
+  `SubmitPosOrder` both snapshot the pair.
+- **`CartLineMapper` extraction**: `CartToOrderMapper`'s former private `_mapLine` is now a public,
+  shared `CartLineMapper.mapLine` (`lib/features/orders/domain/mappers/cart_line_mapper.dart`) used
+  by both `CartToOrderMapper` (real submission) and `CalculatePosOrderTotals` (live preview) — the
+  approved architecture forbade `CalculatePosOrderTotals` from calling `CartToOrderMapper.map()`
+  directly (that would fabricate an `OrderId`/`OrderNumber` merely to preview a total), so the
+  per-line snapshot logic needed exactly one shared implementation instead of two diverging copies.
+- **Deviation — `restaurantId`**: `Order` requires a non-nullable `restaurantId`, but the approved
+  `PosOrderSession` field list has no such field. Resolved by injecting it as a constructor parameter
+  of `SubmitPosOrder` and a required constructor parameter of `PosCashierScreen`, rather than
+  silently adding it to the session or hardcoding a guessed constant. Reported here as a gap the
+  approved field list didn't cover, not a silent architecture change.
+- **Deviation — duplicate-submission prevention placement**: the approval's submission-lifecycle
+  description lists "prevent duplicate concurrent submissions" as one of `SubmitPosOrder`'s own
+  steps; this implementation places the guard solely in `PosOrderSessionController` (checking its own
+  `state.status == submitting`) instead, since the use case itself is stateless per-call and a second,
+  independent flag inside it could disagree with the controller's. One source of truth was chosen
+  over a literal second guard. Verified in `pos_order_session_provider_test.dart` ("a second
+  concurrent submit call is ignored while the first is in flight").
+- **`fees` → `PriceCalculator.serviceFee`**: `PosOrderSession.fees` (one undifferentiated `Money`
+  field) is passed through as `PriceCalculator`'s `serviceFee` parameter; `deliveryFee`/
+  `packagingFee` stay zero. A labeling choice, not a pricing one — the arithmetic is identical
+  regardless of which of the three fee parameters carries the value.
+- **Audit-entry ID**: not routed through `OrderIdentityProvider` (scoped explicitly to
+  `nextOrderId()`/`nextOrderNumber()`); instead a deterministic string derived from the order's own
+  id (`'<orderId>-transition-1'`), unique within that order's first-ever transition, avoiding
+  timestamps/random values/UUIDs without extending the identity abstraction beyond its stated scope.
+- **Discount stacking untouched**: `DiscountStackingPolicy`/`SingleDiscountOnlyPolicy` (ADR-009) are
+  not invoked anywhere in the POS layer — `PosOrderSession.discount` is a single nullable slot,
+  structurally preventing more than one candidate discount, so there is nothing to resolve.
+- Two real, pre-existing overflow bugs in `PosCashierScreen` were found and fixed while writing widget
+  tests at phone width (`_OrderPanel`'s fixed-height content exceeding its `Expanded` allotment;
+  `_SummaryRow`'s label/amount `Row` overflowing horizontally) — not part of the original approval,
+  but a required fix under this codebase's "every screen respects safe areas, avoids overflow"
+  standard (`CLAUDE.md` §7/§8), reported here rather than silently left in place.
+- No new pub dependency. No change to `go_router`, `MainNavigationScreen`, or any customer-facing
+  screen.
+
+### Confidence
+85%. The state shape, use-case names, repository contract, `PosOrderSession` field list, and
+submission-lifecycle steps are directly specified by the user's approved architecture. The residual
+uncertainty is concentrated in the deviations listed above (`restaurantId`'s injection point,
+duplicate-submission-guard placement, and the `fees`-to-`serviceFee` mapping) — each a judgment call
+made to resolve a gap or tension in the approved spec, documented inline and here rather than decided
+silently, but not independently re-confirmed with the user field-by-field.

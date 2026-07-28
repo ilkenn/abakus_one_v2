@@ -201,4 +201,51 @@ Architecture refinement approved and implemented the same day, before Sprint 3A 
 | `ExchangeRateSnapshot.convertFromTry` | DONE | Exact inverse of the existing `convertToTry` — TRY-total-to-foreign-currency conversion, the computation both `Receipt` and a future cashier display need. |
 | `ForeignCurrencyEquivalentsCalculator` | DONE | `lib/features/orders/domain/receipt/foreign_currency_equivalents_calculator.dart` — builds one equivalent per `Currency.acceptedForeignCurrencies` using `ExchangeRateProvider.getTodayRate`; omits (never fabricates) a currency whose rate isn't available. Not `Receipt`-specific — the same primitive a future cashier live display would reuse. `Receipt.issue(...)` is a new convenience factory wiring it in automatically. |
 | `CurrencyNotAcceptedViolation` | DONE | New `BusinessRuleViolation` — rejects capturing a rate or tendering a payment in a currency with `isAcceptedByBusiness == false`. |
-| Cashier live currency display | **ROADMAP** | Approved requirement (Total/Approximate EUR/Approximate USD, auto-updating on rate refresh) — needs a presentation-layer (Riverpod/UI) component. POS UI remains out of scope this sprint; the domain primitives it would be built on (`ExchangeRateProvider`, `ForeignCurrencyEquivalentsCalculator`) already exist and are tested. See BR-PAY-011. |
+| Cashier live currency display | DONE (Sprint 3B) | Was ROADMAP at Sprint 3A close — built in Phase 3 Sprint 3B's `PosCashierScreen`. See below. |
+
+## Phase 3 — POS Application Layer & Basic Cashier Flow (Sprint 3B)
+
+Branch `phase-3/sprint-3b-pos-application-foundation`, from the tip of
+`phase-3/sprint-3a-pos-domain-foundation`. The first functional cashier order flow, built on Sprint
+3A's pure-Dart domain foundation via a new application layer + Riverpod controller + responsive UI.
+See `docs/decisions.md` ADR-011 and `docs/business_rules.md` BR-ORDER-005 (revised), BR-ORDER-007,
+BR-ORDER-008, BR-PAY-011 (revised), DL-014 for full rationale.
+
+| Task | Status | Note |
+|---|---|---|
+| `Clock` abstraction | DONE | `lib/core/utils/clock.dart` — `Clock`/`SystemClock`, `clockProvider`. No domain/application code in this sprint calls `DateTime.now()` directly. |
+| Order-level notes | DONE | `Order.customerNote`/`.kitchenNote` (additive, default `''`), distinct from `OrderLine`'s own note fields. `CartToOrderMapper`/`SubmitPosOrder` both snapshot them. See BR-ORDER-007. |
+| `CartLineMapper` extraction | DONE | `lib/features/orders/domain/mappers/cart_line_mapper.dart` — the per-line snapshot logic formerly private inside `CartToOrderMapper`, now shared with `CalculatePosOrderTotals` so a live totals preview never has to call `CartToOrderMapper.map()` (which would fabricate an `OrderId`/`OrderNumber`). |
+| `OrderIdentityProvider` | DONE | `lib/features/orders/domain/identity/order_identity.dart` — `nextOrderId()`/`nextOrderNumber()`; `InMemoryOrderIdentityProvider` (dev-only, collision-safe within one runtime only) is the only implementation. Revises BR-ORDER-005 — see ADR-011. |
+| `PosApplicationError` | DONE | Sealed hierarchy (`lib/features/pos/application/errors/pos_application_error.dart`) mapping `BusinessRuleViolation` and repository failures to a use-case/controller-facing error type, preserving the original violation for diagnostics. |
+| `PosOrderSession` | DONE | `lib/features/pos/domain/models/pos_order_session.dart` — the in-progress cashier order, distinct from `Order`. Exact approved field list; externally-supplied `sessionId`; immutable `openedAt`; defensively-copied unmodifiable `lines`. |
+| `PosOrderRepository` | DONE | `lib/features/pos/data/pos_order_repository.dart` — draft CRUD + `submitOrder`, `draftId` always externally supplied. `InMemoryPosOrderRepository` only, with one-shot failure injection for retry testing. |
+| 9 POS application use cases | DONE | `StartPosOrder`, `AddProductToPosOrder`, `UpdatePosOrderLine`, `RemovePosOrderLine`, `ApplyPosDiscount`, `UpdatePosOrderNotes`, `CalculatePosOrderTotals`, `SubmitPosOrder`, `CancelPosOrderSession` (`lib/features/pos/application/use_cases/`). Reuse `ModifierValidator`/`PriceCalculator`/`CartLineMapper` — no duplicated validation/pricing logic. |
+| `PosOrderSessionController` | DONE | `lib/features/pos/presentation/providers/pos_order_session_provider.dart` — one `PosOrderSessionState` class with a `PosOrderSessionStatus` field (`idle`/`editing`/`submitting`/`submitted`/`failure`), not a sealed state union, matching this codebase's existing `AuthState`/`OtpState` shape. Owns draft persistence, submission (incl. the sole duplicate-submission guard — see ADR-011 deviation), and error/retry state. |
+| `PosCashierScreen` | DONE | `lib/features/pos/presentation/screens/pos_cashier_screen.dart` — responsive desktop/tablet two-panel vs. phone stacked layout (`AppBreakpoints`); category/product grid, cart lines with quantity controls, customer/kitchen notes, discount/fee/tip in the price summary, cancel/submit, submission progress and failure feedback, TRY + approximate EUR/USD display. Standalone: no `go_router` route, no `MainNavigationScreen` wiring, no staff-auth gate (out of scope this sprint). Reuses `menuCategoriesProvider`/`menuProductsProvider` for its product source — no new menu repository. |
+| Exchange-rate-unavailable default | DONE | `UnavailableExchangeRateProvider` (`lib/shared/models/unavailable_exchange_rate_provider.dart`) is the production default — every method throws/no-ops rather than inventing a rate; the cashier screen shows a non-blocking "Döviz kuru şu anda kullanılamıyor" label instead, and submission is never gated on a rate being available. |
+| Two pre-existing UI overflow bugs found and fixed | DONE | Found while writing phone-width widget tests, not part of the original approval: `_OrderPanel`'s fixed-height content exceeded its `Expanded` allotment at phone width (now scrollable); `_SummaryRow`'s label/amount `Row` overflowed horizontally on narrow widths (label now wrapped in `Flexible` with ellipsis). Both are genuine `RenderFlex` overflow defects under `CLAUDE.md` §7/§8's no-overflow standard, not test artifacts — fixed as part of this sprint rather than left in place. |
+| Tests | DONE | 92 new tests across domain (`PosOrderSession`, `Order` notes extension, `CartLineMapper`, `OrderIdentityProvider`), application (all 9 use cases), data (`PosOrderRepository` contract + failure injection), presentation (`PosOrderSessionController` incl. duplicate-submit/retry), and widget level (`PosCashierScreen` — responsive layout, full add-product-to-submit flow, TRY/EUR/USD presentation). Full project total: **690 tests, all passing** (`flutter test`), up from Phase 1 closure's 399. `flutter analyze`: no issues. `dart format`: clean. |
+| Documentation | DONE | `docs/business_rules.md` v1.3 (BR-ORDER-005 revised, BR-ORDER-007/008 added, BR-PAY-011 revised; DL-014 logged); `docs/decisions.md` ADR-011; this entry. |
+
+**Explicitly out of scope this sprint** (per architecture approval): Firebase, production
+persistence, staff authentication, permissions, printer integration, payment collection, cash
+drawer, kitchen routing, offline sync, stock deduction, advanced campaign engine, marketplace
+orders, production exchange-rate integration, customer-navigation integration (`go_router`/
+`MainNavigationScreen`).
+
+### Deviations from the approved architecture (reported, not silent)
+
+- **`restaurantId`**: not a field on the approved `PosOrderSession` list, but required by `Order`.
+  Injected as a constructor parameter of `SubmitPosOrder` and a required constructor parameter of
+  `PosCashierScreen` instead of being silently added to the session or hardcoded.
+- **Duplicate-submission prevention**: enforced solely in `PosOrderSessionController` (its own
+  in-flight status), not duplicated inside `SubmitPosOrder` as the approval's step-by-step lifecycle
+  literally listed — one source of truth, not two that could disagree. Verified by a dedicated test.
+- **`fees` → `PriceCalculator.serviceFee`**: a labeling choice (`deliveryFee`/`packagingFee` stay
+  zero), not a pricing one — the arithmetic is identical regardless of which fee parameter is used.
+- **Audit-entry ID**: a deterministic string derived from the order's own id
+  (`'<orderId>-transition-1'`), not routed through `OrderIdentityProvider` (which the approval scoped
+  explicitly to `nextOrderId()`/`nextOrderNumber()` only).
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-011 Consequences section.
