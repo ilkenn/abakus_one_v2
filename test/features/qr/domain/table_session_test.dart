@@ -5,6 +5,7 @@ TableSession buildSession({
   TableSessionStatus status = TableSessionStatus.active,
   List<String> guestSessionIds = const [],
   List<String> activeOrderIds = const [],
+  List<String> checkIds = const [],
 }) {
   return TableSession(
     id: 'session_1',
@@ -15,6 +16,7 @@ TableSession buildSession({
     openedAt: DateTime(2026, 6, 1, 12, 0),
     guestSessionIds: guestSessionIds,
     activeOrderIds: activeOrderIds,
+    checkIds: checkIds,
   );
 }
 
@@ -89,6 +91,20 @@ void main() {
 
     expect(cancelled.status, TableSessionStatus.cancelled);
     expect(cancelled.closedAt, cancelledAt);
+  });
+
+  test('withCheckAdded aynı adisyonu tekrar eklemez (Sprint 3D)', () {
+    final session = buildSession(checkIds: const ['check_1']);
+    final updated = session.withCheckAdded('check_1');
+
+    expect(updated.checkIds, ['check_1']);
+  });
+
+  test('withCheckAdded yeni adisyonu listeye ekler (Sprint 3D)', () {
+    final session = buildSession(checkIds: const ['check_1']);
+    final updated = session.withCheckAdded('check_2');
+
+    expect(updated.checkIds, ['check_1', 'check_2']);
   });
 
   test('canAcceptNewGuest yalnizca active durumda true doner', () {

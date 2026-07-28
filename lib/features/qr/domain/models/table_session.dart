@@ -10,6 +10,12 @@ enum TableSessionStatus { pending, active, closed, cancelled }
 /// merge, and split-bill are explicitly out of scope for this phase — see
 /// `docs/table_qr_architecture.md` — and are not modeled here to avoid
 /// speculative fields with no current caller.
+///
+/// [checkIds] is a Phase 3 Sprint 3D addition: the adisyon/check(s) opened
+/// under this table visit (`lib/features/pos/domain/models/check.dart`).
+/// `activeOrderIds` remains what it already was (populated once a check is
+/// actually submitted into an `Order`) — `checkIds` is the superset that
+/// also includes still-open, not-yet-submitted checks.
 class TableSession {
   final String id;
   final String restaurantId;
@@ -20,6 +26,7 @@ class TableSession {
   final DateTime? closedAt;
   final List<String> guestSessionIds;
   final List<String> activeOrderIds;
+  final List<String> checkIds;
 
   const TableSession({
     required this.id,
@@ -31,6 +38,7 @@ class TableSession {
     this.closedAt,
     required this.guestSessionIds,
     required this.activeOrderIds,
+    this.checkIds = const [],
   });
 
   /// Whether the session currently represents a live table visit (as
@@ -55,6 +63,11 @@ class TableSession {
     return copyWith(activeOrderIds: [...activeOrderIds, orderId]);
   }
 
+  TableSession withCheckAdded(String checkId) {
+    if (checkIds.contains(checkId)) return this;
+    return copyWith(checkIds: [...checkIds, checkId]);
+  }
+
   TableSession closed({required DateTime at}) {
     return copyWith(status: TableSessionStatus.closed, closedAt: at);
   }
@@ -73,6 +86,7 @@ class TableSession {
     DateTime? closedAt,
     List<String>? guestSessionIds,
     List<String>? activeOrderIds,
+    List<String>? checkIds,
   }) {
     return TableSession(
       id: id ?? this.id,
@@ -84,6 +98,7 @@ class TableSession {
       closedAt: closedAt ?? this.closedAt,
       guestSessionIds: guestSessionIds ?? this.guestSessionIds,
       activeOrderIds: activeOrderIds ?? this.activeOrderIds,
+      checkIds: checkIds ?? this.checkIds,
     );
   }
 }
