@@ -125,7 +125,7 @@ void main() {
       },
     );
 
-    testWidgets('submitting an order shows the confirmation view', (
+    testWidgets('submitting an order opens the payment screen for the new order', (
       tester,
     ) async {
       await pumpCashier(tester);
@@ -135,10 +135,26 @@ void main() {
       await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Gönder'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Sipariş oluşturuldu'), findsOneWidget);
-      expect(find.text('Yeni Sipariş Başlat'), findsOneWidget);
+      expect(find.text('Ödeme'), findsOneWidget);
+      expect(find.text('Ödeme Yöntemi'), findsOneWidget);
       expect(repository.submittedOrders, hasLength(1));
       expect(repository.draftIds, isEmpty);
+    });
+
+    testWidgets('navigating back from the payment screen shows the confirmation view', (
+      tester,
+    ) async {
+      await pumpCashier(tester);
+
+      await tapProduct(tester, 'Mexifit Bowl');
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Gönder'));
+      await tester.pumpAndSettle();
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sipariş oluşturuldu'), findsOneWidget);
+      expect(find.text('Yeni Sipariş Başlat'), findsOneWidget);
     });
 
     testWidgets(

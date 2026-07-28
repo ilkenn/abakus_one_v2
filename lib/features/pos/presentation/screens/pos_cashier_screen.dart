@@ -27,6 +27,7 @@ import '../../domain/models/discount_preset_seed_data.dart';
 import '../../domain/models/pos_order_session.dart';
 import '../providers/pos_foreign_currency_equivalents_provider.dart';
 import '../providers/pos_order_session_provider.dart';
+import 'pos_payment_screen.dart';
 
 /// The first functional cashier order flow — standalone this sprint (see
 /// `docs/decisions.md`): not registered with `go_router`, not reachable
@@ -83,9 +84,45 @@ class _PosCashierScreenState extends ConsumerState<PosCashierScreen> {
     super.dispose();
   }
 
+  /// The moment a submission succeeds, this screen pushes
+  /// [PosPaymentScreen] for the resulting `Order` — per the approved
+  /// architecture, payment collection always starts after a real `Order`/
+  /// `OrderId` exists, never before (`docs/decisions.md` ADR-012).
+  /// `PosCashierScreen` itself has no route/consumer anywhere in this app
+  /// (confirmed before wiring this — see ADR-012's risk note), so pushing
+  /// directly here is local and safe: no `go_router`/`MainNavigationScreen`
+  /// change involved. `_SubmittedOrderView` remains as the screen shown if
+  /// the cashier navigates back from the payment screen (e.g. via the
+  /// system back gesture), rather than leaving a blank/idle screen behind.
+  ///
+  /// The payment session's own id is deterministically derived from the
+  /// order id (`'<orderId>-payment'`) — never a timestamp/random value/
+  /// UUID, matching `SubmitPosOrder`'s own `auditEntryId` precedent. A
+  /// second payment session for the same order (a reopen scenario) is
+  /// `ReopenClosedOrder`'s concern, not this screen's.
+  void _openPaymentScreen(Order order) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PosPaymentScreen(
+          sessionId: '${order.id.value}-payment',
+          order: order,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(posOrderSessionProvider);
+
+    ref.listen<PosOrderSessionState>(posOrderSessionProvider, (previous, next) {
+      final justSubmitted = previous?.status != PosOrderSessionStatus.submitted &&
+          next.status == PosOrderSessionStatus.submitted &&
+          next.submittedOrder != null;
+      if (justSubmitted) {
+        _openPaymentScreen(next.submittedOrder!);
+      }
+    });
 
     // Keep the note fields in sync with the session without fighting the
     // user's own cursor position — only overwrite when the underlying
