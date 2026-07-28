@@ -766,3 +766,188 @@ ADR documents as deviations (`OrderClosure`'s name — explicitly delegated to t
 specified —, the `reopenCount` mechanism avoiding a second use case, and the unresolved `Order`-by-id
 lookup gap) plus the sheer size of this sprint (22 commits) increasing the chance some single
 consequence was under-documented relative to a smaller ADR.
+
+---
+
+## ADR-013 — Restaurant Operations & Floor Management
+
+- Date: 2026-07-29
+- Status: Accepted
+
+### Decision
+Builds the extensible operational foundation for restaurant/branch operations, floor plans and
+tables, table sessions and checks/adisyon, dine-in/takeaway/delivery preparation, kitchen ticket
+routing, KDS foundations, package preparation, and order channel operation settings — on top of
+ADR-009 through ADR-012's domain/POS/payment foundations, extending rather than rewriting any of
+them. Approved across two rounds: an analysis-only round producing a 14-point architecture report
+(REQUIRED/RECOMMENDED/OPTIONAL-classified findings, VERIFIED/INFERRED/ASSUMED-graded evidence, and
+one explicitly surfaced conflict between two contradictory mid-turn instructions — "stop for
+approval" vs. "proceed autonomously" — which the user then resolved explicitly rather than having it
+silently picked), followed by an approval to execute the entire plan autonomously, with four defined
+stop conditions and explicit direction on the `OrderLine`-identity question the analysis raised.
+
+**Floor plan and table layout.** `FloorPlan` (`lib/features/restaurant/domain/models/floor_plan.dart`)
+is a new, minimal aggregate — a branch may have several; each `RestaurantTable` belongs to exactly
+one. `RestaurantTable` gained `floorPlanId`/`positionX`/`positionY`/`shape`/`rotationDegrees`/`width`/
+`height`, additive (defaulting to an unplaced square) — verified safe before extending its
+constructor: only its own test file constructed it anywhere in the codebase (grep confirmed zero
+other call sites). Zones/sections remain `RestaurantTable.areaName` free text, unchanged — a second
+`FloorPlan` is the model for a genuinely distinct physical layout, not a sub-area within one.
+
+**Channel operation policy.** `ChannelOperationPolicy` (branch + channel scoped, append-only via
+revision) tracks acceptance mode (automatic/manual) and operational state
+(open/busy/closed/emergencyClosed) independently per channel. `emergencyClosed` is reachable only
+through `EmergencyCloseDeliveryChannels` (branch-wide, delivery only, authorized) and leaves only
+back to `open` — never through the routine open/busy/closed toggle, so an emergency stop can never be
+silently undone by ordinary channel management. Channel identity is extensible-catalog-shaped
+(`externalPlatformCode`, nullable) rather than a growing closed enum per marketplace platform,
+matching `Currency`/`PaymentMethod`'s established pattern (ADR-010/ADR-012) — deliberately not
+`docs/domain_architecture.md`'s older `MarketplaceConnector.platform` closed-enum sketch, which
+predates that pattern and was never implemented.
+
+**`Check` — the central architectural decision this sprint.** The POS/payment chain
+(`PosOrderSession → Order → OrderClosure → PaymentSession`) was, before this sprint, strictly 1:1:1:1
+— no shape allowed "one table, many concurrent checks." Two designs were considered:
+(a) extend `PosOrderSession` itself with sibling-check awareness, or (b) introduce a new, thin
+coordination type. (a) was rejected — it would blur "in-progress draft" with "table-visit-level
+coordination," forcing `PosOrderSession` (deliberately table-agnostic since Sprint 3B) to grow
+splitting/merging knowledge it doesn't otherwise need. `Check` (b) was built instead: pre-submission
+it owns exactly one `PosOrderSession`; on `SubmitCheck` it becomes exactly one `Order`, reusing
+`SubmitPosOrder`/`CartToOrderMapper` completely unchanged, whose own `OrderClosure`/`PaymentSession`
+lineage is therefore also completely unchanged — **zero modifications to any Sprint 3C payment/
+closure code**. `CheckStatus` is deliberately only 3 values (`open`/`submitted`/`cancelled`) —
+whether a submitted check is actually resolved is answered by reading its `Order`'s own
+`OrderClosure`, never duplicated onto `Check`. `TableSession` gained one additive field
+(`checkIds: List<String>`, mirroring `guestSessionIds`/`activeOrderIds`'s existing shape).
+
+**Post-submission item-level split/merge is out of scope, by design.** `OrderLine` (the frozen,
+submitted line inside an `Order`) has no stable id; `PosOrderLineDraft` (pre-submission) does. Rather
+than retrofitting `OrderLine` with identity — a change touching every existing Sprint 3A–3C consumer
+and every test asserting `OrderLine` equality by value, disproportionate to fit safely at the end of
+an already-large sprint — `TransferOrderLineDraft`/`MergeChecks`/`SplitCheckByItem`/
+`SplitCheckByQuantity` are scoped to **pre-submission, still-open checks only**. Whole-check transfer
+(submitted or not) has no such blocker (`TransferCheck`, authorized when the check has payment
+activity). Post-submission "split by amount" needs no new mechanism at all — Sprint 3C's
+`PaymentSession` already supports arbitrary multi-split payment collection against one order, which is
+exactly what dividing a bill amount across guests requires. The `OrderLine`-identity gap itself is
+recorded here as a named, explicit follow-up item, per the user's own instruction not to redesign
+`OrderLine` or introduce a breaking change to fit it in this sprint.
+
+**`PackagePreparationStatus` stays separate from `OrderStatus`.** Same reasoning already used twice
+(`PosOrderSession` and `OrderClosure` both kept apart from `Order`): `OrderStatus` is the shared,
+channel-agnostic lifecycle every future Kitchen/Courier/Admin consumer depends on; folding 13
+packaging/delivery-prep sub-states into it would conflate cross-channel lifecycle with packaging
+progress (an order can be `OrderStatus.preparing` while packaging is still `received`), and would
+require re-deriving `OrderStatusTransitions`' entire table and the `OrderStatusLegacyLabel` bridge to
+the legacy UI. `PackagePreparationTransitions` is its own `Map<State, Set<State>>` table, mirroring
+`OrderStatusTransitions`'s exact shape. `packed` branches to either `delivered` (takeaway/dine-in, no
+courier leg) or `waitingForCourier` (delivery) — the same branching precedent `OrderStatus.ready`
+already uses. Preparer identity/timestamp and quality-controller identity/timestamp are tracked as
+two independent fields (`AdvancePackagePreparation` sets the former on reaching `packed`;
+`CompleteQualityControl` sets the latter, only once already `packed`) — not conflated into one.
+
+**`KitchenTicket` line identity sidesteps the `OrderLine`-identity gap for a different, narrower
+need.** `KitchenTicketLine` gets its own id, generated fresh (deterministically, ticketId-derived)
+when a ticket fires — deliberately **not** the same id as its source `OrderLine` (which has none).
+This is safe specifically because `KitchenTicket` is a brand-new type this sprint with no backward-
+compatibility concern, and the actual need (per-line ready tracking on the ticket itself, read by the
+KDS/expeditor) doesn't require `OrderLine` identity at all — only ticket-scoped identity, which is
+free to add without touching `OrderLine`. `KitchenTicketPrintProvider` mirrors
+`ReceiptPrintProvider`'s exact contract-only shape (Sprint 3C), including its honest `NoOp` default —
+a ticket's content model differs from a receipt's, but "print this document" is the same shape of
+contract, reused rather than reinvented. No ticket-wide status enum exists (see BR-KITCHEN-002 in
+`docs/business_rules.md`) — readiness is tracked per line (`completedLineIds`) with `orderReadyAt` set
+once every line is ready, since that's what the KDS/expeditor actually need, and a ticket-wide status
+would only ever have been derived from line completion regardless.
+
+**KDS and expeditor are read-refresh, not real-time.** `KitchenDisplayScreen` computes elapsed time at
+load/refresh rather than via a live `Timer.periodic` tick — a deliberate simplification: a periodic
+rebuild fights `tester.pumpAndSettle()` in widget tests, a well-known Flutter testing hazard, and no
+real-time push infrastructure (WebSocket/SSE) exists in this codebase at all. This positions both
+screens as domain-only foundations, consistent with every sprint delivered so far (3A–3C) being
+client-side, in-memory work — not `docs/master_roadmap.md`'s `KDS-001`, which explicitly requires new
+real-time backend infrastructure and sits at Phase 8 in that roadmap's own numbering.
+`ExpeditorProjectionBuilder` is a pure function over already-fetched data (mirrors
+`ForeignCurrencyEquivalentsCalculator`/`CalculatePosOrderTotals`'s shape) — no repository access of
+its own, so it stays trivially testable and has no hidden I/O.
+
+**Courier receipt and QR are honestly incomplete by necessity, not by oversight.**
+`CourierReceiptSummaryBuilder` takes `Money` values directly (not a whole `PaymentSession`) so
+`orders` incurs no dependency on `pos` — `orders → pos` would violate `CLAUDE.md` §3's forbidden-
+dependency-direction rule (a feature must not depend on another feature's presentation/application
+layer; `pos` already depends on `orders`, not the reverse). `combinedDiscount` is not split into
+item/order/campaign/coupon sub-amounts because `PriceBreakdown` has one undifferentiated discount
+figure and no campaign/coupon engine exists — a line-item breakdown would be fabricated data.
+`ReceiptQrTokenProvider` is contract-only, mirroring `TableQrCode`'s own backend-issued-token pattern;
+`UnavailableReceiptQrTokenProvider` always throws rather than generating a token client-side. No
+QR-image-rendering package was added (a new-dependency decision, left for separate explicit approval,
+matching the `flutter_svg` precedent ADR-012 already declined for payment-method logos).
+
+**Authorization/audit extends Sprint 3C's `PosAuthorizationPolicy`, not a new contract.**
+`PosAuthorizedAction` gained 7 new values (additive — confirmed no exhaustive `switch` exists over
+the enum anywhere in `lib/`, so extending it cannot break existing code).
+`RestaurantOperationsAuditEntry`/`RestaurantOperationsAuditEntryRepository` is **one shared,
+branch-scoped repository** spanning every Sprint 3D sub-domain (channel policy, check transfer/merge/
+split, package-completion override, kitchen ticket reprint) rather than one repository per concern —
+a deliberate deviation from Sprint 3C's `PaymentSplitIdGenerator`/`PosOrderLineDraftIdGenerator`
+precedent of keeping small generators separate. The reasoning differs by case: those two generators
+were kept apart because they're independently *injectable* correlation ids serving genuinely
+different domain concepts with no shared caller; these audit events are all the same shape of fact —
+"a critical restaurant-operations action happened" — differing only in a `type` field, so one
+repository is simpler without losing anything. `RequestDuplicateReceipt` (Sprint 3C) is retrofitted
+with a required `PosAuthorizationPolicy` parameter — it shipped before
+`PosAuthorizedAction.reprintOrDuplicateReceipt` existed; this closes that gap rather than leaving a
+named authorization-required action unenforced.
+
+### Context
+Approved across two rounds — an analysis-only architecture report (§14-point structure: repository
+findings, reusable entities, conflicts, proposed model/state-machines/repositories/use-cases/UI, files
+to touch, tests, commit plan, documentation changes, risks, phased implementation split) followed by
+full autonomous-execution approval with explicit resolution of the "stop for approval" vs. "proceed
+autonomously" conflict the first round surfaced, four defined stop conditions (breaking architectural
+change unavoidable; existing architecture cannot support a required feature without redesign; a
+security/data-integrity/irreversible-migration decision requiring a business call; a true business-
+rule conflict unresolvable from existing documentation), and explicit direction on `OrderLine`
+identity (do not redesign it, do not introduce a breaking change, scope post-submission item-level
+split/merge out of this sprint, keep pre-submission split/merge and whole-check transfer, record the
+improvement as a future item). Full detail: `docs/business_rules.md` DL-016.
+
+### Consequences
+- **11 implementation phases, 11 commits** (floor plan/table; channel policy; Check foundation;
+  multi-guest + whole-check transfer; pre-submission split/merge/transfer; package preparation;
+  kitchen ticket domain; KDS screen; expeditor; courier receipt/QR; authorization/audit sweep), each
+  independently formatted/analyzed/tested before commit, matching the granularity precedent ADR-011/
+  ADR-012 already established.
+- **997 tests passing** project-wide after this sprint (up from 881 at Sprint 3C close) — 116 new
+  tests across every new domain model, repository, use case, and screen.
+- **No existing Sprint 3A–3C file was rewritten** — `TableSession` (additive `checkIds` field),
+  `RestaurantTable` (additive layout fields), `PosAuthorizedAction` (additive enum values), and
+  `RequestDuplicateReceipt` (additive authorization parameter) are the only pre-existing files
+  modified beyond their own tests; every other change is a new file.
+- **Deviation — no dedicated `Check` item-editing UI**: `TableSessionScreen` covers check lifecycle
+  (open/submit/cancel/close) but not adding products to a check's draft session — that remains
+  `PosCashierScreen`'s job, and wiring the two together (so "edit this check's items" pushes into a
+  cashier flow scoped to an already-started session) is flagged as follow-up integration work, since
+  `PosCashierScreen` today only knows how to start its own session.
+- **Deviation — no dedicated `PackagePreparation` screen**: fully built and tested at the domain/
+  application layer; no screen calls its use cases yet. Flagged as a scope boundary matching the
+  `Check`-item-editing boundary above, not an oversight.
+- **Deviation — `reopenTableCheck`/`cancelAfterPreparation` remain unwired**: see BR-STAFF-005's full
+  reasoning — the first overlaps with Sprint 3C's existing `reopenOrder` pathway (a `Check`'s
+  reopening happens at its `Order`'s `OrderClosure` level); the second would require adding
+  authorization to `Order.transitionTo` itself, out of proportion for this sprint's remaining scope.
+- **No new pub dependency.** No change to `go_router`, `MainNavigationScreen`, or any customer-facing
+  screen. No change to any Sprint 3A–3C payment/closure code path.
+
+### Confidence
+80%. The floor-plan/channel-policy/Check/package-preparation/kitchen-ticket/KDS/expeditor
+architecture and every scope boundary (pre-submission-only splitting, `PackagePreparationStatus`
+kept separate, contract-only courier QR) are directly grounded in the two-round approval, including
+explicit direction on the single hardest question (`OrderLine` identity). The residual uncertainty is
+concentrated in judgment calls made without a further confirmation round, appropriate to the
+"proceed autonomously" approval: the `Check`-vs-`PosOrderSession`-extension design choice, the
+one-shared-audit-repository deviation from Sprint 3C's per-concern-generator precedent, and the two
+consciously unwired authorization actions — each documented with reasoning here and in
+`docs/business_rules.md`, not decided silently. The sheer size of this sprint (11 phases, 11 commits)
+carries the same "some single consequence under-documented" risk ADR-012 already noted at a smaller
+scale.

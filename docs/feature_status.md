@@ -309,3 +309,57 @@ integration.
   not yet wired to any screen/form — a scope boundary, not an oversight.
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-012 Consequences section.
+
+## Phase 3 — Restaurant Operations & Floor Management (Sprint 3D)
+
+Branch `phase-3/sprint-3d-restaurant-operations`, from the tip of
+`phase-3/sprint-3c-payment-foundation`. Approved across two rounds — an analysis-only 14-point
+architecture report, followed by full autonomous-execution approval with explicit direction on the
+`OrderLine`-identity question the analysis raised. See `docs/business_rules.md` DL-016 and
+`docs/decisions.md` ADR-013 for full rationale and every deviation.
+
+| Task | Status | Note |
+|---|---|---|
+| Floor plan + table layout | DONE | `FloorPlan` (new aggregate) + `RestaurantTable` extended with `floorPlanId`/position/shape/rotation/size (additive — verified zero other call sites before extending its constructor). `FloorPlanEditorScreen` (drag-and-drop, batch-saved) + `LiveFloorMapScreen` (read-only, tap-to-cycle status). |
+| Channel operation policy | DONE | `ChannelOperationPolicy` (branch+channel scoped, append-only) — acceptance mode (automatic/manual) + operational state (open/busy/closed/emergencyClosed). Emergency stop only reachable via authorized `EmergencyCloseDeliveryChannels`, leaves only back to open. `ChannelOperationSettingsScreen`. |
+| `Check` foundation | DONE | Thin coordination record between `TableSession` and the unchanged POS payment pipeline — pre-submission owns a `PosOrderSession`, post-submission becomes an `Order` (zero changes to Sprint 3C payment/closure code). `TableSession`'s first real persistence/orchestration (`OpenTableSession`, previously deferred by the table-QR architecture phase). `TableSessionScreen` (lifecycle only, no item-editing UI). |
+| Multi-guest checks + whole-check transfer | DONE | `Check.withGuestAdded`; `TransferCheck` (authorized once the check has payment activity). |
+| Pre-submission split/merge/transfer by item | DONE | `TransferOrderLineDraft`/`MergeChecks`/`SplitCheckByItem`/`SplitCheckByQuantity` — scoped to still-open checks only (see the `OrderLine`-identity deferral below). "Split by amount" needs no new mechanism — Sprint 3C's multi-split `PaymentSession` already covers it. |
+| Package/delivery preparation foundation | DONE | `PackagePreparationStatus` — a deliberately separate 13-state machine from `OrderStatus`. `PackagePreparation` (append-only, checklist, preparer + QC identity, timestamps, optional photo, correction reason). 6 use cases; no dedicated screen this sprint. |
+| Kitchen ticket domain + print provider | DONE | `KitchenTicket` (domain/contract only) built via `KitchenTicketMapper` — every product on one ticket by default (no station separation), full ingredient/modifier snapshot per line reused from `OrderLine`. `KitchenTicketPrintProvider` mirrors `ReceiptPrintProvider`'s contract-only shape. `FireKitchenTicket` (initial/delta/cancellation uniformly), `ReprintKitchenTicket` (authorized, always marks `isCopy`). |
+| KDS foundation screen | DONE | `KitchenDisplayScreen` — single main queue by default, station filter chips present but only "Tümü" selectable. `MarkKitchenTicketLineReady` (idempotent, sets `orderReadyAt` once every line is ready). In-memory, no real-time push infrastructure. |
+| Expeditor foundation | DONE | `ExpeditorProjectionBuilder` (pure function over already-fetched tickets/package-preparations) + read-only `ExpeditorScreen` — pending/ready product counts, order readiness, wait time. |
+| Courier receipt standard + QR foundation | DONE | `CourierReceiptSummary`/`CourierReceiptSummaryBuilder` — remaining-to-collect is the figure the print layer is expected to render large/bold. `ReceiptQrTokenProvider` contract-only (mirrors `TableQrCode`'s backend-issued-token pattern); no QR-image-rendering dependency added. |
+| Authorization/audit sweep | DONE | `PosAuthorizedAction` extended (7 new values, additive). `RestaurantOperationsAuditEntry`/Repository — one shared, branch-scoped, structurally append-only repository across every Sprint 3D sub-domain. `RequestDuplicateReceipt` (Sprint 3C) retrofitted with authorization, closing a gap it shipped with. |
+| Tests | DONE | 997 tests total (up from Sprint 3C's 881), all passing. `flutter analyze`: no issues. `dart format`: clean. |
+| Documentation | DONE | `docs/business_rules.md` v1.5 (BR-CHANNEL-004, BR-TABLE-006/007, BR-ORDER-011, BR-KITCHEN-006–008, BR-COURIER-006, BR-STAFF-005, BR-AUDIT-005 added; BR-TABLE-001/003/004, BR-KITCHEN-001/002 revised; DL-016 logged); `docs/decisions.md` ADR-013; this entry. |
+
+**Explicitly out of scope this sprint** (per architecture approval): real marketplace APIs, real
+printer drivers, production payment provider integrations, courier shift settlement, courier payment
+evidence review, cashier opening/closing cash counts, manager end-of-day financial reconciliation,
+inventory deduction, recipe costing, accounting/e-invoice, full production authorization
+implementation, AI prioritization, real-time KDS push infrastructure (`docs/master_roadmap.md`'s
+`KDS-001`), QR image rendering, post-submission item-level order correction.
+
+### Deviations from the approved architecture (reported, not silent)
+
+- **`Check` as a new, thin coordination type, not a `PosOrderSession` extension**: extending
+  `PosOrderSession` itself was considered and rejected — it would force a deliberately table-agnostic
+  type (since Sprint 3B) to grow splitting/merging knowledge it doesn't otherwise need.
+- **Post-submission item-level split/merge deferred**: `OrderLine` has no stable id; retrofitting one
+  now was explicitly ruled out by the user ("do not redesign the existing `OrderLine` model, do not
+  introduce a breaking change"). Recorded as a named future item, not silently worked around.
+- **One shared `RestaurantOperationsAuditEntry` repository**, not one per sub-domain — a deviation
+  from Sprint 3C's `PaymentSplitIdGenerator`/`PosOrderLineDraftIdGenerator` per-concern-separation
+  precedent, justified because these audit events are all the same shape of fact ("a critical
+  restaurant-operations action happened"), unlike those two generators, which are independently
+  injectable ids serving different concepts with no shared caller.
+- **`reopenTableCheck`/`cancelAfterPreparation` left unwired**: the first overlaps with Sprint 3C's
+  existing `reopenOrder` pathway (a check's reopening happens at its order's `OrderClosure` level);
+  the second would require adding authorization to `Order.transitionTo` itself, judged disproportionate
+  to fit safely at the end of an already-large sprint.
+- **No dedicated `Check` item-editing UI or `PackagePreparation` screen**: both fully built and
+  tested at the domain/application layer; wiring either into a screen is flagged as follow-up
+  integration work, matching the scope boundary already set for POS screens in Sprint 3B/3C.
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-013 Consequences section.

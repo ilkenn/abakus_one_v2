@@ -87,6 +87,25 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain (decision) / flutter_architect (enum change)
 - **Related Modules**: Orders, Marketplace
 
+### BR-CHANNEL-004 — Per-branch channel operation policy (Phase 3 Sprint 3D)
+- **Status**: VERIFIED
+- **Rule**: Each branch independently controls, per channel: acceptance mode (`automatic`/`manual`
+  confirmation of new orders) and operational state (`open`/`busy`/`closed`/`emergencyClosed`) —
+  `ChannelOperationPolicy` (`lib/features/restaurant/domain/models/channel_operation_policy.dart`),
+  append-only via revision. A channel defaults to `open` until staff explicitly changes it — platforms
+  are never required to be manually reopened every morning. `emergencyClosed` is reachable only via
+  `EmergencyCloseDeliveryChannels` (branch-wide, delivery channel only, authorized) and leaves only
+  back to `open`, never through the routine open/busy/closed toggle — an emergency stop cannot be
+  silently undone by ordinary channel management. Changing a channel's policy never affects an
+  already-placed order; it only affects whether a *new* order is accepted going forward. Every change
+  is recorded as a `RestaurantOperationsAuditEntry` (see BR-AUDIT-005). Channel identity supports a
+  future external-platform distinction (`externalPlatformCode`, nullable) under the same
+  `OrderChannel.delivery` value, extensible-catalog style — matching `Currency`/`PaymentMethod`'s
+  established pattern rather than `docs/domain_architecture.md`'s older `MarketplaceConnector.platform`
+  closed-enum sketch (unimplemented, predates that pattern).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, Marketplace, Staff/Admin
+
 # Order Lifecycle
 
 ### BR-ORDER-001 — 11-state order lifecycle
@@ -235,6 +254,9 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Status**: VERIFIED
 - **Rule**: `Restaurant`, `Branch`, `RestaurantTable`, `TableQrCode`, `TableSession`, `GuestSession`,
   `TableQrResolutionResult` exist as tested domain models per `docs/table_qr_architecture.md`.
+  *Extended Phase 3 Sprint 3D*: `RestaurantTable` gained `floorPlanId`/`positionX`/`positionY`/
+  `shape`/`rotationDegrees`/`width`/`height` (additive, defaulting to an unplaced square, so every
+  prior construction still compiles) — see BR-TABLE-006.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Table/QR
 
@@ -247,18 +269,30 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Related Modules**: Table/QR
 
 ### BR-TABLE-003 — Multi-guest, multi-order table sessions
-- **Status**: VERIFIED (structural)
-- **Rule**: A `TableSession` holds many `GuestSession`s and many order IDs by default — not a
-  one-order-per-table assumption.
+- **Status**: VERIFIED (structural and orchestrated — *revised Phase 3 Sprint 3D*)
+- **Rule**: A `TableSession` holds many `GuestSession`s, many order IDs, and (Sprint 3D) many `Check`
+  ids by default — not a one-order-per-table assumption. `OpenTableSession` (the first real
+  session-orchestration code; the table-QR architecture phase deliberately deferred this) always
+  starts a brand-new session, never reopens or reuses a prior one, preserving BR-TABLE-002's isolation
+  rule. `CloseTableSession` only closes once every `Check` opened under the session is resolved
+  (cancelled, or submitted with a `closed` `OrderClosure`) — see BR-TABLE-007.
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Table/QR, Orders
+- **Related Modules**: Table/QR, Orders, POS
 
-### BR-TABLE-004 — Table transfer, table merge, split-bill
-- **Status**: UNRESOLVED
-- **Rule**: Not modeled in the current domain shape (deliberately deferred per
-  `docs/table_qr_architecture.md` §12). Whether these are in scope at all is undecided.
+### BR-TABLE-004 — Table transfer, whole-check transfer, and split-bill (revised Phase 3 Sprint 3D)
+- **Status**: DECIDED (domain + application) — was UNRESOLVED
+- **Rule**: A whole `Check` may be transferred between table sessions at any time (`TransferCheck`) —
+  a still-open check transfers freely; a submitted check (payment activity may already exist) requires
+  authorization (BR-STAFF-002). Split-bill is supported two ways: (1) pre-submission item/quantity
+  splitting into a new check on the same table session (`SplitCheckByItem`/`SplitCheckByQuantity`/
+  `MergeChecks`/`TransferOrderLineDraft` — all **pre-submission only**, since `OrderLine` has no stable
+  id yet to safely split after a ticket has fired; see BR-ORDER-009's identity note), and (2)
+  post-submission "split by amount" via Sprint 3C's existing multi-split `PaymentSession` — collecting
+  part of one order's total from each guest needs no new domain concept, since arbitrary multi-split
+  payment collection against one order already exists. Post-submission item-level splitting remains
+  UNRESOLVED, deferred to a future, separately-approved `OrderLine`-identity change.
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Table/QR, Payments
+- **Related Modules**: Table/QR, Payments, POS
 
 ### BR-TABLE-005 — Server-side-only QR token resolution
 - **Status**: ROADMAP
@@ -266,6 +300,36 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   parsed client-side. No backend exists to enforce this yet.
 - **Owner Agent**: firebase_engineer
 - **Related Modules**: Table/QR
+
+### BR-TABLE-006 — Floor plan and live floor map (Phase 3 Sprint 3D)
+- **Status**: VERIFIED
+- **Rule**: A branch may have multiple `FloorPlan`s (`lib/features/restaurant/domain/models/
+  floor_plan.dart`); each `RestaurantTable` belongs to exactly one. Zones/sections remain
+  `RestaurantTable.areaName` free text (unchanged from the table-QR phase) — a second `FloorPlan` is
+  the model for a genuinely distinct physical layout (a different floor, an outdoor terrace), not a
+  sub-area within one layout. Table position/shape (`round`/`square`/`rectangle`)/rotation/size are
+  editable via `FloorPlanEditorScreen` (drag-and-drop, batch-saved) and rendered read-only, colored by
+  `TableStatus`, on `LiveFloorMapScreen`. A table can exist and be assigned to service before its
+  layout is ever placed on the map, mirroring `TableQrCode`'s own "a table can exist before its QR
+  code is printed" precedent.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Table/QR, Staff/Admin
+
+### BR-TABLE-007 — `Check`/adisyon: the table-session-to-payment-pipeline coordination record (Phase 3 Sprint 3D)
+- **Status**: VERIFIED (domain + application) — DECIDED (UI scope: no embedded item-editing screen)
+- **Rule**: `Check` (`lib/features/pos/domain/models/check.dart`) is a deliberately thin coordination
+  record between one `TableSession` and Sprint 3B/3C's existing, unchanged POS payment pipeline — it
+  never duplicates `PosOrderSession`/`Order`/`OrderClosure`/`PaymentSession`. Pre-submission, a `Check`
+  owns exactly one `PosOrderSession` (`CheckStatus.open`); on `SubmitCheck` it becomes exactly one
+  `Order` (`CheckStatus.submitted`), whose own `OrderClosure`/`PaymentSession` lineage is untouched.
+  `CheckStatus` is deliberately only 3 values (`open`/`submitted`/`cancelled`) — whether a submitted
+  check is actually resolved is answered by reading its `Order`'s own `OrderClosure`, never duplicated
+  onto `Check` itself. A check may gain guests independently (`AddGuestToCheck`, idempotent). No
+  dedicated item-editing UI exists this sprint (opening a check starts its draft session, but adding
+  products to it is `PosCashierScreen`'s job; wiring the two together is flagged as follow-up
+  integration work, not built this sprint).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Table/QR, POS, Payments
 
 # Menu and Product Rules
 
@@ -747,6 +811,25 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Payments, POS, Staff/Admin
 
+### BR-ORDER-011 — Package preparation is a separate state machine from `OrderStatus` (Phase 3 Sprint 3D)
+- **Status**: VERIFIED
+- **Rule**: `PackagePreparationStatus` (`lib/features/orders/domain/fulfillment/
+  package_preparation_status.dart`) — 13 states (`received` through `delivered`/`cancelled`/
+  `exception`) — is deliberately **not** folded into `OrderStatus`. `OrderStatus` is the shared,
+  channel-agnostic lifecycle every future Kitchen/Courier/Admin consumer depends on; packaging
+  progress is a different question from cross-channel order lifecycle (an order can be
+  `OrderStatus.preparing` while packaging is still `received`). Same separation already used for
+  `PosOrderSession` and `OrderClosure` staying apart from `Order` — not a new pattern.
+  `PackagePreparation` (append-only, `orderId`-keyed) carries a packaging checklist (product/drink/
+  sauce/cutlery/napkin/wetWipe/straw/dessert/campaignGift categories), order notes, preparer identity
+  and completion timestamp (set on reaching `packed`), a separately-tracked quality-controller
+  identity/timestamp (only recordable once `packed`), an optional photo asset path (local-only, no
+  upload integration), and a correction reason. Overriding an already-completed pack (`ReturnToKitchen`
+  after `preparationCompletedAt` was set) requires authorization (BR-STAFF-002); a still-in-progress
+  correction does not.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen, Orders, Courier
+
 # Refund, Cancellation, and Order Correction Rules
 
 ### BR-REFUND-001 — Cancellation info shape
@@ -823,17 +906,33 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 
 # Kitchen Operations
 
-### BR-KITCHEN-001 — `KitchenTicket` schema
-- **Status**: ROADMAP
-- **Rule**: `docs/module_catalog.md` targets a `KitchenTicket` entity (`id, orderId, branchId,
-  station, status, firedAt, readyAt`) and a real-time KDS module. No code exists.
+### BR-KITCHEN-001 — `KitchenTicket` schema (revised, built Phase 3 Sprint 3D)
+- **Status**: VERIFIED (domain/contract) — ROADMAP (real-time push / printer hardware)
+- **Rule**: `KitchenTicket` (`lib/features/pos/domain/kitchen/kitchen_ticket.dart`) exists — richer
+  than `docs/module_catalog.md`'s original `{id, orderId, branchId, station, status, firedAt,
+  readyAt}` sketch: `id, orderId, branchId, type (initial/delta/cancellation), header, lines, isCopy,
+  firedAt, completedLineIds, orderReadyAt, revision`. Built via `KitchenTicketMapper.fromOrder`, an
+  append-only record (mirrors `OrderClosure`). Every product (including drinks, hot, and cold items)
+  appears on one ticket by default — station-based routing infrastructure is not built (no `station`
+  field exists; `docs/module_catalog.md`'s sketch is superseded on this point, since station
+  separation must stay disabled for the current Abaküs configuration). No real-time push (WebSocket/
+  SSE) and no printer hardware integration exist — `KitchenTicketPrintProvider` mirrors
+  `ReceiptPrintProvider`'s contract-only shape, including its honest `NoOp` default. This is domain-
+  only foundation, not `docs/master_roadmap.md`'s `KDS-001` (which is explicitly backend/real-time-
+  push-dependent, Phase 8 in that roadmap's own numbering) — consistent with every sprint delivered
+  so far being client-side, in-memory work.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Kitchen
 
-### BR-KITCHEN-002 — Ticket lifecycle mapped to order status
-- **Status**: ROADMAP
-- **Rule**: Proposed ticket lifecycle `fired → preparing → ready`, mirroring `OrderStatus` rather than
-  a parallel ticket-status enum.
+### BR-KITCHEN-002 — Ticket lifecycle is per-line completion, not an `OrderStatus`-mirroring enum (revised Phase 3 Sprint 3D)
+- **Status**: VERIFIED — supersedes the original `fired → preparing → ready` proposal
+- **Rule**: A `KitchenTicket` has no ticket-level status enum mirroring `OrderStatus`. Instead,
+  readiness is tracked per product line (`completedLineIds`, via `MarkKitchenTicketLineReady`,
+  idempotent) and `orderReadyAt` is set once every line on the ticket is ready
+  (`KitchenTicket.isFullyReady`). This was chosen over a coarse `fired/preparing/ready` ticket status
+  because the KDS's actual requirement is product-level completion tracking, not a single ticket-wide
+  state — a ticket-wide status would have to be derived from line completion anyway, so it was never
+  modeled as an independent source of truth.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Kitchen, Orders
 
@@ -856,6 +955,46 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   (partial refund, full cancellation, substitution) is undecided.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Kitchen, Orders, Payments
+
+### BR-KITCHEN-006 — Kitchen ticket content and actions standard (Phase 3 Sprint 3D)
+- **Status**: VERIFIED
+- **Rule**: Every `KitchenTicketLine` shows product name, quantity, a full ingredient/modifier
+  snapshot (reused from `OrderLine`/`OrderLineModifierSelection`, never re-fetched or re-derived —
+  including for ready-made products, which still print their complete snapshot), a note, and a
+  `warnings` list for allergen/critical-preparation flags. `warnings` is always empty this sprint — no
+  allergen data source exists anywhere in the menu model (`MenuProduct` has no allergen field); the
+  field is shaped ready for that data, not fabricated. The ticket header shows restaurant/brand,
+  branch, channel, order number, order type, received time, and priority. `FireKitchenTicket` covers
+  initial/delta/cancellation uniformly (`type` is a header field, not three code paths).
+  `ReprintKitchenTicket` requires authorization (BR-STAFF-002) and always marks the result `isCopy` —
+  never indistinguishable from an original print. 58mm/80mm-compatible vertical layout is a print-
+  layer/formatting concern for whenever real printer integration begins — not built this sprint.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen, Orders, POS
+
+### BR-KITCHEN-007 — KDS foundation: single main queue, station filter present but disabled (Phase 3 Sprint 3D)
+- **Status**: VERIFIED (in-memory foundation) — ROADMAP (real-time push, independent devices)
+- **Rule**: `KitchenDisplayScreen` shows every fired ticket for one branch on one queue by default.
+  Station filter chips exist in the UI (infrastructure retained for future branches) but only "Tümü"
+  is selectable — station-based separation must stay disabled for the current Abaküs configuration.
+  Tapping a line calls `MarkKitchenTicketLineReady`. Elapsed time is computed at load/refresh, not via
+  a live `Timer.periodic` tick (a deliberate simplification avoiding a periodic rebuild fighting
+  widget-test `pumpAndSettle`). No real-time push infrastructure exists — this is in-memory,
+  poll/refresh-based foundation, not `docs/master_roadmap.md`'s backend-dependent `KDS-001`.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen
+
+### BR-KITCHEN-008 — Expeditor: coordinates product readiness and package readiness (Phase 3 Sprint 3D)
+- **Status**: VERIFIED
+- **Rule**: `ExpeditorProjectionBuilder` is a pure function (no repository access of its own) over
+  already-fetched `KitchenTicket`s and `PackagePreparation`s — it aggregates every ticket fired for
+  one order (initial + delta + cancellation) into a single readiness summary: pending vs. ready
+  product counts, whether the whole order is ready, and how long a ready order has been waiting.
+  `ExpeditorScreen` is read-only — marking things ready happens on the KDS/package screens themselves,
+  never here. The current Abaküs configuration needs no separate hot/cold/drink stations, so this view
+  is a single list, not station-partitioned.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen, Orders
 
 # Courier Operations
 
@@ -893,6 +1032,23 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Status**: UNRESOLVED
 - **Rule**: What happens when a courier cannot complete delivery after pickup — customer
   compensation, courier accountability — is undecided.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier, Orders, Payments
+
+### BR-COURIER-006 — Courier receipt standard and QR foundation (Phase 3 Sprint 3D)
+- **Status**: VERIFIED (domain) — ROADMAP (QR image rendering, real secure token issuance)
+- **Rule**: `CourierReceiptSummary`/`CourierReceiptSummaryBuilder` (`lib/features/orders/domain/
+  receipt/`) make the **remaining amount to collect** the single most prominent figure — the print
+  layer is expected to render it large/bold (e.g. "KAPIDA TAHSİLAT — 645,00 ₺" vs. "ÖDENDİ" once
+  nothing remains). `combinedDiscount` is deliberately not split into item/order/campaign/coupon
+  sub-amounts: `PriceBreakdown` has one undifferentiated discount figure and no campaign/coupon engine
+  exists (BR-PROMO-003/004 remain UNRESOLVED) — a line-item breakdown would be fabricated data, not a
+  real one. `ReceiptQrTokenProvider` is contract-only, mirroring `TableQrCode`'s own backend-issued-
+  token pattern (`docs/table_qr_architecture.md` §10) — `UnavailableReceiptQrTokenProvider` always
+  throws rather than generating a token client-side; no real secure token issuance is possible without
+  a backend. Rendering the resulting token as an actual QR image additionally needs a new pub
+  dependency (none added — a separate, explicitly-approved decision, matching the `flutter_svg`
+  precedent declined in Sprint 3C).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Courier, Orders, Payments
 
@@ -936,6 +1092,20 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   staff/manager tooling exists.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Staff/Admin
+
+### BR-STAFF-005 — Restaurant-operations authorization actions (Phase 3 Sprint 3D)
+- **Status**: VERIFIED (contract + most actions wired) — 2 actions defined, not yet wired
+- **Rule**: `PosAuthorizedAction` (the same enum/policy Sprint 3C established, extended — not a second
+  authorization contract) gates: emergency channel closure, transfer/merge of a check after payment
+  activity, package-completion override, and reprint/duplicate-receipt requests (retrofitted onto
+  Sprint 3C's `RequestDuplicateReceipt`, which shipped before this action existed). Two added values
+  remain intentionally unwired this sprint: `reopenTableCheck` (a `Check`'s reopening happens at its
+  `Order`'s `OrderClosure` level, already authorized there via `reopenOrder` — wiring a second,
+  overlapping pathway was not done) and `cancelAfterPreparation` (would require adding authorization
+  to `Order.transitionTo` itself, a domain-layer change judged disproportionate to fit safely at the
+  end of an already-large sprint). Both are recorded here as open follow-up work, not silently dropped.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Staff/Admin, POS, Payments, Kitchen
 
 # Stock, Recipe, Portion, and Ingredient Consumption
 
@@ -1058,6 +1228,22 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   correction or reopen always adds a new record, never edits or removes an old one.
 - **Owner Agent**: security_engineer
 - **Related Modules**: Payments, POS, Staff/Admin
+
+### BR-AUDIT-005 — Restaurant-operations audit trail, one shared repository (Phase 3 Sprint 3D)
+- **Status**: VERIFIED
+- **Rule**: `RestaurantOperationsAuditEntry`/`RestaurantOperationsAuditEntryRepository`
+  (`lib/features/restaurant/domain/audit/`, `lib/features/restaurant/data/
+  restaurant_operations_audit_entry_repository.dart`) record channel policy changes, check reopen/
+  transfer/merge/split, package-completion overrides, and kitchen ticket reprints — branch-scoped
+  (most of these events have no single `OrderId` to key against, unlike `ClosureAuditEntry`). Mirrors
+  `ClosureAuditEntryRepository`'s structurally-append-only interface (no update/delete method exists).
+  One shared repository spans every Sprint 3D sub-domain, rather than one per concern — a deliberate
+  choice, since these events are all genuinely "a critical restaurant-operations action happened," the
+  same shape of fact with a different `type`, unlike `PaymentSplitIdGenerator`/
+  `PosOrderLineDraftIdGenerator` (Sprint 3C), which stayed separate because they are independently
+  *injectable* correlation ids with no shared caller.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Staff/Admin, Kitchen
 
 # Profitability and Loss Prevention
 
@@ -1341,11 +1527,61 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Business Rule IDs**: BR-PAY-001, BR-PAY-003, BR-PAY-012, BR-PAY-013, BR-PAY-014, BR-PAY-015,
   BR-ORDER-009, BR-ORDER-010, BR-PROMO-007, BR-REFUND-007, BR-REFUND-008, BR-AUDIT-004, BR-STAFF-002
 
+### DL-016 — Restaurant Operations & Floor Management
+- **Decision**: Builds the extensible operational foundation for restaurant/branch operations, floor
+  plans and tables, table sessions and checks/adisyon, dine-in/takeaway/delivery preparation, kitchen
+  ticket routing, KDS foundations, package preparation and quality control, and order channel
+  operation settings — on top of Sprint 3A–3C's domain/POS/payment foundations, without rewriting any
+  of them. `FloorPlan`/extended `RestaurantTable` (layout); `ChannelOperationPolicy` (per-branch,
+  per-channel acceptance mode + operational state, append-only, with an authorized emergency stop);
+  `Check` (thin coordination record between `TableSession` and the existing, unchanged POS payment
+  pipeline) with multi-guest support, whole-check transfer, and pre-submission item/quantity split/
+  merge; `PackagePreparation` (a state machine deliberately separate from `OrderStatus`); `KitchenTicket`
+  (domain/contract only, no printer hardware) with per-line completion tracking; a KDS foundation
+  screen (single queue, station filter present but disabled); an expeditor projection joining product
+  and package readiness; a courier receipt summary and a contract-only receipt QR token provider;
+  and an authorization/audit sweep extending Sprint 3C's `PosAuthorizationPolicy`/audit patterns
+  rather than introducing new ones.
+- **Status**: DECIDED
+- **Source**: User, Phase 3 Sprint 3D architecture approval (analysis-only round producing a 14-point
+  architecture report with REQUIRED/RECOMMENDED/OPTIONAL-classified findings, followed by explicit
+  approval to proceed autonomously through implementation, with defined stop conditions and explicit
+  direction on the `OrderLine`-identity question raised during analysis).
+- **Date**: 2026-07-29
+- **Consequences**: See BR-CHANNEL-004, BR-TABLE-001 (extended), BR-TABLE-003/004 (revised),
+  BR-TABLE-006, BR-TABLE-007, BR-ORDER-011, BR-KITCHEN-001/002 (revised), BR-KITCHEN-006 through
+  BR-KITCHEN-008, BR-COURIER-006, BR-STAFF-005, BR-AUDIT-005. `docs/decisions.md` ADR-013 records the
+  full architecture, including every deviation and scope boundary (the `Check`-not-`PosOrderSession`-
+  extension choice, pre-submission-only split/merge/transfer, `PackagePreparationStatus` kept separate
+  from `OrderStatus`, `reopenTableCheck`/`cancelAfterPreparation` left unwired) reported with reasons,
+  not silent choices.
+- **Related Modules**: Table/QR, Orders, POS, Payments, Kitchen, Courier, Staff/Admin
+- **Business Rule IDs**: BR-CHANNEL-004, BR-TABLE-001, BR-TABLE-003, BR-TABLE-004, BR-TABLE-006,
+  BR-TABLE-007, BR-ORDER-011, BR-KITCHEN-001, BR-KITCHEN-002, BR-KITCHEN-006, BR-KITCHEN-007,
+  BR-KITCHEN-008, BR-COURIER-006, BR-STAFF-005, BR-AUDIT-005
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v1.5 — 2026-07-29
+- **Version**: 1.5
+- **Date**: 2026-07-29
+- **Summary**: Phase 3 Sprint 3D (Restaurant Operations & Floor Management). Added BR-CHANNEL-004
+  (channel operation policy), BR-TABLE-006 (floor plan), BR-TABLE-007 (Check/adisyon), BR-ORDER-011
+  (package preparation, separate from OrderStatus), BR-KITCHEN-006/007/008 (ticket standard, KDS,
+  expeditor), BR-COURIER-006 (courier receipt + QR foundation), BR-STAFF-005 (restaurant-operations
+  authorization actions), BR-AUDIT-005 (shared restaurant-operations audit trail). Revised BR-TABLE-001
+  (RestaurantTable layout fields), BR-TABLE-003 (real session orchestration now exists),
+  BR-TABLE-004 (table/check transfer and split-bill now DECIDED, was UNRESOLVED), BR-KITCHEN-001/002
+  (KitchenTicket built, richer than the original module_catalog sketch; per-line completion instead
+  of a ticket-wide status enum). Logged DL-016.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the restaurant-operations business rules this sprint's approved architecture
+  established, and correct four rules (BR-TABLE-001/003/004, BR-KITCHEN-001/002) that described a
+  pre-Sprint-3D state this sprint materially changed.
 
 ### v1.4 — 2026-07-28
 - **Version**: 1.4
