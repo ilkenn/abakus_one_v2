@@ -25,6 +25,11 @@ abstract interface class OrderClosureRepository {
   /// Every revision ever saved for [orderId]'s closure record, oldest
   /// first — the full open/close/reopen/reclose history.
   Future<List<OrderClosure>> findHistoryByOrderId(OrderId orderId);
+
+  /// The current (highest-revision) record for every distinct
+  /// [OrderClosure.closureId] ever saved — what a Closed Accounts list
+  /// screen queries, then filters via [ClosedOrderRecordFilter].
+  Future<List<OrderClosure>> findAllCurrent();
 }
 
 /// In-memory [OrderClosureRepository] — the only implementation this
@@ -66,6 +71,18 @@ class InMemoryOrderClosureRepository implements OrderClosureRepository {
     final forOrder = _allRevisions.where((c) => c.orderId == orderId).toList()
       ..sort((a, b) => a.revision.compareTo(b.revision));
     return List.unmodifiable(forOrder);
+  }
+
+  @override
+  Future<List<OrderClosure>> findAllCurrent() async {
+    final byClosureId = <String, OrderClosure>{};
+    for (final closure in _allRevisions) {
+      final existing = byClosureId[closure.closureId];
+      if (existing == null || closure.revision > existing.revision) {
+        byClosureId[closure.closureId] = closure;
+      }
+    }
+    return List.unmodifiable(byClosureId.values);
   }
 
   OrderClosure? _latestRevisionOf(Iterable<OrderClosure> revisions) {

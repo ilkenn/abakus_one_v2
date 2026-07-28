@@ -67,6 +67,20 @@ void main() {
       expect(await repository.findByClosureId('nonexistent'), isNull);
       expect(await repository.findCurrentByOrderId(OrderId('nonexistent')), isNull);
     });
+
+    test('findAllCurrent returns the latest revision of every distinct closureId', () async {
+      final repository = InMemoryOrderClosureRepository();
+      await repository.save(_closure(closureId: 'c1', revision: 1));
+      await repository.save(_closure(closureId: 'c1', revision: 2, status: OrderClosureLifecycleStatus.closed));
+      await repository.save(_closure(closureId: 'c2', orderId: 'order-2', revision: 1));
+
+      final current = await repository.findAllCurrent();
+
+      expect(current, hasLength(2));
+      final c1 = current.firstWhere((c) => c.closureId == 'c1');
+      expect(c1.revision, 2);
+      expect(c1.lifecycleStatus, OrderClosureLifecycleStatus.closed);
+    });
   });
 
   group('InMemoryOrderClosureRepository — failure injection', () {
