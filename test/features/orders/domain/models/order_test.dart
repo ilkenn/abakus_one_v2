@@ -216,4 +216,60 @@ void main() {
       expect(order.statusHistory, isEmpty);
     });
   });
+
+  group('Order — order-level notes (Phase 3 Sprint 3B)', () {
+    test('customerNote and kitchenNote default to empty, preserving existing callers', () {
+      final order = _buildOrder();
+      expect(order.customerNote, '');
+      expect(order.kitchenNote, '');
+    });
+
+    test('customerNote and kitchenNote are distinct from any line-level note', () {
+      final line = OrderLine.create(
+        productId: 'p1',
+        productName: 'Bowl',
+        quantity: 1,
+        unitPrice: Money.fromWhole(100, Currency.tryLira),
+        taxRate: TaxPolicy.defaultRate,
+        customerNote: 'Az tuzlu',
+        kitchenNote: 'Acil',
+      );
+      final order = Order(
+        id: OrderId('order-1'),
+        orderNumber: OrderNumber('A-001'),
+        status: OrderStatus.created,
+        channel: OrderChannel.dineInStaff,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        lines: [line],
+        pricing: PriceCalculator.calculate(
+          lines: [line],
+          currency: Currency.tryLira,
+        ),
+        timestamps: OrderTimestamps(created: DateTime(2026, 7, 28)),
+        customerNote: 'Zile basmayın',
+        kitchenNote: 'Masaya servis',
+      );
+
+      expect(order.customerNote, 'Zile basmayın');
+      expect(order.kitchenNote, 'Masaya servis');
+      expect(order.lines.single.customerNote, 'Az tuzlu');
+      expect(order.lines.single.kitchenNote, 'Acil');
+    });
+
+    test('copyWith preserves notes when not given, updates them when given', () {
+      final order = _buildOrder().copyWith(
+        customerNote: 'Original customer note',
+        kitchenNote: 'Original kitchen note',
+      );
+
+      final untouched = order.copyWith(status: OrderStatus.created);
+      expect(untouched.customerNote, 'Original customer note');
+      expect(untouched.kitchenNote, 'Original kitchen note');
+
+      final updated = order.copyWith(customerNote: 'Updated');
+      expect(updated.customerNote, 'Updated');
+      expect(updated.kitchenNote, 'Original kitchen note');
+    });
+  });
 }

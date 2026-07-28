@@ -46,6 +46,8 @@ class Order {
     this.statusHistory = const [],
     this.version = 1,
     required this.timestamps,
+    this.customerNote = '',
+    this.kitchenNote = '',
   });
 
   final OrderId id;
@@ -90,6 +92,17 @@ class Order {
   final int version;
 
   final OrderTimestamps timestamps;
+
+  /// Order-level note from the customer — distinct from any individual
+  /// [OrderLine.customerNote]. Empty by default; additive field (Phase 3
+  /// Sprint 3B) so every existing caller/test built before it still
+  /// compiles and behaves identically.
+  final String customerNote;
+
+  /// Order-level instruction for the kitchen — distinct from any
+  /// individual [OrderLine.kitchenNote]. Same additive-field reasoning as
+  /// [customerNote].
+  final String kitchenNote;
 
   /// Moves this order from [status] to [newStatus], appending a new
   /// [OrderAuditEntry.statusChange] to [statusHistory] and recording the
@@ -146,6 +159,8 @@ class Order {
     List<OrderAuditEntry>? statusHistory,
     int? version,
     OrderTimestamps? timestamps,
+    String? customerNote,
+    String? kitchenNote,
   }) {
     return Order(
       id: id ?? this.id,
@@ -164,6 +179,8 @@ class Order {
       statusHistory: statusHistory ?? this.statusHistory,
       version: version ?? this.version,
       timestamps: timestamps ?? this.timestamps,
+      customerNote: customerNote ?? this.customerNote,
+      kitchenNote: kitchenNote ?? this.kitchenNote,
     );
   }
 }

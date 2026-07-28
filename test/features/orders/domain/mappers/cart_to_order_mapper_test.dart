@@ -172,6 +172,40 @@ void main() {
     });
   });
 
+  group('CartToOrderMapper.map — order-level notes (Phase 3 Sprint 3B)', () {
+    test('snapshots customerNote and kitchenNote onto the Order, defaulting to empty', () {
+      final cartItems = [
+        const CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+      ];
+
+      final withoutNotes = CartToOrderMapper.map(
+        orderId: OrderId('order-1'),
+        orderNumber: OrderNumber('A-001'),
+        cartItems: cartItems,
+        channel: OrderChannel.takeaway,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        now: DateTime(2026, 7, 28),
+      );
+      expect(withoutNotes.customerNote, '');
+      expect(withoutNotes.kitchenNote, '');
+
+      final withNotes = CartToOrderMapper.map(
+        orderId: OrderId('order-2'),
+        orderNumber: OrderNumber('A-002'),
+        cartItems: cartItems,
+        channel: OrderChannel.takeaway,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        now: DateTime(2026, 7, 28),
+        customerNote: 'Zile basmayın',
+        kitchenNote: 'Acil hazırlansın',
+      );
+      expect(withNotes.customerNote, 'Zile basmayın');
+      expect(withNotes.kitchenNote, 'Acil hazırlansın');
+    });
+  });
+
   group('CartToOrderMapper.map — validation', () {
     test('rejects an empty cart', () {
       expect(
