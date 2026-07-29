@@ -577,3 +577,45 @@ route prediction, autonomous courier scoring, hardware procurement.
   named KDS screens).
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-017 Consequences section.
+
+## Sprint 5A — Courier Compensation & Earnings
+
+Branch `phase-5/courier-operations-platform` (continued), from the tip of Phase 5's own final
+documentation commit. Approved directly into autonomous implementation mode via a 6-part kickoff
+(compensation profile, earnings engine, business rules, dashboard, manager panel, tests) with an
+explicit first-task instruction to analyze the existing Phase 5/Sprint 3F architecture and verify how
+compensation could be added without redesigning it. See `docs/business_rules.md` DL-021 and
+`docs/decisions.md` ADR-018 for the full analysis, architecture, and every deviation.
+
+| Task | Status | Note |
+|---|---|---|
+| Pre-implementation architecture analysis | DONE | Full inspection of `Courier`/`CourierCompensationMetadata`/`CourierOperationalProfile`/`CourierShift`/`Delivery`/`DeliveryAssignment`/`DeliveryProof`/`DeliveryRouteSnapshot`/`CourierLocationSnapshot`/`GeofenceEvaluator`/`CourierSettlementSession`/`CourierCashCollection`/`CourierCashDeclaration`/`CourierPerformanceSnapshot`/`PackagePreparation`/`PosAuthorizedAction`/`CourierOperationalAuditEntry`/`BusinessRuleViolation`/`courier_dependencies_provider.dart` — see ADR-018. Confirmed no scheduled-start/end field on `CourierShift`, no distance source beyond the already-non-authoritative `DeliveryRouteSnapshot`, and zero pre-existing wage/earnings/payroll concept beyond the inert `CourierCompensationMetadata` placeholder. |
+| Compensation profile (Part 1) | DONE | `CourierCompensationProfile` — versioned (`effectiveFrom`/`effectiveUntil`/`version`/`isActive`), append-only, never overwritten; `CreateCourierCompensationProfile` always creates the next version. `CustomBonusRule` (foundation, flat label+amount). A new, separate type from Phase 5's unversioned `CourierCompensationMetadata`, which is left completely untouched. |
+| Earnings engine (Part 2) | DONE | `DeliveryEarnings`/`ShiftHourlyEarnings` — computed once from immutable operational facts (shift, delivery, distance, manager adjustments), no update method on either repository. `CalculateDeliveryEarnings`/`CalculateShiftHourlyEarnings` are both idempotent (check-then-return-existing). Corrections are exclusively `CourierEarningsAdjustment` (append-only). |
+| Business rules (Part 3) | DONE | Shift-start `MAX(scheduledStart, actualLogin)` and shift-end scheduled-end-unless-final-delivery-geofence-cutoff (`ShiftEarningsWindowCalculator`, verified against the brief's own worked examples). Package earnings only after completion, cancelled requires manager approval (`DeliveryNotEligibleForEarningsViolation`/`approveCancelledDeliveryEarnings`). Distance earnings with a per-courier `freeDistanceKm`, extra distance never negative (`max(0, ...)` clamp). GPS/geofence evidence reuses `GeofenceEvaluator` unchanged via `FirstVerifiedGeofenceArrivalFinder` — never a single trusted point. Manager adjustments append-only, predefined-reason-only. Paid earnings locked structurally (`EarningsAlreadyPaidViolation`). |
+| Courier earnings dashboard (Part 4) | DONE | `CourierEarningsScreen` — today/week/month period toggle, gross/paid/pending totals, full breakdown (package/hourly/extra-distance/bonuses/adjustments), operational summary (hours, packages, distance, chargeable extra distance), per-delivery line items. Wired from `CourierHomeScreen`. |
+| Manager panel (Part 5) | DONE | `ManagerCourierCompensationScreen` — read-only historical profile version list, "+ Yeni" dialog (always creates a new version), current-month earnings preview, adjustment-creation dialog, mark-paid action (gathers this period's not-yet-paid ids before calling `MarkCourierEarningsPaid`). Wired from `CourierDispatchBoardScreen`'s roster. |
+| Tests (Part 6) | DONE | 1331 tests total (up from Phase 5's 1283), all passing — 48 new tests: 18 domain (profile `coversAt`, shift-window calculator including the exact brief examples, geofence-arrival finder, earnings builder aggregation), 30 application (profile versioning/validation, shift scheduling, delivery/shift earnings calculation including eligibility/idempotency/authorization, adjustments, payment double-pay rejection, summary period-filtering), 1 full end-to-end integration test. `flutter analyze`: no issues. `dart format`: clean. |
+| Documentation | DONE | `docs/business_rules.md` v2.0 (BR-COURIER-025–033 added; DL-021 logged); `docs/decisions.md` ADR-018 (incl. the pre-implementation architecture analysis); this entry. |
+
+**Explicitly out of scope this sprint** (per the kickoff's own framing): payroll, salary calculation,
+tax withholding, accounting ledger entries, bank transfers, real payment execution — this module
+computes earnings, it does not pay them out.
+
+### Deviations from the approved architecture (reported, not silent)
+
+- **A new `CourierCompensationProfile` type instead of extending `CourierCompensationMetadata`** —
+  the Phase 5 placeholder has no versioning/effective-date support, and retrofitting it would mean
+  modifying `CourierOperationalProfile` (forbidden this sprint). `CourierCompensationMetadata` remains
+  completely untouched and unused by this module.
+- **A new `CourierShiftSchedule` companion type instead of a field added to `CourierShift`** —
+  `CourierShift` has no scheduled-start/end concept at all, and modifying it was forbidden; a separate,
+  additive, `shiftId`-keyed record was used instead, with an explicit fallback to the shift's own actual
+  timestamps when no schedule was set.
+- **Finding the final-delivery verified-geofence-arrival instant is left to the caller** —
+  `CalculateShiftHourlyEarnings` accepts it as an optional parameter rather than sourcing customer
+  coordinates itself, since no such source is currently exposed to the courier feature.
+- **Distance earnings reuse `DeliveryRouteSnapshot`'s pre-existing, already-documented non-authoritative
+  estimate** — the only distance source that exists anywhere in the courier feature.
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-018 Consequences section.

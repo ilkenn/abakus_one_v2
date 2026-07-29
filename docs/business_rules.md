@@ -1521,6 +1521,134 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Courier
 
+### BR-COURIER-025 — Compensation is an operational earnings engine, never payroll, accounting, or
+  settlement (Sprint 5A)
+- **Status**: VERIFIED
+- **Rule**: `lib/features/courier/domain/compensation/**` computes what a courier *earned*, from
+  immutable operational facts (shifts, deliveries, distance, manager adjustments) — it never produces a
+  payroll run, a payslip, a tax calculation, an accounting ledger entry, or a bank transfer, and it
+  never touches `CourierSettlementSession`/`CourierCashCollection`/`CourierCashDeclaration` (Sprint 3F,
+  BR-COURIER-007 through BR-COURIER-011), which remain exclusively about cash physically collected from
+  customers and reconciled against a drawer. The two domains share only a `courierId` value, never a
+  type or a use case. Extends, not supersedes, the original BR-COURIER-002/003 DECIDED framing
+  ("hourly + per-delivery compensation... no rates are defined") — this sprint gives that decision a
+  real, calculating implementation for the first time, still without ever becoming payroll.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-026 — Compensation profiles are versioned and never overwritten; historical earnings
+  always use the profile effective at that time (Sprint 5A)
+- **Status**: VERIFIED
+- **Rule**: `CourierCompensationProfile` is immutable and append-only —
+  `CourierCompensationProfileRepository` has no update method; `CreateCourierCompensationProfile`
+  always creates `version = (highest existing version for this courier) + 1`, never edits an earlier
+  version. `CourierCompensationProfile.coversAt(instant)` resolves which version applied at a given
+  moment (`effectiveFrom` inclusive, `effectiveUntil` exclusive, `isActive` required) —
+  `CalculateDeliveryEarnings`/`CalculateShiftHourlyEarnings` always resolve the profile that was
+  effective at completion time, never the courier's *current* rates, so a later rate change (including
+  a manager-scheduled future raise, which is simply a new profile with a later `effectiveFrom`) never
+  retroactively changes an already-calculated delivery or shift. Deliberately a new, separate type from
+  Phase 5's `CourierCompensationMetadata` (embedded, unversioned, inert placeholder inside
+  `CourierOperationalProfile`) — see `docs/decisions.md` ADR-018 for why.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-027 — Shift-start hourly earnings: `MAX(ScheduledShiftStart, ActualCourierLogin)`
+  (Sprint 5A)
+- **Status**: VERIFIED
+- **Rule**: `ShiftEarningsWindowCalculator.determineStartAt` returns whichever of the manager's
+  scheduled start (`CourierShiftSchedule.scheduledStart`, set via `ScheduleCourierShift`; falls back to
+  the shift's own actual `startedAt` when no schedule was set) and the courier's actual login is later —
+  early arrival never creates extra earnings; late arrival reduces payable hours. Verified against the
+  exact two examples in the brief (`shift 10:00 / login 09:40 → begins 10:00`; `shift 10:00 / login
+  10:18 → begins 10:18`) by a dedicated test.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-028 — Shift-end hourly earnings: scheduled end, unless a final in-progress delivery's
+  first verified customer-geofence arrival cuts it short (Sprint 5A)
+- **Status**: VERIFIED
+- **Rule**: `ShiftEarningsWindowCalculator.determineEndAt` returns the scheduled end
+  (`CourierShiftSchedule.scheduledEnd`, falling back to the shift's actual `endedAt`) unless a
+  caller-supplied `finalDeliveryVerifiedArrivalAt` is given, in which case that instant is used instead
+  — "prevent intentional waiting outside the customer's door": hourly pay for a still-active final
+  delivery stops at the moment the courier's location is first verified within the customer's geofence
+  (`FirstVerifiedGeofenceArrivalFinder`), never at the later moment delivery is confirmed. The delivery
+  itself continues normally to completion, and its package earnings remain payable in full — only the
+  *hourly* clock is affected. Finding that verified-arrival instant (which needs the customer's
+  coordinates) is deliberately the caller's responsibility, not `CalculateShiftHourlyEarnings`'s own —
+  this codebase does not yet expose a customer-coordinate source to the courier feature; see
+  `docs/decisions.md` ADR-018's honest scoping note.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-029 — Package earnings require successful completion; a cancelled delivery earns
+  nothing unless manager-approved (Sprint 5A)
+- **Status**: VERIFIED
+- **Rule**: `CalculateDeliveryEarnings` throws `DeliveryNotEligibleForEarningsViolation` unless
+  `Delivery.status == delivered`, or `== cancelled` **and** `managerApprovedCancellation == true` (gated
+  by the distinct `PosAuthorizedAction.approveCancelledDeliveryEarnings` action rather than the routine
+  `calculateCourierEarnings`). `DeliveryEarnings.wasManagerApprovedCancellation` records which path
+  produced the record. Idempotent — a repeated call for the same delivery returns the existing record
+  rather than recomputing, so earnings are locked the instant they exist.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-030 — Distance earnings: a per-courier configurable free allowance, extra distance
+  never negative (Sprint 5A)
+- **Status**: VERIFIED
+- **Rule**: `CourierCompensationProfile.freeDistanceKm` is a manager-configured, per-courier,
+  non-negative value (0 or any positive number — no fixed tiers). `CalculateDeliveryEarnings` computes
+  `extraDistanceKm = max(0, distanceKm - freeDistanceKm)` and
+  `extraDistanceEarnings = extraDistanceRatePerKm × extraDistanceKm` — the `max(0, ...)` clamp makes a
+  negative extra-distance earning structurally impossible, not just avoided by convention. Distance
+  itself is read from `DeliveryTrackingRepository` (`DeliveryRouteSnapshot.distanceEstimateMeters`) —
+  that type's own doc comment documents it as non-authoritative/informational-only (Phase 5); Sprint 5A
+  reuses it for lack of any other distance source in this codebase, and a missing snapshot means zero
+  distance, never an error. All distance arithmetic is done in exact integer meters, converted to `Money`
+  via `Money.scaledBy` (rational scaling), never floating-point money math.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-031 — Compensation-relevant geofence evidence follows the same accuracy/first-verified
+  rules as operational geofencing — never a single trusted point (Sprint 5A)
+- **Status**: VERIFIED
+- **Rule**: `FirstVerifiedGeofenceArrivalFinder` reuses Phase 5's unmodified `GeofenceEvaluator` — every
+  candidate `CourierLocationSnapshot` is independently evaluated for both radius and accuracy
+  (`GeofenceEvaluationResult.passesAutomatically`); a single low-accuracy or out-of-radius reading is
+  never enough to become financial evidence (BR-COURIER-023's own rule, extended here to earnings). The
+  earliest `capturedAt` among genuinely-passing candidates is the result, `capturedAt`/`receivedAt`
+  distinction preserved unchanged from `CourierLocationSnapshot`'s own Phase 5 shape (an offline-queued
+  reading's two timestamps both remain immutable).
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier
+
+### BR-COURIER-032 — Manager earnings adjustments are append-only, predefined-reason-only, and never
+  modify original earnings (Sprint 5A)
+- **Status**: VERIFIED
+- **Rule**: `CourierEarningsAdjustment` accepts only a predefined
+  `CourierEarningsAdjustmentReason` (`gpsProblem`/`customerComplaint`/`restaurantDelay`/
+  `systemFailure`/`manualCorrection`) — no free-text reason field exists. Every adjustment records
+  `reason`, `actorStaffId`, `createdAt`, and is picked up by the same `CourierOperationalAuditEntry`
+  audit trail every other Phase 5 action uses. `CreateCourierEarningsAdjustment` has no dependency
+  capable of reading or writing `DeliveryEarnings`/`ShiftHourlyEarnings` at all — structurally
+  incapable of touching an original earnings record, not just disciplined not to.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier, Staff/Admin
+
+### BR-COURIER-033 — Paid earnings are locked; every future correction is a new adjustment, never a
+  reopening (Sprint 5A)
+- **Status**: VERIFIED
+- **Rule**: `MarkCourierEarningsPaid` throws `EarningsAlreadyPaidViolation` if any referenced
+  `DeliveryEarnings`/`ShiftHourlyEarnings`/`CourierEarningsAdjustment` id already appears in an earlier
+  `CourierEarningsPayment` (checked via `CourierEarningsPaymentRepository.findByReferencedId`) — no id
+  is ever paid twice. "Locked" is structural rather than a stored flag: none of the three referenced
+  record types has an update method at all, with or without a payment referencing them; a correction
+  after payment is the exact same `CreateCourierEarningsAdjustment` action as before payment, never a
+  reopening of the `CourierEarningsPayment` record itself.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier
+
 # Staff and Manager Operations
 
 ### BR-STAFF-001 — Staff-initiated orders share the state machine
@@ -2202,11 +2330,66 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
   BR-COURIER-015, BR-COURIER-016, BR-COURIER-017, BR-COURIER-018, BR-COURIER-019, BR-COURIER-020,
   BR-COURIER-021, BR-COURIER-022, BR-COURIER-023, BR-COURIER-024
 
+### DL-021 — Courier Compensation & Earnings
+- **Decision**: Adds a production-ready Courier Compensation & Earnings module on top of Phase 5's
+  courier-operations platform, without redesigning it — an operational earnings *calculation* engine,
+  explicitly not payroll, accounting, or settlement (BR-COURIER-025). Introduces versioned
+  `CourierCompensationProfile`s (never overwritten — a rate change or scheduled future raise is always
+  a new, higher-version record), a `CourierShiftSchedule` companion type carrying the manager-set
+  "scheduled start/end" `CourierShift` itself has no field for, and computed-once, append-only
+  `DeliveryEarnings`/`ShiftHourlyEarnings` records. Implements the shift-start (`MAX(scheduledStart,
+  actualLogin)`) and shift-end (scheduled end, unless a final in-progress delivery's first verified
+  customer-geofence arrival cuts it short) rules exactly as specified, and per-delivery package +
+  distance earnings with a per-courier configurable free-distance allowance. Manager corrections
+  (`CourierEarningsAdjustment`) are append-only and predefined-reason-only; a `CourierEarningsPayment`
+  record locks the earnings it references against being paid twice, structurally rather than via a
+  stored flag (nothing it references has an update method at all).
+- **Status**: DECIDED
+- **Source**: User, Sprint 5A autonomous-implementation-mode approval — a 6-part kickoff (compensation
+  profile, earnings engine, business rules, dashboard, manager panel, tests) with an explicit first-task
+  instruction to inspect the existing `Courier`/`CourierShift`/`Delivery`/`DeliveryAssignment`/
+  `CourierSettlementSession`/`CourierCashCollection`/`CourierCashDeclaration`/`CourierPerformance`/
+  `DeliveryProof`/`PackagePreparation`/authorization/audit/business-rules architecture and verify how
+  compensation could be added without breaking Phase 5, an explicit list of exact business rules to
+  implement (including the shift-start/end formulas with worked examples), and an explicit instruction
+  never to rewrite existing Phase 5 architecture. The same "stop only on architectural conflict,
+  security issue, or unavoidable business-rule conflict" condition as Phase 5 applied; none occurred.
+- **Date**: 2026-07-30
+- **Consequences**: See BR-COURIER-025 through BR-COURIER-033. `docs/decisions.md` ADR-018 records the
+  full architecture, including the two genuine scope judgment calls this sprint required: (1)
+  `CourierShift` has no "scheduled start" concept at all, and modifying it was forbidden — resolved by
+  a new, separate, additive `CourierShiftSchedule` type rather than a field added to `CourierShift`;
+  (2) finding a final delivery's first verified customer-geofence arrival needs the customer's
+  coordinates, which no courier-feature type currently exposes — resolved by making that lookup the
+  caller's explicit responsibility (`CalculateShiftHourlyEarnings` accepts the already-found instant as
+  a parameter) rather than solving customer-coordinate sourcing inside this sprint.
+- **Related Modules**: Courier, Orders, POS, Staff/Admin
+- **Business Rule IDs**: BR-COURIER-025, BR-COURIER-026, BR-COURIER-027, BR-COURIER-028,
+  BR-COURIER-029, BR-COURIER-030, BR-COURIER-031, BR-COURIER-032, BR-COURIER-033
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v2.0 — 2026-07-30
+- **Version**: 2.0
+- **Date**: 2026-07-30
+- **Summary**: Sprint 5A (Courier Compensation & Earnings). Added BR-COURIER-025 (compensation is an
+  operational earnings engine, never payroll/accounting/settlement), BR-COURIER-026 (versioned
+  compensation profiles, never overwritten, historical earnings use the profile effective at
+  calculation time), BR-COURIER-027 (shift-start `MAX(scheduledStart, actualLogin)` rule),
+  BR-COURIER-028 (shift-end scheduled-end-unless-final-delivery-geofence-cutoff rule), BR-COURIER-029
+  (package earnings require completion, cancelled requires manager approval), BR-COURIER-030 (distance
+  earnings with a per-courier configurable free allowance, never negative), BR-COURIER-031
+  (compensation geofence evidence reuses the same accuracy/first-verified rules, never a single trusted
+  point), BR-COURIER-032 (manager adjustments are append-only, predefined-reason-only, never modify
+  original earnings), BR-COURIER-033 (paid earnings are locked structurally, corrections are new
+  adjustments, never a reopening). Logged DL-021.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the Courier Compensation & Earnings business rules this sprint's approved
+  architecture established.
 
 ### v1.9 — 2026-07-30
 - **Version**: 1.9

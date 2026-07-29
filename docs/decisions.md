@@ -1563,3 +1563,166 @@ layer's consolidation from the brief's ~32 named screens down to 5 real, functio
 home, active delivery, delivery history, manager dispatch board, manager performance/failure review) —
 narrower in screen count than the brief's literal enumeration but covering every named state/action,
 mirroring Phase 4's own KDS UI consolidation precedent.
+
+## ADR-018 — Courier Compensation & Earnings (Sprint 5A)
+
+- Date: 2026-07-30
+- Status: Accepted
+
+### Pre-implementation architecture analysis (required first task)
+Before any code, the complete existing implementation was inspected: `Courier`
+(`lib/features/courier/domain/identity/courier.dart` — no compensation field of any kind lives on the
+registry entity itself); `CourierCompensationMetadata`
+(`lib/features/courier/domain/identity/courier_compensation_metadata.dart` — confirmed the exact
+existing Phase 5 shape: `{hourlyRate: Money?, perPackageRate: Money?}`, explicitly documented in its own
+doc comment as "metadata/contract only. No payroll calculation, payment run, or payout exists anywhere
+in this phase"), embedded unversioned inside `CourierOperationalProfile`
+(`courier_operational_profile.dart`); `CourierShift`/`CourierShiftStatus`
+(`lib/features/courier/domain/shift/*.dart` — confirmed **no scheduled-start/end field exists at all**,
+only `requestedAt`/`approvedAt`/`startedAt`/`endedAt`, all *actual* timestamps); `Delivery`/
+`DeliveryAssignment`/`DeliveryStatus` (confirmed `Delivery.deliveredAt`/`courierId`/`orderId: OrderId`
+exact shapes, and the full 17-state `DeliveryStatusTransitions` map, `delivered` terminal);
+`DeliveryProof` (no distance field) and `DeliveryRouteSnapshot`
+(`lib/features/courier/domain/delivery/delivery_route_snapshot.dart` — confirmed the **only**
+distance-bearing type in the courier feature, and confirmed its own doc comment explicitly marks
+`distanceEstimateMeters` non-authoritative/informational-only, "never used to validate/block any
+delivery-lifecycle transition"); `CourierLocationSnapshot`/`GeofenceEvaluator`/
+`GeofenceEvaluationResult`/`GeofenceZoneType` (confirmed `accuracyMeters`/`capturedAt`/`receivedAt`
+fields and the exact `passesAutomatically = isWithin && isAccuracySufficient` rule, unchanged);
+`CourierSettlementSession`/`CourierCashCollection`/`CourierCashDeclaration` (Sprint 3F, confirmed **zero
+hourly/wage/rate/compensation field anywhere** in any of the three — purely cash-collected-vs-declared
+reconciliation, `courierId: String` convention, no `Courier` FK); `CourierPerformanceSnapshot`/
+`CourierPerformanceBuilder` (confirmed clean — "do not implement... payroll" is the type's own doc
+comment, and no wage/earnings field had leaked in; also confirmed it already computes
+`activeShiftDuration`/`packagesDelivered`, exactly the two inputs an hourly+per-package calculation
+wants); `PackagePreparation`/`PackagePreparationStatus` (confirmed unchanged, no Sprint 5A relevance
+beyond what Phase 5 already established); `PosAuthorizedAction` (read the full current 44-value enum,
+confirmed the doc comment's "generic action+actor+context, not payment-specific" framing, appended
+after the last value, `reviewFailureResponsibility`); `CourierOperationalAuditEntry`/
+`CourierAuditEventType` (confirmed the current 27-value enum, no compensation-related event type
+existed); `BusinessRuleViolation` (confirmed the file's exact `final class X extends
+BusinessRuleViolation` declaration style and its literal end); `courier_dependencies_provider.dart`
+(read the full file, confirmed the exact `<name>RepositoryProvider`/`<name>IdGeneratorProvider` naming
+convention to extend); a codebase-wide grep for `hourlyRate|wage|compensation|earnings|payroll`
+confirmed **exactly four pre-existing matches, all already covered above** — no duplicate wage/earnings/
+payroll concept existed anywhere else to collide with; `docs/business_rules.md` BR-COURIER-002/003
+(confirmed DECIDED, not UNRESOLVED — "hourly + per-delivery compensation... no rates are defined" is the
+exact boundary this sprint extends) and BR-COURIER-012 through BR-COURIER-024 (one-line summaries
+confirmed, none pre-existing mentioning compensation calculation); `docs/decisions.md` ADR-017 (skimmed,
+confirmed "payroll" was explicitly out of scope for Phase 5, matching `CourierCompensationMetadata`'s
+own doc comment). This analysis directly shaped every decision below — nothing here redesigns a Phase 5
+foundation, and `CourierShift`, `Delivery`, `CourierSettlementSession`, and every other Phase 5 type
+named above are completely unmodified except the purely additive enum extensions listed in
+Consequences.
+
+### Decision
+Implements a production-ready Courier Compensation & Earnings module — an **operational earnings
+calculation engine**, explicitly not payroll, accounting, or settlement (BR-COURIER-025).
+
+**A new, separate, versioned `CourierCompensationProfile` — not a retrofit of
+`CourierCompensationMetadata`.** The existing Phase 5 placeholder (`hourlyRate`/`perPackageRate` only,
+embedded as a single unversioned value inside `CourierOperationalProfile`) has no `effectiveFrom`/
+`effectiveUntil`/`version`/`isActive` support this sprint's explicit requirements need, and retrofitting
+versioning onto a value object nested inside a *different* aggregate would mean modifying
+`CourierOperationalProfile` — forbidden this sprint ("never rewrite existing Phase 5 architecture").
+`CourierCompensationMetadata` is therefore left completely untouched, still exactly what it was: an
+inert Phase 5 placeholder, unused by this module. The new `CourierCompensationProfile` is its own
+top-level, `courierId`-keyed, append-only aggregate with its own repository.
+
+**`CourierShiftSchedule` is a new, additive companion type — never a field added to `CourierShift`.**
+The brief's "ScheduledShiftStart"/scheduled-end business rules need a concept `CourierShift` (Phase 5)
+genuinely does not have (confirmed by the architecture analysis, not assumed) — only actual timestamps
+exist. Modifying `CourierShift` to add one would violate "never rewrite existing Phase 5 architecture."
+The resolution: a separate, `shiftId`-keyed, append-only `CourierShiftSchedule` record
+(`ScheduleCourierShift`), with an explicit, documented fallback when none exists — the shift's own
+actual `startedAt`/`endedAt` stand in for both "scheduled" and "actual," meaning no early/late
+adjustment is possible without a manager having explicitly scheduled the shift. A conservative,
+transparent default, not a fabricated number.
+
+**`DeliveryEarnings`/`ShiftHourlyEarnings` are computed once, with no update method at all — "locked"
+is structural, not a stored flag.** `CalculateDeliveryEarnings`/`CalculateShiftHourlyEarnings` are both
+idempotent (check-then-return-existing, mirroring `ConfirmPackagePickup`/`CompleteDelivery`'s Phase 5
+idempotency pattern) rather than using a separate "already calculated" guard clause. `MarkCourierEarningsPaid`
+similarly locks by absence-of-update-method plus a cross-payment `findByReferencedId` guard
+(`EarningsAlreadyPaidViolation`) — no id is ever paid twice, and every future correction is the exact
+same `CreateCourierEarningsAdjustment` action whether or not the underlying record has been paid yet.
+
+**The shift-start/shift-end formulas are pure functions, mirroring `GeofenceEvaluator`/`DispatchScorer`'s
+established no-I/O shape.** `ShiftEarningsWindowCalculator.determineStartAt`/`determineEndAt`/
+`payableDuration` implement `MAX(scheduledStart, actualLogin)` and the scheduled-end-unless-final-
+delivery-geofence-cutoff rule exactly, verified against the brief's own two worked examples by a
+dedicated test. `FirstVerifiedGeofenceArrivalFinder` reuses `GeofenceEvaluator` completely unchanged —
+every candidate location reading is independently evaluated for both radius and accuracy, and only the
+earliest genuinely-passing one counts, matching "do not trust one GPS point" and "low accuracy GPS
+cannot become financial evidence" structurally.
+
+**Finding the final-delivery verified-arrival instant is deliberately the caller's responsibility, not
+`CalculateShiftHourlyEarnings`'s own — an honest scoping boundary, not a silent gap.** Doing so requires
+the customer's coordinates (for `GeofenceEvaluator.evaluate`'s `targetLatitude`/`targetLongitude`
+parameters), and the architecture analysis confirmed no customer-coordinate source is currently exposed
+to the courier feature (only an unrelated static field on a different feature's customer-address model).
+Rather than building that cross-feature wiring as an unplanned tangent, `CalculateShiftHourlyEarnings`
+accepts `finalDeliveryVerifiedArrivalAt` as an optional parameter — `FirstVerifiedGeofenceArrivalFinder`
+is fully implemented and tested and ready to be called by whichever future orchestration layer sources
+real coordinates.
+
+**Distance earnings reuse `DeliveryRouteSnapshot`'s existing, explicitly non-authoritative distance
+estimate — a documented, honest limitation, not a new source of truth invented for this sprint.** No
+other distance-bearing type exists anywhere in the courier feature. All distance arithmetic is done in
+exact integer meters and converted to `Money` via the existing `Money.scaledBy` rational-scaling method
+— never floating-point money math, matching this codebase's one existing rounding discipline
+(`docs/architecture_bible.md` §10).
+
+**Authorization/audit**: 6 new `PosAuthorizedAction` values (additive, appended after
+`reviewFailureResponsibility`) — `manageCourierCompensationProfile`, `scheduleCourierShift`,
+`calculateCourierEarnings`, `createCourierEarningsAdjustment`, `markCourierEarningsPaid`,
+`approveCancelledDeliveryEarnings` (a deliberately distinct action from the routine
+`calculateCourierEarnings`, so a manager-approved cancelled-delivery payout is separately auditable from
+routine calculation). 6 new `CourierAuditEventType` values. Every state-changing Sprint 5A use case both
+checks authorization and records a `CourierOperationalAuditEntry`.
+
+### Context
+Approved directly into "AUTONOMOUS IMPLEMENTATION MODE" by the user's Sprint 5A kickoff message — a
+6-part brief (compensation profile, earnings engine, exact business rules with worked examples,
+dashboard, manager panel, tests) with an explicit "FIRST TASK — ANALYSIS" instruction to inspect the
+named existing types and verify how compensation could be added without breaking Phase 5, and an
+explicit instruction never to redesign or rewrite Phase 5, only extend it. The same "stop only on
+architectural conflict, security issue, or unavoidable business-rule conflict" condition as Phase 5
+applied; none occurred.
+
+### Consequences
+- **7 implementation commits** (domain/data/identity/enum-extension foundation; use cases; dependencies
+  provider wiring; UI; tests — documentation is this commit), each independently formatted/analyzed/
+  tested before commit, matching ADR-012 through ADR-017's granularity precedent.
+- **No existing Phase 5 (or earlier) file was rewritten** — `PosAuthorizedAction` (6 additive values),
+  `CourierAuditEventType` (6 additive values), `core/errors/business_rule_violation.dart` (4 additive
+  violation types), and `courier_dependencies_provider.dart` (12 additive provider entries) are the
+  only pre-existing files modified beyond their own tests; every other change is a new file.
+  `CourierShift`, `Delivery`, `CourierCompensationMetadata`, `CourierOperationalProfile`,
+  `CourierSettlementSession`, `CourierCashCollection`, `CourierCashDeclaration`,
+  `CourierPerformanceSnapshot`, `DeliveryProof`, `GeofenceEvaluator`, and every other Phase 5/Sprint 3F
+  type referenced during the architecture analysis are completely unmodified.
+- **Deviation — a new `CourierCompensationProfile` type instead of extending
+  `CourierCompensationMetadata`** — see the Decision section's own explicit reasoning.
+- **Deviation — a new `CourierShiftSchedule` companion type instead of a field on `CourierShift`** —
+  see the Decision section.
+- **Honest scoping boundary — finding the final-delivery verified-geofence-arrival instant is the
+  caller's responsibility**, not solved end-to-end inside this sprint, since it needs a customer-
+  coordinate source this codebase does not yet expose to the courier feature.
+- **Honest limitation — distance earnings are computed from `DeliveryRouteSnapshot`'s own
+  already-documented non-authoritative estimate**, the only distance source that exists; a production
+  deployment computing real payouts should attach a verified distance source before trusting this.
+- **No new pub dependency.** No change to `go_router`, `MainNavigationScreen`, or any Sprint 3A–3F/
+  Phase 4/Phase 5 order/payment/restaurant-operations/cash-management/courier-settlement/KDS/courier-
+  operations code path.
+
+### Confidence
+80%. The domain model (versioned profile resolution, computed-once earnings records, the shift-window
+pure functions, the geofence-evidence reuse) is directly grounded in the brief's explicit requirements
+— including its own worked numeric examples — each mapping to a concrete enforced invariant verified by
+a dedicated test (48 new tests, including one full end-to-end integration test spanning profile
+creation through a rejected double-payment). The residual uncertainty is concentrated in two places,
+each reported rather than glossed over: the final-delivery verified-arrival lookup being left to a
+future caller (a genuine, deliberate scope boundary, not an oversight) and the reused
+`DeliveryRouteSnapshot` distance estimate's own pre-existing non-authoritative status (inherited from
+Phase 5, not introduced here, but now load-bearing for a financial calculation for the first time).
