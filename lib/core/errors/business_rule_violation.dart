@@ -1139,3 +1139,66 @@ final class ManualOverrideReasonRequiredViolation
   @override
   String get description => 'A manual override requires a non-empty reason';
 }
+
+/// `CalculateDeliveryEarnings`/`CalculateShiftHourlyEarnings` was called
+/// for a courier with no `CourierCompensationProfile` covering the
+/// requested instant — earnings cannot be computed from an unconfigured
+/// rate set (Sprint 5A).
+final class NoEffectiveCompensationProfileViolation
+    extends BusinessRuleViolation {
+  const NoEffectiveCompensationProfileViolation({
+    required this.courierId,
+    required this.at,
+  });
+
+  final String courierId;
+  final DateTime at;
+
+  @override
+  String get description =>
+      'No compensation profile covers courier "$courierId" at $at';
+}
+
+/// A `CourierCompensationProfile` was constructed with an invalid shape —
+/// a negative rate/distance value, or `effectiveUntil` not strictly after
+/// `effectiveFrom` (Sprint 5A).
+final class InvalidCompensationProfileViolation extends BusinessRuleViolation {
+  const InvalidCompensationProfileViolation({required this.reason});
+
+  final String reason;
+
+  @override
+  String get description => 'Invalid compensation profile: $reason';
+}
+
+/// `CalculateDeliveryEarnings` was called for a `Delivery` that is neither
+/// `delivered` nor a manager-approved `cancelled` — "cancelled deliveries
+/// do not generate package earnings unless manager-approved" (Sprint 5A).
+final class DeliveryNotEligibleForEarningsViolation
+    extends BusinessRuleViolation {
+  const DeliveryNotEligibleForEarningsViolation({
+    required this.deliveryId,
+    required this.statusName,
+  });
+
+  final String deliveryId;
+  final String statusName;
+
+  @override
+  String get description =>
+      'Delivery "$deliveryId" is not eligible for package earnings '
+      '(status: $statusName)';
+}
+
+/// `MarkCourierEarningsPaid` referenced an earnings/adjustment id that
+/// already appears in an earlier `CourierEarningsPayment` — "locked
+/// earnings become immutable," paying the same record twice is rejected
+/// structurally (Sprint 5A).
+final class EarningsAlreadyPaidViolation extends BusinessRuleViolation {
+  const EarningsAlreadyPaidViolation({required this.earningsId});
+
+  final String earningsId;
+
+  @override
+  String get description => 'Earnings record "$earningsId" was already paid';
+}

@@ -19,7 +19,10 @@
 /// (`activateCourier` onward) extend it once more, from the new
 /// `lib/features/courier` feature — confirmed reusable directly by this
 /// enum/policy's own long-standing "generic action+actor+context, not
-/// payment-specific" design (`docs/decisions.md` ADR-017).
+/// payment-specific" design (`docs/decisions.md` ADR-017). The Sprint 5A
+/// courier-compensation values (`manageCourierCompensationProfile`
+/// onward) extend it a final time, same reasoning
+/// (`docs/decisions.md` ADR-018).
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -65,4 +68,10 @@ enum PosAuthorizedAction {
   overrideGeofence,
   accessCustomerContactAction,
   reviewFailureResponsibility,
+  manageCourierCompensationProfile,
+  scheduleCourierShift,
+  calculateCourierEarnings,
+  createCourierEarningsAdjustment,
+  markCourierEarningsPaid,
+  approveCancelledDeliveryEarnings,
 }

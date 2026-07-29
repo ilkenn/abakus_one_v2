@@ -29,4 +29,10 @@ enum CourierAuditEventType {
   geofenceOverridden,
   customerContactAction,
   failureResponsibilityReviewed,
+  compensationProfileCreated,
+  shiftScheduled,
+  deliveryEarningsCalculated,
+  shiftEarningsCalculated,
+  earningsAdjustmentCreated,
+  earningsMarkedPaid,
 }
