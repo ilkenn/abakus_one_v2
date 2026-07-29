@@ -1082,3 +1082,133 @@ The residual uncertainty is concentrated in the two judgment calls made without 
 round — the state-machine revision and the reconciliation/approval screen consolidation — both
 documented with reasoning here rather than decided silently, and both narrowing scope rather than
 introducing new risk.
+
+---
+
+## ADR-015 — Courier Settlement & Financial Reconciliation
+
+- Date: 2026-07-30
+- Status: Accepted
+
+### Decision
+Builds the courier cash-collection, settlement-declaration, manager-review, and financial-reconciliation
+foundation for Abaküs One — on top of ADR-012's payment foundation, ADR-013's restaurant-operations
+foundation, and ADR-014's cash-management foundation, integrating with all three rather than rewriting
+any of them. Approved directly into autonomous implementation mode (no separate analysis-only round —
+the user's kickoff message specified a 9-phase scope, explicit business rules to enforce, and an
+explicit out-of-scope list up front, with four defined stop conditions, the same shape ADR-014 was
+approved under).
+
+**No `Courier` or `Delivery` aggregate exists in this codebase — both are referenced by plain id,
+mirroring `staffId`.** `docs/business_rules.md` BR-COURIER-004 already established that courier
+roster/dispatch is ROADMAP with zero code; this sprint's own brief additionally asked every
+`CourierCashCollection` to reference "Courier" and "Delivery," neither of which has ever had a
+constructed type in this codebase. Inventing either now — a `Courier` entity/repository, a `Delivery`
+aggregate distinct from `Order` — would be new architecture disproportionate to a financial-
+reconciliation sprint, and would contradict the sprint's own "no architectural rewrites" instruction.
+Instead: `courierId: String` is used everywhere a courier actor appears, exactly like `staffId` already
+is for staff (itself ungoverned by any role/permission system — BR-ROLE-003); and `CourierCashCollection.orderId`
+(`OrderId`) stands in for "the delivery," since a delivery *is* an order with `OrderChannel.delivery`
+in this codebase — the same reasoning ADR-013 already used to keep `PackagePreparation` `orderId`-keyed
+rather than inventing a new identity for it. This is reported here as the sprint's one genuine
+architecture-scope judgment call, not left as a silent assumption.
+
+**`CourierSettlementSession` tracks financial status only, deliberately not courier operational
+status.** The brief asked to "separate courier operational status from financial settlement status" —
+satisfied by *not modeling* an operational-status enum at all, since no operational-status concept
+exists anywhere in this codebase to separate from (courier roster/dispatch/live-location remain
+ROADMAP, and the brief's own out-of-scope list excludes live courier tracking). Modeling one now would
+be fabricated data with no consumer. `CourierSettlementSessionStatus` mirrors `CashSessionStatus`
+exactly (`active/pendingApproval/approved/rejected/closed`, including `rejected → pendingApproval`
+directly — no reactivate step, same reasoning ADR-014 already gave for its own state machine).
+
+**Cash collection covers every listed scenario (full, mixed-payment, cash-on-delivery, multiple
+deliveries, partial, failed) as one record shape, not six.** `CourierCashCollection` +
+`CourierCollectionType` (`full`/`partial`/`failed`) is the same record whether it's a single delivery's
+full cash-on-delivery payment or one of several partial collections across a shift — "mixed payment"
+and "multiple deliveries" are not separate cases requiring separate models, they're just what a
+settlement session's collection list naturally contains once more than one is recorded. Every
+collection validates its `paymentSessionId` against a real `PaymentSessionRepository` entry
+(`RecordCourierCashCollection`), never fabricating or duplicating a payment record — satisfying the
+brief's "every settlement references existing PaymentSession records" and "never duplicate payment
+records" rules identically.
+
+**`CourierSettlementVariance` is deliberately its own type, not `CashVariance` reused directly.** The
+two are structurally identical (`compute()` from expected/actual, `over/short/exact`), and reuse was
+considered — rejected because the brief's own Phase 1 explicitly enumerates `CourierSettlementVariance`
+as a required model, and because `CourierCashDeclaration`/`CourierSettlement` describe a different
+aggregate (a courier's settlement, not a drawer's cash count) that may reasonably grow fields
+`CashVariance` never needs. A small, deliberate duplication, not an oversight.
+
+**Cash integration reuses `RecordCashMovement` unchanged — the sprint's central design decision.**
+Rather than building a second financial-event pathway for courier cash, `ApproveCourierSettlement`
+calls Sprint 3E's existing `RecordCashMovement` directly, passing one new, additive
+`CashMovementType.courierCashSettlement` value (always an inflow — added to the enum plus its
+`isInflow` switch, the only edit to Sprint 3E code beyond one new nullable field). `CashMovement`
+gained one additive, nullable `settlementId` field so the movement traces back to the
+`CourierSettlement` that produced it (`docs/business_rules.md` BR-CASH-010) — every Sprint 3E-produced
+movement keeps `settlementId: null`, unchanged. `RecordCourierSettlementAdjustment` reuses the same
+`RecordCashMovement` call for its `CashMovementType.correction` movement. No `PaymentSession` is ever
+written by any courier-settlement code path — `RecordCourierCashCollection` only reads one, to confirm
+it exists.
+
+**Self-approval reuses `SelfApprovalNotAllowedViolation` directly — no new violation type needed.**
+Sprint 3E's violation ("Staff member cannot approve their own submission") is generic enough to cover
+a courier declaring and a manager reviewing without modification; `ApproveCourierSettlement`/
+`RejectCourierSettlement`/`RecordCourierSettlementAdjustment` all reuse it, checked structurally before
+the authorization call, matching ADR-014's own precedent.
+
+**UI foundation: five screens, mirroring ADR-014's own consolidation precedent once more.**
+`CourierSettlementListScreen` → `CourierSettlementDetailScreen` → `CourierCashDeclarationScreen` →
+`ManagerSettlementReviewScreen` → `CourierSettlementHistoryScreen`. `ManagerSettlementReviewScreen`
+consolidates "Manager Settlement Review" with the approve/reject/close actions themselves, the same
+consolidation `CashReconciliationScreen` made in Sprint 3E, for the same reason (the loaded state and
+the actions that act on it belong together). It takes `authorizationPolicy` as **nullable**, matching
+`CashReconciliationScreen`'s own deviation from `ClosedAccountsScreen`'s mandatory-parameter precedent,
+and additionally takes a manager-entered target-cash-session-id field (a manager must be able to choose
+which drawer receives a given courier's cash — no code path can infer this automatically).
+`CourierSettlementHistoryScreen` reads directly from `CourierSettlementAuditEntryRepository.findByCourierId`
+rather than a second, duplicated history record — the append-only audit trail already *is* the
+history, so building a separate historical-records model would duplicate it.
+
+### Context
+Approved directly into "AUTONOMOUS IMPLEMENTATION MODE" by the user's kickoff message — full 9-phase
+breakdown (Domain Model, Cash Collection, Settlement Workflow, Variance Management, Cash Integration,
+Audit, UI Foundation, Business Rules, Testing), explicit business rules to enforce (courier never edits
+payment history; courier never approves own settlement; manager approval mandatory; settlement
+immutable after approval; adjustments append-only; every settlement references existing PaymentSession
+records; every cash movement references an approved settlement; one active settlement session per
+courier; full audit trail), and an explicit out-of-scope list (accounting, ERP, e-invoice, bank
+reconciliation, inventory, marketplace courier APIs, route optimization, live courier tracking,
+payroll) — all stated up front, with the same four stop conditions ADR-014 was approved under. None of
+the four stop conditions were triggered.
+
+### Consequences
+- **2 backend implementation commits plus 1 UI commit** (domain models; settlement lifecycle/cash
+  collection/approval workflow/audit together; UI foundation), each independently formatted/analyzed/
+  tested before commit, matching ADR-012/013/014's granularity precedent.
+- **No existing Sprint 3A–3E file was rewritten** — `PosAuthorizedAction` (additive enum values:
+  `reviewCourierSettlement`, `recordCourierSettlementAdjustment`),
+  `core/errors/business_rule_violation.dart` (additive violation types:
+  `UnknownCourierSettlementEntityViolation`, `CourierSettlementSessionAlreadyActiveViolation`,
+  `CourierSettlementSessionNotActiveViolation`, `InvalidCourierSettlementSessionTransitionViolation`),
+  `CashMovementType`/`CashMovement` (additive: one new enum value + its `isInflow` case, one new
+  nullable field), and `RecordCashMovement` (additive: one new optional parameter) are the only
+  pre-existing files modified beyond their own tests; every other change is a new file.
+- **Deviation — no `Courier`/`Delivery` aggregate** — both referenced by plain id instead; see the
+  Decision section above for the full reasoning.
+- **Deviation — `ManagerSettlementReviewScreen` consolidates review with approve/reject/close**, and
+  takes a nullable `authorizationPolicy` plus a manually-entered target-cash-session-id field — see the
+  Decision section above.
+- **No new pub dependency.** No change to `go_router`, `MainNavigationScreen`, or any customer-facing
+  screen. No change to any Sprint 3A–3E order/payment/restaurant-operations/cash-management code path.
+
+### Confidence
+80%. The domain model (session/collection/declaration/variance/settlement/adjustment/audit split,
+reused self-approval violation, additive cash-movement integration) is directly grounded in the user's
+explicit business rules, each mapping to exactly one enforced invariant, and the cash-integration
+design (reusing `RecordCashMovement` unchanged) is the most direct possible reading of "never duplicate
+financial events." The residual uncertainty is concentrated in the one genuine architecture-scope
+judgment call this sprint required and previous sprints didn't — the no-`Courier`/`Delivery`-aggregate
+decision — resolved by direct analogy to established precedent (`staffId`, `PackagePreparation`'s
+`orderId`-keying) rather than a new pattern, and documented here rather than decided silently.

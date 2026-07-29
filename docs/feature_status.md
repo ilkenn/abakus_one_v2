@@ -411,3 +411,51 @@ printer/hardware integration, real-time push infrastructure for the session/move
   for `PackagePreparation`'s screen.
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-014 Consequences section.
+
+## Phase 3 — Courier Settlement & Financial Reconciliation (Sprint 3F)
+
+Branch `phase-3/sprint-3f-courier-settlement`, from the tip of `phase-3/sprint-3e-cash-management`.
+Approved directly into autonomous implementation mode via a 9-phase kickoff specifying explicit
+business rules and an explicit out-of-scope list up front — no separate analysis-only round. See
+`docs/business_rules.md` DL-018 and `docs/decisions.md` ADR-015 for full rationale and every deviation.
+
+| Task | Status | Note |
+|---|---|---|
+| Domain models | DONE | `CourierSettlementSession` (append-only via revision, mirrors `CashSession`); `CourierCashCollection` (references `orderId`/`paymentSessionId`, never a nonexistent `Delivery` aggregate); `CourierCashDeclaration` (append-only, expected amount frozen at submission); `CourierSettlementVariance` (structurally identical to, deliberately kept separate from, `CashVariance`); `CourierSettlement` (manager review record); `CourierSettlementAdjustment`; `CourierSettlementAuditEntry`/`CourierSettlementAuditEventType`. 5 new `BusinessRuleViolation` types (additive). |
+| Cash collection | DONE | `RecordCourierCashCollection` — validates `paymentSessionId` against a real `PaymentSessionRepository` entry, never fabricating or duplicating it. `CourierCollectionType` (`full`/`partial`/`failed`) covers full/mixed-payment/cash-on-delivery/multiple-deliveries/partial/failed collection as one record shape. |
+| Settlement workflow | DONE | `OpenCourierSettlementSession` (one active session per courier) → `RecordCourierCashCollection` (any number of times) → `SubmitCourierCashDeclaration` → `ApproveCourierSettlement`/`RejectCourierSettlement` (manager-only, requires `PosAuthorizedAction.reviewCourierSettlement`) → `CloseCourierSettlementSession` (approved-only, no courier actor accepted). Self-approval reuses Sprint 3E's `SelfApprovalNotAllowedViolation` directly. |
+| Variance management | DONE | `CourierSettlementVariance.compute` (over/short/exact), append-only declarations (a redeclaration after rejection is a brand-new record, `rejected → pendingApproval` directly), a non-zero variance doesn't auto-block approval (`varianceAccepted` flag), `CourierSettlementAdjustment` links to (never duplicates) its `CashMovement`. |
+| Cash integration | DONE | `ApproveCourierSettlement` calls Sprint 3E's existing `RecordCashMovement` unchanged — one additive `CashMovementType.courierCashSettlement` value (inflow) + one additive, nullable `CashMovement.settlementId` trace field. No `PaymentSession` is ever written by any courier-settlement code path. Rejection records no `CashMovement`. |
+| Audit | DONE | `CourierSettlementAuditEntry`/`CourierSettlementAuditEntryRepository` — courier- and session-scoped, structurally append-only (no update/delete method), covering all 8 event types the sprint specified (collection, declaration, approval, rejection, adjustment, variance accepted, variance rejected, settlement closed). |
+| UI foundation | DONE | 5 screens: `CourierSettlementListScreen` (list + start shift) → `CourierSettlementDetailScreen` (collections + add collection) → `CourierCashDeclarationScreen` (declare total) → `ManagerSettlementReviewScreen` (expected/declared/variance, Onayla/Reddet/Oturumu Kapat — a deliberate consolidation, same pattern `CashReconciliationScreen` used) → `CourierSettlementHistoryScreen` (reads directly from the audit trail, no duplicated history record). `ManagerSettlementReviewScreen.authorizationPolicy` is nullable (deviation, mirrors `CashReconciliationScreen`'s own). |
+| Business rules | DONE | All 9 explicit rules verified enforced: courier never edits payment history (no courier-settlement use case ever calls `PaymentSessionRepository.save`); courier never approves own settlement; manager approval mandatory; settlement immutable after approval (no update method on `CourierSettlementRepository`); adjustments append-only; every collection references an existing `PaymentSession`; the settlement-handover `CashMovement` references its approved settlement via `settlementId`; one active settlement session per courier; full audit trail. |
+| Tests | DONE | 1112 tests total (up from Sprint 3E's 1067), all passing — 45 new tests across every new domain model, repository, use case, the 5 new screens, and one full Payment → Cash Collection → Declaration → Approval → CashMovement integration test. `flutter analyze`: no issues. `dart format`: clean. |
+| Documentation | DONE | `docs/business_rules.md` v1.7 (BR-COURIER-007–011, BR-AUDIT-007, BR-CASH-010 added; DL-018 logged); `docs/decisions.md` ADR-015; this entry. |
+
+**Explicitly out of scope this sprint** (per the kickoff's own scope): accounting, ERP, e-invoice, bank
+reconciliation, inventory, marketplace courier APIs, route optimization, live courier tracking,
+payroll.
+
+### Deviations from the approved architecture (reported, not silent)
+
+- **No `Courier`/`Delivery` aggregate**: neither has ever had a constructed type in this codebase
+  (`docs/business_rules.md` BR-COURIER-004 — courier roster/dispatch is ROADMAP). `courierId: String`
+  is used everywhere a courier actor appears, mirroring `staffId`; `CourierCashCollection.orderId`
+  stands in for "the delivery," since a delivery *is* an order with `OrderChannel.delivery` here — the
+  same reasoning ADR-013 used for `PackagePreparation`'s `orderId`-keying. See ADR-015's Decision
+  section for the full reasoning.
+- **`ManagerSettlementReviewScreen` consolidates "Manager Settlement Review" with the approve/reject/
+  close actions themselves**, and adds a manually-entered target-cash-session-id field — the same
+  consolidation `CashReconciliationScreen` made in Sprint 3E, for the same reason.
+- **No courier-operational-status model**: the brief's "separate courier operational status from
+  financial settlement status" instruction is satisfied by *not modeling* an operational-status enum
+  at all, since none exists anywhere in this codebase to separate from (courier roster/dispatch/live
+  tracking all remain ROADMAP/out-of-scope). Modeling one now would be fabricated data with no
+  consumer.
+- **No dedicated drawer-management pairing UI for courier settlement**: the manager must type the
+  target cash-drawer session id by hand in `ManagerSettlementReviewScreen` rather than selecting from a
+  live drawer list — wiring the two screens together (`CashDrawerListScreen` → settlement review) is
+  flagged as follow-up integration work, the same class of gap Sprint 3C/3D left between several of
+  their own standalone screens.
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-015 Consequences section.

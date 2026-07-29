@@ -919,6 +919,17 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: security_engineer
 - **Related Modules**: POS, Payments, Staff/Admin
 
+### BR-CASH-010 — `CashMovementType.courierCashSettlement` and `CashMovement.settlementId` (Phase 3 Sprint 3F)
+- **Status**: VERIFIED
+- **Rule**: `CashMovementType` gained one additive value, `courierCashSettlement` (always an inflow) —
+  the cash a courier physically hands over to a drawer once their `CourierSettlement` is manager-
+  approved. `CashMovement` gained one additive, nullable field, `settlementId`, populated only for
+  this movement type; every Sprint 3E movement keeps `settlementId: null`, unchanged. `ApproveCourierSettlement`
+  records this movement by calling the existing `RecordCashMovement` (Sprint 3E) unchanged — no second
+  financial-event path exists for courier cash. See BR-COURIER-010.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Payments, Courier
+
 # Refund, Cancellation, and Order Correction Rules
 
 ### BR-REFUND-001 — Cancellation info shape
@@ -1141,6 +1152,82 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Courier, Orders, Payments
 
+### BR-COURIER-007 — Cash collection references an order and a `PaymentSession`, never a `Delivery` (Phase 3 Sprint 3F)
+- **Status**: VERIFIED
+- **Rule**: `CourierCashCollection` (`lib/features/pos/domain/courier_settlement/
+  courier_cash_collection.dart`) references `orderId` (`OrderId`) and `paymentSessionId` — never a
+  `Delivery` id, since no `Delivery` aggregate exists in this codebase (a delivery *is* an order with
+  `OrderChannel.delivery` here; see BR-COURIER-004, courier roster/dispatch remains ROADMAP with no
+  code). `paymentSessionId` is validated against a real `PaymentSessionRepository` entry —
+  `RecordCourierCashCollection` throws `UnknownCourierSettlementEntityViolation` otherwise — never a
+  fabricated reference. `CourierCollectionType` (`full`/`partial`/`failed`) covers cash collected from
+  a customer, mixed-payment orders, cash-on-delivery, and partial/failed attempts uniformly, as the
+  same record shape differing only by type and amount.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier, Orders, Payments, POS
+
+### BR-COURIER-008 — Courier settlement workflow and who may act at each step (Phase 3 Sprint 3F)
+- **Status**: VERIFIED
+- **Rule**: `CourierSettlementSession` (`lib/features/pos/domain/courier_settlement/
+  courier_settlement_session.dart`) tracks *financial settlement* status only
+  (`active/pendingApproval/approved/rejected/closed`), deliberately separate from any courier
+  *operational* status (on-shift/delivering/off-shift) — no operational-status model exists in this
+  codebase (BR-COURIER-004). Workflow: Courier Shift → Collect Cash (`RecordCourierCashCollection`,
+  any number of times) → Declare Cash (`SubmitCourierCashDeclaration`) → Manager Review → Approve/
+  Reject (`ApproveCourierSettlement`/`RejectCourierSettlement`, both requiring
+  `PosAuthorizedAction.reviewCourierSettlement`) → Settlement Closed (`CloseCourierSettlementSession`,
+  only from `approved`). A courier can declare; **only a manager can approve**; **a courier can never
+  close their own settlement** — `CloseCourierSettlementSession` takes only a `closedByStaffId`
+  parameter, never a courier actor. A courier can also never approve/reject their own declaration:
+  `SelfApprovalNotAllowedViolation` (reused from Sprint 3E, BR-CASH-007) is thrown if
+  `reviewedByStaffId` equals the declaration's own `courierId`, checked structurally before the
+  authorization call.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier, POS, Staff/Admin
+
+### BR-COURIER-009 — Variance management is append-only; a redeclaration is a new record (Phase 3 Sprint 3F)
+- **Status**: VERIFIED
+- **Rule**: `CourierCashDeclaration` (`lib/features/pos/domain/courier_settlement/
+  courier_cash_declaration.dart`) is never overwritten — `CourierCashDeclarationRepository` has no
+  update method; `SubmitCourierCashDeclaration` always appends a brand-new record, even a redeclaration
+  after a manager rejection (`CourierSettlementSessionStatusTransitions` allows `rejected →
+  pendingApproval` directly, no separate reactivate step — mirrors BR-CASH-005's `CashCount`
+  precedent). `expectedAmount` is computed once, frozen at submission, as the sum of every
+  `CourierCashCollection` recorded so far. `CourierSettlementVariance` (over/short/exact) is computed
+  once via `CourierSettlementVariance.compute`, structurally identical to `CashVariance` (BR-CASH-*)
+  but kept as its own type since it describes a different aggregate — a considered, documented reuse
+  decision, not an oversight (`docs/decisions.md` ADR-015). A non-zero variance does not by itself
+  force a rejection — `ApproveCourierSettlement` takes an explicit `varianceAccepted` flag; a manager
+  who does not accept the variance calls `RejectCourierSettlement` instead. `CourierSettlementAdjustment`
+  (manager-approved manual correction) is append-only — `CourierSettlementAdjustmentRepository` has no
+  update method — and links to (never duplicates) the `CashMovementType.correction` `CashMovement` it
+  produces.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier, POS, Payments
+
+### BR-COURIER-010 — Cash integration: approval automatically records one `CashMovement`, never a duplicate financial event (Phase 3 Sprint 3F)
+- **Status**: VERIFIED
+- **Rule**: `ApproveCourierSettlement` calls Sprint 3E's existing `RecordCashMovement` unchanged —
+  recording a `CashMovementType.courierCashSettlement` movement (amount = the courier's *declared*
+  figure, the cash physically entering the drawer) against a manager-chosen target `CashSession`, with
+  `CashMovement.settlementId` set to the new `CourierSettlement.id` (see BR-CASH-010). No
+  `PaymentSession` is ever read for writing or modified by any courier-settlement use case — every use
+  case that touches one (`RecordCourierCashCollection`) only calls
+  `PaymentSessionRepository.findBySessionId` to confirm it exists. Rejecting a declaration
+  (`RejectCourierSettlement`) records **no** `CashMovement` — cash only moves into a drawer once a
+  settlement is actually approved.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier, POS, Payments
+
+### BR-COURIER-011 — One active settlement session per courier (Phase 3 Sprint 3F)
+- **Status**: VERIFIED
+- **Rule**: `OpenCourierSettlementSession` throws `CourierSettlementSessionAlreadyActiveViolation` if
+  `CourierSettlementSessionRepository.findActiveByCourierId` already returns a non-`closed` session
+  for that courier — mirrors BR-CASH-002's `CashSession`-per-drawer rule exactly, applied per courier
+  instead of per drawer.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier, POS
+
 # Staff and Manager Operations
 
 ### BR-STAFF-001 — Staff-initiated orders share the state machine
@@ -1346,6 +1433,21 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   the same pattern BR-AUDIT-004/BR-AUDIT-005 already established.
 - **Owner Agent**: security_engineer
 - **Related Modules**: POS, Payments, Staff/Admin
+
+### BR-AUDIT-007 — Courier-settlement audit trail, courier- and session-scoped, structurally append-only (Phase 3 Sprint 3F)
+- **Status**: VERIFIED
+- **Rule**: `CourierSettlementAuditEntry`/`CourierSettlementAuditEntryRepository` (`lib/features/pos/
+  domain/courier_settlement/courier_settlement_audit_entry.dart`, `lib/features/pos/data/
+  courier_settlement_audit_entry_repository.dart`) record every courier-settlement event: collection,
+  declaration, approval, rejection, adjustment, variance accepted, variance rejected, settlement
+  closed (8 types, `CourierSettlementAuditEventType`) — matching the sprint's own audit requirement
+  literally. Queryable both by `settlementSessionId` (one session's history) and by `courierId` (a
+  courier's full history across every session they've ever had) — the latter is what
+  `CourierSettlementHistoryScreen` reads from directly, rather than a second, duplicated history
+  record. No update or delete method exists on its repository interface at all — the same
+  structurally-append-only pattern BR-AUDIT-004/005/006 already established.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier, POS, Staff/Admin
 
 # Profitability and Loss Prevention
 
@@ -1688,11 +1790,54 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Business Rule IDs**: BR-CASH-001, BR-CASH-002, BR-CASH-003, BR-CASH-004, BR-CASH-005, BR-CASH-006,
   BR-CASH-007, BR-CASH-008, BR-CASH-009, BR-AUDIT-006
 
+### DL-018 — Courier Settlement & Financial Reconciliation
+- **Decision**: Builds the courier cash-collection and settlement-review foundation for Abaküs One, on
+  top of Sprint 3C's payment foundation, Sprint 3D's restaurant-operations foundation, and Sprint 3E's
+  cash-management foundation, without rewriting any of them. `CourierSettlementSession` (append-only
+  via revision, mirrors `CashSession`, one active session per courier); `CourierCashCollection`
+  (references `orderId`/`paymentSessionId`, never a nonexistent `Delivery` aggregate); `CourierCashDeclaration`
+  (append-only, expected amount frozen at submission, mirrors `CashCount`); `CourierSettlementVariance`
+  (structurally identical to, but deliberately kept separate from, `CashVariance`); `CourierSettlement`
+  (manager approve/reject, self-approval structurally forbidden, reusing `SelfApprovalNotAllowedViolation`);
+  `CourierSettlementAdjustment` (links to, never duplicates, its `CashMovement`); `CourierSettlementAuditEntry`
+  (courier- and session-scoped, structurally append-only). Cash integration reuses Sprint 3E's
+  `RecordCashMovement` unchanged via one additive `CashMovementType.courierCashSettlement` value and
+  one additive, nullable `CashMovement.settlementId` trace field.
+- **Status**: DECIDED
+- **Source**: User, Phase 3 Sprint 3F autonomous-implementation-mode approval — explicit 9-phase scope
+  (domain model, cash collection, settlement workflow, variance management, cash integration, audit,
+  UI foundation, business rules, testing), explicit business rules to enforce, and an explicit
+  out-of-scope list (accounting, ERP, e-invoice, bank reconciliation, inventory, marketplace courier
+  APIs, route optimization, live courier tracking, payroll).
+- **Date**: 2026-07-30
+- **Consequences**: See BR-COURIER-007 through BR-COURIER-011, BR-AUDIT-007, BR-CASH-010.
+  `docs/decisions.md` ADR-015 records the full architecture, including the documented gap this sprint
+  resolved by established precedent rather than inventing new architecture: no `Courier` or `Delivery`
+  aggregate exists in this codebase (BR-COURIER-004), so both are referenced by plain external id
+  (`courierId: String`, mirroring `staffId`) rather than as constructed entities.
+- **Related Modules**: Courier, POS, Payments, Staff/Admin
+- **Business Rule IDs**: BR-COURIER-007, BR-COURIER-008, BR-COURIER-009, BR-COURIER-010,
+  BR-COURIER-011, BR-AUDIT-007, BR-CASH-010
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v1.7 — 2026-07-30
+- **Version**: 1.7
+- **Date**: 2026-07-30
+- **Summary**: Phase 3 Sprint 3F (Courier Settlement & Financial Reconciliation). Added BR-COURIER-007
+  (cash collection references order/PaymentSession, never a nonexistent Delivery aggregate),
+  BR-COURIER-008 (settlement workflow and who may act at each step), BR-COURIER-009 (append-only
+  variance management, redeclaration is a new record), BR-COURIER-010 (cash integration reuses
+  RecordCashMovement, never duplicates PaymentSession), BR-COURIER-011 (one active settlement session
+  per courier), BR-AUDIT-007 (courier-settlement audit trail), BR-CASH-010 (CashMovementType/CashMovement
+  extended additively for courier cash handover). Logged DL-018.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the courier-settlement business rules this sprint's approved architecture
+  established.
 
 ### v1.6 — 2026-07-29
 - **Version**: 1.6
