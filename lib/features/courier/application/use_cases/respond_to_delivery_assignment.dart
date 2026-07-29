@@ -13,6 +13,7 @@ import '../../domain/delivery/delivery_assignment_status.dart';
 import '../../domain/delivery/delivery_status.dart';
 import '../../domain/events/courier_event_type.dart';
 import '../../domain/feedback/courier_feedback_tag.dart';
+import 'courier_location_availability_guard.dart';
 import 'record_courier_event.dart';
 
 /// The courier's accept/reject response to an offered [DeliveryAssignment]
@@ -30,6 +31,12 @@ import 'record_courier_event.dart';
 /// second saved revision, mirroring `CreateDelivery`'s double-revision
 /// pattern) — "reassignment/re-offering preserves history," so the
 /// rejected [DeliveryAssignment] itself is left untouched, not deleted.
+///
+/// **Sprint 5B**: [locationGuard], when supplied, requires location to be
+/// available before an **accepted** response is allowed — "a courier
+/// cannot... accept an assignment... while location is unavailable."
+/// Rejecting is never gated (a courier with no working location must
+/// still be able to decline). `null` (the default) skips the check.
 class RespondToDeliveryAssignment {
   const RespondToDeliveryAssignment({
     required Clock clock,
@@ -39,13 +46,15 @@ class RespondToDeliveryAssignment {
     required CourierAvailabilityRepository availabilityRepository,
     required CourierOperationalAuditEntryRepository auditRepository,
     required RecordCourierEvent recordCourierEvent,
+    CourierLocationAvailabilityGuard? locationGuard,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _assignmentRepository = assignmentRepository,
         _deliveryRepository = deliveryRepository,
         _availabilityRepository = availabilityRepository,
         _auditRepository = auditRepository,
-        _recordCourierEvent = recordCourierEvent;
+        _recordCourierEvent = recordCourierEvent,
+        _locationGuard = locationGuard;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
@@ -54,6 +63,7 @@ class RespondToDeliveryAssignment {
   final CourierAvailabilityRepository _availabilityRepository;
   final CourierOperationalAuditEntryRepository _auditRepository;
   final RecordCourierEvent _recordCourierEvent;
+  final CourierLocationAvailabilityGuard? _locationGuard;
 
   Future<DeliveryAssignment> call({
     required String assignmentId,
@@ -88,6 +98,12 @@ class RespondToDeliveryAssignment {
             .contains(rejectionReasonCode)) {
       throw InvalidAssignmentRejectionReasonViolation(
         reasonCode: rejectionReasonCode ?? '',
+      );
+    }
+    if (accept) {
+      await _locationGuard?.assertAvailable(
+        courierId: courierId,
+        deliveryId: assignment.deliveryId,
       );
     }
 

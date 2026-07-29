@@ -8,6 +8,7 @@ import '../../domain/audit/courier_operational_audit_entry.dart';
 import '../../domain/events/courier_event_type.dart';
 import '../../domain/shift/courier_shift.dart';
 import '../../domain/shift/courier_shift_status.dart';
+import 'courier_location_availability_guard.dart';
 import 'record_courier_event.dart';
 
 /// Transitions a [CourierShift] through the remainder of its lifecycle
@@ -21,6 +22,13 @@ import 'record_courier_event.dart';
 /// composition). **Shift completion never automatically closes financial
 /// settlement** — this use case never touches `CourierSettlementSession`
 /// (Sprint 3F) at all.
+///
+/// **Sprint 5B**: [locationGuard], when supplied, requires location to be
+/// available before a shift may reach [CourierShiftStatus.active] —
+/// "location permission and device location service are mandatory before
+/// shift activation." `null` (the default, and every existing call site
+/// predating Sprint 5B) skips the check entirely — fully backward
+/// compatible.
 class TransitionCourierShift {
   const TransitionCourierShift({
     required Clock clock,
@@ -28,17 +36,20 @@ class TransitionCourierShift {
     required DeliveryRepository deliveryRepository,
     required CourierOperationalAuditEntryRepository auditRepository,
     required RecordCourierEvent recordCourierEvent,
+    CourierLocationAvailabilityGuard? locationGuard,
   })  : _clock = clock,
         _repository = repository,
         _deliveryRepository = deliveryRepository,
         _auditRepository = auditRepository,
-        _recordCourierEvent = recordCourierEvent;
+        _recordCourierEvent = recordCourierEvent,
+        _locationGuard = locationGuard;
 
   final Clock _clock;
   final CourierShiftRepository _repository;
   final DeliveryRepository _deliveryRepository;
   final CourierOperationalAuditEntryRepository _auditRepository;
   final RecordCourierEvent _recordCourierEvent;
+  final CourierLocationAvailabilityGuard? _locationGuard;
 
   static CourierAuditEventType _auditTypeFor(CourierShiftStatus to) {
     switch (to) {
@@ -106,6 +117,9 @@ class TransitionCourierShift {
           toStatusName: to.name,
         );
       }
+    }
+    if (to == CourierShiftStatus.active) {
+      await _locationGuard?.assertAvailable(courierId: shift.courierId);
     }
 
     final now = _clock.now();

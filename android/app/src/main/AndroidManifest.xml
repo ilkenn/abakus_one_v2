@@ -1,4 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Sprint 5B: real courier GPS tracking. Fine/coarse are required for
+         any location fix; background is required only while an active
+         courier delivery session is running (requested at runtime, not
+         implicitly granted by this manifest entry alone on Android 10+).
+         Foreground-service-location is required by Android 14+ to run a
+         location-type foreground service (geolocator's background mode). -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <application
         android:label="abakus_one_v2"
         android:name="${applicationName}"

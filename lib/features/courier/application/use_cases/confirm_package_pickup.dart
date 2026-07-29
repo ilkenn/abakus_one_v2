@@ -10,6 +10,7 @@ import '../../domain/audit/courier_operational_audit_entry.dart';
 import '../../domain/delivery/delivery.dart';
 import '../../domain/delivery/delivery_status.dart';
 import '../../domain/events/courier_event_type.dart';
+import 'courier_location_availability_guard.dart';
 import 'record_courier_event.dart';
 
 /// Confirms courier pickup of a delivery's package — Phase 5F's
@@ -30,6 +31,11 @@ import 'record_courier_event.dart';
 /// [advanceToCourierCollected] bridges `PackagePreparation` from
 /// `waitingForCourier`/`packed` to `courierCollected` — also an injected
 /// closure, called only on a genuine (non-idempotent-repeat) success.
+///
+/// **Sprint 5B**: [locationGuard], when supplied, requires location to be
+/// available before a genuine (non-idempotent-repeat) pickup is confirmed
+/// — "a courier cannot... start pickup... while location is unavailable."
+/// `null` (the default) skips the check.
 class ConfirmPackagePickup {
   const ConfirmPackagePickup({
     required Clock clock,
@@ -44,13 +50,15 @@ class ConfirmPackagePickup {
       required String performedByStaffId,
       required DateTime at,
     }) advanceToCourierCollected,
+    CourierLocationAvailabilityGuard? locationGuard,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _repository = repository,
         _auditRepository = auditRepository,
         _recordCourierEvent = recordCourierEvent,
         _isPackageReadyForPickup = isPackageReadyForPickup,
-        _advanceToCourierCollected = advanceToCourierCollected;
+        _advanceToCourierCollected = advanceToCourierCollected,
+        _locationGuard = locationGuard;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
@@ -64,6 +72,7 @@ class ConfirmPackagePickup {
     required String performedByStaffId,
     required DateTime at,
   }) _advanceToCourierCollected;
+  final CourierLocationAvailabilityGuard? _locationGuard;
 
   Future<Delivery> call({
     required String deliveryId,
@@ -79,6 +88,13 @@ class ConfirmPackagePickup {
       );
     }
     if (delivery.status == DeliveryStatus.pickedUp) return delivery;
+
+    if (delivery.courierId != null) {
+      await _locationGuard?.assertAvailable(
+        courierId: delivery.courierId!,
+        deliveryId: deliveryId,
+      );
+    }
 
     if (delivery.status != DeliveryStatus.arrivedAtRestaurant) {
       throw InvalidDeliveryTransitionViolation(

@@ -1204,3 +1204,24 @@ final class EarningsAlreadyPaidViolation extends BusinessRuleViolation {
   @override
   String get description => 'Earnings record "$earningsId" was already paid';
 }
+
+/// A courier attempted a state-changing operational action (shift
+/// activation, becoming available, accepting an assignment, package
+/// pickup, delivery progression, or completion) while their latest
+/// `CourierLocationAvailability` is `unavailable` and no active
+/// `LocationEmergencyOverride` covers the action — "a courier must not be
+/// operationally usable without location access during an active shift"
+/// (Sprint 5B REQUIRED business-rule correction).
+final class LocationUnavailableViolation extends BusinessRuleViolation {
+  const LocationUnavailableViolation({
+    required this.courierId,
+    this.reasonName,
+  });
+
+  final String courierId;
+  final String? reasonName;
+
+  @override
+  String get description => 'Courier "$courierId" has no available location'
+      '${reasonName == null ? '' : ' ($reasonName)'} — action blocked';
+}

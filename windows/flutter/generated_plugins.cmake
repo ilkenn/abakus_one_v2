@@ -3,10 +3,13 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  battery_plus
+  connectivity_plus
   firebase_app_check
   firebase_core
   firebase_remote_config
   flutter_secure_storage_windows
+  geolocator_windows
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

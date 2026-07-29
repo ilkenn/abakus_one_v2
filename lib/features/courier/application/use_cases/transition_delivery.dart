@@ -11,6 +11,7 @@ import '../../domain/delivery/delivery_status.dart';
 import '../../domain/events/courier_event_type.dart';
 import '../../domain/location/geofence_evaluation_result.dart';
 import '../../domain/location/geofence_zone_type.dart';
+import 'courier_location_availability_guard.dart';
 import 'record_courier_event.dart';
 
 /// Transitions a [Delivery] through its routine, non-pickup/non-completion
@@ -28,6 +29,14 @@ import 'record_courier_event.dart';
 /// only by id — never re-validated). Omitting [geofenceResult] entirely
 /// skips the check (e.g. a manual/manager-driven correction where no
 /// location reading applies).
+///
+/// **Sprint 5B**: [locationGuard], when supplied, requires location to be
+/// available before a **forward-progress** transition
+/// (`arrivedAtRestaurant`/`enRoute`/`arrivedAtCustomer`) — "a courier
+/// cannot... progress a delivery... while location is unavailable."
+/// Cancellation/return-to-restaurant transitions are never gated — a
+/// courier without a working location must still be able to report those.
+/// `null` (the default) skips the check.
 class TransitionDelivery {
   const TransitionDelivery({
     required Clock clock,
@@ -35,17 +44,26 @@ class TransitionDelivery {
     required DeliveryRepository repository,
     required CourierOperationalAuditEntryRepository auditRepository,
     required RecordCourierEvent recordCourierEvent,
+    CourierLocationAvailabilityGuard? locationGuard,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _repository = repository,
         _auditRepository = auditRepository,
-        _recordCourierEvent = recordCourierEvent;
+        _recordCourierEvent = recordCourierEvent,
+        _locationGuard = locationGuard;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
   final DeliveryRepository _repository;
   final CourierOperationalAuditEntryRepository _auditRepository;
   final RecordCourierEvent _recordCourierEvent;
+  final CourierLocationAvailabilityGuard? _locationGuard;
+
+  static const _forwardProgressStatuses = {
+    DeliveryStatus.arrivedAtRestaurant,
+    DeliveryStatus.enRoute,
+    DeliveryStatus.arrivedAtCustomer,
+  };
 
   static PosAuthorizedAction _actionFor(DeliveryStatus to) {
     switch (to) {
@@ -114,6 +132,12 @@ class TransitionDelivery {
       throw InvalidDeliveryTransitionViolation(
         fromStatusName: delivery.status.name,
         toStatusName: to.name,
+      );
+    }
+    if (_forwardProgressStatuses.contains(to) && delivery.courierId != null) {
+      await _locationGuard?.assertAvailable(
+        courierId: delivery.courierId!,
+        deliveryId: deliveryId,
       );
     }
 

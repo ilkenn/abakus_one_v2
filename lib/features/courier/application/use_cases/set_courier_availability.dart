@@ -9,6 +9,7 @@ import '../../domain/availability/courier_availability.dart';
 import '../../domain/availability/courier_availability_status.dart';
 import '../../domain/events/courier_event_type.dart';
 import '../../domain/shift/courier_shift_status.dart';
+import 'courier_location_availability_guard.dart';
 import 'record_courier_event.dart';
 
 /// Changes a courier's [CourierAvailabilityStatus] — append-only via
@@ -18,6 +19,18 @@ import 'record_courier_event.dart';
 /// approved [CourierShift]** — throws [CourierShiftRequiredViolation]
 /// otherwise. **A suspended courier can never become available** — throws
 /// [CourierNotAvailableViolation]. Never touches financial settlement.
+///
+/// **Sprint 5B**: [locationGuard], when supplied, requires location to be
+/// available before a courier may reach [CourierAvailabilityStatus.online]
+/// or [CourierAvailabilityStatus.available] — "a courier cannot become
+/// online, available... while location is unavailable." Deliberately
+/// **not** checked for [CourierAvailabilityStatus.temporarilyUnavailable]
+/// (or any other target) — `ReportCourierLocationAvailability` itself
+/// calls this use case to *set* `temporarilyUnavailable` precisely when
+/// location becomes unavailable, and gating that transition on location
+/// being available would make the rule unsatisfiable. `null` (the
+/// default, and every existing call site predating Sprint 5B) skips the
+/// check entirely.
 class SetCourierAvailability {
   const SetCourierAvailability({
     required Clock clock,
@@ -25,17 +38,20 @@ class SetCourierAvailability {
     required CourierAvailabilityRepository availabilityRepository,
     required CourierOperationalAuditEntryRepository auditRepository,
     required RecordCourierEvent recordCourierEvent,
+    CourierLocationAvailabilityGuard? locationGuard,
   })  : _clock = clock,
         _shiftRepository = shiftRepository,
         _availabilityRepository = availabilityRepository,
         _auditRepository = auditRepository,
-        _recordCourierEvent = recordCourierEvent;
+        _recordCourierEvent = recordCourierEvent,
+        _locationGuard = locationGuard;
 
   final Clock _clock;
   final CourierShiftRepository _shiftRepository;
   final CourierAvailabilityRepository _availabilityRepository;
   final CourierOperationalAuditEntryRepository _auditRepository;
   final RecordCourierEvent _recordCourierEvent;
+  final CourierLocationAvailabilityGuard? _locationGuard;
 
   Future<CourierAvailability> call({
     required String courierId,
@@ -57,6 +73,10 @@ class SetCourierAvailability {
         (activeShift == null ||
             activeShift.status != CourierShiftStatus.active)) {
       throw CourierShiftRequiredViolation(courierId: courierId);
+    }
+    if (to == CourierAvailabilityStatus.online ||
+        to == CourierAvailabilityStatus.available) {
+      await _locationGuard?.assertAvailable(courierId: courierId);
     }
 
     final now = _clock.now();

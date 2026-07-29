@@ -21,8 +21,9 @@
 /// enum/policy's own long-standing "generic action+actor+context, not
 /// payment-specific" design (`docs/decisions.md` ADR-017). The Sprint 5A
 /// courier-compensation values (`manageCourierCompensationProfile`
-/// onward) extend it a final time, same reasoning
-/// (`docs/decisions.md` ADR-018).
+/// onward) extend it again, same reasoning (`docs/decisions.md` ADR-018).
+/// The Sprint 5B location-tracking values (`grantLocationEmergencyOverride`
+/// onward) extend it a final time (`docs/decisions.md` ADR-019).
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -74,4 +75,9 @@ enum PosAuthorizedAction {
   createCourierEarningsAdjustment,
   markCourierEarningsPaid,
   approveCancelledDeliveryEarnings,
+  grantLocationEmergencyOverride,
+  viewCourierLiveTracking,
+  startCourierLocationTracking,
+  stopCourierLocationTracking,
+  resetCourierLocationHistory,
 }

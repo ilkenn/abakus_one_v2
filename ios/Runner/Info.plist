@@ -26,6 +26,17 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Sprint 5B: real courier GPS tracking. "When in use" covers active-
+	     delivery foreground tracking; "Always" is requested at runtime only
+	     while a courier has an active shift, never implicitly. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Abaküs, teslimat sırasında konumunuzu görebilmek için kurye uygulamasında konum erişimi ister.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Abaküs, aktif vardiya sırasında arka planda teslimat takibi yapabilmek için sürekli konum erişimi ister.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

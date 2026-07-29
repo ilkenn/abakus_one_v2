@@ -14,6 +14,8 @@ class CourierLocationSnapshot {
     required this.accuracyMeters,
     this.headingDegrees,
     this.speedMetersPerSecond,
+    this.altitudeMeters,
+    this.isMocked = false,
     required this.capturedAt,
     required this.receivedAt,
   });
@@ -35,6 +37,18 @@ class CourierLocationSnapshot {
 
   final double? headingDegrees;
   final double? speedMetersPerSecond;
+
+  /// Altitude in meters, when the platform reports one — not every
+  /// device/fix includes it (Sprint 5B).
+  final double? altitudeMeters;
+
+  /// `true` when the platform itself reports this reading as a mock/
+  /// simulated location (Android's `Location.isMock`; iOS exposes no
+  /// equivalent signal, so this is always `false` there — an honest
+  /// platform gap, not a false negative). Feeds `CourierFraudSignal`'s
+  /// `mockLocation` detector (Sprint 5B) — never used to block an action
+  /// by itself.
+  final bool isMocked;
 
   /// When the device actually captured this fix.
   final DateTime capturedAt;

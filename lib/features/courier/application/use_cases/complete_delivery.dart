@@ -16,6 +16,7 @@ import '../../domain/events/courier_event_type.dart';
 import '../../domain/location/geofence_evaluation_result.dart';
 import '../../domain/location/geofence_zone_type.dart';
 import '../identity/delivery_proof_id_generator.dart';
+import 'courier_location_availability_guard.dart';
 import 'record_courier_event.dart';
 
 /// Completes a [Delivery] — "delivered." **Completed deliveries are
@@ -36,6 +37,11 @@ import 'record_courier_event.dart';
 /// calls Sprint 3F's existing `RecordCourierCashCollection` directly).
 /// "Operational completion must not modify `PaymentSession` history" is
 /// therefore true structurally, not by caller discipline.
+///
+/// **Sprint 5B**: [locationGuard], when supplied, requires location to be
+/// available before completion — "a courier cannot... progress a
+/// delivery... while location is unavailable." `null` (the default)
+/// skips the check.
 class CompleteDelivery {
   const CompleteDelivery({
     required Clock clock,
@@ -50,6 +56,7 @@ class CompleteDelivery {
       required String performedByStaffId,
       required DateTime at,
     })? advanceToDelivered,
+    CourierLocationAvailabilityGuard? locationGuard,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _repository = repository,
@@ -57,7 +64,8 @@ class CompleteDelivery {
         _proofRepository = proofRepository,
         _auditRepository = auditRepository,
         _recordCourierEvent = recordCourierEvent,
-        _advanceToDelivered = advanceToDelivered;
+        _advanceToDelivered = advanceToDelivered,
+        _locationGuard = locationGuard;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
@@ -71,6 +79,7 @@ class CompleteDelivery {
     required String performedByStaffId,
     required DateTime at,
   })? _advanceToDelivered;
+  final CourierLocationAvailabilityGuard? _locationGuard;
 
   Future<Delivery> call({
     required String deliveryId,
@@ -106,6 +115,10 @@ class CompleteDelivery {
         actualRevision: delivery.revision,
       );
     }
+    await _locationGuard?.assertAvailable(
+      courierId: courierId,
+      deliveryId: deliveryId,
+    );
     if (delivery.status != DeliveryStatus.arrivedAtCustomer) {
       throw InvalidDeliveryTransitionViolation(
         fromStatusName: delivery.status.name,

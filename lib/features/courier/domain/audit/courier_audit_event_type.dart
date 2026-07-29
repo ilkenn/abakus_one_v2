@@ -35,4 +35,11 @@ enum CourierAuditEventType {
   shiftEarningsCalculated,
   earningsAdjustmentCreated,
   earningsMarkedPaid,
+  locationAvailabilityChanged,
+  locationEmergencyOverrideGranted,
+  locationTrackingStarted,
+  locationTrackingStopped,
+  locationHistoryReset,
+  locationPermissionChanged,
+  fraudSignalDetected,
 }
