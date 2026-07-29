@@ -1159,11 +1159,13 @@ final class NoEffectiveCompensationProfileViolation
       'No compensation profile covers courier "$courierId" at $at';
 }
 
-/// A `CourierCompensationProfile` was constructed with an invalid shape —
-/// a negative rate/distance value, or `effectiveUntil` not strictly after
-/// `effectiveFrom` (Sprint 5A).
-final class InvalidCompensationProfileViolation extends BusinessRuleViolation {
-  const InvalidCompensationProfileViolation({required this.reason});
+/// A `CourierCompensationProfile`/`CourierShiftSchedule` was constructed
+/// with an invalid shape — a negative rate/distance value, `effectiveUntil`
+/// not strictly after `effectiveFrom`, or `scheduledEnd` not strictly
+/// after `scheduledStart` (Sprint 5A).
+final class InvalidCompensationConfigurationViolation
+    extends BusinessRuleViolation {
+  const InvalidCompensationConfigurationViolation({required this.reason});
 
   final String reason;
 
