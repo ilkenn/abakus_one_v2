@@ -12,6 +12,10 @@ import 'record_courier_event.dart';
 /// a device reporting its own courier's position is a routine, high-
 /// frequency background action, not a privileged one (unlike the
 /// courier-operations actions gated in `PosAuthorizedAction`).
+///
+/// **Sprint 5B**: [altitudeMeters]/[isMocked] are additive, optional
+/// parameters carrying the real-GPS fields `GeolocatorCourierLocationProvider`
+/// now captures — omitted callers behave exactly as before.
 class RecordCourierLocationSnapshot {
   const RecordCourierLocationSnapshot({
     required Clock clock,
@@ -39,6 +43,8 @@ class RecordCourierLocationSnapshot {
     required double accuracyMeters,
     double? headingDegrees,
     double? speedMetersPerSecond,
+    double? altitudeMeters,
+    bool isMocked = false,
     required DateTime capturedAt,
   }) async {
     final now = _clock.now();
@@ -53,6 +59,8 @@ class RecordCourierLocationSnapshot {
       accuracyMeters: accuracyMeters,
       headingDegrees: headingDegrees,
       speedMetersPerSecond: speedMetersPerSecond,
+      altitudeMeters: altitudeMeters,
+      isMocked: isMocked,
       capturedAt: capturedAt,
       receivedAt: now,
     );
