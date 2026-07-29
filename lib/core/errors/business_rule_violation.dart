@@ -1093,3 +1093,49 @@ final class InvalidCourierFeedbackViolation extends BusinessRuleViolation {
   String get description =>
       'Delivery "$deliveryId" feedback requires at least one predefined tag';
 }
+
+/// A `DeliveryAssignment.status` transition (`offered` -> `accepted`/
+/// `rejected`/`cancelled`, etc.) was attempted that the assignment's
+/// current status does not permit — e.g. responding twice to the same
+/// offer, or cancelling an already-accepted assignment.
+final class InvalidDeliveryAssignmentTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidDeliveryAssignmentTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid delivery assignment transition: $fromStatusName -> '
+      '$toStatusName';
+}
+
+/// `RespondToDeliveryAssignment` rejected an offer with a
+/// `rejectionReasonCode` that is not one of the predefined
+/// `CourierFeedbackTag` names — "courier rejection requires a predefined
+/// reason tag," never free text.
+final class InvalidAssignmentRejectionReasonViolation
+    extends BusinessRuleViolation {
+  const InvalidAssignmentRejectionReasonViolation({required this.reasonCode});
+
+  final String reasonCode;
+
+  @override
+  String get description =>
+      'Assignment rejection reason "$reasonCode" is not a predefined tag';
+}
+
+/// `ManuallyAssignDelivery`/`ReassignDelivery` was called with an empty
+/// override reason — "manual override requires actor and reason," both
+/// mandatory, never just one.
+final class ManualOverrideReasonRequiredViolation
+    extends BusinessRuleViolation {
+  const ManualOverrideReasonRequiredViolation();
+
+  @override
+  String get description => 'A manual override requires a non-empty reason';
+}
