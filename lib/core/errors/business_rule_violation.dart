@@ -771,3 +771,76 @@ final class InvalidCourierSettlementSessionTransitionViolation
       'Invalid courier settlement session transition: $fromStatusName -> '
       '$toStatusName';
 }
+
+/// A caller referenced a `KitchenWorkItem`/`KitchenEvent`/
+/// `KitchenDisplayDevice`/`KitchenDisplaySession`/`KitchenRoutingRule` id
+/// that does not exist in the relevant repository (Phase 4).
+final class UnknownKdsEntityViolation extends BusinessRuleViolation {
+  const UnknownKdsEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// A `KitchenLineStatus` transition that
+/// `KitchenLineStatusTransitions.canTransition` does not permit was
+/// attempted — including any attempt to silently move a completed
+/// ([KitchenLineStatus.ready]) line back to an earlier state without
+/// passing through [KitchenLineStatus.recalled] first.
+final class InvalidKitchenLineTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidKitchenLineTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid kitchen line transition: $fromStatusName -> $toStatusName';
+}
+
+/// `KitchenEventRepository.append` was called with an `idempotencyKey`
+/// already recorded for the branch — at-least-once delivery means a
+/// caller may retry the same logical event; the repository rejects the
+/// duplicate structurally rather than logging it twice. Callers that
+/// expect retries should check `findByIdempotencyKey` first and treat an
+/// existing match as success, not call `append` blindly.
+final class DuplicateKitchenEventViolation extends BusinessRuleViolation {
+  const DuplicateKitchenEventViolation({required this.idempotencyKey});
+
+  final String idempotencyKey;
+
+  @override
+  String get description =>
+      'Duplicate kitchen event idempotency key: "$idempotencyKey"';
+}
+
+/// A `KitchenWorkItem` (or other revisioned KDS record) transition was
+/// attempted against a stale `expectedRevision` — the caller's view of the
+/// record is out of date, most likely because another device already
+/// acted on it. Prevents two devices from both completing the same line.
+final class StaleKitchenRevisionViolation extends BusinessRuleViolation {
+  const StaleKitchenRevisionViolation({
+    required this.entityId,
+    required this.expectedRevision,
+    required this.actualRevision,
+  });
+
+  final String entityId;
+  final int expectedRevision;
+  final int actualRevision;
+
+  @override
+  String get description =>
+      'Stale revision for "$entityId": expected $expectedRevision, actual '
+      '$actualRevision';
+}

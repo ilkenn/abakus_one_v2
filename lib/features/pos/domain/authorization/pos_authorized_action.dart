@@ -11,7 +11,11 @@
 /// management values (`reviewCashReconciliation` onward) extend it again
 /// for the same reason (`docs/decisions.md` ADR-014). The Phase 3
 /// Sprint 3F courier-settlement values (`reviewCourierSettlement` onward)
-/// extend it once more, same reasoning (`docs/decisions.md` ADR-015).
+/// extend it once more, same reasoning (`docs/decisions.md` ADR-015). The
+/// Phase 4 KDS values (`acknowledgeKitchenItem` onward) extend it a final
+/// time — kitchen ticket reprints deliberately reuse the existing
+/// `reprintOrDuplicateReceipt` value rather than adding a duplicate
+/// (`docs/decisions.md` ADR-016).
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -29,4 +33,11 @@ enum PosAuthorizedAction {
   recordCashAdjustment,
   reviewCourierSettlement,
   recordCourierSettlementAdjustment,
+  acknowledgeKitchenItem,
+  startKitchenPreparation,
+  markKitchenItemReady,
+  cancelKitchenLine,
+  recallKitchenLine,
+  changeKitchenStation,
+  completeOrderPreparation,
 }
