@@ -20,6 +20,7 @@ import '../../domain/shift/courier_shift_status.dart';
 import '../providers/courier_dependencies_provider.dart';
 import 'active_delivery_screen.dart';
 import 'courier_delivery_history_screen.dart';
+import 'courier_earnings_screen.dart';
 
 /// The courier app's home dashboard — shift status/request, online/offline
 /// control, and the entry point into an active delivery. Folds several of
@@ -153,6 +154,17 @@ class _CourierHomeScreenState extends ConsumerState<CourierHomeScreen> {
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.payments_outlined),
+            tooltip: 'Kazançlarım',
+            onPressed: () {
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => CourierEarningsScreen(
+                  courierId: widget.courierId,
+                ),
+              ));
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Teslimat Geçmişi',

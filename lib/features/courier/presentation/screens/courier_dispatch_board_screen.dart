@@ -19,6 +19,7 @@ import '../../domain/identity/courier.dart';
 import '../../domain/shift/courier_shift.dart';
 import '../providers/courier_dependencies_provider.dart';
 import 'courier_performance_screen.dart';
+import 'manager_courier_compensation_screen.dart';
 
 /// Folds the Phase 5O brief's Courier Roster, Courier Status Board, Shift
 /// Approval Queue, Active Shifts, Delivery Dispatch Board, Manual
@@ -264,7 +265,26 @@ class _CourierDispatchBoardScreenState
                 title: Text(courier.displayName),
                 subtitle: Text(
                     '${courier.vehicleType.name} • ${courier.status.name}'),
-                trailing: const Icon(Icons.chevron_right),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.payments_outlined),
+                      tooltip: 'Ücretlendirme',
+                      onPressed: () {
+                        Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => ManagerCourierCompensationScreen(
+                            courierId: courier.id,
+                            branchId: widget.branchId,
+                            authorizationPolicy: widget.authorizationPolicy,
+                            performedByStaffId: widget.performedByStaffId,
+                          ),
+                        ));
+                      },
+                    ),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
                 onTap: () {
                   Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => CourierPerformanceScreen(
