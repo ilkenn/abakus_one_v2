@@ -23,6 +23,7 @@ class CashMovement {
     required this.actorStaffId,
     required this.timestamp,
     this.reversalOfMovementId,
+    this.settlementId,
   });
 
   /// Externally supplied, like every other identifier in this codebase —
@@ -40,4 +41,13 @@ class CashMovement {
   /// The id of the [CashMovement] this one reverses — `null` unless this
   /// movement exists specifically to offset an earlier one.
   final String? reversalOfMovementId;
+
+  /// The id of the `CourierSettlement` this movement was automatically
+  /// generated from (Phase 3 Sprint 3F) — `null` for every movement
+  /// recorded outside the courier-settlement flow (i.e. every Sprint 3E
+  /// movement, unchanged). `docs/business_rules.md` BR-COURIER-011
+  /// requires every courier-originated cash movement to trace back to the
+  /// settlement that approved it; this field is that trace, additive to
+  /// Sprint 3E's `CashMovement` rather than a new type.
+  final String? settlementId;
 }

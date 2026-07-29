@@ -9,7 +9,9 @@
 /// not payment-specific, so extending it here is additive, not a scope
 /// violation (`docs/decisions.md` ADR-013). The Phase 3 Sprint 3E cash-
 /// management values (`reviewCashReconciliation` onward) extend it again
-/// for the same reason (`docs/decisions.md` ADR-014).
+/// for the same reason (`docs/decisions.md` ADR-014). The Phase 3
+/// Sprint 3F courier-settlement values (`reviewCourierSettlement` onward)
+/// extend it once more, same reasoning (`docs/decisions.md` ADR-015).
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -25,4 +27,6 @@ enum PosAuthorizedAction {
   operationalCorrection,
   reviewCashReconciliation,
   recordCashAdjustment,
+  reviewCourierSettlement,
+  recordCourierSettlementAdjustment,
 }

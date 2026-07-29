@@ -21,6 +21,12 @@ enum CashMovementType {
   /// The gap between expected and actual cash recorded once a session
   /// closes with an accepted variance — see `CloseCashSession`.
   closingDifference,
+
+  /// Cash a courier physically hands over to the drawer once their
+  /// `CourierSettlement` is manager-approved (Phase 3 Sprint 3F) — always
+  /// an inflow, recorded automatically by `ApproveCourierSettlement` via
+  /// the existing `RecordCashMovement`, never a separate financial event.
+  courierCashSettlement,
 }
 
 /// Whether [CashMovementType.amount] is always recorded as a cash inflow
@@ -33,6 +39,7 @@ extension CashMovementTypeDirection on CashMovementType {
       case CashMovementType.openingFloat:
       case CashMovementType.cashSale:
       case CashMovementType.manualIn:
+      case CashMovementType.courierCashSettlement:
         return true;
       case CashMovementType.cashRefund:
       case CashMovementType.manualOut:

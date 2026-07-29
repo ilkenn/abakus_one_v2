@@ -50,6 +50,7 @@ class RecordCashMovement {
     required Money amount,
     required String reason,
     required String actorStaffId,
+    String? settlementId,
   }) async {
     final session = await _sessionRepository.findById(sessionId);
     if (session == null) {
@@ -90,6 +91,7 @@ class RecordCashMovement {
       reason: reason,
       actorStaffId: actorStaffId,
       timestamp: now,
+      settlementId: settlementId,
     );
     await _movementRepository.append(movement);
 
