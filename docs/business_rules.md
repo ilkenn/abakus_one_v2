@@ -1096,6 +1096,117 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Kitchen, Orders
 
+### BR-KITCHEN-009 — KDS is a projection layer, never a second authoritative order database (Phase 4)
+- **Status**: VERIFIED
+- **Rule**: `KitchenWorkItem` (`lib/features/pos/domain/kds/kitchen_work_item.dart`) is a coordination
+  record derived from one `KitchenTicketLine` — it never re-stores product name, ingredients, or notes
+  (still read from the source `KitchenTicket` via `kitchenTicketId`/`kitchenTicketLineId` when a screen
+  needs them). `KitchenOrderView`/`KitchenLineProgress` are computed, not persisted, mirroring
+  `ExpeditorProjectionBuilder`'s pure-function shape (BR-KITCHEN-008). Neither the authoritative
+  `Order`/`OrderLine` aggregate nor `KitchenTicket` (Phase 3 Sprint 3D) is modified or duplicated by
+  any Phase 4 type.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen, Orders, POS
+
+### BR-KITCHEN-010 — Line-level preparation lifecycle; a completed line only ever returns via an explicit recall (Phase 4)
+- **Status**: VERIFIED
+- **Rule**: `KitchenLineStatus` (`queued → acknowledged → preparing → ready`, plus `cancelled`/
+  `unavailable`/`recalled`) and `KitchenLineStatusTransitions` are the single source of truth for valid
+  transitions. A `ready` line's only outgoing transition is to `recalled` — never silently back to
+  `preparing`/`acknowledged`/`queued`; `recalled` must then pass back through `preparing` (an explicit,
+  always-audited correction) before it can reach `ready` again. `TransitionKitchenWorkItem` is the one
+  use case behind every transition (mirrors `FireKitchenTicket`'s "one use case, not N near-duplicates"
+  precedent), and requires a matching `PosAuthorizedAction` plus a stale-revision check
+  (`expectedRevision` vs. the item's current `revision`) before applying any change. Quantity-level
+  completion (`KitchenWorkItem.readyQuantity` vs. `quantity`) is supported independently of the line's
+  own status via `RecordKitchenWorkItemQuantityReady`.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Kitchen, POS, Staff/Admin
+
+### BR-KITCHEN-011 — Order-level readiness is derived, never a stored second truth (Phase 4)
+- **Status**: VERIFIED
+- **Rule**: `KitchenOrderView.build` computes order-level readiness from every one of the order's
+  `KitchenWorkItem`s (cancelled/unavailable lines never block it) — it is never itself persisted.
+  `RecordKitchenWorkItemQuantityReady`, once a line reaches full quantity, calls the existing,
+  unmodified `MarkKitchenTicketLineReady` (Phase 3 Sprint 3D) so `KitchenTicket.completedLineIds`/
+  `orderReadyAt` remain the one place order-ready state is actually stored — Phase 4 never introduces
+  a second, independently-updated readiness flag that could disagree with it.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen, Orders
+
+### BR-KITCHEN-012 — Real-time event architecture is backend-neutral; in-memory only this phase (Phase 4)
+- **Status**: VERIFIED (contracts + in-memory implementation) — ROADMAP (real cross-device/cross-process delivery)
+- **Rule**: `KitchenEventPublisher`/`KitchenEventSubscriber`/`KitchenEventRepository`/
+  `KitchenProjectionRepository`/`KitchenSynchronizationService`/`KitchenConnectionMonitor` are
+  backend-neutral contracts a future Firebase implementation could sit behind without the domain layer
+  ever importing `firebase_*` (`CLAUDE.md` §5 — Firebase remains present-but-dormant). This phase ships
+  only `InMemoryKitchenEventBus` and matching in-memory repositories — same-process, in-app-instance-
+  only delivery. **This is explicitly not real cross-device real-time infrastructure**: a second device
+  (a second app instance) never receives events published before it subscribed; correctness for a
+  reconnecting/late device always goes through `KitchenSynchronizationService`'s cursor-based replay
+  against `KitchenEventRepository` (ordered per branch via a monotonic `sequence`, duplicate-
+  idempotency-key rejection, replay-from-cursor), never through the publish/subscribe stream alone.
+  Matches `docs/master_roadmap.md`'s `KDS-001` framing of real-time push infrastructure as new
+  technical surface not yet built — this phase builds the seam, not the production channel.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen, POS
+
+### BR-KITCHEN-013 — Deterministic, priority-ordered kitchen routing; shared station by default (Phase 4)
+- **Status**: VERIFIED
+- **Rule**: `KitchenRoutingResolver.resolve` evaluates a branch's `KitchenRoutingRule`s in ascending
+  `priority` order — first match wins; no match (or no rules configured) resolves to
+  `KitchenStation.shared`, the current Abaküs default (matches BR-KITCHEN-001's single-queue behavior).
+  `KitchenRoutingCriteria` AND-combines `productId`/`categoryId`/`modifierCode`/`channelName` fields, all
+  optional. No rule-editor UI exists this phase (deliberately out of scope) — rules are seeded/managed
+  programmatically only. Adding a new `KitchenStation` value later is an additive enum change, never an
+  aggregate rewrite (`docs/decisions.md` ADR-016).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen, POS
+
+### BR-KITCHEN-014 — Multi-device synchronization; idempotency and revision checks prevent duplicate completion (Phase 4)
+- **Status**: VERIFIED (foundation) — ROADMAP (production multi-device hardware rollout)
+- **Rule**: `KitchenDisplayDevice`/`KitchenDisplaySession` are the first `Device` concept of any kind in
+  this codebase (no prior `Device` type existed anywhere — `docs/module_catalog.md`'s KDS sketch
+  described device-branch pairing only as a requirement). `StartKitchenDisplaySession` permits only one
+  active session per device (mirrors `OpenCashDrawer`'s per-drawer guard). Every state-changing kitchen
+  action requires the caller's `expectedRevision` to match the work item's current `revision`
+  (`StaleKitchenRevisionViolation` otherwise) — this is what stops two devices from both completing the
+  same line: whichever acts second, on a now-stale revision, is rejected and must reload first.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Kitchen, POS, Staff/Admin
+
+### BR-KITCHEN-015 — Delay/timer state is always computed, never persisted as authoritative (Phase 4)
+- **Status**: VERIFIED
+- **Rule**: `KitchenDelayState.compute` derives queued/preparing/total duration and warning/critical/
+  overdue flags fresh from timestamps plus `KitchenDelayThresholds` (branch-configurable, with optional
+  per-order-channel overrides) via an injected `Clock` — never `DateTime.now()` directly, and never
+  stored as a standalone "how delayed is this" field that could go stale the instant it was written.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen, POS
+
+### BR-KITCHEN-016 — Kitchen-ready does not mean package-complete; dine-in never touches package preparation (Phase 4)
+- **Status**: VERIFIED
+- **Rule**: `CompleteKitchenOrderPreparation` requires `KitchenOrderView.isFullyReady` before proceeding
+  (`KitchenOrderNotFullyReadyViolation` otherwise), then advances `PackagePreparation`
+  (Phase 3 Sprint 3D, untouched) from `preparing` to `readyForPacking` — **never further** — and only
+  for `OrderChannel.delivery`/`OrderChannel.takeaway` orders. Dine-in orders (`OrderChannel.dineInQr`/
+  `dineInStaff`) never call into `PackagePreparation` at all. Packing itself (checklist, quality
+  control, courier handover) remains entirely `PackagePreparation`'s own separate lifecycle, unmodified
+  by Phase 4 — kitchen completion and package completion are never merged into one status.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen, Orders, Courier
+
+### BR-KITCHEN-017 — Kitchen printer retry/fallback; printing is never authoritative kitchen state (Phase 4)
+- **Status**: VERIFIED (attempt history + retry/fallback contract) — ROADMAP (real printer hardware)
+- **Rule**: `PrintKitchenTicketWithRetry` records every attempt (`KitchenPrintAttempt`, append-only) via
+  the existing `KitchenTicketPrintProvider` contract (Phase 3 Sprint 3D, unchanged) and retries once
+  through an optional fallback provider on failure/unavailability. A total print failure (primary and
+  fallback both fail) never removes or alters any `KitchenEvent`/`KitchenWorkItem`/`KitchenTicket` data
+  — this use case only reads a `KitchenTicket` to print it, never writes kitchen state. Reprints
+  (`ReprintKitchenTicket`, Sprint 3D) are always marked `isCopy`, unchanged.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Kitchen, POS
+
 # Courier Operations
 
 ### BR-COURIER-001 — Per-order courier location visibility
@@ -1448,6 +1559,23 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   structurally-append-only pattern BR-AUDIT-004/005/006 already established.
 - **Owner Agent**: security_engineer
 - **Related Modules**: Courier, POS, Staff/Admin
+
+### BR-AUDIT-008 — Kitchen operational audit trail, with device and correlation-id fields no earlier audit type needed (Phase 4)
+- **Status**: VERIFIED
+- **Rule**: `KitchenAuditEntry`/`KitchenAuditEntryRepository` (`lib/features/pos/domain/kds/
+  kitchen_audit_entry.dart`, `lib/features/pos/data/kitchen_audit_entry_repository.dart`) record every
+  kitchen operational action (acknowledge, preparation started, quantity progress, marked ready,
+  cancelled, marked unavailable, recalled, resumed, reprinted, station changed, order preparation
+  completed) — actor, device, branch, order, line where applicable, previous/new state, reason where
+  required, timestamp, and a `correlationId` tying the entry back to the `KitchenEvent` that produced
+  it (richer than `ClosureAuditEntry`/`RestaurantOperationsAuditEntry`/`CashAuditEntry`/
+  `CourierSettlementAuditEntry`, since Phase 4K explicitly requires device/correlation-id fields none of
+  those needed). No update or delete method exists on its repository interface at all — the same
+  structurally-append-only pattern BR-AUDIT-004 through BR-AUDIT-007 already established. Distinct from
+  `KitchenEvent` (BR-KITCHEN-012): the event log includes technical/connectivity facts no human audit
+  trail needs; this entry is created only for business-meaningful transitions.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Kitchen, POS, Staff/Admin
 
 # Profitability and Loss Prevention
 
@@ -1819,11 +1947,58 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Business Rule IDs**: BR-COURIER-007, BR-COURIER-008, BR-COURIER-009, BR-COURIER-010,
   BR-COURIER-011, BR-AUDIT-007, BR-CASH-010
 
+### DL-019 — Real-Time Kitchen Display System
+- **Decision**: Builds a production-oriented real-time KDS foundation for Abaküs One, on top of Phase 3
+  Sprint 3D's `KitchenTicket`/`PackagePreparation`/KDS foundation, without rewriting any of it.
+  `KitchenWorkItem` (a routed, revisioned coordination record derived from one `KitchenTicketLine`,
+  never duplicating `KitchenTicket`/`Order` data) with a `KitchenLineStatus` state machine
+  (`queued/acknowledged/preparing/ready` plus `cancelled/unavailable/recalled`, a completed line only
+  ever returning via an explicit recall). Backend-neutral real-time contracts
+  (`KitchenEventPublisher`/`Subscriber`/`Repository`/`ProjectionRepository`/`SynchronizationService`/
+  `ConnectionMonitor`) with in-memory-only implementations, explicitly not claimed as real cross-
+  device delivery. Deterministic priority-ordered `KitchenRoutingRule`s (shared station by default).
+  `KitchenDisplayDevice`/`KitchenDisplaySession` — the first `Device` concept in this codebase.
+  `KitchenDelayState`/`KitchenDelayThresholds` (always computed, never persisted). A
+  `CompleteKitchenOrderPreparation` bridge into `PackagePreparation` for delivery/takeaway orders only,
+  never dine-in. `KitchenPrintAttempt`/`PrintKitchenTicketWithRetry` (retry + fallback provider,
+  append-only attempt history) layered on the existing `KitchenTicketPrintProvider` contract, unchanged.
+  `KitchenAuditEntry` (device- and correlation-id-aware, richer than every earlier audit type).
+- **Status**: DECIDED
+- **Source**: User, Phase 4 autonomous-implementation-mode approval — an 11-section kickoff (4A through
+  4L) specifying explicit domain models, lifecycle rules, real-time properties, routing/delta/delay/
+  multi-device/package/printer/UI/authorization requirements, an explicit instruction to analyze the
+  existing architecture first and not redesign Phase 3 foundations unless strictly required, and an
+  explicit instruction to report the real-time infrastructure boundary honestly rather than overclaim
+  production delivery.
+- **Date**: 2026-07-30
+- **Consequences**: See BR-KITCHEN-009 through BR-KITCHEN-017, BR-AUDIT-008. `docs/decisions.md`
+  ADR-016 records the full architecture, including the one genuine architecture-scope judgment call
+  this phase required: no prior `Device` concept existed anywhere in this codebase, so
+  `KitchenDisplayDevice`/`KitchenDisplaySession` are new foundational types, not a reuse of an existing
+  pattern — reported here rather than silently introduced.
+- **Related Modules**: Kitchen, Orders, POS, Staff/Admin
+- **Business Rule IDs**: BR-KITCHEN-009, BR-KITCHEN-010, BR-KITCHEN-011, BR-KITCHEN-012,
+  BR-KITCHEN-013, BR-KITCHEN-014, BR-KITCHEN-015, BR-KITCHEN-016, BR-KITCHEN-017, BR-AUDIT-008
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v1.8 — 2026-07-30
+- **Version**: 1.8
+- **Date**: 2026-07-30
+- **Summary**: Phase 4 (Real-Time Kitchen Display System). Added BR-KITCHEN-009 (KDS is a projection
+  layer, not a second order database), BR-KITCHEN-010 (line lifecycle, no silent return from ready),
+  BR-KITCHEN-011 (derived order readiness, bridges into existing `orderReadyAt`), BR-KITCHEN-012
+  (backend-neutral real-time contracts, in-memory only, honest boundary), BR-KITCHEN-013 (deterministic
+  routing, shared default), BR-KITCHEN-014 (multi-device sync, idempotency/revision checks),
+  BR-KITCHEN-015 (delay state always computed), BR-KITCHEN-016 (kitchen-ready ≠ package-complete,
+  dine-in never enters packing), BR-KITCHEN-017 (printer retry/fallback, printing non-authoritative),
+  BR-AUDIT-008 (kitchen audit trail with device/correlation-id fields). Logged DL-019.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the real-time KDS business rules this phase's approved architecture established.
 
 ### v1.7 — 2026-07-30
 - **Version**: 1.7

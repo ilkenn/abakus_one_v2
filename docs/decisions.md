@@ -1212,3 +1212,162 @@ financial events." The residual uncertainty is concentrated in the one genuine a
 judgment call this sprint required and previous sprints didn't — the no-`Courier`/`Delivery`-aggregate
 decision — resolved by direct analogy to established precedent (`staffId`, `PackagePreparation`'s
 `orderId`-keying) rather than a new pattern, and documented here rather than decided silently.
+
+---
+
+## ADR-016 — Real-Time Kitchen Display System (Phase 4)
+
+- Date: 2026-07-30
+- Status: Accepted
+
+### Pre-implementation architecture analysis (required first task)
+Before any code, the complete existing implementation was inspected: `KitchenTicket`/`KitchenTicketLine`/
+`KitchenTicketMapper`/`KitchenTicketPrintProvider` (Sprint 3D, domain/contract only, `completedLineIds`-
+based binary readiness, station filter chips present but hard-disabled); `PackagePreparation`/
+`PackagePreparationStatus` (13-state machine, deliberately separate from `OrderStatus`, `orderId`-keyed);
+`Order`/`OrderLine` (confirmed **`OrderLine` has no stable id field at all** — the ADR-013 limitation
+carried forward, not re-litigated); `PosOrderSession`/`PosOrderLineDraft`/`Check` (pre-submission
+identity patterns); the order submission flow (`SubmitPosOrder`/`CartToOrderMapper`); confirmed **no
+post-submission order-line cancellation or delta/add-item use case exists at all** — `KitchenTicketType
+.delta`/`.cancellation` are ticket-print categories with no use case that actually produces one from an
+order edit; the receipt/printer contract-only + `NoOp` convention (`ReceiptPrintProvider`); every
+existing audit-entry type's shape convention (all five structurally append-only, no update/delete
+method); confirmed **no `branchId`-adjacent `Device` concept exists anywhere** (only an unrelated
+Firebase App Check `DeviceCheck` type and an unused legacy `OrderModel.createdDeviceId` field); the
+`FeatureFlagsService`/`AppEnvironmentConfig` shape (no kitchen/real-time flag registered, no backend-
+feature gating on environment config); confirmed `go_router` covers only Splash→Onboarding→Login/Otp→
+Main and `KitchenDisplayScreen` is unregistered, standalone; `docs/decisions.md` ADR-013's explicit
+"KDS is read-refresh, not real-time, no WebSocket/SSE infrastructure exists" passage; and
+`docs/master_roadmap.md`'s `KDS-001` framing real-time push as new, not-yet-built technical surface.
+This analysis directly shaped every decision below — nothing here redesigns a Phase 3 foundation.
+
+### Decision
+Implements a production-oriented real-time KDS foundation on top of Sprint 3D's `KitchenTicket`/
+`PackagePreparation` foundation, without rewriting either.
+
+**`KitchenWorkItem` is a coordination record, not a duplicate aggregate.** It references
+`kitchenTicketId`/`kitchenTicketLineId` rather than re-storing product/ingredient/note data, and its own
+id is independent of `OrderLine` identity entirely — the same sidestep `KitchenTicketLine.id` already
+uses (ADR-013), extended one layer further rather than revisited. `KitchenLineStatus` is a strictly
+richer lifecycle than Sprint 3D's binary `completedLineIds` tracking, layered *alongside* it:
+`RecordKitchenWorkItemQuantityReady`, on reaching full quantity, calls the existing, unmodified
+`MarkKitchenTicketLineReady` so `KitchenTicket.orderReadyAt` remains the one place order-readiness is
+actually stored.
+
+**`TransitionKitchenWorkItem` is one use case behind six transitions**, not six near-duplicates —
+mirrors `FireKitchenTicket`'s own precedent for the same reason (building/persisting is identical
+regardless of which transition; only the target status, required action, and audit/event type type
+change). A `ready` line's only outgoing edge is to `recalled`, never silently back to an earlier state
+— satisfying the brief's explicit rule via the state machine itself, not a runtime check layered on top.
+
+**Real-time architecture: contracts first, in-memory only, boundary reported honestly.**
+`KitchenEventPublisher`/`Subscriber`/`Repository`/`ProjectionRepository`/`SynchronizationService`/
+`ConnectionMonitor` are backend-neutral — no `firebase_*` import anywhere in the domain or application
+layer, matching `CLAUDE.md` §5's "Firebase remains dormant, wiring one is a separate approval" rule.
+`InMemoryKitchenEventBus` is same-process pub/sub only; the actually-correct-for-reconnect path is
+`KitchenSynchronizationService`'s cursor-based replay against `KitchenEventRepository`, which assigns a
+per-branch monotonic `sequence` at append time (ignoring whatever `occurredAt` the caller supplied,
+so out-of-order delivery cannot desync ordering) and rejects a duplicate `idempotencyKey` structurally.
+**This phase does not claim real cross-device/cross-process real-time delivery** — a second app instance
+never receives an event published before it subscribed. This is the literal, deliberate reading of the
+brief's own instruction not to overclaim.
+
+**`KitchenDisplayDevice`/`KitchenDisplaySession` are genuinely new — no prior `Device` concept existed.**
+The architecture analysis confirmed this rather than assuming it (grep for `device`/`Device` across the
+whole codebase found only an unrelated Firebase App Check type and one unused legacy field). Mirrors
+`CashDrawer`(registry, mutable)/`CashSession`(append-only via revision)'s split exactly, applied to
+devices instead of drawers — not a new pattern, just a new instance of an established one.
+
+**Stale-revision rejection is the mechanism preventing duplicate completion across devices**, not a
+separate distributed-lock concept: every transition requires `expectedRevision` to match the item's
+current `revision`; whichever of two racing devices acts second is rejected and must reload. Verified
+directly in `transition_kitchen_work_item_test.dart`'s two-device race test.
+
+**Routing is a pure function over already-loaded rules** (`KitchenRoutingResolver`, mirrors
+`ExpeditorProjectionBuilder`'s no-I/O shape), evaluated in ascending priority order, defaulting to
+`KitchenStation.shared` — the literal Abaküs default the brief specified. No rule-editor UI, per the
+brief's explicit exclusion.
+
+**Delta/cancellation work respects the `OrderLine`-identity limitation rather than re-litigating it.**
+`AdjustKitchenWorkItemQuantity` (quantity increase/decrease) and `CancelKitchenWorkItemsForOrder` (full
+order cancellation) both operate on `KitchenWorkItem`'s own stable id — they never need `OrderLine`
+identity at all. What is genuinely *not* supported, and is recorded here as the exact gap rather than
+worked around silently: automatically diffing "which lines are new since the last ticket" when a delta
+`KitchenTicket` is fired, since `KitchenTicketMapper.fromOrder` re-lists every order line on each fire
+(a Phase 3 behavior, unchanged) and `OrderLine` still has no identity to diff against. The safest
+supported subset — enqueueing is idempotent per `(ticketId, lineId)`, so a duplicate/re-fire never
+duplicates work, and a caller who constructs a delta ticket containing only the genuinely new lines gets
+correct enqueueing — is what's implemented; automatic diffing is not.
+
+**`KitchenDelayState`/`KitchenSynchronizationState` are always computed, never persisted** — the same
+"continuously-changing figure must never be stored as authoritative" reasoning `CashVariance`/
+`CourierSettlementVariance` already established for financial variance, applied here to timers and sync
+status.
+
+**`CompleteKitchenOrderPreparation` bridges into `PackagePreparation` via an injected closure, not a
+direct dependency** — keeps the use case testable without constructing a full `PackagePreparationRepository`
+fixture for kitchen-only tests, and keeps the `pos`→`orders` dependency direction the same shape
+`CourierReceiptSummaryBuilder` already established (pass primitives/closures across the boundary, not
+whole aggregates). Advances only `preparing → readyForPacking`, and only for delivery/takeaway — dine-in
+orders never call into it at all, satisfying the brief's explicit separation rule structurally rather
+than by convention.
+
+**Printer retry/fallback is additive tracking layered on the unchanged `KitchenTicketPrintProvider`
+contract** — `PrintKitchenTicketWithRetry` records every attempt (`KitchenPrintAttempt`, append-only)
+and retries once through an optional fallback provider; `FireKitchenTicket`/`ReprintKitchenTicket`
+(Sprint 3D) are untouched. Kitchen ticket reprint continues reusing `PosAuthorizedAction
+.reprintOrDuplicateReceipt` (already established in Sprint 3D) rather than adding a duplicate action —
+one of Phase 4K's eight named actions maps to an existing one, not a new one.
+
+**Authorization/audit**: 7 new `PosAuthorizedAction` values (additive) cover acknowledge/start-
+preparation/mark-ready/cancel/recall/change-station/complete-order-preparation; reprint reuses the
+existing value. Every state-changing Phase 4 use case both checks authorization and records a
+`KitchenAuditEntry` — device, correlation-id, previous/new state, reason where applicable — richer than
+every earlier audit-entry type in this codebase because Phase 4K explicitly required those fields.
+
+### Context
+Approved directly into "AUTONOMOUS IMPLEMENTATION MODE" by the user's kickoff message — an 11-section
+brief (4A domain foundation through 4L testing) with an explicit first-task instruction to analyze the
+complete existing architecture before writing code and not redesign Phase 3 foundations unless strictly
+required, explicit domain/lifecycle/real-time/routing/delta/delay/multi-device/package/printer/UI/
+authorization requirements, an explicit business-rules list, an explicit out-of-scope list (real
+marketplace integrations, courier dispatch/payroll, inventory/recipe deduction, accounting/e-invoice,
+production printer drivers, advanced analytics, AI prediction, voice control, hardware procurement,
+`OrderLine` identity redesign, full production Firebase deployment), and an explicit instruction to
+report the real-time infrastructure boundary honestly. The same four stop conditions as ADR-014/015
+applied; none were triggered.
+
+### Consequences
+- **6 implementation commits** (domain models + real-time contracts; lifecycle/routing/delta/package
+  integration use cases; printer retry/fallback; UI foundation; comprehensive test suite; documentation),
+  each independently formatted/analyzed/tested before commit, matching ADR-012 through ADR-015's
+  granularity precedent.
+- **No existing Sprint 3A–3F file was rewritten** — `PosAuthorizedAction` (7 additive values),
+  `core/errors/business_rule_violation.dart` (8 additive violation types) are the only pre-existing
+  files modified beyond their own tests; every other change is a new file. `KitchenTicket`/
+  `KitchenTicketLine`/`MarkKitchenTicketLineReady`/`FireKitchenTicket`/`ReprintKitchenTicket`/
+  `PackagePreparation`/`PackagePreparationTransitions`/`AdvancePackagePreparation` are all completely
+  unmodified.
+- **Deviation — no `Courier`/roster-style `Device` reuse**: `KitchenDisplayDevice`/
+  `KitchenDisplaySession` are new foundational types since none existed to reuse; see the Decision
+  section.
+- **Deviation — automatic delta-ticket line-diffing is not implemented**, per the `OrderLine`-identity
+  limitation; the safest supported subset (idempotent enqueueing, caller-constructed delta tickets) is
+  what ships. See the Decision section's "Delta/cancellation work" passage for the exact boundary.
+- **Honest infrastructure boundary**: `InMemoryKitchenEventBus` and every Phase 4 repository are
+  in-memory, same-process only. No `firebase_*` package was added; no WebSocket/SSE client was added.
+  This phase is the seam `docs/master_roadmap.md`'s `KDS-001` will eventually plug a real backend into,
+  not `KDS-001` itself.
+- **No new pub dependency.** No change to `go_router`, `MainNavigationScreen`, or any customer-facing
+  screen. No change to any Sprint 3A–3F order/payment/restaurant-operations/cash-management/courier-
+  settlement code path.
+
+### Confidence
+80%. The domain model (work item/lifecycle/event/cursor/device/session/delay/routing/audit split, the
+bridge-not-duplicate relationship with `KitchenTicket.orderReadyAt`, the stale-revision mechanism for
+duplicate-completion prevention) is directly grounded in the brief's explicit requirements, each mapping
+to a concrete enforced invariant verified by a dedicated test. The residual uncertainty is concentrated
+in two places: the delta-ticket line-diffing boundary (a genuine, pre-existing `OrderLine`-identity gap
+carried forward rather than solved, exactly as instructed) and the in-memory-only real-time bus, whose
+correctness story depends entirely on `KitchenSynchronizationService`'s replay path rather than the
+publish/subscribe stream — both documented here rather than glossed over.

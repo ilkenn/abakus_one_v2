@@ -459,3 +459,59 @@ payroll.
   their own standalone screens.
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-015 Consequences section.
+
+## Phase 4 — Real-Time Kitchen Display System
+
+Branch `phase-4/kds-realtime-foundation`, from the tip of `phase-3/sprint-3f-courier-settlement`.
+Approved directly into autonomous implementation mode via an 11-section kickoff (4A through 4L)
+requiring an existing-architecture analysis before any code and an honest report of the real-time
+infrastructure boundary. See `docs/business_rules.md` DL-019 and `docs/decisions.md` ADR-016 for the
+full analysis, architecture, and every deviation.
+
+| Task | Status | Note |
+|---|---|---|
+| Pre-implementation architecture analysis | DONE | Full inspection of `KitchenTicket`/`PackagePreparation`/`Order`/`OrderLine`/`PosOrderSession`/`Check`/submission/cancellation flows/printer contracts/audit conventions/branch/device concepts/feature flags/environment config/routing/Firebase ADRs — see ADR-016. Confirmed no `Device` concept and no post-submission delta/cancel use case existed anywhere prior to this phase. |
+| Domain foundation (4A) | DONE | `KitchenWorkItem` (revisioned coordination record, never duplicating `KitchenTicket`/`Order`), `KitchenLineStatus`/`KitchenStation`/`KitchenRoutingRule`/`KitchenEvent`/`KitchenEventCursor`/`KitchenDisplayDevice`/`KitchenDisplaySession`/`KitchenSynchronizationState`/`KitchenDelayState`/`KitchenOrderView`+`KitchenLineProgress`/`KitchenAuditEntry`. 8 new `BusinessRuleViolation` types (additive). |
+| Preparation lifecycle (4B) | DONE | `KitchenLineStatusTransitions` (`queued→acknowledged→preparing→ready`, `cancelled`/`unavailable`/`recalled`); a `ready` line's only outgoing edge is `recalled`. `TransitionKitchenWorkItem` — one use case behind every transition, revisioned, authorized, audited. `RecordKitchenWorkItemQuantityReady` — quantity-level completion, bridges into the existing `MarkKitchenTicketLineReady`. |
+| Real-time event architecture (4C) | DONE (contracts + in-memory) — ROADMAP (real cross-device delivery) | `KitchenEventPublisher`/`Subscriber`/`Repository`/`ProjectionRepository`/`SynchronizationService`/`ConnectionMonitor`, backend-neutral. `InMemoryKitchenEventBus` (same-process pub/sub only); `InMemoryKitchenSynchronizationService` (cursor-based replay, monotonic per-branch sequence, duplicate-idempotency-key rejection). Explicitly not real cross-device real-time delivery — see ADR-016. |
+| Kitchen routing (4D) | DONE | `KitchenRoutingResolver` (pure function, priority-ordered, default `shared`) + `KitchenRoutingRule`/`KitchenRoutingCriteria`. No rule-editor UI (out of scope). |
+| Delta and cancellation events (4E) | DONE (safest supported subset) | `AdjustKitchenWorkItemQuantity` (quantity correction, preserves original in audit trail), `CancelKitchenWorkItemsForOrder` (full order cancellation, fans out to `TransitionKitchenWorkItem`). Automatic delta-ticket line-diffing is **not** implemented — the exact `OrderLine`-identity gap this leaves is documented in ADR-016, not silently worked around. |
+| Timers and delay management (4F) | DONE | `KitchenDelayState.compute` (always fresh, injected `Clock`, never persisted) + `KitchenDelayThresholds` (branch-configurable, channel overrides). |
+| Multi-device synchronization (4G) | DONE (foundation) | `KitchenDisplayDevice`/`KitchenDisplaySession` — the first `Device` concept in this codebase. `StartKitchenDisplaySession` (one active session per device). Stale-revision rejection (`expectedRevision`) is what prevents two devices from both completing the same line — verified by a dedicated two-device race test. |
+| Package preparation integration (4H) | DONE | `CompleteKitchenOrderPreparation` — requires `KitchenOrderView.isFullyReady`, advances `PackagePreparation` `preparing → readyForPacking` (never further) only for delivery/takeaway; dine-in never touches it. `PackagePreparation`/`PackagePreparationTransitions`/`AdvancePackagePreparation` (Sprint 3D) are completely unmodified. |
+| Printer integration foundation (4I) | DONE | `KitchenPrintAttempt` (append-only attempt history) + `PrintKitchenTicketWithRetry` (retry once through an optional fallback provider). `KitchenTicketPrintProvider`/`FireKitchenTicket`/`ReprintKitchenTicket` (Sprint 3D) unchanged; reprint continues reusing `PosAuthorizedAction.reprintOrDuplicateReceipt`. |
+| KDS UI (4J) | DONE | `KitchenDisplayBoardScreen` (functional station filter — Sprint 3D shipped these permanently disabled; device sync/connection status bar; full-screen toggle foundation; auto-enqueues work items for any loaded ticket), `KitchenOrderCard`, `KitchenOrderDetailsScreen` (full line-level actions incl. reason-prompted cancel/recall), `DelayedOrdersScreen`, `KitchenCompletedHistoryScreen` (reads directly from the projection repository). |
+| Authorization and audit (4K) | DONE | 7 new `PosAuthorizedAction` values (additive); reprint reuses the existing value rather than duplicating it. `KitchenAuditEntry` — device, correlation-id, previous/new state, reason — on every state-changing use case. |
+| Tests (4L) | DONE | 1188 tests total (up from Sprint 3F's 1112), all passing — 76 new tests across lifecycle transitions/invalid transitions/quantity-level preparation/derived readiness/event idempotency/duplicate delivery/out-of-order events/stale revisions/replay/reconnect sync/multiple devices/routing/delta/cancellation/delay calculations/printer retry/package integration/authorization/audit completeness, plus one full integration test (fire ticket → enqueue → two devices sync → lifecycle to ready → complete order preparation → package preparation bridge). `flutter analyze`: no issues. `dart format`: clean. |
+| Documentation | DONE | `docs/business_rules.md` v1.8 (BR-KITCHEN-009–017, BR-AUDIT-008 added; DL-019 logged); `docs/decisions.md` ADR-016 (incl. the pre-implementation architecture analysis); this entry. |
+
+**Explicitly out of scope this phase** (per the kickoff's own scope): real marketplace integrations,
+courier dispatch/live tracking/payroll, inventory deduction, recipe consumption, accounting, e-invoice,
+production printer drivers, advanced kitchen analytics, AI preparation prediction, voice control,
+hardware procurement, `OrderLine` identity redesign, full production Firebase deployment.
+
+### Deviations from the approved architecture (reported, not silent)
+
+- **No `Courier`/roster-style `Device` reuse**: `KitchenDisplayDevice`/`KitchenDisplaySession` are new
+  foundational types since no `Device` concept of any kind existed anywhere in this codebase prior to
+  this phase (confirmed by the pre-implementation analysis, not assumed).
+- **Automatic delta-ticket line-diffing is not implemented**: `KitchenTicketMapper.fromOrder` (Sprint
+  3D, unchanged) re-lists every order line on each fire, and `OrderLine` still has no stable id to diff
+  against. The safest supported subset ships instead — idempotent enqueueing per `(ticketId, lineId)`,
+  and quantity/cancellation corrections that operate on `KitchenWorkItem`'s own id rather than needing
+  `OrderLine` identity at all. See ADR-016's Decision section for the exact boundary.
+- **Honest real-time infrastructure boundary**: `InMemoryKitchenEventBus` and every Phase 4 repository
+  are in-memory, same-process only — not real cross-device/cross-process real-time delivery. No
+  `firebase_*` package or WebSocket/SSE client was added. Reconnect/catch-up correctness always goes
+  through `KitchenSynchronizationService`'s cursor-based replay, never the publish/subscribe stream
+  alone. This phase is the seam `docs/master_roadmap.md`'s `KDS-001` will eventually plug a real backend
+  into, not `KDS-001` itself.
+- **`CompleteKitchenOrderPreparation` bridges into `PackagePreparation` via an injected closure**, not a
+  direct repository dependency — keeps the use case testable without a full `PackagePreparationRepository`
+  fixture, and keeps the `pos`→`orders` dependency direction the same shape `CourierReceiptSummaryBuilder`
+  already established.
+- **No manager-facing drawer/device pairing UI**: a device's `stationScope` and a manager's routing-rule
+  configuration are both seeded/managed programmatically only this phase — no rule-editor or device-
+  pairing screen, per the brief's own explicit exclusion.
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-016 Consequences section.
