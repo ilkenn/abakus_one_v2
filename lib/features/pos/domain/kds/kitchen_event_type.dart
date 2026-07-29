@@ -11,6 +11,7 @@ enum KitchenEventType {
   workItemUnavailable,
   workItemRecalled,
   workItemResumed,
+  orderPreparationCompleted,
   ticketDeltaFired,
   ticketCancellationFired,
   deviceHeartbeat,

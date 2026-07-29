@@ -5,6 +5,8 @@
 enum KitchenAuditEventType {
   acknowledged,
   preparationStarted,
+  quantityProgressRecorded,
+  quantityAdjusted,
   markedReady,
   cancelled,
   markedUnavailable,

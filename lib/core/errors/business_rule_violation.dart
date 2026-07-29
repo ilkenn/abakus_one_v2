@@ -844,3 +844,31 @@ final class StaleKitchenRevisionViolation extends BusinessRuleViolation {
       'Stale revision for "$entityId": expected $expectedRevision, actual '
       '$actualRevision';
 }
+
+/// `StartKitchenDisplaySession` was called for a device that already has
+/// a non-ended `KitchenDisplaySession` — only one active session per
+/// device is ever permitted.
+final class KitchenDisplaySessionAlreadyActiveViolation
+    extends BusinessRuleViolation {
+  const KitchenDisplaySessionAlreadyActiveViolation({required this.deviceId});
+
+  final String deviceId;
+
+  @override
+  String get description =>
+      'Device "$deviceId" already has an active kitchen display session';
+}
+
+/// `CompleteKitchenOrderPreparation` was called for an order whose
+/// `KitchenOrderView.isFullyReady` is still `false` — order-level
+/// readiness is derived from its lines, never overridable by an explicit
+/// "complete" call while a line remains unfinished.
+final class KitchenOrderNotFullyReadyViolation extends BusinessRuleViolation {
+  const KitchenOrderNotFullyReadyViolation({required this.orderId});
+
+  final String orderId;
+
+  @override
+  String get description =>
+      'Order "$orderId" kitchen preparation is not yet fully ready';
+}
