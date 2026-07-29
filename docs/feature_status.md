@@ -515,3 +515,65 @@ hardware procurement, `OrderLine` identity redesign, full production Firebase de
   pairing screen, per the brief's own explicit exclusion.
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-016 Consequences section.
+
+## Phase 5 — Courier Operations Platform
+
+Branch `phase-5/courier-operations-platform`, from the tip of `phase-4/kds-realtime-foundation`.
+Approved directly into autonomous implementation mode via a 17-section kickoff (5A through 5Q)
+requiring an existing-architecture analysis before any code and an honest report of the real-time and
+location infrastructure boundaries. See `docs/business_rules.md` DL-020 and `docs/decisions.md` ADR-017
+for the full analysis, architecture, and every deviation.
+
+| Task | Status | Note |
+|---|---|---|
+| Pre-implementation architecture analysis | DONE | Full inspection of Sprint 3F courier-settlement shapes, `Order`/`OrderChannel`/`CourierVisibility`, `PackagePreparationStatus`, Phase 4's real-time contracts and closure-bridging pattern, `KitchenDisplayDevice`/`Session` shapes, authorization/audit conventions, feature flags/environment config/routing/Firebase state — see ADR-017. Confirmed zero tenant concept, zero `Staff` entity, zero geolocation/mapping/notification package, and `BR-COURIER-004` still ROADMAP prior to this phase. |
+| Courier domain foundation (5A) | DONE | `Courier`/`CourierOperationalProfile`/`CourierShift`/`CourierAvailability`/`Delivery`/`DeliveryAssignment`/`DeliveryAssignmentAttempt`/`DeliveryRouteSnapshot`/`CourierLocationSnapshot`/`DeliveryProof`/`DeliveryFailure`/`CourierFeedback`/`CourierDevice`/`CourierDeviceSession`/`CourierEvent`/`CourierOperationalAuditEntry` — 53 domain files, first real `Courier`/`Delivery` aggregates in this codebase. 17 new `BusinessRuleViolation` types (additive) across this phase. |
+| Courier identity and profile (5B) | DONE | `Courier` registry (mutable, active/suspended/archived — archive never deletes), `ChangeCourierRegistryStatus` (one use case behind all three transitions), multi-branch eligibility, vehicle/capacity metadata. Deliberately minimal contact data; no document-image storage (no secure blob storage infrastructure exists). |
+| Shift management (5C) | DONE | `CourierShiftStatusTransitions` (`awaitingManagerApproval→approved→active→ending→completed`, plus `rejected`/`cancelled`/`suspended`). `RequestCourierShift` (one active shift per courier), `ReviewCourierShift` (approve/reject unified, self-approval structurally blocked via reused `SelfApprovalNotAllowedViolation`), `TransitionCourierShift` (ending a shift accounts for active deliveries; never touches financial settlement). |
+| Availability and capacity (5D) | DONE | `SetCourierAvailability` — reaching `available` requires an active approved shift (`CourierShiftRequiredViolation`); a suspended courier can never become available; append-only via revision. |
+| Delivery aggregate and lifecycle (5E) | DONE | `DeliveryStatusTransitions` (17-state machine, `delivered` terminal). `CreateDelivery`, `MarkDeliveryReadyForAssignment`, `TransitionDelivery` (one use case behind routine transitions, geofence-gated for arrival zones). Deliberately separate from `OrderStatus` — never writes `Order`. |
+| Package pickup integration (5F) | DONE | `ConfirmPackagePickup` — requires `PackagePreparationStatus.waitingForCourier` (`PackageNotReadyForPickupViolation` otherwise), bridges to `courierCollected` via the same injected-closure pattern `CompleteKitchenOrderPreparation` established, idempotent. |
+| Dispatch and assignment (5G) | DONE (rule-based, in-memory) — explicitly not production route optimization | `DispatchScorer` (pure, deterministic, hard eligibility gate + weighted scoring). `OfferDeliveryAssignment`, `RespondToDeliveryAssignment` (predefined rejection reason required, accept increments `CourierAvailability`, reject requeues while preserving history), `ManuallyAssignDelivery`/`ReassignDelivery` (bypass scoring, require actor+reason), `CancelDeliveryAssignment` (unifies cancel/expire behind one `isExpiry` flag). |
+| Location, geofence, and ETA contracts (5H) | DONE (domain contracts + in-memory) — ROADMAP (real device sensors, paid mapping provider) | `CourierLocationSnapshot`/`GeofenceEvaluator` (haversine, accuracy-aware)/`GeofenceOverride`/`EtaEstimator`+`NaiveEtaEstimator`/`CourierLocationProvider`/`LocationPermissionGateway`/`BackgroundLocationSession` — all `NoOp`/in-memory. `RecordCourierLocationSnapshot`, `OverrideGeofence` (manager-authorized, immutable). |
+| Real-time and offline synchronization (5I) | DONE (contracts + in-memory, same-process only) — ROADMAP (real cross-device delivery) | `CourierEvent`/`CourierEventCursor`/`CourierEventPublisher`/`Subscriber`/`CourierSynchronizationService`/`CourierConnectionMonitor`/`InMemoryCourierEventBus` — structurally mirror Phase 4's `Kitchen*` types exactly but as distinct, non-coupled types, per the explicit instruction. `SubmitOfflineCourierCommand` (idempotent), `RetryPendingCourierCommands` (conflict/failure/success outcomes). |
+| Delivery completion and proof (5J) | DONE | `CompleteDelivery` — idempotent, courier/revision/lifecycle/geofence-gated, records a `DeliveryProof` (metadata only, never raw media), never touches `PaymentSession`/`CourierCashCollection` itself (structurally, not by convention). `DeclareCourierCashCollectionForDelivery` thinly wraps Sprint 3F's unmodified `RecordCourierCashCollection`. |
+| Failed delivery and customer-risk signals (5K) | DONE (classification + signal flag) — explicitly not a fraud/risk engine | `RecordDeliveryFailure` — predefined reasons only, responsibility derived and frozen via `DeliveryFailureResponsibilityMapper`, `mayEmitCustomerRiskSignal` true only for customer-attributable failures, 280-char note limit. |
+| Customer contact and privacy foundation (5L) | DONE | `RecordCustomerContactAction` — restricted to the active (non-terminal) delivery window, `CustomerContactAction` structurally cannot hold raw contact data. |
+| Courier performance foundation (5M) | DONE | `RecordCourierFeedback` (predefined tags required), `CourierPerformanceBuilder` (pure) + `BuildCourierPerformanceSnapshot` (I/O shell) — computed on demand, never persisted, no score/rank/punishment field at all. |
+| Courier application UI (5N) | DONE (consolidated) | `CourierHomeScreen` (shift status/request/start/end, availability toggle, active-delivery entry — folds login/identity, shift-request, connection/sync-status, and location-permission-state), `ActiveDeliveryScreen` (one delivery at a time, one primary action per state: offer accept/reject through completion/failure), `CourierDeliveryHistoryScreen` (history + 30-day performance snapshot). |
+| Manager and dispatch UI foundation (5O) | DONE (consolidated, list-based) | `CourierDispatchBoardScreen` (shift approval queue, courier roster, active-deliveries dispatch board with manual-assign picker), `CourierPerformanceScreen` (performance metrics + failed-delivery review grouped by responsibility). No advanced map visualization, per the brief's own explicit allowance. |
+| Authorization and audit (5P) | DONE | 21 new `PosAuthorizedAction` values (additive), reused directly across every Phase 5 use case. Every state-changing use case records a `CourierOperationalAuditEntry` (actor/courier/device/branch/order/delivery/assignment/shift/previous-new-state/reason/correlation-id — no `tenantId` field, no raw location/contact data). |
+| Tests (5Q) | DONE | 1283 tests total (up from Phase 4's 1188), all passing — 97 new tests: 31 domain (status transitions, `DispatchScorer`, `GeofenceEvaluator`, failure-responsibility mapping, performance builder), 56 application (identity/shift/availability, delivery lifecycle, dispatch/assignment, failure/contact/feedback, offline commands, sync service/connection monitor), 5 data (`CourierEventRepository` sequence/duplicate rejection), 1 full end-to-end integration test (PackagePreparation → dispatch → accept → pickup → delivery → cash collection). `flutter analyze`: no issues (whole app). `dart format`: clean (whole app). |
+| Documentation | DONE | `docs/business_rules.md` v1.9 (BR-COURIER-004 updated, BR-COURIER-012–024 added; DL-020 logged); `docs/decisions.md` ADR-017 (incl. the pre-implementation architecture analysis); `docs/master_roadmap.md` (`COUR-001`/`COUR-002` updated); this entry. |
+
+**Explicitly out of scope this phase** (per the kickoff's own scope): payroll, salary calculation, real
+bank settlement, accounting, ERP, e-invoice, a full fraud/risk engine, automatic customer sanctions, paid
+mapping-provider integration, advanced route optimization, marketplace courier APIs, third-party courier
+companies, production SMS/telephony/push providers, raw proof-photo storage, production background-
+location deployment, app-store permission configuration, inventory deduction, recipe consumption, AI
+route prediction, autonomous courier scoring, hardware procurement.
+
+### Deviations from the approved architecture (reported, not silent)
+
+- **`ManuallyAssignDelivery`/`ReassignDelivery` skip a separate courier-acceptance step**, landing
+  directly at `DeliveryAssignmentStatus.accepted` — a manager physically directing a courier was judged
+  not to need a further separate offer/accept round-trip. Deviates from the brief's literal
+  offer-then-respond implication for the automatic-dispatch path.
+- **`CancelDeliveryAssignment`/`ExpireDeliveryAssignment` (named separately in the brief) are unified**
+  behind one `isExpiry` flag, mirroring `ChangeCourierRegistryStatus`'s existing activate/suspend/archive
+  consolidation pattern — both share every step and differ only in recorded event/audit type.
+- **`RequestCourierShift` skips the brief's `scheduled` intermediate state**, creating directly at
+  `awaitingManagerApproval` — no UI in this phase requires a separate pre-scheduling step.
+- **Honest real-time infrastructure boundary**: `InMemoryCourierEventBus` and every Phase 5 repository
+  are in-memory, same-process only — not real cross-device/cross-process real-time delivery. No
+  `firebase_*` package, mapping/geolocation package, or SMS/push/telephony package was added.
+- **Honest location infrastructure boundary**: every geofence/ETA/location-permission/background-
+  location contract has only a `NoOp`/synthetic-fixture implementation — no real device GPS sensor, no
+  paid mapping provider. Every location-adjacent test exercises hand-built `CourierLocationSnapshot`/
+  `GeofenceEvaluationResult` fixtures, never a real reading.
+- **UI consolidated from the brief's ~32 named screens to 5 real, functioning screens** — narrower in
+  screen count than the brief's literal enumeration but covering every named state/action, mirroring
+  Phase 4's own KDS UI consolidation precedent (`KitchenDisplayBoardScreen` and 3 others covering ~19
+  named KDS screens).
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-017 Consequences section.

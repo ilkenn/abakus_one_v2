@@ -1232,10 +1232,16 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Courier, Staff/Admin
 
-### BR-COURIER-004 — Courier roster/assignment/dispatch/live location
-- **Status**: ROADMAP
-- **Rule**: `docs/module_catalog.md`'s `Courier` entity and dispatch/geofencing/ETA capabilities are
-  target design only. No code exists.
+### BR-COURIER-004 — Courier roster/assignment/dispatch/live location (Phase 5)
+- **Status**: VERIFIED (domain/application/in-memory real-time — see BR-COURIER-012 through
+  BR-COURIER-024) — ROADMAP (production cross-device real-time backend, paid mapping/geolocation
+  provider, production SMS/push/telephony)
+- **Rule**: `docs/module_catalog.md`'s `Courier` entity and dispatch/geofencing/ETA capabilities,
+  previously target design only, are now implemented as `lib/features/courier/**` (Phase 5) — a first
+  real `Courier`/`Delivery`/`DeliveryAssignment` aggregate set, separate from the `Order`-as-delivery
+  reasoning BR-COURIER-007 originally used (that reasoning still holds for the financial-settlement
+  side; `Delivery` is a courier-*operations* aggregate layered alongside it, referencing `orderId`
+  only, never duplicating `Order`). See BR-COURIER-012 through BR-COURIER-024 for the detailed rules.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Courier
 
@@ -1338,6 +1344,182 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   instead of per drawer.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Courier, POS
+
+### BR-COURIER-012 — Courier operations and financial settlement are separate domains (Phase 5)
+- **Status**: VERIFIED
+- **Rule**: `CourierShift`/`CourierAvailability`/`Delivery`/`DeliveryAssignment` (courier-operations
+  state, Phase 5) never reference `CourierSettlementSession` (financial state, Sprint 3F) by field, and
+  no Phase 5 use case reads/writes a `CourierSettlementSession`, `CourierCashCollection`, or
+  `PaymentSession` directly except `DeclareCourierCashCollectionForDelivery`, which is a thin wrapper
+  calling Sprint 3F's unmodified `RecordCourierCashCollection`. Shift completion
+  (`TransitionCourierShift`) never closes a settlement; a courier may declare collected cash but may
+  never financially approve or settle it (that remains `ApproveCourierSettlement`/
+  `RejectCourierSettlement`, manager-only, BR-COURIER-008).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier, POS
+
+### BR-COURIER-013 — Shift lifecycle and manager approval (Phase 5)
+- **Status**: VERIFIED
+- **Rule**: `CourierShift` moves `awaitingManagerApproval → approved → active → ending → completed`
+  (plus `rejected`/`cancelled`/`suspended`), enforced by `CourierShiftStatusTransitions`. `RequestCourierShift`
+  creates directly at `awaitingManagerApproval` (a documented simplification of the brief's
+  `scheduled` intermediate step — see `docs/decisions.md` ADR-017). `ReviewCourierShift` throws
+  `SelfApprovalNotAllowedViolation` (reused from Sprint 3E/3F/Phase 4) if the reviewer is the shift's
+  own courier — checked before authorization. Only one active (non-terminal) shift per courier is ever
+  permitted (`CourierShiftAlreadyActiveViolation`). Reaching `completed` from `ending` requires zero
+  active deliveries for the courier (`TransitionCourierShift` checks `DeliveryRepository
+  .findActiveByCourierId`) — ending a shift accounts for active deliveries.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier, Staff/Admin
+
+### BR-COURIER-014 — Availability requires an active approved shift (Phase 5)
+- **Status**: VERIFIED
+- **Rule**: `SetCourierAvailability` throws `CourierShiftRequiredViolation` if a courier tries to reach
+  `CourierAvailabilityStatus.available` without an active, approved `CourierShift`. A suspended
+  courier can never become available (`CourierNotAvailableViolation`) regardless of shift state.
+  Availability history is append-only via `CourierAvailability.revision`. Changing availability never
+  touches financial settlement (BR-COURIER-012).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-015 — Delivery lifecycle is separate from `OrderStatus` (Phase 5)
+- **Status**: VERIFIED
+- **Rule**: `Delivery.status` (`DeliveryStatus`, 17 values) is a dedicated state machine
+  (`DeliveryStatusTransitions`) — `Order`/`OrderStatus` is never written by any type in
+  `lib/features/courier/**` (mirrors the same separation ADR-013 already established for
+  `PackagePreparation`/`Check`/`PosOrderSession`). `Delivery.orderId` references the order; no order
+  line, pricing, or customer data is duplicated onto `Delivery`. `DeliveryStatus.delivered` is
+  terminal — no outgoing transition exists; any later correction is a separate append-only record
+  (`DeliveryFailure`/`CourierFeedback`/audit entries), never a mutation of an already-delivered
+  `Delivery`.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier, Orders
+
+### BR-COURIER-016 — Package pickup integration: kitchen-ready ≠ package-ready ≠ picked up (Phase 5)
+- **Status**: VERIFIED
+- **Rule**: `ConfirmPackagePickup` throws `PackageNotReadyForPickupViolation` unless the order's
+  `PackagePreparation.status` (Sprint 3D) is `waitingForCourier` — a courier cannot pick up an
+  unprepared package. On success it advances `PackagePreparation` to `courierCollected` via an
+  injected closure (never a direct `PackagePreparationRepository` dependency in the use case
+  constructor — mirrors Phase 4's `CompleteKitchenOrderPreparation` bridging pattern). Idempotent: a
+  second call on an already-`pickedUp` delivery returns it unchanged and does not re-advance
+  `PackagePreparation`. Dine-in orders never enter courier pickup — no dine-in `Delivery` is ever
+  created (`CreateDelivery` is only invoked for delivery-channel orders).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier, Orders, Kitchen
+
+### BR-COURIER-017 — Dispatch is deterministic, rule-based, and never production route optimization (Phase 5)
+- **Status**: VERIFIED (rule-based, in-memory) — explicitly OUT OF SCOPE (production route
+  optimization, AI route prediction, paid mapping provider)
+- **Rule**: `DispatchScorer.rank` scores each `DispatchScoringInput` candidate as
+  `distance 40% + capacity 30% + urgency 10% + reliability 20%`, behind a hard eligibility gate
+  (`isAvailable && isEligibleForBranch && hasCapacity && isVehicleSuitable`) — an ineligible candidate
+  always scores 0 and must never be offered. Distance is a straight-line (haversine) estimate, never a
+  real routing distance. `OfferDeliveryAssignment` offers only to the top-ranked eligible candidate and
+  throws `CourierNotAvailableViolation` if none exists. `DeliveryAlreadyAssignedViolation` enforces
+  "one delivery cannot have two active accepted couriers." `ManuallyAssignDelivery`/`ReassignDelivery`
+  bypass scoring entirely and require a non-empty `overrideReason` plus `overriddenByStaffId`
+  (`ManualOverrideReasonRequiredViolation` otherwise) — both land directly at
+  `DeliveryAssignmentStatus.accepted` (a documented simplification: a manager physically directing a
+  courier does not require the courier's own separate acceptance step, `docs/decisions.md` ADR-017).
+  `ReassignDelivery` never mutates the superseded `DeliveryAssignment` — full assignment history is
+  preserved across reassignments.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-018 — Assignment rejection requires a predefined reason tag (Phase 5)
+- **Status**: VERIFIED
+- **Rule**: `RespondToDeliveryAssignment` validates a rejection's `rejectionReasonCode` against
+  `CourierFeedbackTag` names — `InvalidAssignmentRejectionReasonViolation` otherwise. There is no
+  free-text rejection reason. On reject, the `Delivery` is requeued to `readyForAssignment` (via
+  `assignmentRejected`, a second saved revision) while the rejected `DeliveryAssignment` record itself
+  is left untouched — full history preserved. On accept, `CourierAvailability.activeAssignmentCount`
+  is incremented.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-019 — Delivery completion never duplicates or modifies `PaymentSession` history (Phase 5)
+- **Status**: VERIFIED
+- **Rule**: `CompleteDelivery` requires the correct assigned courier
+  (`DeliveryNotAssignedToCourierViolation`), the correct `expectedRevision`
+  (`StaleCourierRevisionViolation`), the correct lifecycle stage, and a passing geofence evaluation or
+  an approved override (`GeofenceRequiresOverrideViolation`). It is idempotent — a second call on an
+  already-`delivered` delivery returns it unchanged. It records one `DeliveryProof` and never reads or
+  writes `PaymentSession`/`CourierCashCollection` itself — structurally, not by caller discipline: the
+  use case's constructor has no dependency capable of doing so. Cash-on-delivery collection is a fully
+  separate action (`DeclareCourierCashCollectionForDelivery`, BR-COURIER-012).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier, Orders, POS
+
+### BR-COURIER-020 — Failed delivery reasons are predefined; only customer-caused failures may emit a
+  customer-risk signal (Phase 5)
+- **Status**: VERIFIED (classification and signal flag) — explicitly OUT OF SCOPE (a full fraud/risk
+  engine acting on the signal, automatic customer sanctions)
+- **Rule**: `RecordDeliveryFailure` only accepts a predefined `DeliveryFailureReason` (13 values); no
+  unrestricted courier-written accusation field exists (`courierNote` is operational, length-limited to
+  280 characters). `DeliveryFailureResponsibility` (customer/restaurant/courier/system/forceMajeure/
+  manager) is derived from the reason at construction via `DeliveryFailureResponsibilityMapper` and
+  frozen — never independently settable, so a failure's responsibility can never disagree with its own
+  reason. `DeliveryFailure.mayEmitCustomerRiskSignal` is `true` only when
+  `responsibility == DeliveryFailureResponsibility.customer` — restaurant/courier/system/force-majeure/
+  manager-caused failures must never increase customer risk. This use case only reports that boolean;
+  no risk engine exists in this phase to act on it.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier, Orders
+
+### BR-COURIER-021 — Customer contact access is limited to the active delivery window and never
+  carries raw contact data (Phase 5)
+- **Status**: VERIFIED
+- **Rule**: `RecordCustomerContactAction` throws `InvalidDeliveryTransitionViolation` if the
+  `Delivery` is already terminal — a courier's reason to contact the customer ends when the delivery
+  does. `CustomerContactAction` structurally has no field capable of holding a phone number or
+  address; `loggedNote` is operational only (e.g. `'no answer'`), never customer PII, and is
+  length-limited to 280 characters. Contact details are never copied into
+  `CourierOperationalAuditEntry` records.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier, Orders
+
+### BR-COURIER-022 — Feedback uses predefined tags only (Phase 5)
+- **Status**: VERIFIED
+- **Rule**: `RecordCourierFeedback` throws `InvalidCourierFeedbackViolation` if `tags` is empty — at
+  least one predefined `CourierFeedbackTag` is required; there is no untagged free-text feedback.
+  `note` is length-limited to 280 characters.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-023 — Geofence evaluation is accuracy-aware and never authoritative without a manager
+  override (Phase 5)
+- **Status**: VERIFIED (domain contracts + in-memory) — ROADMAP (paid mapping/geolocation provider,
+  production background-location deployment)
+- **Rule**: `GeofenceEvaluator.evaluate` computes `isWithin` (haversine distance ≤ radius, default 20m)
+  and `isAccuracySufficient` (`accuracyMeters ≤ 50`) independently — `passesAutomatically` requires
+  both. A low-accuracy GPS reading is never treated as definitive evidence even if nominally
+  `isWithin`. `TransitionDelivery`/`ConfirmPackagePickup`/`CompleteDelivery` all throw
+  `GeofenceRequiresOverrideViolation` when a supplied `GeofenceEvaluationResult` fails and no
+  `GeofenceOverride` id is supplied. `OverrideGeofence` requires a non-empty `reason` and a manager
+  actor (`PosAuthorizedAction.overrideGeofence`) and produces an immutable record — no update/delete
+  method exists on `GeofenceOverrideRepository`. `EtaEstimator`/`NaiveEtaEstimator` produce an
+  estimate only, never authoritative truth, using the same haversine distance and an assumed 6 m/s
+  speed — no mapping provider is added.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier
+
+### BR-COURIER-024 — Real-time sync is same-process, at-least-once, idempotent, and honestly scoped
+  (Phase 5)
+- **Status**: VERIFIED (domain/contracts + in-memory, same-process only) — explicitly NOT production
+  cross-device/cross-process real-time delivery
+- **Rule**: `CourierEventRepository.append` assigns a monotonically increasing `sequence` per branch at
+  append time (ignoring `occurredAt` ordering, so out-of-order delivery is handled) and throws
+  `DuplicateCourierEventViolation` on a repeated `idempotencyKey` — a caller retry never double-records.
+  `InMemoryCourierSynchronizationService.synchronize` replays every event since a device's last cursor
+  and is safe to call repeatedly (idempotent — an empty batch when nothing changed).
+  `InMemoryCourierEventBus` is same-process, per-branch broadcast only — **not real cross-device/
+  cross-process real-time delivery**, matching `InMemoryKitchenEventBus`'s identical, already-documented
+  boundary (Phase 4, ADR-016). `SubmitOfflineCourierCommand` is idempotent by `idempotencyKey`;
+  `RetryPendingCourierCommands` turns a `StaleCourierRevisionViolation` into an explicit `conflict`
+  outcome rather than a silent wrong write.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
 
 # Staff and Manager Operations
 
@@ -1980,11 +2162,70 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Business Rule IDs**: BR-KITCHEN-009, BR-KITCHEN-010, BR-KITCHEN-011, BR-KITCHEN-012,
   BR-KITCHEN-013, BR-KITCHEN-014, BR-KITCHEN-015, BR-KITCHEN-016, BR-KITCHEN-017, BR-AUDIT-008
 
+### DL-020 — Courier Operations Platform
+- **Decision**: Builds a production-oriented Courier Operations Platform foundation on top of Sprint
+  3F's courier-settlement foundation and Phase 4's real-time architecture pattern, without redesigning
+  either. Introduces the **first real `Courier`/`Delivery`/`DeliveryAssignment` aggregates** in this
+  codebase — `courierId` was previously a plain external `String` (Sprint 3F, BR-COURIER-004/007); a
+  `Courier` registry entity now exists, and `Courier.id` is the same string values already flowing
+  through Sprint 3F code, no migration performed. `Delivery` is a courier-*operations* aggregate,
+  deliberately separate from `Order`/`OrderStatus` (mirrors the `PackagePreparation`/`Check` separation,
+  ADR-013) and from `CourierSettlementSession` (financial state stays untouched, BR-COURIER-012).
+  Shift lifecycle with manager approval and self-approval blocking; availability tied to an active
+  approved shift; deterministic rule-based dispatch (`DispatchScorer`, no route optimization); package
+  pickup integration bridging into `PackagePreparation` via the same closure-injection pattern Phase 4
+  established (`CompleteKitchenOrderPreparation`); geofence evaluation (haversine, accuracy-aware,
+  manager-override escape hatch); a fully parallel (not shared) real-time event architecture
+  mirroring Phase 4's `Kitchen*` types exactly in shape but as distinct types, per the explicit
+  instruction not to couple courier domain objects to KDS-specific contracts; predefined-reason-only
+  failure/rejection/feedback taxonomies with a derived, frozen responsibility classification; a
+  privacy-minimizing customer-contact-action log; and a computed (never persisted, never a score/rank)
+  courier performance snapshot.
+- **Status**: DECIDED
+- **Source**: User, Phase 5 autonomous-implementation-mode approval — a 17-section kickoff (5A through
+  5Q) specifying explicit domain models, identity/shift/availability/delivery/dispatch/location/
+  real-time/completion/failure/contact/performance/UI/authorization/testing requirements, an explicit
+  "FIRST TASK" instruction to analyze the existing architecture and not redesign Phase 3/4 foundations
+  unless strictly required, and an explicit instruction to report the real-time and location
+  infrastructure boundaries honestly rather than overclaim production tracking.
+- **Date**: 2026-07-30
+- **Consequences**: See BR-COURIER-004 (updated) and BR-COURIER-012 through BR-COURIER-024.
+  `docs/decisions.md` ADR-017 records the full architecture, including the judgment calls this phase
+  required: `RequestCourierShift` skips the brief's `scheduled` intermediate state;
+  `ManuallyAssignDelivery`/`ReassignDelivery` land directly at `accepted` rather than a separate
+  offer-then-accept step; `CancelDeliveryAssignment`/`ExpireDeliveryAssignment` are unified behind one
+  `isExpiry` flag (mirrors `ChangeCourierRegistryStatus`'s existing activate/suspend/archive
+  consolidation pattern); `CourierOperationalAuditEntry` deliberately has no `tenantId` field (no
+  tenant concept exists anywhere in this codebase).
+- **Related Modules**: Courier, Orders, POS, Kitchen, Staff/Admin
+- **Business Rule IDs**: BR-COURIER-004, BR-COURIER-012, BR-COURIER-013, BR-COURIER-014,
+  BR-COURIER-015, BR-COURIER-016, BR-COURIER-017, BR-COURIER-018, BR-COURIER-019, BR-COURIER-020,
+  BR-COURIER-021, BR-COURIER-022, BR-COURIER-023, BR-COURIER-024
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v1.9 — 2026-07-30
+- **Version**: 1.9
+- **Date**: 2026-07-30
+- **Summary**: Phase 5 (Courier Operations Platform). Updated BR-COURIER-004 (roster/dispatch/live
+  location moves from ROADMAP to VERIFIED). Added BR-COURIER-012 (operations/settlement domain
+  separation), BR-COURIER-013 (shift lifecycle, manager approval, self-approval block), BR-COURIER-014
+  (availability requires an active approved shift), BR-COURIER-015 (delivery lifecycle separate from
+  OrderStatus), BR-COURIER-016 (package pickup integration, kitchen-ready ≠ package-ready ≠ picked up),
+  BR-COURIER-017 (deterministic rule-based dispatch, no route optimization), BR-COURIER-018 (assignment
+  rejection requires a predefined reason tag), BR-COURIER-019 (completion never touches PaymentSession),
+  BR-COURIER-020 (predefined failure reasons, only customer-caused failures may signal risk),
+  BR-COURIER-021 (customer contact limited to the active delivery window, never raw contact data),
+  BR-COURIER-022 (feedback uses predefined tags only), BR-COURIER-023 (accuracy-aware geofence
+  evaluation, manager-override escape hatch), BR-COURIER-024 (real-time sync is same-process,
+  at-least-once, idempotent, honestly scoped). Logged DL-020.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the Courier Operations Platform business rules this phase's approved architecture
+  established.
 
 ### v1.8 — 2026-07-30
 - **Version**: 1.8

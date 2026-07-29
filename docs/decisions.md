@@ -1371,3 +1371,195 @@ in two places: the delta-ticket line-diffing boundary (a genuine, pre-existing `
 carried forward rather than solved, exactly as instructed) and the in-memory-only real-time bus, whose
 correctness story depends entirely on `KitchenSynchronizationService`'s replay path rather than the
 publish/subscribe stream — both documented here rather than glossed over.
+
+## ADR-017 — Courier Operations Platform (Phase 5)
+
+- Date: 2026-07-30
+- Status: Accepted
+
+### Pre-implementation architecture analysis (required first task)
+A dedicated research agent inspected the complete existing architecture before any code: Sprint 3F's
+`CourierSettlementSession`/`CourierCashCollection`/`CourierCashDeclaration` exact domain shapes;
+`Order`/`OrderChannel`/`OrderStatus` (confirmed `OrderStatus.outForDelivery` exists as the only
+delivery-adjacent status); `CourierVisibility` (`hidden`/`visibleToCustomer`, already exists on
+`Order`, BR-COURIER-001); `PackagePreparationStatus`'s full 13-state machine; Phase 4's
+`CompleteKitchenOrderPreparation` closure-injection bridging code, read in full, as the pattern to
+replicate; Phase 4's real-time architecture interface signatures (`KitchenEventPublisher`/`Subscriber`/
+`Repository`/`ProjectionRepository`/`SynchronizationService`/`ConnectionMonitor`), read in full;
+`KitchenDisplayDevice`/`KitchenDisplaySession` shapes, as the `Device` pattern to mirror; confirmed
+**zero tenant concept exists anywhere** (only two prose mentions, no `Tenant` type); confirmed **zero
+`Staff` entity exists** (staff are referenced by plain `String staffId` throughout); `PosAuthorizedAction`'s
+full value list at start of phase, confirmed feature-agnostic by its own doc comment; all 6 existing
+audit-entry-type shapes; confirmed **zero courier/location/dispatch feature flags** and **zero location
+fields in `AppEnvironmentConfig`**; confirmed `go_router` still covers only 5 routes; confirmed **zero
+geolocation/maps package or contract anywhere** (only an unrelated static `lat/lng` on a customer address
+model); confirmed **zero notification/SMS/push package**; `docs/master_roadmap.md`'s Phase 9 Courier
+section (`COUR-001`/`COUR-002`); `docs/business_rules.md` BR-COURIER-001 through 011, read in full
+(BR-COURIER-004 confirmed still ROADMAP with no code); and existing test fixture conventions
+(`courier_settlement_test_fixtures.dart`, `kds_test_fixtures.dart`). This analysis directly shaped every
+decision below — nothing here redesigns a Phase 3 or Phase 4 foundation.
+
+### Decision
+Implements a production-oriented Courier Operations Platform foundation — the **first real
+`Courier`/`Delivery`/`DeliveryAssignment` aggregates** in this codebase.
+
+**`Courier.id` is the same string already flowing through Sprint 3F code — no migration.**
+`courierId: String` (Sprint 3F, ADR-015's own deliberate judgment call, made because no `Courier`
+entity existed yet) is unchanged everywhere; `Courier` is a new registry entity whose `id` values match
+what already flows through `CourierCashCollection`/`CourierSettlementSession` unchanged.
+
+**`Delivery` is a courier-*operations* aggregate, deliberately separate from both `Order` and
+`CourierSettlementSession`.** `Delivery.orderId` references the order; no line, pricing, or customer
+data is duplicated (mirrors the `PackagePreparation`/`Check`/`PosOrderSession` separation, ADR-013).
+`Delivery`/`CourierShift`/`CourierAvailability`/`DeliveryAssignment` never reference
+`CourierSettlementSession` by field — the only financial touchpoint is
+`DeclareCourierCashCollectionForDelivery`, a thin wrapper calling Sprint 3F's unmodified
+`RecordCourierCashCollection` directly, never reimplementing cash collection.
+
+**"One use case, not N near-duplicates" applied four more times**, extending the precedent
+`FireKitchenTicket` (Sprint 3D) and `TransitionKitchenWorkItem` (Phase 4) already established:
+`ChangeCourierRegistryStatus` (activate/suspend/archive unified), `ReviewCourierShift` (approve/reject
+unified), `TransitionCourierShift` (active/ending/completed/cancelled/suspended unified), and
+`TransitionDelivery` (arrival/en-route/cancellation transitions unified — pickup and completion kept as
+their own use cases since they need additional integration).
+
+**Package pickup bridges into `PackagePreparation` via the exact same injected-closure pattern
+`CompleteKitchenOrderPreparation` established** — `ConfirmPackagePickup` takes
+`isPackageReadyForPickup`/`advanceToCourierCollected` closures rather than a direct
+`PackagePreparationRepository` dependency, for the same reason (testability without constructing a full
+fixture, and the same `pos`/`courier` → `orders` boundary shape). `CompleteDelivery` takes an
+`advanceToDelivered` closure the same way.
+
+**Real-time architecture is deliberately parallel, not shared, with Phase 4's KDS architecture** — per
+the explicit instruction "do not couple courier domain objects directly to KDS-specific contracts."
+`CourierEvent`/`CourierEventCursor`/`CourierEventPublisher`/`CourierEventSubscriber`/
+`CourierSynchronizationService`/`CourierConnectionMonitor`/`InMemoryCourierEventBus` structurally mirror
+`Kitchen*`'s exact same shape (per-branch monotonic `sequence` assigned at append time ignoring
+`occurredAt`, duplicate-idempotency-key rejection, cursor-based replay) but are distinct types with zero
+cross-imports between the two features' domain layers — the same honest boundary Phase 4 established
+("this phase does not claim real cross-device/cross-process real-time delivery") applies identically
+here, verified directly by `services_test.dart`.
+
+**`CourierDevice`/`CourierDeviceSession` mirror `KitchenDisplayDevice`/`KitchenDisplaySession`'s split
+exactly, as a separate type** — mutable registry entity / append-only-via-revision session, applied to
+courier devices instead of kitchen displays. Neither carries a `branchId` (a device belongs to a
+courier, not directly to a branch); `InMemoryCourierConnectionMonitor.findStaleDevices` resolves branch
+scope by first querying `CourierRepository.findByBranchId` then each courier's devices — documented
+directly in the implementation's own doc comment.
+
+**Dispatch is a pure, deterministic scoring function, never route optimization.** `DispatchScorer.rank`
+mirrors `KitchenRoutingResolver`/`ExpeditorProjectionBuilder`'s no-I/O shape: a hard eligibility gate
+(offline/wrong-branch/no-capacity/unsuitable-vehicle candidates always score 0) plus a weighted sum
+(distance 40%, capacity 30%, urgency 10%, reliability 20%) using haversine straight-line distance — no
+mapping/geolocation package was added (none exists in `pubspec.yaml`; adding one is explicitly out of
+scope).
+
+**Manual assignment and reassignment land directly at `accepted`, skipping a separate courier-response
+step — a documented simplification.** The brief's offer→accept/reject flow is what `OfferDeliveryAssignment`/
+`RespondToDeliveryAssignment` implement for the automatic-dispatch path; `ManuallyAssignDelivery`/
+`ReassignDelivery` are manager-driven actions where a manager is already directing a specific courier,
+so a further separate acceptance step was judged unnecessary friction — reported here as a deviation
+from the brief's literal implication, not silently decided.
+
+**`CancelDeliveryAssignment`/`ExpireDeliveryAssignment` (named separately in the brief) are unified
+behind one `isExpiry` flag** — mirrors `ChangeCourierRegistryStatus`'s activate/suspend/archive
+consolidation: both share every step (requeue the delivery via `assignmentExpired`/`assignmentRejected`
+to `readyForAssignment`) and differ only in the recorded event/audit type and description.
+
+**Failure responsibility is derived and frozen, never independently settable.**
+`DeliveryFailureResponsibilityMapper.forReason` is a pure, exhaustive `switch` (a compile error if a new
+`DeliveryFailureReason` is added without updating it) computed once in `DeliveryFailure`'s constructor
+initializer list — a failure's responsibility can never disagree with its own reason, and
+`mayEmitCustomerRiskSignal` is derived from that frozen value, never independently set. No fraud/risk
+engine exists to act on the signal — explicitly out of scope, per the brief.
+
+**Geofence evaluation is a pure function mirroring the same no-I/O shape as `DispatchScorer`/
+`KitchenRoutingResolver`.** `GeofenceEvaluator.evaluate` computes `isWithin` and `isAccuracySufficient`
+independently via haversine distance; `passesAutomatically` requires both — "do not treat low-accuracy
+GPS as definitive evidence" is enforced structurally, not by convention. Every geofence-gated use case
+(`TransitionDelivery`/`ConfirmPackagePickup`'s restaurant-arrival step is folded into
+`TransitionDelivery`/`CompleteDelivery`) accepts an optional `GeofenceEvaluationResult` and an optional
+`geofenceOverrideId`; omitting the result entirely skips the check (a manual/manager-driven correction
+where no location reading applies), while a supplied-and-failing result without an override throws
+`GeofenceRequiresOverrideViolation`.
+
+**`CourierPerformanceSnapshot` is computed on demand from immutable records, never persisted, and has no
+score/rank/punishment field at all** — the same "continuously-changing figure must never be stored as
+authoritative" reasoning `CashVariance`/`CourierSettlementVariance`/`KitchenDelayState` already
+established, extended to performance metrics; `CourierPerformanceBuilder` is a pure function
+(`CourierPerformanceBuilder.build`) and `BuildCourierPerformanceSnapshot` is only the I/O-fetching,
+period-filtering shell around it.
+
+**Customer contact and privacy**: `CustomerContactAction` structurally has no field capable of holding a
+phone number or address — the privacy rule ("never gains access to permanent customer contact data") is
+enforced by the type's own shape, not by a runtime check. `CourierOperationalAuditEntry` carries a
+`locationRef` (opaque reference only, never raw lat/lng) and deliberately has no `tenantId` field, per
+the architecture analysis's confirmation that no tenant concept exists anywhere in this codebase — only
+`branchId` — documented directly in the class's own doc comment rather than fabricating a field.
+
+**Authorization/audit**: 21 new `PosAuthorizedAction` values (additive) cover courier
+activate/deactivate, shift review/start/end, availability change, delivery creation, assignment
+offer/response/manual-assign/reassign/cancel, restaurant-arrival/pickup/start-delivery/customer-arrival/
+completion confirmations, failed-delivery recording, geofence override, customer-contact access, and
+failure-responsibility review. `SelfApprovalNotAllowedViolation` (Sprint 3E) is reused directly for
+`ReviewCourierShift`, not reimplemented. Every state-changing Phase 5 use case both checks authorization
+and records a `CourierOperationalAuditEntry`.
+
+### Context
+Approved directly into "AUTONOMOUS IMPLEMENTATION MODE" by the user's kickoff message — a 17-section
+brief (5A domain foundation through 5Q testing) with an explicit "FIRST TASK — EXISTING ARCHITECTURE
+ANALYSIS" instruction to analyze the complete existing architecture before writing code and not redesign
+Phase 3/4 foundations unless strictly required, explicit domain/identity/shift/availability/delivery/
+pickup/dispatch/location/real-time/completion/failure/contact/performance/UI/authorization/testing
+requirements, an explicit business-rules list, an explicit out-of-scope list (payroll, real bank
+settlement, accounting/e-invoice, full fraud/risk engine, customer automatic sanctions, paid map-provider
+integration, advanced route optimization, marketplace courier APIs, third-party courier companies,
+production SMS/telephony/push provider, raw proof-photo storage, production background-location
+deployment, inventory/recipe consumption, AI route prediction, autonomous courier scoring, hardware
+procurement), and an explicit instruction to report the real-time and location infrastructure boundaries
+honestly. The same four stop conditions as ADR-014/015/016 applied; none were triggered.
+
+### Consequences
+- **9 implementation commits** (domain/data/identity/services foundation; identity/shift/availability
+  use cases; delivery lifecycle/pickup/completion/failure/contact/feedback/performance use cases;
+  dispatch/assignment use cases; location/geofence/offline-command use cases; dependencies provider; UI;
+  comprehensive test suite — documentation is this commit), each independently formatted/analyzed/tested
+  before commit, matching ADR-012 through ADR-016's granularity precedent.
+- **No existing Sprint 3A–3F or Phase 4 file was rewritten** — `PosAuthorizedAction` (21 additive
+  values), `core/errors/business_rule_violation.dart` (20 additive violation types),
+  `DeliveryRepository` (one additive method, `findByCourierId`, added mid-phase when
+  `BuildCourierPerformanceSnapshot` needed full delivery history) are the only pre-existing files
+  modified beyond their own tests; every other change is a new file.
+- **Deviation — `ManuallyAssignDelivery`/`ReassignDelivery` skip a separate courier-acceptance step**;
+  see the Decision section's own passage.
+- **Deviation — `CancelDeliveryAssignment`/`ExpireDeliveryAssignment` unified into one use case** with an
+  `isExpiry` flag, per the "one use case, not N near-duplicates" precedent; see the Decision section.
+- **Deviation — `RequestCourierShift` skips the brief's `scheduled` intermediate state**, creating
+  directly at `awaitingManagerApproval` — no UI in this phase requires a separate pre-scheduling step.
+- **Honest infrastructure boundary**: `InMemoryCourierEventBus` and every Phase 5 repository are
+  in-memory, same-process only. No `firebase_*` package, mapping/geolocation package, or SMS/push/
+  telephony package was added. This phase is the seam a future backend/location-provider integration
+  will plug into, not that integration itself.
+- **Privacy boundary**: no raw customer contact data or raw lat/lng is ever placed in
+  `CourierOperationalAuditEntry`; `CustomerContactAction` cannot structurally hold contact data;
+  `DeliveryProof` carries only metadata (reference tokens), never raw image/signature bytes — no secure
+  blob storage infrastructure exists in this codebase to store it safely in.
+- **No new pub dependency.** No change to `go_router`, `MainNavigationScreen`, or any customer-facing
+  screen. No change to any Sprint 3A–3F or Phase 4 order/payment/restaurant-operations/cash-management/
+  courier-settlement/KDS code path.
+
+### Confidence
+78%. The domain model (courier/shift/availability/delivery/assignment/device/session/location/audit
+split, the operations-vs-settlement separation, the dispatch scoring function, the geofence evaluation
+function) is directly grounded in the brief's explicit requirements, each mapping to a concrete enforced
+invariant verified by a dedicated test (97 new tests, including one full end-to-end integration test
+spanning PackagePreparation through cash collection). The residual uncertainty is concentrated in three
+places, each reported rather than glossed over: the manual-assignment/reassignment courier-acceptance
+simplification (a genuine deviation from the brief's implied flow, not a bug); the in-memory-only
+real-time bus and geofence/location contracts (no real backend, mapping provider, or telephony/SMS/push
+integration exists — every location-adjacent use case is exercised against synthetic
+`CourierLocationSnapshot`/`GeofenceEvaluationResult` fixtures, never a real device sensor); and the UI
+layer's consolidation from the brief's ~32 named screens down to 5 real, functioning screens (courier
+home, active delivery, delivery history, manager dispatch board, manager performance/failure review) —
+narrower in screen count than the brief's literal enumeration but covering every named state/action,
+mirroring Phase 4's own KDS UI consolidation precedent.

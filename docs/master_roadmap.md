@@ -489,19 +489,41 @@
 
 #### COUR-001 — In-House Courier App & Dispatch
 - Description: Courier roster, order assignment (manual/auto-dispatch), and a lightweight courier-facing app.
+- Status: **Domain/application/UI foundation implemented (Phase 5, `lib/features/courier/**`)** — see
+  `docs/business_rules.md` BR-COURIER-004/012–024 and `docs/decisions.md` ADR-017. `Courier`/`Delivery`/
+  `DeliveryAssignment` aggregates, shift lifecycle with manager approval, deterministic rule-based
+  dispatch scoring (`DispatchScorer`), manual/automatic assignment, package pickup integration, delivery
+  completion, and a consolidated courier + manager UI all exist and are tested (97 tests). **Still
+  ROADMAP**: a real backend (every repository is in-memory, same-process only — no cross-device
+  real-time delivery), real device GPS/location ingestion (only `NoOp`/synthetic-fixture location
+  contracts exist), a paid mapping/route-optimization provider (`DispatchScorer` uses straight-line
+  haversine distance only), and production SMS/push/telephony for courier-customer contact.
 - Priority: P2
 - Dependencies: ORD-001, IA-001
 - Business value: Enables in-house delivery without relying solely on marketplace-platform couriers.
 - Technical risk: Medium.
 - Complexity: L
-- Backend impact: Location ingestion, assignment logic.
-- Mobile impact: New lightweight Flutter target (or web view) for couriers.
-- Web/admin impact: Dispatch management UI.
-- Test requirements: Assignment-conflict tests (no order double-assigned).
-- Completion criteria: A dispatcher can assign an order to a courier and see its delivery status update in real time.
+- Backend impact: Location ingestion, assignment logic. Domain/application logic already implemented
+  client-side (Phase 5); a real backend would host the same contracts (`CourierEventRepository`,
+  `CourierLocationRepository`, etc.) behind a real API rather than in-memory.
+- Mobile impact: Implemented as screens within the main Flutter app this phase
+  (`CourierHomeScreen`/`ActiveDeliveryScreen`/`CourierDeliveryHistoryScreen`), not yet a separate
+  lightweight target — whether a separate app/target is still warranted is an open question for whoever
+  picks this up next.
+- Web/admin impact: `CourierDispatchBoardScreen`/`CourierPerformanceScreen` implemented as in-app
+  screens this phase (consolidated, list-based — no map visualization yet).
+- Test requirements: Assignment-conflict tests (no order double-assigned) — implemented
+  (`DeliveryAlreadyAssignedViolation`, tested).
+- Completion criteria: A dispatcher can assign an order to a courier and see its delivery status update
+  in real time — assignment and status-update logic implemented; **real-time cross-device delivery
+  still requires a real backend**, not yet built.
 
 #### COUR-002 — Live Delivery Tracking (Customer App)
 - Description: Customer-facing live map/status view of their courier's delivery, replacing the currently-empty `ActiveOrderScreen`.
+- Status: **Not started.** Phase 5 built the courier-side/manager-side operational platform
+  (COUR-001) only — no customer-facing tracking screen exists yet. `CourierLocationSnapshot`/
+  `DeliveryTrackingRepository` (Phase 5) are the location-data foundation this would read from, but
+  no customer-scoped read path or UI has been built.
 - Priority: P2
 - Dependencies: COUR-001
 - Business value: A well-understood customer-satisfaction driver in food delivery.
