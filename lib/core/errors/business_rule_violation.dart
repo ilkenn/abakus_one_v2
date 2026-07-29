@@ -872,3 +872,211 @@ final class KitchenOrderNotFullyReadyViolation extends BusinessRuleViolation {
   String get description =>
       'Order "$orderId" kitchen preparation is not yet fully ready';
 }
+
+/// A caller referenced a `Courier`/`CourierShift`/`CourierAvailability`/
+/// `Delivery`/`DeliveryAssignment`/`CourierDevice`/`CourierDeviceSession`
+/// id that does not exist in the relevant repository (Phase 5).
+final class UnknownCourierEntityViolation extends BusinessRuleViolation {
+  const UnknownCourierEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// An action was attempted against a `Courier` whose
+/// `CourierRegistryStatus` is not `active` (suspended/archived).
+final class CourierRegistryNotActiveViolation extends BusinessRuleViolation {
+  const CourierRegistryNotActiveViolation({
+    required this.courierId,
+    required this.statusName,
+  });
+
+  final String courierId;
+  final String statusName;
+
+  @override
+  String get description =>
+      'Courier "$courierId" is not active (status: $statusName)';
+}
+
+/// `RequestCourierShift` was called for a courier that already has a
+/// non-terminal `CourierShift` — only one active shift per courier is
+/// ever permitted.
+final class CourierShiftAlreadyActiveViolation extends BusinessRuleViolation {
+  const CourierShiftAlreadyActiveViolation({required this.courierId});
+
+  final String courierId;
+
+  @override
+  String get description => 'Courier "$courierId" already has an active shift';
+}
+
+/// A `CourierShiftStatus` transition that
+/// `CourierShiftStatusTransitions.canTransition` does not permit was
+/// attempted.
+final class InvalidCourierShiftTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidCourierShiftTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid courier shift transition: $fromStatusName -> $toStatusName';
+}
+
+/// `SetCourierAvailability` was called to reach
+/// `CourierAvailabilityStatus.available` without an active, approved
+/// `CourierShift` — "courier cannot become available without an active
+/// approved shift."
+final class CourierShiftRequiredViolation extends BusinessRuleViolation {
+  const CourierShiftRequiredViolation({required this.courierId});
+
+  final String courierId;
+
+  @override
+  String get description => 'Courier "$courierId" has no active approved shift';
+}
+
+/// A courier attempted to accept/act on a delivery while
+/// `CourierAvailabilityStatus` is `offline`/`suspended`, or while at
+/// capacity.
+final class CourierNotAvailableViolation extends BusinessRuleViolation {
+  const CourierNotAvailableViolation({
+    required this.courierId,
+    required this.reason,
+  });
+
+  final String courierId;
+  final String reason;
+
+  @override
+  String get description => 'Courier "$courierId" is not available: $reason';
+}
+
+/// A `DeliveryStatus` transition that
+/// `DeliveryStatusTransitions.canTransition` does not permit was
+/// attempted.
+final class InvalidDeliveryTransitionViolation extends BusinessRuleViolation {
+  const InvalidDeliveryTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid delivery transition: $fromStatusName -> $toStatusName';
+}
+
+/// `ManuallyAssignDelivery`/`OfferDeliveryAssignment` was called for a
+/// `Delivery` that already has an active accepted `DeliveryAssignment` —
+/// "one delivery cannot have two active accepted couriers."
+final class DeliveryAlreadyAssignedViolation extends BusinessRuleViolation {
+  const DeliveryAlreadyAssignedViolation({required this.deliveryId});
+
+  final String deliveryId;
+
+  @override
+  String get description =>
+      'Delivery "$deliveryId" already has an active accepted courier';
+}
+
+/// `ConfirmPackagePickup` was called before the referenced
+/// `PackagePreparation` reached a pickup-eligible status — "courier
+/// cannot pick up an unprepared package."
+final class PackageNotReadyForPickupViolation extends BusinessRuleViolation {
+  const PackageNotReadyForPickupViolation({
+    required this.deliveryId,
+    required this.packageStatusName,
+  });
+
+  final String deliveryId;
+  final String packageStatusName;
+
+  @override
+  String get description =>
+      'Delivery "$deliveryId" package is not ready for pickup '
+      '(status: $packageStatusName)';
+}
+
+/// A courier attempted to act on a `Delivery` they are not the currently
+/// assigned courier for — "courier cannot complete a delivery they are
+/// not assigned to."
+final class DeliveryNotAssignedToCourierViolation
+    extends BusinessRuleViolation {
+  const DeliveryNotAssignedToCourierViolation({
+    required this.deliveryId,
+    required this.courierId,
+  });
+
+  final String deliveryId;
+  final String courierId;
+
+  @override
+  String get description =>
+      'Delivery "$deliveryId" is not assigned to courier "$courierId"';
+}
+
+/// A revisioned courier-domain record (`Delivery`/`CourierShift`/
+/// `CourierAvailability`/`DeliveryAssignment`) transition was attempted
+/// against a stale `expectedRevision`.
+final class StaleCourierRevisionViolation extends BusinessRuleViolation {
+  const StaleCourierRevisionViolation({
+    required this.entityId,
+    required this.expectedRevision,
+    required this.actualRevision,
+  });
+
+  final String entityId;
+  final int expectedRevision;
+  final int actualRevision;
+
+  @override
+  String get description =>
+      'Stale revision for "$entityId": expected $expectedRevision, actual '
+      '$actualRevision';
+}
+
+/// `CourierEventRepository.append` was called with an `idempotencyKey`
+/// already recorded for the branch.
+final class DuplicateCourierEventViolation extends BusinessRuleViolation {
+  const DuplicateCourierEventViolation({required this.idempotencyKey});
+
+  final String idempotencyKey;
+
+  @override
+  String get description =>
+      'Duplicate courier event idempotency key: "$idempotencyKey"';
+}
+
+/// A geofence-gated delivery action was attempted while
+/// `GeofenceEvaluationResult.passesAutomatically` is `false` and no
+/// `GeofenceOverride` was supplied — "geofence overrides require manager
+/// authorization and reason."
+final class GeofenceRequiresOverrideViolation extends BusinessRuleViolation {
+  const GeofenceRequiresOverrideViolation({
+    required this.deliveryId,
+    required this.zoneTypeName,
+  });
+
+  final String deliveryId;
+  final String zoneTypeName;
+
+  @override
+  String get description =>
+      'Delivery "$deliveryId" geofence check for "$zoneTypeName" failed '
+      'and requires a manager override';
+}

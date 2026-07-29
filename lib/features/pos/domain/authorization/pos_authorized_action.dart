@@ -15,7 +15,11 @@
 /// Phase 4 KDS values (`acknowledgeKitchenItem` onward) extend it a final
 /// time — kitchen ticket reprints deliberately reuse the existing
 /// `reprintOrDuplicateReceipt` value rather than adding a duplicate
-/// (`docs/decisions.md` ADR-016).
+/// (`docs/decisions.md` ADR-016). The Phase 5 courier-operations values
+/// (`activateCourier` onward) extend it once more, from the new
+/// `lib/features/courier` feature — confirmed reusable directly by this
+/// enum/policy's own long-standing "generic action+actor+context, not
+/// payment-specific" design (`docs/decisions.md` ADR-017).
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -40,4 +44,25 @@ enum PosAuthorizedAction {
   recallKitchenLine,
   changeKitchenStation,
   completeOrderPreparation,
+  activateCourier,
+  deactivateCourier,
+  reviewCourierShift,
+  startCourierShift,
+  endCourierShift,
+  changeCourierAvailability,
+  createDelivery,
+  offerDeliveryAssignment,
+  respondToDeliveryAssignment,
+  manuallyAssignDelivery,
+  reassignDelivery,
+  cancelDeliveryAssignment,
+  confirmRestaurantArrival,
+  confirmPackagePickup,
+  startDelivery,
+  confirmCustomerArrival,
+  completeDelivery,
+  recordFailedDelivery,
+  overrideGeofence,
+  accessCustomerContactAction,
+  reviewFailureResponsibility,
 }
