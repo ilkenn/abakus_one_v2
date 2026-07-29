@@ -1,0 +1,32 @@
+/// The kind of human-meaningful courier-operations action a
+/// [CourierOperationalAuditEntry] records — narrower than
+/// [CourierEventType] (no connectivity/heartbeat events here).
+enum CourierAuditEventType {
+  courierActivated,
+  courierSuspended,
+  courierArchived,
+  shiftRequested,
+  shiftApproved,
+  shiftRejected,
+  shiftStarted,
+  shiftEnded,
+  shiftCompleted,
+  shiftCancelled,
+  availabilityChanged,
+  deliveryCreated,
+  assignmentOffered,
+  assignmentAccepted,
+  assignmentRejected,
+  manuallyAssigned,
+  reassigned,
+  assignmentCancelled,
+  restaurantArrivalConfirmed,
+  packagePickedUp,
+  deliveryStarted,
+  customerArrivalConfirmed,
+  deliveryCompleted,
+  deliveryFailed,
+  geofenceOverridden,
+  customerContactAction,
+  failureResponsibilityReviewed,
+}

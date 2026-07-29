@@ -1,0 +1,39 @@
+/// The kind of fact one [CourierEvent] records — the technical real-time
+/// sync log (includes connectivity events no human audit trail needs).
+/// This is the "CourierOperationalEvent" concept named in the Phase 5
+/// brief — named `CourierEvent` here to mirror `KitchenEvent`'s naming
+/// exactly (see `docs/decisions.md` ADR-017).
+enum CourierEventType {
+  shiftRequested,
+  shiftApproved,
+  shiftRejected,
+  shiftStarted,
+  shiftEnding,
+  shiftCompleted,
+  shiftCancelled,
+  shiftSuspended,
+  availabilityChanged,
+  deliveryCreated,
+  deliveryReadyForAssignment,
+  assignmentOffered,
+  assignmentAccepted,
+  assignmentRejected,
+  assignmentExpired,
+  assignmentCancelled,
+  deliveryReassigned,
+  restaurantArrivalConfirmed,
+  packagePickedUp,
+  pickupFailed,
+  deliveryEnRoute,
+  customerArrivalConfirmed,
+  deliveryCompleted,
+  deliveryFailed,
+  proofRecorded,
+  locationSnapshotRecorded,
+  geofenceOverridden,
+  feedbackRecorded,
+  customerContactActionRecorded,
+  deviceHeartbeat,
+  deviceConnected,
+  deviceDisconnected,
+}
