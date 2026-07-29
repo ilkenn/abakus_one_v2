@@ -14,6 +14,12 @@ abstract interface class DeliveryRepository {
   /// Every delivery currently assigned to [courierId] and not yet
   /// terminal — what a courier's "active delivery" screen reads.
   Future<List<Delivery>> findActiveByCourierId(String courierId);
+
+  /// Every delivery ever assigned to [courierId], terminal or not — used
+  /// by `BuildCourierPerformanceSnapshot` to compute period metrics.
+  /// Unlike [findActiveByCourierId], this also returns completed/failed/
+  /// cancelled deliveries.
+  Future<List<Delivery>> findByCourierId(String courierId);
 }
 
 class InMemoryDeliveryRepository implements DeliveryRepository {
@@ -65,6 +71,18 @@ class InMemoryDeliveryRepository implements DeliveryRepository {
         result.add(latest);
       }
     }
+    return List.unmodifiable(result);
+  }
+
+  @override
+  Future<List<Delivery>> findByCourierId(String courierId) async {
+    final result = <Delivery>[];
+    for (final history in _historyById.values) {
+      if (history.isNotEmpty && history.last.courierId == courierId) {
+        result.add(history.last);
+      }
+    }
+    result.sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return List.unmodifiable(result);
   }
 }

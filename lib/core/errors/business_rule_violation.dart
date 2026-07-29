@@ -1080,3 +1080,16 @@ final class GeofenceRequiresOverrideViolation extends BusinessRuleViolation {
       'Delivery "$deliveryId" geofence check for "$zoneTypeName" failed '
       'and requires a manager override';
 }
+
+/// `RecordCourierFeedback` was called with an empty tag list — "reuse
+/// predefined feedback tags," which implies at least one must be chosen;
+/// there is no untagged free-text feedback.
+final class InvalidCourierFeedbackViolation extends BusinessRuleViolation {
+  const InvalidCourierFeedbackViolation({required this.deliveryId});
+
+  final String deliveryId;
+
+  @override
+  String get description =>
+      'Delivery "$deliveryId" feedback requires at least one predefined tag';
+}
