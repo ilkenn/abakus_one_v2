@@ -1,27 +1,36 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/utils/clock_provider.dart';
+import '../../application/identity/courier_compensation_profile_id_generator.dart';
 import '../../application/identity/courier_device_id_generator.dart';
 import '../../application/identity/courier_device_session_id_generator.dart';
+import '../../application/identity/courier_earnings_adjustment_id_generator.dart';
+import '../../application/identity/courier_earnings_payment_id_generator.dart';
 import '../../application/identity/courier_event_id_generator.dart';
 import '../../application/identity/courier_feedback_id_generator.dart';
 import '../../application/identity/courier_id_generator.dart';
 import '../../application/identity/courier_location_snapshot_id_generator.dart';
 import '../../application/identity/courier_shift_id_generator.dart';
+import '../../application/identity/courier_shift_schedule_id_generator.dart';
 import '../../application/identity/customer_contact_action_id_generator.dart';
 import '../../application/identity/delivery_assignment_attempt_id_generator.dart';
 import '../../application/identity/delivery_assignment_id_generator.dart';
+import '../../application/identity/delivery_earnings_id_generator.dart';
 import '../../application/identity/delivery_failure_id_generator.dart';
 import '../../application/identity/delivery_id_generator.dart';
 import '../../application/identity/delivery_proof_id_generator.dart';
 import '../../application/identity/delivery_route_snapshot_id_generator.dart';
 import '../../application/identity/geofence_override_id_generator.dart';
 import '../../application/identity/pending_courier_command_id_generator.dart';
+import '../../application/identity/shift_hourly_earnings_id_generator.dart';
 import '../../application/services/in_memory_courier_connection_monitor.dart';
 import '../../application/services/in_memory_courier_synchronization_service.dart';
 import '../../data/courier_availability_repository.dart';
+import '../../data/courier_compensation_profile_repository.dart';
 import '../../data/courier_device_repository.dart';
 import '../../data/courier_device_session_repository.dart';
+import '../../data/courier_earnings_adjustment_repository.dart';
+import '../../data/courier_earnings_payment_repository.dart';
 import '../../data/courier_event_cursor_repository.dart';
 import '../../data/courier_event_repository.dart';
 import '../../data/courier_feedback_repository.dart';
@@ -30,9 +39,11 @@ import '../../data/courier_operational_audit_entry_repository.dart';
 import '../../data/courier_operational_profile_repository.dart';
 import '../../data/courier_repository.dart';
 import '../../data/courier_shift_repository.dart';
+import '../../data/courier_shift_schedule_repository.dart';
 import '../../data/customer_contact_action_repository.dart';
 import '../../data/delivery_assignment_attempt_repository.dart';
 import '../../data/delivery_assignment_repository.dart';
+import '../../data/delivery_earnings_repository.dart';
 import '../../data/delivery_failure_repository.dart';
 import '../../data/delivery_proof_repository.dart';
 import '../../data/delivery_repository.dart';
@@ -40,6 +51,7 @@ import '../../data/delivery_tracking_repository.dart';
 import '../../data/geofence_override_repository.dart';
 import '../../data/in_memory_courier_event_bus.dart';
 import '../../data/pending_courier_command_repository.dart';
+import '../../data/shift_hourly_earnings_repository.dart';
 import '../../domain/events/courier_connection_monitor.dart';
 import '../../domain/events/courier_event_publisher.dart';
 import '../../domain/events/courier_event_subscriber.dart';
@@ -257,4 +269,66 @@ final courierEventIdGeneratorProvider =
 final pendingCourierCommandIdGeneratorProvider =
     Provider<PendingCourierCommandIdGenerator>((ref) {
   return SequentialPendingCourierCommandIdGenerator();
+});
+
+/// Sprint 5A — Courier Compensation & Earnings. Same bundling convention
+/// as everything above (`docs/decisions.md` ADR-018).
+final courierCompensationProfileRepositoryProvider =
+    Provider<CourierCompensationProfileRepository>((ref) {
+  return InMemoryCourierCompensationProfileRepository();
+});
+
+final courierShiftScheduleRepositoryProvider =
+    Provider<CourierShiftScheduleRepository>((ref) {
+  return InMemoryCourierShiftScheduleRepository();
+});
+
+final deliveryEarningsRepositoryProvider =
+    Provider<DeliveryEarningsRepository>((ref) {
+  return InMemoryDeliveryEarningsRepository();
+});
+
+final shiftHourlyEarningsRepositoryProvider =
+    Provider<ShiftHourlyEarningsRepository>((ref) {
+  return InMemoryShiftHourlyEarningsRepository();
+});
+
+final courierEarningsAdjustmentRepositoryProvider =
+    Provider<CourierEarningsAdjustmentRepository>((ref) {
+  return InMemoryCourierEarningsAdjustmentRepository();
+});
+
+final courierEarningsPaymentRepositoryProvider =
+    Provider<CourierEarningsPaymentRepository>((ref) {
+  return InMemoryCourierEarningsPaymentRepository();
+});
+
+final courierCompensationProfileIdGeneratorProvider =
+    Provider<CourierCompensationProfileIdGenerator>((ref) {
+  return SequentialCourierCompensationProfileIdGenerator();
+});
+
+final courierShiftScheduleIdGeneratorProvider =
+    Provider<CourierShiftScheduleIdGenerator>((ref) {
+  return SequentialCourierShiftScheduleIdGenerator();
+});
+
+final deliveryEarningsIdGeneratorProvider =
+    Provider<DeliveryEarningsIdGenerator>((ref) {
+  return SequentialDeliveryEarningsIdGenerator();
+});
+
+final shiftHourlyEarningsIdGeneratorProvider =
+    Provider<ShiftHourlyEarningsIdGenerator>((ref) {
+  return SequentialShiftHourlyEarningsIdGenerator();
+});
+
+final courierEarningsAdjustmentIdGeneratorProvider =
+    Provider<CourierEarningsAdjustmentIdGenerator>((ref) {
+  return SequentialCourierEarningsAdjustmentIdGenerator();
+});
+
+final courierEarningsPaymentIdGeneratorProvider =
+    Provider<CourierEarningsPaymentIdGenerator>((ref) {
+  return SequentialCourierEarningsPaymentIdGenerator();
 });
