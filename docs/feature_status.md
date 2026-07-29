@@ -363,3 +363,51 @@ implementation, AI prioritization, real-time KDS push infrastructure (`docs/mast
   integration work, matching the scope boundary already set for POS screens in Sprint 3B/3C.
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-013 Consequences section.
+
+## Phase 3 — Cash Management (Sprint 3E)
+
+Branch `phase-3/sprint-3e-cash-management`, from the tip of
+`phase-3/sprint-3d-restaurant-operations`. Approved directly into autonomous implementation mode — no
+separate analysis-only round — via an 8-phase kickoff specifying explicit business rules and an
+explicit out-of-scope list up front. See `docs/business_rules.md` DL-017 and `docs/decisions.md`
+ADR-014 for full rationale and every deviation.
+
+| Task | Status | Note |
+|---|---|---|
+| Cash domain models | DONE | `CashDrawer` (mutable registry, mirrors `RestaurantTable`); `CashSession` (append-only via revision, mirrors `PaymentSession`/`OrderClosure`) with embedded `CashOpening`/`CashClosing` value objects; `CashMovement` (immutable, signed by type); `CashDeclaration`/`CashVariance` (shared `compute()` factory, reused by `CashCount` and `CashReconciliation`); `CashCount`/`CashReconciliation`/`CashAdjustment` (append-only); `CashAuditEntry`/`CashAuditEventType`. 5 new `BusinessRuleViolation` types added (additive). |
+| Drawer lifecycle | DONE | `CreateCashDrawer`/`ArchiveCashDrawer`/`OpenCashDrawer` — only one active session per drawer, enforced via `CashSessionRepository.findActiveByDrawerId` (`CashSessionAlreadyActiveViolation` otherwise). Opening a drawer records the opening float as the session's first `CashMovement`. |
+| Cash movements | DONE | `RecordCashMovement` — sign derived from `CashMovementType.isInflow` for every type except `correction`/`closingDifference` (caller-signed). `ReverseCashMovement` — a new, offsetting movement linked via `reversalOfMovementId`; the original is never edited or deleted. |
+| Cash counting | DONE | `SubmitCashCount` — expected amount computed once, as the sum of every recorded movement, frozen onto the `CashCount`. Accepts sessions in `active` or `rejected` status (see the state-machine revision below); never overwrites a previous count. |
+| Approval workflow | DONE | `ApproveCashReconciliation`/`RejectCashReconciliation` — self-approval structurally forbidden (`SelfApprovalNotAllowedViolation`, checked before the authorization-policy call); a non-zero variance doesn't auto-block approval (`varianceAccepted` flag). `CloseCashSession` — only from `approved`, no direct path from any other status. `PosAuthorizedAction` extended with `reviewCashReconciliation`/`recordCashAdjustment` (additive). |
+| Audit + manual adjustment | DONE | `CashAuditEntry`/`CashAuditEntryRepository` — drawer-scoped, structurally append-only (no update/delete method), covering every cash-management event type. `RecordCashAdjustment` — links to (never duplicates) the `correction`-typed `CashMovement` it produces; approver must differ from requester. |
+| UI foundation | DONE | 5 screens: `CashDrawerListScreen` (list + create) → `CashDrawerDetailScreen` (open + view active session) → `CashSessionScreen` (movement list + add movement) → `CashCountScreen` (declare actual amount) → `CashReconciliationScreen` (expected/actual/variance, Onayla/Reddet/Oturumu Kapat — a deliberate consolidation of the brief's separate "Reconciliation" and "Manager Approval" screens). `CashReconciliationScreen.authorizationPolicy` is nullable (deviation from `ClosedAccountsScreen`'s mandatory-parameter precedent — see below). |
+| Tests | DONE | 1067 tests total (up from Sprint 3D's 997), all passing — 70 new tests across every new domain model, repository, use case, and the 5 new screens (16 of the 70 are widget tests). `flutter analyze`: no issues. `dart format`: clean. |
+| Documentation | DONE | `docs/business_rules.md` v1.6 (BR-CASH-001–009, BR-AUDIT-006 added; DL-017 logged); `docs/decisions.md` ADR-014; this entry. |
+
+**Explicitly out of scope this sprint** (per the kickoff's own scope): accounting integration,
+e-invoice, ERP integrations, real payment provider integrations, multi-currency cash drawers, physical
+printer/hardware integration, real-time push infrastructure for the session/movement lists.
+
+### Deviations from the approved architecture (reported, not silent)
+
+- **State-machine revision made mid-implementation**: the initial design required a session to
+  "reactivate" (`rejected → active`) before a recount could be submitted. Revised during Phase 5 to
+  `rejected → pendingApproval` directly — the user's own workflow description never asked for a
+  separate reactivate step, and the revision narrows scope rather than adding to it. See ADR-014's
+  Decision section for the full reasoning.
+- **`CashReconciliationScreen` consolidates two described screens into one**: the kickoff described a
+  "Reconciliation Screen" and a "Manager Approval Screen" separately; both need the same loaded state
+  (the latest `CashCount`'s expected/actual/variance), so they were built as a single screen instead of
+  fetching that state twice.
+- **`CashReconciliationScreen.authorizationPolicy` is nullable, not mandatory**: a deviation from
+  `ClosedAccountsScreen`'s (ADR-012) mandatory-constructor-parameter precedent, made so the screen
+  stays directly reachable from `CashCountScreen`'s own post-submission navigation without every caller
+  threading a real policy through immediately. The approve/reject/close actions check for a policy at
+  call time and surface a denial message when absent — the screen is exactly as unreachable from a real
+  approval flow today as `ClosedAccountsScreen` is, since no production `PosAuthorizationPolicy`
+  implementation exists either way.
+- **No dedicated drawer-management (archive) UI**: `ArchiveCashDrawer` is fully built and tested at the
+  application layer; no screen calls it yet — a scope boundary matching the same pattern Sprint 3D left
+  for `PackagePreparation`'s screen.
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-014 Consequences section.

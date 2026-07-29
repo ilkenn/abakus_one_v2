@@ -33,8 +33,8 @@ Every rule in this document carries exactly one status:
 assigned sequentially within a category and are **never reused** — if a rule is later superseded or
 removed, its ID is retired, not reassigned to a different rule. Category prefixes used in this
 document: `ROLE`, `CHANNEL`, `ORDER`, `STATE`, `TABLE`, `MENU`, `MOD`, `BOWL`, `PRICE`, `MKTPRICE`,
-`TAX`, `PROMO`, `PAY`, `REFUND`, `KITCHEN`, `COURIER`, `STAFF`, `STOCK`, `BRANCH`, `MKT`, `AUDIT`,
-`PROFIT`, `EDGE`.
+`TAX`, `PROMO`, `PAY`, `CASH`, `REFUND`, `KITCHEN`, `COURIER`, `STAFF`, `STOCK`, `BRANCH`, `MKT`,
+`AUDIT`, `PROFIT`, `EDGE`.
 
 Each rule entry states an **Owner Agent** (who to consult/update when the rule changes — usually
 `restaurant_domain`, occasionally a specialist agent for cross-cutting concerns like payment-data
@@ -830,6 +830,95 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Kitchen, Orders, Courier
 
+# Cash Management
+
+### BR-CASH-001 — Multiple cash drawers per branch, mutable registry (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `CashDrawer` (`lib/features/pos/domain/cash/cash_drawer.dart`) is a mutable registry
+  entity, mirroring `RestaurantTable`/`FloorPlan` — a branch may register several. `isActive` means
+  only "still in service," never "currently has an open session," avoiding two fields that could
+  disagree; whether a drawer currently has an open session is answered by
+  `CashSessionRepository.findActiveByDrawerId`, never duplicated onto `CashDrawer` itself.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: POS, Staff/Admin
+
+### BR-CASH-002 — Only one active session per drawer (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `OpenCashDrawer` throws `CashSessionAlreadyActiveViolation` if
+  `CashSessionRepository.findActiveByDrawerId` returns a non-null result for the target drawer.
+  `CashSession.isActive` is `status != CashSessionStatus.closed` — `active`, `pendingApproval`,
+  `approved`, and `rejected` all count as "still open" for this check, not just `active`.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: POS, Staff/Admin
+
+### BR-CASH-003 — Cash movements are immutable, append-only, and signed by type (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `CashMovement` (`lib/features/pos/domain/cash/cash_movement.dart`) is never mutated or
+  deleted once recorded — `CashMovementRepository` has no update/delete method at all. `amount` is
+  signed (positive = inflow, negative = outflow); for every `CashMovementType` except `correction`
+  and `closingDifference`, the sign is fixed by `CashMovementType.isInflow` and enforced by
+  `RecordCashMovement` — a caller cannot record a `cashSale` as a negative amount by mistake.
+  Reversing a movement (`ReverseCashMovement`) records a new, offsetting movement linked via
+  `reversalOfMovementId` — the original entry is never touched.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Payments, Staff/Admin
+
+### BR-CASH-004 — Expected cash amount is computed once and frozen (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `SubmitCashCount` computes `CashCount.expectedAmount` once, at submission time, as the
+  sum of every `CashMovement` recorded for the session so far — the opening float is itself the
+  session's first movement, so it needs no separate addition. The figure is frozen onto the
+  resulting `CashCount`; a movement recorded after submission can never retroactively change what an
+  already-submitted count's expected figure was.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: POS, Payments
+
+### BR-CASH-005 — Cash counts are never overwritten; a recount is a new record (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `CashCountRepository` has no update method at all — every `SubmitCashCount` call appends
+  a brand-new `CashCount`, even a recount after a manager rejection. `CashSessionStatusTransitions`
+  allows `rejected → pendingApproval` directly (via a fresh `SubmitCashCount` call) — a rejected
+  session needs no separate "reactivate" step before recounting.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: POS, Payments
+
+### BR-CASH-006 — Manager approval is required before a cash session can close (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `CashSessionStatusTransitions` allows `CloseCashSession` only from `approved`; there is no
+  direct path from `active`/`pendingApproval`/`rejected` to `closed`. `ApproveCashReconciliation`/
+  `RejectCashReconciliation` are the only ways a `pendingApproval` session moves forward, each
+  requiring `PosAuthorizedAction.reviewCashReconciliation`.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Payments, Staff/Admin
+
+### BR-CASH-007 — A cashier can never approve their own cash reconciliation or adjustment (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `ApproveCashReconciliation`/`RejectCashReconciliation` throw
+  `SelfApprovalNotAllowedViolation` if `reviewedByStaffId` equals the reviewed `CashCount`'s own
+  `declaredByStaffId` — checked structurally, before the `PosAuthorizationPolicy` call, so a
+  permissive authorization result can never override it. `RecordCashAdjustment` enforces the same
+  rule between `requestedByStaffId` and `approvedByStaffId`.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Staff/Admin
+
+### BR-CASH-008 — A non-zero variance does not automatically block approval (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `CashVariance` (over/short/exact) is computed once via `CashVariance.compute`, reused by
+  both `CashCount` and `CashReconciliation`. `ApproveCashReconciliation` accepts an explicit
+  `varianceAccepted` flag from the reviewing manager — a shortage/overage does not by itself force a
+  rejection; a manager who does not accept the variance calls `RejectCashReconciliation` instead.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: POS, Payments, Staff/Admin
+
+### BR-CASH-009 — A cash adjustment links to, never duplicates, its `CashMovement` (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `RecordCashAdjustment` records the financial effect exactly once — as a `correction`-typed
+  `CashMovement` — and `CashAdjustment` (`lib/features/pos/domain/cash/cash_adjustment.dart`) only
+  links to that movement's id, never re-stores the amount. `CashAdjustmentRepository` has no update
+  method, matching every other append-only repository in this sprint.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Payments, Staff/Admin
+
 # Refund, Cancellation, and Order Correction Rules
 
 ### BR-REFUND-001 — Cancellation info shape
@@ -1245,6 +1334,19 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: security_engineer
 - **Related Modules**: POS, Staff/Admin, Kitchen
 
+### BR-AUDIT-006 — Cash-management audit trail, drawer-scoped, structurally append-only (Phase 3 Sprint 3E)
+- **Status**: VERIFIED
+- **Rule**: `CashAuditEntry`/`CashAuditEntryRepository` (`lib/features/pos/domain/cash/
+  cash_audit_entry.dart`, `lib/features/pos/data/cash_audit_entry_repository.dart`) record every
+  cash-management state change: drawerOpened, drawerClosed, movementAdded, movementReversed,
+  countSubmitted, approvalGranted, approvalRejected, varianceAccepted, manualAdjustment.
+  Drawer-scoped (mirrors `ClosureAuditEntry`'s order-scoping and `RestaurantOperationsAuditEntry`'s
+  branch-scoping — each audit trail is keyed to whatever identity its own events naturally share).
+  Its repository interface has no update or delete method at all — append-only enforced structurally,
+  the same pattern BR-AUDIT-004/BR-AUDIT-005 already established.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Payments, Staff/Admin
+
 # Profitability and Loss Prevention
 
 ### BR-PROFIT-001 — Every rule evaluated for profitability/loss impact
@@ -1560,11 +1662,49 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
   BR-TABLE-007, BR-ORDER-011, BR-KITCHEN-001, BR-KITCHEN-002, BR-KITCHEN-006, BR-KITCHEN-007,
   BR-KITCHEN-008, BR-COURIER-006, BR-STAFF-005, BR-AUDIT-005
 
+### DL-017 — Cash Management
+- **Decision**: Builds the cash drawer lifecycle, cash movements, cash counting/reconciliation, and
+  manager-approval foundation for Abaküs One, on top of Sprint 3C's payment foundation and
+  Sprint 3D's restaurant-operations foundation, without rewriting either. `CashDrawer` (mutable
+  registry, mirrors `RestaurantTable`); `CashSession` (append-only via revision, mirrors
+  `PaymentSession`/`OrderClosure`) with a `CashSessionStatusTransitions` state machine including
+  `rejected → pendingApproval` directly (no separate reactivate step); `CashMovement` (immutable,
+  signed by type, reversal-only never edit/delete); `CashCount` (append-only, expected amount frozen
+  at submission); `CashReconciliation` (manager approve/reject, self-approval structurally forbidden);
+  `CashAdjustment` (links to, never duplicates, its `CashMovement`); `CashAuditEntry` (drawer-scoped,
+  structurally append-only, mirrors `ClosureAuditEntry`/`RestaurantOperationsAuditEntry`).
+- **Status**: DECIDED
+- **Source**: User, Phase 3 Sprint 3E autonomous-implementation-mode approval — explicit 8-phase scope
+  (domain model, drawer lifecycle, cash movements, cash counting, approval workflow, audit, UI
+  foundation, testing), explicit business rules to enforce, and an explicit out-of-scope list
+  (accounting, e-invoice, ERP integrations, payment providers).
+- **Date**: 2026-07-29
+- **Consequences**: See BR-CASH-001 through BR-CASH-009, BR-AUDIT-006. `docs/decisions.md` ADR-014
+  records the full architecture, including every deviation (the `rejected → pendingApproval`
+  state-machine revision made mid-implementation, `CashReconciliationScreen` consolidating the
+  "reconciliation" and "manager approval" screens the brief described separately, and its nullable
+  rather than mandatory `authorizationPolicy` constructor parameter).
+- **Related Modules**: POS, Payments, Staff/Admin
+- **Business Rule IDs**: BR-CASH-001, BR-CASH-002, BR-CASH-003, BR-CASH-004, BR-CASH-005, BR-CASH-006,
+  BR-CASH-007, BR-CASH-008, BR-CASH-009, BR-AUDIT-006
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v1.6 — 2026-07-29
+- **Version**: 1.6
+- **Date**: 2026-07-29
+- **Summary**: Phase 3 Sprint 3E (Cash Management). Added BR-CASH-001 through BR-CASH-009 (drawer
+  registry, single-active-session-per-drawer, immutable signed movements, frozen expected-amount
+  computation, never-overwritten cash counts, manager-approval-required-to-close, self-approval
+  forbidden, variance-doesn't-auto-block-approval, adjustment-links-not-duplicates) and BR-AUDIT-006
+  (drawer-scoped, structurally append-only cash audit trail). Logged DL-017.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the cash-management business rules this sprint's approved architecture
+  established.
 
 ### v1.5 — 2026-07-29
 - **Version**: 1.5

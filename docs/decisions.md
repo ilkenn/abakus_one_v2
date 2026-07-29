@@ -951,3 +951,134 @@ consciously unwired authorization actions — each documented with reasoning her
 `docs/business_rules.md`, not decided silently. The sheer size of this sprint (11 phases, 11 commits)
 carries the same "some single consequence under-documented" risk ADR-012 already noted at a smaller
 scale.
+
+---
+
+## ADR-014 — Cash Management
+
+- Date: 2026-07-29
+- Status: Accepted
+
+### Decision
+Builds the cash drawer lifecycle, cash movements, cash counting, manager-review reconciliation, and
+audit foundation for Abaküs One — on top of ADR-012's payment foundation and ADR-013's restaurant-
+operations foundation, extending rather than rewriting either. Approved directly into autonomous
+implementation mode (no separate analysis-only round this time — the user's kickoff message specified
+an 8-phase scope, explicit business rules to enforce, and an explicit out-of-scope list up front, with
+four defined stop conditions).
+
+**`CashDrawer` is a mutable registry entity, `CashSession` is the append-only aggregate.** Same split
+already used for `RestaurantTable`/`TableSession` and (loosely) `PaymentMethod`/`PaymentSession`: a
+drawer's own registry shape (name, in-service flag) changes rarely and has no meaningful history worth
+keeping, while a session's status genuinely needs a full revision trail (mirrors `PaymentSession`/
+`OrderClosure`'s existing append-only-via-`revision` shape exactly). `CashDrawer.isActive` means only
+"in service" — never "has an open session" — so the two facts can't drift apart; "has an open session"
+is answered by `CashSessionRepository.findActiveByDrawerId` alone.
+
+**`CashOpening`/`CashClosing` are embedded value objects, not separate append-only aggregates.**
+Unlike `CashCount`/`CashReconciliation` (which have their own actors, timestamps, and repeat-submission
+semantics), a session's opening and closing each happen exactly once and never change independently of
+their parent `CashSession` — giving them their own top-level repository would add a append-only
+aggregate with no meaningful history of its own to keep.
+
+**`CashVariance` is one shared value object, computed once.** `CashCount` and `CashReconciliation` both
+need "expected vs. actual, over/short/exact" — rather than each reimplementing the comparison,
+`CashVariance.compute({expectedAmount, actualAmount})` is the single source, and `CashReconciliation`
+stores a frozen copy of the `CashCount`'s variance rather than re-deriving it from a (mutable-by-
+recount-history) `CashCount` list later.
+
+**`CashMovement.amount` is signed, not accompanied by a separate direction boolean.** Every
+`CashMovementType` except `correction`/`closingDifference` has its sign fixed by
+`CashMovementTypeDirection.isInflow`, enforced by `RecordCashMovement` — a caller cannot record a
+`cashSale` as a negative amount by mistake, and `correction`/`closingDifference` stay caller-signed
+since a correction may need to add or remove cash. `SubmitCashCount` sums this same signed field
+directly for `expectedAmount` — the opening float is itself the session's first movement, so no
+separate addition is needed for it, avoiding a second, potentially-divergent source for "how much
+should be in the drawer."
+
+**State-machine revision made mid-implementation, reported here rather than silently kept.** The
+initial design modeled `rejected → active` (a session had to "reactivate" before a recount could be
+submitted). Reconsidered while implementing Phase 5: this adds a step the user's own workflow
+description (Cashier → Submit → Manager Review → Approve/Reject → Close) never asked for. Revised to
+`rejected → pendingApproval` directly — `SubmitCashCount` now accepts a session in `active` **or**
+`rejected` status, and a rejected count's recount is simply a fresh `SubmitCashCount` call. This is the
+one implementation-time design change this sprint made without a separate confirmation round; it
+narrows scope (removes a step) rather than adding one, and is recorded here per
+`ENGINEERING_CONSTITUTION.md`'s "no silent decisions" principle even though it fell inside the
+sprint's autonomous-implementation stop-condition boundaries (not a breaking change, not a security/
+data-integrity risk, not an unresolvable business-rule conflict).
+
+**Self-approval is enforced structurally, before the authorization-policy call, in both places it
+applies.** `ApproveCashReconciliation`/`RejectCashReconciliation` throw
+`SelfApprovalNotAllowedViolation` if the reviewer equals the count's own declarer; `RecordCashAdjustment`
+enforces the same rule between requester and approver. Neither check is delegated to
+`PosAuthorizationPolicy` — a permissive policy result must never be able to override this rule, since
+"a cashier cannot approve their own count" is a structural business invariant, not a configurable
+permission.
+
+**`CashAdjustment` links to, never duplicates, the `CashMovement` it produces.** `RecordCashAdjustment`
+records the financial effect exactly once (a `correction`-typed `CashMovement`); `CashAdjustment` only
+stores that movement's id plus the request/approval metadata, so there is never a second place an
+adjustment's amount could disagree with the movement it caused.
+
+**`CashAuditEntry` is one shared, drawer-scoped, structurally append-only repository** — same pattern
+ADR-013 established for `RestaurantOperationsAuditEntry` (branch-scoped) and Sprint 3C established for
+`ClosureAuditEntry` (order-scoped): every cash-management event is the same shape of fact ("a critical
+cash-management action happened") differing only by `type`, so one repository per sprint's domain is
+simpler than one per sub-concern without losing anything; no update/delete method exists on its
+interface at all, enforcing append-only structurally rather than by convention.
+
+**UI foundation: five screens, one deliberate consolidation.** `CashDrawerListScreen` →
+`CashDrawerDetailScreen` → `CashSessionScreen` → `CashCountScreen` → `CashReconciliationScreen` cover
+the full lifecycle end to end. The brief described a "Reconciliation Screen" and a "Manager Approval
+Screen" as separate; they were built as one (`CashReconciliationScreen`) — both need the same loaded
+state (the latest `CashCount`'s expected/actual/variance) and the manager-approval actions are the
+natural next step once that state is on screen, so splitting them would mean re-fetching the same data
+twice for no functional benefit. Unlike `ClosedAccountsScreen` (ADR-012), which requires
+`PosAuthorizationPolicy` as a **mandatory** constructor parameter, `CashReconciliationScreen` accepts
+it as **nullable** — a deliberate deviation, made so the screen stays directly reachable from
+`CashCountScreen`'s own `pushReplacement` (every count submission needs somewhere to land) without
+every caller having to thread a real policy through immediately; the approve/reject/close actions
+check for a policy at call time and surface a clear denial message when absent, rather than the screen
+refusing to build at all. No production `PosAuthorizationPolicy` implementation exists (ADR-012), so
+this screen remains just as structurally unreachable from a real approval flow today as
+`ClosedAccountsScreen` is — the deviation changes *how* that's expressed, not the actual safety
+posture.
+
+### Context
+Approved directly into "AUTONOMOUS IMPLEMENTATION MODE" by the user's kickoff message — full 8-phase
+breakdown (Domain Model, Drawer Lifecycle, Cash Movements, Cash Counting, Approval Workflow, Audit, UI
+Foundation, Testing), explicit business rules to enforce (only one active session per drawer; manager
+approval required before closing; cashier cannot approve own reconciliation; all movements immutable;
+corrections are append-only; variance never modifies history; every action audited; no delete
+operations), and an explicit out-of-scope list (accounting, e-invoice, ERP integrations, payment
+providers) — all stated up front, with four defined stop conditions (irreversible architectural
+conflict, security/data-integrity risk, an unresolvable business-rule contradiction, a business
+decision required to proceed). None of the four stop conditions were triggered.
+
+### Consequences
+- **7 implementation phases delivered as 7 commits** (domain models; drawer lifecycle; cash movements;
+  cash counting; approval workflow; audit + manual adjustment; UI foundation), each independently
+  formatted/analyzed/tested before commit, matching ADR-012/ADR-013's granularity precedent.
+- **No existing Sprint 3A–3D file was rewritten** — `PosAuthorizedAction` (additive enum values:
+  `reviewCashReconciliation`, `recordCashAdjustment`) and `core/errors/business_rule_violation.dart`
+  (additive violation types: `UnknownCashEntityViolation`, `CashSessionAlreadyActiveViolation`,
+  `CashSessionNotActiveViolation`, `InvalidCashSessionTransitionViolation`,
+  `SelfApprovalNotAllowedViolation`) are the only pre-existing files modified beyond their own tests;
+  every other change is a new file.
+- **Deviation — `CashReconciliationScreen` consolidates two described screens into one**, and takes a
+  nullable rather than mandatory `authorizationPolicy` parameter — see the Decision section above for
+  the full reasoning.
+- **Deviation — `rejected → pendingApproval` replaces an initially-designed `rejected → active` step**
+  — narrows scope rather than adding it; see the Decision section above.
+- **No new pub dependency.** No change to `go_router`, `MainNavigationScreen`, or any customer-facing
+  screen. No change to any Sprint 3A–3D order/payment/restaurant-operations code path.
+
+### Confidence
+85%. The domain model (drawer/session/movement/count/reconciliation/adjustment/audit split, signed
+movements, frozen expected-amount computation, structural self-approval enforcement) is directly
+grounded in the user's explicit business rules, each of which maps to exactly one enforced invariant.
+The residual uncertainty is concentrated in the two judgment calls made without a further confirmation
+round — the state-machine revision and the reconciliation/approval screen consolidation — both
+documented with reasoning here rather than decided silently, and both narrowing scope rather than
+introducing new risk.
