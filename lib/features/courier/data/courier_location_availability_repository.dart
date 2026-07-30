@@ -5,6 +5,13 @@ import '../domain/location/courier_location_availability.dart';
 abstract interface class CourierLocationAvailabilityRepository {
   Future<void> save(CourierLocationAvailability availability);
   Future<CourierLocationAvailability?> findLatestByCourierId(String courierId);
+
+  /// Full revision history, oldest first — Sprint 5B Part 8's
+  /// `DetectRepeatedLocationLossSignal` needs this to count how often a
+  /// courier's location becomes unavailable within a window; every other
+  /// caller still only needs [findLatestByCourierId].
+  Future<List<CourierLocationAvailability>> findHistoryByCourierId(
+      String courierId);
 }
 
 class InMemoryCourierLocationAvailabilityRepository
@@ -24,5 +31,11 @@ class InMemoryCourierLocationAvailabilityRepository
     final history = _byCourierId[courierId];
     if (history == null || history.isEmpty) return null;
     return history.last;
+  }
+
+  @override
+  Future<List<CourierLocationAvailability>> findHistoryByCourierId(
+      String courierId) async {
+    return List.unmodifiable(_byCourierId[courierId] ?? const []);
   }
 }

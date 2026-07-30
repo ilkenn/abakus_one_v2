@@ -8,6 +8,7 @@ import '../../application/identity/courier_earnings_adjustment_id_generator.dart
 import '../../application/identity/courier_earnings_payment_id_generator.dart';
 import '../../application/identity/courier_event_id_generator.dart';
 import '../../application/identity/courier_feedback_id_generator.dart';
+import '../../application/identity/courier_fraud_signal_id_generator.dart';
 import '../../application/identity/courier_id_generator.dart';
 import '../../application/identity/courier_location_snapshot_id_generator.dart';
 import '../../application/identity/courier_shift_id_generator.dart';
@@ -30,6 +31,10 @@ import '../../application/services/in_memory_courier_synchronization_service.dar
 import '../../application/use_cases/build_courier_live_status.dart';
 import '../../application/use_cases/build_courier_live_status_for_branch.dart';
 import '../../application/use_cases/courier_location_availability_guard.dart';
+import '../../application/use_cases/detect_courier_fraud_signals.dart';
+import '../../application/use_cases/detect_repeated_location_loss_signal.dart';
+import '../../application/use_cases/record_courier_event.dart';
+import '../../application/use_cases/sync_queued_courier_locations.dart';
 import '../../data/courier_availability_repository.dart';
 import '../../data/courier_compensation_profile_repository.dart';
 import '../../data/courier_device_repository.dart';
@@ -39,6 +44,7 @@ import '../../data/courier_earnings_payment_repository.dart';
 import '../../data/courier_event_cursor_repository.dart';
 import '../../data/courier_event_repository.dart';
 import '../../data/courier_feedback_repository.dart';
+import '../../data/courier_fraud_signal_repository.dart';
 import '../../data/courier_location_availability_repository.dart';
 import '../../data/courier_location_repository.dart';
 import '../../data/courier_operational_audit_entry_repository.dart';
@@ -402,4 +408,50 @@ final buildCourierLiveStatusForBranchProvider =
 final offlineLocationQueueRepositoryProvider =
     Provider<OfflineLocationQueueRepository>((ref) {
   return InMemoryOfflineLocationQueueRepository();
+});
+
+final syncQueuedCourierLocationsProvider =
+    Provider<SyncQueuedCourierLocations>((ref) {
+  return SyncQueuedCourierLocations(
+    clock: ref.watch(clockProvider),
+    queueRepository: ref.watch(offlineLocationQueueRepositoryProvider),
+    locationRepository: ref.watch(courierLocationRepositoryProvider),
+    recordCourierEvent: RecordCourierEvent(
+      idGenerator: ref.watch(courierEventIdGeneratorProvider),
+      eventRepository: ref.watch(courierEventRepositoryProvider),
+      eventPublisher: ref.watch(courierEventPublisherProvider),
+    ),
+  );
+});
+
+final courierFraudSignalRepositoryProvider =
+    Provider<CourierFraudSignalRepository>((ref) {
+  return InMemoryCourierFraudSignalRepository();
+});
+
+final courierFraudSignalIdGeneratorProvider =
+    Provider<CourierFraudSignalIdGenerator>((ref) {
+  return SequentialCourierFraudSignalIdGenerator();
+});
+
+final detectCourierFraudSignalsProvider =
+    Provider<DetectCourierFraudSignals>((ref) {
+  return DetectCourierFraudSignals(
+    clock: ref.watch(clockProvider),
+    idGenerator: ref.watch(courierFraudSignalIdGeneratorProvider),
+    repository: ref.watch(courierFraudSignalRepositoryProvider),
+    auditRepository: ref.watch(courierOperationalAuditEntryRepositoryProvider),
+  );
+});
+
+final detectRepeatedLocationLossSignalProvider =
+    Provider<DetectRepeatedLocationLossSignal>((ref) {
+  return DetectRepeatedLocationLossSignal(
+    clock: ref.watch(clockProvider),
+    availabilityRepository:
+        ref.watch(courierLocationAvailabilityRepositoryProvider),
+    idGenerator: ref.watch(courierFraudSignalIdGeneratorProvider),
+    repository: ref.watch(courierFraudSignalRepositoryProvider),
+    auditRepository: ref.watch(courierOperationalAuditEntryRepositoryProvider),
+  );
 });
