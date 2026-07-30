@@ -9,6 +9,7 @@ import '../../data/courier_operational_audit_entry_repository.dart';
 import '../../data/delivery_earnings_repository.dart';
 import '../../data/delivery_repository.dart';
 import '../../data/delivery_tracking_repository.dart';
+import '../../data/same_destination_group_repository.dart';
 import '../../domain/audit/courier_audit_event_type.dart';
 import '../../domain/audit/courier_operational_audit_entry.dart';
 import '../../domain/compensation/delivery_earnings.dart';
@@ -35,6 +36,20 @@ import '../identity/delivery_earnings_id_generator.dart';
 /// for lack of any other distance source in this codebase (see
 /// `docs/decisions.md` ADR-018's honest limitation note). No snapshot at
 /// all means zero distance, never an error.
+///
+/// **Sprint 5C**: [sameDestinationGroupRepository], when supplied, is
+/// checked for a `SameDestinationGroup` containing [deliveryId] — if one
+/// exists and a sibling delivery in that group already has a
+/// [DeliveryEarnings] record with a non-waived package fee, this
+/// delivery's own [DeliveryEarnings.packageFee] is zeroed instead
+/// ("courier receives one package payment only [per same-destination
+/// group]"). [extraDistanceEarnings] is untouched (distance-based, not
+/// hourly), and `ShiftHourlyEarnings` is a fully separate calculation
+/// this never runs — "hourly earnings remain unchanged" holds
+/// structurally. The first delivery in a group to complete always earns
+/// the real fee; only later siblings are waived — a deterministic,
+/// documented tie-break, not an arbitrary one. `null` (the default) skips
+/// this entirely, same as every existing call site.
 class CalculateDeliveryEarnings {
   const CalculateDeliveryEarnings({
     required Clock clock,
@@ -45,6 +60,7 @@ class CalculateDeliveryEarnings {
     required CourierCompensationProfileRepository compensationProfileRepository,
     required DeliveryEarningsRepository earningsRepository,
     required CourierOperationalAuditEntryRepository auditRepository,
+    SameDestinationGroupRepository? sameDestinationGroupRepository,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _idGenerator = idGenerator,
@@ -52,7 +68,8 @@ class CalculateDeliveryEarnings {
         _trackingRepository = trackingRepository,
         _compensationProfileRepository = compensationProfileRepository,
         _earningsRepository = earningsRepository,
-        _auditRepository = auditRepository;
+        _auditRepository = auditRepository,
+        _sameDestinationGroupRepository = sameDestinationGroupRepository;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
@@ -62,6 +79,7 @@ class CalculateDeliveryEarnings {
   final CourierCompensationProfileRepository _compensationProfileRepository;
   final DeliveryEarningsRepository _earningsRepository;
   final CourierOperationalAuditEntryRepository _auditRepository;
+  final SameDestinationGroupRepository? _sameDestinationGroupRepository;
 
   Future<DeliveryEarnings> call({
     required String deliveryId,
@@ -135,8 +153,12 @@ class CalculateDeliveryEarnings {
         Money.zero(Currency.accountingCurrency);
     final extraDistanceEarnings =
         extraDistanceRate.scaledBy(extraDistanceMeters, 1000);
-    final packageFee = profile.deliveryFeePerPackage ??
-        Money.zero(Currency.accountingCurrency);
+
+    final waivePackageFee = await _shouldWaivePackageFee(deliveryId);
+    final packageFee = waivePackageFee
+        ? Money.zero(Currency.accountingCurrency)
+        : profile.deliveryFeePerPackage ??
+            Money.zero(Currency.accountingCurrency);
     final totalEarnings = packageFee + extraDistanceEarnings;
 
     final earnings = DeliveryEarnings(
@@ -155,6 +177,7 @@ class CalculateDeliveryEarnings {
       wasManagerApprovedCancellation: managerApprovedCancellation,
       approvalReason: approvalReason,
       calculatedAt: now,
+      wasPackageFeeWaivedForSameDestinationGroup: waivePackageFee,
     );
     await _earningsRepository.append(earnings);
 
@@ -174,5 +197,27 @@ class CalculateDeliveryEarnings {
     ));
 
     return earnings;
+  }
+
+  /// `true` when [deliveryId] belongs to a `SameDestinationGroup` and a
+  /// sibling in that group already has a non-waived `DeliveryEarnings`
+  /// record — meaning the package fee for this group was already paid.
+  Future<bool> _shouldWaivePackageFee(String deliveryId) async {
+    final groupRepository = _sameDestinationGroupRepository;
+    if (groupRepository == null) return false;
+
+    final group = await groupRepository.findByDeliveryId(deliveryId);
+    if (group == null) return false;
+
+    for (final siblingId in group.deliveryIds) {
+      if (siblingId == deliveryId) continue;
+      final siblingEarnings =
+          await _earningsRepository.findByDeliveryId(siblingId);
+      if (siblingEarnings != null &&
+          !siblingEarnings.wasPackageFeeWaivedForSameDestinationGroup) {
+        return true;
+      }
+    }
+    return false;
   }
 }

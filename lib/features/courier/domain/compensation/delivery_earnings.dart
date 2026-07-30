@@ -27,6 +27,7 @@ class DeliveryEarnings {
     this.wasManagerApprovedCancellation = false,
     this.approvalReason,
     required this.calculatedAt,
+    this.wasPackageFeeWaivedForSameDestinationGroup = false,
   });
 
   final String id;
@@ -66,4 +67,14 @@ class DeliveryEarnings {
   final String? approvalReason;
 
   final DateTime calculatedAt;
+
+  /// `true` when [packageFee] was waived to `0` because this delivery was
+  /// grouped with another to the same destination and a sibling delivery
+  /// in the group already earned the package fee — Sprint 5C Part 6:
+  /// "courier receives one package payment only [per same-destination
+  /// group]. Hourly earnings remain unchanged" ([extraDistanceEarnings] is
+  /// distance-based, not hourly, and is never affected by this flag —
+  /// `ShiftHourlyEarnings` is a fully separate calculation this never
+  /// touches).
+  final bool wasPackageFeeWaivedForSameDestinationGroup;
 }

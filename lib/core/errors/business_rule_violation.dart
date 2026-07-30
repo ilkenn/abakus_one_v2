@@ -1248,3 +1248,18 @@ final class InvalidDeliverySequenceViolation extends BusinessRuleViolation {
       '($submittedDeliveryIds) does not match their active deliveries '
       '($expectedDeliveryIds)';
 }
+
+/// A `SameDestinationGroup` was submitted with fewer than two deliveries
+/// — "same destination" is meaningless for a single delivery (Sprint 5C
+/// Part 6).
+final class SameDestinationGroupTooSmallViolation
+    extends BusinessRuleViolation {
+  const SameDestinationGroupTooSmallViolation({required this.deliveryCount});
+
+  final int deliveryCount;
+
+  @override
+  String get description =>
+      'A same-destination group requires at least 2 deliveries, got '
+      '$deliveryCount';
+}

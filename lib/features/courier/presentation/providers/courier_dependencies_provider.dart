@@ -27,6 +27,7 @@ import '../../application/identity/geofence_override_id_generator.dart';
 import '../../application/identity/geofence_transition_event_id_generator.dart';
 import '../../application/identity/location_emergency_override_id_generator.dart';
 import '../../application/identity/pending_courier_command_id_generator.dart';
+import '../../application/identity/same_destination_group_id_generator.dart';
 import '../../application/identity/shift_hourly_earnings_id_generator.dart';
 import '../../application/services/in_memory_courier_connection_monitor.dart';
 import '../../application/services/in_memory_courier_synchronization_service.dart';
@@ -73,6 +74,7 @@ import '../../data/in_memory_courier_event_bus.dart';
 import '../../data/location_emergency_override_repository.dart';
 import '../../data/offline_location_queue_repository.dart';
 import '../../data/pending_courier_command_repository.dart';
+import '../../data/same_destination_group_repository.dart';
 import '../../data/shift_hourly_earnings_repository.dart';
 import '../../domain/events/courier_connection_monitor.dart';
 import '../../domain/events/courier_event_publisher.dart';
@@ -517,4 +519,14 @@ final buildCourierDispatchQueueProvider =
 final courierDeliverySequenceRepositoryProvider =
     Provider<CourierDeliverySequenceRepository>((ref) {
   return InMemoryCourierDeliverySequenceRepository();
+});
+
+final sameDestinationGroupRepositoryProvider =
+    Provider<SameDestinationGroupRepository>((ref) {
+  return InMemorySameDestinationGroupRepository();
+});
+
+final sameDestinationGroupIdGeneratorProvider =
+    Provider<SameDestinationGroupIdGenerator>((ref) {
+  return SequentialSameDestinationGroupIdGenerator();
 });
