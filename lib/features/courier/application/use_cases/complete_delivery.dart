@@ -18,6 +18,7 @@ import '../../domain/location/geofence_zone_type.dart';
 import '../identity/delivery_proof_id_generator.dart';
 import 'courier_location_availability_guard.dart';
 import 'record_courier_event.dart';
+import 'sync_courier_dispatch_queue.dart';
 
 /// Completes a [Delivery] — "delivered." **Completed deliveries are
 /// immutable**: [DeliveryStatus.delivered] is terminal
@@ -42,6 +43,18 @@ import 'record_courier_event.dart';
 /// available before completion — "a courier cannot... progress a
 /// delivery... while location is unavailable." `null` (the default)
 /// skips the check.
+///
+/// **Sprint 5C**: [dispatchQueueSync], when supplied, re-enters the
+/// courier into the FIFO dispatch queue once this completion leaves them
+/// with zero remaining active deliveries (`DeliveryRepository
+/// .findActiveByCourierId`, already-existing query — no new dependency
+/// needed) — "the first courier physically returning becomes the first
+/// available courier." Approximates "returning to restaurant" with
+/// "delivery completed," since no separate return-to-restaurant
+/// checkpoint exists in the current delivery lifecycle — an honest
+/// scoping simplification, not a hidden assumption. A courier with
+/// another still-active delivery stays off the queue. `null` (the
+/// default) skips this entirely.
 class CompleteDelivery {
   const CompleteDelivery({
     required Clock clock,
@@ -57,6 +70,7 @@ class CompleteDelivery {
       required DateTime at,
     })? advanceToDelivered,
     CourierLocationAvailabilityGuard? locationGuard,
+    SyncCourierDispatchQueue? dispatchQueueSync,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _repository = repository,
@@ -65,7 +79,8 @@ class CompleteDelivery {
         _auditRepository = auditRepository,
         _recordCourierEvent = recordCourierEvent,
         _advanceToDelivered = advanceToDelivered,
-        _locationGuard = locationGuard;
+        _locationGuard = locationGuard,
+        _dispatchQueueSync = dispatchQueueSync;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
@@ -80,6 +95,7 @@ class CompleteDelivery {
     required DateTime at,
   })? _advanceToDelivered;
   final CourierLocationAvailabilityGuard? _locationGuard;
+  final SyncCourierDispatchQueue? _dispatchQueueSync;
 
   Future<Delivery> call({
     required String deliveryId,
@@ -151,6 +167,16 @@ class CompleteDelivery {
       revision: delivery.revision + 1,
     );
     await _repository.save(updated);
+
+    if (_dispatchQueueSync != null) {
+      final remaining = await _repository.findActiveByCourierId(courierId);
+      if (remaining.isEmpty) {
+        await _dispatchQueueSync.enter(
+          courierId: courierId,
+          branchId: delivery.branchId,
+        );
+      }
+    }
 
     final proof = DeliveryProof(
       id: _proofIdGenerator.nextProofId(),

@@ -11,10 +11,12 @@ import '../../domain/audit/courier_operational_audit_entry.dart';
 import '../../domain/delivery/delivery_assignment.dart';
 import '../../domain/delivery/delivery_assignment_status.dart';
 import '../../domain/delivery/delivery_status.dart';
+import '../../domain/dispatch/courier_dispatch_queue_event.dart';
 import '../../domain/events/courier_event_type.dart';
 import '../../domain/feedback/courier_feedback_tag.dart';
 import 'courier_location_availability_guard.dart';
 import 'record_courier_event.dart';
+import 'sync_courier_dispatch_queue.dart';
 
 /// The courier's accept/reject response to an offered [DeliveryAssignment]
 /// — unified, mirrors `ReviewCourierShift`'s accept/reject shape.
@@ -37,6 +39,14 @@ import 'record_courier_event.dart';
 /// cannot... accept an assignment... while location is unavailable."
 /// Rejecting is never gated (a courier with no working location must
 /// still be able to decline). `null` (the default) skips the check.
+///
+/// **Sprint 5C**: [dispatchQueueSync], when supplied, removes the courier
+/// from the FIFO dispatch queue on accept ("after receiving a delivery,
+/// courier moves to the end of the queue" — modeled as leaving the queue
+/// now and re-entering, always at the back, once free — see
+/// `CompleteDelivery`'s own doc comment for the re-entry side). Never
+/// triggered on reject — a rejection doesn't take the courier off duty.
+/// `null` (the default) skips this entirely.
 class RespondToDeliveryAssignment {
   const RespondToDeliveryAssignment({
     required Clock clock,
@@ -47,6 +57,7 @@ class RespondToDeliveryAssignment {
     required CourierOperationalAuditEntryRepository auditRepository,
     required RecordCourierEvent recordCourierEvent,
     CourierLocationAvailabilityGuard? locationGuard,
+    SyncCourierDispatchQueue? dispatchQueueSync,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _assignmentRepository = assignmentRepository,
@@ -54,7 +65,8 @@ class RespondToDeliveryAssignment {
         _availabilityRepository = availabilityRepository,
         _auditRepository = auditRepository,
         _recordCourierEvent = recordCourierEvent,
-        _locationGuard = locationGuard;
+        _locationGuard = locationGuard,
+        _dispatchQueueSync = dispatchQueueSync;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
@@ -64,6 +76,7 @@ class RespondToDeliveryAssignment {
   final CourierOperationalAuditEntryRepository _auditRepository;
   final RecordCourierEvent _recordCourierEvent;
   final CourierLocationAvailabilityGuard? _locationGuard;
+  final SyncCourierDispatchQueue? _dispatchQueueSync;
 
   Future<DeliveryAssignment> call({
     required String assignmentId,
@@ -152,6 +165,11 @@ class RespondToDeliveryAssignment {
           revision: availability.revision + 1,
         ));
       }
+      await _dispatchQueueSync?.leave(
+        courierId: courierId,
+        branchId: delivery.branchId,
+        reason: CourierDispatchQueueLeaveReason.activeDelivery,
+      );
     } else {
       final rejected = delivery.copyWith(
         status: DeliveryStatus.assignmentRejected,

@@ -8,9 +8,11 @@ import '../../domain/audit/courier_operational_audit_entry.dart';
 import '../../domain/availability/courier_availability.dart';
 import '../../domain/availability/courier_availability_status.dart';
 import '../../domain/events/courier_event_type.dart';
+import '../../domain/dispatch/courier_dispatch_queue_event.dart';
 import '../../domain/shift/courier_shift_status.dart';
 import 'courier_location_availability_guard.dart';
 import 'record_courier_event.dart';
+import 'sync_courier_dispatch_queue.dart';
 
 /// Changes a courier's [CourierAvailabilityStatus] — append-only via
 /// revision (availability history stays auditable).
@@ -31,6 +33,15 @@ import 'record_courier_event.dart';
 /// being available would make the rule unsatisfiable. `null` (the
 /// default, and every existing call site predating Sprint 5B) skips the
 /// check entirely.
+///
+/// **Sprint 5C**: [dispatchQueueSync], when supplied, keeps the FIFO
+/// dispatch queue (`CourierDispatchQueueEvent`) automatically in sync —
+/// reaching [CourierAvailabilityStatus.available] enters the queue;
+/// reaching `paused`/`temporarilyUnavailable`/`busy`/`offline`/
+/// `suspended` leaves it. `online` is deliberately a no-op for the queue
+/// (logged in but not yet available is not "waiting for a delivery").
+/// `null` (the default) skips this entirely, same backward-compatible
+/// pattern as [locationGuard].
 class SetCourierAvailability {
   const SetCourierAvailability({
     required Clock clock,
@@ -39,12 +50,14 @@ class SetCourierAvailability {
     required CourierOperationalAuditEntryRepository auditRepository,
     required RecordCourierEvent recordCourierEvent,
     CourierLocationAvailabilityGuard? locationGuard,
+    SyncCourierDispatchQueue? dispatchQueueSync,
   })  : _clock = clock,
         _shiftRepository = shiftRepository,
         _availabilityRepository = availabilityRepository,
         _auditRepository = auditRepository,
         _recordCourierEvent = recordCourierEvent,
-        _locationGuard = locationGuard;
+        _locationGuard = locationGuard,
+        _dispatchQueueSync = dispatchQueueSync;
 
   final Clock _clock;
   final CourierShiftRepository _shiftRepository;
@@ -52,6 +65,7 @@ class SetCourierAvailability {
   final CourierOperationalAuditEntryRepository _auditRepository;
   final RecordCourierEvent _recordCourierEvent;
   final CourierLocationAvailabilityGuard? _locationGuard;
+  final SyncCourierDispatchQueue? _dispatchQueueSync;
 
   Future<CourierAvailability> call({
     required String courierId,
@@ -90,6 +104,32 @@ class SetCourierAvailability {
       revision: (current?.revision ?? 0) + 1,
     );
     await _availabilityRepository.save(updated);
+
+    final branchId = activeShift?.branchId ?? '';
+    if (to == CourierAvailabilityStatus.available) {
+      await _dispatchQueueSync?.enter(courierId: courierId, branchId: branchId);
+    } else {
+      final leaveReason = switch (to) {
+        CourierAvailabilityStatus.paused =>
+          CourierDispatchQueueLeaveReason.onBreak,
+        CourierAvailabilityStatus.temporarilyUnavailable =>
+          CourierDispatchQueueLeaveReason.locationUnavailable,
+        CourierAvailabilityStatus.busy =>
+          CourierDispatchQueueLeaveReason.activeDelivery,
+        CourierAvailabilityStatus.offline ||
+        CourierAvailabilityStatus.suspended =>
+          CourierDispatchQueueLeaveReason.shiftEnded,
+        CourierAvailabilityStatus.online => null,
+        CourierAvailabilityStatus.available => null,
+      };
+      if (leaveReason != null) {
+        await _dispatchQueueSync?.leave(
+          courierId: courierId,
+          branchId: branchId,
+          reason: leaveReason,
+        );
+      }
+    }
 
     final event = await _recordCourierEvent(
       branchId: activeShift?.branchId ?? '',

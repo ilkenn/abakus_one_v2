@@ -4,6 +4,7 @@ import '../../../../core/utils/clock_provider.dart';
 import '../../application/identity/courier_compensation_profile_id_generator.dart';
 import '../../application/identity/courier_device_id_generator.dart';
 import '../../application/identity/courier_device_session_id_generator.dart';
+import '../../application/identity/courier_dispatch_queue_event_id_generator.dart';
 import '../../application/identity/courier_earnings_adjustment_id_generator.dart';
 import '../../application/identity/courier_earnings_payment_id_generator.dart';
 import '../../application/identity/courier_event_id_generator.dart';
@@ -29,6 +30,7 @@ import '../../application/identity/pending_courier_command_id_generator.dart';
 import '../../application/identity/shift_hourly_earnings_id_generator.dart';
 import '../../application/services/in_memory_courier_connection_monitor.dart';
 import '../../application/services/in_memory_courier_synchronization_service.dart';
+import '../../application/use_cases/build_courier_dispatch_queue.dart';
 import '../../application/use_cases/build_courier_live_status.dart';
 import '../../application/use_cases/build_courier_live_status_for_branch.dart';
 import '../../application/use_cases/build_delivery_tracking_history.dart';
@@ -36,11 +38,13 @@ import '../../application/use_cases/courier_location_availability_guard.dart';
 import '../../application/use_cases/detect_courier_fraud_signals.dart';
 import '../../application/use_cases/detect_repeated_location_loss_signal.dart';
 import '../../application/use_cases/record_courier_event.dart';
+import '../../application/use_cases/sync_courier_dispatch_queue.dart';
 import '../../application/use_cases/sync_queued_courier_locations.dart';
 import '../../data/courier_availability_repository.dart';
 import '../../data/courier_compensation_profile_repository.dart';
 import '../../data/courier_device_repository.dart';
 import '../../data/courier_device_session_repository.dart';
+import '../../data/courier_dispatch_queue_event_repository.dart';
 import '../../data/courier_earnings_adjustment_repository.dart';
 import '../../data/courier_earnings_payment_repository.dart';
 import '../../data/courier_event_cursor_repository.dart';
@@ -478,4 +482,33 @@ final buildDeliveryTrackingHistoryProvider =
 final courierLocationAuditActionIdGeneratorProvider =
     Provider<CourierLocationAuditActionIdGenerator>((ref) {
   return SequentialCourierLocationAuditActionIdGenerator();
+});
+
+/// Sprint 5C — Courier Dispatch & Operations Center. Same bundling
+/// convention as everything above.
+final courierDispatchQueueEventRepositoryProvider =
+    Provider<CourierDispatchQueueEventRepository>((ref) {
+  return InMemoryCourierDispatchQueueEventRepository();
+});
+
+final courierDispatchQueueEventIdGeneratorProvider =
+    Provider<CourierDispatchQueueEventIdGenerator>((ref) {
+  return SequentialCourierDispatchQueueEventIdGenerator();
+});
+
+final syncCourierDispatchQueueProvider =
+    Provider<SyncCourierDispatchQueue>((ref) {
+  return SyncCourierDispatchQueue(
+    clock: ref.watch(clockProvider),
+    idGenerator: ref.watch(courierDispatchQueueEventIdGeneratorProvider),
+    repository: ref.watch(courierDispatchQueueEventRepositoryProvider),
+  );
+});
+
+final buildCourierDispatchQueueProvider =
+    Provider<BuildCourierDispatchQueue>((ref) {
+  return BuildCourierDispatchQueue(
+    clock: ref.watch(clockProvider),
+    repository: ref.watch(courierDispatchQueueEventRepositoryProvider),
+  );
 });
