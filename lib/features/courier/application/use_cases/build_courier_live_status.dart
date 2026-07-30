@@ -93,6 +93,7 @@ class BuildCourierLiveStatus {
       lastLocationUpdateAt: latestSnapshot?.receivedAt,
       activeDeliveryId:
           activeDeliveries.isEmpty ? null : activeDeliveries.first.id,
+      activeDeliveryIds: [for (final d in activeDeliveries) d.id],
     );
   }
 }

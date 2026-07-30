@@ -167,6 +167,29 @@ void main() {
 
       expect(status.activeDeliveryId, 'delivery-1');
     });
+
+    test(
+        'activeDeliveryIds lists every active delivery, not just the '
+        'first (Sprint 5C)', () async {
+      await deliveryRepository.save(buildTestDelivery(
+        id: 'delivery-1',
+        courierId: 'courier-1',
+        status: DeliveryStatus.assigned,
+      ));
+      await deliveryRepository.save(buildTestDelivery(
+        id: 'delivery-2',
+        courierId: 'courier-1',
+        status: DeliveryStatus.accepted,
+      ));
+
+      final status = await buildUseCase(stale: false)(
+        courierId: 'courier-1',
+        branchId: 'branch-1',
+      );
+
+      expect(status.activeDeliveryIds, ['delivery-1', 'delivery-2']);
+      expect(status.activeDeliveryId, 'delivery-1');
+    });
   });
 
   group('BuildCourierLiveStatusForBranch', () {

@@ -26,6 +26,7 @@ class CourierLiveStatus {
     this.batteryLevelPercent,
     this.lastLocationUpdateAt,
     this.activeDeliveryId,
+    this.activeDeliveryIds = const [],
   });
 
   final String courierId;
@@ -50,7 +51,16 @@ class CourierLiveStatus {
   final DateTime? lastLocationUpdateAt;
 
   /// `null` when the courier has no delivery currently in progress.
+  /// Deprecated in spirit by [activeDeliveryIds] (Sprint 5C, which a
+  /// courier can genuinely have more than one of at once — capacity > 1)
+  /// but kept for existing callers; equal to `activeDeliveryIds.first`
+  /// when non-empty.
   final String? activeDeliveryId;
+
+  /// Every delivery currently in progress for this courier, in the order
+  /// `DeliveryRepository.findActiveByCourierId` returns them — Sprint 5C's
+  /// "active delivery count"/"current deliveries."
+  final List<String> activeDeliveryIds;
 
   /// `true` when there is no location reading on record at all — the
   /// manager UI's cue to show "konum verisi yok" rather than a stale pin.
