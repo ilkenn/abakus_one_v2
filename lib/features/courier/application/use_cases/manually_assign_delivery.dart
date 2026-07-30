@@ -3,6 +3,7 @@ import '../../../../core/utils/clock.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
 import '../../data/courier_availability_repository.dart';
+import '../../data/courier_dispatch_queue_event_repository.dart';
 import '../../data/courier_operational_audit_entry_repository.dart';
 import '../../data/delivery_assignment_attempt_repository.dart';
 import '../../data/delivery_assignment_repository.dart';
@@ -13,10 +14,13 @@ import '../../domain/delivery/delivery_assignment.dart';
 import '../../domain/delivery/delivery_assignment_attempt.dart';
 import '../../domain/delivery/delivery_assignment_status.dart';
 import '../../domain/delivery/delivery_status.dart';
+import '../../domain/dispatch/courier_dispatch_queue_builder.dart';
+import '../../domain/dispatch/courier_dispatch_queue_event.dart';
 import '../../domain/events/courier_event_type.dart';
 import '../identity/delivery_assignment_attempt_id_generator.dart';
 import '../identity/delivery_assignment_id_generator.dart';
 import 'record_courier_event.dart';
+import 'sync_courier_dispatch_queue.dart';
 
 /// A manager directly assigns a [Delivery] to a specific courier,
 /// **bypassing [DispatchScorer]** — "manual override requires actor and
@@ -29,6 +33,17 @@ import 'record_courier_event.dart';
 /// Requires [Delivery.status] to be [DeliveryStatus.readyForAssignment]
 /// and [overrideReason] to be non-empty (throws
 /// [ManualOverrideReasonRequiredViolation] otherwise).
+///
+/// **Sprint 5C**: [dispatchQueueSync], when supplied, removes the courier
+/// from the FIFO dispatch queue (a manual assignment is still "receiving
+/// a delivery," same as an accepted offer). [dispatchQueueRepository],
+/// when *also* supplied, additionally captures the queue's before/after
+/// courier-id order and appends a dedicated
+/// [CourierAuditEventType.dispatchQueueManualOverride] audit entry —
+/// "every override: manager, timestamp, reason, old queue, new queue must
+/// be audited." Both are optional and independent of the existing
+/// [CourierAuditEventType.manuallyAssigned] entry below, which is
+/// unmodified. `null` (the default) skips both.
 class ManuallyAssignDelivery {
   const ManuallyAssignDelivery({
     required Clock clock,
@@ -41,6 +56,8 @@ class ManuallyAssignDelivery {
     required CourierAvailabilityRepository availabilityRepository,
     required CourierOperationalAuditEntryRepository auditRepository,
     required RecordCourierEvent recordCourierEvent,
+    SyncCourierDispatchQueue? dispatchQueueSync,
+    CourierDispatchQueueEventRepository? dispatchQueueRepository,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _assignmentIdGenerator = assignmentIdGenerator,
@@ -50,7 +67,9 @@ class ManuallyAssignDelivery {
         _attemptRepository = attemptRepository,
         _availabilityRepository = availabilityRepository,
         _auditRepository = auditRepository,
-        _recordCourierEvent = recordCourierEvent;
+        _recordCourierEvent = recordCourierEvent,
+        _dispatchQueueSync = dispatchQueueSync,
+        _dispatchQueueRepository = dispatchQueueRepository;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
@@ -62,6 +81,8 @@ class ManuallyAssignDelivery {
   final CourierAvailabilityRepository _availabilityRepository;
   final CourierOperationalAuditEntryRepository _auditRepository;
   final RecordCourierEvent _recordCourierEvent;
+  final SyncCourierDispatchQueue? _dispatchQueueSync;
+  final CourierDispatchQueueEventRepository? _dispatchQueueRepository;
 
   Future<DeliveryAssignment> call({
     required String deliveryId,
@@ -109,6 +130,12 @@ class ManuallyAssignDelivery {
       throw AuthorizationDeniedViolation(actionName: action.name);
     }
 
+    final queueRepository = _dispatchQueueRepository;
+    final queueBefore = queueRepository == null
+        ? null
+        : CourierDispatchQueueBuilder.build(
+            await queueRepository.findByBranchId(delivery.branchId));
+
     final now = _clock.now();
     final assignment = DeliveryAssignment(
       id: _assignmentIdGenerator.nextAssignmentId(),
@@ -153,6 +180,32 @@ class ManuallyAssignDelivery {
         activeAssignmentCount: availability.activeAssignmentCount + 1,
         updatedAt: now,
         revision: availability.revision + 1,
+      ));
+    }
+
+    await _dispatchQueueSync?.leave(
+      courierId: courierId,
+      branchId: delivery.branchId,
+      reason: CourierDispatchQueueLeaveReason.manualRemoval,
+    );
+
+    if (queueRepository != null && queueBefore != null) {
+      final queueAfter = CourierDispatchQueueBuilder.build(
+          await queueRepository.findByBranchId(delivery.branchId));
+      await _auditRepository.appendEvent(CourierOperationalAuditEntry(
+        id: '${assignment.id}-queue-override-audit',
+        branchId: delivery.branchId,
+        actorStaffId: overriddenByStaffId,
+        courierId: courierId,
+        deliveryId: delivery.id,
+        assignmentId: assignment.id,
+        type: CourierAuditEventType.dispatchQueueManualOverride,
+        description: 'FIFO override: queue before '
+            '[${queueBefore.map((p) => p.courierId).join(', ')}], '
+            'after [${queueAfter.map((p) => p.courierId).join(', ')}]',
+        reason: overrideReason,
+        timestamp: now,
+        correlationId: '${assignment.id}-queue-override',
       ));
     }
 

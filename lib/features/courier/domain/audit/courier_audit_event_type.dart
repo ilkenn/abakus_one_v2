@@ -1,6 +1,9 @@
 /// The kind of human-meaningful courier-operations action a
 /// [CourierOperationalAuditEntry] records — narrower than
 /// [CourierEventType] (no connectivity/heartbeat events here).
+///
+/// Sprint 5C (Courier Dispatch & Operations Center) adds
+/// `dispatchQueueManualOverride` onward.
 enum CourierAuditEventType {
   courierActivated,
   courierSuspended,
@@ -42,4 +45,13 @@ enum CourierAuditEventType {
   locationHistoryReset,
   locationPermissionChanged,
   fraudSignalDetected,
+  dispatchQueueManualOverride,
+  deliverySequenceReordered,
+  sameDestinationGrouped,
+  shiftTransferred,
+  temporaryPackageBlockingChanged,
+  courierMessageSent,
+  broadcastMessageSent,
+  emergencyMessageSent,
+  emergencyMessageAcknowledged,
 }
