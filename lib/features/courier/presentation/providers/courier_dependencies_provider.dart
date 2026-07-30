@@ -21,10 +21,15 @@ import '../../application/identity/delivery_id_generator.dart';
 import '../../application/identity/delivery_proof_id_generator.dart';
 import '../../application/identity/delivery_route_snapshot_id_generator.dart';
 import '../../application/identity/geofence_override_id_generator.dart';
+import '../../application/identity/geofence_transition_event_id_generator.dart';
+import '../../application/identity/location_emergency_override_id_generator.dart';
 import '../../application/identity/pending_courier_command_id_generator.dart';
 import '../../application/identity/shift_hourly_earnings_id_generator.dart';
 import '../../application/services/in_memory_courier_connection_monitor.dart';
 import '../../application/services/in_memory_courier_synchronization_service.dart';
+import '../../application/use_cases/build_courier_live_status.dart';
+import '../../application/use_cases/build_courier_live_status_for_branch.dart';
+import '../../application/use_cases/courier_location_availability_guard.dart';
 import '../../data/courier_availability_repository.dart';
 import '../../data/courier_compensation_profile_repository.dart';
 import '../../data/courier_device_repository.dart';
@@ -34,6 +39,7 @@ import '../../data/courier_earnings_payment_repository.dart';
 import '../../data/courier_event_cursor_repository.dart';
 import '../../data/courier_event_repository.dart';
 import '../../data/courier_feedback_repository.dart';
+import '../../data/courier_location_availability_repository.dart';
 import '../../data/courier_location_repository.dart';
 import '../../data/courier_operational_audit_entry_repository.dart';
 import '../../data/courier_operational_profile_repository.dart';
@@ -49,7 +55,9 @@ import '../../data/delivery_proof_repository.dart';
 import '../../data/delivery_repository.dart';
 import '../../data/delivery_tracking_repository.dart';
 import '../../data/geofence_override_repository.dart';
+import '../../data/geofence_transition_event_repository.dart';
 import '../../data/in_memory_courier_event_bus.dart';
+import '../../data/location_emergency_override_repository.dart';
 import '../../data/pending_courier_command_repository.dart';
 import '../../data/shift_hourly_earnings_repository.dart';
 import '../../domain/events/courier_connection_monitor.dart';
@@ -331,4 +339,61 @@ final courierEarningsAdjustmentIdGeneratorProvider =
 final courierEarningsPaymentIdGeneratorProvider =
     Provider<CourierEarningsPaymentIdGenerator>((ref) {
   return SequentialCourierEarningsPaymentIdGenerator();
+});
+
+/// Sprint 5B — real GPS/geofence/ETA/live-tracking. Same bundling
+/// convention as everything above.
+final courierLocationAvailabilityRepositoryProvider =
+    Provider<CourierLocationAvailabilityRepository>((ref) {
+  return InMemoryCourierLocationAvailabilityRepository();
+});
+
+final locationEmergencyOverrideRepositoryProvider =
+    Provider<LocationEmergencyOverrideRepository>((ref) {
+  return InMemoryLocationEmergencyOverrideRepository();
+});
+
+final locationEmergencyOverrideIdGeneratorProvider =
+    Provider<LocationEmergencyOverrideIdGenerator>((ref) {
+  return SequentialLocationEmergencyOverrideIdGenerator();
+});
+
+final geofenceTransitionEventRepositoryProvider =
+    Provider<GeofenceTransitionEventRepository>((ref) {
+  return InMemoryGeofenceTransitionEventRepository();
+});
+
+final geofenceTransitionEventIdGeneratorProvider =
+    Provider<GeofenceTransitionEventIdGenerator>((ref) {
+  return SequentialGeofenceTransitionEventIdGenerator();
+});
+
+final courierLocationAvailabilityGuardProvider =
+    Provider<CourierLocationAvailabilityGuard>((ref) {
+  return CourierLocationAvailabilityGuard(
+    clock: ref.watch(clockProvider),
+    availabilityRepository:
+        ref.watch(courierLocationAvailabilityRepositoryProvider),
+    overrideRepository: ref.watch(locationEmergencyOverrideRepositoryProvider),
+  );
+});
+
+final buildCourierLiveStatusProvider = Provider<BuildCourierLiveStatus>((ref) {
+  return BuildCourierLiveStatus(
+    clock: ref.watch(clockProvider),
+    locationRepository: ref.watch(courierLocationRepositoryProvider),
+    connectionMonitor: ref.watch(courierConnectionMonitorProvider),
+    availabilityRepository: ref.watch(courierAvailabilityRepositoryProvider),
+    locationAvailabilityRepository:
+        ref.watch(courierLocationAvailabilityRepositoryProvider),
+    deliveryRepository: ref.watch(deliveryRepositoryProvider),
+  );
+});
+
+final buildCourierLiveStatusForBranchProvider =
+    Provider<BuildCourierLiveStatusForBranch>((ref) {
+  return BuildCourierLiveStatusForBranch(
+    courierRepository: ref.watch(courierRepositoryProvider),
+    buildCourierLiveStatus: ref.watch(buildCourierLiveStatusProvider),
+  );
 });

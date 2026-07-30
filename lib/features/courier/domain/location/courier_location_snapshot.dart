@@ -16,6 +16,7 @@ class CourierLocationSnapshot {
     this.speedMetersPerSecond,
     this.altitudeMeters,
     this.isMocked = false,
+    this.batteryLevelPercent,
     required this.capturedAt,
     required this.receivedAt,
   });
@@ -49,6 +50,14 @@ class CourierLocationSnapshot {
   /// `mockLocation` detector (Sprint 5B) — never used to block an action
   /// by itself.
   final bool isMocked;
+
+  /// Device battery level, 0-100, when the platform reports one — the
+  /// vehicle for Part 6's "live tracking battery level" and Part 12's
+  /// "battery consumption estimate": the courier's own device reports its
+  /// battery alongside its position, the same way it already reports
+  /// position itself; there is no separate way for a manager's app to
+  /// query another courier's battery directly (Sprint 5B).
+  final int? batteryLevelPercent;
 
   /// When the device actually captured this fix.
   final DateTime capturedAt;
