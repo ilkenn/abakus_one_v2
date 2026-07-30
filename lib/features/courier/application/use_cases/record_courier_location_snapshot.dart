@@ -1,4 +1,6 @@
+import '../../../../core/errors/business_rule_violation.dart';
 import '../../../../core/utils/clock.dart';
+import '../../../pos/domain/authorization/pos_authorized_action.dart';
 import '../../data/courier_location_repository.dart';
 import '../../domain/events/courier_event_type.dart';
 import '../../domain/location/courier_location_snapshot.dart';
@@ -17,6 +19,16 @@ import 'record_courier_event.dart';
 /// additive, optional parameters carrying the real-GPS/device-telemetry
 /// fields `GeolocatorCourierLocationProvider`/`BatteryLevelProvider` now
 /// capture — omitted callers behave exactly as before.
+///
+/// **Sprint 5B Part 11**: [authenticatedCourierId], when supplied, must
+/// match [courierId] — "a courier may only publish their own location."
+/// This app has no real backend/auth session yet (`CLAUDE.md` §9's
+/// forward-looking security rules), so this is not a cryptographic
+/// guarantee; it is the same explicit-actor-id trust boundary every other
+/// use case in this app already relies on (`performedByStaffId` is always
+/// passed by the caller, never independently verified either). `null`
+/// (the default) skips the check, preserving every existing call site's
+/// behavior unchanged.
 class RecordCourierLocationSnapshot {
   const RecordCourierLocationSnapshot({
     required Clock clock,
@@ -48,7 +60,12 @@ class RecordCourierLocationSnapshot {
     bool isMocked = false,
     int? batteryLevelPercent,
     required DateTime capturedAt,
+    String? authenticatedCourierId,
   }) async {
+    if (authenticatedCourierId != null && authenticatedCourierId != courierId) {
+      const action = PosAuthorizedAction.publishOwnLocationOnly;
+      throw AuthorizationDeniedViolation(actionName: action.name);
+    }
     final now = _clock.now();
     final snapshot = CourierLocationSnapshot(
       id: _idGenerator.nextSnapshotId(),

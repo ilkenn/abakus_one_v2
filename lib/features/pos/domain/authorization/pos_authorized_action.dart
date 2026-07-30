@@ -23,7 +23,9 @@
 /// courier-compensation values (`manageCourierCompensationProfile`
 /// onward) extend it again, same reasoning (`docs/decisions.md` ADR-018).
 /// The Sprint 5B location-tracking values (`grantLocationEmergencyOverride`
-/// onward) extend it a final time (`docs/decisions.md` ADR-019).
+/// onward, including `publishOwnLocationOnly` added during the same
+/// sprint's Part 11 authorization pass) extend it a final time
+/// (`docs/decisions.md` ADR-019).
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -80,4 +82,5 @@ enum PosAuthorizedAction {
   startCourierLocationTracking,
   stopCourierLocationTracking,
   resetCourierLocationHistory,
+  publishOwnLocationOnly,
 }

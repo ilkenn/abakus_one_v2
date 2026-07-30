@@ -10,6 +10,7 @@ import '../../application/identity/courier_event_id_generator.dart';
 import '../../application/identity/courier_feedback_id_generator.dart';
 import '../../application/identity/courier_fraud_signal_id_generator.dart';
 import '../../application/identity/courier_id_generator.dart';
+import '../../application/identity/courier_location_audit_action_id_generator.dart';
 import '../../application/identity/courier_location_snapshot_id_generator.dart';
 import '../../application/identity/courier_shift_id_generator.dart';
 import '../../application/identity/courier_shift_schedule_id_generator.dart';
@@ -463,4 +464,18 @@ final buildDeliveryTrackingHistoryProvider =
     locationRepository: ref.watch(courierLocationRepositoryProvider),
     auditRepository: ref.watch(courierOperationalAuditEntryRepositoryProvider),
   );
+});
+
+/// Sprint 5B Part 11. `StartCourierLocationTracking`/
+/// `StopCourierLocationTracking`/`ResetCourierLocationHistory` are not
+/// bundled here as full use-case providers — like every other authorized
+/// courier-operations use case in this feature (see
+/// `CourierDispatchBoardScreen`'s `_reviewShift`/`_manuallyAssign`), they
+/// need a `PosAuthorizationPolicy` supplied by whichever screen
+/// constructs them, never resolved from this file (this file deliberately
+/// never imports `pos/presentation/providers/*`). This id generator is
+/// still bundled since it has no such external dependency.
+final courierLocationAuditActionIdGeneratorProvider =
+    Provider<CourierLocationAuditActionIdGenerator>((ref) {
+  return SequentialCourierLocationAuditActionIdGenerator();
 });
