@@ -1263,3 +1263,35 @@ final class SameDestinationGroupTooSmallViolation
       'A same-destination group requires at least 2 deliveries, got '
       '$deliveryCount';
 }
+
+/// A [CourierMessageType.direct] message was sent without a
+/// `recipientCourierId`, or a [CourierMessageType.broadcast]/
+/// [CourierMessageType.emergency] message was sent *with* one — Sprint 5C
+/// Part 8's Communication Center.
+final class InvalidCourierMessageRecipientViolation
+    extends BusinessRuleViolation {
+  const InvalidCourierMessageRecipientViolation({required this.typeName});
+
+  final String typeName;
+
+  @override
+  String get description => 'Invalid recipient for a "$typeName" message';
+}
+
+/// An acknowledgement was attempted for a [CourierMessage] whose
+/// [CourierMessage.type] is not [CourierMessageType.emergency] — only
+/// emergency messages require/accept acknowledgement (Sprint 5C Part 8).
+/// Also thrown by `RecordCourierMessageStatus` if called with
+/// `CourierMessageStatusEventType.acknowledged` directly — acknowledgement
+/// only ever goes through `AcknowledgeEmergencyMessage`'s own validation.
+final class MessageAcknowledgementNotRequiredViolation
+    extends BusinessRuleViolation {
+  const MessageAcknowledgementNotRequiredViolation({required this.messageId});
+
+  final String messageId;
+
+  @override
+  String get description =>
+      'Message "$messageId" is not an emergency message and does not '
+      'accept acknowledgement';
+}

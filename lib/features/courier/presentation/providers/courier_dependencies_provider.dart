@@ -13,6 +13,8 @@ import '../../application/identity/courier_fraud_signal_id_generator.dart';
 import '../../application/identity/courier_id_generator.dart';
 import '../../application/identity/courier_location_audit_action_id_generator.dart';
 import '../../application/identity/courier_location_snapshot_id_generator.dart';
+import '../../application/identity/courier_message_id_generator.dart';
+import '../../application/identity/courier_message_status_event_id_generator.dart';
 import '../../application/identity/courier_shift_id_generator.dart';
 import '../../application/identity/courier_shift_schedule_id_generator.dart';
 import '../../application/identity/customer_contact_action_id_generator.dart';
@@ -55,6 +57,8 @@ import '../../data/courier_feedback_repository.dart';
 import '../../data/courier_fraud_signal_repository.dart';
 import '../../data/courier_location_availability_repository.dart';
 import '../../data/courier_location_repository.dart';
+import '../../data/courier_message_repository.dart';
+import '../../data/courier_message_status_event_repository.dart';
 import '../../data/courier_operational_audit_entry_repository.dart';
 import '../../data/courier_operational_profile_repository.dart';
 import '../../data/courier_package_blocking_status_repository.dart';
@@ -535,4 +539,24 @@ final sameDestinationGroupIdGeneratorProvider =
 final courierPackageBlockingStatusRepositoryProvider =
     Provider<CourierPackageBlockingStatusRepository>((ref) {
   return InMemoryCourierPackageBlockingStatusRepository();
+});
+
+final courierMessageRepositoryProvider =
+    Provider<CourierMessageRepository>((ref) {
+  return InMemoryCourierMessageRepository();
+});
+
+final courierMessageIdGeneratorProvider =
+    Provider<CourierMessageIdGenerator>((ref) {
+  return SequentialCourierMessageIdGenerator();
+});
+
+final courierMessageStatusEventRepositoryProvider =
+    Provider<CourierMessageStatusEventRepository>((ref) {
+  return InMemoryCourierMessageStatusEventRepository();
+});
+
+final courierMessageStatusEventIdGeneratorProvider =
+    Provider<CourierMessageStatusEventIdGenerator>((ref) {
+  return SequentialCourierMessageStatusEventIdGenerator();
 });
