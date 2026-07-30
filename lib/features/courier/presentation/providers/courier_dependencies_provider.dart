@@ -35,6 +35,7 @@ import '../../application/services/in_memory_courier_connection_monitor.dart';
 import '../../application/services/in_memory_courier_synchronization_service.dart';
 import '../../application/use_cases/build_courier_dispatch_queue.dart';
 import '../../application/use_cases/build_courier_live_status.dart';
+import '../../application/use_cases/build_courier_live_warnings.dart';
 import '../../application/use_cases/build_courier_live_status_for_branch.dart';
 import '../../application/use_cases/build_delivery_tracking_history.dart';
 import '../../application/use_cases/courier_location_availability_guard.dart';
@@ -467,6 +468,18 @@ final detectRepeatedLocationLossSignalProvider =
     idGenerator: ref.watch(courierFraudSignalIdGeneratorProvider),
     repository: ref.watch(courierFraudSignalRepositoryProvider),
     auditRepository: ref.watch(courierOperationalAuditEntryRepositoryProvider),
+  );
+});
+
+final buildCourierLiveWarningsProvider =
+    Provider<BuildCourierLiveWarnings>((ref) {
+  return BuildCourierLiveWarnings(
+    clock: ref.watch(clockProvider),
+    courierRepository: ref.watch(courierRepositoryProvider),
+    buildCourierLiveStatus: ref.watch(buildCourierLiveStatusProvider),
+    locationAvailabilityRepository:
+        ref.watch(courierLocationAvailabilityRepositoryProvider),
+    fraudSignalRepository: ref.watch(courierFraudSignalRepositoryProvider),
   );
 });
 
