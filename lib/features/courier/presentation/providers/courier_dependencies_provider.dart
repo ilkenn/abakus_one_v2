@@ -42,6 +42,7 @@ import '../../application/use_cases/sync_courier_dispatch_queue.dart';
 import '../../application/use_cases/sync_queued_courier_locations.dart';
 import '../../data/courier_availability_repository.dart';
 import '../../data/courier_compensation_profile_repository.dart';
+import '../../data/courier_delivery_sequence_repository.dart';
 import '../../data/courier_device_repository.dart';
 import '../../data/courier_device_session_repository.dart';
 import '../../data/courier_dispatch_queue_event_repository.dart';
@@ -511,4 +512,9 @@ final buildCourierDispatchQueueProvider =
     clock: ref.watch(clockProvider),
     repository: ref.watch(courierDispatchQueueEventRepositoryProvider),
   );
+});
+
+final courierDeliverySequenceRepositoryProvider =
+    Provider<CourierDeliverySequenceRepository>((ref) {
+  return InMemoryCourierDeliverySequenceRepository();
 });

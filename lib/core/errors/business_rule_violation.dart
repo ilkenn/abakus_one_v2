@@ -1225,3 +1225,26 @@ final class LocationUnavailableViolation extends BusinessRuleViolation {
   String get description => 'Courier "$courierId" has no available location'
       '${reasonName == null ? '' : ' ($reasonName)'} — action blocked';
 }
+
+/// A manager-submitted `CourierDeliverySequence` reorder did not exactly
+/// match the courier's current set of active (non-terminal) deliveries —
+/// either a delivery was added/removed/duplicated, or a completed
+/// delivery was included ("completed deliveries cannot move") — Sprint
+/// 5C Part 5.
+final class InvalidDeliverySequenceViolation extends BusinessRuleViolation {
+  const InvalidDeliverySequenceViolation({
+    required this.courierId,
+    required this.expectedDeliveryIds,
+    required this.submittedDeliveryIds,
+  });
+
+  final String courierId;
+  final List<String> expectedDeliveryIds;
+  final List<String> submittedDeliveryIds;
+
+  @override
+  String get description =>
+      'Submitted delivery sequence for courier "$courierId" '
+      '($submittedDeliveryIds) does not match their active deliveries '
+      '($expectedDeliveryIds)';
+}

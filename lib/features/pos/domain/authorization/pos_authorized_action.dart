@@ -24,8 +24,10 @@
 /// onward) extend it again, same reasoning (`docs/decisions.md` ADR-018).
 /// The Sprint 5B location-tracking values (`grantLocationEmergencyOverride`
 /// onward, including `publishOwnLocationOnly` added during the same
-/// sprint's Part 11 authorization pass) extend it a final time
-/// (`docs/decisions.md` ADR-019).
+/// sprint's Part 11 authorization pass) extend it again
+/// (`docs/decisions.md` ADR-019). The Sprint 5C Dispatch & Operations
+/// Center values (`reorderCourierDeliverySequence` onward) extend it a
+/// final time (`docs/decisions.md` ADR-020).
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -83,4 +85,11 @@ enum PosAuthorizedAction {
   stopCourierLocationTracking,
   resetCourierLocationHistory,
   publishOwnLocationOnly,
+  reorderCourierDeliverySequence,
+  groupSameDestinationDeliveries,
+  transferCourierShift,
+  setTemporaryPackageBlocking,
+  sendCourierMessage,
+  sendBroadcastMessage,
+  sendEmergencyMessage,
 }

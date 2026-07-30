@@ -36,4 +36,9 @@ enum CourierEventType {
   deviceHeartbeat,
   deviceConnected,
   deviceDisconnected,
+  deliverySequenceReordered,
+  courierMessageSent,
+  broadcastMessageSent,
+  emergencyMessageSent,
+  emergencyMessageAcknowledged,
 }
