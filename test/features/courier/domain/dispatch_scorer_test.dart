@@ -12,6 +12,7 @@ DispatchScoringInput _candidate({
   int packageWaitSeconds = 0,
   int recentRejectionCount = 0,
   bool isVehicleSuitable = true,
+  bool isTemporarilyBlockedFromNewPackages = false,
 }) {
   return DispatchScoringInput(
     courierId: courierId,
@@ -23,6 +24,7 @@ DispatchScoringInput _candidate({
     packageWaitSeconds: packageWaitSeconds,
     recentRejectionCount: recentRejectionCount,
     isVehicleSuitable: isVehicleSuitable,
+    isTemporarilyBlockedFromNewPackages: isTemporarilyBlockedFromNewPackages,
   );
 }
 
@@ -54,6 +56,16 @@ void main() {
         _candidate(courierId: 'c1', isVehicleSuitable: false),
       ]);
       expect(results.single.isEligible, isFalse);
+    });
+
+    test(
+        'a courier temporarily blocked from new packages is ineligible '
+        '(Sprint 5C)', () {
+      final results = DispatchScorer.rank([
+        _candidate(courierId: 'c1', isTemporarilyBlockedFromNewPackages: true),
+      ]);
+      expect(results.single.isEligible, isFalse);
+      expect(results.single.score, 0);
     });
 
     test('closer candidates rank above farther ones, all else equal', () {

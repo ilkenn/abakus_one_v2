@@ -12,6 +12,7 @@ class DispatchScoringInput {
     required this.packageWaitSeconds,
     required this.recentRejectionCount,
     this.isVehicleSuitable = true,
+    this.isTemporarilyBlockedFromNewPackages = false,
   });
 
   final String courierId;
@@ -23,6 +24,12 @@ class DispatchScoringInput {
   final int packageWaitSeconds;
   final int recentRejectionCount;
   final bool isVehicleSuitable;
+
+  /// Sprint 5C Part 7's "temporary package blocking" — a courier still
+  /// finishing existing deliveries but who a manager has flagged to
+  /// receive no *new* ones. Distinct from [isAvailable]/`hasCapacity`:
+  /// this is a manager decision, not a derived state.
+  final bool isTemporarilyBlockedFromNewPackages;
 
   bool get hasCapacity => activeDeliveryCount < capacity;
 }

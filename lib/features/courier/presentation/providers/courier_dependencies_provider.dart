@@ -57,6 +57,7 @@ import '../../data/courier_location_availability_repository.dart';
 import '../../data/courier_location_repository.dart';
 import '../../data/courier_operational_audit_entry_repository.dart';
 import '../../data/courier_operational_profile_repository.dart';
+import '../../data/courier_package_blocking_status_repository.dart';
 import '../../data/courier_repository.dart';
 import '../../data/courier_shift_repository.dart';
 import '../../data/courier_shift_schedule_repository.dart';
@@ -529,4 +530,9 @@ final sameDestinationGroupRepositoryProvider =
 final sameDestinationGroupIdGeneratorProvider =
     Provider<SameDestinationGroupIdGenerator>((ref) {
   return SequentialSameDestinationGroupIdGenerator();
+});
+
+final courierPackageBlockingStatusRepositoryProvider =
+    Provider<CourierPackageBlockingStatusRepository>((ref) {
+  return InMemoryCourierPackageBlockingStatusRepository();
 });

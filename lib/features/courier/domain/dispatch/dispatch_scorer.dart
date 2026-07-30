@@ -19,7 +19,8 @@ abstract final class DispatchScorer {
     final isEligible = input.isAvailable &&
         input.isEligibleForBranch &&
         input.hasCapacity &&
-        input.isVehicleSuitable;
+        input.isVehicleSuitable &&
+        !input.isTemporarilyBlockedFromNewPackages;
 
     if (!isEligible) {
       return DispatchScoringResult(
