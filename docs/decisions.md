@@ -1726,3 +1726,153 @@ each reported rather than glossed over: the final-delivery verified-arrival look
 future caller (a genuine, deliberate scope boundary, not an oversight) and the reused
 `DeliveryRouteSnapshot` distance estimate's own pre-existing non-authoritative status (inherited from
 Phase 5, not introduced here, but now load-bearing for a financial calculation for the first time).
+
+---
+
+## ADR-019 — Real GPS, Geofence, ETA & Live Tracking (Sprint 5B)
+
+- Date: 2026-07-30
+- Status: Accepted
+
+### Pre-implementation architecture analysis (required first task)
+Before any code, every location-adjacent contract named in the brief was inspected directly:
+`CourierLocationProvider`/`LocationPermissionGateway`/`BackgroundLocationSession`/`EtaEstimator`
+(`lib/features/courier/domain/location/*.dart` — confirmed each a deliberately honest NoOp seam, their
+own doc comments already stating "production background-location deployment" and "adding a mapping/
+geolocation package" were explicitly out of scope in ADR-017/ADR-018); `CourierLocationSnapshot`/
+`GeofenceEvaluator`/`GeofenceEvaluationResult`/`GeofenceZoneType`/`GeofenceOverride` (confirmed the
+exact Phase 5 fields/rules, unchanged this sprint); `FirstVerifiedGeofenceArrivalFinder`/
+`ShiftEarningsWindowCalculator` (Sprint 5A, confirmed the "a single accurate in-radius point is
+sufficient evidence" precedent this sprint's `GeofenceTransitionDetector` deliberately follows rather
+than inventing multi-point debounce); `DeliveryRouteSnapshot`/`NaiveEtaEstimator` (confirmed the
+"non-authoritative, no routing provider" doc comment); `CourierAvailability`/`CourierShift`/
+`CourierConnectionMonitor`/`PendingCourierCommand`/`CourierEventBus` (Phase 5's offline-queue/
+connection-health foundation, confirmed reusable unchanged); `pubspec.yaml` (confirmed **zero**
+geolocation/permission/background-execution package existed); `android/app/src/main/AndroidManifest
+.xml`/`ios/Runner/Info.plist` (confirmed zero location-permission entries); `PosAuthorizedAction`/
+`CourierAuditEventType`/`core/errors/business_rule_violation.dart` (read the full current enums/file,
+confirmed the exact additive-value convention to extend); `courier_dependencies_provider.dart` (read
+the full file, confirmed the provider-naming convention). This analysis directly shaped the decision
+below — nothing here redesigns Phase 5/Sprint 5A; `Delivery`, `CourierShift`, `GeofenceEvaluator`,
+`NaiveEtaEstimator`, and every other named type are unmodified except the purely additive extensions
+listed in Consequences.
+
+### Scope decision — real device integration, not contracts-only
+Before writing code, the "real GPS" scope itself was surfaced to the user rather than decided
+silently: contracts-only/simulated (recommended, since real device/permission/background behavior
+cannot be verified in this environment) vs. full real-plugin integration vs. foreground-only. The user
+chose full real-device integration — "add a real geolocation plugin (e.g. `geolocator` +
+`permission_handler`) and wire actual platform APIs" — explicitly accepting the verification
+limitation. `geolocator`/`battery_plus`/`connectivity_plus` were added via `flutter pub add` (pub's own
+resolver, never a guessed version number) — `geolocator: 14.0.3`, `battery_plus: 7.1.1`,
+`connectivity_plus: 7.3.1`. Every `geolocator`/`battery_plus`/`connectivity_plus` type is mapped to a
+domain-owned equivalent before crossing into `domain/`/`application/` — the platform-neutrality rule
+already established by every prior courier-feature contract (BR-COURIER-035).
+
+### REQUIRED mid-sprint correction — mandatory location availability for active-shift operations
+Mid-implementation, the user delivered a required business-rule correction (not part of the original
+13-part brief): a courier must not be operationally usable without location access during an active
+shift. Resolved with a new, small, reusable `CourierLocationAvailabilityGuard` threaded as an
+**optional** constructor dependency (`null` skips the check, preserving every existing call site and
+every one of the then-143 pre-existing courier tests unchanged) into six existing use cases —
+`TransitionCourierShift`, `SetCourierAvailability`, `RespondToDeliveryAssignment`,
+`ConfirmPackagePickup`, `TransitionDelivery`, `CompleteDelivery`. The optional-parameter pattern (the
+same one this feature has used since Phase 5 for every additive cross-cutting concern) is what makes
+"never redesign, only extend" achievable for a rule this broad. Several sub-scope judgment calls were
+required and are documented inline in each modified use case: `SetCourierAvailability`'s
+`temporarilyUnavailable` target is deliberately **not** gated (the guard would otherwise self-block
+`ReportCourierLocationAvailability`'s own automatic transition into that exact state — an infinite-
+regress bug); `RespondToDeliveryAssignment` gates only `accept`, never `reject`; `TransitionDelivery`
+gates only forward-progress statuses (`arrivedAtRestaurant`/`enRoute`/`arrivedAtCustomer`), never
+cancellation/return-to-restaurant — a courier without a working location must still be able to decline
+or cancel, never be stuck. `ReportCourierLocationAvailability` never depends on any shift-transition
+use case at all, structurally satisfying "do not automatically end the shift when location is
+disabled." A manager-authorized, reasoned `LocationEmergencyOverride` (courier-wide or
+delivery-specific, optional expiry) is the sole escape valve.
+
+### Decision
+Replaces every NoOp/in-memory location contract with a production-ready device integration across all
+13 brief parts (BR-COURIER-034 through BR-COURIER-044), on top of the REQUIRED correction above.
+Selected architectural judgment calls, each reasoned in its own file's doc comments rather than
+decided silently:
+
+- **`GeofenceTransitionDetector`'s false-positive rejection is accuracy-plus-real-prior-state, not
+  multi-point debounce.** A transition is only ever reported when the current reading is accurate and
+  either there is no prior reading (bootstrap arrival, mirroring `FirstVerifiedGeofenceArrivalFinder`'s
+  own "a single accurate point is sufficient" precedent) or a real prior evaluation shows an actual
+  state change. A stronger N-consecutive-point debounce is a legitimate future enhancement, not
+  implemented — flagged as technical debt, not silently assumed unnecessary.
+- **`SyncQueuedCourierLocations` is a deliberate sibling of `RecordCourierLocationSnapshot`, never a
+  reuse.** That use case always mints a fresh id via its id generator; replaying a queued reading
+  through it would turn every retried sync into a new duplicate. The sibling instead preserves the
+  snapshot's own capture-time id and checks a new, additive `CourierLocationRepository.containsId`
+  before every append.
+- **No `conflict` status exists for queued locations**, unlike `PendingCourierCommand`'s existing
+  `conflict` state — an immutable reading has no revision to be stale against; there is only "already
+  recorded," handled by deduplication, never surfaced as its own state.
+- **Fraud signals carry no enforcement field of any kind** — "generate operational signals only, do
+  NOT implement punishment" holds structurally: nothing on `CourierFraudSignal` could be wired into a
+  block/ban/deny decision even by mistake. Four of ten taxonomy values
+  (`developerModeEnabled`/`timeManipulationSuspected`/`locationSpoofSuspicion`/
+  `batteryOptimizationAbuseSuspected`) have no detector this sprint — no real platform signal exists
+  yet to detect them honestly, documented as a gap rather than faked.
+- **`ResetCourierLocationHistory` never mutates `CourierLocationRepository`.** "Location history
+  immutable" already holds structurally (no update/delete method exists on that repository at all);
+  this use case is an authorized, reasoned, audited *request* only. Making the courier's device act on
+  it is unbuilt runtime orchestration, not claimed as complete.
+- **Manager live tracking is list-only, deferring the map-package decision.** Follows Phase 5O's own
+  established "list-based operational view is acceptable, no advanced map visualization required"
+  precedent (`CourierDispatchBoardScreen`) rather than silently adding a mapping/geolocation-rendering
+  package (e.g. `google_maps_flutter`) — flagged here as a separate, deferred architecture decision.
+- **`AdaptiveEtaEstimator` is a new `EtaEstimator` implementation, `NaiveEtaEstimator` untouched.**
+  `TimeOfDayTrafficMultiplierProvider` is a local, fully configurable rush-hour heuristic — never a
+  commercial routing/traffic API integration, per the brief's explicit "do not integrate commercial
+  routing APIs" instruction.
+- **"A courier may only publish their own location" is enforced at the trust level this app already
+  operates at.** No real backend/auth session exists yet (`CLAUDE.md` §9's forward-looking security
+  rules); `RecordCourierLocationSnapshot`'s new optional `authenticatedCourierId` check is the same
+  explicit-actor-id trust boundary every other use case here already relies on, not a cryptographic
+  guarantee it cannot honestly provide yet.
+
+### Consequences
+- **15 implementation commits** (foundation + native permissions + location-availability gate; real
+  geolocator/battery_plus/connectivity_plus data layer; adaptive tracking policy; multi-geofence;
+  ETA engine; live tracking + manager dashboard; offline queue; fraud signals; delivery tracking
+  history; authorization/privacy/audit; performance metrics; documentation is this commit), each
+  independently formatted/analyzed/tested before commit, matching ADR-017/ADR-018's granularity
+  precedent.
+- **New pub dependencies**: `geolocator: 14.0.3`, `battery_plus: 7.1.1`, `connectivity_plus: 7.3.1`
+  (plus their transitive platform packages) — the first new runtime dependencies added since ADR-006.
+  Native manifest changes: Android location/foreground-service permissions
+  (`AndroidManifest.xml`), iOS location usage descriptions + background mode (`Info.plist`).
+- **No existing Phase 5/Sprint 5A file was rewritten.** `PosAuthorizedAction` (7 additive values,
+  including one added during the Part 11 authorization pass beyond the original plan),
+  `CourierAuditEventType` (7 additive values), `core/errors/business_rule_violation.dart` (1 additive
+  violation type), `CourierLocationSnapshot`/`RecordCourierLocationSnapshot`/
+  `CourierLocationRepository`/`CourierLocationAvailabilityRepository`/`DeliveryRouteSnapshot`/
+  `DeliveryTrackingRepository` (additive fields/methods only), six Phase 5 use cases (additive optional
+  guard parameter only), and `courier_dependencies_provider.dart` (additive provider entries only) are
+  the only pre-existing files modified beyond their own tests; every other change is a new file.
+- **Honest, explicitly flagged limitation — real device/permission/background-execution behavior is
+  not verified in this environment.** Only structural/unit-level Dart verification was possible; a
+  real-device QA pass is required before production deployment.
+- **Honest, explicitly flagged gap — no live runtime orchestrator wires `CourierLocationProvider
+  .watch()` + `AdaptiveTrackingPolicy` + `OfflineLocationQueueRepository` + `NetworkConnectivityMonitor`
+  together into one continuous background loop.** Every individual piece is real, tested, and
+  independently wired into `courier_dependencies_provider.dart`; the coordinator that runs them
+  together continuously is presentation/bootstrap-layer wiring not built this sprint — the same
+  category of gap ADR-017 already documented for `BackgroundLocationSession` before this sprint made it
+  real.
+- **No customer-facing live tracking** — explicitly out of scope, deferred to a future sprint (Sprint
+  5C).
+
+### Confidence
+75%. The domain model (location-availability gate, multi-geofence evaluation, offline dedup/replay,
+fraud-signal taxonomy, performance calculators) is directly grounded in the brief's explicit
+requirements, each mapping to a concrete, tested invariant (over 150 new tests this sprint alone). The
+residual uncertainty is concentrated in three places, each reported rather than glossed over: real
+device/permission/background behavior is unverified in this environment; the live runtime orchestrator
+tying the individual real pieces into one continuous background loop is not built; and several
+judgment calls (geofence false-positive rejection strategy, four fraud-signal types with no detector,
+the deferred map-package decision) were reasoned through and documented rather than resolved with
+certainty a future sprint might revise.

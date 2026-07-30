@@ -489,41 +489,59 @@
 
 #### COUR-001 — In-House Courier App & Dispatch
 - Description: Courier roster, order assignment (manual/auto-dispatch), and a lightweight courier-facing app.
-- Status: **Domain/application/UI foundation implemented (Phase 5, `lib/features/courier/**`)** — see
-  `docs/business_rules.md` BR-COURIER-004/012–024 and `docs/decisions.md` ADR-017. `Courier`/`Delivery`/
+- Status: **Domain/application/UI foundation implemented (Phase 5), compensation added (Sprint 5A),
+  real GPS/geofence/ETA/live-tracking added (Sprint 5B)** — see `docs/business_rules.md`
+  BR-COURIER-004/012–044 and `docs/decisions.md` ADR-017/018/019. `Courier`/`Delivery`/
   `DeliveryAssignment` aggregates, shift lifecycle with manager approval, deterministic rule-based
   dispatch scoring (`DispatchScorer`), manual/automatic assignment, package pickup integration, delivery
-  completion, and a consolidated courier + manager UI all exist and are tested (97 tests). **Still
+  completion, compensation/earnings, and a consolidated courier + manager UI all exist and are tested.
+  Sprint 5B replaced every NoOp/in-memory location contract with a real device integration:
+  `geolocator`-backed GPS/permissions, `battery_plus`/`connectivity_plus` telemetry, adaptive
+  battery-aware tracking intervals, multi-zone geofence evaluation with false-positive rejection, a
+  real (non-commercial-API) ETA engine, a mandatory location-availability gate on active-shift
+  operations, an offline location queue with dedup/replay, an operational-signals-only fraud-signal
+  foundation, delivery travel/stop/speed history, and location-privacy authorization/audit. **Still
   ROADMAP**: a real backend (every repository is in-memory, same-process only — no cross-device
-  real-time delivery), real device GPS/location ingestion (only `NoOp`/synthetic-fixture location
-  contracts exist), a paid mapping/route-optimization provider (`DispatchScorer` uses straight-line
-  haversine distance only), and production SMS/push/telephony for courier-customer contact.
+  real-time delivery), a paid mapping/route-optimization provider (`DispatchScorer` still uses
+  straight-line haversine distance only; no map-rendering package added — `ManagerLiveTrackingScreen`
+  is list-only), production SMS/push/telephony for courier-customer contact, real-device QA (Sprint 5B's
+  GPS/permission/background behavior is verified only structurally in this environment), and a live
+  runtime orchestrator continuously wiring the real GPS stream + adaptive policy + offline queue
+  together (every individual piece is real and tested; the continuous background loop tying them
+  together is not yet built).
 - Priority: P2
 - Dependencies: ORD-001, IA-001
 - Business value: Enables in-house delivery without relying solely on marketplace-platform couriers.
 - Technical risk: Medium.
 - Complexity: L
 - Backend impact: Location ingestion, assignment logic. Domain/application logic already implemented
-  client-side (Phase 5); a real backend would host the same contracts (`CourierEventRepository`,
-  `CourierLocationRepository`, etc.) behind a real API rather than in-memory.
+  client-side (Phase 5/Sprint 5A/Sprint 5B); a real backend would host the same contracts
+  (`CourierEventRepository`, `CourierLocationRepository`, `OfflineLocationQueueRepository`, etc.) behind
+  a real API rather than in-memory.
 - Mobile impact: Implemented as screens within the main Flutter app this phase
   (`CourierHomeScreen`/`ActiveDeliveryScreen`/`CourierDeliveryHistoryScreen`), not yet a separate
   lightweight target — whether a separate app/target is still warranted is an open question for whoever
   picks this up next.
-- Web/admin impact: `CourierDispatchBoardScreen`/`CourierPerformanceScreen` implemented as in-app
-  screens this phase (consolidated, list-based — no map visualization yet).
+- Web/admin impact: `CourierDispatchBoardScreen`/`CourierPerformanceScreen`/`ManagerLiveTrackingScreen`
+  implemented as in-app screens (consolidated, list-based — no map visualization yet, a deliberately
+  deferred decision per Sprint 5B's `docs/decisions.md` ADR-019).
 - Test requirements: Assignment-conflict tests (no order double-assigned) — implemented
-  (`DeliveryAlreadyAssignedViolation`, tested).
+  (`DeliveryAlreadyAssignedViolation`, tested). Location-availability-gate, geofence false-positive
+  rejection, offline dedup/replay, and fraud-signal tests all implemented (Sprint 5B).
 - Completion criteria: A dispatcher can assign an order to a courier and see its delivery status update
   in real time — assignment and status-update logic implemented; **real-time cross-device delivery
   still requires a real backend**, not yet built.
 
 #### COUR-002 — Live Delivery Tracking (Customer App)
 - Description: Customer-facing live map/status view of their courier's delivery, replacing the currently-empty `ActiveOrderScreen`.
-- Status: **Not started.** Phase 5 built the courier-side/manager-side operational platform
-  (COUR-001) only — no customer-facing tracking screen exists yet. `CourierLocationSnapshot`/
-  `DeliveryTrackingRepository` (Phase 5) are the location-data foundation this would read from, but
-  no customer-scoped read path or UI has been built.
+- Status: **Not started — explicitly deferred again by Sprint 5B** (`docs/decisions.md` ADR-019 names
+  this "Sprint 5C" scope). Phase 5/Sprint 5B built the courier-side/manager-side operational platform
+  (COUR-001) only — no customer-facing tracking screen exists yet. The location-data foundation this
+  would read from is now real, not a NoOp placeholder: `CourierLocationSnapshot` (real GPS, `geolocator`
+  -backed), `CourierLiveStatus`/`BuildCourierLiveStatus` (live position/movement/signal/battery),
+  `DeliveryTrackingHistory`/`BuildDeliveryTrackingHistory` (travel/stop/speed + lifecycle checkpoints),
+  and `DeliveryRouteSnapshot`/`AdaptiveEtaEstimator` (real, non-commercial-API ETA). Still no
+  customer-scoped read path, no customer-facing authorization boundary, and no UI has been built.
 - Priority: P2
 - Dependencies: COUR-001
 - Business value: A well-understood customer-satisfaction driver in food delivery.

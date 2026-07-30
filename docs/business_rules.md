@@ -1649,6 +1649,155 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: security_engineer
 - **Related Modules**: Courier
 
+### BR-COURIER-034 — A courier may not become operationally usable, during an active shift, without a
+  working location (Sprint 5B, REQUIRED correction)
+- **Status**: VERIFIED
+- **Rule**: `CourierLocationAvailabilityGuard.assertAvailable` is threaded (as an optional constructor
+  dependency — `null` skips the check) into `TransitionCourierShift` (gates only the `active`
+  transition), `SetCourierAvailability` (gates only `online`/`available`, never
+  `temporarilyUnavailable` — avoids self-blocking `ReportCourierLocationAvailability`'s own automatic
+  transition), `RespondToDeliveryAssignment` (gates only `accept`, never `reject`),
+  `ConfirmPackagePickup`, `TransitionDelivery` (gates only forward-progress statuses —
+  `arrivedAtRestaurant`/`enRoute`/`arrivedAtCustomer` — never cancellation/return-to-restaurant), and
+  `CompleteDelivery`. `ReportCourierLocationAvailability` automatically forces a courier with no active
+  delivery into `temporarilyUnavailable` when location becomes unavailable, but never calls a
+  shift-transition use case — a disabled location never auto-ends a shift. A manager-authorized,
+  reasoned, audited `LocationEmergencyOverride` (courier-wide or delivery-specific, with an optional
+  expiry) is the only escape valve. Non-operational areas (earnings, history, profile, support) have no
+  guard at all — never blocked by location state.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier
+
+### BR-COURIER-035 — Real GPS is a platform-neutral seam; no platform-specific type crosses into the
+  domain layer (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `GeolocatorCourierLocationProvider`/`GeolocatorLocationPermissionGateway`/
+  `GeolocatorBackgroundLocationSession` (all in `data/`) are the only files that import
+  `package:geolocator`; every `geolocator` type (`Position`, `LocationPermission`, `LocationAccuracy`,
+  `LocationSettings`) is mapped to a domain-owned equivalent (`CourierLocationSnapshot`,
+  `LocationPermissionState`, `LocationTrackingAccuracy`) before crossing into `domain/` or
+  `application/`. `battery_plus`/`connectivity_plus` follow the identical pattern
+  (`BatteryPlusBatteryLevelProvider`/`ConnectivityPlusNetworkMonitor` behind `BatteryLevelProvider`/
+  `NetworkConnectivityMonitor`). Every real implementation has an honest `NoOp*` default that reports
+  "unavailable"/"denied"/`false`, never a fabricated "always granted" value.
+- **Owner Agent**: flutter_architect
+- **Related Modules**: Courier
+
+### BR-COURIER-036 — GPS update interval/accuracy adapts to movement state; every threshold is
+  configurable, never hardcoded (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `AdaptiveTrackingPolicy.classify` derives a `MovementState`
+  (`stationary`/`walking`/`vehicle`/`approachingTarget`) from speed and distance-to-active-geofence-
+  target; `intervalFor`/`accuracyFor` map that state to an update interval and `LocationTrackingAccuracy`.
+  Every threshold and interval (default: 30s/10s/5s/2s, matching the brief's example policy) is a
+  constructor field, never a literal inside `classify`/`intervalFor`/`accuracyFor` — retunable per
+  branch/device without a code change.
+- **Owner Agent**: performance_engineer
+- **Related Modules**: Courier
+
+### BR-COURIER-037 — Multi-zone geofence evaluation; an entry/exit transition requires a trusted
+  reading and a real prior state to compare against (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `MultiGeofenceEvaluator` evaluates one location reading against every active
+  `GeofenceZone` (restaurant/pickup/customer, each with its own dynamic radius) in one pass, reusing
+  the unmodified `GeofenceEvaluator` per zone. `GeofenceTransitionDetector.detect` only ever reports an
+  `entered`/`exited` transition when the *current* reading's accuracy is trusted and either (a) there
+  is no prior reading and the current one is inside (bootstrap arrival) or (b) a real prior evaluation
+  shows an actual state change — a low-accuracy reading or an unchanged state never produces a
+  transition ("false-positive rejection"). `EvaluateCourierGeofences` persists confirmed transitions to
+  an append-only `GeofenceTransitionEventRepository` ("geofence history"). The existing
+  `GeofenceOverride`/`OverrideGeofence` manager-override path is unmodified.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier
+
+### BR-COURIER-038 — ETA remains a non-authoritative estimate; traffic/historical-average adjustments
+  are rule-based, never a commercial routing integration (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `AdaptiveEtaEstimator` (a new `EtaEstimator` implementation; `NaiveEtaEstimator` from
+  Phase 5 is unmodified) uses a `HistoricalEtaAverageCalculator`-derived speed when at least
+  `minimumHistoricalSampleCount` completed-leg samples exist, otherwise falls back to a fixed assumed
+  speed, then applies a `TrafficMultiplierProvider` adjustment (`TimeOfDayTrafficMultiplierProvider` is
+  a local, configurable rush-hour heuristic — never a commercial traffic/routing API, none is
+  approved). `DeliveryRouteSnapshot.confidenceScore`/`trafficMultiplierApplied`/`zoneType` are additive,
+  optional fields; `DeliveryTrackingRepository.findByDeliveryId` gives full ETA history. The class doc
+  on `DeliveryRouteSnapshot` ("ETA must be an estimate, not authoritative truth") applies unchanged.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Courier
+
+### BR-COURIER-039 — Offline-captured locations are queued, deduplicated, and replayed in capture
+  order; no location loss after a temporary disconnect (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `OfflineLocationQueueRepository` is idempotent by `CourierLocationSnapshot.id` on enqueue.
+  `SyncQueuedCourierLocations` replays pending entries oldest-`capturedAt`-first (never insertion
+  order) and checks `CourierLocationRepository.containsId` before every append — a sync interrupted
+  after the append but before `markSynced` (a crash mid-replay) never double-records on retry, it only
+  marks the already-persisted entry synced. This is a deliberate sibling of
+  `RecordCourierLocationSnapshot`, not a reuse of it: that use case always mints a fresh id, which
+  would turn every retried sync into a duplicate reading. No `conflict` status exists for locations —
+  an immutable reading has no revision to be stale against.
+- **Owner Agent**: flutter_architect
+- **Related Modules**: Courier
+
+### BR-COURIER-040 — Fraud signals are operational signals only; nothing in this feature blocks,
+  punishes, or gates any action based on one (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `CourierFraudSignal` carries no enforcement field of any kind. `CourierFraudSignalDetector`
+  (`detectImpossibleSpeed`/`detectGpsJump`/`detectUnrealisticTravel`/`detectMockLocation`) and
+  `DetectRepeatedLocationLossSignal` (`repeatedGpsLoss`/`backgroundTrackingDisabled`, from
+  `CourierLocationAvailability` history) only ever persist a signal and an audit entry — never throw,
+  never call an authorization/guard check, never touch `CourierAvailability`/`CourierShift`. Four of
+  the ten `CourierFraudSignalType` values (`developerModeEnabled`/`timeManipulationSuspected`/
+  `locationSpoofSuspicion`/`batteryOptimizationAbuseSuspected`) exist for taxonomy completeness only —
+  no real platform signal exists yet to detect them honestly, documented as such rather than faked.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier
+
+### BR-COURIER-041 — Manager live tracking is branch-scoped and list-based; a map surface is an
+  explicitly deferred, separate decision (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `BuildCourierLiveStatusForBranch` reuses `CourierRepository.findByBranchId`'s existing
+  scoping unchanged — a manager only ever sees couriers in a branch the caller supplied.
+  `ManagerLiveTrackingScreen` is list-only, following the exact "list-based operational view is
+  acceptable, no advanced map visualization required" precedent `CourierDispatchBoardScreen` already
+  set in Phase 5O — adding a real map means adding a mapping/geolocation-rendering package (e.g.
+  `google_maps_flutter`), a separate new-dependency decision not made this sprint.
+- **Owner Agent**: ui_ux_designer
+- **Related Modules**: Courier
+
+### BR-COURIER-042 — Location history is immutable; a "reset" never deletes or mutates a location
+  reading (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `CourierLocationRepository` has no update or delete method of any kind — structural, not a
+  caller-discipline rule. `ResetCourierLocationHistory` is a manager-authorized, reasoned, audited
+  *request* only: it appends a `CourierOperationalAuditEntry` and touches nothing else. Making the
+  courier's device act on the request (restarting `BackgroundLocationSession` for a fresh baseline) is
+  unbuilt runtime orchestration, documented as a gap rather than presented as complete.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier
+
+### BR-COURIER-043 — A courier may only publish their own location (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `RecordCourierLocationSnapshot` accepts an optional `authenticatedCourierId`; when supplied
+  and it does not match `courierId`, the call throws `AuthorizationDeniedViolation` before anything is
+  recorded. `null` (the default) skips the check, so every existing call site is unaffected. This is
+  not a cryptographic guarantee — no real backend/auth session exists yet (`CLAUDE.md` §9's
+  forward-looking security rules) — it is the same explicit-actor-id trust boundary every other use
+  case in this app already relies on (`performedByStaffId` is likewise never independently verified).
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier
+
+### BR-COURIER-044 — Every location-tracking start/stop, override, and history-reset action is
+  authorized and audited (Sprint 5B)
+- **Status**: VERIFIED
+- **Rule**: `StartCourierLocationTracking`/`StopCourierLocationTracking`/`ResetCourierLocationHistory`/
+  `GrantLocationEmergencyOverride` each check `PosAuthorizationPolicy` before acting and append a
+  `CourierOperationalAuditEntry` on success — none has a path that mutates state without also
+  producing an audit record. `ReportCourierLocationAvailability` (system-triggered device telemetry,
+  no authorization gate — mirrors `RecordCourierLocationSnapshot`'s own precedent) still always
+  produces a `locationAvailabilityChanged` audit entry.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier
+
 # Staff and Manager Operations
 
 ### BR-STAFF-001 — Staff-initiated orders share the state machine
@@ -2367,11 +2516,62 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Business Rule IDs**: BR-COURIER-025, BR-COURIER-026, BR-COURIER-027, BR-COURIER-028,
   BR-COURIER-029, BR-COURIER-030, BR-COURIER-031, BR-COURIER-032, BR-COURIER-033
 
+### DL-022 — Real GPS, Geofence, ETA & Live Tracking
+- **Decision**: Replaces every NoOp/in-memory location contract from Phase 5/Sprint 5A with a
+  production-ready device integration — real GPS (`geolocator`), real battery telemetry
+  (`battery_plus`), real device connectivity (`connectivity_plus`) — plus a mandatory
+  location-availability gate on active-shift operations (a REQUIRED mid-sprint correction, not part of
+  the original 13-part brief), adaptive battery-aware tracking, multi-zone geofence evaluation with
+  false-positive rejection, a real (non-commercial-API) ETA engine, a courier live-tracking read model
+  and branch-scoped manager dashboard, an offline location queue with dedup/replay, an operational-
+  signals-only fraud-signal foundation, delivery travel/stop/speed history, and location-privacy
+  authorization/audit extensions. No customer-facing live tracking (explicitly deferred to a future
+  sprint). Real device/permission/background-execution behavior is **not verified in this
+  environment** — only structural/unit-level Dart verification was possible; documented as an honest
+  limitation, not claimed as end-to-end tested.
+- **Status**: DECIDED
+- **Source**: User, Sprint 5B autonomous-implementation-mode approval — a 13-part kickoff with an
+  explicit first-task architecture analysis (confirming every location-adjacent contract was a
+  deliberately honest NoOp seam before writing any code), an explicit `AskUserQuestion` on whether to
+  add a real geolocation plugin (user chose full real-device integration, accepting the
+  cannot-verify-on-device limitation), and a mid-turn REQUIRED business-rule correction mandating the
+  location-availability gate. Same "stop only on architectural conflict, security issue, or unavoidable
+  business-rule conflict" condition as Phase 5/Sprint 5A; none occurred.
+- **Date**: 2026-07-30
+- **Consequences**: See BR-COURIER-034 through BR-COURIER-044. `docs/decisions.md` ADR-019 records the
+  full architecture, including the genuine scope judgment calls: `AdaptiveTrackingPolicy`'s per-state
+  accuracy mapping, `GeofenceTransitionDetector`'s choice of accuracy-plus-real-prior-state (not
+  multi-point debounce) as its false-positive-rejection mechanism, `ResetCourierLocationHistory`'s
+  audit-only (never destructive) scope given location-history immutability, and the deferred decision
+  on whether to add a real mapping/geolocation-rendering package for a manager map surface (list-only
+  this sprint, following Phase 5O's own precedent).
+- **Related Modules**: Courier, Staff/Admin
+- **Business Rule IDs**: BR-COURIER-034, BR-COURIER-035, BR-COURIER-036, BR-COURIER-037,
+  BR-COURIER-038, BR-COURIER-039, BR-COURIER-040, BR-COURIER-041, BR-COURIER-042, BR-COURIER-043,
+  BR-COURIER-044
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v2.1 — 2026-07-30
+- **Version**: 2.1
+- **Date**: 2026-07-30
+- **Summary**: Sprint 5B (Real GPS, Geofence, ETA & Live Tracking). Added BR-COURIER-034 (mandatory
+  location availability for active-shift operations — the REQUIRED correction), BR-COURIER-035 (real
+  GPS as a platform-neutral seam, no platform type in the domain layer), BR-COURIER-036 (adaptive,
+  configurable tracking interval/accuracy), BR-COURIER-037 (multi-zone geofence with false-positive
+  rejection), BR-COURIER-038 (non-authoritative ETA, no commercial routing API), BR-COURIER-039
+  (offline location queue, dedup, replay, no location loss), BR-COURIER-040 (fraud signals are
+  operational-only, never punitive), BR-COURIER-041 (branch-scoped, list-based manager live tracking),
+  BR-COURIER-042 (immutable location history, non-destructive reset), BR-COURIER-043 (courier may only
+  publish own location), BR-COURIER-044 (every tracking start/stop/override/reset action audited).
+  Logged DL-022.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the real-GPS/geofence/ETA/live-tracking business rules this sprint's approved
+  architecture established.
 
 ### v2.0 — 2026-07-30
 - **Version**: 2.0

@@ -619,3 +619,59 @@ computes earnings, it does not pay them out.
   estimate** — the only distance source that exists anywhere in the courier feature.
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-018 Consequences section.
+
+## Sprint 5B — Real GPS, Geofence, ETA & Live Tracking
+
+Branch `phase-5/courier-operations-platform` (continued). Approved into autonomous implementation
+mode via a 13-part kickoff with an explicit first-task architecture analysis and a mid-sprint REQUIRED
+business-rule correction (mandatory location availability for active-shift operations). See
+`docs/business_rules.md` DL-022 and `docs/decisions.md` ADR-019 for the full analysis, architecture,
+and every deviation.
+
+| Task | Status | Note |
+|---|---|---|
+| Pre-implementation architecture analysis | DONE | Confirmed every location-adjacent Phase 5 contract (`CourierLocationProvider`/`LocationPermissionGateway`/`BackgroundLocationSession`/`EtaEstimator`) was a deliberately honest NoOp seam, zero geolocation/permission/background-execution package in `pubspec.yaml`, zero location permission entries in the native manifests — see ADR-019. |
+| Real GPS scope decision | DONE | Surfaced explicitly to the user (contracts-only vs. full real-plugin integration vs. foreground-only) rather than decided silently; user chose full real-device integration, accepting that real device/permission/background behavior cannot be verified in this environment. |
+| REQUIRED correction — mandatory location availability | DONE | `CourierLocationAvailabilityGuard` threaded as an optional dependency into `TransitionCourierShift`/`SetCourierAvailability`/`RespondToDeliveryAssignment`/`ConfirmPackagePickup`/`TransitionDelivery`/`CompleteDelivery`; `ReportCourierLocationAvailability` auto-forces `temporarilyUnavailable` with no active delivery, never touches shift state; `LocationEmergencyOverride` is the manager-authorized escape valve. All 143 then-pre-existing courier tests passed unchanged. |
+| Part 1 — Real GPS | DONE | `geolocator: 14.0.3` added via `flutter pub add`. `GeolocatorCourierLocationProvider`/`GeolocatorLocationPermissionGateway`/`GeolocatorBackgroundLocationSession` (all `data/`) wrap the plugin; every `geolocator` type mapped to a domain-owned equivalent before crossing into `domain/`/`application/`. Android/iOS native permission entries added. |
+| Part 2 — Location Stream | DONE (foundation) | `CourierLocationProvider.watch()` supports configurable accuracy/interval/distance-filter. No live runtime orchestrator continuously wires `watch()` + `AdaptiveTrackingPolicy` + the offline queue + `NetworkConnectivityMonitor` together — flagged as a gap, not built this sprint. |
+| Part 3 — Battery Optimization | DONE | `AdaptiveTrackingPolicy` classifies `MovementState` from speed/geofence-proximity and maps it to interval/accuracy; every threshold a constructor field (defaults 30s/10s/5s/2s, matching the brief's example policy). |
+| Part 4 — Geofence | DONE | `GeofenceZone`/`MultiGeofenceEvaluator` (simultaneous restaurant/pickup/customer evaluation, dynamic per-zone radius); `GeofenceTransitionDetector` (entry/exit, false-positive rejection via accuracy + real prior state); `GeofenceTransitionEventRepository` (history). Existing `GeofenceOverride`/`OverrideGeofence` unmodified. |
+| Part 5 — ETA Engine | DONE | `AdaptiveEtaEstimator` (new `EtaEstimator`, `NaiveEtaEstimator` untouched) — `HistoricalEtaAverageCalculator`-derived speed when enough samples exist, `TimeOfDayTrafficMultiplierProvider` (local rush-hour heuristic, never a commercial routing API), documented confidence score. `DeliveryRouteSnapshot` gains additive `zoneType`/`confidenceScore`/`trafficMultiplierApplied`; `DeliveryTrackingRepository.findByDeliveryId` gives full ETA history. |
+| Part 6/9 — Live Tracking + Manager Dashboard | DONE | `CourierLiveStatus`/`BuildCourierLiveStatus`/`BuildCourierLiveStatusForBranch` (branch-scoped via existing `CourierRepository.findByBranchId`). `ManagerLiveTrackingScreen` — real, functional, list-based (no map surface this sprint, following `CourierDispatchBoardScreen`'s own Phase 5O precedent; a real map is a separate, deferred new-dependency decision). `batteryLevelPercent` added to `CourierLocationSnapshot`. |
+| Part 7 — Offline Mode | DONE | `OfflineLocationQueueRepository` (idempotent enqueue by snapshot id); `SyncQueuedCourierLocations` (capture-order replay, dedup via new `CourierLocationRepository.containsId`) — a deliberate sibling of `RecordCourierLocationSnapshot`, not a reuse (that use case always mints a fresh id). |
+| Part 8 — Fraud Signal Foundation | DONE | `CourierFraudSignal` (no enforcement field of any kind); `CourierFraudSignalDetector` (impossibleSpeed/gpsJump/unrealisticTravelDistance/mockLocationDetected — pure, no I/O); `DetectRepeatedLocationLossSignal` (repeatedGpsLoss/backgroundTrackingDisabled). 4 of 10 taxonomy values have no detector this sprint (documented honestly, not faked). |
+| Part 10 — Delivery Tracking | DONE | `DeliveryTrackingSegmentBuilder` (travel/stop/speed segments, pure); `BuildDeliveryTrackingHistory` (assembles segments + the existing `CourierOperationalAuditEntry` lifecycle checkpoints — accepted → arrived at restaurant → picked up → en route → arrived at customer → delivered — reused unchanged). |
+| Part 11 — Authorization & Privacy | DONE | `RecordCourierLocationSnapshot` gains optional `authenticatedCourierId` self-only check. `StartCourierLocationTracking`/`StopCourierLocationTracking`/`ResetCourierLocationHistory` — authorized + audited; reset never mutates `CourierLocationRepository` (immutability is structural, no update/delete method exists). "Manager may view only authorized branches" and "location history immutable" were already satisfied structurally by Parts 4/6 — documented, not re-implemented. |
+| Part 12 — Performance | DONE | `CourierTrackingPerformanceCalculator` — GPS accuracy, location latency, estimated dropped updates, battery drain rate, tracking uptime ratio, offline-queue-derived sync latency/total offline duration/reconnect count, average ETA error. Every field nullable — only computed when real underlying data exists. |
+| Part 13 — Testing | DONE | 262 courier tests (up from Sprint 5A's 143 baseline — 119 new this sprint), 1450 tests total app-wide, all passing. `flutter analyze`: no issues (app-wide). `dart format --set-exit-if-changed`: clean (app-wide). |
+| Documentation | DONE | `docs/business_rules.md` v2.1 (BR-COURIER-034–044 added; DL-022 logged); `docs/decisions.md` ADR-019 (incl. the pre-implementation architecture analysis); this entry. |
+
+**Explicitly out of scope this sprint** (per the kickoff's own framing): customer-facing live tracking
+(deferred to a future Sprint 5C), commercial routing/traffic/mapping API integration, real-device
+verification (this environment cannot run/permission-prompt/background-execute a real device build).
+
+### Deviations and honest gaps (reported, not silent)
+
+- **No live runtime orchestrator ties `CourierLocationProvider.watch()` + `AdaptiveTrackingPolicy` +
+  the offline queue + `NetworkConnectivityMonitor` together into one continuous background loop.**
+  Every individual piece is real, tested, and wired into `courier_dependencies_provider.dart`; the
+  coordinator that runs them together continuously is presentation/bootstrap-layer wiring not built
+  this sprint.
+- **Real device/permission/background-execution behavior is not verified in this environment** —
+  only structural/unit-level Dart verification was possible. A real-device QA pass is required before
+  production deployment.
+- **A manager live-tracking map surface was deferred, not built.** `ManagerLiveTrackingScreen` is
+  list-only, following `CourierDispatchBoardScreen`'s own established Phase 5O precedent; adding a
+  real map means adding a mapping/geolocation-rendering package, a separate architecture decision.
+- **Four of ten `CourierFraudSignalType` values have no detector** (`developerModeEnabled`/
+  `timeManipulationSuspected`/`locationSpoofSuspicion`/`batteryOptimizationAbuseSuspected`) — no real
+  platform signal exists yet to detect them honestly.
+- **`GeofenceTransitionDetector`'s false-positive rejection is accuracy-plus-real-prior-state, not
+  multi-point debounce** — a stronger consecutive-point-confirmation strategy is a legitimate future
+  enhancement, not implemented this sprint.
+- **`ResetCourierLocationHistory` only produces an audit trail** — it cannot and does not make a
+  courier's device actually restart its tracking session; that device-side effect is unbuilt runtime
+  orchestration.
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-019 Consequences section.
