@@ -36,6 +36,7 @@ import '../../application/services/in_memory_courier_synchronization_service.dar
 import '../../application/use_cases/build_courier_dispatch_queue.dart';
 import '../../application/use_cases/build_courier_live_status.dart';
 import '../../application/use_cases/build_courier_live_warnings.dart';
+import '../../application/use_cases/build_courier_operation_timeline.dart';
 import '../../application/use_cases/build_courier_live_status_for_branch.dart';
 import '../../application/use_cases/build_delivery_tracking_history.dart';
 import '../../application/use_cases/courier_location_availability_guard.dart';
@@ -480,6 +481,14 @@ final buildCourierLiveWarningsProvider =
     locationAvailabilityRepository:
         ref.watch(courierLocationAvailabilityRepositoryProvider),
     fraudSignalRepository: ref.watch(courierFraudSignalRepositoryProvider),
+  );
+});
+
+final buildCourierOperationTimelineProvider =
+    Provider<BuildCourierOperationTimeline>((ref) {
+  return BuildCourierOperationTimeline(
+    auditRepository: ref.watch(courierOperationalAuditEntryRepositoryProvider),
+    courierRepository: ref.watch(courierRepositoryProvider),
   );
 });
 
