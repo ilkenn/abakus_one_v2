@@ -1295,3 +1295,23 @@ final class MessageAcknowledgementNotRequiredViolation
       'Message "$messageId" is not an emergency message and does not '
       'accept acknowledgement';
 }
+
+/// A caller referenced a `Customer`/`VisitRewardRule`/`Survey`/
+/// `CustomerNotificationCampaign`/`CustomerFeedback` id (or any other
+/// Sprint 5D CRM/Feedback entity) that does not exist in the relevant
+/// repository — the CRM/Feedback-feature sibling of
+/// `UnknownCourierEntityViolation`, kept separate rather than reused
+/// since that type's own doc comment scopes it to courier-domain entities
+/// only (Sprint 5D).
+final class UnknownCrmEntityViolation extends BusinessRuleViolation {
+  const UnknownCrmEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
