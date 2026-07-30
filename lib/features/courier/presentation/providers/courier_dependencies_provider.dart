@@ -58,6 +58,7 @@ import '../../data/geofence_override_repository.dart';
 import '../../data/geofence_transition_event_repository.dart';
 import '../../data/in_memory_courier_event_bus.dart';
 import '../../data/location_emergency_override_repository.dart';
+import '../../data/offline_location_queue_repository.dart';
 import '../../data/pending_courier_command_repository.dart';
 import '../../data/shift_hourly_earnings_repository.dart';
 import '../../domain/events/courier_connection_monitor.dart';
@@ -396,4 +397,9 @@ final buildCourierLiveStatusForBranchProvider =
     courierRepository: ref.watch(courierRepositoryProvider),
     buildCourierLiveStatus: ref.watch(buildCourierLiveStatusProvider),
   );
+});
+
+final offlineLocationQueueRepositoryProvider =
+    Provider<OfflineLocationQueueRepository>((ref) {
+  return InMemoryOfflineLocationQueueRepository();
 });

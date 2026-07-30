@@ -6,6 +6,13 @@ abstract interface class CourierLocationRepository {
   Future<void> append(CourierLocationSnapshot snapshot);
   Future<CourierLocationSnapshot?> findLatestByCourierId(String courierId);
   Future<List<CourierLocationSnapshot>> findByDeliveryId(String deliveryId);
+
+  /// Whether a snapshot with this id was already recorded — Sprint 5B
+  /// Part 7's deduplication seam for offline-queue replay
+  /// (`SyncQueuedCourierLocations`): a snapshot's id is assigned once, at
+  /// capture time, and never regenerated on retry, so this check is what
+  /// makes "replaying a queued reading never double-records it" possible.
+  Future<bool> containsId(String id);
 }
 
 class InMemoryCourierLocationRepository implements CourierLocationRepository {
@@ -32,5 +39,10 @@ class InMemoryCourierLocationRepository implements CourierLocationRepository {
     return List.unmodifiable(
       _all.where((s) => s.deliveryId == deliveryId),
     );
+  }
+
+  @override
+  Future<bool> containsId(String id) async {
+    return _all.any((s) => s.id == id);
   }
 }
