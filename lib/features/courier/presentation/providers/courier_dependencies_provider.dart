@@ -30,6 +30,7 @@ import '../../application/services/in_memory_courier_connection_monitor.dart';
 import '../../application/services/in_memory_courier_synchronization_service.dart';
 import '../../application/use_cases/build_courier_live_status.dart';
 import '../../application/use_cases/build_courier_live_status_for_branch.dart';
+import '../../application/use_cases/build_delivery_tracking_history.dart';
 import '../../application/use_cases/courier_location_availability_guard.dart';
 import '../../application/use_cases/detect_courier_fraud_signals.dart';
 import '../../application/use_cases/detect_repeated_location_loss_signal.dart';
@@ -452,6 +453,14 @@ final detectRepeatedLocationLossSignalProvider =
         ref.watch(courierLocationAvailabilityRepositoryProvider),
     idGenerator: ref.watch(courierFraudSignalIdGeneratorProvider),
     repository: ref.watch(courierFraudSignalRepositoryProvider),
+    auditRepository: ref.watch(courierOperationalAuditEntryRepositoryProvider),
+  );
+});
+
+final buildDeliveryTrackingHistoryProvider =
+    Provider<BuildDeliveryTrackingHistory>((ref) {
+  return BuildDeliveryTrackingHistory(
+    locationRepository: ref.watch(courierLocationRepositoryProvider),
     auditRepository: ref.watch(courierOperationalAuditEntryRepositoryProvider),
   );
 });
