@@ -6,6 +6,10 @@ import '../domain/delivery/delivery_route_snapshot.dart';
 abstract interface class DeliveryTrackingRepository {
   Future<void> append(DeliveryRouteSnapshot snapshot);
   Future<DeliveryRouteSnapshot?> findLatestByDeliveryId(String deliveryId);
+
+  /// Full estimate history for a delivery, oldest first — Sprint 5B's
+  /// "ETA history."
+  Future<List<DeliveryRouteSnapshot>> findByDeliveryId(String deliveryId);
 }
 
 class InMemoryDeliveryTrackingRepository implements DeliveryTrackingRepository {
@@ -22,5 +26,11 @@ class InMemoryDeliveryTrackingRepository implements DeliveryTrackingRepository {
     final history = _byDeliveryId[deliveryId];
     if (history == null || history.isEmpty) return null;
     return history.last;
+  }
+
+  @override
+  Future<List<DeliveryRouteSnapshot>> findByDeliveryId(
+      String deliveryId) async {
+    return List.unmodifiable(_byDeliveryId[deliveryId] ?? const []);
   }
 }
