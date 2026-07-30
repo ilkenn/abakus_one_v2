@@ -36,6 +36,7 @@ import '../../application/services/in_memory_courier_synchronization_service.dar
 import '../../application/use_cases/build_courier_dispatch_queue.dart';
 import '../../application/use_cases/build_courier_live_status.dart';
 import '../../application/use_cases/build_courier_live_warnings.dart';
+import '../../application/use_cases/build_courier_operation_health.dart';
 import '../../application/use_cases/build_courier_operation_timeline.dart';
 import '../../application/use_cases/build_courier_live_status_for_branch.dart';
 import '../../application/use_cases/build_delivery_tracking_history.dart';
@@ -489,6 +490,15 @@ final buildCourierOperationTimelineProvider =
   return BuildCourierOperationTimeline(
     auditRepository: ref.watch(courierOperationalAuditEntryRepositoryProvider),
     courierRepository: ref.watch(courierRepositoryProvider),
+  );
+});
+
+final buildCourierOperationHealthProvider =
+    Provider<BuildCourierOperationHealth>((ref) {
+  return BuildCourierOperationHealth(
+    clock: ref.watch(clockProvider),
+    deliveryRepository: ref.watch(deliveryRepositoryProvider),
+    buildCourierLiveWarnings: ref.watch(buildCourierLiveWarningsProvider),
   );
 });
 
