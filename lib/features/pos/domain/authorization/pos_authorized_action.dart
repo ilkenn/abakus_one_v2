@@ -26,8 +26,12 @@
 /// onward, including `publishOwnLocationOnly` added during the same
 /// sprint's Part 11 authorization pass) extend it again
 /// (`docs/decisions.md` ADR-019). The Sprint 5C Dispatch & Operations
-/// Center values (`reorderCourierDeliverySequence` onward) extend it a
-/// final time (`docs/decisions.md` ADR-020).
+/// Center values (`reorderCourierDeliverySequence` onward) extend it
+/// again (`docs/decisions.md` ADR-020). The Sprint 5D CRM/Feedback values
+/// (`manageVisitRewardRules` onward, from the new `lib/features/crm` and
+/// `lib/features/feedback` features) extend it once more — the same
+/// generic, not-payment-specific design confirmed reusable a fifth time
+/// (`docs/decisions.md` ADR-021).
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -92,4 +96,5 @@ enum PosAuthorizedAction {
   sendCourierMessage,
   sendBroadcastMessage,
   sendEmergencyMessage,
+  manageVisitRewardRules,
 }

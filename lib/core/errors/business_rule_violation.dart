@@ -1315,3 +1315,15 @@ final class UnknownCrmEntityViolation extends BusinessRuleViolation {
   @override
   String get description => 'Unknown $entityName: "$id"';
 }
+
+/// A `VisitRewardRule` was created/edited with an invalid configuration
+/// (e.g. a non-positive `requiredVisitCount`) — Sprint 5D's Visit Rewards
+/// Engine.
+final class InvalidVisitRewardRuleViolation extends BusinessRuleViolation {
+  const InvalidVisitRewardRuleViolation({required this.reason});
+
+  final String reason;
+
+  @override
+  String get description => 'Invalid visit reward rule: $reason';
+}
