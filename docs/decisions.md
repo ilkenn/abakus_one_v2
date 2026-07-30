@@ -1876,3 +1876,142 @@ tying the individual real pieces into one continuous background loop is not buil
 judgment calls (geofence false-positive rejection strategy, four fraud-signal types with no detector,
 the deferred map-package decision) were reasoned through and documented rather than resolved with
 certainty a future sprint might revise.
+
+## ADR-020 — Courier Dispatch & Operations Center (Sprint 5C)
+
+- Date: 2026-07-30
+- Status: Accepted
+
+### Pre-implementation architecture analysis (required first task)
+Before any code, every dispatch-adjacent contract named in the brief was inspected directly:
+`DispatchScorer`/`DispatchScoringInput` (confirmed a pure per-call ranking function with **no**
+persisted queue entity — a FIFO queue is a wholly new concept, not a rename of anything existing);
+`CourierAvailability`/`CourierAvailabilityStatus` (confirmed no queue-position/FIFO concept exists on
+either); `ManuallyAssignDelivery` (read the full use case, confirmed the exact override-audit shape to
+extend); every messaging/chat/broadcast/emergency-adjacent file (confirmed **zero** such domain exists
+anywhere in this codebase — Communication Center is wholly new); `CourierPerformanceSnapshot` (read its
+own doc comment, confirmed it explicitly excludes score/rank/punishment fields by design, and confirmed
+**no "customer rating" field exists anywhere in the app**); `Delivery`/`DeliveryAssignment` (confirmed
+neither has a sequence/priority field); `Courier`/`CourierShift`/every authorization check in this
+feature (confirmed, again, **no tenant concept exists anywhere** — `branchId` is the sole scoping
+boundary, per ADR-018); every delivery/order type (confirmed **zero** address-normalization/coordinate-
+matching logic exists anywhere, and that `Order.deliveryAddressText` — a frozen, display-ready text
+field — is the only delivery-destination text source in the whole codebase, with `Delivery` itself
+carrying no destination field at all); `CourierDispatchBoardScreen` (confirmed it already consolidates
+most dispatch-related manager UI, list-only, explicitly following the Phase 5O "no advanced map
+visualization required" precedent) and `ManagerLiveTrackingScreen` (confirmed its own doc comment
+explicitly defers "customer-facing live tracking... until a future sprint (Sprint 5C)"); the exact
+"real-time" precedent (`InMemoryCourierEventBus`'s own doc comment: "same-process, per-branch broadcast
+only, not real cross-device/cross-process real-time delivery," ADR-017); `CourierAvailabilityStatus`
+(confirmed `paused`/`temporarilyUnavailable` already exist from Phase 5/5B — no new work needed for
+break mode/temporary unavailability — but confirmed **no shift-handoff/transfer-between-couriers use
+case exists**). This analysis directly shaped the decision below and was delivered to the user as a
+pre-implementation report before any code, per the brief's own explicit requirement; the report flagged
+four items, one of which (map package) was a genuinely blocking decision raised via `AskUserQuestion`
+rather than decided silently.
+
+### Blocking decision — map package
+The brief's Manager Map section requires a real map surface, superseding Sprint 5B's list-only
+precedent (ADR-019's own deferred decision). Before writing code, the choice was surfaced to the user:
+`flutter_map`+OpenStreetMap (no API key/billing setup) vs. `google_maps_flutter` (requires API
+key/billing). The user chose `flutter_map`+OpenStreetMap. Added via `flutter pub add flutter_map
+latlong2` (pub's own resolver, never a guessed version) — `flutter_map: 8.3.1`, `latlong2: 0.10.1`.
+OSM's tile-usage-policy dev warning that prints during tests/app runs is informational only, not a
+test failure — flagged in Consequences as a future production recommendation (a paid/self-hosted tile
+provider).
+
+### Decision
+Builds the 14-part brief (Parts 2-13 plus Part 1, deliberately built last so it could consolidate every
+other part's already-built read-model rather than duplicate them) on top of Sprint 5A/5B's courier
+foundation, without redesigning any of it. Selected architectural judgment calls, each reasoned in its
+own file's doc comments rather than decided silently:
+
+- **The FIFO queue is a new, minimal, append-only event log (`CourierDispatchQueueEvent`), never a
+  mutable ordered-list structure.** Matches every other courier-feature entity's audit-friendly shape;
+  `CourierDispatchQueueBuilder` derives current positions fresh from the event history, never a
+  separately-maintained mutable list that could drift from the log.
+- **"Tenant isolation" is implemented as branch isolation.** No tenant concept exists anywhere in this
+  codebase (reconfirmed this sprint) — every new audit/authorization type uses the same `branchId`
+  scoping boundary ADR-017/ADR-018 already established, not a newly-invented tenant field.
+- **Shift transfer composes existing `ReassignDelivery`+`TransitionCourierShift`, never a raw
+  `CourierShift.courierId` swap.** `CourierShift.courierId` is immutable by design, and
+  `TransitionCourierShift.completed` requires zero active deliveries (which a genuinely-transferring
+  courier likely has) — the source shift moves to `suspended`, not `completed`, keeping it resumable.
+- **Same-destination matching uses normalized destination text, not "verified coordinates."** The
+  brief itself offered this as a fallback; no coordinate-verification concept exists anywhere in this
+  codebase. The caller supplies the destination text explicitly (mirrors Sprint 5A's established
+  "caller's explicit responsibility" precedent for the identical kind of cross-feature data gap) —
+  `SameDestinationDetector` itself never depends on the orders feature.
+- **One-package-fee-per-group is a deterministic first-to-complete-earns-the-fee rule**, implemented as
+  an optional auto-detecting `SameDestinationGroupRepository` collaborator on `CalculateDeliveryEarnings`
+  (checks sibling `DeliveryEarnings` records) rather than requiring the caller to pre-compute a boolean
+  flag — chosen for consistency with this sprint's established optional-collaborator idiom.
+- **Communication Center is explicitly built on the exact same honest same-process precedent Phase
+  4/5 already established** (`InMemoryCourierEventBus`'s ADR-017-documented boundary), stated
+  repeatedly in doc comments so it is never mistaken for a fabricated cross-device push claim.
+- **Live warnings and the operation health indicator introduce no new detection logic.**
+  `BuildCourierLiveWarnings` only projects/aggregates existing Sprint 5B/5C signals
+  (`CourierLiveStatus`, `CourierLocationAvailability`, `CourierFraudSignal`);
+  `CourierOperationHealthCalculator` is a pure, configurable-threshold function (mirrors
+  `AdaptiveTrackingPolicy`'s shape) over counts `BuildCourierOperationHealth` sources entirely from
+  `BuildCourierLiveWarnings` and the existing `DeliveryRepository.findActiveByBranchId` query.
+- **The performance card and daily analytics report omit data with no real source, rather than
+  approximate it.** No customer-rating field exists anywhere in this app, and
+  `CourierPerformanceSnapshot`'s own doc comment already forbids a score/rank field by design — the
+  card carries neither. `DeliveryRouteSnapshot.etaMinutes` is never persisted by any repository (only
+  produced transiently for UI display), and no region/district taxonomy exists anywhere — both
+  "average ETA" and "peak region" are omitted from the daily report and documented as gaps requiring a
+  future persistence/taxonomy decision, not silently invented.
+- **The operation timeline is a pure read-model over the existing audit log, not a new log.** Every
+  entry already exists in `CourierOperationalAuditEntryRepository` (comprehensive since Phase 5);
+  `BuildCourierOperationTimeline` only sorts chronologically and resolves courier display names.
+- **`CourierDispatchDashboardScreen` is additive, not a replacement.** `CourierDispatchBoardScreen`
+  remains canonical for roster/shift-approval/manual-assignment; `CourierLiveMapScreen`/
+  `CourierCommunicationCenterScreen` remain canonical for their own actions. The new dashboard links out
+  to all three via quick-action buttons rather than reimplementing them, consistent with the pre-
+  implementation report's proposal and the "no unilateral restructuring" rule.
+- **Same-destination live "assign together/separately" detection is intentionally not surfaced on the
+  dashboard.** Building it would require a new courier-feature dependency on `Order.deliveryAddressText`
+  — no courier-feature file has ever imported from the orders feature. This is an architecture-affecting
+  new cross-feature dependency, correctly deferred for explicit approval rather than added silently; only
+  already-confirmed `SameDestinationGroup` records would be safe to display today, and no screen yet
+  creates them.
+
+### Consequences
+- **13 implementation commits** (foundation/dependency; FIFO queue; manual-override audit; live map;
+  delivery sequence control; same-destination optimization; courier operations; Communication Center;
+  live warnings; performance card; operation timeline; daily analytics report; operation health
+  indicator; dispatch dashboard — documentation is this commit), each independently formatted/analyzed/
+  tested before commit, matching ADR-017/ADR-018/ADR-019's granularity precedent.
+- **New pub dependency**: `flutter_map: 8.3.1` + `latlong2: 0.10.1` (plus transitive packages) — the
+  second new runtime-dependency addition since ADR-006, after ADR-019's geolocation packages.
+- **No existing Sprint 5A/5B file was rewritten.** `CourierAuditEventType`/`CourierEventType`/
+  `PosAuthorizedAction`/`core/errors/business_rule_violation.dart` (additive values/types only),
+  `CourierLiveStatus` (one additive `activeDeliveryIds` field, `activeDeliveryId` kept for compatibility),
+  `SetCourierAvailability`/`RespondToDeliveryAssignment`/`CompleteDelivery`/`ManuallyAssignDelivery`
+  (additive optional collaborator parameters only), `DispatchScoringInput`/`DispatchScorer` (one
+  additive `isTemporarilyBlockedFromNewPackages` field/check), `DeliveryEarnings`/
+  `CalculateDeliveryEarnings` (one additive field, one additive optional collaborator), and
+  `courier_dependencies_provider.dart` (additive provider entries only) are the only pre-existing files
+  modified beyond their own tests; every other change is a new file.
+- **No `DeliveryRepository`/other repository interface was changed.** The daily analytics report and
+  operation health indicator compose only already-existing repository methods
+  (`findByCourierId`/`findActiveByBranchId`/`findByBranchId`), deliberately avoiding an interface change
+  a per-courier-then-merge composition could avoid.
+- **Honest, explicitly flagged gaps** — no live orchestrator ties the individual real-time pieces
+  together continuously (the same category of gap ADR-019 already documented, unchanged this sprint);
+  no customer rating, average ETA, or peak-region data source exists (reporting surfaces omit these
+  rather than fabricate them); same-destination live detection is not surfaced on the dashboard (would
+  require a new cross-feature dependency, deferred for approval); OSM's tile-usage-policy dev warning is
+  informational, with a paid/self-hosted tile provider flagged as a future production recommendation.
+
+### Confidence
+78%. The domain model (FIFO queue event log, delivery sequence control, same-destination grouping,
+shift transfer, package blocking, messaging, live warnings, operation health) is directly grounded in
+the brief's explicit requirements and its own worked example (the Ahmet/Mehmet/Ali FIFO ordering test),
+each mapping to a concrete, tested invariant. The residual uncertainty is concentrated in the same
+categories ADR-019 already flagged (no live runtime orchestrator, real-device behavior unverified) plus
+two new ones specific to this sprint: the deliberately unsurfaced same-destination live-detection UI
+(a real gap requiring a future cross-feature-dependency decision, not a false claim), and the two
+reporting fields (average ETA, peak region) omitted for lack of a real data source rather than resolved
+with a built taxonomy.

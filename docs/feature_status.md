@@ -675,3 +675,61 @@ verification (this environment cannot run/permission-prompt/background-execute a
   orchestration.
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-019 Consequences section.
+
+## Sprint 5C — Courier Dispatch & Operations Center
+
+Branch `phase-5/courier-operations-platform` (continued). Approved into autonomous implementation mode
+via an 18-section kickoff requiring an explicit first-task analysis of the existing courier module/
+dispatch flow/every affected repository-use-case-provider, "do NOT rewrite stable code," and an
+explicit "STOP and report before implementation" instruction on any architecture conflict. One
+genuinely blocking decision (map package) was raised via `AskUserQuestion` before any code. See
+`docs/business_rules.md` DL-023 and `docs/decisions.md` ADR-020 for the full analysis, architecture,
+and every deviation.
+
+| Task | Status | Note |
+|---|---|---|
+| Pre-implementation architecture analysis | DONE | Confirmed `DispatchScorer` is a pure per-call ranking function with no persisted queue entity, `CourierAvailability` has no FIFO concept, zero messaging/chat/broadcast/emergency domain exists anywhere, `CourierPerformanceSnapshot`'s own doc comment excludes score/rank fields and no "customer rating" field exists anywhere in the app, `Delivery`/`DeliveryAssignment` have no sequence field, no tenant concept exists anywhere (`branchId` is the sole scoping boundary), no address-normalization/coordinate-matching logic exists anywhere, `CourierDispatchBoardScreen` already consolidates most dispatch UI (list-only) and `ManagerLiveTrackingScreen` explicitly defers live map to "a future sprint (Sprint 5C)", and `CourierAvailabilityStatus` already has `paused`/`temporarilyUnavailable` but no shift-transfer use case exists — see ADR-020. |
+| Map package decision | DONE | Surfaced via `AskUserQuestion` (`flutter_map`+OpenStreetMap vs. `google_maps_flutter`); user chose `flutter_map`+OpenStreetMap to avoid API key/billing setup. `flutter_map: 8.3.1`, `latlong2: 0.10.1` added via `flutter pub add`. |
+| Part 2 — FIFO Dispatch Queue | DONE | `CourierDispatchQueueEvent` (append-only entered/left log, mirrors every other courier audit-friendly entity); `CourierDispatchQueueBuilder` (pure, derives positions from latest-event-per-courier); `SyncCourierDispatchQueue` threaded as an optional collaborator into `SetCourierAvailability`/`RespondToDeliveryAssignment`/`CompleteDelivery`. Verified against the brief's own Ahmet/Mehmet/Ali worked example. |
+| Part 3 — Manual Assignment Override Audit | DONE | `ManuallyAssignDelivery` gains optional `dispatchQueueSync`/`dispatchQueueRepository` collaborators; captures the queue before/after an override and appends a dedicated `dispatchQueueManualOverride` audit entry alongside the existing mandatory `overrideReason`. |
+| Part 4 — Real Manager Live Map | DONE | `CourierLiveMapScreen` — real `flutter_map`+OSM tiles, colored markers per availability status, tap-to-detail bottom sheet, couriers with no location reading listed separately (never dropped). `CourierLiveStatus` gains additive `activeDeliveryIds` (superseding `activeDeliveryId` in spirit, kept for compatibility). |
+| Part 5 — Delivery Sequence Control | DONE | `CourierDeliverySequence` (append-only, mirrors `CourierAvailability`); `ReorderCourierDeliverySequence` — manager-only (no courier-facing use case ever writes to this repository), validates the submitted order exactly matches the courier's active deliveries, audited. Drag-and-drop UI built in Part 1's dashboard. |
+| Part 6 — Same-Destination Optimization | DONE | `SameDestinationDetector` (pure text normalization/grouping); `GroupSameDestinationDeliveries` (2+ deliveries, manager-authorized); `CalculateDeliveryEarnings` gains an optional `SameDestinationGroupRepository` collaborator implementing a deterministic first-to-complete-earns-the-fee waiver rule — hourly earnings unaffected. |
+| Part 7 — Courier Operations | DONE | `CourierPackageBlockingStatus`/`SetTemporaryPackageBlocking` (separate flag, `DispatchScorer` excludes blocked couriers from eligibility); `TransferCourierShift` (composes unmodified `ReassignDelivery`+`TransitionCourierShift`, suspends rather than completes the source shift, reason mandatory). Break mode/temporary unavailability already existed from Phase 5/5B — no new work needed. |
+| Part 8 — Communication Center | DONE | `CourierMessage`/`CourierMessageStatusEvent` (delivered/read/acknowledged, independently tracked); `CourierReadyMessageTemplate` (8 canned Turkish messages); `SendCourierMessage` (unified direct/broadcast/emergency path); `AcknowledgeEmergencyMessage`; `CourierCommunicationCenterScreen`. Same honest same-process boundary as `InMemoryCourierEventBus` (ADR-017), stated explicitly. |
+| Part 9 — Live Warnings | DONE | `CourierLiveWarningType`/`CourierLiveWarning`; `BuildCourierLiveWarnings` — gpsDisabled/courierOffline/noLocationUpdates/abnormalRoute/longInactivity/operationalRisk, every threshold configurable, zero new detection logic (pure projection over existing Sprint 5B/5C signals). |
+| Part 10 — Performance Card | DONE | `CourierPerformanceCard`/`BuildCourierPerformanceCard` — composes the unmodified `BuildCourierPerformanceSnapshot`+`BuildCourierEarningsSummary` for one period; `cancelledDeliveries` reuses the existing failure-responsibility breakdown. No customer-rating field (none exists anywhere in the app). |
+| Part 11 — Operation Timeline | DONE | `CourierOperationTimelineEntry`/`BuildCourierOperationTimeline` — a pure read-model sorting the existing `CourierOperationalAuditEntryRepository` chronologically (most-recent-first) and resolving courier display names; introduces no new log. |
+| Part 12 — Analytics Daily Report | DONE | `CourierDailyOperationsReport`/`BuildCourierDailyOperationsReport` — total deliveries/distance/average duration/peak hour computed directly from real `Delivery`/`DeliveryEarnings` data across every branch courier; `courierPerformance` reuses the unmodified snapshot builder per courier. "Average ETA" and "peak region" deliberately omitted (no persisted ETA data, no region taxonomy exists) rather than fabricated. |
+| Part 13 — Operation Health Indicator | DONE | `CourierOperationHealthLevel`/`CourierOperationHealth`/`CourierOperationHealthCalculator` (pure, configurable-threshold, mirrors `AdaptiveTrackingPolicy`'s shape) — the brief's own 🟢/🟡/🔴, built entirely on `BuildCourierLiveWarnings` (Part 9) and the existing `findActiveByBranchId` query. |
+| Part 1 — Dispatch Dashboard | DONE | `CourierDispatchDashboardScreen` — built last to consolidate health/warnings/queue/today's report/timeline into one situational-awareness screen, plus a real delivery-sequence drag-and-drop editor. Additive: links out to `CourierDispatchBoardScreen`/`CourierLiveMapScreen`/`CourierCommunicationCenterScreen` via quick-action buttons rather than reimplementing them. Same-destination live "assign together/separately" detection deliberately not surfaced (would require a new courier→orders cross-feature dependency). |
+| Testing | DONE | 1540 tests total app-wide (up from Sprint 5B's 1450 baseline — 90 new this sprint), all passing. `flutter analyze`: no issues (app-wide). `dart format --set-exit-if-changed`: clean (app-wide). |
+| Documentation | DONE | `docs/business_rules.md` v2.2 (BR-COURIER-045–054 added; DL-023 logged); `docs/decisions.md` ADR-020 (incl. the pre-implementation architecture analysis); `docs/master_roadmap.md` COUR-001/COUR-002 updated; this entry. |
+
+**Explicitly out of scope this sprint** (per the kickoff's own framing and the honest gaps surfaced
+during architecture analysis): customer rating collection, real backend push notifications for
+Communication Center (same-process only, matching every other real-time claim in this app), same-
+destination live detection UI on the dashboard (deferred pending a cross-feature-dependency decision),
+average-ETA/peak-region analytics (no real data source exists).
+
+### Deviations and honest gaps (reported, not silent)
+
+- **No customer-rating field exists anywhere in this app** — `CourierPerformanceCard` carries none
+  rather than fabricate one; `CourierPerformanceSnapshot`'s own doc comment already forbids a score/
+  rank field by design.
+- **"Average ETA" and "peak region" are omitted from the daily analytics report** —
+  `DeliveryRouteSnapshot.etaMinutes` is never persisted by any repository (only produced transiently
+  for UI display), and no region/district taxonomy exists anywhere in this codebase.
+- **Same-destination "assign together/separately" live detection is not surfaced on the dashboard** —
+  it would require a new courier-feature dependency on `Order.deliveryAddressText`, which no
+  courier-feature file has ever had; correctly deferred for explicit approval rather than added
+  silently.
+- **"Tenant isolation" was implemented as branch isolation** — no tenant concept exists anywhere in
+  this codebase, reconfirmed during this sprint's own architecture analysis.
+- **Communication Center is same-process only**, matching `InMemoryCourierEventBus`'s own documented
+  boundary (ADR-017) — never a claim of real cross-device push this app's architecture cannot honestly
+  make yet.
+- **No live runtime orchestrator ties the individual real-time pieces together continuously** — the
+  same category of gap ADR-019 already documented, unchanged this sprint.
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-020 Consequences section.

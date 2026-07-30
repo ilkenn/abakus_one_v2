@@ -490,58 +490,74 @@
 #### COUR-001 — In-House Courier App & Dispatch
 - Description: Courier roster, order assignment (manual/auto-dispatch), and a lightweight courier-facing app.
 - Status: **Domain/application/UI foundation implemented (Phase 5), compensation added (Sprint 5A),
-  real GPS/geofence/ETA/live-tracking added (Sprint 5B)** — see `docs/business_rules.md`
-  BR-COURIER-004/012–044 and `docs/decisions.md` ADR-017/018/019. `Courier`/`Delivery`/
-  `DeliveryAssignment` aggregates, shift lifecycle with manager approval, deterministic rule-based
-  dispatch scoring (`DispatchScorer`), manual/automatic assignment, package pickup integration, delivery
-  completion, compensation/earnings, and a consolidated courier + manager UI all exist and are tested.
-  Sprint 5B replaced every NoOp/in-memory location contract with a real device integration:
-  `geolocator`-backed GPS/permissions, `battery_plus`/`connectivity_plus` telemetry, adaptive
-  battery-aware tracking intervals, multi-zone geofence evaluation with false-positive rejection, a
-  real (non-commercial-API) ETA engine, a mandatory location-availability gate on active-shift
-  operations, an offline location queue with dedup/replay, an operational-signals-only fraud-signal
-  foundation, delivery travel/stop/speed history, and location-privacy authorization/audit. **Still
-  ROADMAP**: a real backend (every repository is in-memory, same-process only — no cross-device
-  real-time delivery), a paid mapping/route-optimization provider (`DispatchScorer` still uses
-  straight-line haversine distance only; no map-rendering package added — `ManagerLiveTrackingScreen`
-  is list-only), production SMS/push/telephony for courier-customer contact, real-device QA (Sprint 5B's
-  GPS/permission/background behavior is verified only structurally in this environment), and a live
-  runtime orchestrator continuously wiring the real GPS stream + adaptive policy + offline queue
-  together (every individual piece is real and tested; the continuous background loop tying them
-  together is not yet built).
+  real GPS/geofence/ETA/live-tracking added (Sprint 5B), FIFO dispatch queue/manager map/operations
+  center added (Sprint 5C)** — see `docs/business_rules.md` BR-COURIER-004/012–054 and
+  `docs/decisions.md` ADR-017/018/019/020. `Courier`/`Delivery`/`DeliveryAssignment` aggregates, shift
+  lifecycle with manager approval, deterministic rule-based dispatch scoring (`DispatchScorer`),
+  manual/automatic assignment, package pickup integration, delivery completion, compensation/earnings,
+  and a consolidated courier + manager UI all exist and are tested. Sprint 5B replaced every NoOp/
+  in-memory location contract with a real device integration: `geolocator`-backed GPS/permissions,
+  `battery_plus`/`connectivity_plus` telemetry, adaptive battery-aware tracking intervals, multi-zone
+  geofence evaluation with false-positive rejection, a real (non-commercial-API) ETA engine, a mandatory
+  location-availability gate on active-shift operations, an offline location queue with dedup/replay, an
+  operational-signals-only fraud-signal foundation, delivery travel/stop/speed history, and
+  location-privacy authorization/audit. Sprint 5C added a persisted FIFO dispatch queue (event log +
+  full manual-override audit), a real `flutter_map`+OpenStreetMap manager live map (superseding Sprint
+  5B's list-only map decision), manager-only delivery-sequence reordering, same-destination grouping
+  with a deterministic one-package-fee rule, courier shift transfer and temporary package blocking, a
+  same-process manager-courier Communication Center (direct/broadcast/emergency), a live-warnings
+  aggregator, a 🟢/🟡/🔴 operation-health indicator, a performance card and daily analytics report, an
+  operation timeline, and a consolidated `CourierDispatchDashboardScreen`. **Still ROADMAP**: a real
+  backend (every repository is in-memory, same-process only — no cross-device real-time delivery), a
+  paid/self-hosted map tile provider for production (Sprint 5C's OSM tiles carry a dev-only usage-policy
+  warning), route optimization (`DispatchScorer` still uses straight-line haversine distance only),
+  production SMS/push/telephony for courier-customer contact, real-device QA (Sprint 5B's GPS/
+  permission/background behavior is verified only structurally in this environment), a live runtime
+  orchestrator continuously wiring the real GPS stream + adaptive policy + offline queue together, a
+  real customer-rating data source, a persisted ETA-vs-actual repository, a region/district taxonomy for
+  "peak region" analytics, and same-destination live "assign together/separately" detection on the
+  dashboard (would require a new courier-feature dependency on `Order.deliveryAddressText`).
 - Priority: P2
 - Dependencies: ORD-001, IA-001
 - Business value: Enables in-house delivery without relying solely on marketplace-platform couriers.
 - Technical risk: Medium.
 - Complexity: L
 - Backend impact: Location ingestion, assignment logic. Domain/application logic already implemented
-  client-side (Phase 5/Sprint 5A/Sprint 5B); a real backend would host the same contracts
-  (`CourierEventRepository`, `CourierLocationRepository`, `OfflineLocationQueueRepository`, etc.) behind
-  a real API rather than in-memory.
+  client-side (Phase 5/Sprint 5A/Sprint 5B/Sprint 5C); a real backend would host the same contracts
+  (`CourierEventRepository`, `CourierLocationRepository`, `OfflineLocationQueueRepository`,
+  `CourierMessageRepository`, etc.) behind a real API rather than in-memory.
 - Mobile impact: Implemented as screens within the main Flutter app this phase
   (`CourierHomeScreen`/`ActiveDeliveryScreen`/`CourierDeliveryHistoryScreen`), not yet a separate
   lightweight target — whether a separate app/target is still warranted is an open question for whoever
   picks this up next.
-- Web/admin impact: `CourierDispatchBoardScreen`/`CourierPerformanceScreen`/`ManagerLiveTrackingScreen`
-  implemented as in-app screens (consolidated, list-based — no map visualization yet, a deliberately
-  deferred decision per Sprint 5B's `docs/decisions.md` ADR-019).
+- Web/admin impact: `CourierDispatchBoardScreen`/`CourierPerformanceScreen`/`ManagerLiveTrackingScreen`/
+  `CourierLiveMapScreen`/`CourierCommunicationCenterScreen`/`CourierDispatchDashboardScreen` implemented
+  as in-app screens. A real map surface now exists (`flutter_map`+OpenStreetMap, Sprint 5C), superseding
+  Sprint 5B's deferred list-only decision.
 - Test requirements: Assignment-conflict tests (no order double-assigned) — implemented
   (`DeliveryAlreadyAssignedViolation`, tested). Location-availability-gate, geofence false-positive
-  rejection, offline dedup/replay, and fraud-signal tests all implemented (Sprint 5B).
+  rejection, offline dedup/replay, and fraud-signal tests all implemented (Sprint 5B). FIFO queue
+  ordering (incl. the brief's own worked example), manual-override audit, delivery-sequence validation,
+  same-destination fee-waiver determinism, shift-transfer composition, and messaging/warnings/health-
+  indicator tests all implemented (Sprint 5C).
 - Completion criteria: A dispatcher can assign an order to a courier and see its delivery status update
   in real time — assignment and status-update logic implemented; **real-time cross-device delivery
   still requires a real backend**, not yet built.
 
 #### COUR-002 — Live Delivery Tracking (Customer App)
 - Description: Customer-facing live map/status view of their courier's delivery, replacing the currently-empty `ActiveOrderScreen`.
-- Status: **Not started — explicitly deferred again by Sprint 5B** (`docs/decisions.md` ADR-019 names
-  this "Sprint 5C" scope). Phase 5/Sprint 5B built the courier-side/manager-side operational platform
-  (COUR-001) only — no customer-facing tracking screen exists yet. The location-data foundation this
-  would read from is now real, not a NoOp placeholder: `CourierLocationSnapshot` (real GPS, `geolocator`
-  -backed), `CourierLiveStatus`/`BuildCourierLiveStatus` (live position/movement/signal/battery),
-  `DeliveryTrackingHistory`/`BuildDeliveryTrackingHistory` (travel/stop/speed + lifecycle checkpoints),
-  and `DeliveryRouteSnapshot`/`AdaptiveEtaEstimator` (real, non-commercial-API ETA). Still no
-  customer-scoped read path, no customer-facing authorization boundary, and no UI has been built.
+- Status: **Not started — still deferred, including by Sprint 5C** (`docs/decisions.md` ADR-019 named
+  this "Sprint 5C" scope; Sprint 5C itself built the *manager*-facing dispatch/operations center only —
+  `CourierDispatchDashboardScreen`, `CourierLiveMapScreen`, `CourierCommunicationCenterScreen` — none of
+  it customer-facing). Phase 5/Sprint 5B/Sprint 5C built the courier-side/manager-side operational
+  platform (COUR-001) only — no customer-facing tracking screen exists yet. The location-data foundation
+  this would read from is now real, not a NoOp placeholder: `CourierLocationSnapshot` (real GPS,
+  `geolocator`-backed), `CourierLiveStatus`/`BuildCourierLiveStatus` (live position/movement/signal/
+  battery), `DeliveryTrackingHistory`/`BuildDeliveryTrackingHistory` (travel/stop/speed + lifecycle
+  checkpoints), `DeliveryRouteSnapshot`/`AdaptiveEtaEstimator` (real, non-commercial-API ETA), and now
+  also a real map-rendering package (`flutter_map`+OpenStreetMap, Sprint 5C) a customer-facing map could
+  reuse. Still no customer-scoped read path, no customer-facing authorization boundary, and no UI has
+  been built.
 - Priority: P2
 - Dependencies: COUR-001
 - Business value: A well-understood customer-satisfaction driver in food delivery.
