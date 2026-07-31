@@ -1353,3 +1353,22 @@ final class InvalidSurveyResponseViolation extends BusinessRuleViolation {
   @override
   String get description => 'Invalid survey response: $reason';
 }
+
+/// A `CustomerNotificationCampaign` status transition was attempted that
+/// its current status does not allow (e.g. scheduling a campaign that
+/// isn't a `draft`) — Sprint 5D's CRM Notification Foundation.
+final class InvalidNotificationCampaignTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidNotificationCampaignTransitionViolation({
+    required this.campaignId,
+    required this.fromStatusName,
+  });
+
+  final String campaignId;
+  final String fromStatusName;
+
+  @override
+  String get description =>
+      'Cannot schedule campaign "$campaignId" from status '
+      '"$fromStatusName" — only a draft campaign may be scheduled';
+}
