@@ -1372,3 +1372,14 @@ final class InvalidNotificationCampaignTransitionViolation
       'Cannot schedule campaign "$campaignId" from status '
       '"$fromStatusName" — only a draft campaign may be scheduled';
 }
+
+/// A `CustomerFeedback` submission had an empty subject or body — Sprint
+/// 5D's Customer Feedback Center.
+final class InvalidCustomerFeedbackViolation extends BusinessRuleViolation {
+  const InvalidCustomerFeedbackViolation({required this.reason});
+
+  final String reason;
+
+  @override
+  String get description => 'Invalid customer feedback: $reason';
+}

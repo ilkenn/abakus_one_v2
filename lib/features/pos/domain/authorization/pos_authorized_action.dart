@@ -99,4 +99,5 @@ enum PosAuthorizedAction {
   manageVisitRewardRules,
   manageSurveys,
   manageCustomerNotificationCampaigns,
+  manageCustomerFeedback,
 }
