@@ -1327,3 +1327,29 @@ final class InvalidVisitRewardRuleViolation extends BusinessRuleViolation {
   @override
   String get description => 'Invalid visit reward rule: $reason';
 }
+
+/// A `Survey` was created with an invalid shape (no questions, a
+/// `multipleChoice` question with fewer than 2 options, or duplicate
+/// question ids) — Sprint 5D's Survey Engine.
+final class InvalidSurveyViolation extends BusinessRuleViolation {
+  const InvalidSurveyViolation({required this.reason});
+
+  final String reason;
+
+  @override
+  String get description => 'Invalid survey: $reason';
+}
+
+/// A `SurveyResponse` was submitted that doesn't answer exactly the
+/// target survey's questions, or an answer's shape doesn't match its
+/// question's `SurveyQuestionType` (e.g. no `numericValue` for a rating
+/// question, an out-of-range value, an unknown `multipleChoice` option
+/// id) — Sprint 5D's Survey Engine.
+final class InvalidSurveyResponseViolation extends BusinessRuleViolation {
+  const InvalidSurveyResponseViolation({required this.reason});
+
+  final String reason;
+
+  @override
+  String get description => 'Invalid survey response: $reason';
+}
