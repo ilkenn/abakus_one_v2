@@ -1,6 +1,7 @@
 import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/features/crm/application/identity/visit_reward_rule_id_generator.dart';
 import 'package:abakus_one_v2/features/crm/application/use_cases/create_visit_reward_rule.dart';
+import 'package:abakus_one_v2/features/crm/data/crm_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/crm/data/visit_reward_rule_repository.dart';
 import 'package:abakus_one_v2/features/crm/domain/rewards/reward_type.dart';
 import 'package:abakus_one_v2/features/crm/domain/rewards/visit_reward_config.dart';
@@ -16,6 +17,7 @@ void main() {
         authorizationPolicy: const AllowAllCrmPolicy(),
         idGenerator: SequentialVisitRewardRuleIdGenerator(),
         repository: repository,
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       final rule = await useCase(
@@ -36,6 +38,7 @@ void main() {
         authorizationPolicy: const AllowAllCrmPolicy(),
         idGenerator: SequentialVisitRewardRuleIdGenerator(),
         repository: InMemoryVisitRewardRuleRepository(),
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       expect(
@@ -55,6 +58,7 @@ void main() {
         authorizationPolicy: const DenyAllCrmPolicy(),
         idGenerator: SequentialVisitRewardRuleIdGenerator(),
         repository: InMemoryVisitRewardRuleRepository(),
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       expect(

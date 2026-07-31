@@ -1,6 +1,8 @@
 import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/features/crm/application/use_cases/schedule_customer_notification_campaign.dart';
+import 'package:abakus_one_v2/features/crm/data/crm_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/crm/data/customer_notification_campaign_repository.dart';
+import 'package:abakus_one_v2/features/crm/domain/audit/crm_audit_event_type.dart';
 import 'package:abakus_one_v2/features/crm/domain/notifications/customer_notification_campaign.dart';
 import 'package:abakus_one_v2/features/crm/domain/notifications/customer_notification_campaign_status.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,12 +29,14 @@ void main() {
       final useCase = ScheduleCustomerNotificationCampaign(
         authorizationPolicy: const AllowAllCrmPolicy(),
         repository: repository,
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       final updated = await useCase(
         campaignId: 'campaign-1',
         scheduledFor: DateTime(2026, 2, 1),
         performedByStaffId: 'manager-1',
+        performedAt: DateTime(2026, 1, 15),
       );
 
       expect(updated.status, CustomerNotificationCampaignStatus.scheduled);
@@ -48,6 +52,7 @@ void main() {
       final useCase = ScheduleCustomerNotificationCampaign(
         authorizationPolicy: const AllowAllCrmPolicy(),
         repository: repository,
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       expect(
@@ -55,6 +60,7 @@ void main() {
           campaignId: 'campaign-1',
           scheduledFor: DateTime(2026, 2, 1),
           performedByStaffId: 'manager-1',
+          performedAt: DateTime(2026, 1, 15),
         ),
         throwsA(isA<InvalidNotificationCampaignTransitionViolation>()),
       );
@@ -64,6 +70,7 @@ void main() {
       final useCase = ScheduleCustomerNotificationCampaign(
         authorizationPolicy: const AllowAllCrmPolicy(),
         repository: InMemoryCustomerNotificationCampaignRepository(),
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       expect(
@@ -71,6 +78,7 @@ void main() {
           campaignId: 'missing',
           scheduledFor: DateTime(2026, 2, 1),
           performedByStaffId: 'manager-1',
+          performedAt: DateTime(2026, 1, 15),
         ),
         throwsA(isA<UnknownCrmEntityViolation>()),
       );
@@ -82,6 +90,7 @@ void main() {
       final useCase = ScheduleCustomerNotificationCampaign(
         authorizationPolicy: const DenyAllCrmPolicy(),
         repository: repository,
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       expect(
@@ -89,9 +98,32 @@ void main() {
           campaignId: 'campaign-1',
           scheduledFor: DateTime(2026, 2, 1),
           performedByStaffId: 'staff-1',
+          performedAt: DateTime(2026, 1, 15),
         ),
         throwsA(isA<AuthorizationDeniedViolation>()),
       );
+    });
+
+    test('records a CrmAuditEntry for the schedule action', () async {
+      final repository = InMemoryCustomerNotificationCampaignRepository();
+      await repository.save(_draftCampaign());
+      final auditRepository = InMemoryCrmAuditEntryRepository();
+      final useCase = ScheduleCustomerNotificationCampaign(
+        authorizationPolicy: const AllowAllCrmPolicy(),
+        repository: repository,
+        auditRepository: auditRepository,
+      );
+
+      await useCase(
+        campaignId: 'campaign-1',
+        scheduledFor: DateTime(2026, 2, 1),
+        performedByStaffId: 'manager-1',
+        performedAt: DateTime(2026, 1, 15),
+      );
+
+      final entries = await auditRepository.findByTargetEntityId('campaign-1');
+      expect(entries.single.type,
+          CrmAuditEventType.customerNotificationCampaignScheduled);
     });
   });
 }

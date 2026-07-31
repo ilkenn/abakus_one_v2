@@ -126,6 +126,7 @@ class _SurveyAdminScreenState extends ConsumerState<SurveyAdminScreen> {
         authorizationPolicy: policy,
         idGenerator: ref.read(surveyIdGeneratorProvider),
         repository: ref.read(surveyRepositoryProvider),
+        auditRepository: ref.read(crmAuditEntryRepositoryProvider),
       )(
         title: titleController.text,
         questions: [

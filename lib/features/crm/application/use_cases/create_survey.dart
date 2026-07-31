@@ -1,7 +1,10 @@
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
+import '../../data/crm_audit_entry_repository.dart';
 import '../../data/survey_repository.dart';
+import '../../domain/audit/crm_audit_entry.dart';
+import '../../domain/audit/crm_audit_event_type.dart';
 import '../../domain/segmentation/customer_category.dart';
 import '../../domain/surveys/survey.dart';
 import '../../domain/surveys/survey_question.dart';
@@ -13,18 +16,24 @@ import '../identity/survey_id_generator.dart';
 /// itself is coherent (non-empty, unique question ids, every
 /// [SurveyQuestionType.multipleChoice] question has at least 2 options)
 /// before anything is persisted.
+///
+/// **Sprint 5E**: audited via [CrmAuditEntry] (`docs/decisions.md`
+/// ADR-022).
 class CreateSurvey {
   const CreateSurvey({
     required PosAuthorizationPolicy authorizationPolicy,
     required SurveyIdGenerator idGenerator,
     required SurveyRepository repository,
+    required CrmAuditEntryRepository auditRepository,
   })  : _authorizationPolicy = authorizationPolicy,
         _idGenerator = idGenerator,
-        _repository = repository;
+        _repository = repository,
+        _auditRepository = auditRepository;
 
   final PosAuthorizationPolicy _authorizationPolicy;
   final SurveyIdGenerator _idGenerator;
   final SurveyRepository _repository;
+  final CrmAuditEntryRepository _auditRepository;
 
   Future<Survey> call({
     required String title,
@@ -78,6 +87,17 @@ class CreateSurvey {
       revision: 1,
     );
     await _repository.save(survey);
+
+    await _auditRepository.appendEvent(CrmAuditEntry(
+      id: '${survey.id}-audit-created',
+      actorId: performedByStaffId,
+      type: CrmAuditEventType.surveyCreated,
+      description: 'Survey created: "$title"',
+      targetEntityId: survey.id,
+      newStateName: isActive ? 'active' : 'inactive',
+      timestamp: createdAt,
+    ));
+
     return survey;
   }
 }

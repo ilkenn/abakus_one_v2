@@ -133,6 +133,7 @@ class _VisitRewardRulesAdminScreenState
         authorizationPolicy: policy,
         idGenerator: ref.read(visitRewardRuleIdGeneratorProvider),
         repository: ref.read(visitRewardRuleRepositoryProvider),
+        auditRepository: ref.read(crmAuditEntryRepositoryProvider),
       )(
         requiredVisitCount: requiredVisitCount,
         rewardType: type,
@@ -158,10 +159,12 @@ class _VisitRewardRulesAdminScreenState
       await SetVisitRewardRuleActive(
         authorizationPolicy: policy,
         repository: ref.read(visitRewardRuleRepositoryProvider),
+        auditRepository: ref.read(crmAuditEntryRepositoryProvider),
       )(
         ruleId: rule.id,
         isActive: !rule.isActive,
         performedByStaffId: widget.performedByStaffId,
+        performedAt: ref.read(clockProvider).now(),
       );
       await _load();
     } catch (e) {

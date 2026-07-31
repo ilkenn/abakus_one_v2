@@ -4,6 +4,7 @@ import 'package:abakus_one_v2/features/crm/application/use_cases/build_customer_
 import 'package:abakus_one_v2/features/crm/application/use_cases/grant_visit_reward.dart';
 import 'package:abakus_one_v2/features/crm/application/use_cases/record_customer_visit.dart';
 import 'package:abakus_one_v2/features/crm/application/use_cases/record_customer_visit_and_evaluate_rewards.dart';
+import 'package:abakus_one_v2/features/crm/data/crm_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/crm/data/customer_repository.dart';
 import 'package:abakus_one_v2/features/crm/data/customer_reward_grant_repository.dart';
 import 'package:abakus_one_v2/features/crm/data/customer_visit_repository.dart';
@@ -90,12 +91,14 @@ class _Fixture {
       : customerRepository = InMemoryCustomerRepository(),
         visitRepository = InMemoryCustomerVisitRepository(),
         ruleRepository = InMemoryVisitRewardRuleRepository(),
-        grantRepository = InMemoryCustomerRewardGrantRepository();
+        grantRepository = InMemoryCustomerRewardGrantRepository(),
+        auditRepository = InMemoryCrmAuditEntryRepository();
 
   final CustomerRepository customerRepository;
   final CustomerVisitRepository visitRepository;
   final VisitRewardRuleRepository ruleRepository;
   final CustomerRewardGrantRepository grantRepository;
+  final CrmAuditEntryRepository auditRepository;
 
   RecordCustomerVisitAndEvaluateRewards build(
       {CustomerRewardGrantRepository? grantRepositoryOverride}) {
@@ -106,10 +109,12 @@ class _Fixture {
         idGenerator: SequentialCustomerVisitIdGenerator(),
         customerRepository: customerRepository,
         visitRepository: visitRepository,
+        auditRepository: auditRepository,
       ),
       grantVisitReward: GrantVisitReward(
         idGenerator: SequentialCustomerRewardGrantIdGenerator(),
         repository: grantRepositoryOverride ?? grantRepository,
+        auditRepository: auditRepository,
       ),
     );
   }

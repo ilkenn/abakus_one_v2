@@ -106,6 +106,10 @@ class RecordCustomerVisitAndEvaluateRewards {
       branchId: branchId,
       orderId: orderId,
       occurredAt: occurredAt,
+      // "system" — this orchestration is itself the automated trigger
+      // (see this class's own doc comment); there is no human actor to
+      // attribute the visit to.
+      performedByStaffId: 'system',
     );
 
     final totalVisitCount =

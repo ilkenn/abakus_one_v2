@@ -1,6 +1,8 @@
 import 'package:abakus_one_v2/features/crm/application/identity/customer_reward_grant_id_generator.dart';
 import 'package:abakus_one_v2/features/crm/application/use_cases/grant_visit_reward.dart';
+import 'package:abakus_one_v2/features/crm/data/crm_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/crm/data/customer_reward_grant_repository.dart';
+import 'package:abakus_one_v2/features/crm/domain/audit/crm_audit_event_type.dart';
 import 'package:abakus_one_v2/features/crm/domain/rewards/reward_type.dart';
 import 'package:abakus_one_v2/features/crm/domain/rewards/visit_reward_config.dart';
 import 'package:abakus_one_v2/features/crm/domain/rewards/visit_reward_rule.dart';
@@ -25,6 +27,7 @@ void main() {
       final useCase = GrantVisitReward(
         idGenerator: SequentialCustomerRewardGrantIdGenerator(),
         repository: repository,
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       final grant = await useCase(
@@ -45,6 +48,7 @@ void main() {
       final useCase = GrantVisitReward(
         idGenerator: SequentialCustomerRewardGrantIdGenerator(),
         repository: repository,
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
       final rule = _buildRule();
 
@@ -72,6 +76,7 @@ void main() {
       final useCase = GrantVisitReward(
         idGenerator: SequentialCustomerRewardGrantIdGenerator(),
         repository: repository,
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
       final rule = _buildRule();
 
@@ -90,6 +95,36 @@ void main() {
 
       expect(second, isNotNull);
       expect(await repository.findByCustomerId('customer-1'), hasLength(2));
+    });
+
+    test(
+        'records a CrmAuditEntry only for an actual grant, never for the '
+        'already-granted no-op path', () async {
+      final repository = InMemoryCustomerRewardGrantRepository();
+      final auditRepository = InMemoryCrmAuditEntryRepository();
+      final useCase = GrantVisitReward(
+        idGenerator: SequentialCustomerRewardGrantIdGenerator(),
+        repository: repository,
+        auditRepository: auditRepository,
+      );
+      final rule = _buildRule();
+
+      final grant = await useCase(
+        customerId: 'customer-1',
+        rule: rule,
+        visitCountAtGrant: 5,
+        grantedAt: DateTime(2026, 1, 5),
+      );
+      await useCase(
+        customerId: 'customer-1',
+        rule: rule,
+        visitCountAtGrant: 5,
+        grantedAt: DateTime(2026, 1, 6),
+      );
+
+      final entries = await auditRepository.findByTargetEntityId(grant!.id);
+      expect(entries, hasLength(1));
+      expect(entries.single.type, CrmAuditEventType.visitRewardGranted);
     });
   });
 }

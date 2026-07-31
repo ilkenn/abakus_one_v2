@@ -1,6 +1,7 @@
 import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/features/crm/application/identity/survey_id_generator.dart';
 import 'package:abakus_one_v2/features/crm/application/use_cases/create_survey.dart';
+import 'package:abakus_one_v2/features/crm/data/crm_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/crm/data/survey_repository.dart';
 import 'package:abakus_one_v2/features/crm/domain/surveys/survey_question.dart';
 import 'package:abakus_one_v2/features/crm/domain/surveys/survey_question_type.dart';
@@ -15,6 +16,7 @@ void main() {
         authorizationPolicy: const AllowAllCrmPolicy(),
         idGenerator: SequentialSurveyIdGenerator(),
         repository: repository,
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
     }
 
@@ -109,6 +111,7 @@ void main() {
         authorizationPolicy: const DenyAllCrmPolicy(),
         idGenerator: SequentialSurveyIdGenerator(),
         repository: InMemorySurveyRepository(),
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       expect(

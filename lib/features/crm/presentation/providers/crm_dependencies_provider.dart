@@ -13,6 +13,7 @@ import '../../application/use_cases/build_survey_statistics.dart';
 import '../../application/use_cases/grant_visit_reward.dart';
 import '../../application/use_cases/record_customer_visit.dart';
 import '../../application/use_cases/record_customer_visit_and_evaluate_rewards.dart';
+import '../../data/crm_audit_entry_repository.dart';
 import '../../data/customer_notification_campaign_repository.dart';
 import '../../data/customer_repository.dart';
 import '../../data/customer_reward_grant_repository.dart';
@@ -31,6 +32,15 @@ import '../../data/visit_reward_rule_repository.dart';
 
 final customerRepositoryProvider = Provider<CustomerRepository>((ref) {
   return InMemoryCustomerRepository();
+});
+
+/// **Sprint 5E Part 6** (`docs/decisions.md` ADR-022) — audit-trail
+/// storage for every CRM/Loyalty mutation. Deliberately a separate
+/// provider/repository from courier's own audit infrastructure — see
+/// `CrmAuditEntry`'s doc comment for why.
+final crmAuditEntryRepositoryProvider =
+    Provider<CrmAuditEntryRepository>((ref) {
+  return InMemoryCrmAuditEntryRepository();
 });
 
 final customerVisitRepositoryProvider =
@@ -126,10 +136,12 @@ final recordCustomerVisitAndEvaluateRewardsProvider =
       idGenerator: ref.watch(customerVisitIdGeneratorProvider),
       customerRepository: ref.watch(customerRepositoryProvider),
       visitRepository: ref.watch(customerVisitRepositoryProvider),
+      auditRepository: ref.watch(crmAuditEntryRepositoryProvider),
     ),
     grantVisitReward: GrantVisitReward(
       idGenerator: ref.watch(customerRewardGrantIdGeneratorProvider),
       repository: ref.watch(customerRewardGrantRepositoryProvider),
+      auditRepository: ref.watch(crmAuditEntryRepositoryProvider),
     ),
   );
 });

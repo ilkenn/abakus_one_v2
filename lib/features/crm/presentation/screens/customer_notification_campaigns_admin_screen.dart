@@ -124,6 +124,7 @@ class _CustomerNotificationCampaignsAdminScreenState
         authorizationPolicy: policy,
         idGenerator: ref.read(customerNotificationCampaignIdGeneratorProvider),
         repository: ref.read(customerNotificationCampaignRepositoryProvider),
+        auditRepository: ref.read(crmAuditEntryRepositoryProvider),
       )(
         title: titleController.text,
         body: bodyController.text,

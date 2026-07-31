@@ -1,6 +1,7 @@
 import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/features/crm/application/identity/customer_notification_campaign_id_generator.dart';
 import 'package:abakus_one_v2/features/crm/application/use_cases/create_customer_notification_campaign.dart';
+import 'package:abakus_one_v2/features/crm/data/crm_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/crm/data/customer_notification_campaign_repository.dart';
 import 'package:abakus_one_v2/features/crm/domain/notifications/customer_notification_campaign_status.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,6 +16,7 @@ void main() {
         authorizationPolicy: const AllowAllCrmPolicy(),
         idGenerator: SequentialCustomerNotificationCampaignIdGenerator(),
         repository: repository,
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       final campaign = await useCase(
@@ -33,6 +35,7 @@ void main() {
         authorizationPolicy: const DenyAllCrmPolicy(),
         idGenerator: SequentialCustomerNotificationCampaignIdGenerator(),
         repository: InMemoryCustomerNotificationCampaignRepository(),
+        auditRepository: InMemoryCrmAuditEntryRepository(),
       );
 
       expect(
