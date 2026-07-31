@@ -8,12 +8,16 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/clock_provider.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../crm/application/use_cases/record_customer_visit_and_evaluate_rewards.dart';
+import '../../../crm/presentation/providers/crm_dependencies_provider.dart';
 import '../../../orders/data/package_preparation_repository.dart';
 import '../../../orders/domain/fulfillment/package_preparation_status.dart';
 import '../../../orders/domain/models/order_id.dart';
 import '../../../pos/application/use_cases/advance_package_preparation.dart';
+import '../../../pos/data/pos_order_repository.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/presentation/providers/package_preparation_dependencies_provider.dart';
+import '../../../pos/presentation/providers/pos_dependencies_provider.dart';
 import '../../application/use_cases/complete_delivery.dart';
 import '../../application/use_cases/confirm_package_pickup.dart';
 import '../../application/use_cases/record_courier_event.dart';
@@ -227,6 +231,19 @@ class _ActiveDeliveryScreenState extends ConsumerState<ActiveDeliveryScreen> {
           await _advancePackageToDelivered(
               packageRepository, orderId, performedByStaffId, at);
         },
+        recordVisitAndEvaluateRewards: ({
+          required OrderId orderId,
+          required String branchId,
+          required DateTime at,
+        }) async {
+          await _recordVisitForDeliveredOrder(
+            ref.read(posOrderRepositoryProvider),
+            ref.read(recordCustomerVisitAndEvaluateRewardsProvider),
+            orderId,
+            branchId,
+            at,
+          );
+        },
       )(
         deliveryId: delivery.id,
         courierId: widget.courierId,
@@ -269,6 +286,26 @@ class _ActiveDeliveryScreenState extends ConsumerState<ActiveDeliveryScreen> {
         at: at,
       );
     }
+  }
+
+  /// **Sprint 5E** (`docs/decisions.md` ADR-022): resolves the delivered
+  /// order and hands it to [RecordCustomerVisitAndEvaluateRewards
+  /// .callForOrder] — `order == null` (no `Order` was ever submitted
+  /// under this id — should not happen for a real delivery, but this is
+  /// best-effort orchestration, not a guaranteed invariant) skips the
+  /// same way `callForOrder` itself skips a missing `customerId`:
+  /// delivery completion itself must never fail because loyalty
+  /// bookkeeping couldn't find a customer to credit.
+  static Future<void> _recordVisitForDeliveredOrder(
+    PosOrderRepository orderRepository,
+    RecordCustomerVisitAndEvaluateRewards recordVisit,
+    OrderId orderId,
+    String branchId,
+    DateTime at,
+  ) async {
+    final order = await orderRepository.findById(orderId);
+    if (order == null) return;
+    await recordVisit.callForOrder(order: order, occurredAt: at);
   }
 
   Future<void> _recordFailure(DeliveryFailureReason reason) async {

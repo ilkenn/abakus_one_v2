@@ -10,6 +10,9 @@ import '../../application/identity/survey_response_id_generator.dart';
 import '../../application/identity/visit_reward_rule_id_generator.dart';
 import '../../application/use_cases/build_customer_visit_passport.dart';
 import '../../application/use_cases/build_survey_statistics.dart';
+import '../../application/use_cases/grant_visit_reward.dart';
+import '../../application/use_cases/record_customer_visit.dart';
+import '../../application/use_cases/record_customer_visit_and_evaluate_rewards.dart';
 import '../../data/customer_notification_campaign_repository.dart';
 import '../../data/customer_repository.dart';
 import '../../data/customer_reward_grant_repository.dart';
@@ -107,5 +110,26 @@ final buildSurveyStatisticsProvider = Provider<BuildSurveyStatistics>((ref) {
     clock: ref.watch(clockProvider),
     surveyRepository: ref.watch(surveyRepositoryProvider),
     responseRepository: ref.watch(surveyResponseRepositoryProvider),
+  );
+});
+
+/// **Sprint 5E Part 5** (`docs/decisions.md` ADR-022) — the orchestration
+/// use case `CompleteDelivery`'s `recordVisitAndEvaluateRewards`
+/// collaborator is wired to at its one real production call site
+/// (`ActiveDeliveryScreen`).
+final recordCustomerVisitAndEvaluateRewardsProvider =
+    Provider<RecordCustomerVisitAndEvaluateRewards>((ref) {
+  return RecordCustomerVisitAndEvaluateRewards(
+    visitRepository: ref.watch(customerVisitRepositoryProvider),
+    ruleRepository: ref.watch(visitRewardRuleRepositoryProvider),
+    recordCustomerVisit: RecordCustomerVisit(
+      idGenerator: ref.watch(customerVisitIdGeneratorProvider),
+      customerRepository: ref.watch(customerRepositoryProvider),
+      visitRepository: ref.watch(customerVisitRepositoryProvider),
+    ),
+    grantVisitReward: GrantVisitReward(
+      idGenerator: ref.watch(customerRewardGrantIdGeneratorProvider),
+      repository: ref.watch(customerRewardGrantRepositoryProvider),
+    ),
   );
 });

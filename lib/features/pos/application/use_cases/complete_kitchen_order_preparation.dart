@@ -29,6 +29,12 @@ import 'record_kitchen_event.dart';
 /// `KitchenOrderView.isFullyReady` is already `true` for the order's
 /// current work items — order readiness is derived, never manually
 /// forced past what its lines actually show.
+///
+/// **Sprint 5E**: [createDeliveryForOrder], when supplied, fires only for
+/// [OrderChannel.delivery] — never [OrderChannel.takeaway] or any dine-in
+/// channel, "do not invent a delivery for dine-in or takeaway orders"
+/// (`docs/decisions.md` ADR-022). `null` (the default) skips it, matching
+/// [advanceToReadyForPacking]'s existing optional-collaborator shape.
 class CompleteKitchenOrderPreparation {
   const CompleteKitchenOrderPreparation({
     required Clock clock,
@@ -41,12 +47,18 @@ class CompleteKitchenOrderPreparation {
       required String performedByStaffId,
       required DateTime at,
     })? advanceToReadyForPacking,
+    Future<void> Function({
+      required OrderId orderId,
+      required String branchId,
+      required DateTime at,
+    })? createDeliveryForOrder,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _projectionRepository = projectionRepository,
         _auditRepository = auditRepository,
         _recordKitchenEvent = recordKitchenEvent,
-        _advanceToReadyForPacking = advanceToReadyForPacking;
+        _advanceToReadyForPacking = advanceToReadyForPacking,
+        _createDeliveryForOrder = createDeliveryForOrder;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
@@ -64,6 +76,15 @@ class CompleteKitchenOrderPreparation {
     required String performedByStaffId,
     required DateTime at,
   })? _advanceToReadyForPacking;
+
+  /// Injected rather than depending on `CreateDelivery` directly, for the
+  /// same testability reason as [_advanceToReadyForPacking]. The default
+  /// production wiring passes a closure over the real `CreateDelivery`.
+  final Future<void> Function({
+    required OrderId orderId,
+    required String branchId,
+    required DateTime at,
+  })? _createDeliveryForOrder;
 
   Future<void> call({
     required OrderId orderId,
@@ -124,6 +145,14 @@ class CompleteKitchenOrderPreparation {
       await _advanceToReadyForPacking(
         orderId: orderId,
         performedByStaffId: performedByStaffId,
+        at: now,
+      );
+    }
+
+    if (channel == OrderChannel.delivery && _createDeliveryForOrder != null) {
+      await _createDeliveryForOrder(
+        orderId: orderId,
+        branchId: branchId,
         at: now,
       );
     }

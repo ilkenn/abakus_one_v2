@@ -107,5 +107,79 @@ void main() {
 
       expect(advanceCalled, isFalse);
     });
+
+    test('createDeliveryForOrder fires for a delivery-channel order', () async {
+      final projectionRepository = InMemoryKitchenProjectionRepository();
+      await projectionRepository
+          .save(buildTestKitchenWorkItem(status: KitchenLineStatus.ready));
+
+      String? createdOrderId;
+      final useCase = CompleteKitchenOrderPreparation(
+        clock: FakeClock(DateTime(2026, 1, 1, 12)),
+        authorizationPolicy: FakePosAuthorizationPolicy(
+            const AuthorizationResult(granted: true)),
+        projectionRepository: projectionRepository,
+        auditRepository: InMemoryKitchenAuditEntryRepository(),
+        recordKitchenEvent: buildTestRecordKitchenEvent(),
+        createDeliveryForOrder: ({
+          required orderId,
+          required branchId,
+          required at,
+        }) async {
+          createdOrderId = orderId.value;
+        },
+      );
+
+      await useCase(
+        orderId: OrderId('order-1'),
+        kitchenTicketId: 'ticket-1',
+        branchId: 'branch-1',
+        channel: OrderChannel.delivery,
+        performedByStaffId: 'staff-1',
+      );
+
+      expect(createdOrderId, 'order-1');
+    });
+
+    test(
+        'createDeliveryForOrder never fires for takeaway or dine-in — '
+        '"do not invent a delivery for dine-in or takeaway orders"', () async {
+      for (final channel in [
+        OrderChannel.takeaway,
+        OrderChannel.dineInStaff,
+        OrderChannel.dineInQr,
+      ]) {
+        final projectionRepository = InMemoryKitchenProjectionRepository();
+        await projectionRepository
+            .save(buildTestKitchenWorkItem(status: KitchenLineStatus.ready));
+
+        var createDeliveryCalled = false;
+        final useCase = CompleteKitchenOrderPreparation(
+          clock: FakeClock(DateTime(2026, 1, 1, 12)),
+          authorizationPolicy: FakePosAuthorizationPolicy(
+              const AuthorizationResult(granted: true)),
+          projectionRepository: projectionRepository,
+          auditRepository: InMemoryKitchenAuditEntryRepository(),
+          recordKitchenEvent: buildTestRecordKitchenEvent(),
+          createDeliveryForOrder: ({
+            required orderId,
+            required branchId,
+            required at,
+          }) async {
+            createDeliveryCalled = true;
+          },
+        );
+
+        await useCase(
+          orderId: OrderId('order-1'),
+          kitchenTicketId: 'ticket-1',
+          branchId: 'branch-1',
+          channel: channel,
+          performedByStaffId: 'staff-1',
+        );
+
+        expect(createDeliveryCalled, isFalse, reason: 'channel: $channel');
+      }
+    });
   });
 }

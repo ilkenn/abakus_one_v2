@@ -1,4 +1,5 @@
 import '../../orders/domain/models/order.dart';
+import '../../orders/domain/models/order_id.dart';
 import '../domain/models/pos_order_session.dart';
 
 /// Persistence boundary for POS drafts and submitted orders.
@@ -27,6 +28,13 @@ abstract interface class PosOrderRepository {
   /// `SubmitPosOrder`) and returns it back — this method does not
   /// construct or transition an [Order] itself, only stores one.
   Future<Order> submitOrder(Order order);
+
+  /// The most recently submitted [Order] with this id, or `null` if none
+  /// was ever submitted — `null` also for a draft that was never
+  /// submitted. **Sprint 5E**: the lookup the operational integration
+  /// chain (`docs/decisions.md` ADR-022) needs to resolve a delivery's
+  /// `customerId`/`channel` back from its `orderId` alone.
+  Future<Order?> findById(OrderId orderId);
 }
 
 /// In-memory [PosOrderRepository] — the only implementation this sprint.
@@ -88,6 +96,11 @@ class InMemoryPosOrderRepository implements PosOrderRepository {
     }
     _submittedOrders[order.id.value] = order;
     return order;
+  }
+
+  @override
+  Future<Order?> findById(OrderId orderId) async {
+    return _submittedOrders[orderId.value];
   }
 
   /// Test/diagnostic access to what's actually been persisted — not part

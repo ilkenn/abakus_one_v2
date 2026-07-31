@@ -55,6 +55,14 @@ import 'sync_courier_dispatch_queue.dart';
 /// scoping simplification, not a hidden assumption. A courier with
 /// another still-active delivery stays off the queue. `null` (the
 /// default) skips this entirely.
+///
+/// **Sprint 5E**: [recordVisitAndEvaluateRewards], when supplied, fires
+/// on the same fresh-completion path as [advanceToDelivered] — **never**
+/// on the idempotent early-return for an already-[DeliveryStatus
+/// .delivered] delivery (`docs/decisions.md` ADR-022), so "duplicate
+/// completion event → still one visit" holds even before the callee's
+/// own `orderId`-keyed idempotency guard is reached. `null` (the default)
+/// skips it.
 class CompleteDelivery {
   const CompleteDelivery({
     required Clock clock,
@@ -71,6 +79,11 @@ class CompleteDelivery {
     })? advanceToDelivered,
     CourierLocationAvailabilityGuard? locationGuard,
     SyncCourierDispatchQueue? dispatchQueueSync,
+    Future<void> Function({
+      required OrderId orderId,
+      required String branchId,
+      required DateTime at,
+    })? recordVisitAndEvaluateRewards,
   })  : _clock = clock,
         _authorizationPolicy = authorizationPolicy,
         _repository = repository,
@@ -80,7 +93,8 @@ class CompleteDelivery {
         _recordCourierEvent = recordCourierEvent,
         _advanceToDelivered = advanceToDelivered,
         _locationGuard = locationGuard,
-        _dispatchQueueSync = dispatchQueueSync;
+        _dispatchQueueSync = dispatchQueueSync,
+        _recordVisitAndEvaluateRewards = recordVisitAndEvaluateRewards;
 
   final Clock _clock;
   final PosAuthorizationPolicy _authorizationPolicy;
@@ -96,6 +110,11 @@ class CompleteDelivery {
   })? _advanceToDelivered;
   final CourierLocationAvailabilityGuard? _locationGuard;
   final SyncCourierDispatchQueue? _dispatchQueueSync;
+  final Future<void> Function({
+    required OrderId orderId,
+    required String branchId,
+    required DateTime at,
+  })? _recordVisitAndEvaluateRewards;
 
   Future<Delivery> call({
     required String deliveryId,
@@ -194,6 +213,15 @@ class CompleteDelivery {
       await advance(
         orderId: delivery.orderId,
         performedByStaffId: performedByStaffId,
+        at: now,
+      );
+    }
+
+    final recordVisit = _recordVisitAndEvaluateRewards;
+    if (recordVisit != null) {
+      await recordVisit(
+        orderId: delivery.orderId,
+        branchId: delivery.branchId,
         at: now,
       );
     }

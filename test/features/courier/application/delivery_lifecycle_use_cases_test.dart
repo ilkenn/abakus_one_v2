@@ -35,6 +35,26 @@ void main() {
       expect(delivery.status, DeliveryStatus.awaitingPackage);
       expect(delivery.revision, 2);
     });
+
+    test(
+        'is idempotent — a second call for the same orderId returns the '
+        'existing Delivery instead of creating a duplicate', () async {
+      final repository = InMemoryDeliveryRepository();
+      final useCase = CreateDelivery(
+        clock: FakeClock(DateTime(2026, 1, 1)),
+        idGenerator: SequentialDeliveryIdGenerator(),
+        repository: repository,
+      );
+      final first =
+          await useCase(orderId: OrderId('order-1'), branchId: 'branch-1');
+      final second =
+          await useCase(orderId: OrderId('order-1'), branchId: 'branch-1');
+      expect(second.id, first.id);
+      expect(
+        (await repository.findActiveByBranchId('branch-1')).length,
+        1,
+      );
+    });
   });
 
   group('MarkDeliveryReadyForAssignment', () {
@@ -344,6 +364,77 @@ void main() {
       );
       expect(result.status, DeliveryStatus.delivered);
       expect(advancedOrderId, 'order-1');
+    });
+
+    test('recordVisitAndEvaluateRewards fires on a fresh completion', () async {
+      final repository = InMemoryDeliveryRepository();
+      await repository.save(buildTestDelivery(
+          status: DeliveryStatus.arrivedAtCustomer,
+          courierId: 'courier-1',
+          revision: 1));
+      String? recordedOrderId;
+      final useCase = CompleteDelivery(
+        clock: FakeClock(DateTime(2026, 1, 1)),
+        authorizationPolicy: FakePosAuthorizationPolicy(
+            const AuthorizationResult(granted: true)),
+        repository: repository,
+        proofIdGenerator: SequentialDeliveryProofIdGenerator(),
+        proofRepository: InMemoryDeliveryProofRepository(),
+        auditRepository: InMemoryCourierOperationalAuditEntryRepository(),
+        recordCourierEvent: buildTestRecordCourierEvent(),
+        recordVisitAndEvaluateRewards: ({
+          required OrderId orderId,
+          required String branchId,
+          required DateTime at,
+        }) async {
+          recordedOrderId = orderId.value;
+        },
+      );
+      await useCase(
+        deliveryId: 'delivery-1',
+        courierId: 'courier-1',
+        expectedRevision: 1,
+        performedByStaffId: 'courier-1',
+        proofType: DeliveryProofType.courierConfirmation,
+      );
+      expect(recordedOrderId, 'order-1');
+    });
+
+    test(
+        'recordVisitAndEvaluateRewards never fires on the idempotent '
+        'already-delivered path — "duplicate completion event" must not '
+        'trigger a second visit evaluation', () async {
+      final repository = InMemoryDeliveryRepository();
+      await repository.save(buildTestDelivery(
+          status: DeliveryStatus.delivered,
+          courierId: 'courier-1',
+          revision: 5));
+      var recordVisitCallCount = 0;
+      final useCase = CompleteDelivery(
+        clock: FakeClock(DateTime(2026, 1, 1)),
+        authorizationPolicy: FakePosAuthorizationPolicy(
+            const AuthorizationResult(granted: true)),
+        repository: repository,
+        proofIdGenerator: SequentialDeliveryProofIdGenerator(),
+        proofRepository: InMemoryDeliveryProofRepository(),
+        auditRepository: InMemoryCourierOperationalAuditEntryRepository(),
+        recordCourierEvent: buildTestRecordCourierEvent(),
+        recordVisitAndEvaluateRewards: ({
+          required OrderId orderId,
+          required String branchId,
+          required DateTime at,
+        }) async {
+          recordVisitCallCount++;
+        },
+      );
+      await useCase(
+        deliveryId: 'delivery-1',
+        courierId: 'courier-1',
+        expectedRevision: 999,
+        performedByStaffId: 'courier-1',
+        proofType: DeliveryProofType.courierConfirmation,
+      );
+      expect(recordVisitCallCount, 0);
     });
   });
 }

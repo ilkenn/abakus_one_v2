@@ -79,6 +79,34 @@ void main() {
     });
   });
 
+  group('InMemoryPosOrderRepository — findById', () {
+    test('returns null for an order that was never submitted', () async {
+      final repository = InMemoryPosOrderRepository();
+      expect(await repository.findById(OrderId('nonexistent')), isNull);
+    });
+
+    test('returns the most recently submitted order for that id', () async {
+      final repository = InMemoryPosOrderRepository();
+      final order = CartToOrderMapper.map(
+        orderId: OrderId('order-1'),
+        orderNumber: OrderNumber('A-001'),
+        cartItems: const [
+          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        ],
+        channel: OrderChannel.delivery,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        now: DateTime(2026, 7, 29),
+      );
+      await repository.submitOrder(order);
+
+      final found = await repository.findById(OrderId('order-1'));
+
+      expect(found, isNotNull);
+      expect(found!.channel, OrderChannel.delivery);
+    });
+  });
+
   group('InMemoryPosOrderRepository — failure injection', () {
     test('failOnSaveDraft throws once, then clears itself', () async {
       final repository = InMemoryPosOrderRepository();

@@ -12,6 +12,16 @@ import '../identity/delivery_id_generator.dart';
 /// revision — both real, observable states, not skipped (unlike
 /// `RequestCourierShift`'s deliberate `scheduled`-skip simplification,
 /// reported in `docs/decisions.md` ADR-017).
+///
+/// **Sprint 5E**: idempotent per [orderId] — if a [Delivery] already
+/// exists for [orderId] (`DeliveryRepository.findByOrderId`), that one is
+/// returned unchanged instead of creating a second one. Defense in depth
+/// for the new `CompleteKitchenOrderPreparation` hook
+/// (`docs/decisions.md` ADR-022): that call site is already naturally
+/// non-reentrant (a duplicate kitchen-completion event is rejected
+/// earlier, at `RecordKitchenEvent`'s idempotency-key check, before this
+/// use case is ever reached), but the guard belongs here too so
+/// `CreateDelivery` is safe to call from any future caller as well.
 class CreateDelivery {
   const CreateDelivery({
     required Clock clock,
@@ -29,6 +39,9 @@ class CreateDelivery {
     required OrderId orderId,
     required String branchId,
   }) async {
+    final existing = await _repository.findByOrderId(orderId);
+    if (existing != null) return existing;
+
     final now = _clock.now();
     final created = Delivery(
       id: _idGenerator.nextDeliveryId(),
