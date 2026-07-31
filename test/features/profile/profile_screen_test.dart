@@ -7,6 +7,11 @@ import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
 import 'package:abakus_one_v2/features/favorites/presentation/screens/favorites_screen.dart';
+import 'package:abakus_one_v2/features/feedback/presentation/screens/customer_feedback_screen.dart';
+import 'package:abakus_one_v2/features/navigation/presentation/screens/operations_hub_screen.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
+import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
 import 'package:abakus_one_v2/features/profile/presentation/screens/help_screen.dart';
 import 'package:abakus_one_v2/features/profile/presentation/screens/loyalty_screen.dart';
 import 'package:abakus_one_v2/features/profile/presentation/screens/profile_screen.dart';
@@ -26,6 +31,7 @@ void main() {
   Future<void> pumpProfileScreen(
     WidgetTester tester, {
     _FakeSessionStorage? sessionStorage,
+    ActorSession? actorSession,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -35,6 +41,8 @@ void main() {
               sessionStorage: sessionStorage ?? _FakeSessionStorage(),
             ),
           ),
+          if (actorSession != null)
+            actorSessionProvider.overrideWith((ref) => actorSession),
         ],
         child: const MaterialApp(home: ProfileScreen()),
       ),
@@ -119,6 +127,64 @@ void main() {
       expect(find.byType(LoginScreen), findsOneWidget);
       expect(find.byType(ProfileScreen), findsNothing);
       expect(storage.stored, isNull);
+    },
+  );
+
+  testWidgets(
+    'Ziyaret Pasosu menu ogesi mevcuttur (Sprint 5E)',
+    (WidgetTester tester) async {
+      await pumpProfileScreen(tester);
+
+      expect(find.text('Ziyaret Pasosu'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Geri Bildirim Gonder menu ogesi CustomerFeedbackScreen acar '
+    '(Sprint 5E)',
+    (WidgetTester tester) async {
+      await pumpProfileScreen(tester);
+
+      await tester.ensureVisible(find.text('Geri Bildirim Gönder'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Geri Bildirim Gönder'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CustomerFeedbackScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Islem Merkezi menu ogesi bir personel rolu olmadan gizlidir '
+    '(Sprint 5E)',
+    (WidgetTester tester) async {
+      await pumpProfileScreen(tester);
+
+      expect(find.text('İşlem Merkezi'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Islem Merkezi menu ogesi bir personel rolu ile gorunur ve '
+    'OperationsHubScreen acar (Sprint 5E)',
+    (WidgetTester tester) async {
+      await pumpProfileScreen(
+        tester,
+        actorSession: const ActorSession(
+          actorId: 'manager-1',
+          roles: {StaffRole.manager},
+          activeRole: StaffRole.manager,
+        ),
+      );
+
+      expect(find.text('İşlem Merkezi'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('İşlem Merkezi'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('İşlem Merkezi'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(OperationsHubScreen), findsOneWidget);
     },
   );
 }

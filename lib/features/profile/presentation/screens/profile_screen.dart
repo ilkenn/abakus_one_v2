@@ -17,6 +17,12 @@ import '../screens/saved_cards_screen.dart';
 import '../screens/loyalty_screen.dart';
 import '../screens/help_screen.dart';
 import '../../../favorites/presentation/screens/favorites_screen.dart';
+import '../../../crm/presentation/providers/current_customer_provider.dart';
+import '../../../crm/presentation/screens/customer_visit_passport_screen.dart';
+import '../../../feedback/presentation/screens/customer_feedback_screen.dart';
+import '../../../navigation/presentation/providers/current_branch_provider.dart';
+import '../../../navigation/presentation/screens/operations_hub_screen.dart';
+import '../../../pos/presentation/providers/actor_session_provider.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -283,6 +289,78 @@ class ProfileScreen extends ConsumerWidget {
                           );
                         },
                       ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(
+                          Icons.qr_code_2_rounded,
+                          color: AppColors.primary,
+                        ),
+                        title: const Text('Ziyaret Pasosu'),
+                        subtitle: const Text(
+                          'Sadakat Boncuklarımdan ayrı, ziyaret sayısına dayalı '
+                          'ayrı bir ödül programı',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () {
+                          final customer =
+                              ref.read(currentCustomerProvider).valueOrNull;
+                          if (customer == null) return;
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => CustomerVisitPassportScreen(
+                                customerId: customer.id,
+                                branchId: ref.read(currentBranchIdProvider),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(
+                          Icons.chat_bubble_outline_rounded,
+                          color: AppColors.primary,
+                        ),
+                        title: const Text('Geri Bildirim Gönder'),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () {
+                          final customer =
+                              ref.read(currentCustomerProvider).valueOrNull;
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => CustomerFeedbackScreen(
+                                branchId: ref.read(currentBranchIdProvider),
+                                customerId: customer?.id,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      if (ref.watch(actorSessionProvider)?.roles.isNotEmpty ??
+                          false) ...[
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(
+                            Icons.admin_panel_settings_outlined,
+                            color: AppColors.primary,
+                          ),
+                          title: const Text('İşlem Merkezi'),
+                          subtitle: const Text(
+                              'Kurye, CRM ve geri bildirim yönetimi'),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    const OperationsHubScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
                       const Divider(height: 1),
                       ListTile(
                         leading: const Icon(

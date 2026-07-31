@@ -14,7 +14,14 @@ import '../providers/crm_dependencies_provider.dart';
 /// Customer-facing Visit Passport — Sprint 5D Part 1. Real domain data
 /// (`CustomerVisitPassport`), not a UI mock — a new screen, deliberately
 /// separate from `features/profile`'s existing `LoyaltyScreen`, which
-/// remains untouched this sprint (see `docs/decisions.md` ADR-021).
+/// remains untouched (see `docs/decisions.md` ADR-021).
+///
+/// **Sprint 5E**: reachable from `ProfileScreen`'s "Ziyaret Pasosu" entry
+/// — the Phase 5 closure sprint's explicit, reasoned choice to keep this
+/// and the Boncuk points program (`LoyaltyScreen`) as two honestly
+/// separate, distinctly labeled programs rather than merging or replacing
+/// either (`docs/decisions.md` ADR-022) — see `LoyaltyScreen`'s own doc
+/// comment for the symmetric cross-reference.
 class CustomerVisitPassportScreen extends ConsumerStatefulWidget {
   const CustomerVisitPassportScreen({
     super.key,

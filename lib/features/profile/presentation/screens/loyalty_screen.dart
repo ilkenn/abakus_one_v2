@@ -12,6 +12,20 @@ import '../../domain/models/loyalty_level.dart';
 import '../../domain/models/loyalty_reward_model.dart';
 import '../providers/loyalty_provider.dart';
 
+/// The **Boncuk points program** (balance/tier, daily tasks, redeemable-
+/// reward catalog, spin wheel) — mock/UI-only, `LoyaltyProvider`.
+///
+/// **Sprint 5E — deliberately kept separate from, not merged with, the
+/// real Visit Passport program** (`features/crm`'s
+/// `CustomerVisitPassportScreen`, "Ziyaret Pasosu" in `ProfileScreen`):
+/// the two are genuinely different mechanics (points/spin/tasks vs.
+/// visit-count thresholds) with no data overlap, and swapping this
+/// screen out for the new one would have silently deleted real (if mock)
+/// functionality the Phase 5 closure sprint was explicitly told not to
+/// remove without documenting the migration. `docs/decisions.md`
+/// ADR-022 records this reconciliation decision in full — this is not an
+/// oversight, it's the chosen resolution among the three options that
+/// sprint was offered.
 class LoyaltyScreen extends ConsumerWidget {
   const LoyaltyScreen({super.key});
 
