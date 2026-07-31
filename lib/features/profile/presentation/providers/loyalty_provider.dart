@@ -75,6 +75,14 @@ class LoyaltyState {
 /// doc) until real wheel-odds configuration exists.
 const List<int> kSpinWheelSegments = [5, 10, 5, 15, 20, 5, 10, 50];
 
+/// **Sprint 5E note (`docs/decisions.md` ADR-022)**: [build]'s initial state
+/// below is hardcoded mock seed data (balance, dates, history) — there is
+/// no backend for the Boncuk points program. It is deliberately confined to
+/// this one notifier rather than scattered across widgets, so the mock
+/// boundary is a single, clearly-isolated place: nothing outside this class
+/// treats these values as authoritative, and every other Phase 5E screen
+/// (e.g. the CRM Visit Passport) sources its data from real domain use
+/// cases instead.
 class LoyaltyNotifier extends Notifier<LoyaltyState> {
   @override
   LoyaltyState build() {
