@@ -2015,3 +2015,133 @@ two new ones specific to this sprint: the deliberately unsurfaced same-destinati
 (a real gap requiring a future cross-feature-dependency decision, not a false claim), and the two
 reporting fields (average ETA, peak region) omitted for lack of a real data source rather than resolved
 with a built taxonomy.
+
+## ADR-021 — Customer CRM & Loyalty Platform Foundation (Sprint 5D)
+
+- Date: 2026-07-31
+- Status: Accepted
+
+### Pre-implementation architecture analysis (required first task)
+Before any code, every existing customer/loyalty/feedback/notification-adjacent file was read
+directly: `features/profile/domain/models/loyalty_*.dart` and
+`features/profile/presentation/providers/loyalty_provider.dart` (confirmed `LoyaltyState` is entirely
+hardcoded in-memory mock state — a seeded balance of `320`, hardcoded date strings like
+`'17.07.2026'`, no repository, no persistence layer of any kind); `features/loyalty/` (confirmed,
+matching `CLAUDE.md` §3's own documentation, empty dead scaffolding — zero references anywhere);
+`features/admin/*.dart` (all 5 screens read directly — confirmed every one is a literal 1-line empty
+placeholder, including `loyalty_management_screen.dart` and `campaign_management_screen.dart` —
+genuinely greenfield, nothing to conflict with); `features/feedback/` (confirmed an existing empty
+scaffold — `data/`, `domain/`, `presentation/{controllers,screens,widgets}` folders with zero files,
+exactly the shape a Customer Feedback Center should fill); `features/notifications/` (read every file
+— confirmed a real, if minimal, architecture already exists: `NotificationRepository`/
+`MockNotificationRepository`, `LocalNotificationAbstraction`/`MockLocalNotificationService`,
+`NotificationService`; confirmed **zero** audience/scheduling/segment concept anywhere via targeted
+search, and a pre-existing, out-of-scope inconsistency — two different `NotificationType` enums
+between `notification_model.dart` and `notification_payload.dart` — flagged, not silently fixed);
+`grep "class Customer\b"` across the entire repository (confirmed **no multi-instance customer entity
+exists anywhere** — the only customer-adjacent type,
+`courier/domain/contact/customer_contact_action.dart`, is a delivery-scoped contact log, not a
+registry); `docs/module_catalog.md`'s `CRM` section and `docs/master_roadmap.md`'s `Phase 13 — CRM
+and Loyalty` (`CRM-001` Server-Side Loyalty Ledger, `CRM-002` Campaign/Coupon Backend, `CRM-003`
+Customer Segmentation & Profile — confirmed this phase is explicitly gated behind `BE-001`, a real
+backend, for the trust-sensitive parts, and explicitly warns "the existing client-trusting prototype
+is the exact wrong pattern for real money-equivalent value — flag this explicitly so it isn't
+copy-pasted forward"); `core/errors/business_rule_violation.dart` (confirmed the sealed-class,
+feature-agnostic convention to extend); `PosAuthorizedAction`/`PosAuthorizationPolicy` (confirmed the
+one authorization mechanism this app has, already extended four times for non-payment domains).
+
+This analysis surfaced a genuine conflict — `docs/master_roadmap.md`'s own Phase 13 gating — that
+required explicit resolution before any code, not a silent decision either way. Given the scale (six
+capabilities) and this conflict, a formal plan was written and presented via plan mode for explicit
+approval before implementation began, rather than proceeding directly into autonomous execution the
+way Sprint 5A-5C's kickoffs (which carried their own explicit "otherwise continue" authorization)
+allowed.
+
+### Extra task — module boundary analysis (required by the brief)
+Two new top-level feature folders, not six and not one:
+- **`features/crm/`** houses Customer Segmentation, Visit Passport, Visit Rewards Engine, Survey
+  Engine, and the CRM Notification Foundation as sub-domains under one bounded context — mirroring
+  exactly how `features/courier/` grew to house Dispatch/Warnings/Communication/Health as sub-domains
+  across four sprints rather than fragmenting into separate feature folders. These five are tightly
+  coupled around one anchor entity (`Customer`) and one shared concept (a segment/category is the
+  audience for a survey, a notification campaign, and a targeted reward alike).
+- **`features/feedback/`** (an existing empty scaffold, populated rather than created) is kept
+  **separate** — a support-ticket lifecycle (status/priority/admin-response/audit), not a
+  loyalty-engagement one. It only references `customerId`; it does not depend on segmentation, visits,
+  or rewards to function.
+- **Explicitly flagged as a future split, not decided now**: CRM Notifications should become its own
+  bounded context once it grows real push-provider integration, delivery-receipt tracking, and a
+  scheduling worker — this sprint keeps it thin inside `features/crm/` because it is foundation-only.
+- The new CRM folder is named `features/crm/`, not a repurposed `features/loyalty/` — reusing/renaming
+  a folder `CLAUDE.md` itself flags as an obsolete duplicate is exactly the unilateral
+  rename/restructure action `CLAUDE.md` §15 forbids; building fresh under a new name sidesteps that
+  conflict entirely and matches `docs/module_catalog.md`'s own bounded-context name.
+
+### Decision
+Builds the six-capability brief on top of a wholly new backend-neutral domain architecture, following
+the courier feature's now-proven `domain/` + `data/` (interface + `InMemory*`) + `application/` +
+`presentation/` shape throughout. Selected architectural judgment calls, each reasoned in its own
+file's doc comments rather than decided silently:
+
+- **`Customer` is this codebase's first real multi-instance customer entity** — the same category of
+  precedent ADR-020 already established for `Courier`/`Delivery` in Sprint 5.
+- **`CustomerCategory` is a closed, additively-extended enum plus a `customCategoryLabel` escape hatch
+  for `other`**, not a fully free-text field — the brief's "extendable / future custom categories" is
+  satisfied the same way every other taxonomy in this codebase grows (new enum values added
+  additively), consistent with `CLAUDE.md` §4's "prefer enums over free strings" rather than
+  introducing a second, inconsistent free-text-taxonomy pattern.
+- **`VisitRewardRule` is a mutable registry entity (mirrors `Courier`), not a history-preserving
+  versioned entity (mirrors `CourierCompensationProfile`)** — an administrator edits a rule's current
+  shape in place. This is made safe by `CustomerRewardGrant` snapshotting `rewardType`/`rewardConfig`
+  at grant time rather than re-reading the rule live, so a later edit can never rewrite what history
+  says a customer already received.
+- **The Visit Passport, survey statistics, and notification audience resolution are all pure,
+  never-persisted read-model builders** — mirrors `CourierPerformanceSnapshot`/
+  `CourierDispatchQueueSnapshot`/`BuildCourierDailyOperationsReport`'s "computed fresh, never stored"
+  discipline throughout Sprint 5.
+- **The CRM Notification Foundation never sends anything.** No `firebase_messaging`/APNs dependency
+  was added; `CustomerNotificationCampaign.status` never reaches `sent` anywhere in this codebase.
+  Fields are deliberately shaped to convert into the existing `features/notifications`'
+  `NotificationPayload` without redesign once a real push provider is wired — that hand-off is future
+  work, per the brief's own explicit "do NOT implement push providers" instruction.
+- **The old mock loyalty code (`features/profile`'s `LoyaltyProvider`/`LoyaltyScreen`,
+  `features/loyalty/`) is left completely untouched.** The new `CustomerVisitPassportScreen` is a new,
+  separate, real screen — not a replacement. This produces a real, visible duplication (two
+  loyalty-shaped UIs) that is reported honestly rather than silently resolved, since resolving it is a
+  customer-facing UX/IA decision beyond "build the architecture."
+- **Authorization reuses the existing `PosAuthorizedAction`/`PosAuthorizationPolicy` mechanism** —
+  `manageVisitRewardRules`, `manageSurveys`, `manageCustomerNotificationCampaigns`,
+  `manageCustomerFeedback` — the same generic, not-payment-specific design already extended four times
+  for non-payment domains (ADR-013 through ADR-020), not a new parallel authorization contract.
+
+### Consequences
+- **7 implementation commits** (customer segmentation; visit recording; visit rewards engine + visit
+  passport; survey engine; CRM notification foundation; feedback center; screens for every module —
+  documentation is this commit), each independently formatted/analyzed/tested before commit, matching
+  ADR-017 through ADR-020's granularity precedent.
+- **No new pub dependency** — everything is built on the existing Riverpod/Flutter stack, consistent
+  with "everything must remain backend-neutral."
+- **No existing file was rewritten.** `core/errors/business_rule_violation.dart` (additive violation
+  types only) and `PosAuthorizedAction` (additive values only) are the only pre-existing files
+  modified beyond their own tests; every other change is a new file under `features/crm/` or
+  `features/feedback/`.
+- **A genuine, visible product duplication**: the app now has two separate loyalty-shaped surfaces
+  (the old mock `LoyaltyScreen` and the new real `CustomerVisitPassportScreen`) until an explicit
+  follow-up migration decision is made — reported here, not hidden.
+- **Honest, explicitly flagged gaps**: no real backend exists, so reward/points/coupon "value" is not
+  yet server-trustworthy (exactly what `docs/master_roadmap.md` `CRM-001` already names as future,
+  `BE-001`-gated work); `RecordCustomerVisit` has no live hook into order completion yet; the CRM
+  Notification Foundation never sends anything real; the pre-existing `NotificationType` enum
+  collision in `features/notifications` was found but not fixed (out of this sprint's scope).
+
+### Confidence
+76%. The domain model (customer segmentation, append-only visit recording, mutable-registry reward
+rules with snapshot-on-grant semantics, unified survey question validation, audience-resolution-only
+notifications, immutable-core-plus-append-only-trail feedback) is directly grounded in the brief's
+explicit requirements, each mapping to a concrete, tested invariant (over 100 new tests this sprint).
+The residual uncertainty is concentrated in: the two-parallel-loyalty-surfaces product decision (a
+real, visible gap requiring explicit human follow-up, not a false claim of completeness), the
+`docs/master_roadmap.md` Phase 13/`BE-001` scope boundary (this sprint's architecture is sound but
+explicitly not the production-trustworthy version that phase describes), and the category
+enum-vs-free-text judgment call (a reasoned resolution of two of the brief's own requirements in
+tension, not a certainty).

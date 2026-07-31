@@ -733,3 +733,60 @@ average-ETA/peak-region analytics (no real data source exists).
   same category of gap ADR-019 already documented, unchanged this sprint.
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-020 Consequences section.
+
+## Sprint 5D — Customer CRM & Loyalty Platform Foundation
+
+New branch work (continued on `phase-5/courier-operations-platform`). Approved into implementation via
+a kickoff explicitly requiring a full pre-implementation project read, an "EXTRA TASK" module-boundary
+analysis before any code, and "never fake missing data / everything must remain backend-neutral." Given
+the scale (six capabilities) and a direct conflict with `docs/master_roadmap.md`'s own Phase 13 gating,
+a formal plan was written and explicitly approved via plan mode before implementation began. See
+`docs/business_rules.md` DL-024 and `docs/decisions.md` ADR-021 for the full analysis, module-boundary
+reasoning, and every deviation.
+
+| Task | Status | Note |
+|---|---|---|
+| Pre-implementation architecture analysis | DONE | Confirmed no multi-instance `Customer` entity exists anywhere; confirmed `features/profile`'s `LoyaltyProvider`/`LoyaltyScreen` is entirely hardcoded mock state with no repository; confirmed `features/loyalty/` is empty dead scaffolding and all 5 `features/admin/*.dart` screens are literal 1-line placeholders (genuinely greenfield); confirmed `features/feedback/` is an existing empty scaffold (populated, not created); confirmed `features/notifications/` has a real but audience/scheduling/segment-free architecture (and a pre-existing, out-of-scope `NotificationType` enum collision, flagged not fixed); confirmed `docs/master_roadmap.md`'s Phase 13 (`CRM-001`–`003`) already scopes this work, gated behind `BE-001` for the trust-sensitive parts — see ADR-021. |
+| Module boundary analysis (EXTRA TASK) | DONE | `features/crm/` (new) houses Segmentation, Visit Passport, Rewards Engine, Surveys, and CRM Notifications as sub-domains of one bounded context, mirroring `features/courier/`'s own growth pattern. `features/feedback/` (existing empty scaffold, populated) kept separate — a support-ticket lifecycle, not a loyalty-engagement one. CRM Notifications flagged as a future separate bounded context once it grows real push integration. New folder named `features/crm/`, not a repurposed `features/loyalty/`, to avoid the "rename an obsolete folder" conflict `CLAUDE.md` §15 forbids unilaterally. |
+| Part 1 — Customer Segmentation | DONE | `Customer` (first real multi-instance customer entity in this codebase) with optional, independently-settable `CustomerCategory` (11 named segments + a custom-label escape hatch for "other"); `CustomerRepository.findByCategory` satisfies the admin-filter requirement. `RegisterCustomer`/`SetCustomerCategory` mirror `RegisterCourier`/`SetCourierAvailability`'s shape. |
+| Part 2 — Visit Passport (recording foundation) | DONE | `CustomerVisit` (immutable, append-only, mirrors `CourierDispatchQueueEvent`); `RecordCustomerVisit`. No live hook into order completion yet — caller's explicit responsibility, same precedent used throughout Sprint 5 for order/courier integration. |
+| Part 3 — Visit Rewards Engine + Visit Passport read-model | DONE | `VisitRewardRule` (mutable admin registry, mirrors `Courier`'s shape — `requiredVisitCount` always configured, never hardcoded; branch-restricted; campaign-windowed); `CustomerRewardGrant` (append-only, snapshots reward type/config at grant time, idempotent per customer/rule/visit-count); `CreateVisitRewardRule`/`SetVisitRewardRuleActive` (manager-authorized). `CustomerVisitPassport`/`BuildCustomerVisitPassport` — visit count, next reward, completed rewards, reward history, progress ratio, computed fresh, never stored. |
+| Part 4 — Survey Engine | DONE | `Survey`/`SurveyQuestion`/`SurveyResponse` — rating/stars/emoji unified under one numeric scale, multipleChoice/text/boolean each independently validated; optional category targeting; optional linked reward rule. `CreateSurvey`/`SubmitSurveyResponse` (both validated, the latter requiring an exact, type-correct answer to every question). `BuildSurveyStatistics` — pure per-question aggregation, free text counted not distributed. |
+| Part 5 — CRM Notification Foundation | DONE | `CustomerNotificationCampaign` (draft/scheduled/sent/cancelled — `sent` never reached anywhere) with category or explicit-id targeting (explicit ids win) and optional linked-campaign reference. `CreateCustomerNotificationCampaign`/`ScheduleCustomerNotificationCampaign` (manager-authorized). `ResolveNotificationCampaignAudience` — pure, stops exactly at "who would receive this," never sends anything, per the brief's explicit "architecture only" instruction. |
+| Part 6 — Customer Feedback Center | DONE | Populates the previously-empty `features/feedback` scaffold. `CustomerFeedback` (immutable core, 9 categories, optional customerId, opaque attachment refs) paired with two separate append-only trails — `CustomerFeedbackStatusEvent` (full status+priority snapshot per triage action) and `CustomerFeedbackResponse` — mirroring `CourierMessageStatusEvent`'s pattern. `SubmitCustomerFeedback` seeds an automatic open/medium initial event; `RespondToCustomerFeedback`/`UpdateCustomerFeedbackStatus` are manager-authorized. `BuildCustomerFeedbackView` assembles the combined read-model. |
+| Part 7 — Screens | DONE | 7 new, real (not mock-data) screens: `CustomerVisitPassportScreen`/`CustomerFeedbackScreen` (customer-facing); `CustomerSegmentationAdminScreen`/`VisitRewardRulesAdminScreen`/`SurveyAdminScreen`/`CustomerNotificationCampaignsAdminScreen`/`FeedbackAdminScreen` (admin-facing). `crm_dependencies_provider.dart`/`feedback_dependencies_provider.dart` wire every repository/id-generator/read-model builder, mirroring `courier_dependencies_provider.dart`'s shape. Deliberately not wired into any navigation menu, matching the courier feature's own manager-screen precedent. |
+| Testing | DONE | 1612 tests total app-wide (up from Sprint 5C's 1540 baseline — 72 new this sprint), all passing. `flutter analyze`: no issues (app-wide). `dart format --set-exit-if-changed`: clean (app-wide). |
+| Documentation | DONE | `docs/business_rules.md` v2.3 (BR-CRM-001–007, BR-FEEDBACK-001–002 added; DL-024 logged); `docs/decisions.md` ADR-021 (incl. the pre-implementation architecture analysis and module-boundary reasoning); `docs/master_roadmap.md` CRM-001/002/003 updated; this entry. |
+
+**Explicitly out of scope this sprint** (per the kickoff's own framing and the honest gaps surfaced
+during architecture analysis): a real backend (every repository remains `InMemory*`); real push-provider
+integration (no `firebase_messaging`/APNs dependency, nothing ever reaches "sent"); reconciling the two
+now-parallel loyalty surfaces (old mock `LoyaltyScreen` vs. new real `CustomerVisitPassportScreen`);
+wiring `RecordCustomerVisit` to real order completion; a segment-builder UI beyond a single-category
+filter; fixing the pre-existing `NotificationType` enum collision in `features/notifications` (found,
+not this sprint's to fix).
+
+### Deviations and honest gaps (reported, not silent)
+
+- **Two parallel, visibly duplicate loyalty-shaped surfaces now exist** — `features/profile`'s
+  `LoyaltyProvider`/`LoyaltyScreen` (fully hardcoded mock, left untouched) and the new
+  `CustomerVisitPassportScreen` (real domain data, `features/crm`). Reconciling/migrating them is
+  flagged as necessary follow-up work, not decided this sprint — it's a customer-facing UX/IA decision
+  beyond "build the architecture."
+- **This sprint's architecture is not the production-trustworthy version `docs/master_roadmap.md`'s
+  `CRM-001`/`CRM-002` describe.** No real backend exists; reward/points/coupon "value" is not yet
+  server-trustworthy. This is stated explicitly, not glossed over — it's exactly the gap `CRM-001`
+  already names as future, `BE-001`-gated work.
+- **`RecordCustomerVisit` has no live hook into order completion** — the use case exists and is
+  tested, but nothing calls it automatically from checkout yet.
+- **The CRM Notification Foundation never sends anything real** — stops at audience resolution, per
+  the brief's own explicit instruction.
+- **A pre-existing `NotificationType` enum collision** (`features/notifications/domain/models/
+  notification_model.dart` vs. `notification_payload.dart`) was found during architecture analysis but
+  is out of this sprint's scope — flagged, not fixed.
+- **`CustomerCategory` is a closed enum with a custom-label escape hatch for "other," not a fully
+  dynamic free-text taxonomy** — a reasoned resolution of two of the brief's own requirements in
+  tension ("completely optional/extendable" vs. this codebase's "prefer enums over free strings"
+  convention), not a certainty.
+
+Full detail and reasoning for each: `docs/decisions.md` ADR-021 Consequences section.

@@ -602,6 +602,129 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Campaigns, Orders, POS
 
+# Customer CRM & Loyalty Platform
+
+**Relationship to BR-PROMO-001's existing Boncuk mock**: `features/crm` (Sprint 5D) is a new, real,
+backend-neutral domain architecture — genuine `Customer`/`VisitRewardRule`/`Survey`/
+`CustomerNotificationCampaign` entities behind repository interfaces, not UI-only mock state. It does
+**not** replace or touch `features/profile`'s existing `LoyaltyProvider`/`LoyaltyScreen` (BR-PROMO-001)
+or the dead `features/loyalty/` scaffolding — both are left exactly as they were. The app therefore has
+two visibly separate loyalty-shaped concepts after this sprint; reconciling/migrating them is explicitly
+flagged future work, not decided here (`docs/decisions.md` ADR-021).
+
+### BR-CRM-001 — Customer segmentation category is completely optional and independently settable
+(Sprint 5D)
+- **Status**: VERIFIED
+- **Rule**: `Customer` is this codebase's first real multi-instance customer registry entity —
+  `category: CustomerCategory?` is nullable at registration and every subsequent point.
+  `SetCustomerCategory` carries no authorization gate (a customer's own choice, mirrors
+  `SetCourierAvailability`'s self-service shape) and can set, change, or clear the category at will.
+  `CustomerCategory.other` is paired with an optional free-text `customCategoryLabel`, silently
+  cleared whenever the category is anything else — never a stale note surviving a category switch.
+  `CustomerRepository.findByCategory` satisfies "administrator must be able to filter by category."
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: CRM
+
+### BR-CRM-002 — The Visit Passport is always computed fresh from append-only visit records, never
+  stored (Sprint 5D)
+- **Status**: VERIFIED
+- **Rule**: `CustomerVisit` is an immutable, append-only event (mirrors
+  `CourierDispatchQueueEvent`'s shape). `CustomerVisitPassport` (visit count, next reward, completed
+  rewards, reward history, progress ratio) is rebuilt fresh on every read by
+  `BuildCustomerVisitPassport` from `CustomerVisit`/`VisitRewardRule`/`CustomerRewardGrant` — never
+  itself persisted, so it can never drift out of sync with the records it's derived from.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: CRM
+
+### BR-CRM-003 — A visit-reward threshold is always administrator-configured, never hardcoded; rules
+  support branch restriction and a campaign date window (Sprint 5D)
+- **Status**: VERIFIED
+- **Rule**: `VisitRewardRule.requiredVisitCount` is a required field on every rule — nothing anywhere in
+  this feature hardcodes a visit count such as "5." `CreateVisitRewardRule`/`SetVisitRewardRuleActive`
+  are manager-authorized (`PosAuthorizedAction.manageVisitRewardRules`). `branchIds` empty means every
+  branch; `campaignStartDate`/`campaignEndDate` are both optional and independently checked by
+  `isWithinCampaignWindow`. `RewardType` is a closed, additively-extended enum
+  (`loyaltyPoints, coupon, freeProduct, freeDrink, dessert, upgrade, campaign`), matching "future
+  reward types supported."
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: CRM
+
+### BR-CRM-004 — A reward grant is a permanent snapshot, idempotent per customer/rule/visit-count, and
+  never affected by a later rule edit (Sprint 5D)
+- **Status**: VERIFIED
+- **Rule**: `CustomerRewardGrant` copies `rewardType`/`rewardConfig` from the rule at grant time rather
+  than referencing the rule live — `VisitRewardRule` is a mutable, administrator-editable registry
+  entity (mirrors `Courier`, not `CourierCompensationProfile`'s history-preserving versioning), so a
+  later edit or deactivation never rewrites what history says a customer already received.
+  `GrantVisitReward` checks for an existing grant at the same `(customerId, ruleId, visitCountAtGrant)`
+  before appending — the same milestone is never granted twice.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: CRM
+
+### BR-CRM-005 — Survey question types share one validated shape; a response must answer exactly the
+  survey's questions (Sprint 5D)
+- **Status**: VERIFIED
+- **Rule**: `rating`/`stars`/`emoji` all validate through the same `numericValue` range check (the
+  question type only changes rendering); `multipleChoice` requires at least one selected option that is
+  a valid option id on that question; `text` requires a non-empty value; `boolean` requires a non-null
+  value. `SubmitSurveyResponse` throws `InvalidSurveyResponseViolation` if the answered question ids
+  don't exactly match the survey's question ids, or if any single answer's shape doesn't match its
+  question's type. `CreateSurvey` (manager-authorized, `PosAuthorizedAction.manageSurveys`) rejects an
+  empty question list, duplicate question ids, and a `multipleChoice` question with fewer than 2
+  options.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: CRM
+
+### BR-CRM-006 — Survey statistics are a pure aggregation; free-text answers are counted, never
+  distributed (Sprint 5D)
+- **Status**: VERIFIED
+- **Rule**: `BuildSurveyStatistics` computes an average for numeric-scale questions, per-option counts
+  (every configured option present, even at zero votes) for `multipleChoice`, and true/false counts for
+  `boolean` — all directly from recorded `SurveyResponse`s, no new detection logic. `text` answers
+  contribute to `responseCount` only; free text is never aggregated into a false "distribution."
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: CRM
+
+### BR-CRM-007 — CRM notification campaigns never send anything; an explicit customer-id list overrides
+  category targeting (Sprint 5D)
+- **Status**: VERIFIED
+- **Rule**: `CustomerNotificationCampaign.status` never reaches `sent` anywhere in this codebase — no
+  push-provider dependency exists. `CreateCustomerNotificationCampaign`/
+  `ScheduleCustomerNotificationCampaign` are manager-authorized
+  (`PosAuthorizedAction.manageCustomerNotificationCampaigns`); scheduling is only valid from `draft`.
+  `ResolveNotificationCampaignAudience` — pure, never sends — resolves `targetCustomerIds` (when
+  non-empty) over `targetCategory`; with neither set, the audience is every customer (an explicit,
+  deliberate broadcast default, not an accidental one).
+- **Owner Agent**: security_engineer
+- **Related Modules**: CRM
+
+# Customer Feedback Center
+
+### BR-FEEDBACK-001 — A feedback ticket's status/priority is a separate append-only trail from its
+  immutable content; current state is always the latest event (Sprint 5D)
+- **Status**: VERIFIED
+- **Rule**: `CustomerFeedback` (category/subject/body/attachmentRefs/submittedAt) carries no
+  status/priority field of its own — `CustomerFeedbackStatusEvent` records the full status+priority
+  snapshot on every triage action (never a delta), mirroring `CourierMessageStatusEvent`'s "immutable
+  core + separate mutable-over-time log" pattern. "Current status/priority" is always the latest event
+  for a ticket. `attachmentRefs` are opaque references, never raw blobs, mirroring the courier feature's
+  `locationRef` opacity precedent.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Feedback
+
+### BR-FEEDBACK-002 — Submission seeds an automatic open/medium status event; only an administrator may
+  change it thereafter (Sprint 5D)
+- **Status**: VERIFIED
+- **Rule**: `SubmitCustomerFeedback` (no authorization gate — a customer's own submission, optionally
+  anonymous via a nullable `customerId`) always appends an initial `CustomerFeedbackStatusEvent`
+  (`FeedbackStatus.open`, `FeedbackPriority.medium`, `changedByStaffId: null` marking it
+  system-recorded). Every subsequent status/priority change goes through
+  `UpdateCustomerFeedbackStatus` (manager-authorized, `PosAuthorizedAction.manageCustomerFeedback`,
+  `changedByStaffId` always set). `RespondToCustomerFeedback` (same authorization) is independent of
+  status — an administrator may respond without changing triage state.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Feedback
+
 # Payment Rules
 
 ### BR-PAY-001 — Payment methods are an extensible catalog, not a closed enum (revised Phase 3 Sprint 3C)
@@ -2717,11 +2840,55 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Business Rule IDs**: BR-COURIER-045, BR-COURIER-046, BR-COURIER-047, BR-COURIER-048,
   BR-COURIER-049, BR-COURIER-050, BR-COURIER-051, BR-COURIER-052, BR-COURIER-053, BR-COURIER-054
 
+### DL-024 — Customer CRM & Loyalty Platform Foundation
+- **Decision**: Builds a backend-neutral architecture foundation for six CRM capabilities — Customer
+  Segmentation, Visit Passport, Visit Rewards Engine, Survey Engine, and a CRM Notification Foundation
+  under one new bounded context (`features/crm`), plus a Customer Feedback Center as its own separate
+  bounded context (`features/feedback`, populating a previously-empty scaffold). Introduces the
+  **first real multi-instance `Customer` entity** in this codebase. Every module follows the same
+  repository-interface-plus-`InMemory*`-implementation, real-business-rule, real-test pattern already
+  proven across Sprint 5A-5C — never claiming server-side trust it can't provide, matching
+  `docs/module_catalog.md`'s own explicit warning not to copy the existing client-trusting Boncuk
+  prototype forward into a real implementation.
+- **Status**: DECIDED
+- **Source**: User, Sprint 5D autonomous-implementation-mode approval — an explicit kickoff requiring a
+  full pre-implementation read of the project, an "EXTRA TASK" module-boundary analysis before any
+  code, and "never fake missing data / everything must remain backend-neutral." Given the scale (six
+  capabilities, a genuine module-boundary decision, and a direct conflict with
+  `docs/master_roadmap.md`'s own "Phase 13 — CRM and Loyalty" gating), a formal plan was presented via
+  plan mode and explicitly approved before any implementation began, rather than proceeding directly
+  into autonomous execution as Sprint 5A-5C's kickoffs authorized for themselves.
+- **Date**: 2026-07-31
+- **Consequences**: See BR-CRM-001 through BR-CRM-007 and BR-FEEDBACK-001/002. `docs/decisions.md`
+  ADR-021 records the full architecture, the module-boundary reasoning, and every judgment call
+  (category as a closed enum plus a custom-label escape hatch, feedback kept as a separate bounded
+  context, the existing mock loyalty code left completely untouched).
+- **Related Modules**: CRM, Feedback, Staff/Admin, POS
+- **Business Rule IDs**: BR-CRM-001, BR-CRM-002, BR-CRM-003, BR-CRM-004, BR-CRM-005, BR-CRM-006,
+  BR-CRM-007, BR-FEEDBACK-001, BR-FEEDBACK-002
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v2.3 — 2026-07-31
+- **Version**: 2.3
+- **Date**: 2026-07-31
+- **Summary**: Sprint 5D (Customer CRM & Loyalty Platform Foundation). Added BR-CRM-001 (customer
+  segmentation category is completely optional), BR-CRM-002 (Visit Passport always computed fresh,
+  never stored), BR-CRM-003 (visit-reward thresholds always administrator-configured, never
+  hardcoded), BR-CRM-004 (reward grants are permanent snapshots, idempotent per customer/rule/visit-
+  count), BR-CRM-005 (survey question-type validation, responses must exactly answer the survey),
+  BR-CRM-006 (survey statistics are pure aggregation, free text counted not distributed), BR-CRM-007
+  (notification campaigns never send anything, explicit ids override category targeting),
+  BR-FEEDBACK-001 (feedback status/priority is a separate append-only trail), BR-FEEDBACK-002
+  (submission seeds an automatic open/medium event, only an administrator changes it thereafter).
+  Logged DL-024.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the Customer CRM & Loyalty Platform Foundation business rules this sprint's
+  approved architecture established.
 
 ### v2.2 — 2026-07-30
 - **Version**: 2.2

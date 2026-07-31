@@ -728,8 +728,27 @@
 
 ## Phase 13 — CRM and Loyalty
 
+**Sprint 5D (2026-07-31) built a backend-neutral architecture foundation for CRM-001/CRM-003's domain
+shape** — `features/crm`'s real `Customer`/`VisitRewardRule`/`CustomerRewardGrant`/`Survey`/
+`CustomerNotificationCampaign` entities (repository interfaces + `InMemory*` implementations, real
+business rules, real tests), plus a separate `features/feedback` Customer Feedback Center. See
+`docs/business_rules.md` BR-CRM-001–007/BR-FEEDBACK-001–002 and `docs/decisions.md` ADR-021. This is
+explicitly **not** the production-trustworthy version CRM-001/CRM-002/CRM-003 describe below — no real
+backend exists, so reward/points/coupon "value" is not yet server-trustworthy, and the existing mock
+`LoyaltyProvider`/`LoyaltyScreen` (`features/profile`) was left completely untouched, producing a real,
+visible duplication (two loyalty-shaped surfaces) that a future sprint must explicitly reconcile.
+CRM-001/CRM-002 (the money-equivalent-value trust model) remain fully open, still gated on `BE-001`.
+CRM-003's segmentation *query capability* now has a real client-side implementation
+(`CustomerRepository.findByCategory`) to build the server-side version from; the *targeted-campaign*
+half of CRM-003 (linking a segment to a campaign send) is scaffolded by
+`CustomerNotificationCampaign`/`ResolveNotificationCampaignAudience` but, per the brief's own "do NOT
+implement push providers" instruction, never actually sends anything.
+
 #### CRM-001 — Server-Side Loyalty Ledger
 - Description: Replace the current fully client-trusting `LoyaltyNotifier` (points balance lives only in-memory on-device) with an authoritative, auditable server-side ledger.
+- Status: **Not started — still fully open.** Sprint 5D's `VisitRewardRule`/`CustomerRewardGrant` are a
+  parallel, separate, also-not-server-trustworthy points/reward concept (see the Phase 13 note above);
+  they do not resolve this item, and `LoyaltyNotifier` itself is untouched.
 - Priority: P1
 - Dependencies: BE-001, IA-001
 - Business value: The existing loyalty UI is well-built and reusable, but its trust model is unsuitable for real money-equivalent value — this is a correctness fix, not a feature build, in terms of UI effort.
@@ -756,6 +775,15 @@
 
 #### CRM-003 — Customer Segmentation & Profile
 - Description: `Customer` profile and segmentation query capability for targeted marketing.
+- Status: **Domain/query-capability foundation implemented client-side (Sprint 5D)** — see
+  `docs/business_rules.md` BR-CRM-001 and `docs/decisions.md` ADR-021. `Customer` (this codebase's
+  first real multi-instance customer entity) with an optional, independently-settable
+  `CustomerCategory` (the 11 named segments plus a custom-label escape hatch for "other") and
+  `CustomerRepository.findByCategory` exist and are tested. **Still ROADMAP**: a real backend (every
+  repository is in-memory, same-process only), a segment *builder* beyond a single-category filter
+  (e.g. "ordered 3+ times, no order in 30 days" requires order-history data this feature has no access
+  to), and a web/admin segment-builder UI (today's `CustomerSegmentationAdminScreen` is a flat list +
+  category dropdown, not a query builder).
 - Priority: P2
 - Dependencies: BE-001, ORD-001
 - Business value: Enables targeted campaigns instead of blanket promotions, improving marketing ROI.
@@ -763,7 +791,8 @@
 - Complexity: M
 - Backend impact: Segmentation query engine.
 - Mobile impact: None directly.
-- Web/admin impact: Segment builder UI.
+- Web/admin impact: Segment builder UI — `CustomerSegmentationAdminScreen` (Sprint 5D) is a starting
+  point, not the full builder this item describes.
 - Test requirements: Segmentation-query correctness tests against fixture customer/order data.
 - Completion criteria: A marketer can build a segment (e.g. "ordered 3+ times, no order in 30 days") and target a campaign to it.
 
