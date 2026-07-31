@@ -2133,6 +2133,11 @@ file's doc comments rather than decided silently:
   `BE-001`-gated work); `RecordCustomerVisit` has no live hook into order completion yet; the CRM
   Notification Foundation never sends anything real; the pre-existing `NotificationType` enum
   collision in `features/notifications` was found but not fixed (out of this sprint's scope).
+  **Update (Sprint 5E, ADR-022)**: the "no live hook into order completion" gap is now partially
+  closed — `RecordCustomerVisit`/`GrantVisitReward` are wired into `CompleteDelivery` for the
+  delivery channel, the one channel with a real completion signal to hook into. Dine-in/takeaway
+  remain unhooked, honestly, because no real order-completion use case exists for them either — see
+  ADR-022 for the full accounting.
 
 ### Confidence
 76%. The domain model (customer segmentation, append-only visit recording, mutable-registry reward
@@ -2145,3 +2150,269 @@ real, visible gap requiring explicit human follow-up, not a false claim of compl
 explicitly not the production-trustworthy version that phase describes), and the category
 enum-vs-free-text judgment call (a reasoned resolution of two of the brief's own requirements in
 tension, not a certainty).
+
+## ADR-022 — Phase 5 Required Fixes & Closure (Sprint 5E)
+
+- Date: 2026-07-31
+- Status: Accepted
+
+### Context
+
+A dedicated, explicitly brutally-honest Phase 5 Architecture Review (the task immediately preceding
+this sprint, read-only, no code changed) named two phase-gate blockers — `PosAuthorizationPolicy` had
+zero production implementation anywhere despite Phase 5 building ~15+ more gated actions on it, and
+zero Phase 5 screens were reachable from app navigation, even the natural entry points
+(`CourierHomeScreen`, `CourierDispatchDashboardScreen`) — plus five supporting gaps: three-way
+fragmented customer identity (`AuthSession` phone-only, `ProfileModel` hardcoded mock, CRM `Customer`
+independently generated), two competing unconnected loyalty implementations, a completely broken
+Kitchen→Delivery→Visit→Reward chain (confirmed: no order ever reaches `OrderStatus.completed` via any
+real use case anywhere — only `LocalOrdersRepository`'s hardcoded demo seed data), no audit-trail
+parity between courier (rigorous) and CRM/Feedback (none), and an oversized 594-line provider file.
+Verdict: **APPROVED WITH REQUIRED FIXES**, naming the first two as blocking, the rest as
+trackable-but-not-blocking. This sprint's explicit, sole mandate is closing those seven findings —
+fixes only, no new product features, no Phase 6 work.
+
+### Decision 1 — Authorization: a new `RolePermissionMap` wrapping layer, not a `PosAuthorizedAction`
+split
+
+The brief required an explicit design decision: keep `PosAuthorizedAction` (67 values) flat, split it
+by bounded context, or wrap it behind a permission mapping. Splitting or renaming 67 values with
+100+ existing call sites across 6 ADRs (ADR-013 through ADR-021) would be exactly the "large
+destructive migration" the brief said to avoid unless necessary — chosen instead: **wrapped**. A new
+`StaffRole` enum (`courier, staff, manager, admin`) and `RolePermissionMap`
+(`lib/features/pos/domain/authorization/role_permission_map.dart`) categorize all 67 actions into 4
+static tiers by naming-pattern-plus-judgment, openly documented as "a first-pass partition, not a
+business-signed-off security policy": `_courierTier` (~14, lateral — a courier's own delivery-
+lifecycle actions), `_staffTier` (~9, day-to-day execution), `_managerTier` (~24, supervisory/
+approval), `_adminOnly` (~20, most sensitive/irreversible — `voidPayment`, `correctPayment`,
+`emergencyChannelClosure`, `manageCustomerNotificationCampaigns`, etc.). Hierarchy:
+`permissionsFor(staff) = staffTier`; `permissionsFor(manager) = staffTier ∪ managerTier`;
+`permissionsFor(admin) = staffTier ∪ managerTier ∪ adminOnly`; `permissionsFor(courier) =
+courierTier` only — lateral, never a subset/superset of the other three. **An action absent from
+every tier is denied to every role, including admin** — more conservative than an "admin-only
+fallback," and the actual, documented behavior. `PosAuthorizedAction`'s 67 values are untouched.
+
+`RealPosAuthorizationPolicy` (`lib/features/pos/domain/authorization/real_pos_authorization_policy.dart`)
+is the first production-capable `PosAuthorizationPolicy` implementation ever built in this codebase.
+It deliberately does **not** change the existing `authorize({required action, required String
+actorStaffId, context})` interface (avoiding a migration across every existing call site) — instead
+it cross-validates the caller-supplied `actorStaffId` string against a real `ActorSession` (below).
+Order: no session → deny ("No active session"); `session.actorId != actorStaffId` → deny ("Unknown
+actor"); role lacks permission via `RolePermissionMap.allows` → deny with reason; else grant. The
+default `actorSessionProvider` value is `null` — **deny-by-default**, never allow-all, satisfying the
+brief's hardest constraint. 32 tests cover every required scenario (no session, unknown actor, role-
+without-permission, manager/admin-authorized, courier-cannot-manager, staff-cannot-admin, multi-role
+union, role switching, malformed role data).
+
+`ActorSession` (`actorId: String, roles: Set<StaffRole>, activeRole: StaffRole`) is new and backend-
+neutral. `tryFromRaw({actorId, roleNames, activeRoleName})` simulates parsing untyped backend-shaped
+data — unrecognized role names are silently dropped (never thrown), and blank actorId/empty
+roles/an activeRoleName not in roles all return `null` (deny safely) rather than throwing.
+`RolePermissionMap.allows(Set<StaffRole>, action)` — the full `authorize()` path — grants based on
+the **union** of every held role's permissions ("multi-role user receives the union of valid
+permissions"). `RolePermissionMap.allowsForActiveRole(session, action)` is a separate, narrower, UI-
+context-scoped check using only `session.activeRole` ("role switching changes active permissions
+correctly" as its own distinct, testable behavior). **No real staff login screen exists or was
+built** — `actorSessionProvider` (a `StateProvider<ActorSession?>`) stays manually/seeded; populating
+it from a real backend-authenticated staff login is documented future, backend-gated work, explicitly
+out of this sprint's scope (building one would be new feature work, not a fix).
+
+### Decision 2 — Navigation: one role-gated hub, not a `go_router` migration
+
+`OperationsHubScreen` (`lib/features/navigation/presentation/screens/operations_hub_screen.dart`) is
+the single new entry point into every Phase 5 manager/courier/admin screen — three sections (Courier
+Operations, CRM/Loyalty, Feedback) — deliberately **not** a 6th bottom-nav tab ("do not place every
+screen directly in primary bottom navigation"). Reachable only from `ProfileScreen`'s new "İşlem
+Merkezi" entry, itself shown only when `actorSessionProvider` holds any staff-tier role. Kept as a
+plain `Navigator.push`, matching every other `ProfileScreen`-rooted screen in this app — no second
+navigation system introduced, no `go_router` migration attempted (that remains separate, deferred,
+architecture-change-sized work per `CLAUDE.md` §3).
+
+`RoleGate` (`lib/features/pos/presentation/widgets/role_gate.dart`) is a new `ConsumerWidget` wrapping
+**every individual destination** — the hub only *lists* what a role-appropriate actor can see; it is
+not itself the security boundary ("never authorize based only on screen visibility," "unauthorized
+deep links must fail safely"). Two factories: `RoleGate.forAction(PosAuthorizedAction)` (delegates to
+`RolePermissionMap.allows`) and `RoleGate.forRoles(Set<StaffRole>)`. Reads `actorSessionProvider`
+directly via `ref.watch` (not a constructor parameter) so a sign-out or role switch mid-session takes
+effect immediately, not just on next navigation. On denial it renders a full "Erişim Reddedildi"
+scaffold rather than an empty screen or a silent pop. **Lives in `features/pos`, not `shared/`** —
+it depends on `PosAuthorizedAction`/`RolePermissionMap`, and `shared -> feature` is forbidden
+(`CLAUDE.md` §3); this is consistent with the pre-existing precedent (5 ADRs deep) that courier/crm/
+feedback already import `features/pos/domain/authorization/*` directly.
+
+Every destination is wired with the **real** `posAuthorizationPolicyProvider` and a real
+`session?.actorId ?? ''` — never a hardcoded literal like the pre-existing `'manager-1'` pattern
+elsewhere in the app. 13 new tests (navigation + role-gate) cover: every required route registered,
+authorized/unauthorized role access, deep-link protection, and role-switching behavior.
+
+### Decision 3 — Identity: `Customer.id` remains canonical, phone is a lookup key only
+
+`Customer.id` (CRM, `SequentialCustomerIdGenerator`-issued) is the **one** permanent identity; phone
+number is used only as a resolution key, never stored as identity itself ("avoid phone number as the
+only permanent identity"). New `CustomerRepository.findByPhoneNumber` (additive interface method).
+New `ResolveCurrentCustomer` use case (`features/crm/application/use_cases/`): given phone+display
+name+now, finds an existing `Customer` by phone or registers a new one via the existing
+`RegisterCustomer` — idempotent, verified by test (same phone → same `Customer.id` on every call).
+New `currentCustomerProvider` (`features/crm/presentation/providers/`, a `FutureProvider<Customer?>`)
+reads `authProvider`'s session and resolves through it; `null` if signed out. **Explicitly the one
+deliberate exception to this codebase's no-cross-feature-import convention** — identity bridging
+inherently needs both `features/auth` and `features/crm`, and no third neutral home exists yet; the
+file's own doc comment states this plainly.
+
+`ProfileNotifier` stays a synchronous `Notifier<ProfileModel>`, **not** converted to `AsyncNotifier`
+— converting it just to await the async `Customer` resolution was judged out of scope ("do not
+rewrite the full authentication system," "minimum safe identity bridge"). Instead `ProfileNotifier
+.build()` reads `authProvider`'s session directly and derives a deterministic `ProfileModel.id:
+'customer-${session.phoneNumber}'` when signed in — the same real anchor (phone number) that
+`currentCustomerProvider`'s `Customer` resolution also uses, proving "same person" via a shared key
+even though the two id strings differ textually. Signed-out state keeps the original hardcoded
+`ProfileModel` seed unchanged, preserving every existing test. `submit_pos_order.dart` was **not**
+touched — POS orders are staff-entered for walk-in customers with no signed-in session to bridge from,
+so wiring `Order.customerId` there would require an unrelated new mechanism (e.g. asking for a phone
+number at the register), which is new feature work, not an identity-bridge fix.
+
+### Decision 4 — Loyalty: explicit separation, not replacement or unification
+
+The old `features/profile` `LoyaltyScreen` (points/spin-wheel/daily-tasks/redeemable catalog) and the
+new `features/crm` `CustomerVisitPassportScreen` (visit-count-threshold rewards) are genuinely
+different mechanics with zero data overlap. Swapping the nav target to the new screen, or converting
+the old screen to consume the new domain, would each silently delete or reshape real (if mock)
+functionality — forbidden without an explicit, documented migration the brief never asked for.
+Resolution: **both screens are kept, fully intact**, cross-referenced via doc comments on each
+(`LoyaltyScreen`'s now states it is "the Boncuk points program... deliberately kept separate from,
+not merged with, the real Visit Passport program"; `CustomerVisitPassportScreen`'s states the
+symmetric reverse), and exposed as two distinctly labeled `ProfileScreen` entries ("Sadakat
+Boncuklarım" unchanged; new "Ziyaret Pasosu" with an explicit subtitle naming it a separate program).
+No two screens implying they're the same system anymore — they're honestly labeled as different ones.
+
+The brief's separate sub-requirement — "remove or clearly isolate hardcoded mock balances and dates
+from the production path" — is satisfied by isolation, not removal (removal would delete working
+functionality without a migration decision, also forbidden): `LoyaltyNotifier.build()`'s hardcoded
+seed data (balance, dates, history) was already confined to one notifier, never scattered into
+widgets; a doc comment now states this explicitly, so the mock boundary is a single, named, clearly-
+flagged place rather than an implicit one.
+
+### Decision 5 — Operational integration: an in-process orchestration boundary, honestly scoped
+
+`CompleteKitchenOrderPreparation` gains an optional `createDeliveryForOrder` collaborator, firing
+**only** for `OrderChannel.delivery` — never takeaway or dine-in ("do not invent a delivery for
+dine-in or takeaway orders"). `CreateDelivery` itself gained an `orderId`-keyed idempotency guard
+(`DeliveryRepository.findByOrderId`, checked before creating) as defense in depth, though its one
+call site is already non-reentrant structurally (`RecordKitchenEvent`'s idempotency-key check rejects
+a duplicate kitchen-completion event before this use case is ever reached).
+
+`CompleteDelivery` gains an optional `recordVisitAndEvaluateRewards` collaborator, firing only on the
+fresh-completion path — **never** on the pre-existing idempotent early-return for an already-
+`delivered` delivery — so "duplicate completion event → still one visit" holds structurally, before
+the callee's own guard is even reached.
+
+New `RecordCustomerVisitAndEvaluateRewards` (`features/crm/application/use_cases/`) is the
+orchestration boundary itself: records one `CustomerVisit` (idempotent per `orderId`, via a new
+`CustomerVisitRepository.findByOrderId`), then evaluates every active `VisitRewardRule` against the
+customer's new total visit count and grants any newly-reached one via the existing `GrantVisitReward`
+in the same call — closing the gap where `CustomerVisitPassport.completedRewards` (derived, evaluated
+live) and `.rewardHistory` (actual grants) could otherwise silently diverge. Rules are evaluated as of
+the visit's own `occurredAt`, not wall-clock "now" ("evaluated using the configuration active at the
+correct business moment"). Each rule's grant attempt is individually caught — one rule throwing never
+un-saves the already-recorded visit or blocks any other eligible rule ("failed downstream steps must
+not corrupt completed upstream state"); failures are reported on the result, not raised. Its
+`callForOrder` convenience resolves `Order.customerId` and **skips, never throws**, when absent
+("missing customer mapping fails safely") — new `PosOrderRepository.findById` was added to make this
+resolution possible at all. This establishes a new pattern in this codebase — a use case composed
+from other use case *instances* (`RecordCustomerVisit`, `GrantVisitReward`) as constructor
+collaborators, rather than repositories directly — noted since no prior example existed to follow.
+
+New `VisitQualificationRule` (`features/crm/domain/visits/`) is a pure, documented, directly-tested
+rule: every `OrderChannel` qualifies once `OrderStatus.completed` is reached — channel is accepted
+for future exclusions but currently filters nothing, since a visit to the restaurant is the same
+real-world event regardless of ordering channel.
+
+**Honest limitation, stated plainly, not narrowed**: no real use case anywhere in this codebase
+transitions any order to `OrderStatus.completed` — confirmed again this sprint, unchanged from
+ADR-021's own finding — only `LocalOrdersRepository`'s hardcoded demo seed data does. Tying the live
+delivery-channel trigger to the literal `OrderStatus.completed` would make it permanently unreachable.
+Instead, `CompleteDelivery` reaching `DeliveryStatus.delivered` is treated as the real, live
+completion signal for that one channel — a deliberate, documented substitution, wired at its one real
+production call site (`ActiveDeliveryScreen`). Dine-in/takeaway/reservation-preorder channels have
+**no live trigger at all** this sprint, since no real order-completion use case exists for them to
+hook into — inventing one would be new, unrelated feature work. `VisitQualificationRule` still
+documents and tests how they *would* qualify, so the rule itself needs no changes once that trigger
+eventually exists. This is the exact "clear in-process orchestration boundary, documented for what a
+future backend/event bus must replace" the brief asked for when full automation isn't possible.
+
+### Decision 6 — Audit parity: a new, CRM-scoped `CrmAuditEntry`, not a shared/reused type
+
+New `CrmAuditEntry`/`CrmAuditEntryRepository` (`features/crm/domain/audit/`, `features/crm/data/`) —
+same shape and reasoning as `CourierOperationalAuditEntry` (actor, actor role, timestamp, target
+entity, previous/new state, immutable append-only), but a **deliberately separate type**, not a
+shared/reused one: CRM has no delivery/courier/shift/assignment concepts to carry, and importing
+courier's audit infrastructure into `features/crm` would be exactly the cross-domain coupling the
+brief said to avoid. `branchId` is nullable — `null` for entity types with no single-branch scope (a
+`VisitRewardRule`/`Survey`/`CustomerNotificationCampaign` may apply to multiple branches or none).
+
+Wired as a **required** constructor parameter (not optional) into all 8 named use cases:
+`SetCustomerCategory` (actor is the customer themselves, `actorRole: 'customer'` — genuinely self-
+service, not an admin action, gaining a new `performedAt` call parameter since it had no timestamp
+before), `RecordCustomerVisit` (actor is `'system'` at its one production call site — the automated
+orchestration above, a documented sentinel, never a hardcoded impersonation of a real staff member,
+gaining a new `performedByStaffId` parameter), `CreateVisitRewardRule`, `SetVisitRewardRuleActive`
+(activation/deactivation recorded as **distinct** event types, not one generic "changed" type, gaining
+a new `performedAt` parameter), `GrantVisitReward` (audited only on an actual grant, never the
+already-granted no-op path — an audit log records real state changes, not speculative re-
+evaluations), `CreateSurvey`, `CreateCustomerNotificationCampaign`,
+`ScheduleCustomerNotificationCampaign` (gaining a new `performedAt` parameter). Every existing test
+for these 8 use cases was updated to supply the new parameter(s); none were weakened. Feedback needed
+**no new code** — `CustomerFeedbackStatusEvent`/`CustomerFeedbackResponse` (Sprint 5D) already are
+immutable, actor+timestamp-carrying append-only records, structurally satisfying the same requirement.
+
+### Decision 7 — Provider organization: a barrel re-export, not a call-site migration
+
+`courier_dependencies_provider.dart` (594 lines, ~90 providers, named as maintainability debt in the
+Phase 5 review) is split into 5 sub-domain files — `courier_core_dependencies_provider.dart` (the
+original Phase 5 identity/shift/device/delivery/event core), `courier_compensation_dependencies_
+provider.dart` (Sprint 5A), `courier_location_tracking_dependencies_provider.dart` (Sprint 5B),
+`courier_dispatch_dependencies_provider.dart` (Sprint 5C), `courier_communication_dependencies_
+provider.dart` (the Communication Center block) — matching the sprint boundaries the file's own
+existing comments already marked. `courier_dependencies_provider.dart` itself becomes a barrel that
+`export`s all five, so every one of its 12 existing importers (11 courier screens plus
+`crm_dependencies_provider.dart`) keeps working completely unchanged — zero call sites touched, zero
+behavior change. Cross-sub-domain references (the location-tracking file's use of several core-file
+providers) are resolved by importing `courier_core_dependencies_provider.dart` directly, forming a
+clean, acyclic dependency: core has no dependency on any of the other four; compensation, dispatch,
+and communication are each fully self-contained.
+
+### Consequences
+
+- **7 implementation commits**, one per part (authorization; navigation + loyalty reconciliation,
+  which touched overlapping files; identity — landed before navigation since navigation's hub reads
+  the resolved actor session; operational integration chain; audit parity; provider split), each
+  independently formatted/analyzed/tested before commit.
+- **Both original phase-gate blockers are now resolved**: `RealPosAuthorizationPolicy` is a genuine,
+  deny-by-default, tested production implementation (not a fake, not allow-all); `OperationsHubScreen`
+  makes every required Phase 5 screen reachable, each individually role-gated at the destination, not
+  just at the entry point.
+- **No new pub dependency.** No `PosAuthorizedAction` split or rename. No deletion of `features/
+  loyalty` or `LoyaltyProvider`. No `go_router` migration. No real staff login screen/backend — actor
+  sessions remain manually/seeded, explicitly deferred.
+- **Honest, explicitly flagged residual gaps, carried into the Closure Record**
+  (`docs/feature_status.md`): dine-in/takeaway have no live automatic visit-recording trigger, since
+  no real order-completion use case exists for those channels; `Order.customerId` remains unpopulated
+  for every real POS-submitted order today (no signed-in customer session exists at that call site),
+  so the live delivery-channel visit trigger will not actually fire against today's demo data despite
+  being correctly wired end-to-end; no real staff authentication exists, so `ActorSession` population
+  remains a manual/test seam, not a real login flow; `CompleteKitchenOrderPreparation` itself has zero
+  screen caller anywhere in this codebase — a pre-existing gap predating this sprint (and Phase 5
+  itself), not newly introduced, so its `createDeliveryForOrder` hook is wired and tested at the
+  use-case level only, with no live production trigger to point to.
+
+### Confidence
+
+74%. Every decision above is grounded in code read and verified this session (not recalled), and every
+required test scenario the brief listed (authorization: 10; navigation: 6 categories; identity: 3;
+operational integration: 10; audit: 8 use cases) has a corresponding passing test. The residual
+uncertainty is concentrated in: whether the delivery-channel "`DeliveryStatus.delivered` stands in for
+`OrderStatus.completed`" substitution (Decision 5) will read as the right call to a human reviewer
+versus a narrower one that left the integration chain more visibly incomplete; whether the `RolePermissionMap`
+tier assignments (Decision 1) match how the business would actually categorize each of the 67 actions
+once a real security review happens; and the same two-parallel-loyalty-surfaces residual ADR-021 already
+flagged, now formalized with cross-references rather than resolved outright.

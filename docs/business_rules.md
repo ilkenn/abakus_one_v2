@@ -611,6 +611,9 @@ backend-neutral domain architecture — genuine `Customer`/`VisitRewardRule`/`Su
 or the dead `features/loyalty/` scaffolding — both are left exactly as they were. The app therefore has
 two visibly separate loyalty-shaped concepts after this sprint; reconciling/migrating them is explicitly
 flagged future work, not decided here (`docs/decisions.md` ADR-021).
+**Update (Sprint 5E, ADR-022)**: this was resolved as **explicit separation**, not unification —
+both screens are reachable, each doc-commented as a deliberately distinct program, cross-referencing
+the other, and exposed as two separately labeled `ProfileScreen` entries. See BR-CRM-008.
 
 ### BR-CRM-001 — Customer segmentation category is completely optional and independently settable
 (Sprint 5D)
@@ -697,6 +700,51 @@ flagged future work, not decided here (`docs/decisions.md` ADR-021).
   deliberate broadcast default, not an accidental one).
 - **Owner Agent**: security_engineer
 - **Related Modules**: CRM
+
+### BR-CRM-008 — The Boncuk points program and the Visit Passport are two distinct, independently
+  labeled loyalty programs, never merged or presented as the same system (Sprint 5E)
+- **Status**: DECIDED
+- **Rule**: `LoyaltyScreen`/`LoyaltyProvider` (points, spin-wheel, daily tasks, redeemable catalog)
+  and `CustomerVisitPassportScreen` (visit-count-threshold rewards) have zero data overlap and are
+  never converted into one another. Both are reachable from `ProfileScreen` as two separately
+  labeled entries ("Sadakat Boncuklarım" / "Ziyaret Pasosu"), each doc-commented as deliberately
+  distinct from, not a duplicate of, the other. `LoyaltyNotifier`'s hardcoded seed data (balance,
+  dates, history) remains confined to that one notifier — never scattered into widgets — and is
+  explicitly documented as mock, isolating rather than deleting it.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: CRM, Profile
+
+### BR-CRM-009 — A customer visit is recorded at most once per order, and reward grants are evaluated
+  as of the visit's own business moment (Sprint 5E)
+- **Status**: VERIFIED
+- **Rule**: `RecordCustomerVisitAndEvaluateRewards` checks `CustomerVisitRepository.findByOrderId`
+  before recording — a duplicate completion event for the same order returns the already-recorded
+  visit, never a second one. Every `VisitRewardRule` the customer's new total visit count newly
+  qualifies for is evaluated and granted (via the existing idempotent `GrantVisitReward`) in the same
+  call, using the visit's own `occurredAt` — not wall-clock "now" — for campaign-window checks. A
+  failing grant attempt for one rule is caught and reported, never rolling back the already-recorded
+  visit or blocking any other eligible rule. Only `OrderChannel.delivery` has a live trigger this
+  sprint (`CompleteDelivery` reaching `DeliveryStatus.delivered`, treated as that channel's real
+  completion signal since no real use case anywhere sets `OrderStatus.completed`) —
+  dine-in/takeaway/reservation-preorder remain honestly untriggered; `CompleteKitchenOrderPreparation`
+  gained the matching `createDeliveryForOrder` hook, firing only for `OrderChannel.delivery`.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: CRM, Courier, Kitchen, Orders
+
+### BR-CRM-010 — Every CRM/Loyalty mutation is recorded as an immutable, actor-attributed audit entry
+  (Sprint 5E)
+- **Status**: VERIFIED
+- **Rule**: `CrmAuditEntry`/`CrmAuditEntryRepository` (append-only, no update/delete method) records
+  customer category changes (actor: the customer themselves, `actorRole: 'customer'`), visit
+  recording (actor: `'system'` at its one automated call site — a documented sentinel, never a
+  hardcoded impersonation of a real staff member), reward-rule creation/activation/deactivation
+  (activation and deactivation are distinct event types), reward grants (recorded only on an actual
+  grant, never the already-granted no-op path), survey creation, and notification-campaign creation/
+  scheduling. Every one of the 8 use cases above requires a `CrmAuditEntryRepository` at construction
+  — not optional. `features/feedback` needed no new audit type: `CustomerFeedbackStatusEvent`/
+  `CustomerFeedbackResponse` already are immutable, actor+timestamp-carrying append-only records.
+- **Owner Agent**: security_engineer
+- **Related Modules**: CRM, Feedback
 
 # Customer Feedback Center
 
@@ -2074,8 +2122,42 @@ flagged future work, not decided here (`docs/decisions.md` ADR-021).
   under `test/`. A real actor/approval result must always be supplied externally once a real policy
   is built; the app must never invent one. Approval thresholds themselves remain undecided
   (BR-STAFF-003).
+  **Update (Sprint 5E, ADR-022, BR-AUTH-001 below)**: a real, production-capable implementation —
+  `RealPosAuthorizationPolicy` — now exists, deny-by-default, backed by a real `ActorSession`. This
+  does not resolve BR-STAFF-003's threshold question, and no real staff login exists to populate an
+  `ActorSession` from — that remains a manual/test seam.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Staff/Admin, Payments, POS
+
+### BR-AUTH-001 — Authorization is deny-by-default; no session, unknown actor, or unrecognized role
+  always denies (Sprint 5E)
+- **Status**: VERIFIED
+- **Rule**: `RealPosAuthorizationPolicy` (`lib/features/pos/domain/authorization/`) is the first
+  production-capable `PosAuthorizationPolicy` in this codebase. No active `ActorSession` → deny. The
+  session's `actorId` not matching the action's caller-supplied `actorStaffId` → deny ("unknown
+  actor"). `ActorSession.tryFromRaw` silently drops any unrecognized role name from raw/untyped data
+  rather than throwing, and returns `null` (→ deny) for a blank actor id, empty role set, or an
+  `activeRoleName` not among the parsed roles — malformed data always denies safely, never grants.
+  The default `actorSessionProvider` value is `null` — deny-by-default is the only safe default; an
+  allow-all production policy is forbidden absolutely.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin, Courier, CRM, Feedback
+
+### BR-AUTH-002 — Roles are hierarchical for staff/manager/admin, lateral for courier; a multi-role
+  actor holds the union of every role's permissions (Sprint 5E)
+- **Status**: VERIFIED
+- **Rule**: `RolePermissionMap` categorizes all 67 `PosAuthorizedAction` values into 4 tiers.
+  `permissionsFor(manager)` includes everything `permissionsFor(staff)` does, plus manager-only
+  actions; `permissionsFor(admin)` includes everything both of those do, plus admin-only actions —
+  a strict, additive hierarchy. `permissionsFor(courier)` is a separate, lateral tier — a courier's
+  own delivery-lifecycle actions are never a subset or superset of staff/manager/admin's. An actor
+  holding multiple roles (`ActorSession.roles`) is authorized for the union of every held role's
+  permissions via `RolePermissionMap.allows`, regardless of which role is currently "active." A
+  narrower `allowsForActiveRole` check exists separately for UI contexts that should reflect only the
+  actor's current, switched-to role. An action absent from every tier is denied to every role,
+  including admin — the conservative default, not an admin-only fallback.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin, Courier, CRM, Feedback
 
 ### BR-STAFF-003 — Approval thresholds
 - **Status**: UNRESOLVED
@@ -2867,11 +2949,52 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Business Rule IDs**: BR-CRM-001, BR-CRM-002, BR-CRM-003, BR-CRM-004, BR-CRM-005, BR-CRM-006,
   BR-CRM-007, BR-FEEDBACK-001, BR-FEEDBACK-002
 
+### DL-025 — Phase 5 Required Fixes & Closure
+- **Decision**: Closes the two Phase 5 phase-gate blockers (no production authorization
+  implementation; zero reachable Phase 5 navigation) plus five supporting gaps (fragmented customer
+  identity, competing loyalty surfaces, a broken Kitchen→Delivery→Visit→Reward chain, no CRM/Feedback
+  audit parity, an oversized provider file) a dedicated, brutally-honest Architecture Review named.
+  Introduces the **first production-capable `PosAuthorizationPolicy` implementation** in this
+  codebase (`RealPosAuthorizationPolicy`, deny-by-default, backed by a new `ActorSession`/`StaffRole`
+  model and a `RolePermissionMap` wrapping layer over the unmodified 67-value `PosAuthorizedAction`
+  enum), a role-gated `OperationsHubScreen` making every required Phase 5 screen reachable, a
+  `Customer.id`-anchored identity bridge, an explicit Boncuk-vs-Visit-Passport loyalty separation, an
+  in-process Kitchen→Delivery→Visit→Reward orchestration boundary (delivery channel only — the one
+  channel with a real completion signal), a new `CrmAuditEntry` audit trail across 8 CRM use cases,
+  and a 5-way split of `courier_dependencies_provider.dart`.
+- **Status**: DECIDED
+- **Source**: User, Sprint 5E kickoff — an explicit, fixes-only mandate (no new product features) with
+  a mandatory final Phase Gate result, following directly from the preceding read-only Architecture
+  Review's "APPROVED WITH REQUIRED FIXES" verdict.
+- **Date**: 2026-07-31
+- **Consequences**: See BR-AUTH-001, BR-AUTH-002, BR-CRM-008, BR-CRM-009, BR-CRM-010 above.
+  `docs/decisions.md` ADR-022 records the full architecture and every judgment call (the flat-vs-
+  split-vs-wrapped authorization decision, the `DeliveryStatus.delivered`-stands-in-for-
+  `OrderStatus.completed` substitution and its honest limitations, the loyalty-separation reasoning).
+  `docs/feature_status.md`'s Phase 5 Closure Record states the Phase 6 readiness decision.
+- **Related Modules**: Staff/Admin, Courier, CRM, Feedback, POS, Kitchen, Orders
+- **Business Rule IDs**: BR-AUTH-001, BR-AUTH-002, BR-CRM-008, BR-CRM-009, BR-CRM-010
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v2.4 — 2026-07-31
+- **Version**: 2.4
+- **Date**: 2026-07-31
+- **Summary**: Sprint 5E (Phase 5 Required Fixes & Closure). Added BR-AUTH-001 (authorization is
+  deny-by-default; no session/unknown actor/unrecognized role always denies), BR-AUTH-002 (roles are
+  hierarchical for staff/manager/admin, lateral for courier; multi-role union), BR-CRM-008 (Boncuk
+  points and the Visit Passport are two distinct, never-merged loyalty programs), BR-CRM-009 (a visit
+  is recorded at most once per order; rewards evaluated as of the visit's own business moment),
+  BR-CRM-010 (every CRM/Loyalty mutation is an immutable, actor-attributed audit entry). Updated
+  BR-STAFF-002 with a note that a real, production-capable `PosAuthorizationPolicy` implementation
+  now exists. Logged DL-025.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the business rules Sprint 5E's phase-gate-blocker fixes and supporting-gap
+  closures established, closing the Phase 5 Architecture Review's required-fixes verdict.
 
 ### v2.3 — 2026-07-31
 - **Version**: 2.3

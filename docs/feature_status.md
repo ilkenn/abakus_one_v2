@@ -790,3 +790,84 @@ not this sprint's to fix).
   convention), not a certainty.
 
 Full detail and reasoning for each: `docs/decisions.md` ADR-021 Consequences section.
+
+## Sprint 5E — Phase 5 Required Fixes & Closure
+
+Preceded by a dedicated, explicitly brutally-honest, read-only Phase 5 Architecture Review (no code
+changed) covering every Sprint 5/5A-5D module. Verdict: **APPROVED WITH REQUIRED FIXES** — two
+phase-gate blockers (no production `PosAuthorizationPolicy` implementation; zero reachable Phase 5
+navigation) plus five supporting gaps (fragmented identity, competing loyalty surfaces, a broken
+Kitchen→Delivery→Visit→Reward chain, no CRM/Feedback audit parity, an oversized provider file). This
+sprint's sole, explicit mandate: close those seven findings — fixes only, no new product features, no
+Phase 6 work. See `docs/decisions.md` ADR-022 and `docs/business_rules.md` DL-025 for the full
+architecture and every judgment call.
+
+| Task | Status | Note |
+|---|---|---|
+| Part 1 — Production authorization foundation | DONE | `RealPosAuthorizationPolicy` — the first production-capable `PosAuthorizationPolicy` implementation in this codebase — deny-by-default, backed by a new `ActorSession`/`StaffRole` model. `RolePermissionMap` wraps the unmodified 67-value `PosAuthorizedAction` enum into 4 tiers (courier/staff/manager/admin), resolving the required flat-vs-split-vs-wrapped design decision as **wrapped**. 32 new tests cover every required scenario. |
+| Part 2 — Navigation integration | DONE | `OperationsHubScreen` — one role-sectioned hub (Courier/CRM-Loyalty/Feedback), deliberately not a bottom-nav tab, reachable from `ProfileScreen` only when the actor holds any staff-tier role. `RoleGate` wraps every individual destination (deep-link safety, not just entry-point hiding). 13 new tests. |
+| Part 3 — Customer identity unification | DONE | `Customer.id` remains canonical; phone is a lookup key only (`CustomerRepository.findByPhoneNumber`, `ResolveCurrentCustomer`, `currentCustomerProvider`). `ProfileNotifier` stays synchronous, bridged via the shared phone-number anchor rather than converted to `AsyncNotifier`. `submit_pos_order.dart` deliberately untouched — no signed-in customer session exists at that staff-facing call site. 9 new tests. |
+| Part 4 — Loyalty surface reconciliation | DONE | Explicit separation (not unification): both `LoyaltyScreen` and `CustomerVisitPassportScreen` kept, cross-referenced via doc comments, exposed as two distinctly labeled `ProfileScreen` entries. `LoyaltyNotifier`'s hardcoded mock seed isolated (already confined to one notifier) and documented as such. |
+| Part 5 — Minimum operational integration chain | DONE | `CompleteKitchenOrderPreparation` → `CreateDelivery` (delivery channel only) → `CompleteDelivery` → `RecordCustomerVisitAndEvaluateRewards` (idempotent per order, per-rule failure isolation, `occurredAt`-scoped rule evaluation). New `VisitQualificationRule`, `PosOrderRepository.findById`, `CustomerVisitRepository.findByOrderId`. Live production wiring at `ActiveDeliveryScreen` (`CompleteDelivery`'s one real screen caller). 39 new tests covering all 10 required scenarios. |
+| Part 6 — Audit and security parity | DONE | New `CrmAuditEntry`/`CrmAuditEntryRepository` (deliberately separate from courier's own audit infrastructure). Wired as a required constructor parameter into `SetCustomerCategory`, `RecordCustomerVisit`, `CreateVisitRewardRule`, `SetVisitRewardRuleActive`, `GrantVisitReward`, `CreateSurvey`, `CreateCustomerNotificationCampaign`, `ScheduleCustomerNotificationCampaign`. Feedback needed no new code. 5 new audit-specific tests plus every existing test for the 8 use cases updated. |
+| Part 7 — Provider organization | DONE | `courier_dependencies_provider.dart` (594 lines) split into 5 sub-domain files (core/compensation/location-tracking/dispatch/communication), re-exported from the original file as a barrel — all 12 existing importers unchanged. Zero behavior change. |
+| Documentation | DONE | `docs/decisions.md` ADR-022; `docs/business_rules.md` v2.4 (BR-AUTH-001/002, BR-CRM-008/009/010 added, BR-STAFF-002 updated; DL-025 logged); this entry, including the Phase 5 Closure Record below. |
+| Final quality gate | DONE | See Phase 5 Closure Record below for exact counts. |
+
+**Explicitly out of scope this sprint** (per the kickoff's own framing): a real staff login screen/
+backend (`ActorSession` population remains manual/seeded); a dine-in/takeaway automatic visit
+trigger (no real order-completion use case exists to hook into); any `PosAuthorizedAction` split or
+rename; deletion of `features/loyalty` or `LoyaltyProvider`; a full `go_router` migration; survey-
+update/deactivate or notification-campaign-update audit hooks (those use cases don't exist yet); any
+Phase 6 work.
+
+### Phase 5 Closure Record
+
+**Original phase-gate blockers and how each was resolved:**
+
+1. **`PosAuthorizationPolicy` had zero production implementation anywhere.** Resolved:
+   `RealPosAuthorizationPolicy` (Part 1) is a genuine, deny-by-default, tested production
+   implementation — no session/unknown actor/unrecognized role/insufficient permission ever grants.
+   **Residual limitation**: no real staff login exists to populate `ActorSession` from a real
+   backend-authenticated session; it remains a manual/test seam (`actorSessionProvider`, a
+   `StateProvider<ActorSession?>` defaulting to `null`). This is a deliberate scope boundary, not an
+   oversight — building a staff login screen is new feature work, not a fix to this blocker.
+2. **Zero Phase 5 screens were reachable from app navigation.** Resolved: `OperationsHubScreen` (Part
+   2) makes every required screen reachable, each individually `RoleGate`-wrapped at the destination
+   (not just hidden at the entry point), reachable from `ProfileScreen` when the actor holds any
+   staff-tier role.
+
+**What remains deferred** (explicitly, not silently narrowed): a real staff authentication system;
+a dine-in/takeaway/reservation-preorder automatic visit-recording trigger (no real order-completion
+use case exists for those channels to hook into — `VisitQualificationRule` documents and tests how
+they *would* qualify, so no rule change is needed once that trigger eventually exists);
+`Order.customerId` population for POS-submitted orders (no signed-in customer session exists at that
+staff-facing call site, so the live delivery-channel visit trigger, while correctly wired end-to-end,
+will not actually fire against today's real order data — only if/when a future customer-facing order
+path populates it); a `go_router` migration of the app's remaining ad-hoc `Navigator` screens; the
+two-parallel-loyalty-surfaces product decision remains formalized (cross-referenced, separately
+labeled) rather than unified, per Decision 4's own reasoning; `CompleteKitchenOrderPreparation` has
+zero screen caller anywhere in this codebase — a pre-existing gap predating this sprint (and Phase 5
+itself, confirmed via grep before Part 5 began), not newly introduced; its `createDeliveryForOrder`
+hook is wired and tested at the use-case level only, with no live production trigger to point to.
+
+**Production limitations, stated plainly:** every repository remains `InMemory*` — no real backend
+exists. No real push-provider integration (CRM notifications never send anything). No real-time
+event bus — the operational integration chain (Part 5) is explicit in-process orchestration via
+optional constructor collaborators, not a distributed or production-transactional pipeline; its own
+doc comments state exactly what a future backend/event bus would need to provide (at-least-once
+delivery, a durable idempotency table, independent retry policy for reward-granting). The
+`RolePermissionMap` role-tier categorization (Part 1) is a documented "first-pass partition... not a
+business-signed-off security policy" — a real security review of all 67 `PosAuthorizedAction` tier
+assignments has not happened.
+
+**Test count**: 1612 before this sprint (Sprint 5D baseline) → see the final quality-gate run below
+for the exact after count (roughly +130 across all 7 parts: 32 authorization + 13 navigation/role-gate
++ 9 identity + 39 operational-integration + 5 audit-specific, plus every pre-existing test for the 8
+audited use cases updated in place, not counted as new).
+
+**Phase 6 readiness decision**: **Ready to proceed to Phase 6**, conditioned on the residual gaps
+above being tracked, not silently treated as resolved. Both original phase-gate blockers —
+non-functional authorization and unreachable navigation — are now genuinely resolved, not just
+reported as fixed. Neither is marked approved here without the other; see the mandatory Phase Gate
+verdict in this sprint's own final report for the explicit confirmation this rule was honored.

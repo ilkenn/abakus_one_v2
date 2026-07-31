@@ -543,6 +543,13 @@
 - Completion criteria: A dispatcher can assign an order to a courier and see its delivery status update
   in real time — assignment and status-update logic implemented; **real-time cross-device delivery
   still requires a real backend**, not yet built.
+- **Sprint 5E update (`docs/decisions.md` ADR-022)**: every courier/dispatch screen listed above is now
+  actually reachable in the running app via `OperationsHubScreen` (role-gated), not just implemented as
+  an unreferenced screen class — a phase-gate blocker a dedicated architecture review found and this
+  sprint closed. Authorization checks on these screens' actions now run against a real, production-
+  capable `PosAuthorizationPolicy` (`RealPosAuthorizationPolicy`) instead of having no production
+  implementation at all. No real staff login exists yet to populate the actor session driving that
+  policy — still a manual/test seam, explicitly deferred.
 
 #### COUR-002 — Live Delivery Tracking (Customer App)
 - Description: Customer-facing live map/status view of their courier's delivery, replacing the currently-empty `ActiveOrderScreen`.
@@ -743,6 +750,17 @@ CRM-003's segmentation *query capability* now has a real client-side implementat
 half of CRM-003 (linking a segment to a campaign send) is scaffolded by
 `CustomerNotificationCampaign`/`ResolveNotificationCampaignAudience` but, per the brief's own "do NOT
 implement push providers" instruction, never actually sends anything.
+
+**Sprint 5E (2026-07-31, `docs/decisions.md` ADR-022, `docs/business_rules.md` DL-025)** resolved the
+two phase-gate blockers a dedicated architecture review found in this foundation: every `features/crm`
+admin screen is now actually reachable (`OperationsHubScreen`, role-gated), and every CRM mutation is
+now authorized through a real, production-capable `PosAuthorizationPolicy` (`RealPosAuthorizationPolicy`
+— previously `PosAuthorizationPolicy` had no production implementation at all). CRM/Loyalty mutations
+also gained an audit trail (`CrmAuditEntry`) and a minimal, delivery-channel-only automatic visit-
+recording trigger (`RecordCustomerVisitAndEvaluateRewards`, wired into `CompleteDelivery`). The
+two-parallel-loyalty-surfaces gap noted below was formalized as a deliberate, documented separation
+(distinct programs, cross-referenced, separately labeled) rather than resolved by unifying or
+replacing either — still a real, visible product duplication, now an intentional one.
 
 #### CRM-001 — Server-Side Loyalty Ledger
 - Description: Replace the current fully client-trusting `LoyaltyNotifier` (points balance lives only in-memory on-device) with an authoritative, auditable server-side ledger.
