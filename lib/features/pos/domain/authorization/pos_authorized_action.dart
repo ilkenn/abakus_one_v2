@@ -31,7 +31,12 @@
 /// (`manageVisitRewardRules` onward, from the new `lib/features/crm` and
 /// `lib/features/feedback` features) extend it once more — the same
 /// generic, not-payment-specific design confirmed reusable a fifth time
-/// (`docs/decisions.md` ADR-021).
+/// (`docs/decisions.md` ADR-021). The Phase 6 Admin Platform values
+/// (`manageStaffAccounts` onward) extend it a sixth time, from the new
+/// `lib/features/admin` feature (`docs/decisions.md` ADR-023) — still the
+/// same generic contract, not split, though ADR-023 flags that this
+/// enum is now approaching the ~150-value threshold ADR-022 named as the
+/// trigger for a future bounded-context split.
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -100,4 +105,22 @@ enum PosAuthorizedAction {
   manageSurveys,
   manageCustomerNotificationCampaigns,
   manageCustomerFeedback,
+  manageStaffAccounts,
+  manageStaffRoles,
+  manageStaffAdminRole,
+  manageStaffBranchAccess,
+  revokeStaffSession,
+  viewStaffAudit,
+  manageOrganization,
+  manageRestaurant,
+  manageBranch,
+  branchEmergencyStop,
+  viewCustomerAdmin,
+  manageCustomerAccountStatus,
+  moderateCustomerPhoto,
+  manageDeviceRegistry,
+  viewAuditCenter,
+  manageLocalizationConfig,
+  viewFeatureFlags,
+  manageMaintenanceMode,
 }

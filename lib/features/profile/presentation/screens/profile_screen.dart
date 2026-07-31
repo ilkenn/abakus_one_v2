@@ -22,6 +22,7 @@ import '../../../crm/presentation/screens/customer_visit_passport_screen.dart';
 import '../../../feedback/presentation/screens/customer_feedback_screen.dart';
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
 import '../../../navigation/presentation/screens/operations_hub_screen.dart';
+import '../../../admin/presentation/screens/staff_sign_in_screen.dart';
 import '../../../pos/presentation/providers/actor_session_provider.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -338,29 +339,36 @@ class ProfileScreen extends ConsumerWidget {
                           );
                         },
                       ),
-                      if (ref.watch(actorSessionProvider)?.roles.isNotEmpty ??
-                          false) ...[
-                        const Divider(height: 1),
-                        ListTile(
-                          leading: const Icon(
-                            Icons.admin_panel_settings_outlined,
-                            color: AppColors.primary,
-                          ),
-                          title: const Text('İşlem Merkezi'),
-                          subtitle: const Text(
-                              'Kurye, CRM ve geri bildirim yönetimi'),
-                          trailing: const Icon(Icons.chevron_right_rounded),
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    const OperationsHubScreen(),
-                              ),
-                            );
-                          },
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(
+                          Icons.admin_panel_settings_outlined,
+                          color: AppColors.primary,
                         ),
-                      ],
+                        title: const Text('Yönetici Paneli'),
+                        subtitle: Text(
+                          (ref.watch(actorSessionProvider)?.roles.isNotEmpty ??
+                                  false)
+                              ? 'Kurye, CRM ve geri bildirim yönetimi'
+                              : 'Personel/yönetici girişi',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () {
+                          final hasSession = ref
+                                  .read(actorSessionProvider)
+                                  ?.roles
+                                  .isNotEmpty ??
+                              false;
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => hasSession
+                                  ? const OperationsHubScreen()
+                                  : const StaffSignInScreen(),
+                            ),
+                          );
+                        },
+                      ),
                       const Divider(height: 1),
                       ListTile(
                         leading: const Icon(

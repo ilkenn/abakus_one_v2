@@ -5,17 +5,20 @@ import 'staff_role.dart';
 /// The role → permission mapping [RealPosAuthorizationPolicy] consults —
 /// Sprint 5E's chosen resolution to the required "flat vs. split vs.
 /// wrapped" design decision (`docs/decisions.md` ADR-022): `PosAuthorizedAction`
-/// stays a single flat enum (splitting or renaming its 67 values across
+/// stays a single flat enum (splitting or renaming its values across
 /// 100+ existing call sites and 5 prior ADRs would be exactly the "large
 /// destructive migration" this sprint was told to avoid unless necessary),
 /// and this file is the new layer wrapping it in role-scoped groups
-/// instead.
+/// instead. Phase 6 (`docs/decisions.md` ADR-023) extended the enum again
+/// rather than splitting it, for the same reason — now approaching the
+/// ~150-value threshold ADR-022 itself named as the trigger for a future
+/// bounded-context split.
 ///
 /// **This categorization is a first-pass, naming-pattern-plus-judgment
-/// partition of all 67 existing values, not a business-signed-off
-/// security policy** — it should be reviewed by an actual product/security
-/// owner before this authorization model is treated as final. It is
-/// recorded here, openly, rather than left unstated.
+/// partition, not a business-signed-off security policy** — it should be
+/// reviewed by an actual product/security owner before this authorization
+/// model is treated as final. It is recorded here, openly, rather than
+/// left unstated.
 ///
 /// Tiering rule: [StaffRole.staff] ⊂ [StaffRole.manager] ⊂
 /// [StaffRole.admin] — each higher tier is the lower tier's set plus its
@@ -52,6 +55,19 @@ abstract final class RolePermissionMap {
     PosAuthorizedAction.sendBroadcastMessage,
     PosAuthorizedAction.sendEmergencyMessage,
     PosAuthorizedAction.manageCustomerNotificationCampaigns,
+    // Phase 6 Admin Platform (`docs/decisions.md` ADR-023) — the most
+    // sensitive/irreversible admin actions: account lifecycle, granting
+    // the admin role itself, forced session revocation, org/restaurant
+    // structural changes, a whole-branch emergency stop, and system-wide
+    // maintenance mode.
+    PosAuthorizedAction.manageStaffAccounts,
+    PosAuthorizedAction.manageStaffAdminRole,
+    PosAuthorizedAction.revokeStaffSession,
+    PosAuthorizedAction.manageOrganization,
+    PosAuthorizedAction.manageRestaurant,
+    PosAuthorizedAction.branchEmergencyStop,
+    PosAuthorizedAction.manageLocalizationConfig,
+    PosAuthorizedAction.manageMaintenanceMode,
   };
 
   /// Supervisory/approval/oversight actions — reviewing, overriding,
@@ -81,6 +97,20 @@ abstract final class RolePermissionMap {
     PosAuthorizedAction.manageVisitRewardRules,
     PosAuthorizedAction.manageSurveys,
     PosAuthorizedAction.manageCustomerFeedback,
+    // Phase 6 Admin Platform (`docs/decisions.md` ADR-023) — supervisory
+    // day-to-day admin: assigning non-admin roles, branch access grants,
+    // staff audit inspection, branch-level configuration, customer
+    // account restriction, photo moderation, device registry, and
+    // read-only audit-center/feature-flag visibility.
+    PosAuthorizedAction.manageStaffRoles,
+    PosAuthorizedAction.manageStaffBranchAccess,
+    PosAuthorizedAction.viewStaffAudit,
+    PosAuthorizedAction.manageBranch,
+    PosAuthorizedAction.manageCustomerAccountStatus,
+    PosAuthorizedAction.moderateCustomerPhoto,
+    PosAuthorizedAction.manageDeviceRegistry,
+    PosAuthorizedAction.viewAuditCenter,
+    PosAuthorizedAction.viewFeatureFlags,
   };
 
   /// Front-line, day-to-day execution actions.
@@ -94,6 +124,12 @@ abstract final class RolePermissionMap {
     PosAuthorizedAction.completeOrderPreparation,
     PosAuthorizedAction.createDelivery,
     PosAuthorizedAction.offerDeliveryAssignment,
+    // Phase 6 Admin Platform (`docs/decisions.md` ADR-023) — base,
+    // limited-scope customer-admin visibility. "Staff: limited
+    // operational access" per the brief — further data-level narrowing
+    // (e.g. hiding sensitive fields) happens presentation-side, not by a
+    // second action.
+    PosAuthorizedAction.viewCustomerAdmin,
   };
 
   /// A courier's own delivery-lifecycle actions — never automatically

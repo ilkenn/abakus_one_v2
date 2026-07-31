@@ -9,14 +9,14 @@ import 'role_permission_map.dart';
 /// phase-gate blocker recorded in `docs/decisions.md` ADR-012/ADR-022.
 ///
 /// **Deny by default, never allow-all**: with no active session, an
-/// unrecognized actor, or a role lacking the requested permission, this
-/// always denies — there is no code path in this class that grants an
-/// action without a real, matching [ActorSession] whose roles actually
-/// cover it (`RolePermissionMap.allows`). It is **not** wired as this
-/// app's default `posAuthorizationPolicyProvider` override this sprint —
-/// see `actor_session_provider.dart`'s own doc comment for why a real
-/// policy still starts every session with no active actor, i.e. denying
-/// everything, until a future login flow populates one.
+/// unrecognized actor, a revoked or expired session, or a role lacking
+/// the requested permission, this always denies — there is no code path
+/// in this class that grants an action without a real, matching, valid
+/// [ActorSession] whose roles actually cover it
+/// (`RolePermissionMap.allows`). **Phase 6B** (`docs/decisions.md`
+/// ADR-023) added the [ActorSession.revoked]/[ActorSession.isExpired]
+/// checks — "forced session revocation" and "expired session denies" are
+/// now enforced here, not left to callers.
 ///
 /// [PosAuthorizationPolicy.authorize]'s existing signature (bare
 /// `actorStaffId: String`) is deliberately unchanged — this class cross-
@@ -48,6 +48,18 @@ class RealPosAuthorizationPolicy implements PosAuthorizationPolicy {
       return const AuthorizationResult(
         granted: false,
         reason: 'Unknown actor',
+      );
+    }
+    if (session.revoked) {
+      return const AuthorizationResult(
+        granted: false,
+        reason: 'Session revoked',
+      );
+    }
+    if (session.isExpired) {
+      return const AuthorizationResult(
+        granted: false,
+        reason: 'Session expired',
       );
     }
     if (!RolePermissionMap.allows(session.roles, action)) {

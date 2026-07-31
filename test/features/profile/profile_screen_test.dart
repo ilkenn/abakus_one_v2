@@ -9,6 +9,7 @@ import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.da
 import 'package:abakus_one_v2/features/favorites/presentation/screens/favorites_screen.dart';
 import 'package:abakus_one_v2/features/feedback/presentation/screens/customer_feedback_screen.dart';
 import 'package:abakus_one_v2/features/navigation/presentation/screens/operations_hub_screen.dart';
+import 'package:abakus_one_v2/features/admin/presentation/screens/staff_sign_in_screen.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
@@ -155,18 +156,25 @@ void main() {
   );
 
   testWidgets(
-    'Islem Merkezi menu ogesi bir personel rolu olmadan gizlidir '
-    '(Sprint 5E)',
+    'Yonetici Paneli menu ogesi oturum yokken StaffSignInScreen acar '
+    '(Sprint 6B)',
     (WidgetTester tester) async {
       await pumpProfileScreen(tester);
 
-      expect(find.text('İşlem Merkezi'), findsNothing);
+      expect(find.text('Yönetici Paneli'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Yönetici Paneli'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Yönetici Paneli'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(StaffSignInScreen), findsOneWidget);
     },
   );
 
   testWidgets(
-    'Islem Merkezi menu ogesi bir personel rolu ile gorunur ve '
-    'OperationsHubScreen acar (Sprint 5E)',
+    'Yonetici Paneli menu ogesi bir personel rolu ile OperationsHubScreen '
+    'acar (Sprint 5E)',
     (WidgetTester tester) async {
       await pumpProfileScreen(
         tester,
@@ -177,11 +185,11 @@ void main() {
         ),
       );
 
-      expect(find.text('İşlem Merkezi'), findsOneWidget);
+      expect(find.text('Yönetici Paneli'), findsOneWidget);
 
-      await tester.ensureVisible(find.text('İşlem Merkezi'));
+      await tester.ensureVisible(find.text('Yönetici Paneli'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('İşlem Merkezi'));
+      await tester.tap(find.text('Yönetici Paneli'));
       await tester.pumpAndSettle();
 
       expect(find.byType(OperationsHubScreen), findsOneWidget);

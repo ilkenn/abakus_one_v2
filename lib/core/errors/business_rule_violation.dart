@@ -1383,3 +1383,77 @@ final class InvalidCustomerFeedbackViolation extends BusinessRuleViolation {
   @override
   String get description => 'Invalid customer feedback: $reason';
 }
+
+/// A `StaffMember`/`Organization`/`Restaurant`/`Branch`/`CustomerPhoto`/
+/// device-registry id (or any other Phase 6 Admin Platform entity) that
+/// does not exist in the relevant repository — the Admin Platform
+/// sibling of `UnknownCourierEntityViolation`/`UnknownCrmEntityViolation`,
+/// kept separate for the same reason those two are (`docs/decisions.md`
+/// ADR-023).
+final class UnknownAdminEntityViolation extends BusinessRuleViolation {
+  const UnknownAdminEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// A staff member attempted to grant a role to themselves — "no
+/// self-promotion," enforced structurally regardless of what
+/// `PosAuthorizationPolicy` would otherwise allow (Phase 6C,
+/// `docs/decisions.md` ADR-023).
+final class SelfRoleGrantNotAllowedViolation extends BusinessRuleViolation {
+  const SelfRoleGrantNotAllowedViolation({required this.staffMemberId});
+
+  final String staffMemberId;
+
+  @override
+  String get description =>
+      'Staff member "$staffMemberId" cannot grant a role to themselves';
+}
+
+/// A [StaffMember] action was attempted while the member's
+/// `StaffMemberStatus` is `suspended` or `archived` — "suspended actor
+/// cannot create a valid operational session," extended to every
+/// mutating staff-admin action, not just sign-in (Phase 6C,
+/// `docs/decisions.md` ADR-023).
+final class StaffMemberNotActiveViolation extends BusinessRuleViolation {
+  const StaffMemberNotActiveViolation({required this.staffMemberId});
+
+  final String staffMemberId;
+
+  @override
+  String get description => 'Staff member "$staffMemberId" is not active';
+}
+
+/// Thrown by `BootstrapFirstAdminAccount` when at least one `StaffMember`
+/// already exists — bootstrapping only ever runs once (Phase 6B,
+/// `docs/decisions.md` ADR-023).
+final class AdminPlatformAlreadyBootstrappedViolation
+    extends BusinessRuleViolation {
+  const AdminPlatformAlreadyBootstrappedViolation();
+
+  @override
+  String get description =>
+      'The Admin Platform already has at least one staff member — '
+      'bootstrapping only runs once';
+}
+
+/// An `archived` [StaffMember] was targeted by a status change —
+/// `archived` is terminal, mirroring `CourierShift`'s own reversible-
+/// vs-terminal state distinction (Phase 6C, `docs/decisions.md`
+/// ADR-023).
+final class StaffMemberArchivedViolation extends BusinessRuleViolation {
+  const StaffMemberArchivedViolation({required this.staffMemberId});
+
+  final String staffMemberId;
+
+  @override
+  String get description =>
+      'Staff member "$staffMemberId" is archived and cannot be changed';
+}

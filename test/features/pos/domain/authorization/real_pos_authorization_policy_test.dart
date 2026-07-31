@@ -182,5 +182,43 @@ void main() {
       expect(session, isNull);
       expect(result.granted, isFalse);
     });
+
+    test('a revoked session denies even with a permitted role (Phase 6B)',
+        () async {
+      const session = ActorSession(
+        actorId: 'admin-1',
+        roles: {StaffRole.admin},
+        activeRole: StaffRole.admin,
+        revoked: true,
+      );
+      final policy = RealPosAuthorizationPolicy(currentSession: () => session);
+
+      final result = await policy.authorize(
+        action: PosAuthorizedAction.voidPayment,
+        actorStaffId: 'admin-1',
+      );
+
+      expect(result.granted, isFalse);
+      expect(result.reason, 'Session revoked');
+    });
+
+    test('an expired session denies even with a permitted role (Phase 6B)',
+        () async {
+      final session = ActorSession(
+        actorId: 'admin-1',
+        roles: const {StaffRole.admin},
+        activeRole: StaffRole.admin,
+        expiresAt: DateTime.now().subtract(const Duration(minutes: 1)),
+      );
+      final policy = RealPosAuthorizationPolicy(currentSession: () => session);
+
+      final result = await policy.authorize(
+        action: PosAuthorizedAction.voidPayment,
+        actorStaffId: 'admin-1',
+      );
+
+      expect(result.granted, isFalse);
+      expect(result.reason, 'Session expired');
+    });
   });
 }
