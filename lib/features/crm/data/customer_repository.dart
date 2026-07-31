@@ -13,6 +13,12 @@ abstract interface class CustomerRepository {
   /// The administrator-filter-by-category requirement — customers whose
   /// [Customer.category] equals [category] exactly.
   Future<List<Customer>> findByCategory(CustomerCategory category);
+
+  /// The identity-bridge lookup key — Sprint 5E. Phone number is never
+  /// [Customer.id] itself (see `ResolveCurrentCustomer`'s own doc
+  /// comment for why), only how an existing record is found. `null` when
+  /// no customer has registered with this phone number yet.
+  Future<Customer?> findByPhoneNumber(String phoneNumber);
 }
 
 class InMemoryCustomerRepository implements CustomerRepository {
@@ -34,5 +40,13 @@ class InMemoryCustomerRepository implements CustomerRepository {
     return List.unmodifiable(
       _byId.values.where((c) => c.category == category),
     );
+  }
+
+  @override
+  Future<Customer?> findByPhoneNumber(String phoneNumber) async {
+    for (final customer in _byId.values) {
+      if (customer.phoneNumber == phoneNumber) return customer;
+    }
+    return null;
   }
 }
