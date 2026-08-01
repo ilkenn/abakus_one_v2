@@ -944,9 +944,12 @@ flag value on the new System Health screen is a documented default, not a live r
 staff authentication — `ActorSession` remains a manual/seeded construct, same limitation ADR-022 named
 for Phase 5 and still true here.
 
-**Test count**: 1778 before this phase (Sprint 5E baseline, per that sprint's own closure record) →
-**1816 after** (0 `flutter analyze` issues, `dart format` clean, no test skipped or weakened). New
-tests span: staff session lifecycle/expiration/revocation, self-promotion prevention, branch-access
+**Test count**: **1816 passing at Phase 6 close** (0 `flutter analyze` issues, `dart format` clean, no
+test skipped or weakened), verified by a full `flutter test` run, not estimated. Static `test(`/
+`testWidgets(` declaration counts (a proxy, not the runtime count, since some tests are generated in
+loops) went from 1506 at the last pre-Phase-6 commit to 1772 at close — roughly 266 new test
+declarations across the phase's 12 commits. New tests span: staff session lifecycle/expiration/
+revocation, self-promotion prevention, branch-access
 grant/revoke, admin shell responsive layouts and role-gated navigation across desktop/tablet/mobile,
 customer 360 search/notes/account-status, photo submission/moderation/selection invariants, unified
 audit projection merging/filtering/pagination, device registry projection/registration/status toggling,
