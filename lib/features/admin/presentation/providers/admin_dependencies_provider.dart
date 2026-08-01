@@ -22,6 +22,7 @@ import '../../data/branch_repository.dart';
 import '../../data/customer_admin_note_repository.dart';
 import '../../data/customer_photo_repository.dart';
 import '../../data/localization_config_repository.dart';
+import '../../data/maintenance_mode_state_repository.dart';
 import '../../data/organization_repository.dart';
 import '../../data/restaurant_repository.dart';
 import '../../data/staff_auth_repository.dart';
@@ -207,4 +208,10 @@ final translationEntryRepositoryProvider =
 final translationEntryIdGeneratorProvider =
     Provider<TranslationEntryIdGenerator>((ref) {
   return SequentialTranslationEntryIdGenerator();
+});
+
+// Phase 6O — feature flags/settings/system health foundation.
+final maintenanceModeStateRepositoryProvider =
+    Provider<MaintenanceModeStateRepository>((ref) {
+  return InMemoryMaintenanceModeStateRepository();
 });

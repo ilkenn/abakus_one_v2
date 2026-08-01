@@ -20,4 +20,5 @@ enum AdminAuditEventType {
   deviceRegistered,
   deviceStatusChanged,
   localizationConfigChanged,
+  maintenanceModeChanged,
 }

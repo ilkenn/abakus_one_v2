@@ -27,6 +27,7 @@ import 'customer_management_screen.dart';
 import 'customer_photo_moderation_screen.dart';
 import 'device_registry_screen.dart';
 import 'localization_admin_screen.dart';
+import 'system_health_admin_screen.dart';
 import 'staff_management_screen.dart';
 import 'staff_sign_in_screen.dart';
 
@@ -401,12 +402,11 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             label: 'Ayarlar',
             icon: Icons.tune_outlined,
             visibleToRoles: const {StaffRole.manager, StaffRole.admin},
-            builder: (context, ref) => RoleGate.forRoles(
-              const {StaffRole.manager, StaffRole.admin},
-              child: const AdminComingSoonView(
-                title: 'Ayarlar',
-                reason: 'Özellik bayrakları/sistem sağlığı ekranı ayrı bir '
-                    'adımda eklenecek.',
+            builder: (context, ref) => RoleGate.forAction(
+              PosAuthorizedAction.viewFeatureFlags,
+              child: SystemHealthAdminScreen(
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
               ),
             ),
           ),

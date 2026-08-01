@@ -8,6 +8,7 @@ import 'package:abakus_one_v2/features/admin/presentation/screens/admin_unauthor
 import 'package:abakus_one_v2/features/admin/presentation/screens/audit_center_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/device_registry_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/localization_admin_screen.dart';
+import 'package:abakus_one_v2/features/admin/presentation/screens/system_health_admin_screen.dart';
 import 'package:abakus_one_v2/features/crm/presentation/screens/customer_segmentation_admin_screen.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
@@ -184,6 +185,30 @@ void main() {
     );
 
     expect(find.text('Yerelleştirme'), findsNothing);
+  });
+
+  testWidgets('a manager can open Ayarlar (System Health) from Sistem group',
+      (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+      ),
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Ayarlar'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ayarlar').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SystemHealthAdminScreen), findsOneWidget);
   });
 
   testWidgets(
