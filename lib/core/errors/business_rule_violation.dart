@@ -1444,6 +1444,19 @@ final class AdminPlatformAlreadyBootstrappedViolation
       'bootstrapping only runs once';
 }
 
+/// An `archived` `Branch` was targeted by a status change — `archived`
+/// is terminal, same reasoning as `StaffMemberArchivedViolation` (Phase
+/// 6D, `docs/decisions.md` ADR-023).
+final class BranchArchivedViolation extends BusinessRuleViolation {
+  const BranchArchivedViolation({required this.branchId});
+
+  final String branchId;
+
+  @override
+  String get description =>
+      'Branch "$branchId" is archived and cannot be changed';
+}
+
 /// An `archived` [StaffMember] was targeted by a status change —
 /// `archived` is terminal, mirroring `CourierShift`'s own reversible-
 /// vs-terminal state distinction (Phase 6C, `docs/decisions.md`

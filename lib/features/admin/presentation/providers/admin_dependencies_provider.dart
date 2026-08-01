@@ -1,12 +1,21 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../application/identity/branch_id_generator.dart';
+import '../../application/identity/organization_id_generator.dart';
+import '../../application/identity/restaurant_id_generator.dart';
 import '../../application/identity/staff_member_id_generator.dart';
 import '../../application/identity/staff_role_change_event_id_generator.dart';
 import '../../data/admin_audit_entry_repository.dart';
+import '../../data/branch_repository.dart';
+import '../../data/organization_repository.dart';
+import '../../data/restaurant_repository.dart';
 import '../../data/staff_auth_repository.dart';
 import '../../data/staff_member_repository.dart';
 import '../../data/staff_role_change_event_repository.dart';
+import '../../domain/organization/branch.dart';
+import '../../domain/organization/organization.dart';
+import '../../domain/organization/restaurant.dart';
 
 /// Central Riverpod wiring for `features/admin` — mirrors
 /// `crm_dependencies_provider.dart`'s shape (Phase 6, `docs/decisions.md`
@@ -46,4 +55,60 @@ final staffAuthRepositoryProvider = Provider<StaffAuthRepository>((ref) {
     staffMemberRepository: ref.watch(staffMemberRepositoryProvider),
     sessionDuration: () => const Duration(hours: 12),
   );
+});
+
+// Phase 6D — organization/restaurant/branch minimum tenant boundary.
+// Seeded with exactly one Organization/Restaurant/Branch whose id
+// matches `currentBranchIdProvider`'s pre-existing `'branch-1'` literal
+// (`features/navigation`) — "preserve existing branchId references":
+// every one of the 177 existing bare-`String` `branchId` call sites
+// across courier/POS/CRM/feedback/restaurant keeps resolving to the
+// same id, now backed by a real, admin-manageable `Branch` record
+// instead of nothing.
+final organizationRepositoryProvider = Provider<OrganizationRepository>((ref) {
+  return InMemoryOrganizationRepository(seed: [
+    Organization(
+      id: 'org-1',
+      name: 'Abaküs',
+      createdAt: DateTime(2026, 1, 1),
+      revision: 1,
+    ),
+  ]);
+});
+
+final restaurantRepositoryProvider = Provider<RestaurantRepository>((ref) {
+  return InMemoryRestaurantRepository(seed: [
+    Restaurant(
+      id: 'restaurant-1',
+      organizationId: 'org-1',
+      name: 'Abaküs Bowl',
+      createdAt: DateTime(2026, 1, 1),
+      revision: 1,
+    ),
+  ]);
+});
+
+final branchRepositoryProvider = Provider<BranchRepository>((ref) {
+  return InMemoryBranchRepository(seed: [
+    Branch(
+      id: 'branch-1',
+      restaurantId: 'restaurant-1',
+      name: 'Merkez Şube',
+      createdAt: DateTime(2026, 1, 1),
+      revision: 1,
+    ),
+  ]);
+});
+
+final organizationIdGeneratorProvider =
+    Provider<OrganizationIdGenerator>((ref) {
+  return SequentialOrganizationIdGenerator();
+});
+
+final restaurantIdGeneratorProvider = Provider<RestaurantIdGenerator>((ref) {
+  return SequentialRestaurantIdGenerator();
+});
+
+final branchIdGeneratorProvider = Provider<BranchIdGenerator>((ref) {
+  return SequentialBranchIdGenerator();
 });
