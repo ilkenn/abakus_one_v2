@@ -220,5 +220,107 @@ void main() {
       expect(result.granted, isFalse);
       expect(result.reason, 'Session expired');
     });
+
+    group('branch scoping (Phase 6P)', () {
+      test(
+          'a manager without branch access is denied a branch-scoped '
+          'action even though their role permits it', () async {
+        const session = ActorSession(
+          actorId: 'manager-1',
+          roles: {StaffRole.manager},
+          activeRole: StaffRole.manager,
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageBranch,
+          actorStaffId: 'manager-1',
+          context: const {kBranchIdAuthorizationContextKey: 'branch-1'},
+        );
+
+        expect(result.granted, isFalse);
+        expect(result.reason, contains('branch-1'));
+      });
+
+      test('a manager granted access to the target branch is allowed',
+          () async {
+        const session = ActorSession(
+          actorId: 'manager-1',
+          roles: {StaffRole.manager},
+          activeRole: StaffRole.manager,
+          branchAccess: {'branch-1'},
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageBranch,
+          actorStaffId: 'manager-1',
+          context: const {kBranchIdAuthorizationContextKey: 'branch-1'},
+        );
+
+        expect(result.granted, isTrue);
+      });
+
+      test(
+          'a manager granted access to a different branch is denied for '
+          'the target branch', () async {
+        const session = ActorSession(
+          actorId: 'manager-1',
+          roles: {StaffRole.manager},
+          activeRole: StaffRole.manager,
+          branchAccess: {'branch-2'},
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageBranch,
+          actorStaffId: 'manager-1',
+          context: const {kBranchIdAuthorizationContextKey: 'branch-1'},
+        );
+
+        expect(result.granted, isFalse);
+      });
+
+      test('admin is exempt from branch scoping — org-wide oversight role',
+          () async {
+        const session = ActorSession(
+          actorId: 'admin-1',
+          roles: {StaffRole.admin},
+          activeRole: StaffRole.admin,
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageBranch,
+          actorStaffId: 'admin-1',
+          context: const {kBranchIdAuthorizationContextKey: 'branch-1'},
+        );
+
+        expect(result.granted, isTrue);
+      });
+
+      test(
+          'an action with no branchId in context is unaffected by branch '
+          'scoping, even with empty branchAccess', () async {
+        const session = ActorSession(
+          actorId: 'manager-1',
+          roles: {StaffRole.manager},
+          activeRole: StaffRole.manager,
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageBranch,
+          actorStaffId: 'manager-1',
+        );
+
+        expect(result.granted, isTrue);
+      });
+    });
   });
 }

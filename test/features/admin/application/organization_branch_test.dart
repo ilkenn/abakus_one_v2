@@ -15,6 +15,9 @@ import 'package:abakus_one_v2/features/admin/domain/organization/branch.dart';
 import 'package:abakus_one_v2/features/admin/domain/organization/branch_status.dart';
 import 'package:abakus_one_v2/features/admin/domain/organization/organization.dart';
 import 'package:abakus_one_v2/features/admin/domain/organization/restaurant.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/real_pos_authorization_policy.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../test_support/admin_test_fixtures.dart';
@@ -219,6 +222,63 @@ void main() {
       expect(updated.status, BranchStatus.inactive);
       expect(
           await auditRepository.findByTargetEntityId('branch-1'), hasLength(1));
+    });
+
+    test(
+        'Phase 6P: a manager without access to the branch is denied end '
+        '-to-end through RealPosAuthorizationPolicy', () async {
+      final repository = InMemoryBranchRepository(seed: [_buildTestBranch()]);
+      const session = ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-2'},
+      );
+      final useCase = SetBranchStatus(
+        authorizationPolicy: RealPosAuthorizationPolicy(
+          currentSession: () => session,
+        ),
+        repository: repository,
+        auditRepository: InMemoryAdminAuditEntryRepository(),
+      );
+
+      expect(
+        () => useCase(
+          branchId: 'branch-1',
+          newStatus: BranchStatus.inactive,
+          performedByStaffId: 'manager-1',
+          performedAt: DateTime(2026, 1, 1),
+        ),
+        throwsA(isA<AuthorizationDeniedViolation>()),
+      );
+    });
+
+    test(
+        'Phase 6P: a manager granted access to the branch succeeds '
+        'end-to-end through RealPosAuthorizationPolicy', () async {
+      final repository = InMemoryBranchRepository(seed: [_buildTestBranch()]);
+      const session = ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-1'},
+      );
+      final useCase = SetBranchStatus(
+        authorizationPolicy: RealPosAuthorizationPolicy(
+          currentSession: () => session,
+        ),
+        repository: repository,
+        auditRepository: InMemoryAdminAuditEntryRepository(),
+      );
+
+      final updated = await useCase(
+        branchId: 'branch-1',
+        newStatus: BranchStatus.inactive,
+        performedByStaffId: 'manager-1',
+        performedAt: DateTime(2026, 1, 1),
+      );
+
+      expect(updated.status, BranchStatus.inactive);
     });
   });
 

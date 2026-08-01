@@ -1,6 +1,7 @@
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
+import '../../../pos/domain/authorization/real_pos_authorization_policy.dart';
 import '../../data/admin_audit_entry_repository.dart';
 import '../../data/branch_repository.dart';
 import '../../domain/audit/admin_audit_entry.dart';
@@ -36,6 +37,7 @@ class SetBranchEmergencyStop {
     final authResult = await _authorizationPolicy.authorize(
       action: action,
       actorStaffId: performedByStaffId,
+      context: {kBranchIdAuthorizationContextKey: branchId},
     );
     if (!authResult.granted) {
       throw AuthorizationDeniedViolation(actionName: action.name);

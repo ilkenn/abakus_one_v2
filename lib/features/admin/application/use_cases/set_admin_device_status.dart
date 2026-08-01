@@ -1,6 +1,7 @@
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
+import '../../../pos/domain/authorization/real_pos_authorization_policy.dart';
 import '../../data/admin_audit_entry_repository.dart';
 import '../../data/admin_device_registration_repository.dart';
 import '../../domain/audit/admin_audit_entry.dart';
@@ -49,6 +50,20 @@ class SetAdminDeviceStatus {
         id: deviceId,
       );
     }
+
+    // A second check, now that the device's branch is known — "cross-
+    // branch access must require explicit authorization" (Phase 6P).
+    // The base action/role check above already passed identically; this
+    // call can only newly deny on the branch-scope check.
+    final branchScopedAuthResult = await _authorizationPolicy.authorize(
+      action: action,
+      actorStaffId: performedByStaffId,
+      context: {kBranchIdAuthorizationContextKey: existing.branchId},
+    );
+    if (!branchScopedAuthResult.granted) {
+      throw AuthorizationDeniedViolation(actionName: action.name);
+    }
+
     if (existing.status == AdminDeviceRegistrationStatus.archived) {
       throw AdminDeviceRegistrationArchivedViolation(deviceId: deviceId);
     }
