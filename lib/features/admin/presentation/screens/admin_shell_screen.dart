@@ -25,6 +25,7 @@ import 'audit_center_screen.dart';
 import 'branch_admin_screen.dart';
 import 'customer_management_screen.dart';
 import 'customer_photo_moderation_screen.dart';
+import 'device_registry_screen.dart';
 import 'staff_management_screen.dart';
 import 'staff_sign_in_screen.dart';
 
@@ -340,11 +341,12 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             label: 'Cihazlar',
             icon: Icons.devices_outlined,
             visibleToRoles: const {StaffRole.manager, StaffRole.admin},
-            builder: (context, ref) => RoleGate.forRoles(
-              const {StaffRole.manager, StaffRole.admin},
-              child: const AdminComingSoonView(
-                title: 'Cihazlar',
-                reason: 'Cihaz kaydı ekranı ayrı bir adımda eklenecek.',
+            builder: (context, ref) => RoleGate.forAction(
+              PosAuthorizedAction.manageDeviceRegistry,
+              child: DeviceRegistryScreen(
+                branchId: branchId,
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
               ),
             ),
           ),

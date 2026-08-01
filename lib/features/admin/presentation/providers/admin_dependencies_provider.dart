@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../courier/presentation/providers/courier_core_dependencies_provider.dart';
 import '../../../pos/presentation/providers/kds_dependencies_provider.dart';
 import '../../../restaurant/presentation/providers/restaurant_operations_dependencies_provider.dart';
+import '../../application/identity/admin_device_registration_id_generator.dart';
 import '../../application/identity/branch_id_generator.dart';
 import '../../application/identity/customer_admin_note_id_generator.dart';
 import '../../application/identity/customer_photo_id_generator.dart';
@@ -12,7 +13,9 @@ import '../../application/identity/restaurant_id_generator.dart';
 import '../../application/identity/staff_member_id_generator.dart';
 import '../../application/identity/staff_role_change_event_id_generator.dart';
 import '../../application/use_cases/build_audit_center_projection.dart';
+import '../../application/use_cases/build_device_registry_projection.dart';
 import '../../data/admin_audit_entry_repository.dart';
+import '../../data/admin_device_registration_repository.dart';
 import '../../data/branch_repository.dart';
 import '../../data/customer_admin_note_repository.dart';
 import '../../data/customer_photo_repository.dart';
@@ -155,5 +158,28 @@ final buildAuditCenterProjectionProvider =
     restaurantOperationsAuditRepository:
         ref.watch(restaurantOperationsAuditEntryRepositoryProvider),
     adminAuditRepository: ref.watch(adminAuditEntryRepositoryProvider),
+  );
+});
+
+// Phase 6L — device & integration registry foundation.
+final adminDeviceRegistrationRepositoryProvider =
+    Provider<AdminDeviceRegistrationRepository>((ref) {
+  return InMemoryAdminDeviceRegistrationRepository();
+});
+
+final adminDeviceRegistrationIdGeneratorProvider =
+    Provider<AdminDeviceRegistrationIdGenerator>((ref) {
+  return SequentialAdminDeviceRegistrationIdGenerator();
+});
+
+final buildDeviceRegistryProjectionProvider =
+    Provider<BuildDeviceRegistryProjection>((ref) {
+  return BuildDeviceRegistryProjection(
+    kitchenDisplayDeviceRepository:
+        ref.watch(kitchenDisplayDeviceRepositoryProvider),
+    courierRepository: ref.watch(courierRepositoryProvider),
+    courierDeviceRepository: ref.watch(courierDeviceRepositoryProvider),
+    adminDeviceRegistrationRepository:
+        ref.watch(adminDeviceRegistrationRepositoryProvider),
   );
 });

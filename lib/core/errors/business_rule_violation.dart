@@ -1496,3 +1496,54 @@ final class StaffMemberArchivedViolation extends BusinessRuleViolation {
   String get description =>
       'Staff member "$staffMemberId" is archived and cannot be changed';
 }
+
+/// An `archived` `AdminDeviceRegistration` was targeted by a status
+/// change — `archived` is terminal, same reasoning as
+/// `BranchArchivedViolation`/`StaffMemberArchivedViolation` (Phase 6L,
+/// `docs/decisions.md` ADR-023).
+final class AdminDeviceRegistrationArchivedViolation
+    extends BusinessRuleViolation {
+  const AdminDeviceRegistrationArchivedViolation({required this.deviceId});
+
+  final String deviceId;
+
+  @override
+  String get description =>
+      'Device registration "$deviceId" is archived and cannot be changed';
+}
+
+/// `RegisterDevice` was called with a `DeviceType.kitchenDisplay`/
+/// `DeviceType.courierDevice` type — those already have a real owning
+/// aggregate (`KitchenDisplayDevice`/`CourierDevice`) in their own
+/// bounded context; `AdminDeviceRegistration` exists only for device
+/// types with no other backing aggregate. "Do not merge device domain
+/// aggregates destructively" (Phase 6L, `docs/decisions.md` ADR-023).
+final class AdminDeviceRegistrationTypeNotAllowedViolation
+    extends BusinessRuleViolation {
+  const AdminDeviceRegistrationTypeNotAllowedViolation({
+    required this.typeName,
+  });
+
+  final String typeName;
+
+  @override
+  String get description =>
+      'Device type "$typeName" already has its own owning aggregate and '
+      'cannot be registered through the admin device registry';
+}
+
+/// `SetSourceDeviceActive` was called with `DeviceType.posTerminal`/
+/// `DeviceType.printer`/`DeviceType.paymentTerminal` — those have no
+/// source-owning repository to toggle; only `AdminDeviceRegistration`
+/// (via `SetAdminDeviceStatus`) manages their status (Phase 6L,
+/// `docs/decisions.md` ADR-023).
+final class NoSourceDeviceRepositoryViolation extends BusinessRuleViolation {
+  const NoSourceDeviceRepositoryViolation({required this.typeName});
+
+  final String typeName;
+
+  @override
+  String get description =>
+      'Device type "$typeName" has no source-owning repository — use '
+      'SetAdminDeviceStatus instead';
+}
