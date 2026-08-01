@@ -26,6 +26,7 @@ import 'branch_admin_screen.dart';
 import 'customer_management_screen.dart';
 import 'customer_photo_moderation_screen.dart';
 import 'device_registry_screen.dart';
+import 'localization_admin_screen.dart';
 import 'staff_management_screen.dart';
 import 'staff_sign_in_screen.dart';
 
@@ -379,6 +380,20 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             builder: (context, ref) => RoleGate.forAction(
               PosAuthorizedAction.viewAuditCenter,
               child: AuditCenterScreen(branchId: branchId),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'localization',
+            label: 'Yerelleştirme',
+            icon: Icons.translate_outlined,
+            visibleToRoles: const {StaffRole.admin},
+            builder: (context, ref) => RoleGate.forAction(
+              PosAuthorizedAction.manageLocalizationConfig,
+              child: LocalizationAdminScreen(
+                branchId: branchId,
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
+              ),
             ),
           ),
           _AdminNavItem(

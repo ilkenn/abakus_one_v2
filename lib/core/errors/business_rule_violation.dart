@@ -1547,3 +1547,69 @@ final class NoSourceDeviceRepositoryViolation extends BusinessRuleViolation {
       'Device type "$typeName" has no source-owning repository — use '
       'SetAdminDeviceStatus instead';
 }
+
+/// `SetLanguageEnabled` was called to disable `SupportedLanguage.tr` —
+/// the master language is always enabled, never admin-configurable off
+/// (Phase 6N, `docs/decisions.md` ADR-023).
+final class MasterLanguageCannotBeDisabledViolation
+    extends BusinessRuleViolation {
+  const MasterLanguageCannotBeDisabledViolation();
+
+  @override
+  String get description => 'The master language (tr) can never be disabled';
+}
+
+/// `SetLanguageEnabled` was called to disable a `LocalizationConfig`'s
+/// current `fallbackLanguage` — the fallback must always resolve to an
+/// enabled language; change the fallback first (Phase 6N,
+/// `docs/decisions.md` ADR-023).
+final class FallbackLanguageCannotBeDisabledViolation
+    extends BusinessRuleViolation {
+  const FallbackLanguageCannotBeDisabledViolation({
+    required this.languageName,
+  });
+
+  final String languageName;
+
+  @override
+  String get description =>
+      'Cannot disable "$languageName" — it is the current fallback '
+      'language; change the fallback first';
+}
+
+/// `SetFallbackLanguage` was called with a language not currently in
+/// the scope's `enabledLanguages` — a fallback must already be enabled
+/// (Phase 6N, `docs/decisions.md` ADR-023).
+final class FallbackLanguageMustBeEnabledViolation
+    extends BusinessRuleViolation {
+  const FallbackLanguageMustBeEnabledViolation({required this.languageName});
+
+  final String languageName;
+
+  @override
+  String get description =>
+      'Cannot set fallback language to "$languageName" — it is not '
+      'currently enabled for this scope';
+}
+
+/// `SetTranslationContent` was called with `isMachineGenerated: true`
+/// against a `TranslationEntry` whose `isManuallyEdited` is already
+/// `true` — "do not overwrite manually edited translations
+/// automatically" (Phase 6N, `docs/decisions.md` ADR-023). A human
+/// operator may still overwrite by calling with
+/// `isMachineGenerated: false` (an explicit manual edit).
+final class ManuallyEditedTranslationNotOverwritableViolation
+    extends BusinessRuleViolation {
+  const ManuallyEditedTranslationNotOverwritableViolation({
+    required this.contentKey,
+    required this.languageName,
+  });
+
+  final String contentKey;
+  final String languageName;
+
+  @override
+  String get description =>
+      'Translation "$contentKey" ($languageName) was manually edited and '
+      'cannot be overwritten by a machine-generated write';
+}

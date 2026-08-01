@@ -8,10 +8,12 @@ import '../../application/identity/admin_device_registration_id_generator.dart';
 import '../../application/identity/branch_id_generator.dart';
 import '../../application/identity/customer_admin_note_id_generator.dart';
 import '../../application/identity/customer_photo_id_generator.dart';
+import '../../application/identity/localization_config_id_generator.dart';
 import '../../application/identity/organization_id_generator.dart';
 import '../../application/identity/restaurant_id_generator.dart';
 import '../../application/identity/staff_member_id_generator.dart';
 import '../../application/identity/staff_role_change_event_id_generator.dart';
+import '../../application/identity/translation_entry_id_generator.dart';
 import '../../application/use_cases/build_audit_center_projection.dart';
 import '../../application/use_cases/build_device_registry_projection.dart';
 import '../../data/admin_audit_entry_repository.dart';
@@ -19,11 +21,13 @@ import '../../data/admin_device_registration_repository.dart';
 import '../../data/branch_repository.dart';
 import '../../data/customer_admin_note_repository.dart';
 import '../../data/customer_photo_repository.dart';
+import '../../data/localization_config_repository.dart';
 import '../../data/organization_repository.dart';
 import '../../data/restaurant_repository.dart';
 import '../../data/staff_auth_repository.dart';
 import '../../data/staff_member_repository.dart';
 import '../../data/staff_role_change_event_repository.dart';
+import '../../data/translation_entry_repository.dart';
 import '../../domain/organization/branch.dart';
 import '../../domain/organization/organization.dart';
 import '../../domain/organization/restaurant.dart';
@@ -182,4 +186,25 @@ final buildDeviceRegistryProjectionProvider =
     adminDeviceRegistrationRepository:
         ref.watch(adminDeviceRegistrationRepositoryProvider),
   );
+});
+
+// Phase 6N — localization administration foundation.
+final localizationConfigRepositoryProvider =
+    Provider<LocalizationConfigRepository>((ref) {
+  return InMemoryLocalizationConfigRepository();
+});
+
+final localizationConfigIdGeneratorProvider =
+    Provider<LocalizationConfigIdGenerator>((ref) {
+  return SequentialLocalizationConfigIdGenerator();
+});
+
+final translationEntryRepositoryProvider =
+    Provider<TranslationEntryRepository>((ref) {
+  return InMemoryTranslationEntryRepository();
+});
+
+final translationEntryIdGeneratorProvider =
+    Provider<TranslationEntryIdGenerator>((ref) {
+  return SequentialTranslationEntryIdGenerator();
 });
