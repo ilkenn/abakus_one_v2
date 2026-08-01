@@ -18,6 +18,7 @@ import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../../pos/presentation/widgets/role_gate.dart';
 import '../../../pos/presentation/screens/kitchen_display_board_screen.dart';
 import '../widgets/admin_coming_soon_view.dart';
+import 'admin_overview_screen.dart';
 import 'admin_session_expired_screen.dart';
 import 'admin_unauthorized_screen.dart';
 import 'branch_admin_screen.dart';
@@ -95,10 +96,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
                 StaffRole.admin,
                 StaffRole.courier,
               },
-              child: const AdminComingSoonView(
-                title: 'Genel Bakış',
-                reason: 'Genel bakış paneli ayrı bir adımda eklenecek.',
-              ),
+              child: AdminOverviewScreen(branchId: branchId),
             ),
           ),
         ],
