@@ -1,3 +1,4 @@
+import 'customer_account_status.dart';
 import 'customer_category.dart';
 
 /// A customer's CRM registry entry — the first `Customer` entity of any
@@ -26,6 +27,7 @@ class Customer {
     required this.phoneNumber,
     this.category,
     this.customCategoryLabel,
+    this.accountStatus = CustomerAccountStatus.active,
     required this.registeredAt,
     required this.revision,
   });
@@ -40,6 +42,11 @@ class Customer {
   /// [CustomerCategory.other] — never populated for any other category.
   final String? customCategoryLabel;
 
+  /// **Phase 6F**: additive field — every pre-existing `Customer`
+  /// construction defaults to [CustomerAccountStatus.active], so no
+  /// existing call site needed to change.
+  final CustomerAccountStatus accountStatus;
+
   final DateTime registeredAt;
   final int revision;
 
@@ -50,6 +57,7 @@ class Customer {
     bool clearCategory = false,
     String? customCategoryLabel,
     bool clearCustomCategoryLabel = false,
+    CustomerAccountStatus? accountStatus,
     required int revision,
   }) {
     return Customer(
@@ -60,6 +68,7 @@ class Customer {
       customCategoryLabel: clearCustomCategoryLabel
           ? null
           : (customCategoryLabel ?? this.customCategoryLabel),
+      accountStatus: accountStatus ?? this.accountStatus,
       registeredAt: registeredAt,
       revision: revision,
     );

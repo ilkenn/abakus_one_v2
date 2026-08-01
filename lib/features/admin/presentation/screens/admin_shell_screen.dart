@@ -22,6 +22,8 @@ import 'admin_overview_screen.dart';
 import 'admin_session_expired_screen.dart';
 import 'admin_unauthorized_screen.dart';
 import 'branch_admin_screen.dart';
+import 'customer_management_screen.dart';
+import 'customer_photo_moderation_screen.dart';
 import 'staff_management_screen.dart';
 import 'staff_sign_in_screen.dart';
 
@@ -194,8 +196,38 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
         icon: Icons.groups_outlined,
         items: [
           _AdminNavItem(
+            id: 'customer-360',
+            label: 'Müşteri 360',
+            icon: Icons.badge_outlined,
+            visibleToRoles: const {
+              StaffRole.staff,
+              StaffRole.manager,
+              StaffRole.admin
+            },
+            builder: (context, ref) => RoleGate.forAction(
+              PosAuthorizedAction.viewCustomerAdmin,
+              child: CustomerManagementScreen(
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'photo-moderation',
+            label: 'Fotoğraf Denetimi',
+            icon: Icons.image_search_outlined,
+            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            builder: (context, ref) => RoleGate.forAction(
+              PosAuthorizedAction.moderateCustomerPhoto,
+              child: CustomerPhotoModerationScreen(
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
             id: 'customers',
-            label: 'Müşteriler / CRM',
+            label: 'Segmentasyon',
             icon: Icons.people_outline,
             visibleToRoles: const {StaffRole.manager, StaffRole.admin},
             builder: (context, ref) => RoleGate.forRoles(

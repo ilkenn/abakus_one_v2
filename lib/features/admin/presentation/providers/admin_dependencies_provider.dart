@@ -2,12 +2,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/identity/branch_id_generator.dart';
+import '../../application/identity/customer_admin_note_id_generator.dart';
+import '../../application/identity/customer_photo_id_generator.dart';
 import '../../application/identity/organization_id_generator.dart';
 import '../../application/identity/restaurant_id_generator.dart';
 import '../../application/identity/staff_member_id_generator.dart';
 import '../../application/identity/staff_role_change_event_id_generator.dart';
 import '../../data/admin_audit_entry_repository.dart';
 import '../../data/branch_repository.dart';
+import '../../data/customer_admin_note_repository.dart';
+import '../../data/customer_photo_repository.dart';
 import '../../data/organization_repository.dart';
 import '../../data/restaurant_repository.dart';
 import '../../data/staff_auth_repository.dart';
@@ -111,4 +115,26 @@ final restaurantIdGeneratorProvider = Provider<RestaurantIdGenerator>((ref) {
 
 final branchIdGeneratorProvider = Provider<BranchIdGenerator>((ref) {
   return SequentialBranchIdGenerator();
+});
+
+// Phase 6F — customer admin notes/risk flags.
+final customerAdminNoteRepositoryProvider =
+    Provider<CustomerAdminNoteRepository>((ref) {
+  return InMemoryCustomerAdminNoteRepository();
+});
+
+final customerAdminNoteIdGeneratorProvider =
+    Provider<CustomerAdminNoteIdGenerator>((ref) {
+  return SequentialCustomerAdminNoteIdGenerator();
+});
+
+// Phase 6G — customer photo moderation.
+final customerPhotoRepositoryProvider =
+    Provider<CustomerPhotoRepository>((ref) {
+  return InMemoryCustomerPhotoRepository();
+});
+
+final customerPhotoIdGeneratorProvider =
+    Provider<CustomerPhotoIdGenerator>((ref) {
+  return SequentialCustomerPhotoIdGenerator();
 });

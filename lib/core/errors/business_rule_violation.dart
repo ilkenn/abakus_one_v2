@@ -1444,6 +1444,32 @@ final class AdminPlatformAlreadyBootstrappedViolation
       'bootstrapping only runs once';
 }
 
+/// A customer already has 5 active/eligible `CustomerPhoto`s (`pending
+/// Review`/`underReview`/`approved` — `rejected`/`removed` never count)
+/// and attempted to submit another — "maximum 5 active/eligible photos"
+/// (Phase 6G, `docs/decisions.md` ADR-023).
+final class CustomerPhotoLimitReachedViolation extends BusinessRuleViolation {
+  const CustomerPhotoLimitReachedViolation({required this.customerId});
+
+  final String customerId;
+
+  @override
+  String get description =>
+      'Customer "$customerId" already has 5 active photos';
+}
+
+/// A `CustomerPhoto` was selected as the profile photo while not
+/// `approved` — "a selected but unapproved photo must not become
+/// publicly visible" (Phase 6G, `docs/decisions.md` ADR-023).
+final class CustomerPhotoNotApprovedViolation extends BusinessRuleViolation {
+  const CustomerPhotoNotApprovedViolation({required this.photoId});
+
+  final String photoId;
+
+  @override
+  String get description => 'Photo "$photoId" is not approved yet';
+}
+
 /// An `archived` `Branch` was targeted by a status change — `archived`
 /// is terminal, same reasoning as `StaffMemberArchivedViolation` (Phase
 /// 6D, `docs/decisions.md` ADR-023).

@@ -30,7 +30,7 @@ void main() {
         child: const MaterialApp(home: AdminShellScreen()),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
   }
 
   testWidgets('shows AdminUnauthorizedScreen with no session', (tester) async {
@@ -68,6 +68,11 @@ void main() {
     );
 
     expect(find.text('Müşteri & Sadakat'), findsOneWidget);
+    await tester.dragUntilVisible(
+      find.text('Yapılandırma'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
     expect(find.text('Yapılandırma'), findsOneWidget);
     // A courier-only section must not be visible to a manager-only
     // session that also isn't courier.
@@ -85,7 +90,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Müşteriler / CRM'));
+    await tester.tap(find.text('Segmentasyon'));
     await tester.pumpAndSettle();
 
     expect(find.byType(CustomerSegmentationAdminScreen), findsOneWidget);
