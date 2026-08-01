@@ -22,6 +22,12 @@
 - **Integration requirements**: None external at MVP; SSO (Google/Apple/Microsoft) as a later increment.
 - **Minimum tests**: Unit tests for permission-resolution logic; widget tests for login/guard redirects; integration test for full login → protected-screen flow.
 - **Risks**: Getting the Role/Permission model wrong early is the single most expensive mistake to fix later — every other module reads from it.
+- **Note (2026-08-01, the ad hoc "Phase 6" admin-platform sprint, `docs/decisions.md` ADR-023)**: a
+  client-side, backend-neutral prototype of Role/Permission concepts now exists (`StaffRole`,
+  `RolePermissionMap`, `RealPosAuthorizationPolicy`) with a real admin UI built against it
+  (`AdminShellScreen` and its 18 destinations). No backend, no permission-check middleware, no token
+  issuance — this satisfies none of this module's Backend/Security/Integration requirements. Distinct
+  ad hoc numbering, per `CLAUDE.md` §1 — this is not this module's MVP.
 
 ## MT — Multi-Tenant & Multi-Branch Platform
 
@@ -142,6 +148,15 @@
 - **Integration requirements**: All backend modules, surfaced through UI.
 - **Minimum tests**: E2E tests for the admin console's highest-risk flows (publishing a menu, refunding an order, changing a role).
 - **Risks**: Decision debt — Flutter Web vs. a separate framework for the admin console is a decision this roadmap deliberately does not make for you (see `WEB-001`).
+- **Note (2026-08-01, the ad hoc "Phase 6" admin-platform sprint, `docs/decisions.md` ADR-023)**: an
+  `AdminShellScreen` now exists **inside the same customer-app codebase**, reachable via
+  `ProfileScreen` on any platform the app already runs on (`CLAUDE.md`'s
+  web/Windows/macOS/Linux/Android/iOS target list) — not a separate web build/deployment. This is a
+  different shape than this module describes (a distinct web admin console with its own hardened
+  session handling and broader API surface) and does not resolve `WEB-001`'s Flutter-Web-vs-separate-
+  stack decision debt; it demonstrates one possible answer (reuse the same codebase) without formally
+  deciding it. No backend, no separate hardened session handling beyond the same `ActorSession`
+  everything else in this codebase uses.
 
 ## QR — QR Ordering
 

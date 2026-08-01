@@ -871,3 +871,92 @@ above being tracked, not silently treated as resolved. Both original phase-gate 
 non-functional authorization and unreachable navigation — are now genuinely resolved, not just
 reported as fixed. Neither is marked approved here without the other; see the mandatory Phase Gate
 verdict in this sprint's own final report for the explicit confirmation this rule was honored.
+
+## Phase 6 — Admin Platform, Staff Access & Control Center
+
+Autonomous-mode implementation of the real management center for Abaküs One — orchestrating and
+exposing Phase 3–5's operational modules through one secure control center, plus building the
+genuinely missing administration layers Phase 5 identified as absent (staff/role management,
+organization/branch administration, customer 360, photo moderation, unified audit visibility, device
+registry, localization administration, system health). See `docs/decisions.md` ADR-023 for the full
+architecture and every judgment call, including the one real security gap found and closed mid-phase.
+
+| Task | Status | Note |
+|---|---|---|
+| 6A — Admin shell & responsive navigation | DONE | `AdminShellScreen` — one `LayoutBuilder`-driven structure (desktop sidebar / tablet `NavigationRail` / phone `Drawer`), 18 destinations under 5 groups. Every destination independently `RoleGate`-wrapped at push time — the shell's own group filtering is a UX convenience, not the security boundary. `AdminUnauthorizedScreen`/`AdminSessionExpiredScreen` as distinct states. Reachable from `ProfileScreen`'s "Yönetici Paneli" entry, now always visible (routes to sign-in or the shell depending on session state). |
+| 6B — Real staff session foundation | DONE | `ActorSession` extended additively (`branchAccess`, `restaurantAccess`, `activeBranchId`, `issuedAt`/`expiresAt`, `revoked`) — zero existing call sites broke. `StaffAuthRepository` (`Development`/`ProductionUnavailable`, `kReleaseMode`-gated, mirrors `authRepositoryProvider`). `StaffSessionController` is the sole write path into `actorSessionProvider`. `BootstrapFirstAdminAccount` — the one deliberate exception to "no manager granting admin unless authorized," self-limiting to an empty `StaffMemberRepository`. |
+| 6C — Staff, role & permission management | DONE | `RegisterStaffMember`/`AssignStaffRole`/`RevokeStaffRole`/`SetStaffMemberStatus`/`GrantStaffBranchAccess`/`RevokeStaffBranchAccess`/`RevokeStaffSession`. Self-promotion/self-revocation structurally blocked (`SelfRoleGrantNotAllowedViolation`, checked before authorization). Admin-role grants require `manageStaffAdminRole` (admin-only); other roles require `manageStaffRoles` (manager+) — action selection enforces "no manager granting admin unless authorized," not a separate check. `active <-> suspended` reversible, `archived` terminal. `PosAuthorizedAction` extended 17 values (17→84 total from ADR-022's 67), flagged as "approaching" the ~150 split-trigger threshold, not split. |
+| 6D — Organization/branch administration | DONE | Resurrected dead `shared/models/{restaurant,branch}.dart` into real, repository-backed entities (`Organization -> Restaurant -> Branch`), seeded to match `currentBranchIdProvider`'s pre-existing `'branch-1'`. No per-organization data isolation is actually enforced anywhere data is stored — documented honestly as the identity/boundary *shape*, not isolation itself. `SetBranchEmergencyStop` (admin-only, distinct from `emergencyChannelClosure`). |
+| 6E — Admin overview dashboard | DONE | `BuildAdminOverviewSnapshot` — a pure, computed-fresh read-model reusing `BuildCourierOperationHealth` directly rather than recomputing. Explicitly omits open-orders/delayed-kitchen-work/open-cash-session counts — no query exists for any of them — "honestly absent, not approximated with a fake zero." |
+| 6F/6G — Customer 360 & photo moderation | DONE | `CustomerManagementScreen`/`CustomerDetailScreen` (search, notes, account status). `CustomerPhoto.photoRef` is a fully opaque string end-to-end — no `image_picker`/media dependency exists in this codebase, confirmed during the pre-implementation survey; the moderation screen never renders an `Image` widget. Max-5-eligible-photo limit (`rejected`/`removed` never count), 0-or-1 selected profile photo enforced by deselecting siblings before selecting. No hard deletion — `removed` is a status, not a delete. |
+| 6H/6I/6J/6K — CRM/loyalty/survey/feedback/menu admin entry points | DONE (satisfied by 6A) | Pre-existing Sprint-5D screens (`CustomerSegmentationAdminScreen`, `VisitRewardRulesAdminScreen`, `SurveyAdminScreen`, `CustomerNotificationCampaignsAdminScreen`, `FeedbackAdminScreen`) wired directly into the shell rather than rebuilt — see ADR-023 Decision 8. Menu/Orders/POS/Cash entry points are honest `AdminComingSoonView` placeholders, each naming what's missing. |
+| 6L — Device & integration registry foundation | DONE | `BuildDeviceRegistryProjection` merges `KitchenDisplayDevice`/`CourierDevice` (read/toggle-only, writes back through their own repositories via `SetSourceDeviceActive`) with the new `AdminDeviceRegistration` (the only record for `posTerminal`/`printer`/`paymentTerminal`, which have no other owning aggregate). No remote restart/reconnect — only active/inactive/archive. |
+| 6M — Unified Audit Center projection | DONE | `BuildAuditCenterProjection` covers 4 of 8 audit trails (courier/kitchen/restaurant-operations/admin) — the only 4 with a branch-scoped or unscoped query; cash/closure/courier-settlement/CRM audit trails are excluded and named as such, not silently dropped. Client-side filtering/pagination only — an explicit "future backend query seam." |
+| 6N — Localization administration foundation | DONE | `tr` is a fixed `SupportedLanguage.master` constant, never configurable data. `LocalizationConfig` (org/branch scope) — `SetLanguageEnabled` refuses to disable the master language or the current fallback. `TranslationEntry` — independent `isMachineGenerated`/`isManuallyEdited` markers; `SetTranslationContent` refuses a machine-sourced overwrite of a manually-edited entry. `AiTranslationProvider`/`GastronomyGlossaryProvider` are dormant contracts only — no implementation, nothing calls them. |
+| 6O — Feature flags, settings & system health | DONE | `SystemHealthAdminScreen` — read-only environment visibility (`AppEnvironmentConfig`, confirmed no secrets), read-only feature-flag values (no write API exists anywhere in this codebase — editing happens in the Firebase console, not here), a real global `MaintenanceModeState` toggle (audited, admin-only — nothing yet reads it to block traffic, an honest foundation), and a static, factual list of dormant/NoOp integrations rather than a fabricated dynamic health check. |
+| 6P — Authorization & security verification | DONE | Found `ActorSession.branchAccess`/`hasBranchAccess` was decorative — computed but never consulted by any authorization decision. Closed: `RealPosAuthorizationPolicy` now denies a non-admin actor lacking access to a `context`-supplied target branch id (`StaffRole.admin` exempt, an org-wide oversight role). Wired into every genuinely branch-scoped Phase 6 use case. See ADR-023 Decision 9 for the full finding and the explicit, honestly-scoped boundary of what this fix does and does not cover (staff-management branch-grant nuance remains open). |
+| 6Q — Comprehensive testing + quality gate | DONE | See Phase 6 Closure Record below for exact counts. |
+| Documentation | DONE | `docs/decisions.md` ADR-023; this entry, including the Phase 6 Closure Record below. |
+
+**Explicitly out of scope this phase** (per the kickoff's own framing): full Boncuk Ledger/Spin Engine/
+Google-review/Instagram-follow verification, a real push provider, a paid AI translation provider, AI
+feedback analysis, accounting/inventory/supplier management, e-invoice, a production media storage
+backend, production multi-tenant backend deployment, real remote device restart, a production MFA
+provider, a full analytics warehouse. Staff-management branch-scoping by the actor's own granted
+branches (distinct from the single-target-branch scoping 6P did close) — carried forward, not solved.
+
+### Phase 6 Closure Record
+
+**Mandatory "do not mark approved if" checklist** (verbatim from the kickoff brief):
+
+1. **Staff authorization is non-functional** — **not the case**. `RealPosAuthorizationPolicy` is a
+   genuine, deny-by-default, tested production implementation; every admin destination is
+   `RoleGate`-wrapped at the screen itself, not just hidden from navigation.
+2. **Admin routes are unreachable** — **not the case**. `ProfileScreen`'s "Yönetici Paneli" entry is
+   always visible and routes to `StaffSignInScreen`/`AdminShellScreen` depending on session state,
+   extending the same reachability precedent Sprint 5E established for `OperationsHubScreen`.
+3. **Branch access is not enforced** — **was true, now resolved** (ADR-023 Decision 9). Found during
+   the mandatory 6P verification pass, not assumed absent; closed with a real, tested fix before this
+   record was written, not deferred to a future sprint.
+4. **Sensitive customer/photo data is exposed unsafely** — **not the case**. `CustomerPhoto.photoRef`
+   is opaque end-to-end; no raw media bytes exist anywhere in this codebase to leak. Customer 360
+   access is role-tiered (`viewCustomerAdmin`, staff-tier, courier explicitly excluded).
+5. **Critical admin actions are not audited** — **not the case**. Every mutating Phase 6 use case
+   writes an `AdminAuditEntry` before returning; the audit repository has no update/delete method at
+   all — append-only structurally, not by convention.
+
+**What remains deferred** (explicitly, not silently narrowed): a real staff login backend (`ActorSession`
+population remains manual/seeded, same deferral as ADR-022); full multi-tenant data isolation (Decision
+3 — the organization/branch entities exist, no repository actually partitions by them); staff-management
+actions are not scoped by the acting manager's own granted branches, only the 7 single-target-branch
+actions 6P closed are (Decision 9); Cash/Closure/CourierSettlement/CRM audit trails are not in the
+unified Audit Center (Decision 7); feature flags remain view-only (no write path exists); maintenance
+mode is real and audited but nothing yet reads it to actually block traffic; Reports/Orders/POS/Cash/
+Menu admin entry points remain honest placeholders, not real management screens; no real AI translation/
+gastronomy-glossary integration; no real device remote-restart capability; the `RolePermissionMap`
+tier assignments for Phase 6's 17 new actions are, like ADR-022's original 67, "a first-pass partition,
+not a business-signed-off security policy."
+
+**Production limitations, stated plainly:** every repository remains `InMemory*` — no real backend
+exists. No real push-provider integration. Firebase remains dormant (uninitialized) — feature flags,
+remote config, and crash reporting all resolve through their `NoOp` chain, so every displayed feature-
+flag value on the new System Health screen is a documented default, not a live remote value. No real
+staff authentication — `ActorSession` remains a manual/seeded construct, same limitation ADR-022 named
+for Phase 5 and still true here.
+
+**Test count**: 1778 before this phase (Sprint 5E baseline, per that sprint's own closure record) →
+**1816 after** (0 `flutter analyze` issues, `dart format` clean, no test skipped or weakened). New
+tests span: staff session lifecycle/expiration/revocation, self-promotion prevention, branch-access
+grant/revoke, admin shell responsive layouts and role-gated navigation across desktop/tablet/mobile,
+customer 360 search/notes/account-status, photo submission/moderation/selection invariants, unified
+audit projection merging/filtering/pagination, device registry projection/registration/status toggling,
+localization language-enable/fallback/translation-content/review lifecycle (including the manually-
+edited-overwrite-protection rule), maintenance-mode activation/deactivation, and — from the 6P pass —
+branch-scoped authorization denial/grant/admin-exemption, both at the policy-unit level and end-to-end
+through a real use case (`SetBranchStatus`).
+
+**Phase 6 readiness decision**: **APPROVED**. All 5 of the brief's explicit blocking conditions are
+satisfied — including branch-access enforcement, which required a real fix discovered during this
+phase's own mandatory verification pass rather than being assumed correct from Phase 6B's original
+design. The residual gaps above are real and should inform Phase 6's own future hardening work or a
+dedicated security-review sprint, but none of them are one of the 5 named blocking conditions.

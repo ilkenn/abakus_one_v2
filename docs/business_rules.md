@@ -2146,7 +2146,7 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 ### BR-AUTH-002 — Roles are hierarchical for staff/manager/admin, lateral for courier; a multi-role
   actor holds the union of every role's permissions (Sprint 5E)
 - **Status**: VERIFIED
-- **Rule**: `RolePermissionMap` categorizes all 67 `PosAuthorizedAction` values into 4 tiers.
+- **Rule**: `RolePermissionMap` categorizes all `PosAuthorizedAction` values into 4 tiers.
   `permissionsFor(manager)` includes everything `permissionsFor(staff)` does, plus manager-only
   actions; `permissionsFor(admin)` includes everything both of those do, plus admin-only actions —
   a strict, additive hierarchy. `permissionsFor(courier)` is a separate, lateral tier — a courier's
@@ -2156,8 +2156,94 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
   narrower `allowsForActiveRole` check exists separately for UI contexts that should reflect only the
   actor's current, switched-to role. An action absent from every tier is denied to every role,
   including admin — the conservative default, not an admin-only fallback.
+  **Update (Phase 6, ADR-023 Decision 2)**: 17 more values were added (84 total), tiered the same way,
+  flagged as "approaching" the ~150-value split threshold ADR-022 itself named.
 - **Owner Agent**: security_engineer
 - **Related Modules**: Staff/Admin, Courier, CRM, Feedback
+
+### BR-AUTH-003 — A branch-scoped admin action requires the actor to hold explicit access to the
+  target branch; `StaffRole.admin` is exempt (Phase 6)
+- **Status**: VERIFIED
+- **Rule**: `RealPosAuthorizationPolicy` denies a non-admin actor who lacks `ActorSession
+  .hasBranchAccess(targetBranchId)` when the caller supplies `kBranchIdAuthorizationContextKey` in
+  `context` — "cross-branch access must require explicit authorization." `StaffRole.admin` bypasses
+  this check by design, an org-wide oversight role, matching the "Admin: permitted scope, Manager:
+  branch scope" tiering established for customer administration (BR-ADMIN-001 below). Applies to
+  every single-target-branch admin action: branch status/emergency-stop, device registration/status,
+  and branch-scoped localization config. **Does not yet apply** to staff-management actions (a staff
+  member's `branchAccess` is a *set* of granted branches, not one target — a different, unsolved
+  check) or to customer/photo actions (`Customer`/`CustomerPhoto` carry no branch field in this
+  codebase's CRM model at all).
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin
+
+### BR-ADMIN-001 — Customer administration access is role-tiered: admin unrestricted, manager
+  branch-scoped, staff limited, courier none (Phase 6)
+- **Status**: VERIFIED
+- **Rule**: `PosAuthorizedAction.viewCustomerAdmin` is staff-tier — granted to staff/manager/admin,
+  never courier ("courier: no customer-management access"). Every access to `CustomerManagementScreen`
+  /`CustomerDetailScreen` is audited when it results in a mutation (`SetCustomerAccountStatus`,
+  `AddCustomerAdminNote`, `ModerateCustomerPhoto`).
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin, CRM
+
+### BR-ADMIN-002 — A staff member cannot grant or revoke their own role; a suspended/archived staff
+  member cannot be granted a new role (Phase 6)
+- **Status**: VERIFIED
+- **Rule**: `AssignStaffRole`/`RevokeStaffRole` throw `SelfRoleGrantNotAllowedViolation` when
+  `staffMemberId == performedByStaffId`, checked *before* the authorization call — holds regardless
+  of what `RealPosAuthorizationPolicy` would otherwise permit. Granting the admin role requires
+  `manageStaffAdminRole` (admin-only); every other role requires `manageStaffRoles` (manager+) —
+  "no manager granting admin unless authorized" is enforced by which action is selected, not a
+  separate check. `StaffMemberNotActiveViolation` blocks any role change against a suspended/archived
+  member. Role changes are append-only (`StaffRoleChangeEvent`, no update/delete method exists).
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin
+
+### BR-ADMIN-003 — A customer photo counts toward the 5-photo limit unless rejected/removed; at most
+  one photo may be selected as the profile photo, and it must be approved (Phase 6)
+- **Status**: VERIFIED
+- **Rule**: `CustomerPhoto.countsTowardEligibleLimit` is `true` for `pendingReview`/`underReview`/
+  `approved`, `false` for `rejected`/`removed` — `SubmitCustomerPhoto` throws
+  `CustomerPhotoLimitReachedViolation` once 5 counting photos exist. `SelectCustomerProfilePhoto`
+  throws `CustomerPhotoNotApprovedViolation` for a non-approved target, and deselects every other
+  photo of the same customer before selecting the new one — 0-or-1 selected is enforced by the write
+  path, never a separately-checked invariant. `ModerateCustomerPhoto`'s `reject`/`remove` actions
+  force-clear the selection if the target was selected. No photo is ever hard-deleted — `removed` is
+  a status, not a delete; the repository has no delete method. Photo bytes are never stored anywhere
+  in this codebase — `photoRef` is an opaque reference string end-to-end.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin, CRM
+
+### BR-ADMIN-004 — The master language (tr) can never be disabled; a scope's fallback language must
+  always be enabled; a machine-generated write cannot overwrite a manually edited translation
+  (Phase 6)
+- **Status**: VERIFIED
+- **Rule**: `SetLanguageEnabled` throws `MasterLanguageCannotBeDisabledViolation` for
+  `SupportedLanguage.master` (`tr`), and `FallbackLanguageCannotBeDisabledViolation` for the scope's
+  current `fallbackLanguage` (change the fallback first via `SetFallbackLanguage`, which itself
+  requires the target already enabled). `SetTranslationContent` throws
+  `ManuallyEditedTranslationNotOverwritableViolation` when a write with `isMachineGenerated: true`
+  targets an entry whose `isManuallyEdited` is already `true` — a human overwrite
+  (`isMachineGenerated: false`) is always permitted and sets `isManuallyEdited: true` going forward.
+  No paid AI translation service is called anywhere in this codebase — `AiTranslationProvider` has no
+  implementation.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin
+
+### BR-ADMIN-005 — Every Admin Platform mutation is recorded as an immutable, actor-attributed audit
+  entry; no admin audit repository has an update or delete method (Phase 6)
+- **Status**: VERIFIED
+- **Rule**: `AdminAuditEntryRepository` has `appendEvent`/`findBy*` only — structurally append-only,
+  not by convention. Every mutating Phase 6 use case (staff/role/branch-access/session, organization/
+  restaurant/branch, customer account status/notes/photo moderation, device registration/status,
+  localization config/translation content/review, maintenance mode) writes an `AdminAuditEntry` before
+  returning. The unified Audit Center (`BuildAuditCenterProjection`) is read-only — it never writes to
+  any source repository, and covers only the 4 audit trails (courier/kitchen/restaurant-operations/
+  admin) that support a branch-scoped or unscoped query; cash/closure/courier-settlement/CRM audit
+  trails are excluded, named as such, not silently dropped.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin, Courier, POS, Restaurant Operations, CRM
 
 ### BR-STAFF-003 — Approval thresholds
 - **Status**: UNRESOLVED
@@ -2975,11 +3061,50 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Related Modules**: Staff/Admin, Courier, CRM, Feedback, POS, Kitchen, Orders
 - **Business Rule IDs**: BR-AUTH-001, BR-AUTH-002, BR-CRM-008, BR-CRM-009, BR-CRM-010
 
+### DL-026 — Admin Platform, Staff Access & Control Center (Phase 6)
+- **Decision**: Builds the real management center of Abaküs One — a responsive, role-gated
+  `AdminShellScreen` orchestrating Phase 3–5's operational screens plus new administration for staff/
+  roles, organization/branch, customer 360, photo moderation, unified audit visibility, device
+  registry, localization, and system health. A dedicated 6P verification pass found
+  `ActorSession.branchAccess` was decorative (computed but never enforced) and closed it with a real
+  fix before this phase could be marked approved — see BR-AUTH-003.
+- **Status**: DECIDED
+- **Source**: User, Phase 6 kickoff — an explicit autonomous-implementation mandate spanning 17
+  lettered parts (6A–6Q), with a mandatory pre-implementation architecture analysis and a mandatory
+  final Phase Gate result against 5 named blocking conditions.
+- **Date**: 2026-08-01
+- **Consequences**: See BR-AUTH-003, BR-ADMIN-001 through BR-ADMIN-005 above. `docs/decisions.md`
+  ADR-023 records the full architecture and every judgment call (the flat-vs-split authorization
+  extension, the organization/tenant boundary's honest isolation-shape-not-isolation framing, the
+  opaque-photo-reference design, the master-language-as-constant design, the audit/device-registry
+  projection-not-merge pattern, the 6H/6I/6J/6K satisfied-by-shell-wiring determination, and the
+  branch-scoping gap found and closed in the 6P pass). `docs/feature_status.md`'s Phase 6 Closure
+  Record states the **APPROVED** phase-gate verdict against all 5 named blocking conditions.
+- **Related Modules**: Staff/Admin, Courier, CRM, Feedback, POS, Kitchen, Restaurant Operations
+- **Business Rule IDs**: BR-AUTH-003, BR-ADMIN-001, BR-ADMIN-002, BR-ADMIN-003, BR-ADMIN-004,
+  BR-ADMIN-005
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v2.5 — 2026-08-01
+- **Version**: 2.5
+- **Date**: 2026-08-01
+- **Summary**: Phase 6 (Admin Platform, Staff Access & Control Center). Added BR-AUTH-003
+  (branch-scoped admin actions require explicit branch access; admin is exempt), BR-ADMIN-001
+  (customer administration access is role-tiered, courier excluded), BR-ADMIN-002 (no self-
+  promotion/self-revocation; admin-role grants require the stricter admin-only action), BR-ADMIN-003
+  (5-photo limit excludes rejected/removed; 0-or-1 selected profile photo, must be approved),
+  BR-ADMIN-004 (master language never disableable; manually edited translations protected from
+  machine overwrite), BR-ADMIN-005 (every admin mutation is an immutable, actor-attributed audit
+  entry). Updated BR-AUTH-002 to note the 17-value `PosAuthorizedAction` extension. Logged DL-026.
+- **Author**: Claude, at the user's direction.
+- **Reason**: Record the business rules Phase 6 established, including the branch-scoped
+  authorization gap (BR-AUTH-003) found and closed during the phase's own mandatory 6P verification
+  pass, before the phase could be marked approved.
 
 ### v2.4 — 2026-07-31
 - **Version**: 2.4

@@ -2416,3 +2416,227 @@ versus a narrower one that left the integration chain more visibly incomplete; w
 tier assignments (Decision 1) match how the business would actually categorize each of the 67 actions
 once a real security review happens; and the same two-parallel-loyalty-surfaces residual ADR-021 already
 flagged, now formalized with cross-references rather than resolved outright.
+
+## ADR-023 — Admin Platform, Staff Access & Control Center (Phase 6)
+
+- Date: 2026-08-01
+- Status: Accepted
+
+### Context
+
+Phase 5 closed with a real (if manually-seeded) staff/courier authorization foundation
+(`RealPosAuthorizationPolicy`, `ActorSession`, `RolePermissionMap`, ADR-022) but no actual management
+surface — every Phase 3–5 operational screen existed and was individually role-gated, yet nothing
+organized them into one control center, and no staff/role/branch/customer/device/localization
+administration existed at all. Phase 6's mandate: "build the real management center of Abaküs
+One" — orchestrate and expose Phase 3–5 modules through one secure shell, and build the genuinely
+missing administration layers (staff, organization/branch, customer 360, photo moderation, audit,
+device registry, localization, system health) as real, backend-neutral foundations — "do not
+duplicate completed modules," "do not fabricate complete management capability" where a real backend
+integration is out of scope.
+
+Delivered as 17 lettered parts (6A–6Q, with 6H/6I/6J/6K judged satisfied by 6A's shell wiring rather
+than built as separate new work — see Decision 8) plus a dedicated 6P verification pass that found and
+closed one real security gap (Decision 9). Verdict: **APPROVED**, see the Phase 6 Closure Record
+(`docs/feature_status.md`) for the full gate checklist.
+
+### Decision 1 — Staff session: extend `ActorSession` additively, no new interface
+
+Zero production call sites construct `ActorSession(...)` outside its own file (confirmed by grep),
+making it safe to add optional, defaulted fields rather than a new session type: `branchAccess`,
+`restaurantAccess: Set<String>`, `activeBranchId: String?`, `issuedAt`/`expiresAt: DateTime?`,
+`revoked: bool`. New `isExpired`/`isValid`/`hasBranchAccess` getters/method, `withActiveBranch`
+mirroring `withActiveRole`. `RealPosAuthorizationPolicy` gained `revoked`/`isExpired` denial checks,
+ordered after "unknown actor" and before the permission check. `tryFromRaw` extended symmetrically —
+`activeBranchId` validated against parsed `branchAccessIds` exactly as `activeRoleName` is validated
+against parsed roles. No existing test broke: none of the 30+ pre-Phase-6 call sites set the new
+fields, so they default to "valid, no branch access" — additive, not a breaking migration.
+
+`StaffAuthRepository` mirrors `AuthRepository`'s exact shape (`signIn`, `refreshSession`, `signOut`),
+selected `Development`/`ProductionUnavailable` via `kReleaseMode` exactly like `authRepositoryProvider`
+— "do not claim production backend validation if none exists" holds structurally, the release build
+fails closed. `refreshSession` re-reads the `StaffMember` fresh and checks `sessionsRevokedAt` against
+the session's own `issuedAt` for forced revocation — "removed role takes effect immediately after
+session refresh" is satisfied by re-reading, not by a live push (this codebase has no such mechanism).
+`StaffSessionController` is the sole write path into `actorSessionProvider` from screen-facing code.
+
+### Decision 2 — `PosAuthorizedAction`: extend the flat enum again, not split
+
+The brief re-raised the flat-vs-split question ADR-022 first answered. Same resolution: 17 more values
+appended (staff/org/branch/customer/photo/device/audit/localization/settings actions), bringing the
+enum past 67 toward the ~150 value ADR-022 itself named as the split trigger — now flagged in both the
+enum's and `RolePermissionMap`'s doc comments as "approaching" that threshold, a near-term decision
+point, not resolved now ("do not perform a destructive rewrite unless necessary"). Tiered into the same
+4 buckets: admin-only (`manageStaffAccounts`, `manageStaffAdminRole`, `revokeStaffSession`,
+`manageOrganization`, `manageRestaurant`, `branchEmergencyStop`, `manageLocalizationConfig`,
+`manageMaintenanceMode`), manager-tier (`manageStaffRoles`, `manageStaffBranchAccess`,
+`viewStaffAudit`, `manageBranch`, `manageCustomerAccountStatus`, `moderateCustomerPhoto`,
+`manageDeviceRegistry`, `viewAuditCenter`, `viewFeatureFlags`), staff-tier (`viewCustomerAdmin` —
+courier explicitly excluded, matching "courier: no customer-management access").
+
+### Decision 3 — Organization/tenant boundary: the minimum safe seam, not a fabricated backend
+
+Resurrected the dead `shared/models/{restaurant,branch}.dart` classes into real, repository-backed,
+admin-manageable entities (`Organization -> Restaurant -> Branch`), seeded with exactly one of each
+whose `Branch.id` matches `currentBranchIdProvider`'s pre-existing hardcoded `'branch-1'` literal —
+"preserve existing branchId references" holds for all ~177 existing bare-`String` `branchId` call
+sites across courier/POS/CRM/feedback/restaurant without touching any of them.
+
+**Stated honestly**: no per-organization data isolation is actually enforced anywhere data is stored —
+every repository in this codebase remains a single shared in-memory store. This is the identity/
+boundary *shape* a real backend would need to start enforcing isolation against, not isolation itself.
+"Brand" (named in the brief's "org/brand/branch" scope list) has no separate entity — `Restaurant` is
+the closest equivalent, but nothing else in Phase 6 needed a restaurant-level scope, so the
+localization foundation (Decision 6) scopes to `organization`/`branch` only, echoing the pre-existing
+Loyalty/"Wallet" naming-gap precedent (ADR-021) rather than inventing an unused third scope level.
+
+### Decision 4 — Admin shell: one responsive, grouped, defense-in-depth navigation structure
+
+`AdminShellScreen` — a single `LayoutBuilder` picking a desktop sidebar (≥1000px), tablet
+`NavigationRail` (600–999px), or phone `Drawer` (<600px), all three fed by the same `_groups()` method
+so there is one navigation structure to maintain. 18 destinations under 5 groups (Genel Bakış,
+Operasyonlar, Müşteri & Sadakat, Yapılandırma, Sistem) — "do not put every page directly in one menu."
+The shell's own group/item `visibleToRoles` filtering is a UX convenience only; **every individual
+destination is independently wrapped in its own `RoleGate`** at push time, mirroring
+`OperationsHubScreen`'s Sprint 5E precedent — a deep link to any admin route is re-checked at the
+screen itself, not just hidden from the nav list. `AdminUnauthorizedScreen` (no session) and
+`AdminSessionExpiredScreen` (revoked/expired session) are distinct states, checked before the shell
+renders anything. `AdminComingSoonView` replaces fabricated screens for modules with no real admin
+surface yet (Orders, POS, Cash, Menu, Reports) — each names the specific reason, never presented as a
+loading/empty state.
+
+### Decision 5 — Customer photo moderation: opaque references only, never bytes
+
+No `image_picker`/cloud-storage dependency exists in this codebase (confirmed during the pre-
+implementation survey) — `CustomerPhoto.photoRef` is a fully opaque string throughout the domain/
+use-case/screen layers; the moderation screen displays the raw ref as text, never an `Image` widget.
+"Media bytes must not be stored in audit logs" is satisfied structurally, not by caller discipline.
+Max-5-photo eligibility counts `pendingReview`/`underReview`/`approved` only (`rejected`/`removed`
+never count, `CustomerPhoto.countsTowardEligibleLimit`). "0 or 1 selected profile photo" is enforced by
+`SelectCustomerProfilePhoto` deselecting every sibling before selecting the new one — never a separate
+invariant check that could drift from the write path. "No hard deletion of moderation history" holds
+structurally: `removed` is a status value, not a delete — no delete method exists on the repository.
+
+### Decision 6 — Localization: master language is a constant, not configurable data
+
+`SupportedLanguage.tr` is a fixed `static const master` — never stored as mutable config, since it is
+never meant to change ("Master language Turkish (tr)"). `LocalizationConfig` (per organization/branch
+scope) holds `enabledLanguages`/`fallbackLanguage` only; `SetLanguageEnabled` refuses to disable the
+master language or the current fallback (change the fallback first). `TranslationEntry` carries
+independent `isMachineGenerated`/`isManuallyEdited` markers (a translation can be both — machine-
+authored, later human-edited) plus `sourceContentRevision`/`translationRevision` counters and a
+`draft -> needsReview -> approved` review lifecycle. "Do not overwrite manually edited translations
+automatically" is enforced by `SetTranslationContent` refusing a machine-sourced write against an
+entry already marked manually edited — a human overwrite (`isMachineGenerated: false`) is always
+permitted. `AiTranslationProvider`/`GastronomyGlossaryProvider` are dormant contracts only — no
+implementation exists, nothing calls them, matching `CrashReportingService`'s own pre-Firebase-wiring
+precedent — "do not call a paid AI translation service."
+
+### Decision 7 — Audit Center and Device Registry: projections, never merged write-side stores
+
+Both follow the same shape: a new read-model type (`AuditCenterEntry`/`DeviceRegistryEntry`) built by
+a pure `BuildXProjection` use case that reads several bounded contexts' own repositories and normalizes
+their rows — the source repositories are never touched, merged, or rewritten.
+
+`BuildAuditCenterProjection` covers 4 of this codebase's 8 audit trails — courier, kitchen,
+restaurant-operations, and the new admin trail — the only 4 with a branch-scoped or unscoped query.
+Cash/closure/courier-settlement/CRM audit trails are **excluded**, not silently dropped: each was
+checked and confirmed to have only a narrow, non-branch-scoped query (drawer/session-id, order-id,
+settlement-session-id, actor/target-id respectively) — retrofitting a new query method onto each is
+judged separate, larger work each domain owner should do, consistent with the "without retrofitting
+date-range query methods onto all of them" boundary this sprint set for itself. Filtering
+(actor/domain/date-range) is entirely client-side, applied after fetching each source's full
+branch-scoped history — an explicitly named "future backend query seam," not real server-side
+filtering or pagination.
+
+`BuildDeviceRegistryProjection` merges `KitchenDisplayDevice`/`CourierDevice` (owned by their own
+bounded contexts, read/toggle-only here via `SetSourceDeviceActive`, which writes back through their
+own repositories) with the new `AdminDeviceRegistration` (the only record for
+`posTerminal`/`printer`/`paymentTerminal`, which have no other owning aggregate).
+`CourierDevice` carries no `branchId` — branch scoping for it is derived by first resolving the
+branch's couriers via `CourierRepository.findByBranchId`, then each courier's devices, the same
+N+1-by-branch pattern `BuildAdminOverviewSnapshot`'s `activeCourierCount` already established. No
+remote restart/reconnect action exists anywhere — only active/inactive/archive — "no real remote
+restart claim unless supported."
+
+### Decision 8 — 6H/6I/6J/6K: satisfied by 6A's shell wiring, not separately built
+
+CRM segmentation (`CustomerSegmentationAdminScreen`), visit-reward administration
+(`VisitRewardRulesAdminScreen`), survey administration (`SurveyAdminScreen`), notification-campaign
+administration (`CustomerNotificationCampaignsAdminScreen`), and feedback administration
+(`FeedbackAdminScreen`) are all pre-existing, real, Sprint-5D-built screens — Phase 6 wired them
+directly into the shell's "Müşteri & Sadakat"/"Geri Bildirim" destinations during 6A rather than
+building new domain work, since the brief itself said "expose completed Phase 5 CRM modules" and "do
+not duplicate completed Phase 3–5 modules." Menu/operation configuration entry points (6K) are
+satisfied by the shell's honest `AdminComingSoonView` placeholders for Orders/POS/Cash/Menu, each
+naming exactly what's missing, per the brief's own "if a target module has no real admin screen,
+report it... do not fabricate complete management capability."
+
+### Decision 9 — Branch-scoped authorization: a real gap found and closed in the 6P verification pass
+
+The 6P verification pass found `ActorSession.branchAccess`/`hasBranchAccess` (Decision 1) was
+**decorative**: computed and stored at sign-in, but never consulted by any authorization decision —
+`RealPosAuthorizationPolicy.authorize` checked role permission only, and its `context` parameter was
+accepted but never read; every admin use case called `authorize()` with no branch information at all.
+A manager granted access only to branch A could act on branch B's data through any branch-scoped admin
+action. This is one of the kickoff brief's explicit phase-gate blockers ("do not mark Phase 6 approved
+if... branch access is not enforced") — closed, not just documented, before Phase 6 could be considered
+for approval.
+
+Fix: a new `kBranchIdAuthorizationContextKey` context convention. `RealPosAuthorizationPolicy` now
+denies a non-admin actor lacking `hasBranchAccess(targetBranchId)` when that key is present in
+`context` — additive, so every pre-existing non-branch-scoped call site (all of Phase 3–5, and every
+Phase 6 org-wide action) is unaffected. `StaffRole.admin` is exempt — an org-wide oversight role by
+design, matching 6F's own "Admin: permitted scope, Manager: branch scope" tiering, and avoiding a
+bootstrap paradox (`BootstrapFirstAdminAccount` grants no branch access, so a non-exempt admin
+couldn't act on any branch immediately after bootstrapping). Wired into every genuinely branch-scoped
+Phase 6 admin use case: `SetBranchStatus`, `SetBranchEmergencyStop`, `RegisterDevice`,
+`SetSourceDeviceActive`, `SetAdminDeviceStatus` (a second authorize call after the entity lookup, so
+an unauthorized-by-branch actor never learns whether a device id exists before the base check would
+already have denied them), `SetLanguageEnabled`, `SetFallbackLanguage`.
+
+**Stated honestly, not expanded further**: staff management actions (`AssignStaffRole`,
+`SetStaffMemberStatus`, `GrantStaffBranchAccess`, etc.) operate on `StaffMember`, which is org-wide
+with a *set* of granted branches, not a single target branch — "can a manager only manage staff within
+branches they share access with" is a different, more complex check this pass did not attempt to
+solve, and is carried into the Closure Record as a named residual gap rather than silently expanded
+into. Customer/CustomerPhoto entities have no branch field in this codebase's CRM model at all, so
+branch-scoping does not apply to `SetCustomerAccountStatus`/`ModerateCustomerPhoto`/
+`AddCustomerAdminNote` — not an oversight, but a real absence of a branch concept on those entities.
+
+### Consequences
+
+- **9 implementation commits** (6M, 6L, 6N, 6O, plus the 6P branch-scoping fix, each independently
+  formatted/analyzed/tested; 6A/6B/6C/6D/6E/6F+6G landed earlier in this session before the context
+  window's summary boundary).
+- **Both of the brief's own explicit "do not mark approved if" conditions that were at real risk are
+  now satisfied**: staff authorization is functional end-to-end (`RealPosAuthorizationPolicy` +
+  `RoleGate` on every destination), and branch access is now actually enforced (Decision 9) rather than
+  decorative. Admin routes are genuinely reachable (`ProfileScreen -> AdminShellScreen`, confirmed
+  Sprint 5E precedent extended). Customer/photo data is never exposed unsafely (Decision 5). Every
+  admin mutation writes an `AdminAuditEntry`.
+- **No new pub dependency.** No `PosAuthorizedAction` split. No real staff login backend — `ActorSession`
+  population remains manual/seeded, explicitly deferred, same as ADR-022. No full multi-tenant data
+  isolation (Decision 3). No real AI translation/glossary integration (Decision 6). No real remote
+  device restart (Decision 7).
+- **Honest residual gaps, carried into the Closure Record** (`docs/feature_status.md`): staff-management
+  actions are not branch-scoped by the actor's own granted branches (Decision 9); Cash/Closure/
+  CourierSettlement/CRM audit trails are not in the unified Audit Center (Decision 7); feature flags
+  are view-only (no write API exists anywhere in this codebase to edit them from); maintenance mode is
+  a real, audited, admin-toggleable flag that nothing yet reads to actually block traffic (an honest
+  "foundation," per the brief's own framing); Reports/Orders/POS/Cash/Menu admin entry points remain
+  `AdminComingSoonView` placeholders.
+
+### Confidence
+
+72%. Every decision above is grounded in code read this session (branch-access enforcement gap
+confirmed by direct grep of every `hasBranchAccess`/`.branchAccess`/`context:` call site before any fix
+was written, not assumed), and every new use case has a corresponding passing test (1816 total tests
+passing, 0 `flutter analyze` issues). The residual uncertainty is concentrated in: whether Decision 9's
+scope boundary (branch-scope the clearly single-branch actions, explicitly not staff-management's
+multi-branch-grant actions) will read as principled or as leaving too much of "cross-branch access must
+require explicit authorization" unclosed to a strict reviewer; whether `RolePermissionMap`'s 17 new
+tier assignments (Decision 2) match how the business would actually categorize them, unchanged
+uncertainty from ADR-022's own equivalent judgment call; and whether 6H/6I/6J/6K being satisfied by
+shell-wiring alone (Decision 8) undersells what "CRM/Loyalty/Survey/Feedback administration" was meant
+to require versus what Sprint 5D already built.

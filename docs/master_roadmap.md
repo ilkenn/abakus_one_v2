@@ -136,6 +136,13 @@
 - Web/admin impact: Role/permission management screens in the admin console.
 - Test requirements: Adversarial permission-boundary tests (a role must never be able to call an endpoint its permissions don't cover, tested at the API layer, not just UI).
 - Completion criteria: At least 3 distinct roles (e.g. Branch Manager, Kitchen Staff, Cashier) demonstrably cannot perform each other's restricted actions, verified by automated tests.
+- **Note (2026-08-01, the ad hoc "Phase 6" admin-platform sprint, `docs/decisions.md` ADR-023)**: a
+  client-side, backend-neutral prototype of this shape now exists — `StaffRole`/`RolePermissionMap`/
+  `RealPosAuthorizationPolicy`, 4 roles, deny-by-default, unit-tested at the policy layer. This does
+  **not** satisfy this item: there is no permission-check middleware (no backend/API exists at all),
+  and "verified by automated tests" here means adversarial API-layer tests, not the Flutter unit tests
+  this prototype has. Distinct ad hoc numbering, per `CLAUDE.md` §1 — completing it does not mean
+  IA-002 has started.
 
 #### IA-003 — Audit Event Pipeline
 - Description: Implement `AuditEvent` emission as a first-class, append-only record for every mutating action across the platform, starting with identity events.
