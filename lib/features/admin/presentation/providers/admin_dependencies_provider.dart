@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../courier/presentation/providers/courier_core_dependencies_provider.dart';
+import '../../../pos/presentation/providers/kds_dependencies_provider.dart';
+import '../../../restaurant/presentation/providers/restaurant_operations_dependencies_provider.dart';
 import '../../application/identity/branch_id_generator.dart';
 import '../../application/identity/customer_admin_note_id_generator.dart';
 import '../../application/identity/customer_photo_id_generator.dart';
@@ -8,6 +11,7 @@ import '../../application/identity/organization_id_generator.dart';
 import '../../application/identity/restaurant_id_generator.dart';
 import '../../application/identity/staff_member_id_generator.dart';
 import '../../application/identity/staff_role_change_event_id_generator.dart';
+import '../../application/use_cases/build_audit_center_projection.dart';
 import '../../data/admin_audit_entry_repository.dart';
 import '../../data/branch_repository.dart';
 import '../../data/customer_admin_note_repository.dart';
@@ -137,4 +141,19 @@ final customerPhotoRepositoryProvider =
 final customerPhotoIdGeneratorProvider =
     Provider<CustomerPhotoIdGenerator>((ref) {
   return SequentialCustomerPhotoIdGenerator();
+});
+
+// Phase 6M — unified Audit Center projection. See
+// `BuildAuditCenterProjection`'s own doc comment for exactly which 4 of
+// this codebase's 8 audit trails are included and why.
+final buildAuditCenterProjectionProvider =
+    Provider<BuildAuditCenterProjection>((ref) {
+  return BuildAuditCenterProjection(
+    courierAuditRepository:
+        ref.watch(courierOperationalAuditEntryRepositoryProvider),
+    kitchenAuditRepository: ref.watch(kitchenAuditEntryRepositoryProvider),
+    restaurantOperationsAuditRepository:
+        ref.watch(restaurantOperationsAuditEntryRepositoryProvider),
+    adminAuditRepository: ref.watch(adminAuditEntryRepositoryProvider),
+  );
 });

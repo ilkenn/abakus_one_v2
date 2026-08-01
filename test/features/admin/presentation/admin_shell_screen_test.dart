@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/admin_shell_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/admin_session_expired_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/admin_unauthorized_screen.dart';
+import 'package:abakus_one_v2/features/admin/presentation/screens/audit_center_screen.dart';
 import 'package:abakus_one_v2/features/crm/presentation/screens/customer_segmentation_admin_screen.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
@@ -94,6 +95,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(CustomerSegmentationAdminScreen), findsOneWidget);
+  });
+
+  testWidgets('a manager can open the Audit Center from Sistem group',
+      (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+      ),
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Denetim'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.tap(find.text('Denetim'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AuditCenterScreen), findsOneWidget);
   });
 
   testWidgets(

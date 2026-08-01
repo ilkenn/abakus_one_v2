@@ -21,6 +21,7 @@ import '../widgets/admin_coming_soon_view.dart';
 import 'admin_overview_screen.dart';
 import 'admin_session_expired_screen.dart';
 import 'admin_unauthorized_screen.dart';
+import 'audit_center_screen.dart';
 import 'branch_admin_screen.dart';
 import 'customer_management_screen.dart';
 import 'customer_photo_moderation_screen.dart';
@@ -373,12 +374,9 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             label: 'Denetim',
             icon: Icons.fact_check_outlined,
             visibleToRoles: const {StaffRole.manager, StaffRole.admin},
-            builder: (context, ref) => RoleGate.forRoles(
-              const {StaffRole.manager, StaffRole.admin},
-              child: const AdminComingSoonView(
-                title: 'Denetim',
-                reason: 'Birleşik denetim merkezi ayrı bir adımda eklenecek.',
-              ),
+            builder: (context, ref) => RoleGate.forAction(
+              PosAuthorizedAction.viewAuditCenter,
+              child: AuditCenterScreen(branchId: branchId),
             ),
           ),
           _AdminNavItem(
