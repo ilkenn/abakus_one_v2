@@ -7,8 +7,8 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
-import '../../../navigation/presentation/screens/operations_hub_screen.dart';
 import '../../application/use_cases/bootstrap_first_admin_account.dart';
+import 'admin_shell_screen.dart';
 import '../../domain/staff/staff_member.dart';
 import '../../domain/staff/staff_member_status.dart';
 import '../providers/admin_dependencies_provider.dart';
@@ -64,7 +64,7 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
       return;
     }
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const OperationsHubScreen()),
+      MaterialPageRoute(builder: (_) => const AdminShellScreen()),
     );
   }
 

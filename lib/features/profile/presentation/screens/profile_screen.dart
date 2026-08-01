@@ -21,7 +21,7 @@ import '../../../crm/presentation/providers/current_customer_provider.dart';
 import '../../../crm/presentation/screens/customer_visit_passport_screen.dart';
 import '../../../feedback/presentation/screens/customer_feedback_screen.dart';
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
-import '../../../navigation/presentation/screens/operations_hub_screen.dart';
+import '../../../admin/presentation/screens/admin_shell_screen.dart';
 import '../../../admin/presentation/screens/staff_sign_in_screen.dart';
 import '../../../pos/presentation/providers/actor_session_provider.dart';
 
@@ -349,7 +349,7 @@ class ProfileScreen extends ConsumerWidget {
                         subtitle: Text(
                           (ref.watch(actorSessionProvider)?.roles.isNotEmpty ??
                                   false)
-                              ? 'Kurye, CRM ve geri bildirim yönetimi'
+                              ? 'Personel, şube, CRM ve operasyon yönetimi'
                               : 'Personel/yönetici girişi',
                         ),
                         trailing: const Icon(Icons.chevron_right_rounded),
@@ -363,7 +363,7 @@ class ProfileScreen extends ConsumerWidget {
                             context,
                             MaterialPageRoute(
                               builder: (context) => hasSession
-                                  ? const OperationsHubScreen()
+                                  ? const AdminShellScreen()
                                   : const StaffSignInScreen(),
                             ),
                           );

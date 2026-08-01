@@ -8,7 +8,7 @@ import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
 import 'package:abakus_one_v2/features/favorites/presentation/screens/favorites_screen.dart';
 import 'package:abakus_one_v2/features/feedback/presentation/screens/customer_feedback_screen.dart';
-import 'package:abakus_one_v2/features/navigation/presentation/screens/operations_hub_screen.dart';
+import 'package:abakus_one_v2/features/admin/presentation/screens/admin_shell_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/staff_sign_in_screen.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
@@ -173,8 +173,8 @@ void main() {
   );
 
   testWidgets(
-    'Yonetici Paneli menu ogesi bir personel rolu ile OperationsHubScreen '
-    'acar (Sprint 5E)',
+    'Yonetici Paneli menu ogesi bir personel rolu ile AdminShellScreen '
+    'acar (Phase 6A)',
     (WidgetTester tester) async {
       await pumpProfileScreen(
         tester,
@@ -192,7 +192,7 @@ void main() {
       await tester.tap(find.text('Yönetici Paneli'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(OperationsHubScreen), findsOneWidget);
+      expect(find.byType(AdminShellScreen), findsOneWidget);
     },
   );
 }
