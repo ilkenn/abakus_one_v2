@@ -35,6 +35,12 @@ import '../identity/goods_receipt_line_id_generator.dart';
 /// still recorded here but its stock movement is skipped — the same
 /// honest cross-unit limitation every other Phase 7 aggregator
 /// documents.
+///
+/// **Idempotent by [idempotencyKey]**: a duplicate call with the same
+/// key (e.g. a retried network request) returns the original receipt
+/// unchanged instead of recording a second delivery and doubling the
+/// stock increase — the same guarantee `RecordStockMovement` and
+/// `ConsumeStockForOrder` give their own callers.
 class ReceiveGoods {
   const ReceiveGoods({
     required PosAuthorizationPolicy authorizationPolicy,
@@ -77,6 +83,7 @@ class ReceiveGoods {
     required String branchId,
     required String locationId,
     required List<GoodsReceiptLineInput> lines,
+    required String idempotencyKey,
     required String performedByStaffId,
     required DateTime performedAt,
   }) async {
@@ -88,6 +95,10 @@ class ReceiveGoods {
     if (!authResult.granted) {
       throw AuthorizationDeniedViolation(actionName: action.name);
     }
+
+    final existingReceipt =
+        await _receiptRepository.findByIdempotencyKey(idempotencyKey);
+    if (existingReceipt != null) return existingReceipt;
 
     final order = await _purchaseOrderRepository.findById(purchaseOrderId);
     if (order == null) {
@@ -112,6 +123,7 @@ class ReceiveGoods {
       receivedByStaffId: performedByStaffId,
       receivedAt: performedAt,
       createdAt: performedAt,
+      idempotencyKey: idempotencyKey,
     );
     await _receiptRepository.save(receipt);
 

@@ -189,6 +189,7 @@ void main() {
             receivedQuantity: Quantity.fromWhole(10, InventoryUnit.kilogram),
           ),
         ],
+        idempotencyKey: 'receive-1',
         performedByStaffId: 'manager-1',
         performedAt: DateTime(2026, 1, 3),
       );
@@ -199,6 +200,27 @@ void main() {
 
       final finalOrder = await orderRepository.findById(order.id);
       expect(finalOrder!.status, PurchaseOrderStatus.received);
+
+      // A retried call with the same idempotency key never doubles the
+      // stock increase.
+      await receive(
+        purchaseOrderId: order.id,
+        branchId: 'branch-1',
+        locationId: 'location-1',
+        lines: [
+          GoodsReceiptLineInput(
+            purchaseOrderLineId: orderLine.id,
+            receivedQuantity: Quantity.fromWhole(10, InventoryUnit.kilogram),
+          ),
+        ],
+        idempotencyKey: 'receive-1',
+        performedByStaffId: 'manager-1',
+        performedAt: DateTime(2026, 1, 3),
+      );
+
+      final balanceAfterRetry = await branchStockRepository
+          .findByItemAndLocation('item-rice', 'location-1');
+      expect(balanceAfterRetry!.quantityOnHand.smallestUnits, 10000);
     });
 
     test(
@@ -299,6 +321,7 @@ void main() {
             receivedQuantity: Quantity.fromWhole(4, InventoryUnit.kilogram),
           ),
         ],
+        idempotencyKey: 'receive-2',
         performedByStaffId: 'manager-1',
         performedAt: DateTime(2026, 1, 3),
       );

@@ -3,6 +3,7 @@ import '../domain/goods_receipt.dart';
 abstract interface class GoodsReceiptRepository {
   Future<void> save(GoodsReceipt receipt);
   Future<List<GoodsReceipt>> findByPurchaseOrderId(String purchaseOrderId);
+  Future<GoodsReceipt?> findByIdempotencyKey(String idempotencyKey);
 }
 
 class InMemoryGoodsReceiptRepository implements GoodsReceiptRepository {
@@ -19,5 +20,13 @@ class InMemoryGoodsReceiptRepository implements GoodsReceiptRepository {
     return List.unmodifiable(
       _receipts.where((r) => r.purchaseOrderId == purchaseOrderId),
     );
+  }
+
+  @override
+  Future<GoodsReceipt?> findByIdempotencyKey(String idempotencyKey) async {
+    for (final receipt in _receipts) {
+      if (receipt.idempotencyKey == idempotencyKey) return receipt;
+    }
+    return null;
   }
 }

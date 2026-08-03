@@ -11,6 +11,7 @@ class GoodsReceipt {
     required this.receivedByStaffId,
     required this.receivedAt,
     required this.createdAt,
+    required this.idempotencyKey,
   });
 
   final String id;
@@ -20,4 +21,10 @@ class GoodsReceipt {
   final String receivedByStaffId;
   final DateTime receivedAt;
   final DateTime createdAt;
+
+  /// A retried [ReceiveGoods] call with the same key returns the
+  /// original receipt instead of recording a second delivery — "do not
+  /// double a stock increase," mirroring `RecordStockMovement`'s own
+  /// idempotency guarantee.
+  final String idempotencyKey;
 }
