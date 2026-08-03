@@ -1562,6 +1562,32 @@ final class InvalidImportStatusTransitionViolation
 /// reached `ImportStatus.approved` — "the user must approve before
 /// authoritative records are created," enforced structurally, not by
 /// caller discipline (Phase 7, `docs/decisions.md` ADR-024).
+/// A `SetupTemplate` was constructed with `isPublic: true` and a
+/// non-null `ownerOrganizationId`, or `isPublic: false` and a null one —
+/// "Abaküs Street Food's private recipes must not become public SaaS
+/// templates," enforced structurally (Phase 7, `docs/decisions.md`
+/// ADR-024).
+final class InvalidSetupTemplateOwnershipViolation
+    extends BusinessRuleViolation {
+  const InvalidSetupTemplateOwnershipViolation();
+
+  @override
+  String get description =>
+      'A public template must have no owner organization; a private '
+      'template must have one';
+}
+
+/// A caller referenced a `SetupTemplate` id that does not exist in the
+/// relevant repository (Phase 7, `docs/decisions.md` ADR-024).
+final class UnknownSetupTemplateViolation extends BusinessRuleViolation {
+  const UnknownSetupTemplateViolation({required this.id});
+
+  final String id;
+
+  @override
+  String get description => 'Unknown SetupTemplate: "$id"';
+}
+
 final class ImportNotApprovedViolation extends BusinessRuleViolation {
   const ImportNotApprovedViolation({required this.importJobId});
 

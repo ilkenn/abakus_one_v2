@@ -16,6 +16,7 @@ import 'package:abakus_one_v2/features/entitlements/presentation/screens/entitle
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
+import 'package:abakus_one_v2/features/restaurant_setup/presentation/screens/setup_templates_screen.dart';
 import 'package:abakus_one_v2/features/smart_import/presentation/screens/import_jobs_screen.dart';
 
 import '../../entitlements/test_support/entitlement_test_fixtures.dart';
@@ -161,6 +162,37 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ImportJobsScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'a manager with branch access and the flag enabled can open Kurulum '
+      'Şablonları from Akıllı Kurulum & Stok group', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-1'},
+      ),
+      extraOverrides: [
+        featureFlagsServiceProvider.overrideWithValue(
+          FakeFeatureFlagsService(
+            enabledKeys: {FeatureFlagsKeys.smartRestaurantSetupEnabled},
+          ),
+        ),
+      ],
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Kurulum Şablonları'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.tap(find.text('Kurulum Şablonları').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SetupTemplatesScreen), findsOneWidget);
   });
 
   testWidgets(
