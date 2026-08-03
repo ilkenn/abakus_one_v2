@@ -1915,3 +1915,19 @@ final class AllergenOverrideReasonRequiredViolation
   String get description =>
       'A manually-entered allergen declaration requires a non-empty reason';
 }
+
+/// A caller referenced a `MenuLabelRule`/`MenuLabelSuggestion` id
+/// that does not exist in the relevant repository (Phase 7,
+/// `docs/decisions.md` ADR-024).
+final class UnknownMenuLabelEntityViolation extends BusinessRuleViolation {
+  const UnknownMenuLabelEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
