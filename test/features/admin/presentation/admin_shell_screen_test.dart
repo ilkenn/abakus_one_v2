@@ -10,6 +10,7 @@ import 'package:abakus_one_v2/features/admin/presentation/screens/device_registr
 import 'package:abakus_one_v2/features/admin/presentation/screens/localization_admin_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/system_health_admin_screen.dart';
 import 'package:abakus_one_v2/features/crm/presentation/screens/customer_segmentation_admin_screen.dart';
+import 'package:abakus_one_v2/features/entitlements/presentation/screens/entitlement_admin_screen.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
@@ -171,6 +172,31 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(LocalizationAdminScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'an admin can open Abonelikler (Entitlements) from Sistem '
+      'group', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'admin-1',
+        roles: {StaffRole.admin},
+        activeRole: StaffRole.admin,
+      ),
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Abonelikler'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -150));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Abonelikler').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(EntitlementAdminScreen), findsOneWidget);
   });
 
   testWidgets('a manager cannot see the admin-only Localization destination',

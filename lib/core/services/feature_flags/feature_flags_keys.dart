@@ -24,6 +24,26 @@ abstract final class FeatureFlagsKeys {
 
   /// QR-code table/session scanning.
   static const String qrScannerEnabled = 'qrScannerEnabled';
+
+  // Phase 7 — Smart Restaurant Setup, Inventory & Food Intelligence
+  // (`docs/decisions.md` ADR-024). Each gates whether the module's
+  // functionality is *technically enabled* — a separate axis from
+  // `EntitlementModule` ("has the tenant purchased it?") and
+  // `PosAuthorizedAction` ("may this actor do it?"); see
+  // `features/entitlements/application/use_cases/check_module_access.dart`
+  // for where all three combine.
+  static const String smartRestaurantSetupEnabled =
+      'smartRestaurantSetupEnabled';
+  static const String menuImportEnabled = 'menuImportEnabled';
+  static const String inventoryEnabled = 'inventoryEnabled';
+  static const String recipesEnabled = 'recipesEnabled';
+  static const String nutritionEnabled = 'nutritionEnabled';
+  static const String allergensEnabled = 'allergensEnabled';
+  static const String purchasingEnabled = 'purchasingEnabled';
+  static const String suppliersEnabled = 'suppliersEnabled';
+  static const String costingEnabled = 'costingEnabled';
+  static const String profitabilityEnabled = 'profitabilityEnabled';
+  static const String advancedReportingEnabled = 'advancedReportingEnabled';
 }
 
 /// Documented safe default for each [FeatureFlagsKeys] flag — the value a
@@ -47,4 +67,20 @@ abstract final class FeatureFlagsDefaults {
   static const bool fortuneWheelEnabled = false;
   static const bool reservationsEnabled = false;
   static const bool qrScannerEnabled = false;
+
+  // Phase 7 — all fail-closed by default, matching every other
+  // not-yet-launched flag above ("critical functionality must not become
+  // enabled merely because Remote Config initialization fails" doesn't
+  // apply here — none of these are critical, shipped functionality yet).
+  static const bool smartRestaurantSetupEnabled = false;
+  static const bool menuImportEnabled = false;
+  static const bool inventoryEnabled = false;
+  static const bool recipesEnabled = false;
+  static const bool nutritionEnabled = false;
+  static const bool allergensEnabled = false;
+  static const bool purchasingEnabled = false;
+  static const bool suppliersEnabled = false;
+  static const bool costingEnabled = false;
+  static const bool profitabilityEnabled = false;
+  static const bool advancedReportingEnabled = false;
 }

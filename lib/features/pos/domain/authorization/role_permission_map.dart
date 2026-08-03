@@ -68,6 +68,19 @@ abstract final class RolePermissionMap {
     PosAuthorizedAction.branchEmergencyStop,
     PosAuthorizedAction.manageLocalizationConfig,
     PosAuthorizedAction.manageMaintenanceMode,
+    // Phase 7 Smart Setup/Inventory/Food-Intelligence (`docs/decisions.md`
+    // ADR-024) — supplier pricing and costing configuration are the
+    // "supplier-price confidentiality"/"recipe confidentiality" adjacent
+    // actions the brief calls out as most sensitive; profitability
+    // (contribution margins, cost coverage) is business-financial data,
+    // not operational data any manager needs day to day.
+    PosAuthorizedAction.manageSupplierPricing,
+    PosAuthorizedAction.manageCostingConfiguration,
+    PosAuthorizedAction.viewProfitability,
+    // "Has the tenant purchased this module?" is a subscription/billing-
+    // adjacent decision, deliberately admin-only, distinct from
+    // `manageOrganization`'s structural org edits.
+    PosAuthorizedAction.manageEntitlements,
   };
 
   /// Supervisory/approval/oversight actions — reviewing, overriding,
@@ -111,6 +124,19 @@ abstract final class RolePermissionMap {
     PosAuthorizedAction.manageDeviceRegistry,
     PosAuthorizedAction.viewAuditCenter,
     PosAuthorizedAction.viewFeatureFlags,
+    // Phase 7 Smart Setup/Inventory/Food-Intelligence (`docs/decisions.md`
+    // ADR-024) — day-to-day setup/inventory/recipe/purchasing management.
+    PosAuthorizedAction.manageSmartImport,
+    PosAuthorizedAction.manageRestaurantSetup,
+    PosAuthorizedAction.manageInventory,
+    PosAuthorizedAction.recordStockMovement,
+    PosAuthorizedAction.approveStockCountAdjustment,
+    PosAuthorizedAction.manageRecipes,
+    PosAuthorizedAction.manageNutrition,
+    PosAuthorizedAction.manageAllergens,
+    PosAuthorizedAction.managePurchasing,
+    PosAuthorizedAction.manageSuppliers,
+    PosAuthorizedAction.viewAdvancedReporting,
   };
 
   /// Front-line, day-to-day execution actions.
@@ -130,6 +156,11 @@ abstract final class RolePermissionMap {
     // (e.g. hiding sensitive fields) happens presentation-side, not by a
     // second action.
     PosAuthorizedAction.viewCustomerAdmin,
+    // Phase 7 (`docs/decisions.md` ADR-024) — front-line count/waste
+    // recording; approving a resulting adjustment stays manager-tier
+    // ("cashier/counter cannot approve their own material variance").
+    PosAuthorizedAction.recordStockCount,
+    PosAuthorizedAction.recordWaste,
   };
 
   /// A courier's own delivery-lifecycle actions — never automatically

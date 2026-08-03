@@ -1501,6 +1501,17 @@ final class StaffMemberArchivedViolation extends BusinessRuleViolation {
 /// change — `archived` is terminal, same reasoning as
 /// `BranchArchivedViolation`/`StaffMemberArchivedViolation` (Phase 6L,
 /// `docs/decisions.md` ADR-023).
+/// A caller referenced an `EntitlementGrant` id that does not exist in
+/// the relevant repository (Phase 7, `docs/decisions.md` ADR-024).
+final class UnknownEntitlementGrantViolation extends BusinessRuleViolation {
+  const UnknownEntitlementGrantViolation({required this.id});
+
+  final String id;
+
+  @override
+  String get description => 'Unknown EntitlementGrant: "$id"';
+}
+
 final class AdminDeviceRegistrationArchivedViolation
     extends BusinessRuleViolation {
   const AdminDeviceRegistrationArchivedViolation({required this.deviceId});

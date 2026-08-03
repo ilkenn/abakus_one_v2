@@ -32,6 +32,18 @@ class RemoteConfigFeatureFlagsService implements FeatureFlagsService {
     FeatureFlagsKeys.fortuneWheelEnabled: 'fortune_wheel_enabled',
     FeatureFlagsKeys.reservationsEnabled: 'reservations_enabled',
     FeatureFlagsKeys.qrScannerEnabled: 'qr_scanner_enabled',
+    FeatureFlagsKeys.smartRestaurantSetupEnabled:
+        'smart_restaurant_setup_enabled',
+    FeatureFlagsKeys.menuImportEnabled: 'menu_import_enabled',
+    FeatureFlagsKeys.inventoryEnabled: 'inventory_enabled',
+    FeatureFlagsKeys.recipesEnabled: 'recipes_enabled',
+    FeatureFlagsKeys.nutritionEnabled: 'nutrition_enabled',
+    FeatureFlagsKeys.allergensEnabled: 'allergens_enabled',
+    FeatureFlagsKeys.purchasingEnabled: 'purchasing_enabled',
+    FeatureFlagsKeys.suppliersEnabled: 'suppliers_enabled',
+    FeatureFlagsKeys.costingEnabled: 'costing_enabled',
+    FeatureFlagsKeys.profitabilityEnabled: 'profitability_enabled',
+    FeatureFlagsKeys.advancedReportingEnabled: 'advanced_reporting_enabled',
   };
 
   @override

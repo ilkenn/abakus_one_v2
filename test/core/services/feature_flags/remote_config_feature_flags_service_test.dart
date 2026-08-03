@@ -30,6 +30,17 @@ void main() {
         FeatureFlagsKeys.fortuneWheelEnabled,
         FeatureFlagsKeys.reservationsEnabled,
         FeatureFlagsKeys.qrScannerEnabled,
+        FeatureFlagsKeys.smartRestaurantSetupEnabled,
+        FeatureFlagsKeys.menuImportEnabled,
+        FeatureFlagsKeys.inventoryEnabled,
+        FeatureFlagsKeys.recipesEnabled,
+        FeatureFlagsKeys.nutritionEnabled,
+        FeatureFlagsKeys.allergensEnabled,
+        FeatureFlagsKeys.purchasingEnabled,
+        FeatureFlagsKeys.suppliersEnabled,
+        FeatureFlagsKeys.costingEnabled,
+        FeatureFlagsKeys.profitabilityEnabled,
+        FeatureFlagsKeys.advancedReportingEnabled,
       ];
 
       for (final flag in knownFlags) {

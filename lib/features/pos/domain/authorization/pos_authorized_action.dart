@@ -36,7 +36,13 @@
 /// `lib/features/admin` feature (`docs/decisions.md` ADR-023) — still the
 /// same generic contract, not split, though ADR-023 flags that this
 /// enum is now approaching the ~150-value threshold ADR-022 named as the
-/// trigger for a future bounded-context split.
+/// trigger for a future bounded-context split. The Phase 7 Smart Setup/
+/// Inventory/Food-Intelligence values (`manageSmartImport` onward) extend
+/// it a seventh time, from the new `lib/features/inventory`,
+/// `lib/features/recipes`, `lib/features/purchasing`,
+/// `lib/features/costing`, `lib/features/profitability`, and
+/// `lib/features/smart_import` features (`docs/decisions.md` ADR-024) —
+/// now past 90 values, closer still to the named split trigger.
 enum PosAuthorizedAction {
   viewClosedAccount,
   reopenOrder,
@@ -123,4 +129,21 @@ enum PosAuthorizedAction {
   manageLocalizationConfig,
   viewFeatureFlags,
   manageMaintenanceMode,
+  manageSmartImport,
+  manageRestaurantSetup,
+  manageInventory,
+  recordStockMovement,
+  recordStockCount,
+  approveStockCountAdjustment,
+  recordWaste,
+  manageRecipes,
+  manageNutrition,
+  manageAllergens,
+  managePurchasing,
+  manageSuppliers,
+  manageSupplierPricing,
+  manageCostingConfiguration,
+  viewProfitability,
+  manageEntitlements,
+  viewAdvancedReporting,
 }
