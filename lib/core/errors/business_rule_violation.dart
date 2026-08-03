@@ -1931,3 +1931,35 @@ final class UnknownMenuLabelEntityViolation extends BusinessRuleViolation {
   @override
   String get description => 'Unknown $entityName: "$id"';
 }
+
+/// A caller referenced a `StockConsumptionRecord`/
+/// `StockConsumptionChannelPolicy` id that does not exist in the
+/// relevant repository (Phase 7, `docs/decisions.md` ADR-024).
+final class UnknownStockConsumptionEntityViolation
+    extends BusinessRuleViolation {
+  const UnknownStockConsumptionEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// `ReverseStockConsumption` was called for a `StockConsumptionRecord`
+/// that already has a `reversedAt` — a consumption may only ever be
+/// reversed once; a second attempt is rejected rather than silently
+/// double-restoring stock (Phase 7, `docs/decisions.md` ADR-024).
+final class StockConsumptionAlreadyReversedViolation
+    extends BusinessRuleViolation {
+  const StockConsumptionAlreadyReversedViolation({required this.recordId});
+
+  final String recordId;
+
+  @override
+  String get description =>
+      'Stock consumption record "$recordId" was already reversed';
+}
