@@ -1963,3 +1963,38 @@ final class StockConsumptionAlreadyReversedViolation
   String get description =>
       'Stock consumption record "$recordId" was already reversed';
 }
+
+/// A caller referenced a `Supplier`/`SupplierProduct`/`PurchaseOrder`/
+/// `PurchaseOrderLine`/`GoodsReceipt`/`GoodsReceiptLine` id that does
+/// not exist in the relevant repository (Phase 7, `docs/decisions.md`
+/// ADR-024).
+final class UnknownSupplierEntityViolation extends BusinessRuleViolation {
+  const UnknownSupplierEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// A `PurchaseOrder` transition was attempted that its current
+/// `PurchaseOrderStatus` does not permit (Phase 7,
+/// `docs/decisions.md` ADR-024).
+final class InvalidPurchaseOrderTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidPurchaseOrderTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid purchase order transition: $fromStatusName -> $toStatusName';
+}
