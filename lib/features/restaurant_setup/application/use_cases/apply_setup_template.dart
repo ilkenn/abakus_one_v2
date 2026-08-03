@@ -2,8 +2,11 @@ import '../../../../core/errors/business_rule_violation.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
 import '../../../pos/domain/authorization/real_pos_authorization_policy.dart';
+import '../../data/setup_audit_entry_repository.dart';
 import '../../data/setup_template_application_snapshot_repository.dart';
 import '../../data/setup_template_repository.dart';
+import '../../domain/setup_audit_entry.dart';
+import '../../domain/setup_audit_event_type.dart';
 import '../../domain/setup_template_application_snapshot.dart';
 import '../identity/setup_template_application_snapshot_id_generator.dart';
 
@@ -21,15 +24,18 @@ class ApplySetupTemplate {
     required SetupTemplateRepository templateRepository,
     required SetupTemplateApplicationSnapshotRepository snapshotRepository,
     required SetupTemplateApplicationSnapshotIdGenerator idGenerator,
+    required SetupAuditEntryRepository auditRepository,
   })  : _authorizationPolicy = authorizationPolicy,
         _templateRepository = templateRepository,
         _snapshotRepository = snapshotRepository,
-        _idGenerator = idGenerator;
+        _idGenerator = idGenerator,
+        _auditRepository = auditRepository;
 
   final PosAuthorizationPolicy _authorizationPolicy;
   final SetupTemplateRepository _templateRepository;
   final SetupTemplateApplicationSnapshotRepository _snapshotRepository;
   final SetupTemplateApplicationSnapshotIdGenerator _idGenerator;
+  final SetupAuditEntryRepository _auditRepository;
 
   Future<SetupTemplateApplicationSnapshot> call({
     required String templateId,
@@ -68,6 +74,18 @@ class ApplySetupTemplate {
       appliedAt: performedAt,
     );
     await _snapshotRepository.save(snapshot);
+
+    await _auditRepository.appendEvent(SetupAuditEntry(
+      id: '${snapshot.id}-audit-applied',
+      branchId: branchId,
+      actorId: performedByStaffId,
+      type: SetupAuditEventType.templateApplied,
+      description:
+          'Setup template "${template.id}" applied to branch "$branchId"',
+      targetEntityId: snapshot.id,
+      timestamp: performedAt,
+    ));
+
     return snapshot;
   }
 }

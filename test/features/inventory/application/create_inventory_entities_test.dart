@@ -8,10 +8,12 @@ import 'package:abakus_one_v2/features/inventory/application/use_cases/create_in
 import 'package:abakus_one_v2/features/inventory/application/use_cases/create_stock_location.dart';
 import 'package:abakus_one_v2/features/inventory/application/use_cases/create_warehouse.dart';
 import 'package:abakus_one_v2/features/inventory/data/ingredient_repository.dart';
+import 'package:abakus_one_v2/features/inventory/data/inventory_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/inventory/data/inventory_item_repository.dart';
 import 'package:abakus_one_v2/features/inventory/data/stock_location_repository.dart';
 import 'package:abakus_one_v2/features/inventory/data/warehouse_repository.dart';
 import 'package:abakus_one_v2/features/inventory/domain/ingredient.dart';
+import 'package:abakus_one_v2/features/inventory/domain/inventory_audit_event_type.dart';
 import 'package:abakus_one_v2/features/inventory/domain/inventory_unit.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -21,10 +23,12 @@ void main() {
   group('CreateIngredient', () {
     test('a manager creates a tenant-scoped ingredient', () async {
       final repository = InMemoryIngredientRepository();
+      final auditRepository = InMemoryInventoryAuditEntryRepository();
       final useCase = CreateIngredient(
         authorizationPolicy: const AllowAllInventoryPolicy(),
         idGenerator: SequentialIngredientIdGenerator(),
         repository: repository,
+        auditRepository: auditRepository,
       );
 
       final ingredient = await useCase(
@@ -37,6 +41,10 @@ void main() {
 
       expect(ingredient.organizationId, 'org-1');
       expect(await repository.findById(ingredient.id), isNotNull);
+
+      final entries = await auditRepository.findByTargetEntityId(ingredient.id);
+      expect(entries.single.type, InventoryAuditEventType.ingredientCreated);
+      expect(entries.single.actorId, 'manager-1');
     });
 
     test('an unauthorized actor is denied', () async {
@@ -44,6 +52,7 @@ void main() {
         authorizationPolicy: const DenyAllInventoryPolicy(),
         idGenerator: SequentialIngredientIdGenerator(),
         repository: InMemoryIngredientRepository(),
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       );
 
       expect(
@@ -70,11 +79,13 @@ void main() {
         createdAt: DateTime(2026, 1, 1),
         revision: 1,
       ));
+      final auditRepository = InMemoryInventoryAuditEntryRepository();
       final useCase = CreateInventoryItem(
         authorizationPolicy: const AllowAllInventoryPolicy(),
         idGenerator: SequentialInventoryItemIdGenerator(),
         repository: InMemoryInventoryItemRepository(),
         ingredientRepository: ingredientRepository,
+        auditRepository: auditRepository,
       );
 
       final item = await useCase(
@@ -85,6 +96,9 @@ void main() {
       );
 
       expect(item.organizationId, 'org-1');
+
+      final entries = await auditRepository.findByTargetEntityId(item.id);
+      expect(entries.single.type, InventoryAuditEventType.inventoryItemCreated);
     });
 
     test('an unknown ingredient throws', () async {
@@ -93,6 +107,7 @@ void main() {
         idGenerator: SequentialInventoryItemIdGenerator(),
         repository: InMemoryInventoryItemRepository(),
         ingredientRepository: InMemoryIngredientRepository(),
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       );
 
       expect(
@@ -112,6 +127,7 @@ void main() {
         idGenerator: SequentialInventoryItemIdGenerator(),
         repository: InMemoryInventoryItemRepository(),
         ingredientRepository: InMemoryIngredientRepository(),
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       );
 
       expect(
@@ -128,10 +144,12 @@ void main() {
 
   group('CreateStockLocation', () {
     test('a manager creates a branch-scoped location', () async {
+      final auditRepository = InMemoryInventoryAuditEntryRepository();
       final useCase = CreateStockLocation(
         authorizationPolicy: const AllowAllInventoryPolicy(),
         idGenerator: SequentialStockLocationIdGenerator(),
         repository: InMemoryStockLocationRepository(),
+        auditRepository: auditRepository,
       );
 
       final location = await useCase(
@@ -142,6 +160,10 @@ void main() {
       );
 
       expect(location.branchId, 'branch-1');
+
+      final entries = await auditRepository.findByTargetEntityId(location.id);
+      expect(entries.single.type, InventoryAuditEventType.stockLocationCreated);
+      expect(entries.single.branchId, 'branch-1');
     });
 
     test('an unauthorized actor is denied', () async {
@@ -149,6 +171,7 @@ void main() {
         authorizationPolicy: const DenyAllInventoryPolicy(),
         idGenerator: SequentialStockLocationIdGenerator(),
         repository: InMemoryStockLocationRepository(),
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       );
 
       expect(
@@ -165,10 +188,12 @@ void main() {
 
   group('CreateWarehouse', () {
     test('a manager creates a restaurant-scoped warehouse', () async {
+      final auditRepository = InMemoryInventoryAuditEntryRepository();
       final useCase = CreateWarehouse(
         authorizationPolicy: const AllowAllInventoryPolicy(),
         idGenerator: SequentialWarehouseIdGenerator(),
         repository: InMemoryWarehouseRepository(),
+        auditRepository: auditRepository,
       );
 
       final warehouse = await useCase(
@@ -179,6 +204,10 @@ void main() {
       );
 
       expect(warehouse.restaurantId, 'restaurant-1');
+
+      final entries = await auditRepository.findByTargetEntityId(warehouse.id);
+      expect(entries.single.type, InventoryAuditEventType.warehouseCreated);
+      expect(entries.single.branchId, isNull);
     });
 
     test('an unauthorized actor is denied', () async {
@@ -186,6 +215,7 @@ void main() {
         authorizationPolicy: const DenyAllInventoryPolicy(),
         idGenerator: SequentialWarehouseIdGenerator(),
         repository: InMemoryWarehouseRepository(),
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       );
 
       expect(

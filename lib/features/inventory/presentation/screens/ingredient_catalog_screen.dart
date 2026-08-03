@@ -81,6 +81,7 @@ class _IngredientCatalogScreenState
         authorizationPolicy: policy,
         idGenerator: ref.read(ingredientIdGeneratorProvider),
         repository: ref.read(ingredientRepositoryProvider),
+        auditRepository: ref.read(inventoryAuditEntryRepositoryProvider),
       )(
         organizationId: widget.organizationId,
         name: name,

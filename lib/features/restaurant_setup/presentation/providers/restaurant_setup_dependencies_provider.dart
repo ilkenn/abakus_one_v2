@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/identity/setup_template_application_snapshot_id_generator.dart';
 import '../../application/identity/setup_template_id_generator.dart';
+import '../../data/setup_audit_entry_repository.dart';
 import '../../data/setup_template_application_snapshot_repository.dart';
 import '../../data/setup_template_repository.dart';
 import '../../domain/setup_template.dart';
@@ -58,4 +59,9 @@ final setupTemplateApplicationSnapshotRepositoryProvider =
 final setupTemplateApplicationSnapshotIdGeneratorProvider =
     Provider<SetupTemplateApplicationSnapshotIdGenerator>((ref) {
   return SequentialSetupTemplateApplicationSnapshotIdGenerator();
+});
+
+final setupAuditEntryRepositoryProvider =
+    Provider<SetupAuditEntryRepository>((ref) {
+  return InMemorySetupAuditEntryRepository();
 });

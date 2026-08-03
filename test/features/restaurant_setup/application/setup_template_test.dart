@@ -3,8 +3,10 @@ import 'package:abakus_one_v2/features/restaurant_setup/application/identity/set
 import 'package:abakus_one_v2/features/restaurant_setup/application/identity/setup_template_id_generator.dart';
 import 'package:abakus_one_v2/features/restaurant_setup/application/use_cases/apply_setup_template.dart';
 import 'package:abakus_one_v2/features/restaurant_setup/application/use_cases/create_setup_template.dart';
+import 'package:abakus_one_v2/features/restaurant_setup/data/setup_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/restaurant_setup/data/setup_template_application_snapshot_repository.dart';
 import 'package:abakus_one_v2/features/restaurant_setup/data/setup_template_repository.dart';
+import 'package:abakus_one_v2/features/restaurant_setup/domain/setup_audit_event_type.dart';
 import 'package:abakus_one_v2/features/restaurant_setup/domain/setup_template.dart';
 import 'package:abakus_one_v2/features/restaurant_setup/domain/setup_template_category.dart';
 import 'package:abakus_one_v2/features/restaurant_setup/domain/setup_template_content.dart';
@@ -19,6 +21,7 @@ void main() {
         authorizationPolicy: const AllowAllSetupPolicy(),
         idGenerator: SequentialSetupTemplateIdGenerator(),
         repository: InMemorySetupTemplateRepository(),
+        auditRepository: InMemorySetupAuditEntryRepository(),
       );
 
       expect(
@@ -39,6 +42,7 @@ void main() {
         authorizationPolicy: const AllowAllSetupPolicy(),
         idGenerator: SequentialSetupTemplateIdGenerator(),
         repository: InMemorySetupTemplateRepository(),
+        auditRepository: InMemorySetupAuditEntryRepository(),
       );
 
       expect(
@@ -55,10 +59,12 @@ void main() {
 
     test('a private template is created for the owning organization', () async {
       final repository = InMemorySetupTemplateRepository();
+      final auditRepository = InMemorySetupAuditEntryRepository();
       final useCase = CreateSetupTemplate(
         authorizationPolicy: const AllowAllSetupPolicy(),
         idGenerator: SequentialSetupTemplateIdGenerator(),
         repository: repository,
+        auditRepository: auditRepository,
       );
 
       final template = await useCase(
@@ -75,6 +81,9 @@ void main() {
       final visibleToOther = await repository.findVisibleTo('org-2');
       expect(visibleToOwner, contains(template));
       expect(visibleToOther, isNot(contains(template)));
+
+      final entries = await auditRepository.findByTargetEntityId(template.id);
+      expect(entries.single.type, SetupAuditEventType.templateCreated);
     });
 
     test('an unauthorized actor cannot create a public template', () async {
@@ -82,6 +91,7 @@ void main() {
         authorizationPolicy: const DenyAllSetupPolicy(),
         idGenerator: SequentialSetupTemplateIdGenerator(),
         repository: InMemorySetupTemplateRepository(),
+        auditRepository: InMemorySetupAuditEntryRepository(),
       );
 
       expect(
@@ -114,11 +124,13 @@ void main() {
       ]);
       final snapshotRepository =
           InMemorySetupTemplateApplicationSnapshotRepository();
+      final auditRepository = InMemorySetupAuditEntryRepository();
       final useCase = ApplySetupTemplate(
         authorizationPolicy: const AllowAllSetupPolicy(),
         templateRepository: templateRepository,
         snapshotRepository: snapshotRepository,
         idGenerator: SequentialSetupTemplateApplicationSnapshotIdGenerator(),
+        auditRepository: auditRepository,
       );
 
       final snapshot = await useCase(
@@ -139,6 +151,10 @@ void main() {
       // The template itself is untouched by applying it.
       final template = await templateRepository.findById('template-1');
       expect(template!.revision, 3);
+
+      final entries = await auditRepository.findByTargetEntityId(snapshot.id);
+      expect(entries.single.type, SetupAuditEventType.templateApplied);
+      expect(entries.single.branchId, 'branch-1');
     });
 
     test('an unknown template id throws', () async {
@@ -148,6 +164,7 @@ void main() {
         snapshotRepository:
             InMemorySetupTemplateApplicationSnapshotRepository(),
         idGenerator: SequentialSetupTemplateApplicationSnapshotIdGenerator(),
+        auditRepository: InMemorySetupAuditEntryRepository(),
       );
 
       expect(

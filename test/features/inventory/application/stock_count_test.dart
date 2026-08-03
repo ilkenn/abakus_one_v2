@@ -13,6 +13,7 @@ import 'package:abakus_one_v2/features/inventory/data/inventory_item_repository.
 import 'package:abakus_one_v2/features/inventory/data/stock_count_line_repository.dart';
 import 'package:abakus_one_v2/features/inventory/data/stock_count_repository.dart';
 import 'package:abakus_one_v2/features/inventory/data/stock_movement_repository.dart';
+import 'package:abakus_one_v2/features/inventory/domain/inventory_audit_event_type.dart';
 import 'package:abakus_one_v2/features/inventory/domain/inventory_item.dart';
 import 'package:abakus_one_v2/features/inventory/domain/inventory_unit.dart';
 import 'package:abakus_one_v2/features/inventory/domain/negative_stock_policy.dart';
@@ -80,10 +81,12 @@ void main() {
       );
 
       final countRepository = InMemoryStockCountRepository();
+      final auditRepository = InMemoryInventoryAuditEntryRepository();
       final count = await StartStockCount(
         authorizationPolicy: const AllowAllInventoryPolicy(),
         idGenerator: SequentialStockCountIdGenerator(),
         repository: countRepository,
+        auditRepository: auditRepository,
       )(
         branchId: 'branch-1',
         locationId: 'location-1',
@@ -119,6 +122,7 @@ void main() {
       await SubmitStockCount(
         authorizationPolicy: const AllowAllInventoryPolicy(),
         repository: countRepository,
+        auditRepository: auditRepository,
       )(
         countId: count.id,
         performedByStaffId: 'staff-1',
@@ -130,6 +134,7 @@ void main() {
         repository: countRepository,
         lineRepository: lineRepository,
         recordStockMovement: recordStockMovement,
+        auditRepository: auditRepository,
       );
       final approved = await approve(
         approve: true,
@@ -149,6 +154,16 @@ void main() {
       // Unchanged: no movement should have been recorded for a zero
       // variance line.
       expect(chickenBalance!.quantityOnHand.smallestUnits, 500);
+
+      final auditEntries = await auditRepository.findByTargetEntityId(count.id);
+      expect(
+        auditEntries.map((e) => e.type),
+        containsAll([
+          InventoryAuditEventType.stockCountStarted,
+          InventoryAuditEventType.stockCountSubmitted,
+          InventoryAuditEventType.stockCountApproved,
+        ]),
+      );
     });
 
     test('the staff member who started the count cannot approve it', () async {
@@ -157,6 +172,7 @@ void main() {
         authorizationPolicy: const AllowAllInventoryPolicy(),
         idGenerator: SequentialStockCountIdGenerator(),
         repository: countRepository,
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       )(
         branchId: 'branch-1',
         locationId: 'location-1',
@@ -166,6 +182,7 @@ void main() {
       await SubmitStockCount(
         authorizationPolicy: const AllowAllInventoryPolicy(),
         repository: countRepository,
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       )(
         countId: count.id,
         performedByStaffId: 'staff-1',
@@ -183,6 +200,7 @@ void main() {
           inventoryItemRepository: InMemoryInventoryItemRepository(),
           auditRepository: InMemoryInventoryAuditEntryRepository(),
         ),
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       );
 
       expect(
@@ -202,6 +220,7 @@ void main() {
         authorizationPolicy: const AllowAllInventoryPolicy(),
         idGenerator: SequentialStockCountIdGenerator(),
         repository: countRepository,
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       )(
         branchId: 'branch-1',
         locationId: 'location-1',
@@ -211,6 +230,7 @@ void main() {
       await SubmitStockCount(
         authorizationPolicy: const AllowAllInventoryPolicy(),
         repository: countRepository,
+        auditRepository: InMemoryInventoryAuditEntryRepository(),
       )(
         countId: count.id,
         performedByStaffId: 'staff-1',
@@ -218,6 +238,7 @@ void main() {
       );
 
       final branchStockRepository = InMemoryBranchStockRepository();
+      final auditRepository = InMemoryInventoryAuditEntryRepository();
       final rejected = await ApproveStockCount(
         authorizationPolicy: const AllowAllInventoryPolicy(),
         repository: countRepository,
@@ -229,6 +250,7 @@ void main() {
           inventoryItemRepository: InMemoryInventoryItemRepository(),
           auditRepository: InMemoryInventoryAuditEntryRepository(),
         ),
+        auditRepository: auditRepository,
       )(
         approve: false,
         countId: count.id,
@@ -242,6 +264,17 @@ void main() {
         await branchStockRepository.findByItemAndLocation(
             'item-rice', 'location-1'),
         isNull,
+      );
+
+      final rejectionEntries =
+          await auditRepository.findByTargetEntityId(count.id);
+      expect(
+        rejectionEntries.single.type,
+        InventoryAuditEventType.stockCountRejected,
+      );
+      expect(
+        rejectionEntries.single.description,
+        contains('Sayım hatalı yapılmış, tekrar edilecek'),
       );
     });
   });

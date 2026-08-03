@@ -80,6 +80,7 @@ class _SetupTemplatesScreenState extends ConsumerState<SetupTemplatesScreen> {
             ref.read(setupTemplateApplicationSnapshotRepositoryProvider),
         idGenerator:
             ref.read(setupTemplateApplicationSnapshotIdGeneratorProvider),
+        auditRepository: ref.read(setupAuditEntryRepositoryProvider),
       )(
         templateId: template.id,
         organizationId: widget.organizationId,

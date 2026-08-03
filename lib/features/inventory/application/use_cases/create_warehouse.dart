@@ -1,7 +1,10 @@
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
+import '../../data/inventory_audit_entry_repository.dart';
 import '../../data/warehouse_repository.dart';
+import '../../domain/inventory_audit_entry.dart';
+import '../../domain/inventory_audit_event_type.dart';
 import '../../domain/warehouse.dart';
 import '../identity/warehouse_id_generator.dart';
 
@@ -12,13 +15,16 @@ class CreateWarehouse {
     required PosAuthorizationPolicy authorizationPolicy,
     required WarehouseIdGenerator idGenerator,
     required WarehouseRepository repository,
+    required InventoryAuditEntryRepository auditRepository,
   })  : _authorizationPolicy = authorizationPolicy,
         _idGenerator = idGenerator,
-        _repository = repository;
+        _repository = repository,
+        _auditRepository = auditRepository;
 
   final PosAuthorizationPolicy _authorizationPolicy;
   final WarehouseIdGenerator _idGenerator;
   final WarehouseRepository _repository;
+  final InventoryAuditEntryRepository _auditRepository;
 
   Future<Warehouse> call({
     required String restaurantId,
@@ -43,6 +49,17 @@ class CreateWarehouse {
       revision: 1,
     );
     await _repository.save(warehouse);
+
+    await _auditRepository.appendEvent(InventoryAuditEntry(
+      id: '${warehouse.id}-audit-created',
+      branchId: null,
+      actorId: performedByStaffId,
+      type: InventoryAuditEventType.warehouseCreated,
+      description: 'Warehouse "$name" created',
+      targetEntityId: warehouse.id,
+      timestamp: performedAt,
+    ));
+
     return warehouse;
   }
 }

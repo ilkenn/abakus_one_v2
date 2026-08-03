@@ -1,0 +1,4 @@
+enum SetupAuditEventType {
+  templateCreated,
+  templateApplied,
+}

@@ -1,8 +1,11 @@
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
+import '../../data/inventory_audit_entry_repository.dart';
 import '../../data/stock_count_line_repository.dart';
 import '../../data/stock_count_repository.dart';
+import '../../domain/inventory_audit_entry.dart';
+import '../../domain/inventory_audit_event_type.dart';
 import '../../domain/stock_count.dart';
 import '../../domain/stock_movement_type.dart';
 import 'record_stock_movement.dart';
@@ -24,15 +27,18 @@ class ApproveStockCount {
     required StockCountRepository repository,
     required StockCountLineRepository lineRepository,
     required RecordStockMovement recordStockMovement,
+    required InventoryAuditEntryRepository auditRepository,
   })  : _authorizationPolicy = authorizationPolicy,
         _repository = repository,
         _lineRepository = lineRepository,
-        _recordStockMovement = recordStockMovement;
+        _recordStockMovement = recordStockMovement,
+        _auditRepository = auditRepository;
 
   final PosAuthorizationPolicy _authorizationPolicy;
   final StockCountRepository _repository;
   final StockCountLineRepository _lineRepository;
   final RecordStockMovement _recordStockMovement;
+  final InventoryAuditEntryRepository _auditRepository;
 
   Future<StockCount> call({
     required bool approve,
@@ -97,6 +103,22 @@ class ApproveStockCount {
       rejectionReason: approve ? null : rejectionReason,
     );
     await _repository.save(updated);
+
+    await _auditRepository.appendEvent(InventoryAuditEntry(
+      id: '${count.id}-audit-${approve ? 'approved' : 'rejected'}',
+      branchId: count.branchId,
+      actorId: performedByStaffId,
+      type: approve
+          ? InventoryAuditEventType.stockCountApproved
+          : InventoryAuditEventType.stockCountRejected,
+      description: approve
+          ? 'Stock count "${count.id}" approved'
+          : 'Stock count "${count.id}" rejected'
+              '${rejectionReason != null ? ': $rejectionReason' : ''}',
+      targetEntityId: count.id,
+      timestamp: performedAt,
+    ));
+
     return updated;
   }
 }

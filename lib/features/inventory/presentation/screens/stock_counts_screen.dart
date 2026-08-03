@@ -74,6 +74,7 @@ class _StockCountsScreenState extends ConsumerState<StockCountsScreen> {
         authorizationPolicy: policy,
         idGenerator: ref.read(stockCountIdGeneratorProvider),
         repository: ref.read(stockCountRepositoryProvider),
+        auditRepository: ref.read(inventoryAuditEntryRepositoryProvider),
       )(
         branchId: widget.branchId,
         locationId: locationId,

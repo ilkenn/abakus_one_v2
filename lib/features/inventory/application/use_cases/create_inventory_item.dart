@@ -2,7 +2,10 @@ import '../../../../core/errors/business_rule_violation.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
 import '../../data/ingredient_repository.dart';
+import '../../data/inventory_audit_entry_repository.dart';
 import '../../data/inventory_item_repository.dart';
+import '../../domain/inventory_audit_entry.dart';
+import '../../domain/inventory_audit_event_type.dart';
 import '../../domain/inventory_item.dart';
 import '../../domain/inventory_unit.dart';
 import '../../domain/negative_stock_policy.dart';
@@ -18,15 +21,18 @@ class CreateInventoryItem {
     required InventoryItemIdGenerator idGenerator,
     required InventoryItemRepository repository,
     required IngredientRepository ingredientRepository,
+    required InventoryAuditEntryRepository auditRepository,
   })  : _authorizationPolicy = authorizationPolicy,
         _idGenerator = idGenerator,
         _repository = repository,
-        _ingredientRepository = ingredientRepository;
+        _ingredientRepository = ingredientRepository,
+        _auditRepository = auditRepository;
 
   final PosAuthorizationPolicy _authorizationPolicy;
   final InventoryItemIdGenerator _idGenerator;
   final InventoryItemRepository _repository;
   final IngredientRepository _ingredientRepository;
+  final InventoryAuditEntryRepository _auditRepository;
 
   Future<InventoryItem> call({
     required String ingredientId,
@@ -64,6 +70,17 @@ class CreateInventoryItem {
       revision: 1,
     );
     await _repository.save(item);
+
+    await _auditRepository.appendEvent(InventoryAuditEntry(
+      id: '${item.id}-audit-created',
+      branchId: null,
+      actorId: performedByStaffId,
+      type: InventoryAuditEventType.inventoryItemCreated,
+      description: 'Inventory item created for ingredient "$ingredientId"',
+      targetEntityId: item.id,
+      timestamp: performedAt,
+    ));
+
     return item;
   }
 }
