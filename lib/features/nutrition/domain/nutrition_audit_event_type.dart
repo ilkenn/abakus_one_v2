@@ -1,0 +1,4 @@
+enum NutritionAuditEventType {
+  entrySet,
+  entryReviewed,
+}

@@ -1857,3 +1857,32 @@ final class RecipeCycleDetectedViolation extends BusinessRuleViolation {
       'Sub-recipe "$subRecipeId" (transitively) references itself — '
       'cannot resolve an ingredient snapshot';
 }
+
+/// A caller referenced a `NutritionReferenceEntry` id that does not
+/// exist in the relevant repository (Phase 7, `docs/decisions.md`
+/// ADR-024).
+final class UnknownNutritionEntityViolation extends BusinessRuleViolation {
+  const UnknownNutritionEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// A `NutritionReferenceEntry` was set with
+/// `NutritionDataSourceType.manual` and an empty override reason —
+/// "manual values require actor+reason+audit" (Phase 7,
+/// `docs/decisions.md` ADR-024).
+final class NutritionOverrideReasonRequiredViolation
+    extends BusinessRuleViolation {
+  const NutritionOverrideReasonRequiredViolation();
+
+  @override
+  String get description =>
+      'A manually-entered nutrition value requires a non-empty reason';
+}
