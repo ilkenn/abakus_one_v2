@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../application/identity/nutrition_calculation_result_id_generator.dart';
 import '../../application/identity/nutrition_reference_entry_id_generator.dart';
 import '../../data/nutrition_audit_entry_repository.dart';
+import '../../data/nutrition_calculation_result_repository.dart';
 import '../../data/nutrition_reference_entry_repository.dart';
 
 /// Central Riverpod wiring for `features/nutrition` — Phase 7
@@ -22,4 +24,14 @@ final nutritionReferenceEntryIdGeneratorProvider =
 final nutritionAuditEntryRepositoryProvider =
     Provider<NutritionAuditEntryRepository>((ref) {
   return InMemoryNutritionAuditEntryRepository();
+});
+
+final nutritionCalculationResultRepositoryProvider =
+    Provider<NutritionCalculationResultRepository>((ref) {
+  return InMemoryNutritionCalculationResultRepository();
+});
+
+final nutritionCalculationResultIdGeneratorProvider =
+    Provider<NutritionCalculationResultIdGenerator>((ref) {
+  return SequentialNutritionCalculationResultIdGenerator();
 });
