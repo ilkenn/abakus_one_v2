@@ -14,6 +14,8 @@ import '../../../entitlements/domain/entitlement_scope_type.dart';
 import '../../../entitlements/presentation/screens/entitlement_admin_screen.dart';
 import '../../../entitlements/presentation/widgets/module_entitlement_gate.dart';
 import '../../../feedback/presentation/screens/feedback_admin_screen.dart';
+import '../../../inventory/presentation/screens/ingredient_catalog_screen.dart';
+import '../../../inventory/presentation/screens/inventory_screen.dart';
 import '../../../restaurant_setup/presentation/screens/setup_templates_screen.dart';
 import '../../../smart_import/presentation/screens/import_jobs_screen.dart';
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
@@ -400,6 +402,39 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
                 restaurantId: 'restaurant-1',
                 branchId: branchId,
                 performedByStaffId: actorId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'ingredient-catalog',
+            label: 'Malzeme Kataloğu',
+            icon: Icons.egg_outlined,
+            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            builder: (context, ref) => ModuleEntitlementGate(
+              module: EntitlementModule.inventory,
+              scopeType: EntitlementScopeType.branch,
+              scopeId: branchId,
+              actorStaffId: actorId,
+              child: IngredientCatalogScreen(
+                organizationId: 'org-1',
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'inventory',
+            label: 'Envanter',
+            icon: Icons.inventory_2_outlined,
+            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            builder: (context, ref) => ModuleEntitlementGate(
+              module: EntitlementModule.inventory,
+              scopeType: EntitlementScopeType.branch,
+              scopeId: branchId,
+              actorStaffId: actorId,
+              child: InventoryScreen(
+                organizationId: 'org-1',
+                branchId: branchId,
               ),
             ),
           ),

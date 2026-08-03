@@ -689,7 +689,11 @@ final class InvalidCashSessionTransitionViolation
 
 /// A staff member attempted to approve/reject their own `CashCount` (as
 /// a `CashReconciliation`) or their own requested `CashAdjustment` —
-/// self-approval is never permitted, regardless of role.
+/// self-approval is never permitted, regardless of role. Reused as-is
+/// for `StockAdjustment`/`StockCount` approval (Phase 7,
+/// `docs/decisions.md` ADR-024) — "cashier/counter cannot approve their
+/// own material variance" is the identical rule, generically shaped
+/// already, not worth a duplicate inventory-specific type.
 final class SelfApprovalNotAllowedViolation extends BusinessRuleViolation {
   const SelfApprovalNotAllowedViolation({required this.staffId});
 
@@ -1501,6 +1505,104 @@ final class StaffMemberArchivedViolation extends BusinessRuleViolation {
 /// change — `archived` is terminal, same reasoning as
 /// `BranchArchivedViolation`/`StaffMemberArchivedViolation` (Phase 6L,
 /// `docs/decisions.md` ADR-023).
+/// Two `Quantity` values that must share an `InventoryUnit` did not —
+/// mirrors `CurrencyMismatchViolation`'s "never silently coerce" rule
+/// (Phase 7, `docs/decisions.md` ADR-024).
+final class UnitMismatchViolation extends BusinessRuleViolation {
+  const UnitMismatchViolation({
+    required this.expectedUnitCode,
+    required this.actualUnitCode,
+  });
+
+  final String expectedUnitCode;
+  final String actualUnitCode;
+
+  @override
+  String get description =>
+      'Expected unit $expectedUnitCode but got $actualUnitCode';
+}
+
+/// A caller referenced an `Ingredient`/`InventoryItem`/`StockLocation`/
+/// `Warehouse`/`StockLot`/`StockAdjustment`/`StockCount` id that does
+/// not exist in the relevant repository (Phase 7, `docs/decisions.md`
+/// ADR-024).
+final class UnknownInventoryEntityViolation extends BusinessRuleViolation {
+  const UnknownInventoryEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// `RecordStockMovement` was called with an `idempotencyKey` already
+/// recorded — "every deduction requires an idempotency key," and a
+/// retry of the same logical action must never double-count (Phase 7,
+/// `docs/decisions.md` ADR-024), mirroring
+/// `DuplicateKitchenEventViolation`/`DuplicateCourierEventViolation`.
+final class DuplicateStockMovementViolation extends BusinessRuleViolation {
+  const DuplicateStockMovementViolation({required this.idempotencyKey});
+
+  final String idempotencyKey;
+
+  @override
+  String get description =>
+      'Duplicate stock movement idempotency key: "$idempotencyKey"';
+}
+
+/// A `StockMovement` would take a `BranchStock.quantityOnHand` negative
+/// while the item's `NegativeStockPolicy` is `forbid` (Phase 7,
+/// `docs/decisions.md` ADR-024).
+final class NegativeStockNotAllowedViolation extends BusinessRuleViolation {
+  const NegativeStockNotAllowedViolation({
+    required this.inventoryItemId,
+    required this.locationId,
+  });
+
+  final String inventoryItemId;
+  final String locationId;
+
+  @override
+  String get description =>
+      'Stock movement for "$inventoryItemId" at "$locationId" would '
+      'result in negative on-hand quantity, which this item\'s policy '
+      'forbids';
+}
+
+/// A `StockAdjustment`/`WasteRecord` was submitted with an empty
+/// [reason] — "waste requires reason," extended to every manual
+/// adjustment (Phase 7, `docs/decisions.md` ADR-024).
+final class InventoryReasonRequiredViolation extends BusinessRuleViolation {
+  const InventoryReasonRequiredViolation();
+
+  @override
+  String get description => 'A reason is required for this inventory action';
+}
+
+/// A `StockAdjustment`/`StockCount` transition was attempted that its
+/// current status does not permit — e.g. approving an already-approved
+/// adjustment, or resubmitting a submitted count (Phase 7,
+/// `docs/decisions.md` ADR-024).
+final class InvalidInventoryWorkflowTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidInventoryWorkflowTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid inventory workflow transition: $fromStatusName -> '
+      '$toStatusName';
+}
+
 /// A caller referenced an `EntitlementGrant` id that does not exist in
 /// the relevant repository (Phase 7, `docs/decisions.md` ADR-024).
 final class UnknownEntitlementGrantViolation extends BusinessRuleViolation {

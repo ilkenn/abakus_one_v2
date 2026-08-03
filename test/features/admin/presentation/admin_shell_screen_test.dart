@@ -13,6 +13,8 @@ import 'package:abakus_one_v2/core/services/feature_flags/feature_flags_keys.dar
 import 'package:abakus_one_v2/core/services/feature_flags/feature_flags_provider.dart';
 import 'package:abakus_one_v2/features/crm/presentation/screens/customer_segmentation_admin_screen.dart';
 import 'package:abakus_one_v2/features/entitlements/presentation/screens/entitlement_admin_screen.dart';
+import 'package:abakus_one_v2/features/inventory/presentation/screens/ingredient_catalog_screen.dart';
+import 'package:abakus_one_v2/features/inventory/presentation/screens/inventory_screen.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
@@ -193,6 +195,72 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(SetupTemplatesScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'a manager with branch access and the flag enabled can open Malzeme '
+      'Kataloğu from Akıllı Kurulum & Stok group', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-1'},
+      ),
+      extraOverrides: [
+        featureFlagsServiceProvider.overrideWithValue(
+          FakeFeatureFlagsService(
+            enabledKeys: {FeatureFlagsKeys.inventoryEnabled},
+          ),
+        ),
+      ],
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Malzeme Kataloğu'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Malzeme Kataloğu').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(IngredientCatalogScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'a manager with branch access and the flag enabled can open Envanter '
+      'from Akıllı Kurulum & Stok group', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-1'},
+      ),
+      extraOverrides: [
+        featureFlagsServiceProvider.overrideWithValue(
+          FakeFeatureFlagsService(
+            enabledKeys: {FeatureFlagsKeys.inventoryEnabled},
+          ),
+        ),
+      ],
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Envanter'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Envanter').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(InventoryScreen), findsOneWidget);
   });
 
   testWidgets(
