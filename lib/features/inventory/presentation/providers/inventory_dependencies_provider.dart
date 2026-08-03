@@ -1,11 +1,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../application/identity/expiry_record_id_generator.dart';
 import '../../application/identity/ingredient_id_generator.dart';
 import '../../application/identity/inventory_item_id_generator.dart';
 import '../../application/identity/stock_adjustment_id_generator.dart';
+import '../../application/identity/stock_count_id_generator.dart';
+import '../../application/identity/stock_count_line_id_generator.dart';
 import '../../application/identity/stock_location_id_generator.dart';
 import '../../application/identity/stock_lot_id_generator.dart';
 import '../../application/identity/stock_movement_id_generator.dart';
+import '../../application/identity/waste_record_id_generator.dart';
 import '../../application/identity/warehouse_id_generator.dart';
 import '../../data/branch_stock_repository.dart';
 import '../../data/expiry_record_repository.dart';
@@ -102,17 +106,35 @@ final stockCountRepositoryProvider = Provider<StockCountRepository>((ref) {
   return InMemoryStockCountRepository();
 });
 
+final stockCountIdGeneratorProvider = Provider<StockCountIdGenerator>((ref) {
+  return SequentialStockCountIdGenerator();
+});
+
 final stockCountLineRepositoryProvider =
     Provider<StockCountLineRepository>((ref) {
   return InMemoryStockCountLineRepository();
+});
+
+final stockCountLineIdGeneratorProvider =
+    Provider<StockCountLineIdGenerator>((ref) {
+  return SequentialStockCountLineIdGenerator();
 });
 
 final wasteRecordRepositoryProvider = Provider<WasteRecordRepository>((ref) {
   return InMemoryWasteRecordRepository();
 });
 
+final wasteRecordIdGeneratorProvider = Provider<WasteRecordIdGenerator>((ref) {
+  return SequentialWasteRecordIdGenerator();
+});
+
 final expiryRecordRepositoryProvider = Provider<ExpiryRecordRepository>((ref) {
   return InMemoryExpiryRecordRepository();
+});
+
+final expiryRecordIdGeneratorProvider =
+    Provider<ExpiryRecordIdGenerator>((ref) {
+  return SequentialExpiryRecordIdGenerator();
 });
 
 final unitConversionRepositoryProvider =
