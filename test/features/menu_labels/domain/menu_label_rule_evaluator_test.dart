@@ -19,6 +19,7 @@ MenuLabelRule _rule({
 }) {
   return MenuLabelRule(
     id: 'rule-1',
+    organizationId: 'org-1',
     labelType: labelType,
     ruleVersion: 1,
     description: 'test rule',

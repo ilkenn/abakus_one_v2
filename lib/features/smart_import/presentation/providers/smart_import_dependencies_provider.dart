@@ -69,6 +69,7 @@ final normalizeAndAnalyzeParsedMenuProvider =
 
 final parseImportSourceProvider = Provider<ParseImportSource>((ref) {
   return ParseImportSource(
+    authorizationPolicy: ref.watch(posAuthorizationPolicyProvider),
     jobRepository: ref.watch(importJobRepositoryProvider),
     auditRepository: ref.watch(importAuditEntryRepositoryProvider),
   );
@@ -76,6 +77,7 @@ final parseImportSourceProvider = Provider<ParseImportSource>((ref) {
 
 final createImportDraftProvider = Provider<CreateImportDraft>((ref) {
   return CreateImportDraft(
+    authorizationPolicy: ref.watch(posAuthorizationPolicyProvider),
     jobRepository: ref.watch(importJobRepositoryProvider),
     draftRepository: ref.watch(importDraftRepositoryProvider),
     idGenerator: ref.watch(importDraftIdGeneratorProvider),
@@ -102,6 +104,7 @@ final approveImportDraftProvider = Provider<ApproveImportDraft>((ref) {
 
 final commitImportDraftProvider = Provider<CommitImportDraft>((ref) {
   return CommitImportDraft(
+    authorizationPolicy: ref.watch(posAuthorizationPolicyProvider),
     jobRepository: ref.watch(importJobRepositoryProvider),
     draftRepository: ref.watch(importDraftRepositoryProvider),
     categoryRepository: ref.watch(menuCategoryRepositoryProvider),

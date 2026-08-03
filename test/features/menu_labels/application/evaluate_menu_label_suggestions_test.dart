@@ -138,6 +138,99 @@ void main() {
           await suggestionRepository.findByRecipeVersionId('version-1');
       expect(persisted, hasLength(1));
     });
+
+    test(
+        'a rule created for a different organization is never applied '
+        'to this organization\'s recipe (tenant isolation)', () async {
+      final recipeRepository = InMemoryRecipeRepository();
+      final versionRepository = InMemoryRecipeVersionRepository();
+      final version = RecipeVersion(
+        id: 'version-1',
+        recipeId: 'recipe-1',
+        versionNumber: 1,
+        lines: [
+          RecipeLine(
+            id: 'line-1',
+            ingredientId: 'chicken',
+            quantity: Quantity.fromWhole(200, InventoryUnit.gram),
+          ),
+        ],
+        portionDefinition: PortionDefinition(
+          quantity: Quantity.fromWhole(1, InventoryUnit.portion),
+        ),
+        yieldAmount: Yield(
+          totalQuantity: Quantity.fromWhole(200, InventoryUnit.gram),
+          portionCount: 1,
+        ),
+        createdAt: DateTime(2026, 1, 1),
+        createdByStaffId: 'manager-1',
+      );
+      await versionRepository.save(version);
+      await recipeRepository.save(Recipe(
+        id: 'recipe-1',
+        organizationId: 'org-1',
+        name: 'Tavuklu Bowl',
+        currentVersionId: version.id,
+        createdAt: DateTime(2026, 1, 1),
+        revision: 1,
+      ));
+
+      final nutritionResultRepository =
+          InMemoryNutritionCalculationResultRepository();
+      await nutritionResultRepository.save(NutritionCalculationResult(
+        id: 'nutrition-result-1',
+        recipeId: 'recipe-1',
+        recipeVersionId: 'version-1',
+        totalValues: const NutritionValueSet(proteinMilligrams: 30000),
+        perPortionValues: const NutritionValueSet(proteinMilligrams: 30000),
+        portionCount: 1,
+        missingIngredientIds: const [],
+        status: RecipeCalculationStatus.calculated,
+        confidence: NutritionConfidence.high,
+        calculationRevision: 1,
+        calculatedAt: DateTime(2026, 1, 2),
+      ));
+
+      // A qualifying rule, but created for a DIFFERENT organization.
+      final ruleRepository = InMemoryMenuLabelRuleRepository();
+      await CreateMenuLabelRule(
+        authorizationPolicy: const AllowAllMenuLabelsPolicy(),
+        idGenerator: SequentialMenuLabelRuleIdGenerator(),
+        repository: ruleRepository,
+        auditRepository: InMemoryMenuLabelAuditEntryRepository(),
+      )(
+        organizationId: 'org-2',
+        labelType: MenuLabelType.highProtein,
+        description: 'Yüksek protein',
+        thresholdMilligramsOrKcal: 25000,
+        performedByStaffId: 'manager-1',
+        performedAt: DateTime(2026, 1, 1),
+      );
+
+      final useCase = EvaluateMenuLabelSuggestions(
+        authorizationPolicy: const AllowAllMenuLabelsPolicy(),
+        idGenerator: SequentialMenuLabelSuggestionIdGenerator(),
+        recipeRepository: recipeRepository,
+        recipeVersionRepository: versionRepository,
+        subRecipeRepository: InMemorySubRecipeRepository(),
+        subRecipeVersionRepository: InMemorySubRecipeVersionRepository(),
+        nutritionResultRepository: nutritionResultRepository,
+        allergenRepository: InMemoryIngredientAllergenDeclarationRepository(),
+        ruleRepository: ruleRepository,
+        suggestionRepository: InMemoryMenuLabelSuggestionRepository(),
+        auditRepository: InMemoryMenuLabelAuditEntryRepository(),
+      );
+
+      final created = await useCase(
+        organizationId: 'org-1',
+        recipeId: 'recipe-1',
+        performedByStaffId: 'manager-1',
+        performedAt: DateTime(2026, 1, 3),
+      );
+
+      expect(created, isEmpty,
+          reason: 'org-2\'s rule must never apply to an org-1 recipe');
+    });
   });
 
   group('ApproveMenuLabelSuggestion', () {

@@ -17,6 +17,7 @@ import 'menu_label_type.dart';
 class MenuLabelRule {
   const MenuLabelRule({
     required this.id,
+    required this.organizationId,
     required this.labelType,
     required this.ruleVersion,
     required this.description,
@@ -28,6 +29,11 @@ class MenuLabelRule {
   });
 
   final String id;
+
+  /// Tenant scoping — "no cross-tenant catalog mutation." A rule
+  /// created for one organization is never evaluated against, or
+  /// returned to, another.
+  final String organizationId;
   final MenuLabelType labelType;
   final int ruleVersion;
   final String description;

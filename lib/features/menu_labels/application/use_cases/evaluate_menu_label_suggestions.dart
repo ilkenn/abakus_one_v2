@@ -116,7 +116,7 @@ class EvaluateMenuLabelSuggestions {
           await _allergenRepository.findByIngredientId(ingredientId);
     }
 
-    final activeRules = await _ruleRepository.findAllActive();
+    final activeRules = await _ruleRepository.findAllActive(organizationId);
     final created = <MenuLabelSuggestion>[];
     for (final rule in activeRules) {
       final evaluation = _evaluator.evaluate(

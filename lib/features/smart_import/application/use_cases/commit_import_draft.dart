@@ -5,6 +5,9 @@ import '../../../menu/data/menu_category_repository.dart';
 import '../../../menu/data/menu_product_repository.dart';
 import '../../../menu/domain/models/menu_category.dart';
 import '../../../menu/domain/models/menu_product.dart';
+import '../../../pos/domain/authorization/pos_authorization_policy.dart';
+import '../../../pos/domain/authorization/pos_authorized_action.dart';
+import '../../../pos/domain/authorization/real_pos_authorization_policy.dart';
 import '../../data/import_audit_entry_repository.dart';
 import '../../data/import_draft_repository.dart';
 import '../../data/import_job_repository.dart';
@@ -16,13 +19,15 @@ import '../../domain/import_review_decision.dart';
 import '../../domain/import_status.dart';
 
 /// The **only** point in the whole Smart Import flow that writes to a
-/// real domain repository — Phase 7 (`docs/decisions.md` ADR-024).
-/// Requires [ImportStatus.approved]; throws
-/// [ImportNotApprovedViolation] otherwise, structurally preventing
-/// "import commit without approval" regardless of what any caller
-/// intends. Idempotent by status: an already-[ImportStatus.committed]
-/// job throws [InvalidImportStatusTransitionViolation] rather than
-/// creating a second copy of every product.
+/// real domain repository — manager+
+/// (`PosAuthorizedAction.manageSmartImport`), Phase 7
+/// (`docs/decisions.md` ADR-024). Requires [ImportStatus.approved];
+/// throws [ImportNotApprovedViolation] otherwise, structurally
+/// preventing "import commit without approval" regardless of what any
+/// caller intends. Idempotent by status: an already-
+/// [ImportStatus.committed] job throws
+/// [InvalidImportStatusTransitionViolation] rather than creating a
+/// second copy of every product.
 ///
 /// Only [ParsedCategory]/[ParsedProduct] entities with a matching
 /// [ImportReviewOutcome.approved] decision are ever created — anything
@@ -32,6 +37,7 @@ import '../../domain/import_status.dart';
 /// parsed value — "approving *edited* content."
 class CommitImportDraft {
   const CommitImportDraft({
+    required PosAuthorizationPolicy authorizationPolicy,
     required ImportJobRepository jobRepository,
     required ImportDraftRepository draftRepository,
     required MenuCategoryRepository categoryRepository,
@@ -39,7 +45,8 @@ class CommitImportDraft {
     required MenuCategoryIdGenerator categoryIdGenerator,
     required MenuProductIdGenerator productIdGenerator,
     required ImportAuditEntryRepository auditRepository,
-  })  : _jobRepository = jobRepository,
+  })  : _authorizationPolicy = authorizationPolicy,
+        _jobRepository = jobRepository,
         _draftRepository = draftRepository,
         _categoryRepository = categoryRepository,
         _productRepository = productRepository,
@@ -47,6 +54,7 @@ class CommitImportDraft {
         _productIdGenerator = productIdGenerator,
         _auditRepository = auditRepository;
 
+  final PosAuthorizationPolicy _authorizationPolicy;
   final ImportJobRepository _jobRepository;
   final ImportDraftRepository _draftRepository;
   final MenuCategoryRepository _categoryRepository;
@@ -67,6 +75,17 @@ class CommitImportDraft {
         id: importJobId,
       );
     }
+
+    const action = PosAuthorizedAction.manageSmartImport;
+    final authResult = await _authorizationPolicy.authorize(
+      action: action,
+      actorStaffId: approval.approvedByStaffId,
+      context: {kBranchIdAuthorizationContextKey: job.branchId},
+    );
+    if (!authResult.granted) {
+      throw AuthorizationDeniedViolation(actionName: action.name);
+    }
+
     if (job.status != ImportStatus.approved) {
       throw ImportNotApprovedViolation(importJobId: importJobId);
     }

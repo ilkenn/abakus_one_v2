@@ -1,4 +1,7 @@
 import '../../../../core/errors/business_rule_violation.dart';
+import '../../../pos/domain/authorization/pos_authorization_policy.dart';
+import '../../../pos/domain/authorization/pos_authorized_action.dart';
+import '../../../pos/domain/authorization/real_pos_authorization_policy.dart';
 import '../../data/import_audit_entry_repository.dart';
 import '../../data/import_job_repository.dart';
 import '../../domain/import_audit_entry.dart';
@@ -9,7 +12,8 @@ import '../../domain/parsed_menu.dart';
 import '../../domain/parsing/csv_menu_parser.dart';
 import '../../domain/parsing/json_menu_parser.dart';
 
-/// Runs the "Parse" stage of the Smart Import flow — Phase 7
+/// Runs the "Parse" stage of the Smart Import flow — manager+
+/// (`PosAuthorizedAction.manageSmartImport`), Phase 7
 /// (`docs/decisions.md` ADR-024). `Source -> Parse` only; **never**
 /// `Source -> direct database write` — the returned [ParsedMenu] is
 /// transient, handed to `NormalizeAndAnalyzeParsedMenu` next, and no
@@ -22,15 +26,18 @@ import '../../domain/parsing/json_menu_parser.dart';
 /// result," never a fabricated parse.
 class ParseImportSource {
   const ParseImportSource({
+    required PosAuthorizationPolicy authorizationPolicy,
     required ImportJobRepository jobRepository,
     required ImportAuditEntryRepository auditRepository,
     CsvMenuParser csvParser = const CsvMenuParser(),
     JsonMenuParser jsonParser = const JsonMenuParser(),
-  })  : _jobRepository = jobRepository,
+  })  : _authorizationPolicy = authorizationPolicy,
+        _jobRepository = jobRepository,
         _auditRepository = auditRepository,
         _csvParser = csvParser,
         _jsonParser = jsonParser;
 
+  final PosAuthorizationPolicy _authorizationPolicy;
   final ImportJobRepository _jobRepository;
   final ImportAuditEntryRepository _auditRepository;
   final CsvMenuParser _csvParser;
@@ -47,6 +54,16 @@ class ParseImportSource {
         entityName: 'ImportJob',
         id: importJobId,
       );
+    }
+
+    const action = PosAuthorizedAction.manageSmartImport;
+    final authResult = await _authorizationPolicy.authorize(
+      action: action,
+      actorStaffId: performedByStaffId,
+      context: {kBranchIdAuthorizationContextKey: job.branchId},
+    );
+    if (!authResult.granted) {
+      throw AuthorizationDeniedViolation(actionName: action.name);
     }
     if (job.status != ImportStatus.pending) {
       throw InvalidImportStatusTransitionViolation(

@@ -1,4 +1,7 @@
 import '../../../../core/errors/business_rule_violation.dart';
+import '../../../pos/domain/authorization/pos_authorization_policy.dart';
+import '../../../pos/domain/authorization/pos_authorized_action.dart';
+import '../../../pos/domain/authorization/real_pos_authorization_policy.dart';
 import '../../data/import_audit_entry_repository.dart';
 import '../../data/import_draft_repository.dart';
 import '../../data/import_job_repository.dart';
@@ -10,22 +13,26 @@ import '../../domain/parsed_menu.dart';
 import '../identity/import_draft_id_generator.dart';
 
 /// Persists a normalized+analyzed [ParsedMenu] as the reviewable
-/// [ImportDraft] — Phase 7 (`docs/decisions.md` ADR-024). Transitions
-/// the job to [ImportStatus.draftReady]. Re-running this for the same
-/// job (e.g. after a re-parse) creates a new draft revision rather than
-/// silently discarding the prior one — `ImportDraftRepository
+/// [ImportDraft] — manager+ (`PosAuthorizedAction.manageSmartImport`),
+/// Phase 7 (`docs/decisions.md` ADR-024). Transitions the job to
+/// [ImportStatus.draftReady]. Re-running this for the same job (e.g.
+/// after a re-parse) creates a new draft revision rather than silently
+/// discarding the prior one — `ImportDraftRepository
 /// .findByImportJobId` always returns the current one.
 class CreateImportDraft {
   const CreateImportDraft({
+    required PosAuthorizationPolicy authorizationPolicy,
     required ImportJobRepository jobRepository,
     required ImportDraftRepository draftRepository,
     required ImportDraftIdGenerator idGenerator,
     required ImportAuditEntryRepository auditRepository,
-  })  : _jobRepository = jobRepository,
+  })  : _authorizationPolicy = authorizationPolicy,
+        _jobRepository = jobRepository,
         _draftRepository = draftRepository,
         _idGenerator = idGenerator,
         _auditRepository = auditRepository;
 
+  final PosAuthorizationPolicy _authorizationPolicy;
   final ImportJobRepository _jobRepository;
   final ImportDraftRepository _draftRepository;
   final ImportDraftIdGenerator _idGenerator;
@@ -44,6 +51,17 @@ class CreateImportDraft {
         id: importJobId,
       );
     }
+
+    const action = PosAuthorizedAction.manageSmartImport;
+    final authResult = await _authorizationPolicy.authorize(
+      action: action,
+      actorStaffId: performedByStaffId,
+      context: {kBranchIdAuthorizationContextKey: job.branchId},
+    );
+    if (!authResult.granted) {
+      throw AuthorizationDeniedViolation(actionName: action.name);
+    }
+
     if (job.status != ImportStatus.parsed &&
         job.status != ImportStatus.draftReady) {
       throw InvalidImportStatusTransitionViolation(

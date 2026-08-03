@@ -51,9 +51,11 @@ class CreateMenuLabelRule {
       throw AuthorizationDeniedViolation(actionName: action.name);
     }
 
-    final existing = await _repository.findActiveByLabelType(labelType);
+    final existing =
+        await _repository.findActiveByLabelType(organizationId, labelType);
     final rule = MenuLabelRule(
       id: _idGenerator.nextMenuLabelRuleId(),
+      organizationId: organizationId,
       labelType: labelType,
       ruleVersion: existing.length + 1,
       description: description,

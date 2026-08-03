@@ -56,10 +56,12 @@ void main() {
         auditRepository: auditRepository,
       );
       parseImportSource = ParseImportSource(
+        authorizationPolicy: const AllowAllImportPolicy(),
         jobRepository: jobRepository,
         auditRepository: auditRepository,
       );
       createImportDraft = CreateImportDraft(
+        authorizationPolicy: const AllowAllImportPolicy(),
         jobRepository: jobRepository,
         draftRepository: draftRepository,
         idGenerator: SequentialImportDraftIdGenerator(),
@@ -71,6 +73,7 @@ void main() {
         auditRepository: auditRepository,
       );
       commitImportDraft = CommitImportDraft(
+        authorizationPolicy: const AllowAllImportPolicy(),
         jobRepository: jobRepository,
         draftRepository: draftRepository,
         categoryRepository: categoryRepository,
