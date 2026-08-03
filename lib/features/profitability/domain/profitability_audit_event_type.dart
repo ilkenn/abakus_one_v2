@@ -1,0 +1,4 @@
+enum ProfitabilityAuditEventType {
+  thresholdConfigSet,
+  recipeProfitabilityCalculated,
+}
