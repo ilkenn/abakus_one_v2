@@ -1813,3 +1813,47 @@ final class ManuallyEditedTranslationNotOverwritableViolation
       'Translation "$contentKey" ($languageName) was manually edited and '
       'cannot be overwritten by a machine-generated write';
 }
+
+/// A caller referenced a `Recipe`/`RecipeVersion`/`SubRecipe`/
+/// `SubRecipeVersion` id that does not exist in the relevant repository
+/// (Phase 7, `docs/decisions.md` ADR-024).
+final class UnknownRecipeEntityViolation extends BusinessRuleViolation {
+  const UnknownRecipeEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// A `RecipeLine` was constructed with neither an `ingredientId` nor a
+/// `subRecipeId` set, or with both set — a line references exactly one
+/// of the two, never neither or both (Phase 7, `docs/decisions.md`
+/// ADR-024).
+final class InvalidRecipeLineViolation extends BusinessRuleViolation {
+  const InvalidRecipeLineViolation({required this.reason});
+
+  final String reason;
+
+  @override
+  String get description => 'Invalid recipe line: $reason';
+}
+
+/// `ResolveRecipeIngredientSnapshot` found a `SubRecipe` that
+/// (transitively) references itself through its own lines — resolving
+/// it would recurse forever, so it is rejected structurally instead of
+/// looping (Phase 7, `docs/decisions.md` ADR-024).
+final class RecipeCycleDetectedViolation extends BusinessRuleViolation {
+  const RecipeCycleDetectedViolation({required this.subRecipeId});
+
+  final String subRecipeId;
+
+  @override
+  String get description =>
+      'Sub-recipe "$subRecipeId" (transitively) references itself — '
+      'cannot resolve an ingredient snapshot';
+}
