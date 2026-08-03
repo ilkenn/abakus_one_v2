@@ -1886,3 +1886,32 @@ final class NutritionOverrideReasonRequiredViolation
   String get description =>
       'A manually-entered nutrition value requires a non-empty reason';
 }
+
+/// A caller referenced an `IngredientAllergenDeclaration` id that
+/// does not exist in the relevant repository (Phase 7,
+/// `docs/decisions.md` ADR-024).
+final class UnknownAllergenEntityViolation extends BusinessRuleViolation {
+  const UnknownAllergenEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// An `IngredientAllergenDeclaration` was set with
+/// `AllergenSourceType.manual` and an empty override reason — "manual
+/// overrides require reason+audit" (Phase 7, `docs/decisions.md`
+/// ADR-024).
+final class AllergenOverrideReasonRequiredViolation
+    extends BusinessRuleViolation {
+  const AllergenOverrideReasonRequiredViolation();
+
+  @override
+  String get description =>
+      'A manually-entered allergen declaration requires a non-empty reason';
+}

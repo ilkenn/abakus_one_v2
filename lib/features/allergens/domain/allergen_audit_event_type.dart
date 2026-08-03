@@ -1,0 +1,4 @@
+enum AllergenAuditEventType {
+  declarationSet,
+  declarationConfirmed,
+}
