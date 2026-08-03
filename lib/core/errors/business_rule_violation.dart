@@ -1512,6 +1512,67 @@ final class UnknownEntitlementGrantViolation extends BusinessRuleViolation {
   String get description => 'Unknown EntitlementGrant: "$id"';
 }
 
+/// A caller referenced an `ImportJob`/`ImportDraft` id that does not
+/// exist in the relevant repository (Phase 7, `docs/decisions.md`
+/// ADR-024).
+final class UnknownImportEntityViolation extends BusinessRuleViolation {
+  const UnknownImportEntityViolation(
+      {required this.entityName, required this.id});
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
+/// `ParseImportSource` was called for an `ImportSourceType` with
+/// `supportsDeterministicLocalParsing == false` — "unsupported sources
+/// must produce an honest 'provider required' result," never a fake or
+/// stubbed parse (Phase 7, `docs/decisions.md` ADR-024).
+final class UnsupportedImportSourceViolation extends BusinessRuleViolation {
+  const UnsupportedImportSourceViolation({required this.sourceTypeName});
+
+  final String sourceTypeName;
+
+  @override
+  String get description =>
+      'Import source type "$sourceTypeName" requires a provider that is '
+      'not implemented — no fake parse was performed';
+}
+
+/// An `ImportJob` transition was attempted that its current `ImportStatus`
+/// does not permit (Phase 7, `docs/decisions.md` ADR-024).
+final class InvalidImportStatusTransitionViolation
+    extends BusinessRuleViolation {
+  const InvalidImportStatusTransitionViolation({
+    required this.fromStatusName,
+    required this.toStatusName,
+  });
+
+  final String fromStatusName;
+  final String toStatusName;
+
+  @override
+  String get description =>
+      'Invalid import status transition: $fromStatusName -> $toStatusName';
+}
+
+/// `CommitImportDraft` was called for an `ImportJob` that has not
+/// reached `ImportStatus.approved` — "the user must approve before
+/// authoritative records are created," enforced structurally, not by
+/// caller discipline (Phase 7, `docs/decisions.md` ADR-024).
+final class ImportNotApprovedViolation extends BusinessRuleViolation {
+  const ImportNotApprovedViolation({required this.importJobId});
+
+  final String importJobId;
+
+  @override
+  String get description =>
+      'Import job "$importJobId" has not been approved and cannot be '
+      'committed';
+}
+
 final class AdminDeviceRegistrationArchivedViolation
     extends BusinessRuleViolation {
   const AdminDeviceRegistrationArchivedViolation({required this.deviceId});

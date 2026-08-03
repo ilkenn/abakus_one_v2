@@ -9,17 +9,23 @@ import 'package:abakus_one_v2/features/admin/presentation/screens/audit_center_s
 import 'package:abakus_one_v2/features/admin/presentation/screens/device_registry_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/localization_admin_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/system_health_admin_screen.dart';
+import 'package:abakus_one_v2/core/services/feature_flags/feature_flags_keys.dart';
+import 'package:abakus_one_v2/core/services/feature_flags/feature_flags_provider.dart';
 import 'package:abakus_one_v2/features/crm/presentation/screens/customer_segmentation_admin_screen.dart';
 import 'package:abakus_one_v2/features/entitlements/presentation/screens/entitlement_admin_screen.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
+import 'package:abakus_one_v2/features/smart_import/presentation/screens/import_jobs_screen.dart';
+
+import '../../entitlements/test_support/entitlement_test_fixtures.dart';
 
 void main() {
   Future<void> pumpShell(
     WidgetTester tester, {
     ActorSession? session,
     Size size = const Size(1400, 900),
+    List<Override> extraOverrides = const [],
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -31,6 +37,7 @@ void main() {
         overrides: [
           if (session != null)
             actorSessionProvider.overrideWith((ref) => session),
+          ...extraOverrides,
         ],
         child: const MaterialApp(home: AdminShellScreen()),
       ),
@@ -117,10 +124,68 @@ void main() {
       find.byType(ListView).first,
       const Offset(0, -300),
     );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Denetim'));
     await tester.pumpAndSettle();
 
     expect(find.byType(AuditCenterScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'a manager with branch access and the flag enabled can open Menü '
+      'İçe Aktarma from Akıllı Kurulum & Stok group', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-1'},
+      ),
+      extraOverrides: [
+        featureFlagsServiceProvider.overrideWithValue(
+          FakeFeatureFlagsService(
+            enabledKeys: {FeatureFlagsKeys.menuImportEnabled},
+          ),
+        ),
+      ],
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Menü İçe Aktarma'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.tap(find.text('Menü İçe Aktarma').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ImportJobsScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'without the feature flag enabled, Menü İçe Aktarma denies with a '
+      'feature-disabled message', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-1'},
+      ),
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Menü İçe Aktarma'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.tap(find.text('Menü İçe Aktarma').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ImportJobsScreen), findsNothing);
+    expect(find.text('Bu özellik henüz etkinleştirilmedi.'), findsOneWidget);
   });
 
   testWidgets('a manager can open the Device Registry from Yapılandırma group',
