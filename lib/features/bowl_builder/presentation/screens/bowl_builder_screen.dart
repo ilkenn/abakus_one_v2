@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/layout/app_breakpoints.dart';
@@ -11,6 +13,7 @@ import '../../data/bowl_builder_catalog.dart';
 import '../../domain/models/bowl_builder_category.dart';
 import '../../domain/models/bowl_builder_step.dart';
 import '../providers/bowl_builder_provider.dart';
+import '../providers/bowl_builder_recipe_provider.dart';
 import '../widgets/bowl_canvas.dart';
 import '../widgets/builder_progress.dart';
 import '../widgets/builder_summary.dart';
@@ -42,6 +45,7 @@ class _BowlBuilderScreenState extends ConsumerState<BowlBuilderScreen> {
   void _addToCart(BuildContext context, WidgetRef ref) {
     final selectedModifiers = ref.read(bowlBuilderSelectedModifiersProvider);
     final state = ref.read(bowlBuilderProvider);
+    final unitPrice = ref.read(bowlBuilderTotalPriceProvider);
     final id = 'custom_bowl_${DateTime.now().millisecondsSinceEpoch}';
 
     ref.read(cartProvider.notifier).addToCart(
@@ -56,6 +60,25 @@ class _BowlBuilderScreenState extends ConsumerState<BowlBuilderScreen> {
           selectedModifiers: selectedModifiers,
           note: state.note.trim(),
         );
+
+    // Records an immutable Phase 7H recipe snapshot for this bowl at
+    // the moment it's finalized into the cart — the closest analog
+    // this app's customer-facing flow has to "order submission" (see
+    // `CreateBowlBuilderRecipeSnapshot`'s doc comment). Best-effort:
+    // never blocks or fails cart-add itself, since Bowl Builder must
+    // stay fully usable even with no `BowlBuilderIngredientRecipeMapping`
+    // configured yet.
+    unawaited(
+      ref.read(createBowlBuilderRecipeSnapshotProvider).call(
+            contextId: id,
+            organizationId: 'org-1',
+            branchId: 'branch-1',
+            selections: state.selectedQuantitiesByIngredient,
+            priceBasisMinorUnits: (unitPrice * 100).round(),
+            priceBasisCurrencyCode: 'TRY',
+            performedAt: DateTime.now(),
+          ),
+    );
 
     ref.read(bowlBuilderProvider.notifier).reset();
 

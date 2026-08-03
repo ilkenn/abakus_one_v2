@@ -5,4 +5,5 @@ enum RecipeAuditEventType {
   subRecipeCreated,
   subRecipeVersionCreated,
   ingredientSnapshotResolved,
+  bowlBuilderMappingSet,
 }
