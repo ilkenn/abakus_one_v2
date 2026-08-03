@@ -16,6 +16,9 @@ import '../../../entitlements/presentation/widgets/module_entitlement_gate.dart'
 import '../../../feedback/presentation/screens/feedback_admin_screen.dart';
 import '../../../inventory/presentation/screens/ingredient_catalog_screen.dart';
 import '../../../inventory/presentation/screens/inventory_screen.dart';
+import '../../../inventory/presentation/screens/stock_counts_screen.dart';
+import '../../../purchasing/presentation/screens/suppliers_screen.dart';
+import '../../../recipes/presentation/screens/recipes_screen.dart';
 import '../../../restaurant_setup/presentation/screens/setup_templates_screen.dart';
 import '../../../smart_import/presentation/screens/import_jobs_screen.dart';
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
@@ -435,6 +438,57 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
               child: InventoryScreen(
                 organizationId: 'org-1',
                 branchId: branchId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'stock-counts',
+            label: 'Stok Sayımları',
+            icon: Icons.fact_check_outlined,
+            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            builder: (context, ref) => ModuleEntitlementGate(
+              module: EntitlementModule.inventory,
+              scopeType: EntitlementScopeType.branch,
+              scopeId: branchId,
+              actorStaffId: actorId,
+              child: StockCountsScreen(
+                branchId: branchId,
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'recipes',
+            label: 'Tarifler',
+            icon: Icons.menu_book_outlined,
+            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            builder: (context, ref) => ModuleEntitlementGate(
+              module: EntitlementModule.recipes,
+              scopeType: EntitlementScopeType.branch,
+              scopeId: branchId,
+              actorStaffId: actorId,
+              child: RecipesScreen(
+                organizationId: 'org-1',
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'suppliers',
+            label: 'Tedarikçiler',
+            icon: Icons.local_shipping_outlined,
+            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            builder: (context, ref) => ModuleEntitlementGate(
+              module: EntitlementModule.suppliers,
+              scopeType: EntitlementScopeType.branch,
+              scopeId: branchId,
+              actorStaffId: actorId,
+              child: SuppliersScreen(
+                organizationId: 'org-1',
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
               ),
             ),
           ),

@@ -15,9 +15,12 @@ import 'package:abakus_one_v2/features/crm/presentation/screens/customer_segment
 import 'package:abakus_one_v2/features/entitlements/presentation/screens/entitlement_admin_screen.dart';
 import 'package:abakus_one_v2/features/inventory/presentation/screens/ingredient_catalog_screen.dart';
 import 'package:abakus_one_v2/features/inventory/presentation/screens/inventory_screen.dart';
+import 'package:abakus_one_v2/features/inventory/presentation/screens/stock_counts_screen.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
+import 'package:abakus_one_v2/features/purchasing/presentation/screens/suppliers_screen.dart';
+import 'package:abakus_one_v2/features/recipes/presentation/screens/recipes_screen.dart';
 import 'package:abakus_one_v2/features/restaurant_setup/presentation/screens/setup_templates_screen.dart';
 import 'package:abakus_one_v2/features/smart_import/presentation/screens/import_jobs_screen.dart';
 
@@ -261,6 +264,105 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(InventoryScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'a manager with branch access and the flag enabled can open Stok '
+      'Sayımları from Akıllı Kurulum & Stok group', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-1'},
+      ),
+      extraOverrides: [
+        featureFlagsServiceProvider.overrideWithValue(
+          FakeFeatureFlagsService(
+            enabledKeys: {FeatureFlagsKeys.inventoryEnabled},
+          ),
+        ),
+      ],
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Stok Sayımları'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Stok Sayımları').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(StockCountsScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'a manager with branch access and the flag enabled can open Tarifler '
+      'from Akıllı Kurulum & Stok group', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-1'},
+      ),
+      extraOverrides: [
+        featureFlagsServiceProvider.overrideWithValue(
+          FakeFeatureFlagsService(
+            enabledKeys: {FeatureFlagsKeys.recipesEnabled},
+          ),
+        ),
+      ],
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Tarifler'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tarifler').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(RecipesScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'a manager with branch access and the flag enabled can open '
+      'Tedarikçiler from Akıllı Kurulum & Stok group', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        branchAccess: {'branch-1'},
+      ),
+      extraOverrides: [
+        featureFlagsServiceProvider.overrideWithValue(
+          FakeFeatureFlagsService(
+            enabledKeys: {FeatureFlagsKeys.suppliersEnabled},
+          ),
+        ),
+      ],
+    );
+
+    await tester.dragUntilVisible(
+      find.text('Tedarikçiler'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tedarikçiler').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SuppliersScreen), findsOneWidget);
   });
 
   testWidgets(
