@@ -1484,6 +1484,19 @@ final class UnknownBrandThemeViolation extends BusinessRuleViolation {
       'No TenantBrandTheme exists yet for organization "$organizationId"';
 }
 
+/// A requested `providerId` doesn't exist in the platform's
+/// `IntegrationProviderRegistry` catalog — Phase 8 (`docs/decisions.md`
+/// ADR-025). A tenant can only enable a provider the platform itself
+/// has registered.
+final class UnknownIntegrationProviderViolation extends BusinessRuleViolation {
+  const UnknownIntegrationProviderViolation({required this.providerId});
+
+  final String providerId;
+
+  @override
+  String get description => 'Unknown integration provider: "$providerId"';
+}
+
 /// A customer already has 5 active/eligible `CustomerPhoto`s (`pending
 /// Review`/`underReview`/`approved` — `rejected`/`removed` never count)
 /// and attempted to submit another — "maximum 5 active/eligible photos"
