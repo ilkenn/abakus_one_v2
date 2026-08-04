@@ -1497,6 +1497,38 @@ final class UnknownIntegrationProviderViolation extends BusinessRuleViolation {
   String get description => 'Unknown integration provider: "$providerId"';
 }
 
+/// A tenant tried to create a `MarketplaceAccount`/merchant account for
+/// a provider it has not enabled via `SetTenantIntegrationEnabled` —
+/// Phase 8 (`docs/decisions.md` ADR-025).
+final class IntegrationProviderNotEnabledViolation
+    extends BusinessRuleViolation {
+  const IntegrationProviderNotEnabledViolation({required this.providerId});
+
+  final String providerId;
+
+  @override
+  String get description =>
+      'Provider "$providerId" is not enabled for this tenant — enable it '
+      'first via the Integration Hub';
+}
+
+/// Phase 8 (`docs/decisions.md` ADR-025) — mirrors
+/// `UnknownAdminEntityViolation`/`UnknownInventoryEntityViolation` for
+/// `features/marketplace`'s own entities (account/store/virtual
+/// restaurant).
+final class UnknownMarketplaceEntityViolation extends BusinessRuleViolation {
+  const UnknownMarketplaceEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
 /// A customer already has 5 active/eligible `CustomerPhoto`s (`pending
 /// Review`/`underReview`/`approved` — `rejected`/`removed` never count)
 /// and attempted to submit another — "maximum 5 active/eligible photos"
