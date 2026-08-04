@@ -1545,6 +1545,28 @@ final class UnknownPaymentHubEntityViolation extends BusinessRuleViolation {
   String get description => 'Unknown $entityName: "$id"';
 }
 
+/// No credential of the given kind has ever been stored for this
+/// tenant/provider — Phase 8 (`docs/decisions.md` ADR-025), Credential
+/// Management (8K). Never includes any secret value, only identifying
+/// metadata.
+final class UnknownIntegrationCredentialViolation
+    extends BusinessRuleViolation {
+  const UnknownIntegrationCredentialViolation({
+    required this.organizationId,
+    required this.providerId,
+    required this.kind,
+  });
+
+  final String organizationId;
+  final String providerId;
+  final String kind;
+
+  @override
+  String get description =>
+      'No "$kind" credential exists for provider "$providerId" and '
+      'organization "$organizationId"';
+}
+
 /// A customer already has 5 active/eligible `CustomerPhoto`s (`pending
 /// Review`/`underReview`/`approved` — `rejected`/`removed` never count)
 /// and attempted to submit another — "maximum 5 active/eligible photos"

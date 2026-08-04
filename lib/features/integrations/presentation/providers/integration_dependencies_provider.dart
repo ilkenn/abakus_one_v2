@@ -1,7 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../application/identity/integration_credential_ref_id_generator.dart';
 import '../../application/identity/tenant_integration_configuration_id_generator.dart';
 import '../../data/integration_audit_entry_repository.dart';
+import '../../data/integration_credential_ref_repository.dart';
+import '../../data/integration_credential_storage.dart';
 import '../../data/tenant_integration_configuration_repository.dart';
 import '../../domain/integration_provider_adapter.dart';
 import '../../domain/integration_provider_category.dart';
@@ -109,4 +112,23 @@ final tenantIntegrationConfigurationIdGeneratorProvider =
 final integrationAuditEntryRepositoryProvider =
     Provider<IntegrationAuditEntryRepository>((ref) {
   return InMemoryIntegrationAuditEntryRepository();
+});
+
+/// Phase 8K — Credential Management. The real, `flutter_secure_storage`-
+/// backed implementation; see `IntegrationCredentialStorage`'s own doc
+/// comment for why no use case in this codebase ever reads a value back
+/// out of this provider.
+final integrationCredentialStorageProvider =
+    Provider<IntegrationCredentialStorage>((ref) {
+  return const SecureIntegrationCredentialStorage();
+});
+
+final integrationCredentialRefRepositoryProvider =
+    Provider<IntegrationCredentialRefRepository>((ref) {
+  return InMemoryIntegrationCredentialRefRepository();
+});
+
+final integrationCredentialRefIdGeneratorProvider =
+    Provider<IntegrationCredentialRefIdGenerator>((ref) {
+  return SequentialIntegrationCredentialRefIdGenerator();
 });

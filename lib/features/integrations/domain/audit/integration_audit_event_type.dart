@@ -8,4 +8,10 @@
 enum IntegrationAuditEventType {
   tenantIntegrationEnabled,
   tenantIntegrationDisabled,
+  // Phase 8K — Credential Management. The audited fact is always "a
+  // credential of this kind was stored/revoked for this provider,"
+  // never the credential's own value — see `IntegrationCredentialRef`'s
+  // own doc comment for why.
+  credentialStored,
+  credentialRevoked,
 }
