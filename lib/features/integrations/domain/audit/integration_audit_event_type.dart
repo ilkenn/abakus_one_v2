@@ -14,4 +14,6 @@ enum IntegrationAuditEventType {
   // own doc comment for why.
   credentialStored,
   credentialRevoked,
+  // Phase 8L — Webhook Foundation.
+  webhookDeliveryReceived,
 }

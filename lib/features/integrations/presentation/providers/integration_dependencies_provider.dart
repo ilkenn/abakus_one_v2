@@ -2,13 +2,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/identity/integration_credential_ref_id_generator.dart';
 import '../../application/identity/tenant_integration_configuration_id_generator.dart';
+import '../../application/identity/webhook_delivery_record_id_generator.dart';
 import '../../data/integration_audit_entry_repository.dart';
 import '../../data/integration_credential_ref_repository.dart';
 import '../../data/integration_credential_storage.dart';
 import '../../data/tenant_integration_configuration_repository.dart';
+import '../../data/webhook_delivery_record_repository.dart';
 import '../../domain/integration_provider_adapter.dart';
 import '../../domain/integration_provider_category.dart';
 import '../../domain/integration_provider_registry.dart';
+import '../../domain/webhook_signature_verifier.dart';
 
 /// Central Riverpod wiring for `features/integrations` — Phase 8
 /// (`docs/decisions.md` ADR-025).
@@ -131,4 +134,23 @@ final integrationCredentialRefRepositoryProvider =
 final integrationCredentialRefIdGeneratorProvider =
     Provider<IntegrationCredentialRefIdGenerator>((ref) {
   return SequentialIntegrationCredentialRefIdGenerator();
+});
+
+/// Phase 8L — Webhook Foundation. `UnverifiedWebhookSignatureVerifier`
+/// is the only implementation — see its own doc comment for why (no
+/// `crypto` dependency exists yet, and adding one is a new-dependency
+/// decision this provider does not make silently).
+final webhookSignatureVerifierProvider =
+    Provider<WebhookSignatureVerifier>((ref) {
+  return const UnverifiedWebhookSignatureVerifier();
+});
+
+final webhookDeliveryRecordRepositoryProvider =
+    Provider<WebhookDeliveryRecordRepository>((ref) {
+  return InMemoryWebhookDeliveryRecordRepository();
+});
+
+final webhookDeliveryRecordIdGeneratorProvider =
+    Provider<WebhookDeliveryRecordIdGenerator>((ref) {
+  return SequentialWebhookDeliveryRecordIdGenerator();
 });
