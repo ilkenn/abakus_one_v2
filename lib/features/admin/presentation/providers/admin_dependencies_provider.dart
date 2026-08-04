@@ -92,6 +92,16 @@ final organizationRepositoryProvider = Provider<OrganizationRepository>((ref) {
   ]);
 });
 
+/// The tenant the currently running app instance serves — Phase 8
+/// (`docs/decisions.md` ADR-025). **A placeholder, not real tenant
+/// selection**: this app has no tenant-switching UI anywhere yet (no
+/// screen lets an actor pick which organization's build they're
+/// running), so this always resolves to the single seeded organization
+/// above — mirrors `currentBranchIdProvider`'s exact honest-placeholder
+/// pattern (`features/navigation`) for the same reason. Building real
+/// tenant selection/provisioning is separate, unrelated feature work.
+final currentOrganizationIdProvider = Provider<String>((ref) => 'org-1');
+
 final restaurantRepositoryProvider = Provider<RestaurantRepository>((ref) {
   return InMemoryRestaurantRepository(seed: [
     Restaurant(
