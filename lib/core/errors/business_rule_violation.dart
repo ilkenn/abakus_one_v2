@@ -1448,6 +1448,18 @@ final class AdminPlatformAlreadyBootstrappedViolation
       'bootstrapping only runs once';
 }
 
+/// Phase 8 (`docs/decisions.md` ADR-025) — mirrors
+/// [AdminPlatformAlreadyBootstrappedViolation] for the wholly separate
+/// platform-owner hierarchy.
+final class PlatformAlreadyBootstrappedViolation extends BusinessRuleViolation {
+  const PlatformAlreadyBootstrappedViolation();
+
+  @override
+  String get description =>
+      'The platform already has at least one platform member — '
+      'bootstrapping only runs once';
+}
+
 /// A customer already has 5 active/eligible `CustomerPhoto`s (`pending
 /// Review`/`underReview`/`approved` — `rejected`/`removed` never count)
 /// and attempted to submit another — "maximum 5 active/eligible photos"
