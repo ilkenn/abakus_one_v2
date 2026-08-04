@@ -1094,9 +1094,9 @@ full architecture and every judgment call.
 | 8P — Release Readiness Foundation | DONE | `BuildReleaseReadinessSnapshot` — 6-criterion checklist (environment separation: ready; crash reporting: not ready; feature-flag production values: manual step; app-version observability: not ready — no `package_info_plus`-equivalent dependency; platform monitoring/integration audit: ready). Never publishes anything. |
 | 8Q — Store Compliance Foundation | DONE | `BuildStoreComplianceSnapshot` — 5-criterion checklist (account deletion: not ready, `AccountDataScreen._processDeleteAccount` is UI-only; data export: not ready, fake delayed transition; privacy policy/terms of use documents: not ready, disclaimer caption only; store data-safety declarations: manual step). Never submits anything to any store. |
 | 8R — Admin UI wiring | DONE (partial, honest gap) | 2 real destinations wired: `TenantIntegrationHubScreen` (tenant `AdminShellScreen`, tenantOwner-only) combining provider catalog + real toggle + recent activity; `PlatformShellScreen` (3-tab: Monitoring/Release-Readiness/Store-Compliance), reached only via `PlatformSignInScreen`, never linked from the tenant shell. Full Marketplace/Payment Hub CRUD UI and platform-side tenant/catalog-management screens remain unbuilt — named explicitly, not silently skipped. |
-| 8S — Security & tenant-isolation verification pass | IN PROGRESS | Dedicated skeptical pass over cross-stack leakage, organization-scoping enforcement, cross-tenant read paths, credential secrecy, role-permission-map consistency, UI-vs-policy gating, trusted-primitive reachability, and dev-login release gating — mirrors Phase 6's 6P and Phase 7's 7S precedent. |
-| 8T — Comprehensive testing + quality gate | PENDING | Final closing pass, mirroring Phase 7's 7U. |
-| Documentation | DONE (this entry); pending final counts | `docs/decisions.md` ADR-025; `docs/business_rules.md` BR-BRANCH-002/003/005, BR-MKT-001/002, BR-PLATFORM-001/002, BR-BRANDING-001/002, BR-INTEGRATION-001/002/003, BR-PAYMENTHUB-001/002, DL-028; `docs/master_roadmap.md` (MT-001, MT-002, SAAS-002, SAAS-003, Phase 10 header) and `docs/module_catalog.md` (MT, MKT, SAAS, PLAT) Phase 8 progress notes; this entry, Phase 8 Closure Record to follow once 8S/8T land.
+| 8S — Security & tenant-isolation verification pass | DONE | Dedicated skeptical agent pass (mirrors Phase 6's 6P and Phase 7's 7S precedent) confirmed cross-stack isolation, all 10 tenant-mutation use cases' organization-scoping, cross-tenant read-path gating, credential secrecy, and role-permission-map consistency are all sound (verified by direct code reading, exhaustive grep, and 42 executed tests). Found and closed 2 real gaps: `CheckModuleAccess` silently skipped authorization context for `EntitlementScopeType.organization` (the "no role exemption" guarantee from 8B was never reached for org-scoped entitlement checks — dormant, zero current callers, but untested); `StoreIntegrationCredential` persisted a ref and a "stored" audit entry even when the underlying secure-storage write silently failed. Both fixed with regression tests. 2 additional findings (read-projections relying on UI-level `RoleGate` only; `PlatformMemberRepository.findAll()` not `kReleaseMode`-gated for the sign-in screen's listing path) were confirmed pre-existing/inherited from before Phase 8, logged as accepted residual risk below rather than fixed. |
+| 8T — Comprehensive testing + quality gate | DONE | `dart format --set-exit-if-changed` clean (0 files changed), `flutter analyze` 0 issues, full `flutter test` 2117/2117 passing, zero stray `print()`/unresolved `TODO` in any Phase 8 feature directory, working tree clean (only the pre-existing unrelated `.claude/settings*` and untracked `brand-production/` remain, both excluded from every Phase 8 commit). |
+| Documentation | DONE | `docs/decisions.md` ADR-025; `docs/business_rules.md` BR-BRANCH-002/003/005, BR-MKT-001/002, BR-PLATFORM-001/002, BR-BRANDING-001/002, BR-INTEGRATION-001/002/003, BR-PAYMENTHUB-001/002, DL-028; `docs/master_roadmap.md` (MT-001, MT-002, SAAS-002, SAAS-003, Phase 10 header) and `docs/module_catalog.md` (MT, MKT, SAAS, PLAT) Phase 8 progress notes; this entry including the Phase 8 Closure Record below.
 
 **Explicitly out of scope this phase** (per the kickoff's own framing): actually integrating any
 marketplace/payment provider ("do NOT integrate providers yet"); real webhook signature verification
@@ -1112,7 +1112,83 @@ at every point a new one might have been tempting.
 
 ### Phase 8 Closure Record
 
-*Pending 8S (security/tenant-isolation verification pass) and 8T (comprehensive testing + quality
-gate) — this record will be completed once both land, mirroring Phase 6's 6P and Phase 7's 7S/7T/7U
-precedent of writing the closure record only after the phase's own dedicated verification passes have
-actually run, not before.*
+**Mandatory "do not mark approved if" checklist** (against the kickoff brief's own repeated, explicit
+guarantees, verbatim in spirit):
+
+1. **Platform Owner is not completely separated from the tenant hierarchy** — **not the case**.
+   Verified structurally by the 8S pass: zero shared types between `PlatformRole`/`PlatformActorSession`/
+   `PlatformAuthorizedAction` and `StaffRole`/`ActorSession`/`PosAuthorizedAction`; zero cross-stack
+   imports (exhaustive grep, both directions); zero navigation path between `AdminShellScreen` and
+   `PlatformShellScreen`.
+2. **A provider was actually integrated ("do NOT integrate providers yet")** — **not the case**. Every
+   one of the 13 registered marketplace/payment providers resolves to
+   `UnconfiguredIntegrationProviderAdapter`; confirmed no real vendor SDK call exists anywhere in
+   `lib/`.
+3. **Cross-tenant data leakage exists** — **was a real, if dormant, gap for `CheckModuleAccess`,
+   now resolved** (8S finding #1). Found during the mandatory 8S pass, not assumed absent; closed with
+   a real fix and 2 regression tests before this record was written. The 10 other tenant-mutation use
+   cases named in the 8S brief were all confirmed clean on first read, not just after a fix.
+4. **An audit entry can assert something that did not happen** — **was true for
+   `StoreIntegrationCredential`, now resolved** (8S finding #2). A failed secure-storage write no
+   longer produces a false "credential stored" audit entry.
+5. **A stored credential's raw value is exposed anywhere** (ref, audit description, log, screen) —
+   **not the case**. `IntegrationCredentialRef` has no field capable of holding it; `readValue()` has
+   zero call sites in `lib/`.
+6. **Publishing was implemented ("do not implement publishing")** — **not the case**. `BuildReleaseReadinessSnapshot`/
+   `BuildStoreComplianceSnapshot` never call any external API, submit a build, or publish to any store —
+   pure read-only records.
+7. **A readiness/compliance criterion is asserted true without evidence** — **not the case**.
+   `isReleaseReady`/`isStoreCompliant` both correctly report `false` today; every criterion is checked
+   against a real, code-verified fact (crash reporting genuinely `NoOp`, account deletion genuinely a
+   UI-only stub).
+8. **A trusted internal primitive (`RecordMarketplaceOrderMapping`, `RecordPaymentSettlement`,
+   `RecordWebhookDelivery`) is actually reachable from production code, undermining its "system-actor,
+   no authorization check" design** — **not the case**. Confirmed by exhaustive grep: zero constructor
+   calls, zero provider wiring, zero screen references outside their own definition files.
+
+**What remains deferred** (explicitly, not silently narrowed): full Marketplace Hub/Payment Hub CRUD
+admin UI (account/store/virtual-restaurant/merchant-account management); a Branding editor UI; the
+platform-side tenant/entitlement-catalog/integration-catalog management screens
+`PlatformAuthorizedAction` already anticipates; real billing/subscription (`SAAS-001`); build-flavor/
+app-store tooling to publish a second, differently-branded app; real webhook signature verification (no
+`crypto` dependency); a real backend of any kind to receive an inbound webhook; real OTP authentication
+for platform-level actors; database-level tenant isolation enforcement (no database exists at all);
+tenant-provisioning workflow (exactly one seeded `Organization` exists).
+
+**Accepted residual risk, logged rather than fixed this phase** (both confirmed pre-existing/inherited
+from before Phase 8, not regressions introduced by it): read-only projections
+(`BuildProviderHealthProjection`, `BuildIntegrationAuditCenterProjection`, and the pre-existing
+`BuildAdminOverviewSnapshot`/`BuildAuditCenterProjection` this pattern was inherited from) rely solely
+on UI-level `RoleGate` rather than an independent `authorize()` call inside the use case itself — a
+future architectural decision (flagged for `flutter_architect`) on whether read-projections should
+adopt independent authorization as a standing rule; `PlatformMemberRepository.findAll()`/
+`StaffMemberRepository.findAll()` (identical pre-existing shape) are not `kReleaseMode`-gated for their
+respective sign-in screens' own member-listing path, only the actual sign-in action is — low real-world
+impact today since neither sign-in screen has a reachable route in the shipped app.
+
+**Production limitations, stated plainly:** every repository remains `InMemory*` — no real backend
+exists. No real staff or platform-owner authentication (Development Login substitutes for both,
+unchanged reasoning from Phase 5/6). Firebase remains dormant. No real vendor integration behind any
+marketplace/payment provider adapter. `isReleaseReady`/`isStoreCompliant` both correctly report `false`
+— this phase does not claim the product is ready to publish.
+
+**Test count**: **2117 passing at Phase 8 close** (0 `flutter analyze` issues, `dart format` clean, no
+test skipped or weakened), verified by a full `flutter test` run — up from 1989 at Phase 7 close,
+128 new/expanded test assertions across the phase's 20 commits (8A through 8S, plus documentation).
+New tests span: both authorization stacks' allow/deny/no-exemption/multi-role cases, Development Login
+signIn/refreshSession/forced-revocation for the platform stack, every `EntitlementModule` value's
+map-completeness (the 8D regression) plus organization-scoping (the 8S regression), brand-theme
+resolution and channel overrides, the provider registry and health projection, tenant integration
+enable/disable and its audit trail, marketplace/payment hub account-through-mapping flows, credential
+store/revoke including the 8S storage-failure regression, webhook delivery idempotency and fail-closed
+signature verification, all three platform read-model snapshots (monitoring/release-readiness/store-
+compliance), and the two new admin screens' navigation/gating/toggle widget tests.
+
+**Phase 8 readiness decision**: **APPROVED**. All 8 of the kickoff's named guarantees hold — including
+2 real gaps (one dormant tenant-isolation bypass, one audit-integrity gap) found and closed during this
+phase's own mandatory 8S verification pass, rather than assumed correct from their original
+implementation. The residual gaps and deferred scope above are real, substantial, and should inform
+Phase 9's own planning (a tenant-provisioning workflow, real backend/billing, full Marketplace/Payment
+Hub admin UI, and the accepted-residual-risk items are the natural next targets) — but none of them are
+one of the 8 named blocking conditions, and the phase closes with every readiness claim backed by
+real, verified code rather than assumed.
