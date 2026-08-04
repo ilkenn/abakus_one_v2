@@ -1460,6 +1460,30 @@ final class PlatformAlreadyBootstrappedViolation extends BusinessRuleViolation {
       'bootstrapping only runs once';
 }
 
+/// A submitted `BrandColorPalette` has a color that isn't a valid
+/// `#RRGGBB`/`#AARRGGBB` hex string — Phase 8 (`docs/decisions.md`
+/// ADR-025).
+final class InvalidBrandColorPaletteViolation extends BusinessRuleViolation {
+  const InvalidBrandColorPaletteViolation();
+
+  @override
+  String get description =>
+      'One or more brand colors is not a valid #RRGGBB/#AARRGGBB hex string';
+}
+
+/// No `TenantBrandTheme` exists yet for the given organization — Phase 8
+/// (`docs/decisions.md` ADR-025). A channel override cannot be set
+/// before the tenant's base brand theme exists.
+final class UnknownBrandThemeViolation extends BusinessRuleViolation {
+  const UnknownBrandThemeViolation({required this.organizationId});
+
+  final String organizationId;
+
+  @override
+  String get description =>
+      'No TenantBrandTheme exists yet for organization "$organizationId"';
+}
+
 /// A customer already has 5 active/eligible `CustomerPhoto`s (`pending
 /// Review`/`underReview`/`approved` — `rejected`/`removed` never count)
 /// and attempted to submit another — "maximum 5 active/eligible photos"
