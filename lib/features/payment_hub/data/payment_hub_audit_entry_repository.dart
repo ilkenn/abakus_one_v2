@@ -4,6 +4,8 @@ abstract interface class PaymentHubAuditEntryRepository {
   Future<void> appendEvent(PaymentHubAuditEntry entry);
   Future<List<PaymentHubAuditEntry>> findByTargetEntityId(
       String targetEntityId);
+  Future<List<PaymentHubAuditEntry>> findByOrganizationId(
+      String organizationId);
 }
 
 class InMemoryPaymentHubAuditEntryRepository
@@ -20,6 +22,14 @@ class InMemoryPaymentHubAuditEntryRepository
       String targetEntityId) async {
     return List.unmodifiable(
       _entries.where((e) => e.targetEntityId == targetEntityId),
+    );
+  }
+
+  @override
+  Future<List<PaymentHubAuditEntry>> findByOrganizationId(
+      String organizationId) async {
+    return List.unmodifiable(
+      _entries.where((e) => e.organizationId == organizationId),
     );
   }
 }

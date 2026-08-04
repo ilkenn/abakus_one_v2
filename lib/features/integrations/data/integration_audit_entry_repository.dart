@@ -4,6 +4,8 @@ abstract interface class IntegrationAuditEntryRepository {
   Future<void> appendEvent(IntegrationAuditEntry entry);
   Future<List<IntegrationAuditEntry>> findByTargetEntityId(
       String targetEntityId);
+  Future<List<IntegrationAuditEntry>> findByOrganizationId(
+      String organizationId);
 }
 
 class InMemoryIntegrationAuditEntryRepository
@@ -20,6 +22,14 @@ class InMemoryIntegrationAuditEntryRepository
       String targetEntityId) async {
     return List.unmodifiable(
       _entries.where((e) => e.targetEntityId == targetEntityId),
+    );
+  }
+
+  @override
+  Future<List<IntegrationAuditEntry>> findByOrganizationId(
+      String organizationId) async {
+    return List.unmodifiable(
+      _entries.where((e) => e.organizationId == organizationId),
     );
   }
 }

@@ -4,6 +4,8 @@ abstract interface class MarketplaceAuditEntryRepository {
   Future<void> appendEvent(MarketplaceAuditEntry entry);
   Future<List<MarketplaceAuditEntry>> findByTargetEntityId(
       String targetEntityId);
+  Future<List<MarketplaceAuditEntry>> findByOrganizationId(
+      String organizationId);
 }
 
 class InMemoryMarketplaceAuditEntryRepository
@@ -20,6 +22,14 @@ class InMemoryMarketplaceAuditEntryRepository
       String targetEntityId) async {
     return List.unmodifiable(
       _entries.where((e) => e.targetEntityId == targetEntityId),
+    );
+  }
+
+  @override
+  Future<List<MarketplaceAuditEntry>> findByOrganizationId(
+      String organizationId) async {
+    return List.unmodifiable(
+      _entries.where((e) => e.organizationId == organizationId),
     );
   }
 }
