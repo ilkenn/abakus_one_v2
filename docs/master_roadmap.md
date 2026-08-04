@@ -321,6 +321,12 @@
 - Web/admin impact: Recipe builder UI.
 - Test requirements: Recipe-to-ingredient referential integrity tests.
 - Completion criteria: Every sellable product has a recipe with real ingredient quantities.
+- **Status update** (this session's own ad hoc "Phase 7," distinct from this roadmap's numbering —
+  see `CLAUDE.md` §1): the `Ingredient`/`Recipe` domain shape, versioning (an edit creates a new
+  version, never rewrites history), and referential-integrity tests all now exist as a real, tested,
+  client-side foundation (`features/inventory`, `features/recipes`; `docs/decisions.md` ADR-024).
+  Still missing: backend persistence, and a recipe-builder admin UI (no screen exists to author a
+  recipe — recipes are currently constructed only through use cases/tests).
 
 #### PR-002 — Modifier-to-Ingredient Mapping & Allergen Tagging
 - Description: Connect the customer-facing modifier system (already reasonably built in `MenuScreen`/`ModifierSelector`) to real ingredient data, and add allergen tagging.
@@ -334,6 +340,13 @@
 - Web/admin impact: Allergen tagging UI.
 - Test requirements: Tests confirming allergen data correctly aggregates from a product's full ingredient set including selected modifiers.
 - Completion criteria: A customer can see accurate, modifier-aware allergen information before ordering.
+- **Status update** (session Phase 7, ADR-024): `features/allergens` — a 14+ value `AllergenType`
+  taxonomy and `IngredientAllergenDeclaration` with a `draft`/`pendingReview`/`confirmed` lifecycle
+  exist and are tested. Bowl Builder's dynamic recipe resolution (`features/bowl_builder`) connects
+  the customer-facing modifier system to real recipe/ingredient data at add-to-cart time. Still
+  missing: allergen display on `ProductDetailScreen` (no customer-facing allergen UI was built) and
+  an allergen-tagging admin UI (only the review-queue *engine* exists — `GetAllergenReviewQueue` —
+  no screen).
 
 ---
 
@@ -351,6 +364,15 @@
 - Web/admin impact: Stock management screens.
 - Test requirements: Concurrent-order race-condition tests (deliberately simulate simultaneous orders depleting the same stock).
 - Completion criteria: Two simultaneous orders for the last unit of an ingredient cannot both succeed.
+- **Status update** (session Phase 7, ADR-024): `InventoryItem`/`BranchStock`/`Quantity` (exact
+  integers) and `RecordStockMovement` (the single write path for every stock change, idempotent by
+  key) exist and are tested. `ConsumeStockForOrder` (`features/stock_consumption`) is a real,
+  idempotent, recipe-driven deduction use case — but **no live trigger connects it to a real
+  dine-in/takeaway order completion anywhere in this codebase** (no `MenuProduct`↔`Recipe` linkage
+  exists to join against), so "automatic, order-fulfillment-tied deduction" is not actually
+  happening yet outside Bowl Builder's own add-to-cart path. No concurrency-safe backend exists —
+  this remains an honest, in-memory, single-process foundation, not the race-safe guarantee this
+  item's completion criteria describes.
 
 #### INV-002 — Supplier & Purchase Order Management
 - Description: Implement `Supplier`/`Purchase`/`PurchaseOrderLine` with a purchase-order creation and receiving workflow.
@@ -364,6 +386,13 @@
 - Web/admin impact: PO management UI.
 - Test requirements: PO state-transition tests, receiving-updates-stock integration test.
 - Completion criteria: A purchase order, once marked received, correctly updates `INV-001`'s stock levels.
+- **Status update** (session Phase 7, ADR-024): `features/purchasing` — `Supplier`/
+  `SupplierProduct`/`SupplierPrice` (append-only), a `PurchaseOrder` state machine
+  (draft→submitted→partially received→received), and `ReceiveGoods` (idempotent by key, real
+  `RecordStockMovement` integration confirmed by an integration test) all exist and are tested —
+  this item's completion criteria is met at the domain layer. A `SuppliersScreen` exists for
+  supplier management; no dedicated PO-creation/receiving admin UI was built (constructible only
+  through use cases/tests today).
 
 #### INV-003 — Waste/Adjustment Logging & Low-Stock Alerts
 - Description: Manual `StockAdjustment` entry (waste, correction, transfer) with reason codes, and configurable low-stock alerting.
@@ -377,6 +406,10 @@
 - Web/admin impact: Adjustment entry UI, alert configuration.
 - Test requirements: Adjustment-audit tests, alert-trigger tests.
 - Completion criteria: A branch manager is alerted before an ingredient stocks out, and every adjustment has an auditable reason.
+- **Status update** (session Phase 7, ADR-024): `RecordWaste`/`DisposeExpiredLot` (reason codes,
+  audit trail) and `GetExpiryWarnings` (a read-only query, not a push alert) exist and are tested.
+  No alerting mechanism exists — a manager must actively query expiry warnings, nothing proactively
+  notifies them of an approaching stock-out or expiry.
 
 ---
 
@@ -724,6 +757,14 @@
 - Web/admin impact: None directly (feeds `COST-002`'s reporting).
 - Test requirements: Costing-correctness tests against known fixtures; historical-snapshot immutability tests.
 - Completion criteria: A product's cost is calculable at any point in time using the ingredient prices that were actually in effect then, not today's.
+- **Status update** (session Phase 7, ADR-024): `features/costing` — `CalculateRecipeCost` with
+  three swappable `IngredientCostResolver` strategies (latest purchase price, weighted average,
+  manually-set standard cost), `PurchasePrice`/`StandardIngredientCost` (append-only — a historical
+  calculation always resolves the price actually in effect at that date, satisfying this item's own
+  completion criteria at the domain layer), and the exact-unit-match-or-excluded rule (an ingredient
+  with no resolvable cost is excluded and the result flagged incomplete, never silently
+  substituted). No scheduled recalculation job exists — costing is computed on demand only, never
+  proactively.
 
 #### COST-002 — Profitability Reporting
 - Description: Margin reporting per product/category/branch and price-simulation ("what-if") tooling, built on `COST-001`.
@@ -737,6 +778,13 @@
 - Web/admin impact: This item *is* the web/admin impact.
 - Test requirements: Report-accuracy tests against fixture data.
 - Completion criteria: An owner can see per-product margin and simulate a price change's impact before publishing it.
+- **Status update** (session Phase 7, ADR-024): `features/profitability` — `CalculateRecipeProfitability`
+  exists and is tested, deliberately never using the term "net profit" ("Estimated Gross
+  Contribution"/"Contribution Margin" only, since labor/overhead/packaging/delivery-fee allocation
+  is unbuilt — see `LaborCostAllocationConfig`/`OverheadAllocationConfig`, foundation types with no
+  implementation yet). No reporting screen, per-category/per-branch aggregation, or price-simulation
+  tooling exists — this item's completion criteria ("an owner can see... and simulate") is not met;
+  only the underlying single-recipe calculation is.
 
 ---
 

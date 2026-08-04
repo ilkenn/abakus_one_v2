@@ -2417,6 +2417,235 @@ tier assignments (Decision 1) match how the business would actually categorize e
 once a real security review happens; and the same two-parallel-loyalty-surfaces residual ADR-021 already
 flagged, now formalized with cross-references rather than resolved outright.
 
+## ADR-024 — Smart Restaurant Setup, Inventory & Food Intelligence (Phase 7)
+
+- Date: 2026-08-03
+- Status: Accepted
+
+### Context
+
+`docs/module_catalog.md` had targeted an ingredient/inventory/recipe/nutrition/allergen/costing
+layer since before Phase 1, but nothing in it existed: no `Ingredient`, no recipe composition, no
+stock ledger, no supplier/purchasing model, no nutrition/allergen/menu-label engine, no
+profitability calculation, and no way for a new tenant to bootstrap a menu other than hand-entering
+every product. Phase 7's kickoff mandate: build all of it, plus a new Smart Import bounded context
+(parse a CSV/JSON menu source into a human-reviewed draft, commit only after explicit approval) and
+tenant-scoped module entitlements gating every new surface — 20 lettered parts (7A–7U), an explicit
+out-of-scope list, and a mandatory 34-item final report ending in a phase-gate verdict against 8
+named blocking conditions.
+
+Two dedicated closing verification passes (7S — security/tenant-isolation, 7T — audit coverage)
+plus a final 7U comprehensive pass each found and closed real gaps before Phase 7 could be
+considered complete — the same discipline Phase 6's 6P pass established (ADR-023 Decision 9): treat
+"everything is fine" with skepticism, dispatch a read-only verification pass that greps/reads
+rather than asserts, and fix what it finds before writing the closure record.
+
+### Decision 1 — Module entitlements: a third, independent authorization axis, not folded into role permission
+
+Every Phase 7 feature is gated by three independent axes that must all pass: `PosAuthorizedAction`
+(does this role have permission at all — the existing Phase 5/6 mechanism, unchanged), a new
+`EntitlementModule` (has this tenant's subscription plan purchased this module — e.g. `inventory`,
+`recipes`, `costing`, `smartImport`), and the existing `FeatureFlagsKeys` (is this build's technical
+rollout flag on). `CheckModuleAccess` composes all three; `ModuleEntitlementGate` is the one widget
+every gated screen wraps itself in, rendering a named denial reason rather than a blank/broken
+screen when any axis fails. Kept as a genuinely separate concept from role permission — a manager
+role can be fully authorized to manage recipes while the tenant's plan simply doesn't include the
+Recipes module, and the UI must say so honestly rather than reporting a generic "unauthorized."
+
+### Decision 2 — Trusted internal primitive vs. authorized entry point: an explicit, documented split, not a blanket rule
+
+`RecordStockMovement`, `ConsumeStockForOrder`, `CreateBowlBuilderRecipeSnapshot`,
+`ResolveDynamicBowlRecipe`, and `GetExpiryWarnings` deliberately have no `PosAuthorizationPolicy`
+dependency of their own — each is either a trusted internal primitive (every mutating caller checks
+the permission appropriate to *itself* before calling in; mirrors `RecordKitchenEvent`'s
+established precedent) or a pure/read-only computation with nothing to gate. Every other mutating
+Phase 7 use case checks `PosAuthorizationPolicy.authorize()` directly. This split is documented in
+each such class's own doc comment, not left implicit — the 7S verification pass specifically
+checked for undocumented exceptions to this rule and found three (Decision 9 below).
+
+### Decision 3 — `Quantity`/`InventoryUnit`: exact integers, mirroring `Money` exactly, for the same reason
+
+`Quantity` stores an integer count of an `InventoryUnit`'s smallest unit — the same reasoning
+ADR-009's `Money` design already established (binary floating point cannot represent exact
+fractional values reliably) applies identically to grams/milliliters/pieces. No Phase 7 domain type
+uses `double` for a quantity or cost amount anywhere; the only raw `double` price fields found
+during the 7U verification pass (`BowlBuilderIngredient.price`, Smart Import's `ParsedProduct
+.price`) are the same pre-existing catalog/UI-boundary pattern ADR-009 already established for
+`MenuProduct.basePrice`, bridged into `Money` at the order boundary — not a new Phase 7 violation.
+
+### Decision 4 — One shared `RecipeLineFlattener`, not four independent sub-recipe expansions
+
+Nutrition, costing, automatic menu-label evaluation, and Bowl Builder's dynamic recipe resolution
+all need to expand a recipe's nested sub-recipes into flat ingredient quantities, with cycle
+detection. Rather than let each consumer re-derive this, `ResolveRecipeIngredientSnapshot`'s
+private expansion logic was extracted into a standalone, pure, reusable domain service
+(`features/recipes/domain/recipe_line_flattener.dart`) that all four now share — one implementation
+to test and trust, not four that could silently diverge.
+
+### Decision 5 — "Missing, never fabricated or defaulted to zero" — one rule, applied identically across nutrition/costing/menu-labeling
+
+`NutritionAggregator` and `CostAggregator` are pure, synchronous aggregators over pre-resolved
+per-ingredient values — an ingredient with no resolvable data, or one whose recorded unit doesn't
+*exactly* match the recipe line's unit, is excluded from the total and the result is reported as
+`RecipeCalculationStatus.incomplete`, never partially summed or defaulted to zero. Cross-unit
+conversion was deliberately not attempted anywhere in Phase 7 (nutrition, costing, menu-label
+evaluation, stock consumption, purchasing all apply the identical exact-match-or-excluded rule) —
+one honest, consistent boundary rather than three or four different judgment calls about when a
+conversion is "close enough" to trust.
+
+### Decision 6 — Recipe versioning: an edit never rewrites history; `yield` is a reserved word
+
+`RecipeVersion`/`SubRecipeVersion` changes always create a new version (mirrors
+`CourierCompensationProfile`'s established versioning pattern, ADR-018) — `ResolveRecipeIngredientSnapshot`
+and `ConsumeStockForOrder` both resolve against the version active at the relevant historical
+instant, never the current one, so editing today's recipe can never retroactively change what a
+past order's food-cost or stock-consumption record means. One implementation note: `yield` cannot
+be used as a named constructor parameter or field name inside this codebase's `async`/generator
+function bodies (`yield`/`await` are reserved even as named-argument labels in async contexts) — the
+field is `yieldAmount` throughout.
+
+### Decision 7 — Never "net profit"
+
+`ProfitabilityCalculationResult` deliberately never uses the term "net profit" anywhere in its
+fields, labels, or intended future UI — "Estimated Gross Contribution" / "Contribution Margin"
+only, because the underlying recipe cost is itself already an estimate (Decision 5), and labor/
+overhead/packaging/delivery-fee allocation is out of Phase 7's scope entirely
+(`LaborCostAllocationConfig`/`OverheadAllocationConfig` exist only as unused foundation types for a
+later phase). Presenting an incomplete contribution figure as "net profit" would materially mislead
+a real business decision — this is treated as a terminology rule with teeth, not a style
+preference, and was one of the phase-gate's own named blocking conditions.
+
+### Decision 8 — Append-only everywhere; a correction is always a new record
+
+`PurchasePrice`, `SupplierPrice`, `StockMovement`, `WasteRecord`, and `ExpiryRecord` are never
+edited — their repository interfaces have no update method at all, the same structurally-enforced
+pattern `ClosureAuditEntryRepository`/`CashAuditEntryRepository` already established (ADR-012,
+ADR-013). `ReverseStockConsumption` corrects a mistaken consumption by issuing new,
+equal-and-opposite movements rather than editing the original. `RecordStockMovement` and
+`ConsumeStockForOrder` are both idempotent by a caller-supplied key — a duplicate call returns the
+already-applied state rather than double-applying, "do not deduct stock twice" holding
+structurally.
+
+### Decision 9 — 7S found real gaps: Smart Import had no authorization, and `MenuLabelRule` leaked across tenants
+
+A dedicated read-only verification subagent, dispatched specifically to check compliance rather
+than assume it, found two real, unrelated gaps before Phase 7 could be marked secure:
+
+1. **Smart Import had no authorization at all.** `ParseImportSource`, `CreateImportDraft`, and
+   `CommitImportDraft` — the last being the single point that writes real `MenuCategory`/
+   `MenuProduct` records — had no `PosAuthorizationPolicy` check and no documented trusted-primitive
+   exception, unlike every other Decision 2 exception. Fixed by adding a
+   `PosAuthorizedAction.manageSmartImport` check to all three and rewiring their Riverpod providers.
+2. **`MenuLabelRule` had no tenant scoping.** A label rule created for one organization would apply
+   to every organization's recipes — a real cross-tenant data leak. Fixed by adding
+   `organizationId` to the domain type, requiring it in every repository query method, and proving
+   the fix with a new regression test asserting a rule created for a different organization is
+   never applied.
+
+Both fixes are committed with their own regression tests, not merely asserted fixed.
+
+### Decision 10 — 7T found real gaps: 8 inventory use cases and the entire `restaurant_setup` feature had no audit trail
+
+A second dedicated verification pass, checking every mutating Phase 7 use case against its
+feature's own audit repository, found: `CreateIngredient`, `CreateInventoryItem`,
+`CreateStockLocation`, `CreateWarehouse`, `StartStockCount`, `SubmitStockCount`, and
+`ApproveStockCount`'s own approval/rejection decision (as distinct from the indirect generic event
+`RecordStockMovement` produces when a count correction has variance) had no dedicated audit call;
+and `restaurant_setup` (`CreateSetupTemplate`, `ApplySetupTemplate`) had no audit trail
+infrastructure at all — no type, no repository, nothing. Closed by wiring the 7 inventory use cases
+into the already-declared-but-unused `InventoryAuditEventType` values (plus two new ones for
+approve/reject), and by building a new `SetupAuditEntry`/`SetupAuditEventType`/
+`SetupAuditEntryRepository` trio for `restaurant_setup`, following the established
+per-bounded-context pattern (Decision 11). Every fix has a regression test asserting the specific
+event type, actor, and branch scoping recorded.
+
+### Decision 11 — Nine separate per-bounded-context audit types, never one shared type
+
+`InventoryAuditEntry`, `RecipeAuditEntry`, `NutritionAuditEntry`, `AllergenAuditEntry`,
+`MenuLabelAuditEntry`, `CostingAuditEntry`, `ProfitabilityAuditEntry`, `StockConsumptionAuditEntry`,
+`SupplierAuditEntry`, and `SetupAuditEntry` each have their own event-type enum and their own
+`InMemory*` repository, mirroring `ClosureAuditEntry`/`RestaurantOperationsAuditEntry`/
+`CashAuditEntry`'s established one-repository-per-bounded-context pattern (ADR-012/013) rather than
+inventing one shared Phase 7 audit type. Every repository has `appendEvent`/finders only, no
+update/delete method — append-only enforced structurally.
+
+### Decision 12 — 7U found one real gap: `ReceiveGoods` had no idempotency guard
+
+The final closing verification pass — checking authorization coverage, idempotency, append-only
+correctness, floating-point boundaries, and screen entitlement gating across all 12 Phase 7 feature
+folders — found 4 of 5 items clean, but `ReceiveGoods` (purchasing) had no idempotency check at
+all: a retried call would create a second `GoodsReceipt` with a freshly generated id, and the
+downstream stock movement's own dedup key (derived from that new id) could never recognize the
+retry, doubling the stock increase. Fixed the same way `RecordStockMovement`/`ConsumeStockForOrder`
+already work: `GoodsReceipt` now carries a caller-supplied `idempotencyKey`,
+`GoodsReceiptRepository` gained `findByIdempotencyKey`, and `ReceiveGoods` checks for an existing
+receipt before doing any work. A regression test proves a retried receive never doubles the
+resulting stock balance.
+
+### Decision 13 — 7R: 7 of ~20 admin screens built, honestly disclosed, not silently narrowed
+
+The kickoff brief's own UI scope named roughly 20 admin screens across Phase 7's food-intelligence
+surface. 7 were built (Ingredient Catalog, Inventory, Import Jobs/Review, Setup Templates, Recipes,
+Suppliers, Stock Counts) on top of fully real, tested engines for all 12 feature folders — every
+built screen wrapped in its `ModuleEntitlementGate` (Decision 1). The remaining ~13 (nutrition
+admin, allergen review queue, menu-label rule builder, costing configuration, profitability
+dashboards, purchase-order/goods-receipt UI beyond what exists, waste/expiry admin views, and
+others) are real, tested engines with **no screen** — reported explicitly in the 7R commit message
+and the Phase 7 Closure Record, rather than either skipped silently or filled with shallow
+placeholder screens to appear complete.
+
+### Decision 14 — `restaurant_setup` never auto-activates real data
+
+`ApplySetupTemplate` creates only a frozen `SetupTemplateApplicationSnapshot` — no `MenuCategory`/
+`MenuProduct`/`Ingredient`/`Recipe` is ever created by this use case. Turning one of a template's
+suggestions into a real record is always a separate, explicit action through Menu admin, Smart
+Import, or Ingredient admin — the same "suggestion, never silent activation" boundary Smart
+Import's own commit-requires-approval architecture already established for menu-import drafts.
+
+### Decision 15 — No live order-completion trigger for automatic stock consumption; reported, not invented
+
+`ConsumeStockForOrder` is a real, tested, idempotent use case, but no order-completion path in this
+codebase transitions a dine-in/takeaway order in a way this trigger could hook into — no
+`MenuProduct`↔`Recipe` linkage exists anywhere in the codebase to join against. Inventing one would
+be new, unrelated order-lifecycle scope, not a Phase 7 fix. This mirrors Sprint 5E's own honestly-
+reported dine-in-visit-trigger gap (ADR-022 Decision 5) — the same category of limitation, reported
+the same way. Bowl Builder is the one channel where a real trigger exists today
+(`CreateBowlBuilderRecipeSnapshot`, fired at add-to-cart time), independent of this gap.
+
+### Consequences
+
+- **Zero new pub dependencies** across the entire Phase 7 effort (12 feature folders, ~20 lettered
+  parts).
+- **Every phase-gate blocking condition the kickoff named is satisfied**: Smart Import cannot
+  bypass user approval (commit requires an explicit approved draft, and now requires authorization
+  — Decision 9); nutrition/allergen values are never fabricated (Decision 5); tenant records cannot
+  leak (the one found `MenuLabelRule` gap is closed and regression-tested — Decision 9); stock
+  movements are immutable (Decision 8); recipe history is never rewritable (Decision 6); stock is
+  never deducted twice (Decision 8's idempotency, extended to purchasing in Decision 12);
+  profitability never presents an incomplete calculation as net profit (Decision 7); every built
+  Phase 7 screen is reachable only through its `ModuleEntitlementGate` (Decision 1, Decision 13).
+- **Honest, explicitly-disclosed residual gaps**, carried into the Phase 7 Closure Record
+  (`docs/feature_status.md`): ~13 of ~20 named admin screens remain unbuilt (real engines, no UI —
+  Decision 13); no live trigger connects automatic stock consumption to a real dine-in/takeaway
+  order completion (Decision 15); no real backend exists anywhere in this codebase — every
+  repository remains `InMemory*`.
+- **Two independent verification passes plus a final closing pass each found and fixed real,
+  previously undetected gaps** (Decisions 9, 10, 12) — none of the three were assumed clean without
+  checking; each fix shipped with its own regression test in the same commit.
+
+### Confidence
+
+80%. Every architectural choice above is grounded in code read and tested this session, not
+assumed — including the three real gaps found and fixed by dedicated verification passes rather
+than asserted compliant. The residual uncertainty is concentrated in: whether the exact-unit-match-
+or-excluded rule (Decision 5) will read as too conservative once real nutrition/cost data is
+entered for production ingredients (a unit-conversion layer may become necessary sooner than
+assumed); whether the ~13 unbuilt admin screens (Decision 13) represent the right subset to have
+prioritized versus a different 7 the business would have picked first; and whether the module-
+entitlement axis (Decision 1) composes correctly with the existing role-permission and feature-flag
+axes in every combination once a real subscription-billing backend exists to drive it, which has
+not been exercised against real plan data.
+
 ## ADR-023 — Admin Platform, Staff Access & Control Center (Phase 6)
 
 - Date: 2026-08-01

@@ -963,3 +963,106 @@ satisfied — including branch-access enforcement, which required a real fix dis
 phase's own mandatory verification pass rather than being assumed correct from Phase 6B's original
 design. The residual gaps above are real and should inform Phase 6's own future hardening work or a
 dedicated security-review sprint, but none of them are one of the 5 named blocking conditions.
+
+## Phase 7 — Smart Restaurant Setup, Inventory & Food Intelligence
+
+Autonomous-mode implementation of the ingredient/inventory/recipe/nutrition/allergen/menu-label/
+costing/profitability/stock-consumption/purchasing/setup-template layer `docs/module_catalog.md`
+had targeted since before Phase 1, plus a new Smart Import bounded context and tenant-scoped module
+entitlements gating all of it. See `docs/decisions.md` ADR-024 for the full architecture and every
+judgment call, including the three real gaps found and closed by dedicated verification passes.
+
+| Task | Status | Note |
+|---|---|---|
+| 7A — Tenant-scoped module entitlements | DONE | `EntitlementModule`, `CheckModuleAccess`, `ModuleEntitlementGate` — a third, independent authorization axis alongside `PosAuthorizedAction` (role permission) and `FeatureFlagsKeys` (technical toggle). Every Phase 7 screen wraps itself in the gate; a denial shows a named reason, never a blank/broken screen. |
+| 7B/7C/7D — Smart Import: parsing, draft, review workspace | DONE | New `features/smart_import`: CSV/JSON parsers, `CreateImportDraft`, human review workspace (`ImportJobsScreen`/review screen), `ApproveImportDraft`/`CommitImportDraft` — commit is the single point that writes real `MenuCategory`/`MenuProduct` records, and is refused without an approved draft. An unparseable price yields `null`, never a fabricated one; an unsupported source type fails honestly. |
+| 7E — Restaurant setup templates | DONE | `features/restaurant_setup`: `SetupTemplate` (public/platform-owned or private/tenant-owned, mutually exclusive), `ApplySetupTemplate` — creates only a frozen `SetupTemplateApplicationSnapshot`, never real menu/inventory data (BR-SETUP-001). Public templates require admin-tier authorization, private ones manager-tier (BR-SETUP-002). |
+| 7F — Ingredient & inventory domain | DONE | `features/inventory`: `Ingredient`, `InventoryItem`, `StockLocation`/`Warehouse`, `BranchStock`, `Quantity`/`InventoryUnit` (exact integers, mirrors `Money` — BR-STOCK-004), `NegativeStockPolicy` per item. |
+| 7G — Recipe & sub-recipe engine | DONE | `features/recipes`: `Recipe`/`RecipeVersion`/`SubRecipeVersion` (versioned, never edited in place — BR-RECIPE-001), `RecipeLineFlattener` (shared cycle-detecting sub-recipe expansion, reused by nutrition/costing/menu-labels/Bowl Builder — BR-RECIPE-002), `ResolveRecipeIngredientSnapshot`. |
+| 7H — Dynamic Bowl Builder recipe integration | DONE | `BowlBuilderIngredientRecipeMapping`, `ResolveDynamicBowlRecipe`, `CreateBowlBuilderRecipeSnapshot` — fires at add-to-cart time, the one channel with a real, live trigger into Phase 7's stock/recipe layer (see BR-STOCK-002's honest gap for every other channel). |
+| 7I — Nutrition reference catalog | DONE | `features/nutrition`: `NutritionReferenceEntry` with `NutritionDataSourceType`/`NutritionConfidence` recorded alongside every value (BR-NUTRITION-002), `SetNutritionReferenceEntry`, `ReviewNutritionReferenceEntry`. |
+| 7J — Nutrition calculation engine | DONE | `NutritionAggregator`/`CalculateRecipeNutrition` — an ingredient with no matching-unit data is excluded and the result flagged `incomplete`, never partially summed or defaulted to zero (BR-NUTRITION-001). |
+| 7K — Allergen engine | DONE | `features/allergens`: 14+ `AllergenType` values, `IngredientAllergenDeclaration` with a `draft`/`pendingReview`/`confirmed` lifecycle — a declaration must be explicitly human-confirmed before it's trusted (BR-ALLERGEN-001). |
+| 7L — Automatic menu labels | DONE | `features/menu_labels`: `MenuLabelRule` (nutrition-threshold and free-from-allergen evaluators), `EvaluateMenuLabelSuggestions` — always a suggestion requiring `ApproveMenuLabelSuggestion`, never auto-published (BR-MENULABEL-001). |
+| 7M — Costing engine | DONE | `features/costing`: `PurchasePrice`/`StandardIngredientCost` (append-only — BR-COSTING-002), three `IngredientCostResolver` strategies (latest purchase, weighted average, standard), `CalculateRecipeCost` follows the same missing-not-fabricated rule as nutrition (BR-COSTING-001). |
+| 7N — Profitability engine | DONE | `features/profitability`: `CalculateRecipeProfitability` — deliberately never uses the term "net profit," reports "Estimated Gross Contribution"/"Contribution Margin" only, and propagates an incomplete underlying cost calculation rather than understating it (BR-PROFIT-003/004). |
+| 7O — Automatic stock consumption | DONE (engine only, honest gap) | `features/stock_consumption`: `ConsumeStockForOrder` — idempotent by key, resolves against the exact historical recipe version. No live trigger exists anywhere in this codebase to call it from a real dine-in/takeaway order completion (no `MenuProduct`↔`Recipe` linkage exists) — reported explicitly, mirrors Sprint 5E's own dine-in-visit-trigger gap (BR-STOCK-002). |
+| 7P — Purchasing & suppliers | DONE | `features/purchasing`: `Supplier`/`SupplierProduct`/`SupplierPrice` (append-only), `PurchaseOrder` lifecycle, `ReceiveGoods` (real `RecordStockMovement` integration; idempotency gap found and closed in 7U — BR-PURCHASE-001), `RecordPurchaseReturn`. |
+| 7Q — Stock counts, waste & expiry | DONE | `StartStockCount`/`AddStockCountLine`/`SubmitStockCount`/`ApproveStockCount` (self-approval blocked, mirrors `ApproveStockAdjustment`), `RecordWaste`, `DisposeExpiredLot`, `GetExpiryWarnings`. |
+| 7R — Admin UI wiring | DONE (partial, honest gap) | 7 of ~20 brief-named screens built (Ingredient Catalog, Inventory, Import Jobs/Review, Setup Templates, Recipes, Suppliers, Stock Counts), each wrapped in `ModuleEntitlementGate`. The remaining ~13 (nutrition admin, allergen review queue, menu-label rule builder, costing configuration, profitability dashboards, and others) are real, tested engines with no screen yet — named explicitly, not silently skipped. |
+| 7S — Privacy, security & tenant isolation pass | DONE | Verification subagent found and closed 2 real gaps: Smart Import's `ParseImportSource`/`CreateImportDraft`/`CommitImportDraft` had no authorization check at all (now require `manageSmartImport`); `MenuLabelRule` had no tenant scoping (a real cross-tenant leak — now requires `organizationId`, regression-tested). See ADR-024 Decision 9. |
+| 7T — Audit coverage pass | DONE | Verification subagent found 8 inventory use cases (create ingredient/inventory-item/stock-location/warehouse, start/submit/approve stock count) and the entire `restaurant_setup` feature with no audit trail. Closed: wired the 7 inventory use cases into existing-but-unused `InventoryAuditEventType` values plus 2 new ones; built a new `SetupAuditEntry`/`SetupAuditEventType`/`SetupAuditEntryRepository` trio for `restaurant_setup`. See ADR-024 Decision 10/11. |
+| 7U — Final verification + quality gate | DONE | Closing pass across authorization coverage, idempotency, append-only correctness, floating-point boundaries, and screen entitlement gating for all 12 feature folders. Found and closed 1 real gap: `ReceiveGoods` had no idempotency guard (a retry could double a stock receipt) — fixed with a caller-supplied idempotency key, regression-tested. See ADR-024 Decision 12. |
+| Documentation | DONE | `docs/decisions.md` ADR-024; `docs/business_rules.md` BR-STOCK-001–007, BR-RECIPE-001/002, BR-NUTRITION-001/002, BR-ALLERGEN-001, BR-MENULABEL-001, BR-COSTING-001/002, BR-PROFIT-003/004, BR-PURCHASE-001/002, BR-SETUP-001/002, BR-AUDIT-009, DL-027; this entry, including the Phase 7 Closure Record below. |
+
+**Explicitly out of scope this phase** (per the kickoff's own framing): a real payment/subscription
+backend driving module entitlements (the gate exists, plan data is seeded); a real staff login
+backend (unchanged from Phase 5/6); labor/overhead/packaging/delivery-fee cost allocation
+(`LaborCostAllocationConfig`/`OverheadAllocationConfig` exist only as unused foundation types); a
+live dine-in/takeaway stock-consumption trigger (no order-completion join point exists); ~13 of ~20
+brief-named admin screens; real AI-assisted menu parsing (Smart Import's parsers are deterministic
+CSV/JSON only); a production media/storage backend for any future recipe-photo work.
+
+### Phase 7 Closure Record
+
+**Mandatory "do not mark approved if" checklist** (verbatim from the kickoff brief's own framing):
+
+1. **Smart Import bypasses user approval** — **not the case**. `CommitImportDraft` refuses to run
+   without an approved draft, and (closed in 7S) now also requires `manageSmartImport`
+   authorization — both conditions checked, not just one.
+2. **Nutrition/allergen values are fabricated** — **not the case**. `NutritionAggregator`/
+   `CostAggregator` exclude any ingredient without exact-unit-matching data rather than estimating
+   or defaulting to zero; an allergen declaration is never trusted until explicitly
+   human-confirmed.
+3. **Tenant records can leak across organizations** — **was true for `MenuLabelRule`, now
+   resolved** (ADR-024 Decision 9). Found during the mandatory 7S verification pass, not assumed
+   absent; closed with a real fix and a regression test proving cross-tenant isolation before this
+   record was written.
+4. **Stock movements are mutable** — **not the case**. `StockMovementRepository` has no
+   update/delete method; every correction is a new, equal-and-opposite movement.
+5. **Recipe history is rewritable** — **not the case**. `RecipeVersion`/`SubRecipeVersion` are
+   never edited in place; every consumer resolves against the version active at the relevant
+   historical instant.
+6. **Stock is deducted twice** — **not the case, and a related gap was found and closed**.
+   `RecordStockMovement`/`ConsumeStockForOrder` were idempotent by key from the start;
+   `ReceiveGoods` was not, found during the mandatory 7U verification pass and closed the same way
+   (ADR-024 Decision 12) before this record was written.
+7. **Profitability presents an incomplete calculation as net profit** — **not the case**.
+   `ProfitabilityCalculationResult` never uses that term, and propagates an incomplete underlying
+   cost calculation rather than silently understating the result.
+8. **Phase 7 screens are unreachable or unprotected** — **not the case for what's built**. All 7
+   built screens are wrapped in `ModuleEntitlementGate`; no other call site instantiates them
+   directly. ~13 of ~20 brief-named screens remain simply unbuilt — honestly disclosed as a scope
+   gap, not a protection gap.
+
+**What remains deferred** (explicitly, not silently narrowed): ~13 of ~20 brief-named admin screens
+(nutrition admin, allergen review queue, menu-label rule builder, costing configuration,
+profitability dashboards, and others — real engines, no UI); no live trigger connects automatic
+stock consumption to a real dine-in/takeaway order completion, only Bowl Builder's add-to-cart path
+is live; labor/overhead/packaging/delivery-fee cost allocation is unbuilt foundation only; no real
+payment/subscription backend drives module entitlements (seeded plan data only); no real AI-assisted
+menu parsing (deterministic CSV/JSON parsing only).
+
+**Production limitations, stated plainly:** every repository remains `InMemory*` — no real backend
+exists. No real staff authentication (unchanged from Phase 5/6). Firebase remains dormant. Module
+entitlements resolve against seeded, not billing-driven, plan data.
+
+**Test count**: **1989 passing at Phase 7 close** (0 `flutter analyze` issues, `dart format` clean,
+no test skipped or weakened), verified by a full `flutter test` run — up from 1816 at Phase 6 close,
+roughly 173 new/expanded test assertions across the phase's 14 commits (7F through 7U). New tests
+span: module entitlement composition across all three authorization axes, Smart Import parsing/
+draft/approval/commit/rollback and the two authorization/tenant-isolation regressions from 7S,
+recipe/sub-recipe versioning and flattening (including cycle rejection), Bowl Builder dynamic recipe
+resolution, nutrition/costing missing-ingredient exclusion, allergen declaration confirmation
+lifecycle, menu-label rule evaluation and tenant isolation, three cost-resolver strategies
+(including a hand-verified weighted-average calculation), profitability terminology and incomplete-
+calculation propagation, stock-consumption idempotency, purchasing workflow including the
+`ReceiveGoods` retry-safety regression from 7U, stock count start/submit/approve/reject with the new
+audit-event assertions from 7T, and waste/expiry recording.
+
+**Phase 7 readiness decision**: **APPROVED**. All 8 of the kickoff's named blocking conditions are
+satisfied — including one tenant-isolation gap and one audit-coverage gap found and closed during
+this phase's own mandatory verification passes (7S, 7T), and one idempotency gap found and closed
+during the final 7U pass, rather than any of the three being assumed correct from their original
+implementation. The residual gaps above are real and should inform a future Phase 7 hardening
+sprint or the UI-completion backlog, but none of them are one of the 8 named blocking conditions.

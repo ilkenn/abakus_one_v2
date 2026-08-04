@@ -88,6 +88,13 @@
 - **Integration requirements**: Feeds `COST` (costing engine) and `INV` (stock deduction on order).
 - **Minimum tests**: Recipe-to-ingredient integrity tests, costing-calculation unit tests.
 - **Risks**: Without this, `INV` and `COST` cannot exist — this module gates two later phases entirely.
+- **Status update** (this session's own ad hoc "Phase 7," distinct from this catalog's own module
+  ordering — see `CLAUDE.md` §1): the shared ingredient catalog, recipe composition, sub-recipe
+  yield, allergen tagging, and versioning (never rewrites history) all exist as a real, tested,
+  client-side domain foundation — `features/inventory`, `features/recipes`, `features/allergens`;
+  see `docs/decisions.md` ADR-024. Still missing per this entry's own requirements: backend
+  referential-integrity enforcement, an admin recipe-builder UI, and cost-data exposure restriction
+  (no backend/API boundary exists yet to enforce "not exposed to the customer-facing app").
 
 ## INV — Inventory, Purchasing & Suppliers
 
@@ -103,6 +110,17 @@
 - **Integration requirements**: Consumes `PR` recipes; feeds `COST`; a stockout should be able to auto-disable a `Product`'s availability (feeds back to `CMS`).
 - **Minimum tests**: Concurrent-decrement race tests, adjustment audit tests, low-stock alert tests.
 - **Risks**: Race conditions on stock decrement under real order concurrency are easy to get wrong and expensive to debug in production.
+- **Status update** (session Phase 7, ADR-024): stock-on-hand tracking, manual adjustment/waste
+  logging (with reason codes and an append-only audit trail), and a supplier/purchase-order
+  creation-and-receiving workflow (idempotent by key) all exist and are tested — `features/inventory`,
+  `features/purchasing`. Automatic deduction on order fulfillment exists as a real, tested engine
+  (`ConsumeStockForOrder`) but has **no live trigger** connecting it to a real order-completion
+  event anywhere in this codebase — "automatic deduction tied to order fulfillment" is not actually
+  happening for dine-in/takeaway orders yet, only for Bowl Builder's add-to-cart path. No
+  concurrency-safe backend exists (single-process in-memory only) — the race-safety this module's
+  own risk note names is unaddressed. No low-stock *alerting* exists, only an on-demand expiry-
+  warning query. A `SuppliersScreen`/`StockCountsScreen`/`InventoryScreen`/`IngredientCatalogScreen`
+  exist; no PO-creation/receiving admin UI was built.
 
 ## COST — Recipe Costing & Profitability Engine
 
@@ -118,6 +136,16 @@
 - **Integration requirements**: Reads from `PR`, `INV`, `FIN`.
 - **Minimum tests**: Costing calculation correctness tests against known fixtures; historical-snapshot immutability tests.
 - **Risks**: Silent costing errors (e.g. using current instead of historical ingredient price) produce wrong financial decisions without any visible bug — needs strong test fixtures, not just code review.
+- **Status update** (session Phase 7, ADR-024): real-time recipe cost calculation exists
+  (`CalculateRecipeCost`, three swappable resolver strategies, tested against hand-verified fixture
+  math including a weighted-average calculation) and price history is append-only, satisfying this
+  module's own "don't recompute history when today's price changes" requirement at the domain
+  layer. Profitability calculation exists (`CalculateRecipeProfitability`) but deliberately never
+  claims "net profit" — labor/overhead cost allocation is unbuilt foundation only. No margin
+  reporting screen, no per-category/per-branch aggregation, and no price-simulation tooling exist —
+  this module's "primary users: finance, brand/franchise owners" have nothing to look at yet, only
+  the underlying single-recipe calculation is real. No role restriction on cost/margin data exists
+  because no screen exposes it yet.
 
 ## APP — Customer Mobile App
 

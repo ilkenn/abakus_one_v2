@@ -2276,26 +2276,203 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 # Stock, Recipe, Portion, and Ingredient Consumption
 
 ### BR-STOCK-001 — Consumption based on recipes and actual modifiers
-- **Status**: DECIDED
+- **Status**: DECIDED — engine built (Phase 7), no live order trigger
 - **Rule**: Stock consumption must be calculated from recipes and actual selected modifiers, not a
-  flat per-product estimate (e.g. extra protein consumes more of that ingredient).
+  flat per-product estimate. `ConsumeStockForOrder` (`features/stock_consumption`) resolves each
+  order line's `Recipe`/`SubRecipe` at its exact historical version (never the current, possibly
+  edited, version — see BR-RECIPE-002) and deducts exactly what that recipe specifies. See
+  BR-STOCK-002 for the honest gap between this being real and being wired to a live order.
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Stock/Inventory, Menu, Bowl Builder
+- **Related Modules**: Stock/Inventory, Menu, Bowl Builder, Orders
 
-### BR-STOCK-002 — Deduction hook reserved at `confirmed`
-- **Status**: ROADMAP
-- **Rule**: `OrderItemSnapshot.productId` is the intended join point for future stock deduction,
-  hooked at the `confirmed` transition (the point an order is guaranteed fulfilled, not merely
-  requested) — not at `created`.
+### BR-STOCK-002 — No live trigger connects order completion to stock consumption
+- **Status**: VERIFIED (absence) — mirrors Sprint 5E's dine-in-visit-trigger gap
+- **Rule**: `ConsumeStockForOrder` is a real, tested, idempotent use case, but nothing in this
+  codebase calls it from a real order-completion path — no `MenuProduct`↔`Recipe` linkage exists
+  anywhere, so there is no join point to hook a trigger to without inventing unrelated new scope.
+  `StockConsumptionTimingPolicy`/`StockConsumptionChannelPolicy` exist as the rule this trigger
+  would follow once a linkage exists, not as evidence one does. Bowl Builder is the one exception:
+  `CreateBowlBuilderRecipeSnapshot` runs at add-to-cart time via a documented, deliberately
+  customer-facing, unauthenticated code path (BR-BOWL-005), independent of this gap.
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Stock/Inventory, Orders
+- **Related Modules**: Stock/Inventory, Orders, Bowl Builder
 
 ### BR-STOCK-003 — Ingredient/recipe/yield/allergen model
-- **Status**: ROADMAP
-- **Rule**: `docs/module_catalog.md` targets a shared ingredient catalog, recipe composition,
-  yield/portion definitions, and allergen tagging. Not implemented.
+- **Status**: DECIDED — built (Phase 7)
+- **Rule**: A shared `Ingredient` catalog (`features/inventory`), recipe composition with
+  sub-recipes and yield (`features/recipes`), and allergen tagging (`features/allergens`) all
+  exist as real, tested domain code — see BR-RECIPE-001 through BR-ALLERGEN-002 below for the
+  specific rules each enforces.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Stock/Inventory, Menu
+
+### BR-STOCK-004 — All quantities are exact integers; no quantity is ever a `double`
+- **Status**: VERIFIED
+- **Rule**: `Quantity` (`features/inventory/domain/quantity.dart`) stores an integer count of an
+  `InventoryUnit`'s smallest unit, mirroring `Money`'s integer-minor-units design exactly — the
+  same reasoning (binary floating point cannot represent exact fractional quantities reliably)
+  applies to grams/milliliters/pieces as much as to currency. No Phase 7 domain type (`Quantity`,
+  `Money`, `BranchStock`, `StockMovement`, costing/profitability results) uses `double` for a
+  quantity or amount; a raw `double` price field exists only at the pre-existing menu/catalog UI
+  boundary (`MenuProduct.basePrice`, etc.), unchanged by Phase 7 and bridged into `Money` at the
+  order boundary, per ADR-009.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Stock/Inventory, Bowl Builder, Payments
+
+### BR-STOCK-005 — `RecordStockMovement` is the single write path for every stock change; idempotent by key
+- **Status**: VERIFIED
+- **Rule**: Every stock-affecting use case (manual adjustment, waste, expiry disposal, purchase
+  receipt, stock-count correction, order consumption) calls `RecordStockMovement` internally —
+  nothing else writes `BranchStock` directly. A duplicate call with the same `idempotencyKey`
+  returns the already-applied balance without appending a second `StockMovement` — "do not deduct
+  stock twice" holds structurally, not by caller discipline. `RecordStockMovement` is a trusted
+  internal primitive with no authorization check of its own; each caller checks the permission
+  appropriate to itself before calling it (mirrors `RecordKitchenEvent`'s precedent).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Stock/Inventory, Purchasing
+
+### BR-STOCK-006 — `StockMovement`, `WasteRecord`, and `ExpiryRecord` are append-only; a correction is a new record
+- **Status**: VERIFIED
+- **Rule**: None of `StockMovementRepository`, `WasteRecordRepository`, `ExpiryRecordRepository`
+  has an update or delete method — append-only is enforced by the repository contract's shape, the
+  same pattern `ClosureAuditEntryRepository`/`CashAuditEntryRepository` already established
+  (BR-AUDIT-004/006). `ReverseStockConsumption` corrects a mistaken consumption by issuing new,
+  equal-and-opposite movements — it never edits the original.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Stock/Inventory
+
+### BR-STOCK-007 — Negative stock policy is per-item, checked on every movement
+- **Status**: VERIFIED
+- **Rule**: `InventoryItem.negativeStockPolicy` (`forbid`/`warn`/`allow`) is consulted by
+  `RecordStockMovement` before applying any movement that would push `BranchStock.quantityOnHand`
+  negative — `forbid` throws, `warn` applies the movement but flags the resulting balance, `allow`
+  applies it silently. No global override exists; the policy is set per `InventoryItem`.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Stock/Inventory
+
+### BR-RECIPE-001 — A recipe is versioned; editing a recipe never rewrites history
+- **Status**: VERIFIED
+- **Rule**: `Recipe`/`SubRecipe` changes always create a new `RecipeVersion`/`SubRecipeVersion`
+  (never edit an existing one, the same pattern `CourierCompensationProfile` already established —
+  BR-COURIER-026). `ResolveRecipeIngredientSnapshot` and `ConsumeStockForOrder` both resolve
+  against the version that was active at the relevant historical instant, never the current
+  version — so editing today's recipe can never silently change what a past order's food-cost or
+  stock-consumption record means.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Stock/Inventory, Costing
+
+### BR-RECIPE-002 — Nested sub-recipes are flattened by one shared service; a cycle is rejected, never silently truncated
+- **Status**: VERIFIED
+- **Rule**: `RecipeLineFlattener` (`features/recipes/domain/`) is the single, pure implementation
+  every consumer (nutrition, costing, menu-label evaluation, Bowl Builder recipe resolution) uses
+  to expand a recipe's nested sub-recipes into flat ingredient quantities — no consumer re-derives
+  this logic independently. A circular sub-recipe reference throws rather than silently stopping
+  at some arbitrary depth.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Stock/Inventory, Nutrition, Costing, Menu, Bowl Builder
+
+### BR-NUTRITION-001 — A missing or unit-mismatched ingredient is reported as missing, never defaulted to zero or estimated
+- **Status**: VERIFIED
+- **Rule**: `NutritionAggregator`/`CostAggregator` are pure, synchronous aggregators over
+  pre-resolved per-ingredient values — an ingredient with no `NutritionReferenceEntry`, or one
+  whose recorded unit doesn't exactly match the recipe line's unit, is excluded from the total and
+  reported via `RecipeCalculationStatus.incomplete`, never partially summed or defaulted to zero.
+  The same "exact unit match or excluded, never converted" rule applies identically in costing
+  (BR-COSTING-001) and automatic menu labeling (BR-MENULABEL-001) — one consistent boundary across
+  every Phase 7 aggregator, not three different judgment calls.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, Stock/Inventory
+
+### BR-NUTRITION-002 — A nutrition value's data source and confidence are always recorded alongside the value itself
+- **Status**: VERIFIED
+- **Rule**: `NutritionReferenceEntry` carries `NutritionDataSourceType` (manufacturer label, lab
+  analysis, USDA-style reference database, manual estimate) and `NutritionConfidence` alongside the
+  value — a screen showing a calculated nutrition figure can always disclose how trustworthy the
+  underlying data is, never presenting an estimate with the same confidence as a lab-verified value.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu
+
+### BR-ALLERGEN-001 — An ingredient's allergen declaration must be explicitly confirmed by a human before it is trusted
+- **Status**: VERIFIED
+- **Rule**: `IngredientAllergenDeclaration` carries `AllergenDeclarationStatus`
+  (`draft`/`pendingReview`/`confirmed`) — `ConfirmIngredientAllergenDeclaration` is a distinct,
+  separately-authorized action from `SetIngredientAllergenDeclaration` (which only records a
+  proposed declaration). `GetAllergenReviewQueue` surfaces every non-confirmed declaration for a
+  human reviewer; nothing in this codebase treats a `draft`/`pendingReview` declaration as safe to
+  display to a customer as a confirmed allergen fact.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, Stock/Inventory
+
+### BR-MENULABEL-001 — An automatic menu label (e.g. "Vegan", "Gluten-Free") is a suggestion requiring human approval, never auto-published
+- **Status**: VERIFIED
+- **Rule**: `EvaluateMenuLabelSuggestions` produces `MenuLabelSuggestion` records from
+  `MenuLabelRule`s (nutrition-threshold or free-from-allergen evaluators) — nothing in this
+  codebase marks a product as carrying a label without a separate `ApproveMenuLabelSuggestion`
+  call. A rule's evaluation is only ever as trustworthy as the underlying nutrition/allergen data
+  it reads (BR-NUTRITION-001, BR-ALLERGEN-001) — an incomplete calculation never silently yields a
+  false-positive "safe" label.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu
+
+### BR-COSTING-001 — Recipe cost is calculated only from ingredients with a resolvable cost at a matching unit; never partially estimated
+- **Status**: VERIFIED
+- **Rule**: `CostAggregator` follows the same exclusion rule as BR-NUTRITION-001. Three
+  `IngredientCostResolver` strategies exist (latest purchase price, weighted-average purchase
+  price, a manually-set standard cost) — which one applies is configured per organization, not
+  silently mixed within one calculation.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Stock/Inventory, Purchasing
+
+### BR-COSTING-002 — A price record (purchase price, standard cost, supplier price) is never edited; a correction is always a new record
+- **Status**: VERIFIED
+- **Rule**: `PurchasePrice`/`StandardIngredientCost`/`SupplierPrice` repositories have no update
+  method — the same append-only-by-contract pattern BR-STOCK-006 established, so a recipe cost
+  calculated against a past date always resolves the price that was actually recorded as of that
+  date, never a value later corrections silently altered.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Purchasing, Stock/Inventory
+
+### BR-PURCHASE-001 — A goods receipt is idempotent by key; a retried delivery-receiving call never doubles the stock increase
+- **Status**: VERIFIED
+- **Rule**: `ReceiveGoods` requires a caller-supplied `idempotencyKey` and checks
+  `GoodsReceiptRepository.findByIdempotencyKey` before creating a new `GoodsReceipt` or applying
+  any stock movement — a retried call (network retry, duplicate submit) returns the original
+  receipt unchanged rather than recording a second delivery. This closed a real gap found during
+  Phase 7's own closing verification pass, before Phase 7 could be considered complete — see
+  `docs/decisions.md` ADR-024.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Purchasing, Stock/Inventory
+
+### BR-PURCHASE-002 — An over- or under-received quantity is recorded exactly as received, never silently corrected to match the order
+- **Status**: VERIFIED
+- **Rule**: `GoodsReceiptLine.receivedQuantity` is always the quantity the receiving use case was
+  given — a delivery of more or less than ordered is an honest fact reflected in the resulting
+  `PurchaseOrderStatus` (`partiallyReceived`/`received`), never rounded or clamped to the ordered
+  amount.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Purchasing
+
+### BR-SETUP-001 — Applying a restaurant setup template only records that it was applied; it never auto-creates real menu/inventory data
+- **Status**: VERIFIED
+- **Rule**: `ApplySetupTemplate` creates only a frozen `SetupTemplateApplicationSnapshot` — no
+  `MenuCategory`/`MenuProduct`/`Ingredient`/`Recipe` is ever created by this use case. Turning one
+  of the template's suggestions into a real record is always a separate, explicit action through
+  Menu admin, Smart Import, or Ingredient admin, each its own approval step — the same
+  "suggestion, never silent activation" boundary Smart Import's own commit-requires-approval rule
+  already established.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, Stock/Inventory
+
+### BR-SETUP-002 — A public (platform-owned) setup template requires a stricter authorization tier than a private (tenant-owned) one
+- **Status**: VERIFIED
+- **Rule**: `CreateSetupTemplate` requires `manageOrganization` (admin-only) for a public template
+  and only `manageRestaurantSetup` (manager+) for a private one — which action applies is selected
+  by the template's own `isPublic` flag, not a separate check, the same "action selection enforces
+  the sensitive-vs-routine distinction" pattern `AssignStaffRole` already established
+  (BR-ADMIN-002). A template must have exactly one of `isPublic`/`ownerOrganizationId` set —
+  never both, never neither.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Staff/Admin, Menu
 
 # Multi-Branch and Tenant Rules
 
@@ -2456,6 +2633,22 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Owner Agent**: security_engineer
 - **Related Modules**: Kitchen, POS, Staff/Admin
 
+### BR-AUDIT-009 — Nine separate, structurally append-only audit trails cover every Phase 7 bounded context; none are shared across contexts (Phase 7)
+- **Status**: VERIFIED
+- **Rule**: `InventoryAuditEntry`, `RecipeAuditEntry`, `NutritionAuditEntry`, `AllergenAuditEntry`,
+  `MenuLabelAuditEntry`, `CostingAuditEntry`, `ProfitabilityAuditEntry`,
+  `StockConsumptionAuditEntry`, `SupplierAuditEntry`, and `SetupAuditEntry` each have their own
+  `*AuditEventType` enum and their own repository, mirroring `ClosureAuditEntry`/
+  `RestaurantOperationsAuditEntry`/`CashAuditEntry`'s established one-repository-per-bounded-context
+  pattern (BR-AUDIT-004/005/006) rather than one shared audit type across all of Phase 7. Every
+  mutating Phase 7 use case appends its event before returning; no repository has an update or
+  delete method. A dedicated closing verification pass (mirroring 6P's role in Phase 6) found real
+  coverage gaps — 8 inventory use cases with no audit call at all, and the entire
+  `restaurant_setup` feature with zero audit instrumentation — and closed them before Phase 7 could
+  be considered complete; see `docs/decisions.md` ADR-024.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Stock/Inventory, Menu, Staff/Admin
+
 # Profitability and Loss Prevention
 
 ### BR-PROFIT-001 — Every rule evaluated for profitability/loss impact
@@ -2471,6 +2664,27 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
   differently to reflect real food-cost loss. Differentiated reporting itself is not implemented.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Orders, Kitchen, Reporting
+
+### BR-PROFIT-003 — A profitability figure is never presented as "net profit"; it is always an estimated gross contribution
+- **Status**: VERIFIED (Phase 7)
+- **Rule**: `ProfitabilityCalculationResult` (`features/profitability`) deliberately never uses the
+  term "net profit" anywhere in its fields, labels, or the screens that would eventually render it
+  — "Estimated Gross Contribution" / "Contribution Margin" only, because the underlying recipe
+  cost itself is already an estimate (BR-COSTING-001), and labor/overhead/packaging/delivery-fee
+  allocation is out of this phase's scope entirely (`LaborCostAllocationConfig`/
+  `OverheadAllocationConfig` exist only as unused foundation types). Presenting an incomplete
+  contribution figure as "net profit" would materially mislead a manager's real business decisions.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Stock/Inventory, Reporting
+
+### BR-PROFIT-004 — A profitability calculation built on an incomplete cost calculation is flagged as incomplete, never silently understated
+- **Status**: VERIFIED (Phase 7)
+- **Rule**: `CalculateRecipeProfitability` propagates `RecipeCalculationStatus.incomplete` from its
+  underlying `CostCalculationResult` (BR-COSTING-001) rather than treating a missing ingredient
+  cost as zero — a recipe missing one ingredient's cost never silently reports a
+  higher-than-real contribution margin.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Stock/Inventory, Reporting
 
 # Edge Cases and Failure Scenarios
 
@@ -3084,11 +3298,61 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Business Rule IDs**: BR-AUTH-003, BR-ADMIN-001, BR-ADMIN-002, BR-ADMIN-003, BR-ADMIN-004,
   BR-ADMIN-005
 
+### DL-027 — Smart Restaurant Setup, Inventory & Food Intelligence (Phase 7)
+- **Decision**: Builds the ingredient/inventory/recipe/nutrition/allergen/menu-label/costing/
+  profitability/stock-consumption/purchasing/setup-template bounded contexts from nothing — the
+  full "food intelligence" layer `docs/module_catalog.md` had targeted since before Phase 1, plus
+  a new Smart Import bounded context (CSV/JSON menu parsing → human-reviewed draft →
+  approval-gated commit) and tenant-scoped module entitlements gating all of it. Two dedicated
+  closing verification passes (7S security/tenant-isolation, 7T audit coverage, plus a final 7U
+  pass) each found and closed real gaps before Phase 7 could be considered complete — mirroring
+  Phase 6's own 6P precedent.
+- **Status**: DECIDED
+- **Source**: User, Phase 7 kickoff — an explicit autonomous-implementation mandate spanning 20
+  lettered parts (7A–7U), an explicit out-of-scope list, and a mandatory 34-item final report
+  ending in an APPROVED / APPROVED WITH REQUIRED FIXES / REJECTED phase-gate verdict against 8
+  named blocking conditions.
+- **Date**: 2026-08-03
+- **Consequences**: See BR-STOCK-001 through BR-STOCK-007, BR-RECIPE-001/002, BR-NUTRITION-001/002,
+  BR-ALLERGEN-001, BR-MENULABEL-001, BR-COSTING-001/002, BR-PROFIT-003/004, BR-PURCHASE-001/002,
+  BR-SETUP-001/002, and BR-AUDIT-009 above. `docs/decisions.md` ADR-024 records the full
+  architecture and every judgment call: the trusted-primitive-vs-authorized-entry-point split, the
+  exact-integer `Quantity` type mirroring `Money`, the "missing, never fabricated or defaulted to
+  zero" rule shared identically across nutrition/costing/menu-labeling, the never-"net profit"
+  terminology rule, the append-only-everywhere pattern, and the two real gaps found and closed
+  during Phase 7's own verification passes (a smart_import authorization + `MenuLabelRule`
+  tenant-isolation gap in 7S; an inventory/restaurant_setup audit-coverage gap in 7T; a
+  `ReceiveGoods` idempotency gap in the final 7U pass). `docs/feature_status.md`'s Phase 7 Closure
+  Record states the phase-gate verdict against all 8 named blocking conditions.
+- **Related Modules**: Stock/Inventory, Menu, Bowl Builder, Purchasing, Staff/Admin, Reporting
+- **Business Rule IDs**: BR-STOCK-001, BR-STOCK-002, BR-STOCK-003, BR-STOCK-004, BR-STOCK-005,
+  BR-STOCK-006, BR-STOCK-007, BR-RECIPE-001, BR-RECIPE-002, BR-NUTRITION-001, BR-NUTRITION-002,
+  BR-ALLERGEN-001, BR-MENULABEL-001, BR-COSTING-001, BR-COSTING-002, BR-PROFIT-003, BR-PROFIT-004,
+  BR-PURCHASE-001, BR-PURCHASE-002, BR-SETUP-001, BR-SETUP-002, BR-AUDIT-009
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v2.6 — 2026-08-03
+- **Version**: 2.6
+- **Date**: 2026-08-03
+- **Summary**: Phase 7 (Smart Restaurant Setup, Inventory & Food Intelligence). Replaced the stale
+  ROADMAP-status BR-STOCK-002/003 placeholders with real, VERIFIED rules and added BR-STOCK-004
+  through BR-STOCK-007 (exact-integer quantities, single-write-path idempotent stock movements,
+  append-only stock/waste/expiry records, per-item negative-stock policy), BR-RECIPE-001/002
+  (versioned recipes, shared sub-recipe flattening), BR-NUTRITION-001/002 (missing-not-fabricated
+  aggregation, source/confidence disclosure), BR-ALLERGEN-001 (declaration must be human-confirmed),
+  BR-MENULABEL-001 (automatic labels are suggestions, never auto-published), BR-COSTING-001/002
+  (missing-not-fabricated cost aggregation, append-only price records), BR-PROFIT-003/004 (never
+  "net profit," incomplete cost never silently understated), BR-PURCHASE-001/002 (idempotent goods
+  receipt — closing a real gap found in Phase 7's own closing verification pass — and honest
+  over/under-receipt recording), BR-SETUP-001/002 (setup-template application never auto-creates
+  real data; public-vs-private authorization tiering), and BR-AUDIT-009 (nine new
+  per-bounded-context Phase 7 audit trails, plus the real coverage gaps a dedicated verification
+  pass found and closed). New DL-027. See `docs/decisions.md` ADR-024.
 
 ### v2.5 — 2026-08-01
 - **Version**: 2.5
