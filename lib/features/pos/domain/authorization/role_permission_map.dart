@@ -21,10 +21,11 @@ import 'staff_role.dart';
 /// left unstated.
 ///
 /// Tiering rule: [StaffRole.staff] ⊂ [StaffRole.manager] ⊂
-/// [StaffRole.admin] — each higher tier is the lower tier's set plus its
-/// own additions, computed once in [permissionsFor], never duplicated by
+/// [StaffRole.admin] ⊂ [StaffRole.tenantOwner] (Phase 8, `docs/decisions.md`
+/// ADR-025) — each higher tier is the lower tier's set plus its own
+/// additions, computed once in [permissionsFor], never duplicated by
 /// hand. [StaffRole.courier] is lateral (a courier's own delivery-lifecycle
-/// actions only — never a superset/subset of the other three).
+/// actions only — never a superset/subset of the other tiers).
 ///
 /// If this file grows hard to review (many more actions, or actions from
 /// 3+ more bounded contexts), that is the trigger to revisit `PosAuthorizedAction`
@@ -81,6 +82,21 @@ abstract final class RolePermissionMap {
     // adjacent decision, deliberately admin-only, distinct from
     // `manageOrganization`'s structural org edits.
     PosAuthorizedAction.manageEntitlements,
+  };
+
+  /// tenantOwner-only actions — one tier above [_adminOnly]. Phase 8
+  /// (`docs/decisions.md` ADR-025): a tenant's own brand identity,
+  /// which purchased modules are toggled on, third-party provider
+  /// configuration, and (foundation only) the tenant's own billing
+  /// record — decisions that affect the *entire tenant*, not any one
+  /// branch, and that even an org-wide [StaffRole.admin] should not be
+  /// able to make unilaterally.
+  static const Set<PosAuthorizedAction> _tenantOwnerOnly = {
+    PosAuthorizedAction.manageTenantBranding,
+    PosAuthorizedAction.manageTenantEntitlements,
+    PosAuthorizedAction.manageTenantIntegrations,
+    PosAuthorizedAction.manageTenantBilling,
+    PosAuthorizedAction.manageStaffOrganizationAccess,
   };
 
   /// Supervisory/approval/oversight actions — reviewing, overriding,
@@ -197,6 +213,13 @@ abstract final class RolePermissionMap {
         return {..._staffTier, ..._managerTier};
       case StaffRole.admin:
         return {..._staffTier, ..._managerTier, ..._adminOnly};
+      case StaffRole.tenantOwner:
+        return {
+          ..._staffTier,
+          ..._managerTier,
+          ..._adminOnly,
+          ..._tenantOwnerOnly,
+        };
     }
   }
 

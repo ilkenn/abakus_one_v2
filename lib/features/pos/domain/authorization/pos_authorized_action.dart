@@ -146,4 +146,19 @@ enum PosAuthorizedAction {
   viewProfitability,
   manageEntitlements,
   viewAdvancedReporting,
+  // Phase 8 Platform, Integrations & White-Label Ecosystem
+  // (`docs/decisions.md` ADR-025) — tenantOwner-only: the tenant's own
+  // brand identity, which purchased modules this tenant has toggled on
+  // from the platform's catalog, which marketplace/payment providers
+  // this tenant has configured, and (foundation only, no real billing)
+  // this tenant's subscription/billing record.
+  manageTenantBranding,
+  manageTenantEntitlements,
+  manageTenantIntegrations,
+  manageTenantBilling,
+
+  /// Granting/revoking a staff member's [ActorSession.organizationAccess]
+  /// — the tenant boundary itself, one tier more sensitive than
+  /// [manageStaffBranchAccess].
+  manageStaffOrganizationAccess,
 }

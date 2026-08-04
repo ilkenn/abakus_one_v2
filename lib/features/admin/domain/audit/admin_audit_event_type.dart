@@ -21,4 +21,7 @@ enum AdminAuditEventType {
   deviceStatusChanged,
   localizationConfigChanged,
   maintenanceModeChanged,
+  // Phase 8 (`docs/decisions.md` ADR-025)
+  staffOrganizationAccessGranted,
+  staffOrganizationAccessRevoked,
 }

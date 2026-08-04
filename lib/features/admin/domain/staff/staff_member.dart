@@ -20,6 +20,7 @@ class StaffMember {
     this.roles = const {},
     this.branchAccess = const {},
     this.restaurantAccess = const {},
+    this.organizationAccess = const {},
     this.status = StaffMemberStatus.active,
     this.sessionsRevokedAt,
     required this.createdAt,
@@ -31,6 +32,12 @@ class StaffMember {
   final Set<StaffRole> roles;
   final Set<String> branchAccess;
   final Set<String> restaurantAccess;
+
+  /// **Phase 8**: every tenant `organizationId` this member is granted
+  /// access to — mirrors [branchAccess]'s empty-means-none convention.
+  /// See `ActorSession.organizationAccess`'s doc comment for why no
+  /// role, including `StaffRole.admin`, is exempt from needing this.
+  final Set<String> organizationAccess;
   final StaffMemberStatus status;
 
   /// Set by `RevokeStaffSession` — "forced session revocation contract."
@@ -50,6 +57,7 @@ class StaffMember {
     Set<StaffRole>? roles,
     Set<String>? branchAccess,
     Set<String>? restaurantAccess,
+    Set<String>? organizationAccess,
     StaffMemberStatus? status,
     DateTime? sessionsRevokedAt,
     bool clearSessionsRevokedAt = false,
@@ -61,6 +69,7 @@ class StaffMember {
       roles: roles ?? this.roles,
       branchAccess: branchAccess ?? this.branchAccess,
       restaurantAccess: restaurantAccess ?? this.restaurantAccess,
+      organizationAccess: organizationAccess ?? this.organizationAccess,
       status: status ?? this.status,
       sessionsRevokedAt: clearSessionsRevokedAt
           ? null

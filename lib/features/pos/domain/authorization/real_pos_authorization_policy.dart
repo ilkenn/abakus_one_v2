@@ -10,6 +10,14 @@ import 'staff_role.dart';
 /// check (Phase 6P, `docs/decisions.md` ADR-023).
 const String kBranchIdAuthorizationContextKey = 'branchId';
 
+/// The context key a caller passing an organization-scoped action's
+/// target tenant id must use — see [RealPosAuthorizationPolicy]'s
+/// organization-scope check (Phase 8, `docs/decisions.md` ADR-025).
+/// **Unlike [kBranchIdAuthorizationContextKey], no `StaffRole` is
+/// exempt from this check** — see [ActorSession.organizationAccess]'s
+/// own doc comment for why.
+const String kOrganizationIdAuthorizationContextKey = 'organizationId';
+
 /// The first real, production-capable [PosAuthorizationPolicy]
 /// implementation in this codebase — Sprint 5E, resolving the Phase 5
 /// phase-gate blocker recorded in `docs/decisions.md` ADR-012/ADR-022.
@@ -36,14 +44,27 @@ const String kBranchIdAuthorizationContextKey = 'branchId';
 /// carries [kBranchIdAuthorizationContextKey], the actor must hold that
 /// branch in [ActorSession.branchAccess] — "cross-branch access must
 /// require explicit authorization" (`docs/decisions.md` ADR-023's Phase
-/// 6D organization/tenant boundary). [StaffRole.admin] is exempt (an
-/// org-wide oversight role by design, matching 6F's own "Admin:
-/// permitted scope, Manager: branch scope" tiering) — every other role
-/// is denied for a branch it wasn't explicitly granted, even if its
-/// role otherwise permits the action. Callers that omit the context key
-/// entirely (every non-branch-scoped action, and every call site that
-/// pre-dates this check) are unaffected — this is additive, not a
-/// blanket new requirement.
+/// 6D organization/tenant boundary). [StaffRole.admin] and (Phase 8)
+/// [StaffRole.tenantOwner] are exempt (org-wide oversight roles by
+/// design, matching 6F's own "Admin: permitted scope, Manager: branch
+/// scope" tiering) — every other role is denied for a branch it wasn't
+/// explicitly granted, even if its role otherwise permits the action.
+/// Callers that omit the context key entirely (every non-branch-scoped
+/// action, and every call site that pre-dates this check) are
+/// unaffected — this is additive, not a blanket new requirement.
+///
+/// **Phase 8 organization scoping** (`docs/decisions.md` ADR-025): when
+/// `context` carries [kOrganizationIdAuthorizationContextKey], the
+/// actor must hold that organization in [ActorSession.organizationAccess]
+/// — **with no role exemption at all, including [StaffRole.admin] and
+/// [StaffRole.tenantOwner]**. This is a deliberate difference from the
+/// branch check above: every `StaffRole` value is a *tenant*-hierarchy
+/// role by construction (see `StaffRole`'s own doc comment) — none of
+/// them, however senior within one tenant, should be able to reach a
+/// different tenant's data merely by supplying its id. Only the wholly
+/// separate platform-role stack (`features/platform/`) ever spans more
+/// than one organization. As with branch scoping, this is additive —
+/// existing call sites that never pass this context key are unaffected.
 class RealPosAuthorizationPolicy implements PosAuthorizationPolicy {
   const RealPosAuthorizationPolicy({
     required ActorSession? Function() currentSession,
@@ -91,10 +112,21 @@ class RealPosAuthorizationPolicy implements PosAuthorizationPolicy {
     final targetBranchId = context[kBranchIdAuthorizationContextKey];
     if (targetBranchId != null &&
         !session.roles.contains(StaffRole.admin) &&
+        !session.roles.contains(StaffRole.tenantOwner) &&
         !session.hasBranchAccess(targetBranchId)) {
       return AuthorizationResult(
         granted: false,
         reason: 'Actor does not have access to branch "$targetBranchId"',
+      );
+    }
+    final targetOrganizationId =
+        context[kOrganizationIdAuthorizationContextKey];
+    if (targetOrganizationId != null &&
+        !session.hasOrganizationAccess(targetOrganizationId)) {
+      return AuthorizationResult(
+        granted: false,
+        reason:
+            'Actor does not have access to organization "$targetOrganizationId"',
       );
     }
     return const AuthorizationResult(granted: true);

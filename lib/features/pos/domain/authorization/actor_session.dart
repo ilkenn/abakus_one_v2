@@ -24,6 +24,7 @@ class ActorSession {
     required this.activeRole,
     this.branchAccess = const {},
     this.restaurantAccess = const {},
+    this.organizationAccess = const {},
     this.activeBranchId,
     this.issuedAt,
     this.expiresAt,
@@ -42,6 +43,17 @@ class ActorSession {
   /// Every restaurant id this actor is granted access to, same
   /// empty-means-none convention as [branchAccess].
   final Set<String> restaurantAccess;
+
+  /// **Phase 8**: every tenant `organizationId` this actor is granted
+  /// access to — same empty-means-none convention as [branchAccess].
+  /// Unlike [branchAccess]'s admin exemption
+  /// (`RealPosAuthorizationPolicy`'s branch-scoping check), **no
+  /// `StaffRole` is exempt from organization scoping, including
+  /// `StaffRole.admin` and `StaffRole.tenantOwner`** — every tenant-
+  /// hierarchy role operates within one tenant by construction; only the
+  /// wholly separate platform-role stack ever spans more than one. See
+  /// `docs/decisions.md` ADR-025.
+  final Set<String> organizationAccess;
 
   /// Which of [branchAccess] the actor is *currently operating in* —
   /// "branch switching," the same narrower/context-only relationship
@@ -81,6 +93,11 @@ class ActorSession {
   /// require explicit authorization."
   bool hasBranchAccess(String branchId) => branchAccess.contains(branchId);
 
+  /// Whether [organizationId] is in [organizationAccess] — "cross-tenant
+  /// access must require explicit authorization," Phase 8.
+  bool hasOrganizationAccess(String organizationId) =>
+      organizationAccess.contains(organizationId);
+
   /// Builds a session from raw, untyped role-name strings — the shape a
   /// future backend session payload would actually arrive in (this app
   /// has no such backend yet — see `docs/decisions.md` ADR-022). Unknown
@@ -100,6 +117,7 @@ class ActorSession {
     String? activeRoleName,
     List<String> branchAccessIds = const [],
     List<String> restaurantAccessIds = const [],
+    List<String> organizationAccessIds = const [],
     String? activeBranchId,
     DateTime? issuedAt,
     DateTime? expiresAt,
@@ -141,6 +159,7 @@ class ActorSession {
       activeRole: active,
       branchAccess: branchAccess,
       restaurantAccess: restaurantAccessIds.toSet(),
+      organizationAccess: organizationAccessIds.toSet(),
       activeBranchId: activeBranchId,
       issuedAt: issuedAt,
       expiresAt: expiresAt,
@@ -182,6 +201,7 @@ class ActorSession {
       activeRole: activeRole ?? this.activeRole,
       branchAccess: branchAccess,
       restaurantAccess: restaurantAccess,
+      organizationAccess: organizationAccess,
       activeBranchId: activeBranchId ?? this.activeBranchId,
       issuedAt: issuedAt,
       expiresAt: expiresAt,

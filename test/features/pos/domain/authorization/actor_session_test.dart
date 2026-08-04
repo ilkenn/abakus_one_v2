@@ -188,5 +188,30 @@ void main() {
       );
       expect(denied, isNull);
     });
+
+    test(
+        'hasOrganizationAccess reflects organizationAccess membership '
+        '(Phase 8)', () {
+      const session = ActorSession(
+        actorId: 'staff-1',
+        roles: {StaffRole.admin},
+        activeRole: StaffRole.admin,
+        organizationAccess: {'org-1', 'org-2'},
+      );
+
+      expect(session.hasOrganizationAccess('org-1'), isTrue);
+      expect(session.hasOrganizationAccess('org-9'), isFalse);
+    });
+
+    test('tryFromRaw carries organization access (Phase 8)', () {
+      final session = ActorSession.tryFromRaw(
+        actorId: 'staff-1',
+        roleNames: ['admin'],
+        organizationAccessIds: ['org-1', 'org-2'],
+      );
+
+      expect(session, isNotNull);
+      expect(session!.organizationAccess, {'org-1', 'org-2'});
+    });
   });
 }

@@ -78,6 +78,7 @@ class DevelopmentStaffAuthRepository implements StaffAuthRepository {
       activeRole: member.roles.first,
       branchAccess: member.branchAccess,
       restaurantAccess: member.restaurantAccess,
+      organizationAccess: member.organizationAccess,
       issuedAt: now,
       expiresAt: now.add(_sessionDuration()),
     );
@@ -108,6 +109,7 @@ class DevelopmentStaffAuthRepository implements StaffAuthRepository {
       activeRole: activeRole,
       branchAccess: member.branchAccess,
       restaurantAccess: member.restaurantAccess,
+      organizationAccess: member.organizationAccess,
       activeBranchId: activeBranchId,
       issuedAt: current.issuedAt,
       expiresAt: current.expiresAt,

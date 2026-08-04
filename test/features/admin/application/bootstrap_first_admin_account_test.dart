@@ -20,6 +20,7 @@ void main() {
 
       final member = await useCase(
         displayName: 'İlk Yönetici',
+        organizationId: 'org-1',
         createdAt: DateTime(2026, 1, 1),
       );
 
@@ -37,12 +38,14 @@ void main() {
 
       await useCase(
         displayName: 'İlk Yönetici',
+        organizationId: 'org-1',
         createdAt: DateTime(2026, 1, 1),
       );
 
       expect(
         () => useCase(
           displayName: 'İkinci Yönetici',
+          organizationId: 'org-1',
           createdAt: DateTime(2026, 1, 2),
         ),
         throwsA(isA<AdminPlatformAlreadyBootstrappedViolation>()),
@@ -60,6 +63,7 @@ void main() {
 
       final member = await useCase(
         displayName: 'İlk Yönetici',
+        organizationId: 'org-1',
         createdAt: DateTime(2026, 1, 1),
       );
 

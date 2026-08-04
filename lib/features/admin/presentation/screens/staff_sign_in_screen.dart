@@ -78,7 +78,11 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
         idGenerator: ref.read(staffMemberIdGeneratorProvider),
         repository: ref.read(staffMemberRepositoryProvider),
         auditRepository: ref.read(adminAuditEntryRepositoryProvider),
-      )(displayName: 'İlk Yönetici', createdAt: DateTime.now());
+      )(
+        displayName: 'İlk Yönetici',
+        organizationId: 'org-1',
+        createdAt: DateTime.now(),
+      );
       await _load();
     } catch (e) {
       setState(() => _error = e.toString());

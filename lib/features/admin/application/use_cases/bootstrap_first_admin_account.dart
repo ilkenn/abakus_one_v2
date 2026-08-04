@@ -19,6 +19,17 @@ import '../identity/staff_member_id_generator.dart';
 /// `RecordCustomerVisitAndEvaluateRewards` uses for its one automated,
 /// no-human-actor call site (`docs/decisions.md` ADR-022) — never a
 /// hardcoded production identity.
+///
+/// **Phase 8** (`docs/decisions.md` ADR-025): also grants
+/// `organizationAccess: {organizationId}` — since
+/// `RealPosAuthorizationPolicy`'s organization-scoping check exempts no
+/// role, including admin (unlike the pre-existing branch-scoping
+/// exemption), the first bootstrapped admin would otherwise be denied
+/// every organization-scoped action immediately after bootstrapping —
+/// the same bootstrap paradox `AssignStaffRole` already solves for the
+/// admin role itself, resolved here the same way: a caller-supplied
+/// value at the one call site that has no prior authority to derive it
+/// from.
 class BootstrapFirstAdminAccount {
   const BootstrapFirstAdminAccount({
     required StaffMemberIdGenerator idGenerator,
@@ -34,6 +45,7 @@ class BootstrapFirstAdminAccount {
 
   Future<StaffMember> call({
     required String displayName,
+    required String organizationId,
     required DateTime createdAt,
   }) async {
     final existing = await _repository.findAll();
@@ -45,6 +57,7 @@ class BootstrapFirstAdminAccount {
       id: _idGenerator.nextStaffMemberId(),
       displayName: displayName,
       roles: const {StaffRole.admin},
+      organizationAccess: {organizationId},
       createdAt: createdAt,
       revision: 1,
     );

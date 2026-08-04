@@ -72,6 +72,38 @@ void main() {
         isTrue,
       );
     });
+
+    test(
+        'tenantOwner includes every admin-tier and manager-tier action '
+        '(Phase 8)', () {
+      final adminActions = RolePermissionMap.permissionsFor(StaffRole.admin);
+      final tenantOwnerActions =
+          RolePermissionMap.permissionsFor(StaffRole.tenantOwner);
+
+      expect(tenantOwnerActions.containsAll(adminActions), isTrue);
+    });
+
+    test('admin cannot perform a tenantOwner-only action (Phase 8)', () {
+      expect(
+        RolePermissionMap.allows(
+          {StaffRole.admin},
+          PosAuthorizedAction.manageTenantBranding,
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+        'a tenantOwner-authorized action is allowed for tenantOwner '
+        '(Phase 8)', () {
+      expect(
+        RolePermissionMap.allows(
+          {StaffRole.tenantOwner},
+          PosAuthorizedAction.manageTenantBranding,
+        ),
+        isTrue,
+      );
+    });
   });
 
   group('RolePermissionMap.allows — multi-role union', () {

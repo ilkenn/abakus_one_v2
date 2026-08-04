@@ -321,6 +321,129 @@ void main() {
 
         expect(result.granted, isTrue);
       });
+
+      test(
+          'tenantOwner is exempt from branch scoping, same as admin '
+          '(Phase 8)', () async {
+        const session = ActorSession(
+          actorId: 'owner-1',
+          roles: {StaffRole.tenantOwner},
+          activeRole: StaffRole.tenantOwner,
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageBranch,
+          actorStaffId: 'owner-1',
+          context: const {kBranchIdAuthorizationContextKey: 'branch-1'},
+        );
+
+        expect(result.granted, isTrue);
+      });
+    });
+
+    group('organization scoping (Phase 8)', () {
+      test(
+          'admin without organization access is denied an '
+          'organization-scoped action — no role is exempt', () async {
+        const session = ActorSession(
+          actorId: 'admin-1',
+          roles: {StaffRole.admin},
+          activeRole: StaffRole.admin,
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageOrganization,
+          actorStaffId: 'admin-1',
+          context: const {kOrganizationIdAuthorizationContextKey: 'org-1'},
+        );
+
+        expect(result.granted, isFalse);
+        expect(result.reason, contains('org-1'));
+      });
+
+      test(
+          'tenantOwner without organization access is denied — not even '
+          'the most senior tenant role is exempt', () async {
+        const session = ActorSession(
+          actorId: 'owner-1',
+          roles: {StaffRole.tenantOwner},
+          activeRole: StaffRole.tenantOwner,
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageTenantBranding,
+          actorStaffId: 'owner-1',
+          context: const {kOrganizationIdAuthorizationContextKey: 'org-1'},
+        );
+
+        expect(result.granted, isFalse);
+      });
+
+      test('a manager granted access to the target organization is allowed',
+          () async {
+        const session = ActorSession(
+          actorId: 'manager-1',
+          roles: {StaffRole.manager},
+          activeRole: StaffRole.manager,
+          organizationAccess: {'org-1'},
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageBranch,
+          actorStaffId: 'manager-1',
+          context: const {kOrganizationIdAuthorizationContextKey: 'org-1'},
+        );
+
+        expect(result.granted, isTrue);
+      });
+
+      test(
+          'an actor granted access to a different organization is denied '
+          'for the target organization', () async {
+        const session = ActorSession(
+          actorId: 'admin-1',
+          roles: {StaffRole.admin},
+          activeRole: StaffRole.admin,
+          organizationAccess: {'org-2'},
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageOrganization,
+          actorStaffId: 'admin-1',
+          context: const {kOrganizationIdAuthorizationContextKey: 'org-1'},
+        );
+
+        expect(result.granted, isFalse);
+      });
+
+      test(
+          'an action with no organizationId in context is unaffected, even '
+          'with empty organizationAccess', () async {
+        const session = ActorSession(
+          actorId: 'admin-1',
+          roles: {StaffRole.admin},
+          activeRole: StaffRole.admin,
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageOrganization,
+          actorStaffId: 'admin-1',
+        );
+
+        expect(result.granted, isTrue);
+      });
     });
   });
 }
