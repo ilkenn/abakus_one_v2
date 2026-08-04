@@ -6,14 +6,24 @@ import 'package:abakus_one_v2/features/integrations/data/integration_credential_
 /// already defines per-test-file (`features/auth`) rather than a real
 /// platform-channel-backed implementation.
 class FakeIntegrationCredentialStorage implements IntegrationCredentialStorage {
+  FakeIntegrationCredentialStorage({this.failWrites = false});
+
+  /// Simulates a broken secure-storage platform channel — Phase 8S
+  /// security pass regression coverage for `StoreIntegrationCredential`'s
+  /// "never persist a ref/audit entry for a write that didn't succeed"
+  /// guarantee.
+  final bool failWrites;
+
   final Map<String, String> _values = {};
 
   @override
   Future<String?> readValue(String storageKey) async => _values[storageKey];
 
   @override
-  Future<void> writeValue(String storageKey, String value) async {
+  Future<bool> writeValue(String storageKey, String value) async {
+    if (failWrites) return false;
     _values[storageKey] = value;
+    return true;
   }
 
   @override

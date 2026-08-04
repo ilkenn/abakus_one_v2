@@ -11,6 +11,9 @@ import 'package:abakus_one_v2/features/entitlements/domain/entitlement_module.da
 import 'package:abakus_one_v2/features/entitlements/domain/entitlement_scope_type.dart';
 import 'package:abakus_one_v2/features/entitlements/domain/entitlement_status.dart';
 import 'package:abakus_one_v2/features/entitlements/domain/module_access_denial_reason.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/real_pos_authorization_policy.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../test_support/entitlement_test_fixtures.dart';
@@ -311,6 +314,89 @@ void main() {
           actorStaffId: 'manager-1',
         );
       }
+    });
+
+    test(
+        'an organization-scoped grant is denied for a manager without '
+        'access to that organization — no role exemption (Phase 8S '
+        'regression)', () async {
+      final entitlementRepository = InMemoryEntitlementGrantRepository(seed: [
+        EntitlementGrant(
+          id: 'g1',
+          module: EntitlementModule.crm,
+          scopeType: EntitlementScopeType.organization,
+          scopeId: 'org-1',
+          status: EntitlementStatus.active,
+          grantedByStaffId: 'admin-1',
+          grantedAt: DateTime(2026, 1, 1),
+          revision: 1,
+        ),
+      ]);
+      const session = ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        // Deliberately no organizationAccess — must be denied even
+        // though `manageCrmModule` is a manager-tier action.
+      );
+      final useCase = CheckModuleAccess(
+        entitlementRepository: entitlementRepository,
+        featureFlagsService: FakeFeatureFlagsService(
+          enabledKeys: {FeatureFlagsKeys.crmEnabled},
+        ),
+        authorizationPolicy:
+            RealPosAuthorizationPolicy(currentSession: () => session),
+      );
+
+      final result = await useCase(
+        module: EntitlementModule.crm,
+        scopeType: EntitlementScopeType.organization,
+        scopeId: 'org-1',
+        actorStaffId: 'manager-1',
+      );
+
+      expect(result.isGranted, isFalse);
+      expect(result.denialReason, ModuleAccessDenialReason.permissionDenied);
+    });
+
+    test(
+        'an organization-scoped grant is allowed for a manager with '
+        'access to that organization', () async {
+      final entitlementRepository = InMemoryEntitlementGrantRepository(seed: [
+        EntitlementGrant(
+          id: 'g1',
+          module: EntitlementModule.crm,
+          scopeType: EntitlementScopeType.organization,
+          scopeId: 'org-1',
+          status: EntitlementStatus.active,
+          grantedByStaffId: 'admin-1',
+          grantedAt: DateTime(2026, 1, 1),
+          revision: 1,
+        ),
+      ]);
+      const session = ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        organizationAccess: {'org-1'},
+      );
+      final useCase = CheckModuleAccess(
+        entitlementRepository: entitlementRepository,
+        featureFlagsService: FakeFeatureFlagsService(
+          enabledKeys: {FeatureFlagsKeys.crmEnabled},
+        ),
+        authorizationPolicy:
+            RealPosAuthorizationPolicy(currentSession: () => session),
+      );
+
+      final result = await useCase(
+        module: EntitlementModule.crm,
+        scopeType: EntitlementScopeType.organization,
+        scopeId: 'org-1',
+        actorStaffId: 'manager-1',
+      );
+
+      expect(result.isGranted, isTrue);
     });
   });
 }

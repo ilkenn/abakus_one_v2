@@ -17,7 +17,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// consume internally.
 abstract interface class IntegrationCredentialStorage {
   Future<String?> readValue(String storageKey);
-  Future<void> writeValue(String storageKey, String value);
+
+  /// Returns `true` once the value is actually persisted, `false` if the
+  /// underlying platform channel failed — the caller (`StoreIntegrationCredential`)
+  /// must never treat a `false` result as success (Phase 8S security pass).
+  Future<bool> writeValue(String storageKey, String value);
   Future<void> deleteValue(String storageKey);
 }
 
@@ -45,13 +49,15 @@ class SecureIntegrationCredentialStorage
   }
 
   @override
-  Future<void> writeValue(String storageKey, String value) async {
+  Future<bool> writeValue(String storageKey, String value) async {
     try {
       await _storage.write(key: storageKey, value: value).timeout(_timeout);
+      return true;
     } catch (_) {
-      // Best-effort, matching SecureSessionStorage's own precedent — a
-      // failure here surfaces to the caller as "the credential was not
-      // actually stored," never a crash.
+      // Fails safe, matching SecureSessionStorage's own precedent — no
+      // crash — but the caller is told, so it never persists a ref/audit
+      // entry that falsely claims the credential was stored.
+      return false;
     }
   }
 

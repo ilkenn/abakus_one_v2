@@ -70,7 +70,15 @@ class StoreIntegrationCredential {
     );
     final storageKey =
         existing?.storageKey ?? '$organizationId-$providerId-${kind.name}';
-    await _storage.writeValue(storageKey, value);
+    final stored = await _storage.writeValue(storageKey, value);
+    if (!stored) {
+      // Phase 8S security pass: never persist a ref or append an audit
+      // entry that would falsely assert the credential was stored.
+      throw IntegrationCredentialStorageFailedViolation(
+        providerId: providerId,
+        kind: kind.name,
+      );
+    }
 
     final ref = existing?.copyWith(
           revoked: false,

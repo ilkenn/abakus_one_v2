@@ -1567,6 +1567,28 @@ final class UnknownIntegrationCredentialViolation
       'organization "$organizationId"';
 }
 
+/// The underlying secure-storage write did not actually succeed — Phase
+/// 8S security pass (`docs/decisions.md` ADR-025). `StoreIntegrationCredential`
+/// throws this instead of persisting an `IntegrationCredentialRef`/
+/// `IntegrationAuditEntry` that would falsely assert the credential was
+/// stored — an audit entry must never assert something that did not
+/// actually happen.
+final class IntegrationCredentialStorageFailedViolation
+    extends BusinessRuleViolation {
+  const IntegrationCredentialStorageFailedViolation({
+    required this.providerId,
+    required this.kind,
+  });
+
+  final String providerId;
+  final String kind;
+
+  @override
+  String get description =>
+      'Failed to store the "$kind" credential for provider "$providerId" — '
+      'the secure storage write did not succeed';
+}
+
 /// A customer already has 5 active/eligible `CustomerPhoto`s (`pending
 /// Review`/`underReview`/`approved` — `rejected`/`removed` never count)
 /// and attempted to submit another — "maximum 5 active/eligible photos"

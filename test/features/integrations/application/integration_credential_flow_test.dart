@@ -103,6 +103,42 @@ void main() {
         throwsA(isA<AuthorizationDeniedViolation>()),
       );
     });
+
+    test(
+        'a failed secure-storage write never persists a ref or an audit '
+        'entry that would falsely claim the credential was stored '
+        '(Phase 8S regression)', () async {
+      final storage = FakeIntegrationCredentialStorage(failWrites: true);
+      final refRepository = InMemoryIntegrationCredentialRefRepository();
+      final auditRepository = InMemoryIntegrationAuditEntryRepository();
+      final useCase = StoreIntegrationCredential(
+        authorizationPolicy: const AllowAllIntegrationPolicy(),
+        storage: storage,
+        idGenerator: SequentialIntegrationCredentialRefIdGenerator(),
+        repository: refRepository,
+        auditRepository: auditRepository,
+      );
+
+      await expectLater(
+        () => useCase(
+          organizationId: 'org-1',
+          providerId: 'iyzico',
+          kind: IntegrationCredentialKind.apiKey,
+          value: 'secret',
+          performedByStaffId: 'owner-1',
+          performedAt: DateTime(2026, 1, 1),
+        ),
+        throwsA(isA<IntegrationCredentialStorageFailedViolation>()),
+      );
+      expect(
+          await refRepository.findByOrganizationProviderAndKind(
+            'org-1',
+            'iyzico',
+            IntegrationCredentialKind.apiKey,
+          ),
+          isNull);
+      expect(await auditRepository.findByOrganizationId('org-1'), isEmpty);
+    });
   });
 
   group('RevokeIntegrationCredential', () {

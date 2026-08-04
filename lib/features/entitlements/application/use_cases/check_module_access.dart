@@ -2,7 +2,10 @@ import '../../../../core/services/feature_flags/feature_flags_keys.dart';
 import '../../../../core/services/feature_flags/feature_flags_service.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
-import '../../../pos/domain/authorization/real_pos_authorization_policy.dart';
+import '../../../pos/domain/authorization/real_pos_authorization_policy.dart'
+    show
+        kBranchIdAuthorizationContextKey,
+        kOrganizationIdAuthorizationContextKey;
 import '../../data/entitlement_grant_repository.dart';
 import '../../domain/entitlement_module.dart';
 import '../../domain/entitlement_scope_type.dart';
@@ -130,12 +133,28 @@ class CheckModuleAccess {
     }
 
     final action = _actionByModule[module]!;
+    // Phase 8S security pass (`docs/decisions.md` ADR-025): every scope
+    // type that has a corresponding `RealPosAuthorizationPolicy` context
+    // check must forward it — a scope this switch doesn't recognize must
+    // never silently skip authorization context. `EntitlementScopeType
+    // .restaurant` has no equivalent check anywhere in this codebase's
+    // authorization policy yet (only branch/organization exist) — a
+    // separate, pre-existing gap, not invented here.
+    final Map<String, String> authorizationContext;
+    switch (scopeType) {
+      case EntitlementScopeType.branch:
+        authorizationContext = {kBranchIdAuthorizationContextKey: scopeId};
+      case EntitlementScopeType.organization:
+        authorizationContext = {
+          kOrganizationIdAuthorizationContextKey: scopeId,
+        };
+      case EntitlementScopeType.restaurant:
+        authorizationContext = const {};
+    }
     final authResult = await _authorizationPolicy.authorize(
       action: action,
       actorStaffId: actorStaffId,
-      context: scopeType == EntitlementScopeType.branch
-          ? {kBranchIdAuthorizationContextKey: scopeId}
-          : const {},
+      context: authorizationContext,
     );
     if (!authResult.granted) {
       return const ModuleAccessResult.denied(
