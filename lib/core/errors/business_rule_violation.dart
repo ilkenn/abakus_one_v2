@@ -1529,6 +1529,22 @@ final class UnknownMarketplaceEntityViolation extends BusinessRuleViolation {
   String get description => 'Unknown $entityName: "$id"';
 }
 
+/// Phase 8 (`docs/decisions.md` ADR-025) — mirrors
+/// `UnknownMarketplaceEntityViolation` for `features/payment_hub`'s own
+/// entities (merchant account, settlement).
+final class UnknownPaymentHubEntityViolation extends BusinessRuleViolation {
+  const UnknownPaymentHubEntityViolation({
+    required this.entityName,
+    required this.id,
+  });
+
+  final String entityName;
+  final String id;
+
+  @override
+  String get description => 'Unknown $entityName: "$id"';
+}
+
 /// A customer already has 5 active/eligible `CustomerPhoto`s (`pending
 /// Review`/`underReview`/`approved` — `rejected`/`removed` never count)
 /// and attempted to submit another — "maximum 5 active/eligible photos"
