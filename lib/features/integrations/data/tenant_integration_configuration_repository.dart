@@ -9,6 +9,11 @@ abstract interface class TenantIntegrationConfigurationRepository {
   Future<List<TenantIntegrationConfiguration>> findByOrganizationId(
     String organizationId,
   );
+
+  /// Every configuration across every tenant — Phase 8O (Platform
+  /// Monitoring). Cross-tenant by design; only a platform-level actor
+  /// should ever consult this, never a tenant-scoped one.
+  Future<List<TenantIntegrationConfiguration>> findAll();
 }
 
 class InMemoryTenantIntegrationConfigurationRepository
@@ -41,5 +46,10 @@ class InMemoryTenantIntegrationConfigurationRepository
     return List.unmodifiable(
       _byId.values.where((c) => c.organizationId == organizationId),
     );
+  }
+
+  @override
+  Future<List<TenantIntegrationConfiguration>> findAll() async {
+    return List.unmodifiable(_byId.values);
   }
 }
