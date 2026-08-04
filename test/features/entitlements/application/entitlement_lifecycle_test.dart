@@ -279,5 +279,38 @@ void main() {
       expect(result.isGranted, isTrue);
       expect(result.denialReason, isNull);
     });
+
+    test(
+        'every EntitlementModule value has a feature-flag and action '
+        'mapping — no module throws (Phase 8 regression)', () async {
+      for (final module in EntitlementModule.values) {
+        final entitlementRepository = InMemoryEntitlementGrantRepository(seed: [
+          EntitlementGrant(
+            id: 'g-${module.name}',
+            module: module,
+            scopeType: EntitlementScopeType.branch,
+            scopeId: 'branch-1',
+            status: EntitlementStatus.active,
+            grantedByStaffId: 'admin-1',
+            grantedAt: DateTime(2026, 1, 1),
+            revision: 1,
+          ),
+        ]);
+        final useCase = CheckModuleAccess(
+          entitlementRepository: entitlementRepository,
+          featureFlagsService: FakeFeatureFlagsService(),
+          authorizationPolicy: const AllowAllEntitlementPolicy(),
+        );
+
+        // Must not throw for any module — a missing map entry would
+        // throw on the internal `!` lookup before returning a result.
+        await useCase(
+          module: module,
+          scopeType: EntitlementScopeType.branch,
+          scopeId: 'branch-1',
+          actorStaffId: 'manager-1',
+        );
+      }
+    });
   });
 }

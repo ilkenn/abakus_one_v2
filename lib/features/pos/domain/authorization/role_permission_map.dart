@@ -153,6 +153,16 @@ abstract final class RolePermissionMap {
     PosAuthorizedAction.managePurchasing,
     PosAuthorizedAction.manageSuppliers,
     PosAuthorizedAction.viewAdvancedReporting,
+    // Phase 8 (`docs/decisions.md` ADR-025) — module-entry-point
+    // actions for the new white-label-purchasable modules.
+    PosAuthorizedAction.manageQrMenuConfiguration,
+    PosAuthorizedAction.manageReservations,
+    PosAuthorizedAction.manageCrmModule,
+    PosAuthorizedAction.manageLoyaltyModule,
+    PosAuthorizedAction.usePosModule,
+    PosAuthorizedAction.useKdsModule,
+    PosAuthorizedAction.manageCourierModule,
+    PosAuthorizedAction.manageAiModule,
   };
 
   /// Front-line, day-to-day execution actions.

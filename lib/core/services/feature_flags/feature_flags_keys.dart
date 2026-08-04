@@ -44,6 +44,21 @@ abstract final class FeatureFlagsKeys {
   static const String costingEnabled = 'costingEnabled';
   static const String profitabilityEnabled = 'profitabilityEnabled';
   static const String advancedReportingEnabled = 'advancedReportingEnabled';
+
+  // Phase 8 — Platform, Integrations & White-Label Ecosystem
+  // (`docs/decisions.md` ADR-025). `EntitlementModule.qrMenu`/
+  // `.reservations` deliberately reuse the pre-existing
+  // [qrScannerEnabled]/[reservationsEnabled] flags above rather than
+  // duplicating them — those features predate module entitlements but
+  // are exactly what those two new modules gate.
+  static const String crmEnabled = 'crmEnabled';
+  static const String loyaltyEnabled = 'loyaltyEnabled';
+  static const String posModuleEnabled = 'posModuleEnabled';
+  static const String kdsModuleEnabled = 'kdsModuleEnabled';
+  static const String courierModuleEnabled = 'courierModuleEnabled';
+  static const String marketplaceEnabled = 'marketplaceEnabled';
+  static const String paymentsEnabled = 'paymentsEnabled';
+  static const String aiEnabled = 'aiEnabled';
 }
 
 /// Documented safe default for each [FeatureFlagsKeys] flag — the value a
@@ -83,4 +98,15 @@ abstract final class FeatureFlagsDefaults {
   static const bool costingEnabled = false;
   static const bool profitabilityEnabled = false;
   static const bool advancedReportingEnabled = false;
+
+  // Phase 8 — same fail-closed default as every other not-yet-launched
+  // flag above.
+  static const bool crmEnabled = false;
+  static const bool loyaltyEnabled = false;
+  static const bool posModuleEnabled = false;
+  static const bool kdsModuleEnabled = false;
+  static const bool courierModuleEnabled = false;
+  static const bool marketplaceEnabled = false;
+  static const bool paymentsEnabled = false;
+  static const bool aiEnabled = false;
 }

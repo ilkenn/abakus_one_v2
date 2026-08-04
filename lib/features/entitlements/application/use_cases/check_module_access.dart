@@ -52,6 +52,19 @@ class CheckModuleAccess {
     EntitlementModule.profitability: FeatureFlagsKeys.profitabilityEnabled,
     EntitlementModule.advancedReporting:
         FeatureFlagsKeys.advancedReportingEnabled,
+    // Phase 8 (`docs/decisions.md` ADR-025). qrMenu/reservations
+    // deliberately reuse the pre-existing flags those features already
+    // had before module entitlements existed.
+    EntitlementModule.qrMenu: FeatureFlagsKeys.qrScannerEnabled,
+    EntitlementModule.reservations: FeatureFlagsKeys.reservationsEnabled,
+    EntitlementModule.crm: FeatureFlagsKeys.crmEnabled,
+    EntitlementModule.loyalty: FeatureFlagsKeys.loyaltyEnabled,
+    EntitlementModule.pos: FeatureFlagsKeys.posModuleEnabled,
+    EntitlementModule.kds: FeatureFlagsKeys.kdsModuleEnabled,
+    EntitlementModule.courier: FeatureFlagsKeys.courierModuleEnabled,
+    EntitlementModule.marketplace: FeatureFlagsKeys.marketplaceEnabled,
+    EntitlementModule.payments: FeatureFlagsKeys.paymentsEnabled,
+    EntitlementModule.ai: FeatureFlagsKeys.aiEnabled,
   };
 
   /// The representative "may this actor use this module at all" action
@@ -73,6 +86,20 @@ class CheckModuleAccess {
     EntitlementModule.profitability: PosAuthorizedAction.viewProfitability,
     EntitlementModule.advancedReporting:
         PosAuthorizedAction.viewAdvancedReporting,
+    // Phase 8 (`docs/decisions.md` ADR-025). marketplace/payments
+    // deliberately reuse `manageTenantIntegrations` — both are, per the
+    // kickoff's own framing, Integration Hub configuration rather than
+    // a distinct standalone module action.
+    EntitlementModule.qrMenu: PosAuthorizedAction.manageQrMenuConfiguration,
+    EntitlementModule.reservations: PosAuthorizedAction.manageReservations,
+    EntitlementModule.crm: PosAuthorizedAction.manageCrmModule,
+    EntitlementModule.loyalty: PosAuthorizedAction.manageLoyaltyModule,
+    EntitlementModule.pos: PosAuthorizedAction.usePosModule,
+    EntitlementModule.kds: PosAuthorizedAction.useKdsModule,
+    EntitlementModule.courier: PosAuthorizedAction.manageCourierModule,
+    EntitlementModule.marketplace: PosAuthorizedAction.manageTenantIntegrations,
+    EntitlementModule.payments: PosAuthorizedAction.manageTenantIntegrations,
+    EntitlementModule.ai: PosAuthorizedAction.manageAiModule,
   };
 
   Future<ModuleAccessResult> call({

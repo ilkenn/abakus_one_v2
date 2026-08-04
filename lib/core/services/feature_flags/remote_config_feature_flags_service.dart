@@ -44,6 +44,15 @@ class RemoteConfigFeatureFlagsService implements FeatureFlagsService {
     FeatureFlagsKeys.costingEnabled: 'costing_enabled',
     FeatureFlagsKeys.profitabilityEnabled: 'profitability_enabled',
     FeatureFlagsKeys.advancedReportingEnabled: 'advanced_reporting_enabled',
+    // Phase 8 (`docs/decisions.md` ADR-025).
+    FeatureFlagsKeys.crmEnabled: 'crm_enabled',
+    FeatureFlagsKeys.loyaltyEnabled: 'loyalty_enabled',
+    FeatureFlagsKeys.posModuleEnabled: 'pos_module_enabled',
+    FeatureFlagsKeys.kdsModuleEnabled: 'kds_module_enabled',
+    FeatureFlagsKeys.courierModuleEnabled: 'courier_module_enabled',
+    FeatureFlagsKeys.marketplaceEnabled: 'marketplace_enabled',
+    FeatureFlagsKeys.paymentsEnabled: 'payments_enabled',
+    FeatureFlagsKeys.aiEnabled: 'ai_enabled',
   };
 
   @override

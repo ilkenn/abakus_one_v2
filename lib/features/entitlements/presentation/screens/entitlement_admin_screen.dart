@@ -27,6 +27,17 @@ const _moduleLabels = {
   EntitlementModule.costing: 'Maliyetlendirme',
   EntitlementModule.profitability: 'Kârlılık',
   EntitlementModule.advancedReporting: 'Gelişmiş Raporlama',
+  // Phase 8 (`docs/decisions.md` ADR-025).
+  EntitlementModule.qrMenu: 'QR Menü',
+  EntitlementModule.reservations: 'Rezervasyonlar',
+  EntitlementModule.crm: 'CRM',
+  EntitlementModule.loyalty: 'Sadakat Programı',
+  EntitlementModule.pos: 'POS',
+  EntitlementModule.kds: 'Mutfak Ekranı (KDS)',
+  EntitlementModule.courier: 'Kurye Operasyonları',
+  EntitlementModule.marketplace: 'Pazaryeri Entegrasyonu',
+  EntitlementModule.payments: 'Ödeme Entegrasyonu',
+  EntitlementModule.ai: 'Yapay Zeka',
 };
 
 /// Manages which Phase 7 modules a scope (here: the current branch) has

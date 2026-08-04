@@ -26,6 +26,33 @@ void main() {
     expect(find.text('active'), findsWidgets);
   });
 
+  testWidgets(
+      'every module renders without throwing, including the last one in '
+      'the list (Phase 8 regression — a missing label/action map entry '
+      'previously threw only once scrolled into view)', (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: EntitlementAdminScreen(
+            branchId: 'branch-1',
+            authorizationPolicy: AllowAllEntitlementPolicy(),
+            performedByStaffId: 'admin-1',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Yapay Zeka'),
+      500.0,
+      scrollable: find.byType(Scrollable),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Yapay Zeka'), findsOneWidget);
+  });
+
   testWidgets('cancelling a module sets it to revoked', (tester) async {
     await tester.pumpWidget(
       const ProviderScope(

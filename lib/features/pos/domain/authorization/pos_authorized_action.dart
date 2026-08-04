@@ -161,4 +161,20 @@ enum PosAuthorizedAction {
   /// — the tenant boundary itself, one tier more sensitive than
   /// [manageStaffBranchAccess].
   manageStaffOrganizationAccess,
+
+  // Phase 8 (`docs/decisions.md` ADR-025) — the "may this actor use
+  // this module at all" module-entry-point action for the 7 new
+  // `EntitlementModule` values that had no pre-existing representative
+  // action (`marketplace`/`payments` reuse [manageTenantIntegrations]
+  // above instead, since both are literally Integration Hub
+  // configuration). Individual mutations within each module still run
+  // their own finer-grained check, same as every Phase 7 module.
+  manageQrMenuConfiguration,
+  manageReservations,
+  manageCrmModule,
+  manageLoyaltyModule,
+  usePosModule,
+  useKdsModule,
+  manageCourierModule,
+  manageAiModule,
 }
