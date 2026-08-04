@@ -1066,3 +1066,53 @@ this phase's own mandatory verification passes (7S, 7T), and one idempotency gap
 during the final 7U pass, rather than any of the three being assumed correct from their original
 implementation. The residual gaps above are real and should inform a future Phase 7 hardening
 sprint or the UI-completion backlog, but none of them are one of the 8 named blocking conditions.
+
+## Phase 8 — Platform, Integrations & White-Label Ecosystem
+
+Autonomous-mode implementation turning Abaküs One from a single-restaurant operations product into a
+multi-tenant, white-label, integration-ready platform *foundation* — "not a restaurant application, a
+Restaurant Operating System" per the kickoff's own framing. See `docs/decisions.md` ADR-025 for the
+full architecture and every judgment call.
+
+| Task | Status | Note |
+|---|---|---|
+| 8A — Platform Owner hierarchy | DONE | New `features/platform/domain/authorization/`: `PlatformRole` (`platformAdministrator`, `platformOwner`), `PlatformActorSession`, `PlatformAuthorizedAction`, `RealPlatformAuthorizationPolicy`, `PlatformRolePermissionMap` — zero shared types with the tenant stack, structurally separate (BR-BRANCH-005). |
+| 8B — Tenant Owner hierarchy | DONE | `tenantOwner` added to `StaffRole`; `ActorSession.organizationAccess: Set<String>` plus a real organization-scoping check with **no role exemption for any role** (`kOrganizationIdAuthorizationContextKey`) — a deliberate departure from branch-scoping's admin/tenantOwner exemption (BR-BRANCH-002). 5 new tenantOwner-only `PosAuthorizedAction` values. |
+| 8C — Development Login (platform) | DONE | `PlatformMember`/`PlatformAuthRepository`/`DevelopmentPlatformAuthRepository`/`ProductionUnavailablePlatformAuthRepository` mirror the tenant-side pattern exactly, `kReleaseMode`-gated (BR-PLATFORM-001). `PlatformSignInScreen` built, wired into `PlatformShellScreen` at 8R. |
+| 8D — Module entitlements extension | DONE | `EntitlementModule` 11 → 21 values (qrMenu, reservations, crm, loyalty, pos, kds, courier, marketplace, payments, ai). Found and fixed a real non-exhaustive-map bug in `CheckModuleAccess` and `EntitlementAdminScreen` (confirmed by an actual test failure, not just static analysis) — 2 new regression tests added for this class of bug. |
+| 8E — Brand Engine & Tenant Branding domain | DONE | New `features/branding`: `TenantBrandTheme`, `BrandColorPalette`, `BrandTypography`, `BrandAssetSet`, `ChannelBrandingOverride`, `resolveEffectiveBrandTheme` — kept separate from `Restaurant` (BR-BRANDING-001). |
+| 8F — White-label application identity wiring | DONE | `buildThemeFromBrandPresentation`/`resolvedAppThemeProvider` apply per-tenant `ColorScheme` at app launch via `AbakusApp.build`, overriding only the color scheme on the existing design-token `AppTheme` — never a parallel theming system. |
+| 8G — Provider Adapter architecture | DONE | `IntegrationProviderAdapter`/`UnconfiguredIntegrationProviderAdapter`/`IntegrationProviderRegistry` (`features/integrations/domain`) — the one shared interface both Marketplace Hub and Payment Hub build on. |
+| 8H — Integration Hub foundation | DONE | `TenantIntegrationConfiguration`, `SetTenantIntegrationEnabled` (tenantOwner-only, organization-scoped), `integrationProviderRegistryProvider` seeded with 5 marketplace + 9 payment providers, each `UnconfiguredIntegrationProviderAdapter` (BR-MKT-001/002). |
+| 8I — Marketplace Hub domain | DONE | New `features/marketplace`: `MarketplaceAccount` → `MarketplaceStore` → `VirtualRestaurant` → branch/menu/order mapping, one shared `MarketplaceAuditEntry` type across all 6 sub-concepts. `RecordMarketplaceOrderMapping` is a documented trusted internal primitive, zero production call sites. |
+| 8J — Payment Hub domain | DONE | New `features/payment_hub`: `PaymentMerchantAccount`, method mapping, `PaymentSettlementRecord` — deliberately separate bounded context from `features/payment`'s order-time payment collection (BR-PAYMENTHUB-001). `RecordPaymentSettlement` is a trusted internal primitive (BR-PAYMENTHUB-002). |
+| 8K — Credential Management foundation | DONE | `IntegrationCredentialRef` (metadata-only, structurally cannot hold a raw secret — BR-INTEGRATION-001), `SecureIntegrationCredentialStorage` (real, `flutter_secure_storage`-backed), `StoreIntegrationCredential`/`RevokeIntegrationCredential`. |
+| 8L — Webhook Foundation | DONE | `WebhookDeliveryRecord` (doc comment states honestly: no backend exists to receive a real webhook — BR-INTEGRATION-003), `UnverifiedWebhookSignatureVerifier` (always `false`, fail-closed, no `crypto` dependency exists — BR-INTEGRATION-002), `RecordWebhookDelivery` (trusted internal primitive). |
+| 8M — Provider Health Monitoring | DONE | `BuildProviderHealthProjection` — pure, computed-fresh projection combining the platform provider registry with one tenant's own enable/disable state; `lastCheckedAt` is honestly `null`, never fabricated. |
+| 8N — Integration Audit trail | DONE | `BuildIntegrationAuditCenterProjection` merges Integration Hub/Marketplace Hub/Payment Hub audit trails (all 3 owned by this same phase, unlike Phase 6M's 4 unretrofitted trails) into one organization-scoped, client-side-filtered view. |
+| 8O — Platform Monitoring foundation | DONE | `BuildPlatformMonitoringSnapshot` — real, cross-tenant counts (organizations, platform members, tenant-enabled integrations) for platform-level actors only, plus an honest static `dormantServiceNotes` list (BR-PLATFORM-002). |
+| 8P — Release Readiness Foundation | DONE | `BuildReleaseReadinessSnapshot` — 6-criterion checklist (environment separation: ready; crash reporting: not ready; feature-flag production values: manual step; app-version observability: not ready — no `package_info_plus`-equivalent dependency; platform monitoring/integration audit: ready). Never publishes anything. |
+| 8Q — Store Compliance Foundation | DONE | `BuildStoreComplianceSnapshot` — 5-criterion checklist (account deletion: not ready, `AccountDataScreen._processDeleteAccount` is UI-only; data export: not ready, fake delayed transition; privacy policy/terms of use documents: not ready, disclaimer caption only; store data-safety declarations: manual step). Never submits anything to any store. |
+| 8R — Admin UI wiring | DONE (partial, honest gap) | 2 real destinations wired: `TenantIntegrationHubScreen` (tenant `AdminShellScreen`, tenantOwner-only) combining provider catalog + real toggle + recent activity; `PlatformShellScreen` (3-tab: Monitoring/Release-Readiness/Store-Compliance), reached only via `PlatformSignInScreen`, never linked from the tenant shell. Full Marketplace/Payment Hub CRUD UI and platform-side tenant/catalog-management screens remain unbuilt — named explicitly, not silently skipped. |
+| 8S — Security & tenant-isolation verification pass | IN PROGRESS | Dedicated skeptical pass over cross-stack leakage, organization-scoping enforcement, cross-tenant read paths, credential secrecy, role-permission-map consistency, UI-vs-policy gating, trusted-primitive reachability, and dev-login release gating — mirrors Phase 6's 6P and Phase 7's 7S precedent. |
+| 8T — Comprehensive testing + quality gate | PENDING | Final closing pass, mirroring Phase 7's 7U. |
+| Documentation | DONE (this entry); pending final counts | `docs/decisions.md` ADR-025; `docs/business_rules.md` BR-BRANCH-002/003/005, BR-MKT-001/002, BR-PLATFORM-001/002, BR-BRANDING-001/002, BR-INTEGRATION-001/002/003, BR-PAYMENTHUB-001/002, DL-028; `docs/master_roadmap.md` (MT-001, MT-002, SAAS-002, SAAS-003, Phase 10 header) and `docs/module_catalog.md` (MT, MKT, SAAS, PLAT) Phase 8 progress notes; this entry, Phase 8 Closure Record to follow once 8S/8T land.
+
+**Explicitly out of scope this phase** (per the kickoff's own framing): actually integrating any
+marketplace/payment provider ("do NOT integrate providers yet"); real webhook signature verification
+(no `crypto` dependency); a real backend of any kind to receive an inbound webhook; real billing/
+subscription (`SAAS-001`); build-flavor/app-store tooling to publish a second, differently-branded app;
+full Marketplace Hub/Payment Hub CRUD admin UI; the platform-side tenant/entitlement-catalog/
+integration-catalog management screens `PlatformAuthorizedAction` already anticipates; real OTP
+authentication for platform-level actors (Development Login remains the substitute); database-level
+tenant isolation enforcement (no database exists).
+
+Zero new pub dependencies across all 18 implementation parts (8A–8R), verified against `pubspec.yaml`
+at every point a new one might have been tempting.
+
+### Phase 8 Closure Record
+
+*Pending 8S (security/tenant-isolation verification pass) and 8T (comprehensive testing + quality
+gate) — this record will be completed once both land, mirroring Phase 6's 6P and Phase 7's 7S/7T/7U
+precedent of writing the closure record only after the phase's own dedicated verification passes have
+actually run, not before.*

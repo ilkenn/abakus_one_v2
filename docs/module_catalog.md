@@ -43,6 +43,7 @@
 - **Integration requirements**: None.
 - **Minimum tests**: Isolation tests (Tenant A can never read Tenant B's data via any code path), branch-switch UI tests.
 - **Risks**: Retrofitting tenancy onto a codebase built single-tenant is far more expensive than building it in from the start — this module should land before most business features, not after.
+- **Phase 8 update (2026-08-04, `docs/decisions.md` ADR-025)**: real progress, not completion — `ActorSession.organizationAccess` plus a genuinely new organization-scoping authorization check (`kOrganizationIdAuthorizationContextKey`, no role exemption for any `StaffRole` including admin/tenantOwner) now exist and are enforced by every new Phase 8 tenant-scoped use case. This is still application-layer filtering only (no row-level DB enforcement — there is no database at all), still exactly one seeded `Organization` (`'org-1'`), and still no tenant-provisioning workflow — MT-001/MT-002's own completion criteria remain unmet. A wholly separate, structurally isolated `PlatformRole`/`PlatformActorSession` stack (`features/platform`) was also added for platform-operator-tier actors, distinct from tenant roles.
 
 ## BE — Backend & Persistence Platform
 
@@ -290,6 +291,7 @@
 - **Integration requirements**: This module *is* the integration layer — each of the 5 named platforms is a separate connector implementation behind a shared interface, deliberately mirroring the existing `PaymentProviderAdapter` pattern already used for meal-card payments.
 - **Minimum tests**: Per-connector contract tests (ideally against sandbox/mock platform APIs), mapping-conflict resolution tests, unified-inbox aggregation tests.
 - **Risks**: Each platform's API is a separate integration project with its own quirks, rate limits, and breaking-change risk — do not estimate this as "one module," estimate each connector separately (reflected in the roadmap as separate items).
+- **Phase 8 update (2026-08-04, `docs/decisions.md` ADR-025)**: a provider-neutral foundation was built — `IntegrationProviderRegistry`/`IntegrationProviderAdapter` (shared with `PLAT`'s payment providers), a Marketplace Hub domain (`MarketplaceAccount` → `MarketplaceStore` → `VirtualRestaurant` → branch/menu/order mapping), and a credential/webhook foundation (`flutter_secure_storage`-backed, no real signature verification yet — no `crypto` dependency exists). This is explicitly **not** "the first third-party marketplace connector" this module's own roadmap item (Phase 10) describes — every adapter is `UnconfiguredIntegrationProviderAdapter`, no real Yemeksepeti/Getir Yemek/Trendyol Yemek/Migros Yemek/TruYemek API call exists anywhere. Treat this as the shared scaffolding Phase 10's per-connector work would build on, not as Phase 10 itself.
 
 ## FIN — Finance & Reporting
 
@@ -395,6 +397,7 @@
 - **Integration requirements**: Payment/billing provider (Stripe or regional equivalent), app store tooling for white-label builds.
 - **Minimum tests**: Entitlement-enforcement tests (disabled module truly inaccessible), billing-webhook correctness tests.
 - **Risks**: White-label build/release tooling (per-tenant app store listings) is an operational, not just technical, undertaking — budget for release engineering, not only backend work.
+- **Phase 8 update (2026-08-04, `docs/decisions.md` ADR-025)**: `EntitlementModule` extended from 11 to 21 purchasable modules, each checked by `CheckModuleAccess` through both a `FeatureFlagsKeys` toggle and a `PosAuthorizedAction` — real enforcement, not UI-hidden-only, satisfying this module's own "server-side only" requirement as far as this codebase's application layer goes. A `TenantBrandTheme`/`resolvedAppThemeProvider` white-label runtime-theming foundation was also built (color palette/typography/asset refs resolve at app-launch time). **Not done**: no `Subscription`/billing-provider integration (SAAS-001) exists at all, and no build-flavor/app-store release tooling for producing a second, differently-branded published app exists — `BuildReleaseReadinessSnapshot`/`BuildStoreComplianceSnapshot` (Phase 8P/8Q) enumerate these gaps explicitly rather than claiming them done.
 
 ## PLAT — API/Connector Marketplace, Security, Observability & Backup/DR
 
@@ -410,3 +413,4 @@
 - **Integration requirements**: Observability vendor, backup storage provider; future third-party developer access via the connector marketplace.
 - **Minimum tests**: Restore-from-backup drills (not just backup-creation tests), chaos/failure-injection tests before GA, dependency vulnerability scan gating in CI.
 - **Risks**: Because this module has no visible feature UI, it's the module most likely to be under-resourced against a feature-driven roadmap — treat its Production Hardening phase items as non-negotiable gates, not optional polish.
+- **Phase 8 update (2026-08-04, `docs/decisions.md` ADR-025)**: a provider-neutral Payment Hub domain (`PaymentMerchantAccount` → method mapping → `PaymentSettlementRecord`, deliberately separate from `features/payment`'s pre-existing order-time payment collection) plus platform-operator-tier read models — `BuildPlatformMonitoringSnapshot`, `BuildReleaseReadinessSnapshot`, `BuildStoreComplianceSnapshot` (8O/8P/8Q) — were added, each honestly reporting today's real gaps (no crash-reporting vendor wired, no account-deletion backend, no privacy-policy document) rather than a fabricated "system health" dashboard. None of this is the observability stack, backup/DR, or public partner API surface this module describes — no logs/metrics/traces vendor, no backup automation, and no external API gateway exist.

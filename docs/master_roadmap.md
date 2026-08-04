@@ -173,6 +173,7 @@
 - Web/admin impact: Tenant provisioning is primarily an admin-console/back-office flow.
 - Test requirements: Schema-level tests asserting no query can run without a tenant/branch filter.
 - Completion criteria: Two independent tenants can be provisioned and demonstrably cannot see each other's data through any code path.
+- **Phase 8 progress note (2026-08-04, `docs/decisions.md` ADR-025)**: `ActorSession.organizationAccess` plus a real organization-scoping authorization check now exist and are enforced by every new Phase 8 tenant-scoped use case — genuine progress, not completion. Still unmet: no tenant provisioning workflow, exactly one seeded `Organization`, no row-level/database enforcement (no database exists). This item's own completion criteria remain open.
 
 #### MT-002 — Tenant Isolation Enforcement & Tests
 - Description: A dedicated, adversarial test suite (and, where the chosen backend supports it, database-level enforcement such as row-level security) proving cross-tenant data leakage is impossible, not just unlikely.
@@ -186,6 +187,7 @@
 - Web/admin impact: None directly.
 - Test requirements: Automated adversarial tests attempting cross-tenant reads/writes on every entity type, run in CI on every change to any module touching persistence.
 - Completion criteria: This test suite exists, runs in CI, and passes — treated as a permanent regression gate, not a one-time check.
+- **Phase 8 progress note (2026-08-04)**: Phase 8's own 8S verification pass exercised the new organization-scoping check adversarially (correctness tests, not a CI-gated adversarial suite) — see the Phase 8 Closure Record in `docs/feature_status.md` for what it found. This is not the permanent CI regression gate this item requires.
 
 #### MT-003 — Branch-Switching UX
 - Description: UI for staff who work across or manage multiple branches to switch active branch context.
@@ -620,6 +622,15 @@
 
 ## Phase 10 — Marketplace Integrations
 
+**Phase 8 progress note (2026-08-04, `docs/decisions.md` ADR-025)**: this session's ad hoc "Phase 8"
+sprint numbering (`P1-0xx`-style, distinct from this roadmap's own phase numbers per `CLAUDE.md` §1)
+built a provider-neutral Marketplace Hub *foundation* — `IntegrationProviderRegistry`,
+`MarketplaceAccount`/`MarketplaceStore`/`VirtualRestaurant`/branch-menu-order mapping, credential and
+webhook scaffolding — that MKT-101 and its four siblings would sit on top of. It is explicitly **not**
+MKT-101 itself: every provider adapter is `UnconfiguredIntegrationProviderAdapter`, no real
+Yemeksepeti API call exists anywhere, "do NOT integrate providers yet" was an explicit instruction for
+that sprint. Do not mark MKT-101 (or any `MKT-10x` item) as started based on this note.
+
 #### MKT-101 — Yemeksepeti Connector
 - Description: First third-party marketplace connector, per `MarketplaceConnector`/`PlatformMapping` in the domain model — deliberately built first to extract the shared connector abstraction the remaining four reuse.
 - Priority: P1
@@ -1001,6 +1012,7 @@ replacing either — still a real, visible product duplication, now an intention
 - Web/admin impact: Same pattern.
 - Test requirements: Entitlement-enforcement tests (a disabled module's API must reject requests, not just hide the UI button).
 - Completion criteria: A tenant on a plan without a given module cannot access it through any client, verified at the API layer.
+- **Phase 8 progress note (2026-08-04, `docs/decisions.md` ADR-025)**: `EntitlementModule` extended 11 → 21 values, each gated by `CheckModuleAccess` through both a feature flag and a `PosAuthorizedAction` — real application-layer enforcement. "Verified at the API layer" remains unmet since no API/backend exists at all.
 
 #### SAAS-003 — White-Label Theming & Build Pipeline
 - Description: Runtime/build-time branding injection (app name, icon, color scheme) extending the existing, already well-built `core/theme` token system, plus app-store release tooling for white-labeled builds.
@@ -1014,6 +1026,7 @@ replacing either — still a real, visible product duplication, now an intention
 - Web/admin impact: Branding configuration UI.
 - Test requirements: Build-pipeline tests producing a correctly-branded build from config.
 - Completion criteria: A second, differently-branded app can be built and published from the same codebase without a manual code fork.
+- **Phase 8 progress note (2026-08-04, `docs/decisions.md` ADR-025)**: real progress on the runtime half — `TenantBrandTheme`/`resolveEffectiveBrandTheme`/`resolvedAppThemeProvider` apply per-tenant color/typography at app launch, and `BuildReleaseReadinessSnapshot`/`BuildStoreComplianceSnapshot` (8P/8Q) now give an honest, structured checklist of what release/store-policy work remains (crash reporting unwired, no account-deletion backend, no privacy-policy document, no build-flavor tooling). This item's completion criteria — publishing a second, differently-branded app — remain entirely unmet; no build-flavor/app-store tooling exists.
 
 #### FRAN-001 — Franchise & Royalty Management
 - Description: Cross-branch performance comparison, franchise fee/royalty tracking, and brand-standard compliance monitoring per `docs/module_catalog.md`'s `FRAN` module.

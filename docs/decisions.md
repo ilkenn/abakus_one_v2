@@ -2869,3 +2869,225 @@ tier assignments (Decision 2) match how the business would actually categorize t
 uncertainty from ADR-022's own equivalent judgment call; and whether 6H/6I/6J/6K being satisfied by
 shell-wiring alone (Decision 8) undersells what "CRM/Loyalty/Survey/Feedback administration" was meant
 to require versus what Sprint 5D already built.
+
+---
+
+## ADR-025 — Platform, Integrations & White-Label Ecosystem (Phase 8)
+
+- Date: 2026-08-04
+- Status: Accepted
+
+### Context
+
+Every phase through 7 built a genuinely better single-restaurant operations product, but the platform
+remained architecturally single-tenant in every load-bearing sense: one seeded `Organization`, no
+concept of a platform operator distinct from a restaurant's own staff, no white-label branding path
+beyond the one hardcoded theme, and no provider-neutral seam for the marketplace/payment integrations
+every "SaaS" pitch for this product assumes exist. Phase 8's mandate, in the user's own words: turn
+Abaküs One into "not a restaurant application, a Restaurant Operating System" — a true multi-tenant,
+white-label, integration-ready platform foundation, spanning 20 named objectives (White Label
+Platform, Brand Engine, Tenant Branding, Platform Owner hierarchy, Tenant Owner hierarchy, Development
+Login, Integration Hub, Marketplace Hub, Payment Hub, Provider Adapter architecture, Multi Marketplace
+Store support, Multi Payment Account support, Marketplace Mapping Engine, Credential Management,
+Webhook Foundation, Provider Health Monitoring, Integration Audit, Platform Monitoring, Release
+Readiness Foundation, Store Compliance Foundation) delivered as 18 lettered parts (8A–8R) plus this
+same dedicated 8S security/tenant-isolation pass and an 8T closing quality gate, mirroring Phase 6's
+6P and Phase 7's 7S/7T/7U precedent of a real, skeptical verification pass rather than self-attestation.
+
+The brief was explicit and repeated on several points this ADR holds to throughout: "do NOT integrate
+providers yet, only create provider-neutral architecture"; "Platform Owner remains completely separated
+from tenant hierarchy"; "never duplicate Flutter projects, one codebase, infinite brands"; "do not
+implement publishing, only prepare production foundations" (release/store readiness); "accept only
+production-ready architecture," not "works."
+
+### Decision 1 — Two structurally separate authorization stacks, zero shared types
+
+"Platform Owner remains completely separated from tenant hierarchy" is enforced by construction, not
+convention: `features/platform/domain/authorization/` (`PlatformRole` — `platformAdministrator`,
+`platformOwner`; `PlatformActorSession`; `PlatformAuthorizedAction`; `RealPlatformAuthorizationPolicy`;
+`PlatformRolePermissionMap`) shares zero types with the pre-existing tenant stack
+(`features/pos/domain/authorization/` — `StaffRole`, `ActorSession`, `PosAuthorizedAction`,
+`RealPosAuthorizationPolicy`, `RolePermissionMap`). `PlatformActorSession` structurally has no
+branch/restaurant/organization field at all — there is nothing on the type to scope, unlike
+`ActorSession.branchAccess`/`restaurantAccess`/`organizationAccess`. The two stacks' UI shells
+(`AdminShellScreen`, tenant-side; `PlatformShellScreen`, platform-side, 8R) have no navigation path
+into one another — reaching the platform shell requires `PlatformSignInScreen`'s own Development Login,
+never a link from the tenant admin shell.
+
+### Decision 2 — Tenant Owner hierarchy: extend `ActorSession`/`StaffRole` additively, add
+organization-scoping with no role exemption
+
+Mirrors ADR-023's Decision 1 precedent (safe additive extension, zero non-file call sites construct
+`ActorSession(...)` directly) — added `tenantOwner` to `StaffRole` and `organizationAccess: Set<String>`
+to `ActorSession`. The real new decision: organization-scoping (`kOrganizationIdAuthorizationContextKey`)
+is checked with **no role exemption for any `StaffRole`**, including `admin`/`tenantOwner` — a
+deliberate departure from ADR-023's branch-scoping, which *does* exempt admin/tenantOwner. Reasoning:
+branch-scoping within one tenant is an operational convenience (an admin should be able to act across
+their own tenant's branches without per-branch grants); organization-scoping is the tenant boundary
+itself — no tenant-hierarchy role, however senior, should reach a *different* organization's data merely
+by supplying its id. Five new `PosAuthorizedAction` values (`manageTenantBranding`,
+`manageTenantEntitlements`, `manageTenantIntegrations`, `manageTenantBilling`,
+`manageStaffOrganizationAccess`) are tenantOwner-only, added to the existing flat-enum-plus-tier-map
+pattern (ADR-022/ADR-023 Decision 2) rather than a new split — the enum is now well past the ~150-value
+split trigger those ADRs named as a future decision point, again flagged, again deferred.
+
+### Decision 3 — Development Login: mirrors the existing pattern exactly, `kReleaseMode`-gated
+
+`PlatformMember`/`PlatformAuthRepository`/`DevelopmentPlatformAuthRepository`/
+`ProductionUnavailablePlatformAuthRepository` mirror `StaffMember`/`StaffAuthRepository`'s Phase 6
+shape and the same `kReleaseMode` release/debug split (`platformAuthRepositoryProvider`) — "release
+builds must never expose this path" holds structurally, the same way it already does for staff sign-in.
+Exists solely until real OTP authentication becomes available for platform-level actors, same
+documented temporariness as the tenant-side equivalent.
+
+### Decision 4 — Module Entitlements: extend the existing enum, fix the exhaustiveness bug it exposed
+
+`EntitlementModule` extended from 11 to 21 values, so every tenant can independently purchase QR Menu,
+Reservations, CRM, Loyalty, Inventory, Recipes, Nutrition, Allergens, POS, KDS, Courier, Marketplace,
+Payments, Reports, AI, Smart Import. This surfaced a real, pre-existing-shape bug: `CheckModuleAccess`'s
+internal `Map<EntitlementModule, ...>` lookups used force-unwrap (`!`) against non-exhaustive maps —
+confirmed by an actual test failure (`entitlement_admin_screen_test.dart`'s "Abonelikler" test threw a
+null-check error), not just static analysis, and the same gap existed independently in
+`EntitlementAdminScreen`'s own label map. Fixed by completing both maps for all 21 values; two new
+regression tests added specifically for this class of bug (a use-case-level test iterating every
+`EntitlementModule.values`, and a widget-level test that scrolls to force full rendering of the last
+item) — the kind of test this codebase did not previously have for "does every enum value have a
+corresponding map entry."
+
+### Decision 5 — Brand Engine & Tenant Branding: a new bounded context, applied at runtime, never
+duplicating the theme system
+
+`features/branding` (`TenantBrandTheme`, `BrandColorPalette`, `BrandTypography`, `BrandAssetSet`,
+`ChannelBrandingOverride`, `resolveEffectiveBrandTheme`) is kept deliberately separate from `Restaurant`
+— a tenant's brand identity is not restaurant data. `buildThemeFromBrandPresentation` overrides only
+`ColorScheme` on the existing `AppTheme`, never replacing the design-token system itself (`AppColors`/
+`AppTypography`/etc. remain the working example of "done" per `CLAUDE.md` §6) — extends it, does not
+fork it. `resolvedAppThemeProvider` is watched by `AbakusApp.build` so the resolved theme takes effect
+at app launch; `AppLogo` was updated to read `Theme.of(context).colorScheme` instead of the static
+`AppColors` constant, the one deliberate, documented exception this ADR records for that file. This is
+runtime theming only — no build-flavor/app-store tooling exists to produce a second, published,
+differently-branded app; that gap is reported honestly by `BuildReleaseReadinessSnapshot` (Decision 10),
+not silently implied as done.
+
+### Decision 6 — Provider Adapter architecture: one shared interface, marketplace and payment both
+build on it, "do NOT integrate providers yet" held everywhere
+
+`IntegrationProviderAdapter`/`UnconfiguredIntegrationProviderAdapter` (`features/integrations/domain`)
+is the one interface both the Integration Hub and every marketplace/payment provider in
+`integrationProviderRegistryProvider`'s 13-entry catalog implement — every entry resolves to
+`UnconfiguredIntegrationProviderAdapter`, which always reports `notConfigured` without contacting
+anything. `IntegrationProviderCategory` (`marketplace`, `payment`) is extensible to a future category
+without a parallel adapter interface. This single registry is what Marketplace Hub (Decision 7) and
+Payment Hub (Decision 8) both read from, rather than each maintaining its own provider list —
+`SetTenantIntegrationEnabled` is the one write path both hubs' tenant-facing UI uses to turn a specific
+provider on/off, avoiding two independently-invented toggles for what is the same underlying concept.
+
+### Decision 7 — Marketplace Hub: full hierarchy modeled, zero vendor integration
+
+`features/marketplace` models the brief's own stated hierarchy in full — `MarketplaceAccount` →
+`MarketplaceStore` → `VirtualRestaurant` → branch mapping → menu mapping → order mapping — as a wholly
+new bounded context, explicitly built so one tenant can own multiple accounts/stores/virtual
+restaurants across every provider ("never assume 1 provider, 1 account, 1 restaurant"). `MarketplaceAuditEntry`
+is one shared audit type covering all six sub-concepts, mirroring Phase 3D's
+`RestaurantOperationsAuditEntry` precedent (one bounded context, one audit trail, several event types)
+rather than six separate trails. `RecordMarketplaceOrderMapping` is a documented "trusted internal
+primitive" (no `PosAuthorizationPolicy` dependency, actor recorded as `'system'`, mirroring
+`RecordStockMovement`'s Phase 7 precedent) — genuinely unreachable from production code this phase,
+since its real caller would be a future webhook handler this codebase's total absence of a backend
+makes impossible to build yet.
+
+### Decision 8 — Payment Hub: a deliberately separate bounded context from `features/payment`
+
+`features/payment_hub` (`PaymentMerchantAccount` → method mapping → `PaymentSettlementRecord`) is kept
+wholly separate from the pre-existing `features/payment` (Sprint 3C, order-time payment collection at
+the POS) — order-time payment collection and tenant-level merchant-account configuration are different
+concerns, the same reasoning ADR-012 already used to separate `PaymentMethod` (the instrument a
+customer pays with) from `PaymentProviderId` (the technical integration). `PaymentMerchantAccountStatus`
+is its own enum, not reused from `MarketplaceAccountStatus`, despite an identical shape — per-
+bounded-context separate types, established as this phase's own convention (Decision 7's audit-entry
+choice, this decision's status enum, Decision 10's two near-identical-shaped checklist-status enums)
+rather than a shared "generic status" type that would couple otherwise-independent bounded contexts.
+
+### Decision 9 — Credential Management & Webhook Foundation: real secure storage, honestly
+unverifiable signatures
+
+`IntegrationCredentialRef` is structurally incapable of holding a raw secret value — no field for it —
+mirroring `CustomerPhoto.photoRef`'s Phase 6 opaque-reference pattern applied to secrets instead of
+images. `SecureIntegrationCredentialStorage` is real, `flutter_secure_storage`-backed (the dependency
+already exists for the auth session), mirroring `SessionStorage`'s narrow interface and fail-safe
+error handling exactly. `WebhookSignatureVerifier`'s only implementation,
+`UnverifiedWebhookSignatureVerifier`, always returns `false` — checked `pubspec.yaml` directly (no
+`crypto`/`convert` package exists) and chose a fail-closed abstraction over either silently adding a
+new dependency or hand-rolling HMAC verification (an explicitly discouraged practice), documenting the
+gap as a future explicit dependency-approval decision per `CLAUDE.md` §15 rather than deciding it here.
+`WebhookDeliveryRecord`'s own doc comment states plainly this codebase has no backend at all, so
+nothing can ever actually receive a real inbound webhook HTTP request — a more fundamental gap than
+"no vendor integration yet," stated honestly rather than glossed over.
+
+### Decision 10 — Platform Monitoring, Release Readiness, Store Compliance: honest read-only
+checklists, never a fabricated "ready" state
+
+Three read-only projections (`BuildPlatformMonitoringSnapshot`, `BuildReleaseReadinessSnapshot`,
+`BuildStoreComplianceSnapshot`) mirror `BuildAdminOverviewSnapshot`/`SystemHealthAdminScreen`'s Phase 6
+"real counts plus an honest static list of what's dormant" shape one tier up. Release readiness and
+store compliance are deliberately separate `Criterion`/`CriterionStatus`/`Snapshot` type families —
+identical shape, kept apart per Decision 8's own precedent, since release-process readiness (crash
+reporting, environment separation, feature-flag production values, build-version observability) and
+app-store policy compliance (account deletion, data export, privacy policy, data-safety declarations)
+are different concerns with different owners. Every criterion is evaluated against a real, code-verified
+fact, never optimistically asserted: crash reporting genuinely resolves to `NoOpCrashReportingService`
+only (`notReady`); `AccountDataScreen._processDeleteAccount` genuinely never calls a repository or use
+case, just a confirmation dialog and a SnackBar (`notReady`); no `package_info_plus`-equivalent
+dependency exists to read the running build's version at runtime, itself reported as a real gap
+(`notReady`) rather than silently worked around by adding one. `isReleaseReady`/`isStoreCompliant` are
+both, correctly, `false` today — this ADR does not claim otherwise. None of the three use cases
+publish, submit, or send anything anywhere; each is a readiness *record* only, per the brief's explicit
+"do not implement publishing" instruction.
+
+### Decision 11 — Admin UI wiring (8R): two real destinations, everything else stays deliberately
+domain/application-only
+
+Every Phase 8A–8Q part built domain/data/application[/presentation-providers] only, deliberately
+deferring screens — matching this phase's own "foundation only" framing throughout. 8R wired exactly
+two real, reachable destinations rather than a screen per bounded context: `TenantIntegrationHubScreen`
+(tenant side, `AdminShellScreen`'s Sistem group, tenantOwner-only) combines the provider catalog, this
+tenant's own enable/disable state, and a recent-activity list into one screen; `PlatformShellScreen`
+(platform side, reached only via `PlatformSignInScreen`) is a 3-tab shell over the three Decision 10
+checklists. Full Marketplace Hub/Payment Hub CRUD (account/store/virtual-restaurant/merchant-account
+management), a Branding editor UI, and the platform-side tenant/entitlement-catalog/integration-catalog
+management screens `PlatformAuthorizedAction` already anticipates (`manageTenantOrganizations`,
+`managePlatformAdministrators`, `manageGlobalEntitlementCatalog`, `managePlatformIntegrationCatalog`)
+remain unbuilt — named here as a deliberate, reported scope boundary, not a silent omission, matching
+the Definition of Done's "presenting placeholder/stubbed/partial code as complete" prohibition by simply
+not building a screen at all where a real one would take real, separately-scoped work.
+
+### Consequences
+
+- **18 implementation commits** (8A–8R, each independently formatted/analyzed/tested), plus this same
+  ADR's own 8S security/tenant-isolation pass and 8T closing quality gate — see the Phase 8 Closure
+  Record (`docs/feature_status.md`) for the full gate checklist and final verdict once both land.
+- **Zero new pub dependencies across all 18 parts** — verified against `pubspec.yaml` at every decision
+  point where one might have been tempting (webhook signature verification, app-version observability),
+  each time choosing an honestly-reported gap over a silent dependency addition.
+- **Two wholly separate authorization stacks, verified structurally separate** (Decision 1) — "Platform
+  Owner remains completely separated from tenant hierarchy" holds in the type system, the permission
+  maps, and the navigation graph, not just in naming convention.
+- **A real, if partial, multi-tenant foundation**: organization-scoping with no role exemption
+  (Decision 2), 21 purchasable modules with real enforcement (Decision 4), runtime white-label theming
+  (Decision 5) — but still only one seeded `Organization`, still no tenant-provisioning workflow, still
+  no database anywhere to enforce isolation at (see the `docs/master_roadmap.md`/`docs/module_catalog.md`
+  Phase 8 progress notes added alongside this ADR — MT-001/MT-002's own completion criteria remain open).
+- **Honest, structured gap reporting instead of fabricated readiness** (Decision 10) — this phase closes
+  with `isReleaseReady: false` and `isStoreCompliant: false` reported truthfully by real code, not
+  glossed over in prose.
+
+### Confidence
+
+Pending this ADR's own Decision 11 note and the 8S/8T passes referenced above — this entry will be
+superseded by an addendum (or a follow-up ADR) if 8S finds a genuine tenant-isolation gap requiring an
+architectural change, mirroring Phase 6's 6P and Phase 7's 7S precedent of the verification pass
+sometimes changing the final picture. Every decision above is grounded in code read and tests written
+this session; the residual uncertainty is concentrated in exactly the areas Decision 11 names as
+deferred (full Marketplace/Payment Hub CRUD UI, platform-side tenant/catalog management UI) and in
+whether 8S's adversarial check of the new organization-scoping rule (Decision 2) confirms it holds
+under every call path, not just the ones exercised by this session's own tests.

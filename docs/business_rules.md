@@ -2484,18 +2484,39 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Related Modules**: Multi-Branch, Table/QR
 
 ### BR-BRANCH-002 — No multi-tenant runtime behavior
-- **Status**: VERIFIED (absence)
-- **Rule**: The running app has a single hardcoded user with no tenant/brand/branch concept in any
-  live screen or provider.
-- **Owner Agent**: restaurant_domain
-- **Related Modules**: Multi-Branch
+- **Status**: DECIDED — a real, application-layer organization boundary now exists (Phase 8, superseded
+  the "single hardcoded user" absence this rule originally recorded)
+- **Rule**: `ActorSession.organizationAccess: Set<String>` plus a real authorization check
+  (`kOrganizationIdAuthorizationContextKey`, `RealPosAuthorizationPolicy`) now scope every new Phase 8
+  tenant-facing use case to the actor's granted organization(s) — **with no role exemption for any
+  `StaffRole`**, including `admin`/`tenantOwner` (a deliberate departure from `BR-ADMIN-003`'s
+  branch-scoping exemption, see `docs/decisions.md` ADR-025 Decision 2). Still not multi-tenant in
+  practice: exactly one seeded `Organization` (`'org-1'`) exists, no tenant-provisioning workflow
+  exists, and pre-Phase-8 use cases remain unscoped — see BR-BRANCH-003 for what remains open.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Multi-Branch, Staff/Admin
 
 ### BR-BRANCH-003 — Tenant/branch isolation enforcement
-- **Status**: ROADMAP
-- **Rule**: Structural tenant/branch data isolation (Security Rules-level) is target design, not
-  implemented.
+- **Status**: ROADMAP — application-layer check exists (BR-BRANCH-002), database-level enforcement
+  does not
+- **Rule**: Structural tenant/branch data isolation (Security Rules-level, or equivalent row-level
+  enforcement) is still target design, not implemented — there is no database of any kind in this
+  codebase, every repository remains a single shared in-memory store regardless of organization id.
+  `docs/master_roadmap.md` MT-001/MT-002 completion criteria remain unmet.
 - **Owner Agent**: security_engineer
 - **Related Modules**: Multi-Branch
+
+### BR-BRANCH-005 — Platform-operator hierarchy is structurally separate from the tenant hierarchy
+- **Status**: VERIFIED
+- **Rule**: `PlatformRole`/`PlatformActorSession`/`PlatformAuthorizedAction`/
+  `RealPlatformAuthorizationPolicy` (`features/platform`) share zero types with `StaffRole`/
+  `ActorSession`/`PosAuthorizedAction`/`RealPosAuthorizationPolicy` (`features/pos`).
+  `PlatformActorSession` has no branch/restaurant/organization field at all — a platform-level actor
+  is global by construction, not merely "granted access to everything." Confirmed no navigation path
+  exists between `AdminShellScreen` (tenant) and `PlatformShellScreen` (platform) — reaching the
+  platform shell requires `PlatformSignInScreen`'s own Development Login.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Platform, Staff/Admin
 
 ### BR-BRANCH-004 — Coupon/campaign branch scoping
 - **Status**: UNRESOLVED
@@ -2507,17 +2528,23 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 # Marketplace Integration Rules
 
 ### BR-MKT-001 — `MarketplaceConnector` concept
-- **Status**: ROADMAP
-- **Rule**: `docs/domain_architecture.md` references a `MarketplaceConnector` as metadata on `Order`.
-  No code exists.
+- **Status**: DECIDED — provider-neutral foundation built (Phase 8), no real connector
+- **Rule**: `IntegrationProviderAdapter`/`IntegrationProviderRegistry` (`features/integrations`) is now
+  the real, tested foundation `docs/domain_architecture.md`'s `MarketplaceConnector` reference
+  anticipated, plus a full `MarketplaceAccount` → `MarketplaceStore` → `VirtualRestaurant` → branch/
+  menu/order mapping domain (`features/marketplace`). Every adapter resolves to
+  `UnconfiguredIntegrationProviderAdapter` — no real connector to any named marketplace exists; "do NOT
+  integrate providers yet" was an explicit instruction for this phase. See `docs/decisions.md` ADR-025
+  Decision 7.
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Marketplace, Orders
+- **Related Modules**: Marketplace, Orders, Platform
 
 ### BR-MKT-002 — Candidate marketplace list
-- **Status**: ROADMAP
-- **Rule**: Named candidate marketplaces from prior project discussion (not found in any file under
-  `docs/` — provenance is session memory, flagged accordingly): Yemeksepeti, Getir Yemek, Trendyol
-  Yemek, Migros Yemek, TruYemek.
+- **Status**: DECIDED — list now encoded in real, registered (but unconfigured) provider adapters
+- **Rule**: The five candidate marketplaces (Yemeksepeti, Getir Yemek, Trendyol Yemek, Migros Yemek,
+  TruYemek) are now registered as `UnconfiguredIntegrationProviderAdapter` entries in
+  `integrationProviderRegistryProvider` — provenance is still this same prior-session naming (not an
+  external source), now made concrete as `providerId` strings rather than only prose.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Marketplace
 
@@ -2535,6 +2562,99 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
   (no stock/marketplace sync exists) is undecided.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Marketplace, Stock/Inventory
+
+# Platform, White-Label & Tenant Ownership Rules
+
+### BR-PLATFORM-001 — Development Login is `kReleaseMode`-gated, mirrors the tenant-side pattern
+- **Status**: VERIFIED
+- **Rule**: `platformAuthRepositoryProvider` resolves to `ProductionUnavailablePlatformAuthRepository`
+  (always denies) when `kReleaseMode`, and `DevelopmentPlatformAuthRepository` otherwise — the same
+  release/debug split `staffAuthRepositoryProvider` already used. "Release builds must never expose
+  this path" holds structurally.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Platform
+
+### BR-PLATFORM-002 — Platform Monitoring, Release Readiness, and Store Compliance are read-only
+  records, never publishing actions
+- **Status**: VERIFIED
+- **Rule**: `BuildPlatformMonitoringSnapshot`/`BuildReleaseReadinessSnapshot`/
+  `BuildStoreComplianceSnapshot` never call any external API, never submit a build, and never publish
+  anything to any store — each is a pure, computed-fresh read model. Every criterion is evaluated
+  against a real, code-verified fact (e.g. `CrashReportingService` genuinely resolves to `NoOp` only)
+  — none is asserted optimistically. `isReleaseReady`/`isStoreCompliant` both correctly report `false`
+  today.
+- **Owner Agent**: qa_engineer
+- **Related Modules**: Platform
+
+### BR-BRANDING-001 — Tenant brand identity is separate from `Restaurant`, applied at app launch
+- **Status**: VERIFIED
+- **Rule**: `TenantBrandTheme` (`features/branding`) is a distinct entity from `Restaurant` — a
+  tenant's white-label identity is not restaurant data. `resolvedAppThemeProvider` overrides only
+  `ColorScheme` on the existing `AppTheme`/design-token system (`CLAUDE.md` §6) — never a parallel
+  theming system. Applied at app launch via `AbakusApp.build`.
+- **Owner Agent**: ui_ux_designer
+- **Related Modules**: Platform, Design System
+
+### BR-BRANDING-002 — No build-pipeline/app-store tooling exists for a second, published, differently-
+  branded app
+- **Status**: VERIFIED (absence)
+- **Rule**: `docs/master_roadmap.md` SAAS-003's completion criteria ("a second, differently-branded app
+  can be built and published from the same codebase") remain entirely unmet — only runtime theming
+  exists (BR-BRANDING-001). `BuildReleaseReadinessSnapshot` reports this gap explicitly
+  (`appVersionObservability`, `crashReporting` both `notReady`).
+- **Owner Agent**: flutter_architect
+- **Related Modules**: Platform, Design System
+
+# Integration Hub & Payment Hub Rules
+
+### BR-INTEGRATION-001 — A stored integration credential's raw value is never held by a domain type,
+  never displayed, never logged
+- **Status**: VERIFIED
+- **Rule**: `IntegrationCredentialRef` has no field capable of holding a raw secret value — only
+  metadata (kind, organization, provider, revision). The actual secret value only ever touches
+  `SecureIntegrationCredentialStorage` (`flutter_secure_storage`-backed). No use case or screen
+  (`StoreIntegrationCredential`, `RevokeIntegrationCredential`, `TenantIntegrationHubScreen`) ever
+  reads a stored value back out.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Platform, Security
+
+### BR-INTEGRATION-002 — Webhook signatures are never treated as verified without a real cryptographic
+  check
+- **Status**: VERIFIED
+- **Rule**: `UnverifiedWebhookSignatureVerifier` (the only `WebhookSignatureVerifier` implementation)
+  always returns `false` — no `crypto`/`convert` dependency exists in `pubspec.yaml` to perform a real
+  HMAC check, and none was hand-rolled. Adding real verification is an explicit future new-dependency
+  decision (`CLAUDE.md` §15), not silently done here.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Platform, Security
+
+### BR-INTEGRATION-003 — No backend exists to actually receive a real inbound webhook
+- **Status**: VERIFIED (absence)
+- **Rule**: `WebhookDeliveryRecord`'s own doc comment states this codebase has no backend of any kind —
+  `RecordWebhookDelivery` is a documented "trusted internal primitive" (no `PosAuthorizationPolicy`
+  dependency, actor `'system'`) with zero production call sites, since its real caller would be a
+  webhook HTTP handler that cannot exist without a backend.
+- **Owner Agent**: flutter_architect
+- **Related Modules**: Platform
+
+### BR-PAYMENTHUB-001 — Payment Hub (tenant merchant-account configuration) is a separate bounded
+  context from order-time payment collection
+- **Status**: VERIFIED
+- **Rule**: `features/payment_hub` (`PaymentMerchantAccount`, method mapping, `PaymentSettlementRecord`)
+  is deliberately kept separate from `features/payment`'s pre-existing order-time `PaymentSession`/
+  `PaymentSplit`/`PaymentService` (Sprint 3C) — the same distinction ADR-012 already drew between
+  `PaymentMethod` (instrument) and `PaymentProviderId` (technical integration).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Payment, Platform
+
+### BR-PAYMENTHUB-002 — `RecordPaymentSettlement` is a trusted internal primitive, unreachable from
+  production
+- **Status**: VERIFIED
+- **Rule**: Mirrors BR-INTEGRATION-003's reasoning: no `PosAuthorizationPolicy` dependency, actor
+  `'system'`, zero production call sites — its real caller would be a payment-provider settlement
+  webhook this codebase's total absence of a backend makes impossible to build yet.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Payment, Platform
 
 # Audit and Approval Requirements
 
@@ -3329,6 +3449,33 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
   BR-STOCK-006, BR-STOCK-007, BR-RECIPE-001, BR-RECIPE-002, BR-NUTRITION-001, BR-NUTRITION-002,
   BR-ALLERGEN-001, BR-MENULABEL-001, BR-COSTING-001, BR-COSTING-002, BR-PROFIT-003, BR-PROFIT-004,
   BR-PURCHASE-001, BR-PURCHASE-002, BR-SETUP-001, BR-SETUP-002, BR-AUDIT-009
+
+### DL-028 — Platform, Integrations & White-Label Ecosystem (Phase 8)
+- **Decision**: Transforms Abaküs One from a single-restaurant operations product into a multi-tenant,
+  white-label, integration-ready platform *foundation* — two structurally separate authorization stacks
+  (tenant vs. platform-operator), organization-scoping with no role exemption, 21 purchasable
+  entitlement modules, runtime white-label branding, a provider-neutral Integration Hub shared by new
+  Marketplace Hub and Payment Hub bounded contexts, credential/webhook scaffolding, and three honest
+  platform-operator read models (Monitoring/Release-Readiness/Store-Compliance). "Do NOT integrate
+  providers yet" and "Platform Owner remains completely separated from tenant hierarchy" were held to
+  throughout, verified structurally, not just by convention.
+- **Status**: DECIDED
+- **Source**: User, Phase 8 kickoff — an explicit autonomous-implementation mandate spanning 18 lettered
+  parts (8A–8R), a mandatory pre-implementation roadmap-revalidation and full-platform gap-analysis
+  step, a dedicated 8S security/tenant-isolation verification pass, an 8T closing quality gate, and a
+  mandatory 14-item final report ending in a phase-gate verdict.
+- **Date**: 2026-08-04
+- **Consequences**: See BR-BRANCH-002/003/005, BR-MKT-001/002, BR-PLATFORM-001/002, BR-BRANDING-001/002,
+  BR-INTEGRATION-001/002/003, BR-PAYMENTHUB-001/002 above. `docs/decisions.md` ADR-025 records the full
+  architecture and every judgment call. `docs/master_roadmap.md` (MT-001, MT-002, SAAS-002, SAAS-003,
+  Phase 10 header) and `docs/module_catalog.md` (MT, MKT, SAAS, PLAT) carry Phase 8 progress notes
+  distinguishing real progress from each item's own still-unmet completion criteria.
+  `docs/feature_status.md`'s Phase 8 Closure Record states the phase-gate verdict once 8S/8T land.
+- **Related Modules**: Platform, Multi-Branch, Marketplace, Payment, Staff/Admin, Security, Design
+  System
+- **Business Rule IDs**: BR-BRANCH-002, BR-BRANCH-003, BR-BRANCH-005, BR-MKT-001, BR-MKT-002,
+  BR-PLATFORM-001, BR-PLATFORM-002, BR-BRANDING-001, BR-BRANDING-002, BR-INTEGRATION-001,
+  BR-INTEGRATION-002, BR-INTEGRATION-003, BR-PAYMENTHUB-001, BR-PAYMENTHUB-002
 
 # Change History
 
