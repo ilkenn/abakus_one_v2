@@ -13,6 +13,7 @@ import 'package:abakus_one_v2/core/services/feature_flags/feature_flags_keys.dar
 import 'package:abakus_one_v2/core/services/feature_flags/feature_flags_provider.dart';
 import 'package:abakus_one_v2/features/crm/presentation/screens/customer_segmentation_admin_screen.dart';
 import 'package:abakus_one_v2/features/entitlements/presentation/screens/entitlement_admin_screen.dart';
+import 'package:abakus_one_v2/features/integrations/presentation/screens/tenant_integration_hub_screen.dart';
 import 'package:abakus_one_v2/features/inventory/presentation/screens/ingredient_catalog_screen.dart';
 import 'package:abakus_one_v2/features/inventory/presentation/screens/inventory_screen.dart';
 import 'package:abakus_one_v2/features/inventory/presentation/screens/stock_counts_screen.dart';
@@ -518,6 +519,39 @@ void main() {
 
     expect(find.text('Müşteri & Sadakat'), findsNothing);
     expect(find.text('Yapılandırma'), findsNothing);
+  });
+
+  testWidgets('a tenantOwner can open Entegrasyonlar from Sistem group',
+      (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'owner-1',
+        roles: {StaffRole.tenantOwner},
+        activeRole: StaffRole.tenantOwner,
+      ),
+    );
+
+    // "Entegrasyonlar" is a tenantOwner's only visible destination across
+    // every group, so the desktop shell auto-selects it on first build —
+    // no tap needed, and no other Sistem-group item exists for this role
+    // to confuse the selection with.
+    expect(find.byType(TenantIntegrationHubScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'a manager (not tenantOwner) cannot see the Entegrasyonlar '
+      'destination', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+      ),
+    );
+
+    expect(find.text('Entegrasyonlar'), findsNothing);
   });
 
   testWidgets('a narrow viewport shows the mobile drawer chrome',

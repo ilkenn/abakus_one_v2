@@ -14,6 +14,7 @@ import '../../../entitlements/domain/entitlement_scope_type.dart';
 import '../../../entitlements/presentation/screens/entitlement_admin_screen.dart';
 import '../../../entitlements/presentation/widgets/module_entitlement_gate.dart';
 import '../../../feedback/presentation/screens/feedback_admin_screen.dart';
+import '../../../integrations/presentation/screens/tenant_integration_hub_screen.dart';
 import '../../../inventory/presentation/screens/ingredient_catalog_screen.dart';
 import '../../../inventory/presentation/screens/inventory_screen.dart';
 import '../../../inventory/presentation/screens/stock_counts_screen.dart';
@@ -29,6 +30,7 @@ import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../../pos/presentation/widgets/role_gate.dart';
 import '../../../pos/presentation/screens/kitchen_display_board_screen.dart';
 import '../widgets/admin_coming_soon_view.dart';
+import '../providers/admin_dependencies_provider.dart';
 import 'admin_overview_screen.dart';
 import 'admin_session_expired_screen.dart';
 import 'admin_unauthorized_screen.dart';
@@ -559,6 +561,20 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
               PosAuthorizedAction.manageEntitlements,
               child: EntitlementAdminScreen(
                 branchId: branchId,
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'integrations',
+            label: 'Entegrasyonlar',
+            icon: Icons.hub_outlined,
+            visibleToRoles: const {StaffRole.tenantOwner},
+            builder: (context, ref) => RoleGate.forAction(
+              PosAuthorizedAction.manageTenantIntegrations,
+              child: TenantIntegrationHubScreen(
+                organizationId: ref.read(currentOrganizationIdProvider),
                 authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
                 performedByStaffId: actorId,
               ),

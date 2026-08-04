@@ -1,8 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../marketplace/presentation/providers/marketplace_dependencies_provider.dart';
+import '../../../payment_hub/presentation/providers/payment_hub_dependencies_provider.dart';
 import '../../application/identity/integration_credential_ref_id_generator.dart';
 import '../../application/identity/tenant_integration_configuration_id_generator.dart';
 import '../../application/identity/webhook_delivery_record_id_generator.dart';
+import '../../application/use_cases/build_integration_audit_center_projection.dart';
+import '../../application/use_cases/build_provider_health_projection.dart';
 import '../../data/integration_audit_entry_repository.dart';
 import '../../data/integration_credential_ref_repository.dart';
 import '../../data/integration_credential_storage.dart';
@@ -153,4 +157,31 @@ final webhookDeliveryRecordRepositoryProvider =
 final webhookDeliveryRecordIdGeneratorProvider =
     Provider<WebhookDeliveryRecordIdGenerator>((ref) {
   return SequentialWebhookDeliveryRecordIdGenerator();
+});
+
+/// Phase 8M — Provider Health Monitoring.
+final buildProviderHealthProjectionProvider =
+    Provider<BuildProviderHealthProjection>((ref) {
+  return BuildProviderHealthProjection(
+    providerRegistry: ref.watch(integrationProviderRegistryProvider),
+    tenantIntegrationRepository:
+        ref.watch(tenantIntegrationConfigurationRepositoryProvider),
+  );
+});
+
+/// Phase 8N — Integration Audit trail. Cross-feature wiring of
+/// marketplace/payment-hub audit repositories mirrors
+/// `admin_dependencies_provider.dart`'s `buildAuditCenterProjectionProvider`
+/// (Phase 6M) precedent for the same "unify several bounded contexts'
+/// audit trails" shape.
+final buildIntegrationAuditCenterProjectionProvider =
+    Provider<BuildIntegrationAuditCenterProjection>((ref) {
+  return BuildIntegrationAuditCenterProjection(
+    integrationAuditRepository:
+        ref.watch(integrationAuditEntryRepositoryProvider),
+    marketplaceAuditRepository:
+        ref.watch(marketplaceAuditEntryRepositoryProvider),
+    paymentHubAuditRepository:
+        ref.watch(paymentHubAuditEntryRepositoryProvider),
+  );
 });

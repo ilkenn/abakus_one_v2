@@ -12,6 +12,7 @@ import '../../domain/member/platform_member.dart';
 import '../../domain/member/platform_member_status.dart';
 import '../providers/platform_dependencies_provider.dart';
 import '../providers/platform_session_controller.dart';
+import 'platform_shell_screen.dart';
 
 /// Development Login for the platform-owner hierarchy — Phase 8
 /// (`docs/decisions.md` ADR-025). Mirrors `StaffSignInScreen`'s exact
@@ -27,12 +28,13 @@ import '../providers/platform_session_controller.dart';
 /// becomes available" — this screen is the one, explicit, temporary
 /// substitute for that, not a permanent platform-owner login mechanism.
 ///
-/// Standalone: no `go_router` route, no shell wiring yet — the
-/// Platform Owner Hub surface this would sign an actor into is Phase
-/// 8R's own, separately-scoped UI work; this screen is directly
-/// constructible for tests and that future wiring to push, matching
-/// `PosCashierScreen`'s (ADR-011) and the closed-account screens'
-/// (ADR-012) own "standalone until its consumer exists" precedent.
+/// A successful sign-in pushes [PlatformShellScreen] (Phase 8R) — this
+/// screen has no `go_router` route of its own (still a raw
+/// `Navigator.push` entry point, matching every other in-app screen
+/// transition per `CLAUDE.md` §3); reaching this screen at all still
+/// requires a direct `Navigator.push` from calling code (e.g. a test,
+/// or a future hidden platform-owner entry point) since it is
+/// intentionally not linked from the tenant-side `AdminShellScreen`.
 class PlatformSignInScreen extends ConsumerStatefulWidget {
   const PlatformSignInScreen({super.key});
 
@@ -69,7 +71,11 @@ class _PlatformSignInScreenState extends ConsumerState<PlatformSignInScreen> {
     setState(() => _busy = false);
     if (!success) {
       setState(() => _error = 'Oturum açılamadı. Hesap aktif değil olabilir.');
+      return;
     }
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const PlatformShellScreen()),
+    );
   }
 
   Future<void> _bootstrapFirstOwner() async {
