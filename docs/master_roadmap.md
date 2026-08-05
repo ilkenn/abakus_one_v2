@@ -90,6 +90,14 @@
 - Web/admin impact: Web push as a stretch goal, not required at MVP.
 - Test requirements: Token-refresh tests, delivery-status tests, opt-out-respected tests.
 - Completion criteria: A real push notification is delivered end-to-end from a backend event to a device.
+- **Phase 9 progress note (2026-08-05)**: device-token storage now exists
+  (`core/device_tokens` — register/revoke, idempotent re-registration,
+  `kReleaseMode`-gated fail-closed in release, mirroring `docs/
+  phase9_adversarial_security_review.md` §2) and Storage rules for
+  media/attachments are real and tested. Still not met: no FCM/APNs
+  integration, no send API, no delivery-status handling — this item's actual
+  completion criterion (an end-to-end delivered push) remains entirely
+  unstarted. Token storage alone is a small fraction of this item's scope.
 
 #### F-005 — CI Pipeline (analyze / test / build automation)
 - Description: Automated `dart format`, `flutter analyze`, `flutter test`, and build verification on every change, replacing today's fully manual process.
@@ -123,6 +131,21 @@
 - Web/admin impact: Shared auth service for `WEB`'s admin console.
 - Test requirements: Unit tests for token refresh logic; integration test for full login → authenticated-screen flow; negative tests (expired token, revoked session).
 - Completion criteria: A user cannot reach any authenticated screen without a valid, backend-issued session; logout truly invalidates the session server-side.
+- **Phase 9 progress note (2026-08-05, `docs/decisions.md` ADR-026, `docs/
+  phase9_final_report.md`)**: real Firebase Auth wiring now exists — `Firebase.
+  initializeApp()` is genuinely called at bootstrap (`lib/bootstrap/
+  firebase_bootstrap_service.dart:18`, superseding `CLAUDE.md` §5's older
+  "no `Firebase.initializeApp()` call anywhere" claim, now stale), and
+  `authRepositoryProvider` is `firebaseReadyProvider`-gated to a real
+  `FirebaseAuthRepository`/`ProductionUnavailableAuthRepository` split (fails
+  closed, never fakes success) instead of the always-succeeds mock this item
+  describes replacing. `AuthSession.uid` is a real backend-issued identity,
+  now genuinely threaded through order submission (`Order.customerId`) and
+  account-deletion request ownership checks. Still open against this item's
+  own completion criteria: no server-side session revocation on logout (the
+  session is client-cleared only — documented, accepted limitation this
+  phase), and Firebase project environment separation (dev/staging/
+  production) is still the single `abakusone` project only (`CLAUDE.md` §5).
 
 #### IA-002 — Role & Permission Model
 - Description: Implement the `Role`/`Permission` domain (see `docs/domain_architecture.md` §2) with a fixed platform permission catalog and tenant-editable role composition.
@@ -156,6 +179,14 @@
 - Web/admin impact: Audit log viewer in the admin console (at least for `IA`/`CMS`/`INV` events at MVP).
 - Test requirements: Tests asserting every mutating endpoint touched by `IA-001`/`IA-002` emits a correctly-shaped audit event.
 - Completion criteria: Every login, role change, and permission grant/revoke produces a queryable audit record.
+- **Phase 9 progress note (2026-08-05)**: real, server-only, append-only audit
+  collections now exist and are enforced at the Firestore rules layer —
+  `auditEvents`, `orderEvents`, `accountDeletionAuditEvents` are all
+  `allow write: if false` for clients, verified by a passing emulator test
+  (`audit events are read-only for members, never client-writable`). Covers
+  order-lifecycle and account-deletion events specifically, not yet the
+  login/role-change events this item's own completion criterion names —
+  those remain open.
 
 ---
 
@@ -188,6 +219,18 @@
 - Test requirements: Automated adversarial tests attempting cross-tenant reads/writes on every entity type, run in CI on every change to any module touching persistence.
 - Completion criteria: This test suite exists, runs in CI, and passes — treated as a permanent regression gate, not a one-time check.
 - **Phase 8 progress note (2026-08-04)**: Phase 8's own 8S verification pass exercised the new organization-scoping check adversarially (correctness tests, not a CI-gated adversarial suite) — see the Phase 8 Closure Record in `docs/feature_status.md` for what it found. This is not the permanent CI regression gate this item requires.
+- **Phase 9 progress note (2026-08-05, `docs/phase9_adversarial_security_review.md`
+  §3/§5)**: this item is now substantially, not just partially, met for the
+  Firestore layer specifically. `firestore-tests/rules.test.js` (24 tests) and
+  `storage-tests/rules.test.js` (10 tests) are a real adversarial suite —
+  cross-tenant read/write denial, platform-support-grant time-limiting, an
+  unlisted-collection fail-closed default — and both now run in CI as the new
+  `emulator-tests` job (`.github/workflows/ci.yml`), so this is now a
+  permanent regression gate, not a one-time check, satisfying the letter of
+  this item's completion criteria for the Firestore/Storage backend
+  specifically. Not yet independently verified against a real GitHub Actions
+  run (no runner available this session) — verified locally only, repeatedly,
+  including immediately before the Phase 9 closure report.
 
 #### MT-003 — Branch-Switching UX
 - Description: UI for staff who work across or manage multiple branches to switch active branch context.
@@ -218,6 +261,18 @@
 - Web/admin impact: Same API surface serves `WEB`.
 - Test requirements: API contract tests, migration tests, a seeded staging environment for the mobile team to develop against.
 - Completion criteria: A deployed, reachable API serving real data for at least the entities listed above, with migrations under version control.
+- **Phase 9 progress note (2026-08-05)**: Firestore now serves as the real
+  backend for `Order` specifically (`CanonicalOrderRepository`/
+  `FirestoreCanonicalOrderRepository`, `firebaseReadyProvider`-gated) with
+  server-authoritative status transitions via two Cloud Functions
+  (`onOrderCreated`, `onOrderCompleted`), both idempotent and covered by
+  passing emulator tests. This is real progress on `Order` specifically, not
+  the full `Tenant`/`Brand`/`Branch`/`User`/`Menu`/`Product` schema this item
+  names — those remain mock/in-memory. See
+  `docs/phase9_adversarial_security_review.md` §7 for an open gap even within
+  the `Order` slice: the customer-facing Orders screen still reads from a
+  separate legacy in-memory store, not this new backend, pending a follow-up
+  sprint.
 
 #### BE-002 — Environment Separation & Deployment Pipeline
 - Description: Dev/staging/production environment separation with a repeatable deployment process, replacing the current single-environment (nonexistent) setup — `app_environment.dart`/`app_environment_config.dart` are the client-side half of this.

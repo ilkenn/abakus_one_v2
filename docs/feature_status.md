@@ -1363,13 +1363,36 @@ at the end.
 - **9A–9J: all ten sub-parts of the Phase 9 kickoff have now landed.** See the mandatory final
   adversarial security review and the 30-item final report (below/`docs/decisions.md`) for the
   phase-gate verdict.
+- **Post-9J adversarial review fixes (2026-08-05):** the mandatory review (`docs/
+  phase9_adversarial_security_review.md`) found and closed three real gaps: an IDOR in
+  `CancelAccountDeletionRequest` (no ownership check on `requestId` — fixed, now requires and verifies
+  `uid`); `accountDeletionRequestRepositoryProvider`/`deviceTokenRepositoryProvider` had no release-mode
+  gating at all and would have silently persisted in memory even in a release build (fixed,
+  `kReleaseMode`-gated to a `ProductionUnavailable*` implementation, mirroring Phase 8's
+  `ProductionUnavailableStaffMemberRepository`); `firestore.rules`' `orders` create rule only accepted
+  `status == 'created'`, which would reject every real order create (the real client transitions to
+  `pendingConfirmation` in-memory before the first write) — fixed to accept either status at create
+  time, `update` still permanently denied. Dart: 2263 → 2264 tests; firestore-tests 23 → 24; all three
+  emulator suites (firestore 24, storage 10, functions 9) re-verified passing in this same pass. See
+  `docs/phase9_final_report.md` for the full 30-item closure report and phase-gate verdict.
 
-**Production limitations, stated plainly (still true after 9A–9E):** every repository except
-`CanonicalOrderRepository` (Firestore-backed once Firebase is ready, `InMemory*` otherwise) remains
-`InMemory*` unconditionally — no real backend persistence exists for staff/platform/CRM/menu/POS/
-courier/admin data yet. No Cloud Function has been written (memberships→claims sync, order-status
-transitions, event/outbox processing — all Sprint 9F) — `OrdersNotifier`'s customer-facing lifecycle
-actions (cancel/review/status-update) still operate on the local `OrderModel` projection only, not real
-transitions on the underlying canonical `Order`. Nothing is deployed to any real Firebase project.
-Account deletion has no backend yet (Sprint 9G). Media/push/device-token infrastructure has no backend
-yet (Sprint 9H).
+**Production limitations, stated plainly (current, post-9J):** `CanonicalOrderRepository`,
+`AccountDeletionRequestRepository`, and `DeviceTokenRepository` are now genuinely release-safe
+(`firebaseReadyProvider`/`kReleaseMode`-gated, real Firestore-backed implementation or fail-closed —
+never a silent in-memory fallback in release). Every other repository in the app (staff/platform were
+already gated in Phase 8; CRM/menu/POS/courier/admin/inventory/etc. were not touched by Phase 9) remains
+`InMemory*` unconditionally — pre-Phase-9 baseline, unchanged, out of this phase's remit. Two real Cloud
+Functions now exist and run (`onOrderCreated`, `onOrderCompleted`, both idempotent) — but nothing
+downstream of order completion (visit recording, reward granting, stock deduction) is wired to them yet,
+by design, and explicitly marked as such in the outbox record itself
+(`visitRecorded/rewardsEvaluated/stockConsumed: false`). **A known, currently open gap**: the
+customer-facing `OrdersNotifier`/`ordersProvider` (backing `orders_screen.dart`,
+`order_detail_screen.dart`, the Home "Aktif Siparişin" card) still reads exclusively from the legacy
+in-memory `LocalOrdersRepository`, not the canonical `Order` this phase built — checkout bridges a
+one-time write into both stores, but nothing reads canonical status transitions back, so the customer's
+own Orders screen has no live or restart-safe connection to the real, server-authoritative order. This
+is the one finding serious enough to block an outright APPROVED verdict this phase — see
+`docs/phase9_adversarial_security_review.md` §7 and `docs/phase9_final_report.md` for the required
+follow-up scope ("Sprint 9K"). Nothing is deployed to any real Firebase project; all verification this
+phase is against the local emulator suite only. Firebase environment separation (dev/staging/
+production) is still the single `abakusone` project (`CLAUDE.md` §5).

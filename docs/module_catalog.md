@@ -28,6 +28,19 @@
   (`AdminShellScreen` and its 18 destinations). No backend, no permission-check middleware, no token
   issuance — this satisfies none of this module's Backend/Security/Integration requirements. Distinct
   ad hoc numbering, per `CLAUDE.md` §1 — this is not this module's MVP.
+- **Phase 9 update (2026-08-05, `docs/decisions.md` ADR-026, `docs/
+  phase9_final_report.md`)**: real progress on the Backend/Security columns
+  specifically, still not this module's MVP. Firebase Auth is genuinely
+  wired (`Firebase.initializeApp()` called at bootstrap, `firebaseReadyProvider`
+  -gated `FirebaseAuthRepository`, fails closed via
+  `ProductionUnavailableAuthRepository` rather than faking success), replacing
+  the always-succeeds mock. Token storage uses `flutter_secure_storage`
+  (already existing). Audit-event emission is real for order and
+  account-deletion events specifically (`auditEvents`/`orderEvents`/
+  `accountDeletionAuditEvents`, server-write-only, verified by adversarial
+  emulator tests). Still open: permission-check middleware (no general API
+  exists), login/OTP rate limiting, SSO, and audit coverage for login/
+  role-change events specifically.
 
 ## MT — Multi-Tenant & Multi-Branch Platform
 
@@ -44,6 +57,17 @@
 - **Minimum tests**: Isolation tests (Tenant A can never read Tenant B's data via any code path), branch-switch UI tests.
 - **Risks**: Retrofitting tenancy onto a codebase built single-tenant is far more expensive than building it in from the start — this module should land before most business features, not after.
 - **Phase 8 update (2026-08-04, `docs/decisions.md` ADR-025)**: real progress, not completion — `ActorSession.organizationAccess` plus a genuinely new organization-scoping authorization check (`kOrganizationIdAuthorizationContextKey`, no role exemption for any `StaffRole` including admin/tenantOwner) now exist and are enforced by every new Phase 8 tenant-scoped use case. This is still application-layer filtering only (no row-level DB enforcement — there is no database at all), still exactly one seeded `Organization` (`'org-1'`), and still no tenant-provisioning workflow — MT-001/MT-002's own completion criteria remain unmet. A wholly separate, structurally isolated `PlatformRole`/`PlatformActorSession` stack (`features/platform`) was also added for platform-operator-tier actors, distinct from tenant roles.
+- **Phase 9 update (2026-08-05, `docs/phase9_adversarial_security_review.md`
+  §3/§5)**: this module's own "Minimum tests" requirement — isolation tests
+  proving Tenant A can never read Tenant B's data — is now genuinely met for
+  the Firestore/Storage layer: `firestore-tests/rules.test.js` (24 tests) and
+  `storage-tests/rules.test.js` (10 tests) adversarially assert cross-tenant
+  read/write denial, time-limited platform-support-grant access, and a
+  fail-closed default for unlisted paths/collections, and both now run in CI
+  (`emulator-tests` job). This is the first genuinely database-level
+  (Firestore Security Rules, not just application-code filtering) enforcement
+  this module has had. Not yet independently verified against a real GitHub
+  Actions run (no runner available this session).
 
 ## BE — Backend & Persistence Platform
 
@@ -59,6 +83,19 @@
 - **Integration requirements**: None itself; everything else integrates through it.
 - **Minimum tests**: API contract tests, migration tests, load tests before GA.
 - **Risks**: The single biggest technical-risk item in the whole roadmap — a wrong early choice (e.g. no multi-tenancy support in the chosen DB pattern) has the widest blast radius.
+- **Phase 9 update (2026-08-05, `docs/phase9_adversarial_security_review.md`)**:
+  Firestore now genuinely backs `Order` (`CanonicalOrderRepository`, real
+  server-authoritative status transitions via two idempotent Cloud
+  Functions), `AccountDeletionRequest`, and `DeviceToken` — all
+  `firebaseReadyProvider`/`kReleaseMode`-gated to fail closed rather than
+  silently persisting in memory in a release build. This is real backend
+  substrate for those three entities specifically, not the general API layer
+  this module describes — no REST/GraphQL surface, no job queue, and roughly
+  35 other feature repositories across the app remain unconditionally
+  in-memory (pre-Phase-9 scope, unchanged). A known gap even within the
+  `Order` slice: the customer-facing Orders screen still reads from a
+  separate legacy in-memory store, not this new backend (see the adversarial
+  review §7) — flagged as required follow-up work, not silently accepted.
 
 ## CMS — Menu & Dynamic CMS Management
 
@@ -337,6 +374,14 @@
 - **Integration requirements**: Triggered by nearly every other module (`Order` status, `CRM` campaigns, `AUTO` rules).
 - **Minimum tests**: Delivery-provider integration tests, preference-respect tests (a muted category must never deliver).
 - **Risks**: Low novel technical risk — mainly integration and volume/cost management once a real push provider is in place.
+- **Phase 9 update (2026-08-05)**: device-token storage now exists
+  (`core/device_tokens` — register, idempotent re-registration, revoke on
+  logout, `kReleaseMode`-gated fail-closed in release) and Storage rules
+  covering media/attachment paths are real and adversarially tested (10
+  passing emulator tests). This is groundwork only — no FCM/APNs
+  integration, no send API, no delivery-status tracking, no template
+  management exist yet; this module's actual core capability (delivering a
+  push notification) remains entirely unbuilt.
 
 ## AUTO — Automation Rules Engine
 
@@ -413,4 +458,18 @@
 - **Integration requirements**: Observability vendor, backup storage provider; future third-party developer access via the connector marketplace.
 - **Minimum tests**: Restore-from-backup drills (not just backup-creation tests), chaos/failure-injection tests before GA, dependency vulnerability scan gating in CI.
 - **Risks**: Because this module has no visible feature UI, it's the module most likely to be under-resourced against a feature-driven roadmap — treat its Production Hardening phase items as non-negotiable gates, not optional polish.
+- **Phase 9 update (2026-08-05, `docs/observability_and_operations.md`,
+  `docs/deployment_and_operations.md`, `docs/phase9_adversarial_security_review.md`)**:
+  documentation-first foundations landed, deliberately scoped that way by the
+  phase's own kickoff ("runbook foundations," not new instrumentation).
+  `LoggingService`/`LogRedactor` (real, pre-Phase-9) plus 8 new runbook
+  entries; a documented (not load-tested) backup strategy; a new
+  `forbidden-secrets-scan` CI job (grep-based — a floor, explicitly not
+  claimed as a substitute for a real secret-scanning service); a mandatory
+  adversarial security review performed and written up in full
+  (`docs/phase9_adversarial_security_review.md`), the first of its kind in
+  this codebase. Still unmet: `CrashReportingService` remains `NoOp`, no
+  centralized metrics/tracing, no tested restore-from-backup drill, no
+  dependency-vulnerability scan in CI, no penetration test, no partner/
+  connector API surface.
 - **Phase 8 update (2026-08-04, `docs/decisions.md` ADR-025)**: a provider-neutral Payment Hub domain (`PaymentMerchantAccount` → method mapping → `PaymentSettlementRecord`, deliberately separate from `features/payment`'s pre-existing order-time payment collection) plus platform-operator-tier read models — `BuildPlatformMonitoringSnapshot`, `BuildReleaseReadinessSnapshot`, `BuildStoreComplianceSnapshot` (8O/8P/8Q) — were added, each honestly reporting today's real gaps (no crash-reporting vendor wired, no account-deletion backend, no privacy-policy document) rather than a fabricated "system health" dashboard. None of this is the observability stack, backup/DR, or public partner API surface this module describes — no logs/metrics/traces vendor, no backup automation, and no external API gateway exist.

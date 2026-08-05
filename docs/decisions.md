@@ -3662,3 +3662,59 @@ can never reach a deterministic dev OTP).
 9I/9J: documentation-only for 9I; 9J adds two new CI jobs (not independently runnable/verifiable in
 this session — no GitHub Actions runner available) plus two new docs. No Dart/Flutter files changed;
 `flutter analyze` reconfirmed clean.
+
+### Decision 12 — Mandatory adversarial security review: three real findings closed, one BLOCKING
+finding named and deliberately deferred, not fixed unreviewed (post-9J)
+
+Performed the review the original Phase 9 kickoff required before any phase-gate verdict. Full
+findings, evidence, and per-area classification (CLOSED / ACCEPTED LOW RISK / BLOCKING) live in
+`docs/phase9_adversarial_security_review.md` — this entry records only the decisions made in response.
+
+**Closed, verified, committed:**
+1. IDOR in `CancelAccountDeletionRequest` — accepted a bare `requestId` with no ownership check.
+   Fixed: now requires `uid`, checks `request.uid != uid`, throws the identical violation for
+   "not found" and "wrong owner" so the error leaks nothing. Caller and tests updated; new IDOR test
+   added.
+2. `accountDeletionRequestRepositoryProvider`/`deviceTokenRepositoryProvider` had zero release gating
+   — always `InMemory*`, including in release. Fixed with `kReleaseMode`-gating (not
+   `firebaseReadyProvider` — neither has a Firestore-backed implementation yet to fail over to),
+   mirroring Phase 8's `ProductionUnavailableStaffMemberRepository` pattern exactly.
+3. `firestore.rules`' `orders` create rule only accepted `status == 'created'`, which would reject
+   every real order create — the real client (`SubmitPosOrder`/`SubmitCustomerOrder`) transitions to
+   `pendingConfirmation` in-memory before the first write. Fixed to accept either status at create
+   time; `update` stays permanently denied, so this does not weaken security.
+
+Verified: `flutter analyze` clean, `flutter test` 2264/2264, `firestore-tests` 24/24,
+`storage-tests` 10/10, `functions` 9/9 — all re-run fresh in this pass, not carried over from earlier
+sprints' own gates.
+
+**One BLOCKING finding, named and deliberately not fixed this session**: the customer-facing
+`OrdersNotifier`/`ordersProvider` (backing `orders_screen.dart`, `order_detail_screen.dart`, the Home
+"Aktif Siparişin" card) reads exclusively from the legacy in-memory `LocalOrdersRepository`, never from
+the canonical `Order` this phase built. `checkout_screen.dart` bridges a one-time write into both
+stores at submission time, but nothing reads canonical status transitions back — the customer's own
+Orders screen has no live or restart-safe connection to the real, server-authoritative order. This is
+the kickoff's own named disqualifying condition, "legacy order path remains competing truth," found by
+tracing what the screen actually reads rather than what it was designed to read.
+
+**Why this was named, not silently fixed**: a correct fix means giving `OrdersNotifier` a real
+read-through path off `canonicalOrderRepositoryProvider` while preserving the customer-review/UI-only
+fields `OrderModel` carries that `Order` does not model (ratings, cancellation copy, courier-visibility
+legacy mirroring) — a genuine UI/state-architecture change to the screen customers use most, not a
+backend-wiring task, and outside Sprints 9F–9J's own named scope. Writing that unreviewed, this late in
+an already very long session, would trade one undisclosed risk for another — exactly what this
+project's plan-first workflow (`CLAUDE.md` §16) exists to prevent. Scoped instead as required follow-up
+work ("Sprint 9K — Orders screen read-through migration") in `docs/phase9_adversarial_security_review.md`
+§7 and `docs/master_roadmap.md`'s `BE-001` progress note.
+
+**Phase-gate consequence**: per the kickoff's own rule — no unresolved Critical/High/Medium finding may
+remain for an outright APPROVED verdict — this one BLOCKING finding forces the verdict to **APPROVED
+WITH REQUIRED FIXES**, recorded in full in `docs/phase9_final_report.md`.
+
+### Confidence
+
+High for the three closed findings — each has a direct, freshly-run passing test as evidence, not
+self-attestation. High for the BLOCKING finding's diagnosis (traced via direct grep/read of the actual
+provider wiring and the actual screen call sites, not inferred) and honest about the finding not being
+fixed — this is judgment about proportionate scope under a very long session, stated as such, not
+hidden.
