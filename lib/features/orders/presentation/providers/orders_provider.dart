@@ -1,7 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/utils/clock_provider.dart';
+import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../application/use_cases/submit_customer_order.dart';
 import '../../data/canonical_order_repository.dart';
+import '../../data/order_firestore_client.dart';
 import '../../data/orders_repository.dart';
 import '../../domain/models/courier_visibility.dart';
 import '../../domain/models/order_actor.dart';
@@ -20,16 +23,36 @@ final ordersRepositoryProvider = Provider<OrdersRepository>((ref) {
   return const LocalOrdersRepository();
 });
 
-/// The [CanonicalOrderRepository] currently in use — Sprint 9D
-/// (`docs/decisions.md` ADR-026). A single app-wide instance: both
-/// `posOrderRepositoryProvider` (`features/pos`) and
+/// The [CanonicalOrderRepository] implementation currently in use —
+/// Sprint 9D/9E (`docs/decisions.md` ADR-026). A single app-wide instance:
+/// both `posOrderRepositoryProvider` (`features/pos`) and
 /// `SubmitCustomerOrder`/checkout wire through this same provider, so a
 /// POS-submitted and a customer-checkout-submitted [Order] land in the
 /// same store — "customer/POS/QR-created orders all enter the same
 /// lifecycle," verified at the storage level.
+///
+/// Gated on [firebaseReadyProvider] — Sprint 9E — mirroring every other
+/// Firebase-backed provider in this codebase: [FirestoreCanonicalOrderRepository]
+/// once Firebase is ready (resolving `organizationId` via the same
+/// restaurant→organization closure-injection pattern
+/// `RealPosAuthorizationPolicy` uses, Sprint 9B), [InMemoryCanonicalOrderRepository]
+/// otherwise — including every `flutter test` run. **No release build may
+/// silently persist orders in memory only**: once Firebase is ready, this
+/// always resolves to the real, durable implementation.
 final canonicalOrderRepositoryProvider =
     Provider<CanonicalOrderRepository>((ref) {
-  return InMemoryCanonicalOrderRepository();
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return InMemoryCanonicalOrderRepository();
+  }
+  return FirestoreCanonicalOrderRepository(
+    client: DefaultOrderFirestoreClient(),
+    resolveOrganizationId: (restaurantId) async {
+      final restaurant =
+          await ref.read(restaurantRepositoryProvider).findById(restaurantId);
+      return restaurant?.organizationId;
+    },
+  );
 });
 
 /// Builds and persists customer-checkout orders onto the canonical [Order]

@@ -1,5 +1,7 @@
 import '../domain/models/order.dart';
 import '../domain/models/order_id.dart';
+import 'order_firestore_client.dart';
+import 'order_firestore_mapper.dart';
 
 /// The shared persistence boundary for the canonical [Order] aggregate —
 /// Sprint 9D (`docs/decisions.md` ADR-026). Lives in `features/orders`
@@ -63,4 +65,60 @@ class InMemoryCanonicalOrderRepository implements CanonicalOrderRepository {
 
   @override
   Future<List<Order>> findAll() async => List.unmodifiable(_byId.values);
+}
+
+/// The real, Firestore-backed [CanonicalOrderRepository] — Sprint 9E
+/// (`docs/decisions.md` ADR-026). Every write resolves and denormalizes
+/// `organizationId` via [resolveOrganizationId] (the caller-injected
+/// restaurant→organization chain — mirrors
+/// `RealPosAuthorizationPolicy.resolveRestaurantOrganizationId`'s exact
+/// closure-injection pattern from Sprint 9B, keeping this `data/`-layer
+/// class free of any `features/admin` dependency) — **fails closed**: an
+/// order whose restaurant can't be resolved to a real organization is
+/// never persisted, matching "tenant scope is resolved, never trusted."
+class FirestoreCanonicalOrderRepository implements CanonicalOrderRepository {
+  FirestoreCanonicalOrderRepository({
+    required OrderFirestoreClient client,
+    required Future<String?> Function(String restaurantId)
+        resolveOrganizationId,
+  })  : _client = client,
+        _resolveOrganizationId = resolveOrganizationId;
+
+  final OrderFirestoreClient _client;
+  final Future<String?> Function(String restaurantId) _resolveOrganizationId;
+
+  @override
+  Future<Order> submitOrder(Order order) async {
+    final organizationId = await _resolveOrganizationId(order.restaurantId);
+    if (organizationId == null) {
+      throw StateError(
+        'Cannot resolve an organization for restaurant '
+        '"${order.restaurantId}" — refusing to persist an order with no '
+        'resolved tenant boundary.',
+      );
+    }
+    await _client.setOrder(
+      order.id.value,
+      OrderFirestoreMapper.toFirestore(order, organizationId: organizationId),
+    );
+    return order;
+  }
+
+  @override
+  Future<Order?> findById(OrderId orderId) async {
+    final data = await _client.getOrder(orderId.value);
+    return data == null ? null : OrderFirestoreMapper.fromFirestore(data);
+  }
+
+  @override
+  Future<List<Order>> findByCustomerId(String customerId) async {
+    final docs = await _client.queryOrdersByCustomerId(customerId);
+    return [for (final doc in docs) OrderFirestoreMapper.fromFirestore(doc)];
+  }
+
+  @override
+  Future<List<Order>> findAll() async {
+    final docs = await _client.getAllOrders();
+    return [for (final doc in docs) OrderFirestoreMapper.fromFirestore(doc)];
+  }
 }

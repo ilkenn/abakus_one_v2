@@ -3365,8 +3365,58 @@ closing the exact gap 9C's own report named ("`Order.customerId` wiring is defer
   `SubmitPosOrder`'s existing bar (a fresh `OrderId` per call, no dedup), not a stronger guarantee;
   real retry-safe idempotency is a Sprint 9F (event/outbox) concern.
 
+### Decision 6 — Pilot Repository Migration: canonical `Order` first, not all 184 repositories (9E)
+
+The kickoff explicitly forbids migrating all 184 repositories blindly, asking instead for "the minimum
+coherent vertical slice required for a real internal pilot." `CanonicalOrderRepository` (9D) is that
+slice: it is the one repository sprint 9D just made the single authoritative persistence boundary for
+every order-creation channel, and taking real orders durably is the single most pilot-critical
+capability. `FirestoreCanonicalOrderRepository` implements the existing interface with no change to any
+caller (`SubmitPosOrder`, `SubmitCustomerOrder`, `InMemoryPosOrderRepository`'s delegation) — the
+"repository migration strategy" `docs/phase9_architecture_analysis.md` called for.
+
+**Design**: `OrderFirestoreMapper` (`features/orders/data/`) converts a canonical `Order` to/from the
+exact document shape `firestore.rules`/`docs/firestore_data_model.md` already define for the `orders`
+collection, adding `organizationId` (not a field on `Order` itself — resolved via the same
+restaurant→organization closure-injection pattern `RealPosAuthorizationPolicy` uses, Sprint 9B) at
+write time. `OrderLine` cannot be reconstructed with pre-computed derived fields (its constructor is
+private; only `OrderLine.create` is public and *recomputes* `modifierTotal`/`lineSubtotal`/`lineTotal`/
+`tax`) — the mapper stores only each line's raw inputs and replays `OrderLine.create` on read, a pure
+deterministic function that reproduces the identical frozen line, not an approximation.
+`FirestoreCanonicalOrderRepository.submitOrder` **fails closed**: an order whose restaurant can't be
+resolved to a real organization is never persisted (`StateError`, never silently written without a
+tenant boundary) — "tenant scope is resolved, never trusted." `DefaultOrderFirestoreClient` mirrors
+`DefaultFirebaseAuthClient`'s exact lazy-`FirebaseFirestore.instance`-resolution fix (Sprint 9C) for the
+same reason: a test proving provider *wiring* must not crash at construction.
+`canonicalOrderRepositoryProvider` is gated on `firebaseReadyProvider` (not `kReleaseMode`) — the same
+seam every other Firebase-backed provider in this codebase uses.
+
+**Honest, explicit scope limitation, not an oversight**: this sprint migrates exactly one repository.
+The remaining ~183 `InMemory*` repositories (staff/platform member registries, CRM `Customer`, menu/
+product catalogs, POS cash/kitchen/table state, courier, admin audit trails, and every other bounded
+context) are **not** migrated — they remain `InMemory*`, exactly as `docs/feature_status.md` already
+states. This is the "controlled migration path for the remainder" the kickoff asks for, not a
+completed migration: each future repository migration should follow this sprint's exact pattern
+(narrow client wrapper → mapper → fail-closed tenant resolution where applicable →
+`firebaseReadyProvider`-gated provider → unit tests against a fake client), one bounded context at a
+time, prioritized by real pilot need — not attempted in one further mega-sprint.
+
+**Not yet done, honestly**: no Dart-level integration test runs `FirestoreCanonicalOrderRepository`
+against the real Firestore Emulator — `cloud_firestore`'s plugin implementation requires platform
+channels unavailable under plain `flutter test` (the same constraint `firebase_auth`/
+`firebase_crashlytics` already have, Sprints 9A/9C), and this non-interactive environment has no
+device/simulator to run a full Flutter app against the emulator either. Confidence instead composes
+two separately-verified halves: `firestore.rules`' `orders` collection behavior is genuinely
+emulator-verified (9B's 22 Node-based Security Rules tests), and `OrderFirestoreMapper`/
+`FirestoreCanonicalOrderRepository`'s own logic is verified via round-trip and fake-client unit tests
+against the exact same document shape those rules govern — not a single unified proof, and that gap is
+recorded here rather than glossed over.
+
 ### Confidence
 
 9D: 2205 → 2213 tests, including a dedicated cross-channel integration test proving shared storage/
 lifecycle and a projection-correctness test for `OrderModel.fromCanonicalOrder`. `dart format`/
 `flutter analyze` clean.
+
+9E: 2213 → 2223 tests (mapper round-trip, fail-closed tenant resolution, `findById`/`findByCustomerId`/
+`findAll` against a fake Firestore client, provider-gating). `dart format`/`flutter analyze` clean.

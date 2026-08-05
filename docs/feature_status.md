@@ -1273,13 +1273,33 @@ at the end.
   `Order.customerNote` as readable text rather than lost, but the projection's individual
   boolean/string fields are not reconstructed from that text (documented in `docs/decisions.md` ADR-026
   Decision 5, not silently dropped). 2205 → 2213 tests.
-- **9E–9J: not yet started.**
+- **9E — Pilot Repository Migration: DONE for one deliberately narrow slice — `CanonicalOrderRepository`
+  only.** Per the kickoff's own "do not migrate all 184 repositories blindly" instruction, this sprint
+  migrates exactly the one repository sprint 9D just made authoritative for every order-creation
+  channel: `FirestoreCanonicalOrderRepository` (`features/orders/data/`) implements the existing
+  `CanonicalOrderRepository` interface against real Firestore document shapes (`OrderFirestoreMapper`,
+  matching `firestore.rules`'/`docs/firestore_data_model.md`'s `orders` collection exactly), resolving
+  and denormalizing `organizationId` via the same restaurant→organization closure-injection pattern
+  `RealPosAuthorizationPolicy` uses (Sprint 9B) — **fails closed** if the restaurant can't be resolved
+  to an organization, never persisting an order with no tenant boundary. `canonicalOrderRepositoryProvider`
+  is gated on `firebaseReadyProvider`, matching every other Firebase-backed provider. **Not yet done,
+  honestly**: no Dart-level test runs this against a live Firestore Emulator — `cloud_firestore`
+  requires platform channels unavailable under `flutter test` (same constraint as `firebase_auth`),
+  and this environment has no device/simulator to drive a full app against the emulator either;
+  confidence rests on 9B's real emulator-verified Security Rules for the same collection plus thorough
+  mapper/repository unit tests against a fake client, not one unified proof. The remaining ~183
+  `InMemory*` repositories (staff/platform registries, CRM `Customer`, menu/product catalogs, POS
+  cash/kitchen/table state, courier, admin audit trails, etc.) are **not** migrated this sprint —
+  each future migration should follow this sprint's exact pattern, one bounded context at a time. 2213
+  → 2223 tests.
+- **9F–9J: not yet started.**
 
-**Production limitations, stated plainly (still true after 9A–9D):** every repository — including the
-new `CanonicalOrderRepository` — remains `InMemory*`; no real backend persistence exists yet (Sprint
-9E). No Cloud Function has been written (memberships→claims sync, order-status transitions, event/
-outbox processing — all Sprint 9F) — `OrdersNotifier`'s customer-facing lifecycle actions
-(cancel/review/status-update) still operate on the local `OrderModel` projection only, not real
+**Production limitations, stated plainly (still true after 9A–9E):** every repository except
+`CanonicalOrderRepository` (Firestore-backed once Firebase is ready, `InMemory*` otherwise) remains
+`InMemory*` unconditionally — no real backend persistence exists for staff/platform/CRM/menu/POS/
+courier/admin data yet. No Cloud Function has been written (memberships→claims sync, order-status
+transitions, event/outbox processing — all Sprint 9F) — `OrdersNotifier`'s customer-facing lifecycle
+actions (cancel/review/status-update) still operate on the local `OrderModel` projection only, not real
 transitions on the underlying canonical `Order`. Nothing is deployed to any real Firebase project.
 Account deletion has no backend yet (Sprint 9G). Media/push/device-token infrastructure has no backend
 yet (Sprint 9H).
