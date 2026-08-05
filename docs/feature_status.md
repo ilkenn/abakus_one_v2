@@ -1292,7 +1292,22 @@ at the end.
   cash/kitchen/table state, courier, admin audit trails, etc.) are **not** migrated this sprint —
   each future migration should follow this sprint's exact pattern, one bounded context at a time. 2213
   → 2223 tests.
-- **9F–9J: not yet started.**
+- **9F — Server-Authoritative Events & Outbox: DONE for two real, emulator-verified Cloud Functions;
+  the full downstream event chain explicitly deferred.** New `functions/` TypeScript project
+  (`firebase-functions`/`firebase-admin`). `onOrderCreated` performs the server-authoritative `created
+  -> pendingConfirmation` transition `firestore.rules` requires (idempotent via an in-transaction
+  status re-check). `onOrderCompleted` writes an exactly-once `orderEvents/{orderId}-completed` outbox
+  record on reaching `OrderStatus.completed` (idempotent via Firestore `.create()`, catching
+  `ALREADY_EXISTS`). Both genuinely verified: `firebase emulators:exec --only firestore,functions` runs
+  5 real Node tests against the live Functions + Firestore emulators together, 5/5 passing. **Not
+  built this sprint, stated plainly**: kitchen-eligibility triggers, delivery-creation, and — the
+  largest deferred piece — visit-recording/reward-evaluation/stock-consumption on completion (real,
+  tested Dart use cases today; reimplementing them in TypeScript for server-side execution is
+  deliberately not attempted partially). The outbox record's `visitRecorded`/`rewardsEvaluated`/
+  `stockConsumed` fields are explicit `false` markers for that future work, not silently implied done.
+  See `functions/README.md` for the complete honest scope list. Not deployed to any real Firebase
+  project.
+- **9G–9J: not yet started.**
 
 **Production limitations, stated plainly (still true after 9A–9E):** every repository except
 `CanonicalOrderRepository` (Firestore-backed once Firebase is ready, `InMemory*` otherwise) remains

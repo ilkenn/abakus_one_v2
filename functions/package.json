@@ -1,0 +1,23 @@
+{
+  "name": "abakus-one-functions",
+  "private": true,
+  "description": "Server-authoritative Cloud Functions for Abaküs One - Sprint 9F (docs/decisions.md ADR-026). Emulator-tested only; not deployed to any real Firebase project yet - see functions/README.md.",
+  "engines": {
+    "node": "20"
+  },
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "npm run build && node --test lib/test/*.test.js",
+    "test:emulator": "cd .. && firebase emulators:exec --only firestore,functions \"cd functions && npm test\""
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^20.16.0"
+  }
+}

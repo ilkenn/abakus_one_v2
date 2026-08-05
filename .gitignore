@@ -50,5 +50,7 @@ firestore-debug.log
 ui-debug.log
 .firebase/
 
-# Node.js (Firestore Security Rules test harness, firestore-tests/)
+# Node.js (Firestore Security Rules test harness, firestore-tests/; Cloud
+# Functions source, functions/)
 node_modules/
+functions/lib/

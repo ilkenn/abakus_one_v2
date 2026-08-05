@@ -3420,3 +3420,69 @@ lifecycle and a projection-correctness test for `OrderModel.fromCanonicalOrder`.
 
 9E: 2213 → 2223 tests (mapper round-trip, fail-closed tenant resolution, `findById`/`findByCustomerId`/
 `findAll` against a fake Firestore client, provider-gating). `dart format`/`flutter analyze` clean.
+
+### Decision 7 — Server-Authoritative Events & Outbox: two real, emulator-verified Cloud Functions;
+the full downstream event chain is explicitly deferred, not partially reimplemented (9F)
+
+A new `functions/` TypeScript project (`firebase-functions` v6/`firebase-admin` v12) delivers exactly
+two Cloud Functions, chosen for being both genuinely necessary and tractable within this sprint —
+"do not migrate/implement everything blindly" applied to server logic the same way Decision 6 applied
+it to repositories:
+
+- **`onOrderCreated`** — the server-authoritative `created -> pendingConfirmation` transition
+  `firestore.rules` already requires (client `create` is only allowed in `status == 'created'`; every
+  later transition is `allow update: if false`) but that Sprint 9E's `FirestoreCanonicalOrderRepository`
+  left for the Dart client to keep performing client-side (unchanged, still correct for this sprint's
+  emulator-only flow) — against a real deployed project, this function is what would actually perform
+  it. Idempotent by re-checking the document's live status inside a Firestore transaction before
+  acting, not by a separate dedup record — a second trigger invocation (Firestore's "at least once"
+  delivery) finds the status already moved on and no-ops.
+- **`onOrderCompleted`** — the transactional-outbox write: an exactly-once
+  `orderEvents/{orderId}-completed` record on reaching `OrderStatus.completed`, using Firestore's
+  `.create()` (fails on an existing document) rather than `.set()` so a second trigger invocation is
+  caught (`ALREADY_EXISTS`) and ignored rather than duplicating or silently overwriting the record.
+
+**Explicitly, deliberately not built this sprint** (recorded here so it is never mistaken for done):
+kitchen-eligibility triggers, delivery-creation on `ready`+`delivery`, and — the largest deferred
+piece — visit-recording → reward-evaluation → stock-consumption on order completion. Those are real,
+tested Dart use cases today (`RecordCustomerVisitAndEvaluateRewards`, `ConsumeStockForOrder`, and
+related CRM/inventory logic); reimplementing that business logic a second time in TypeScript so a
+Cloud Function could execute it server-side is a substantial undertaking of its own, and a *partial*
+port would be worse than an honest gap (silently wrong business behavior, not a documented absence).
+`onOrderCompleted`'s outbox record — explicitly carrying `visitRecorded`/`rewardsEvaluated`/
+`stockConsumed`, all `false` — is the real, durable, idempotent trigger point that future work would
+consume from. Cancellation/refund reversal events and the `memberships` → custom-claims sync function
+`docs/firestore_data_model.md` named since Sprint 9B are equally out of scope here.
+
+**The 11-state `OrderStatus` transition table is duplicated by hand** in `functions/src/orderStatus.ts`
+— there is no Dart↔TypeScript code-sharing mechanism in this repository, and the two are different
+runtimes. This is an accepted, documented risk (`functions/README.md`), not an oversight; the Dart file
+remains the source of truth for the state machine's *design*.
+
+**Both functions are genuinely emulator-verified**, closing the gap 9E's own Confidence section left
+open (`cloud_firestore` requires platform channels unavailable under `flutter test`, so the *Dart*
+Firestore layer couldn't be proven against a live emulator) — Cloud Functions have no such constraint:
+`firebase emulators:exec --only firestore,functions "cd functions && npm test"` runs 5 real Node tests
+(`functions/src/test/functions.test.ts`) against the real (local) Functions + Firestore emulators
+together, all 5 passing, including two idempotency-specific cases (re-triggering does not duplicate a
+status-history entry or an outbox record). A new `.firebaserc` (`demo-abakus-one-emulator` — the
+Firebase-recommended `demo-`-prefixed pattern, which can never resolve against a real GCP project) lets
+the emulator and the test process agree on one project id; without it the Functions emulator's trigger
+silently never fired against writes made from a mismatched project namespace — found and fixed during
+this sprint's own verification, not assumed to work.
+
+**Not yet done, honestly**: nothing is deployed to any real Firebase project (this session's stop
+conditions reserve that for explicit approval with real project access). The Dart client's own
+`created -> pendingConfirmation` transition (`SubmitPosOrder`/`SubmitCustomerOrder`) is unchanged —
+once `onOrderCreated` is actually deployed, the client-side transition becomes redundant-but-harmless
+(the function's transactional re-check means it simply finds the order already past `created` and
+no-ops); removing the client-side transition entirely, so the client only ever writes `status:
+'created'`, is a reasonable future cleanup but was not done this sprint to avoid re-verifying every
+existing POS/customer order test against a behavior change with no emulator-deployed function backing
+it yet in the app's own test suite.
+
+### Confidence
+
+9F: 5 new Node tests, genuinely run against the real Functions + Firestore emulators together (not
+merely written and assumed correct) — 5/5 passing. No Dart/Flutter files changed; `flutter analyze`
+reconfirmed clean.

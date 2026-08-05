@@ -1019,6 +1019,23 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Orders, POS, Cart, Auth
 
+### BR-ORDER-013 — Order status transitions and completion events are server-authoritative and
+  idempotent (Phase 9 Sprint 9F, ADR-026)
+- **Status**: VERIFIED (emulator-tested; not deployed)
+- **Rule**: `firestore.rules`'s `orders` collection permits a client `create` only in `status ==
+  'created'`; every later transition is `allow update: if false` — enforced structurally, not by
+  convention. The Cloud Function `onOrderCreated` performs the one transition a freshly created order
+  may take server-side (`created -> pendingConfirmation`), idempotently (a repeat trigger invocation
+  finds the status already moved on and no-ops, verified inside a Firestore transaction). On reaching
+  `OrderStatus.completed`, `onOrderCompleted` writes an exactly-once `orderEvents/{orderId}-completed`
+  outbox record (`Firestore.create()`, not `.set()` — a duplicate invocation hits `ALREADY_EXISTS` and
+  is ignored, never silently overwritten). **Known limitation**: the outbox record itself does not yet
+  trigger visit-recording, reward evaluation, or stock consumption — those remain real, tested Dart use
+  cases not yet reachable from a server-side event; the record's `visitRecorded`/`rewardsEvaluated`/
+  `stockConsumed` fields are explicit `false` markers for that deferred work.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, Kitchen, CRM, Inventory
+
 # Cash Management
 
 ### BR-CASH-001 — Multiple cash drawers per branch, mutable registry (Phase 3 Sprint 3E)
@@ -3571,11 +3588,46 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Related Modules**: Orders, POS, Cart, Auth
 - **Business Rule IDs**: BR-ORDER-012
 
+### DL-031 — Pilot Repository Migration & Server-Authoritative Events (Phase 9, sprints 9E–9F)
+- **Decision**: `CanonicalOrderRepository` is migrated to real Firestore (fail-closed on unresolved
+  tenant boundary) as the one deliberately narrow "pilot vertical slice" — the remaining ~183
+  repositories stay `InMemory*`, explicitly deferred. Two Cloud Functions (`onOrderCreated`,
+  `onOrderCompleted`) deliver the server-authoritative status-transition and outbox-write halves of the
+  event architecture, genuinely emulator-verified; the full downstream event chain (kitchen-
+  eligibility, delivery-creation, visit/reward/stock consumption) is explicitly deferred rather than
+  partially reimplemented in a second language.
+- **Status**: DECIDED
+- **Source**: User, Phase 9 kickoff — 9E's own "do not migrate all 184 repositories blindly" and 9F's
+  "transactional-outbox-plus-idempotent-processor" requirements, both with an explicit allowance to
+  scope narrowly and document what's deferred honestly.
+- **Date**: 2026-08-05
+- **Consequences**: See BR-ORDER-013 above. `docs/decisions.md` ADR-026 Decisions 6–7 record the full
+  design, the fail-closed tenant-resolution mechanism, the emulator-verification approach for both the
+  Dart repository layer (fake-client unit tests, no live Dart-level emulator integration test — a
+  documented `cloud_firestore` platform-channel constraint) and the Cloud Functions (genuinely run
+  against live Functions + Firestore emulators together), and the complete list of what remains
+  unmigrated/unbuilt.
+- **Related Modules**: Orders, POS, Platform (Firebase infrastructure)
+- **Business Rule IDs**: BR-ORDER-012, BR-ORDER-013
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v2.9 — 2026-08-05
+- **Version**: 2.9
+- **Date**: 2026-08-05
+- **Summary**: Phase 9 sprints 9E–9F (Pilot Repository Migration; Server-Authoritative Events &
+  Outbox). Added BR-ORDER-013 (order status transitions and completion events are server-authoritative
+  and idempotent via two emulator-verified Cloud Functions). New DL-031. See `docs/decisions.md` ADR-026
+  Decisions 6–7.
+- **Author**: Claude, at the user's direction (autonomous Phase 9 implementation mandate).
+- **Reason**: Record the real Firestore repository migration and the new Cloud Functions
+  infrastructure, and their explicitly-named scope limits (only one of ~184 repositories migrated;
+  only two of the many needed event-chain functions built) so neither is mistaken for a completed
+  migration.
 
 ### v2.8 — 2026-08-05
 - **Version**: 2.8
