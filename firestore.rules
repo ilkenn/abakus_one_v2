@@ -1,0 +1,275 @@
+rules_version = '2';
+
+// Phase 9 (docs/decisions.md ADR-026) — see docs/firestore_data_model.md for
+// the full collection strategy and the requirement -> mechanism table this
+// file implements. NOT YET DEPLOYED to any real Firebase project — emulator-
+// verified only (firestore-tests/), per the Phase 9 kickoff's own stop
+// condition on requiring real console/deployment access to go further.
+//
+// Core principle applied everywhere below: never trust a caller-supplied
+// scope id for the authorization DECISION. request.resource.data.organizationId
+// is validated (must match a real, resolved value) on write, but the
+// decision itself always reads request.auth.token (custom claims) or a
+// server-controlled membership document — never the client's own claim
+// about its own scope.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Tenant-hierarchy membership check — the fast path. organizationAccess
+    // is a custom claim (a list of organization ids), synced from
+    // memberships/{organizationId}_{uid} by a Cloud Function (Sprint 9F).
+    // No role exemption of any kind lives in this helper — mirrors
+    // RealPosAuthorizationPolicy's own "no role exemption" organization
+    // check (docs/decisions.md ADR-025) exactly: every tenant role,
+    // however senior within one tenant, must appear in this list for the
+    // specific organizationId being checked.
+    function isOrgMember(organizationId) {
+      return isSignedIn() &&
+        ('organizationAccess' in request.auth.token) &&
+        (organizationId in request.auth.token.organizationAccess);
+    }
+
+    // A specific tenant role for a specific organization — e.g.
+    // hasRole('org-1', 'tenantOwner'). roles is a custom claim map:
+    // { [organizationId]: [roleName, ...] }.
+    function hasRole(organizationId, roleName) {
+      return isOrgMember(organizationId) &&
+        ('roles' in request.auth.token) &&
+        (organizationId in request.auth.token.roles) &&
+        (roleName in request.auth.token.roles[organizationId]);
+    }
+
+    // Platform-level authorization uses a wholly separate claim namespace
+    // from tenant roles/organizationAccess — mirrors PlatformActorSession's
+    // "zero shared types with the tenant stack" design (ADR-025) at the
+    // rules layer too.
+    function isPlatformRole(roleName) {
+      return isSignedIn() &&
+        ('platformRole' in request.auth.token) &&
+        (request.auth.token.platformRole == roleName);
+    }
+
+    function isPlatformMember() {
+      return isPlatformRole('platformOwner') || isPlatformRole('platformAdministrator');
+    }
+
+    // Time-limited, reasoned, audited platform-support access to one
+    // tenant's data — a platform member's read access to organizationId
+    // is granted only while a matching, non-expired supportGrants document
+    // exists (created by a Cloud Function, never a client).
+    function hasActiveSupportGrant(organizationId) {
+      return isPlatformMember() &&
+        exists(/databases/$(database)/documents/supportGrants/$(organizationId + '_' + request.auth.uid)) &&
+        get(/databases/$(database)/documents/supportGrants/$(organizationId + '_' + request.auth.uid)).data.expiresAt > request.time;
+    }
+
+    function canReadOrg(organizationId) {
+      return isOrgMember(organizationId) || hasActiveSupportGrant(organizationId);
+    }
+
+    // organizationId must never change after creation — the denormalized
+    // tenant-boundary field is verified once at create time (see each
+    // collection's own create rule) and trusted, never re-derived, on
+    // every subsequent read; this is what keeps it immutable.
+    function organizationIdUnchanged() {
+      return request.resource.data.organizationId == resource.data.organizationId;
+    }
+
+    // ---------------------------------------------------------------------
+    // Platform-owned collections
+    // ---------------------------------------------------------------------
+
+    match /platformMembers/{platformMemberId} {
+      allow read: if isPlatformMember() && request.auth.uid == platformMemberId;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
+    match /supportGrants/{grantId} {
+      allow read: if isPlatformMember();
+      allow write: if false; // Cloud Function (Admin SDK) only — every grant
+                              // is itself recorded as an auditEvents entry.
+    }
+
+    // ---------------------------------------------------------------------
+    // Tenant hierarchy
+    // ---------------------------------------------------------------------
+
+    match /organizations/{organizationId} {
+      allow read: if canReadOrg(organizationId);
+      allow write: if false; // Cloud Function only — clients cannot assign
+                              // themselves an organization.
+    }
+
+    match /restaurants/{restaurantId} {
+      allow read: if canReadOrg(resource.data.organizationId);
+      allow write: if false; // Cloud Function only.
+    }
+
+    match /branches/{branchId} {
+      allow read: if canReadOrg(resource.data.organizationId);
+      allow write: if false; // Cloud Function only — see docs/firestore_data_model.md
+                              // for how the Cloud Function itself verifies the
+                              // branch -> restaurant -> organization chain
+                              // before denormalizing organizationId here.
+    }
+
+    // ---------------------------------------------------------------------
+    // Identity & membership — the collections "clients cannot promote
+    // roles" / "clients cannot assign themselves an organization" apply to
+    // most directly.
+    // ---------------------------------------------------------------------
+
+    match /memberships/{membershipId} {
+      // A client may read only their own membership document (the id
+      // encodes {organizationId}_{uid}, so ownership is a suffix check).
+      allow read: if isSignedIn() && membershipId == resource.data.organizationId + '_' + request.auth.uid;
+      allow write: if false; // Cloud Function only — the literal, direct
+                              // enforcement of "clients cannot assign
+                              // themselves an organization" and "clients
+                              // cannot promote roles."
+    }
+
+    match /staffMembers/{staffMemberId} {
+      allow read: if canReadOrg(resource.data.organizationId);
+      allow write: if false; // Cloud Function only.
+    }
+
+    match /platformAuditEntries/{entryId} {
+      allow read: if isPlatformMember();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Customer identity (Sprint 9C target shape)
+    // ---------------------------------------------------------------------
+
+    match /customers/{uid} {
+      // The canonical global identity — keyed by the real Firebase Auth
+      // UID, never a phone-number-derived string (closes the identity
+      // fragmentation docs/phase9_architecture_analysis.md documents).
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      // A signed-in user may update their own profile fields, but never
+      // role/status/verification fields — enforced by an explicit
+      // allow-list rather than a deny-list, so a new sensitive field added
+      // later defaults to NOT client-writable.
+      allow update: if isSignedIn() && request.auth.uid == uid &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['displayName', 'email', 'profilePicturePath']);
+      allow create: if false; // Cloud Function only — a customer profile
+                               // document is provisioned by the same
+                               // trusted process that verifies the OTP,
+                               // never a bare client write.
+      allow delete: if false;
+    }
+
+    match /tenantCustomers/{tenantCustomerId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function only — loyalty/visit data is
+                              // server-computed, never client-writable.
+    }
+
+    // ---------------------------------------------------------------------
+    // Entitlements — "clients cannot write arbitrary entitlement grants."
+    // ---------------------------------------------------------------------
+
+    match /entitlements/{entitlementId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function only.
+    }
+
+    // ---------------------------------------------------------------------
+    // Orders — the one canonical Order aggregate (Sprint 9D). Creation is
+    // client-initiated (staff at POS, an authenticated customer, a QR
+    // guest session) but every field is validated server-side by shape;
+    // status transitions after creation are Cloud-Function-only, matching
+    // "order status transitions must be server-authoritative"
+    // (docs/phase9_architecture_analysis.md §9).
+    // ---------------------------------------------------------------------
+
+    match /orders/{orderId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow create: if isOrgMember(request.resource.data.organizationId) &&
+        request.resource.data.status == 'created';
+      allow update: if false; // Cloud Function only — every status
+                               // transition after creation is
+                               // server-authoritative (Sprint 9F).
+      allow delete: if false; // Orders are never deleted, only transitioned
+                               // to a terminal status.
+    }
+
+    match /orderEvents/{eventId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function only — the event/outbox
+                              // records themselves (Sprint 9F).
+    }
+
+    // ---------------------------------------------------------------------
+    // Audit — append-only everywhere, no client write path of any kind.
+    // ---------------------------------------------------------------------
+
+    match /auditEvents/{auditEventId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function only — create-only in
+                              // practice (Admin SDK never calls update/
+                              // delete on this collection either).
+    }
+
+    // ---------------------------------------------------------------------
+    // Account deletion (Sprint 9G)
+    // ---------------------------------------------------------------------
+
+    match /deletionRequests/{requestId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid &&
+        request.resource.data.status == 'pendingVerification';
+      allow update: if false; // Cloud Function only — every subsequent
+                               // status transition (verification, cooling-
+                               // off, processing, completion, cancellation)
+                               // is server-authoritative.
+      allow delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Device tokens (Sprint 9H) — a user manages only their own tokens.
+    // ---------------------------------------------------------------------
+
+    match /deviceTokens/{tokenId} {
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid &&
+        organizationIdUnchanged();
+    }
+
+    // ---------------------------------------------------------------------
+    // Media metadata (Sprint 9H) — refs only, never raw bytes (that's
+    // Storage's job, see storage.rules once it exists). A Cloud Function
+    // validates the actual upload before a ref is trusted, so this stays
+    // server-write-only even though the underlying file was client-
+    // uploaded to Storage.
+    // ---------------------------------------------------------------------
+
+    match /mediaMetadata/{mediaId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function only.
+    }
+
+    // ---------------------------------------------------------------------
+    // Default deny — anything not explicitly matched above (including any
+    // future collection someone adds without also adding a rule for it)
+    // is denied by default, never implicitly readable/writable. "Fail
+    // Closed" (ENGINEERING_CONSTITUTION.md) applies structurally here.
+    // ---------------------------------------------------------------------
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
