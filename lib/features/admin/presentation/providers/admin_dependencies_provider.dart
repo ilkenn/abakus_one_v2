@@ -36,7 +36,20 @@ import '../../domain/organization/restaurant.dart';
 /// Central Riverpod wiring for `features/admin` — mirrors
 /// `crm_dependencies_provider.dart`'s shape (Phase 6, `docs/decisions.md`
 /// ADR-023).
+///
+/// `kReleaseMode`-gated — Phase 8 closure sprint (`docs/decisions.md`
+/// ADR-025): "the roster itself must never be available in Release."
+/// Every reachable consumer of this provider (`StaffSignInScreen`'s
+/// enumeration, `StaffManagementScreen`/`StaffDetailScreen`) already
+/// requires a real `ActorSession`, which `staffAuthRepositoryProvider`'s
+/// own `kReleaseMode` gate makes impossible to obtain in a release
+/// build — this mirrors that same gate at the data layer instead of
+/// relying solely on "nothing can reach it," the same "never trust the
+/// caller" reasoning Phase 8's read-projection self-authorization uses.
 final staffMemberRepositoryProvider = Provider<StaffMemberRepository>((ref) {
+  if (kReleaseMode) {
+    return const ProductionUnavailableStaffMemberRepository();
+  }
   return InMemoryStaffMemberRepository();
 });
 

@@ -10,8 +10,19 @@ import '../../data/platform_member_repository.dart';
 /// (`docs/decisions.md` ADR-025). Mirrors
 /// `admin_dependencies_provider.dart`'s shape for the wholly separate
 /// platform-owner hierarchy.
+/// `kReleaseMode`-gated — Phase 8 closure sprint (`docs/decisions.md`
+/// ADR-025): "the roster itself must never be available in Release."
+/// Mirrors `staffMemberRepositoryProvider`'s identical gate one tier up
+/// — every reachable consumer already requires a real
+/// `PlatformActorSession`, impossible in release since
+/// `platformAuthRepositoryProvider` fails closed there too, but this
+/// gate holds at the data layer regardless, never relying solely on
+/// "nothing can reach it."
 final platformMemberRepositoryProvider =
     Provider<PlatformMemberRepository>((ref) {
+  if (kReleaseMode) {
+    return const ProductionUnavailablePlatformMemberRepository();
+  }
   return InMemoryPlatformMemberRepository();
 });
 

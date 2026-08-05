@@ -529,6 +529,12 @@ void main() {
         actorId: 'owner-1',
         roles: {StaffRole.tenantOwner},
         activeRole: StaffRole.tenantOwner,
+        // Phase 8 closure sprint: BuildProviderHealthProjection/
+        // BuildIntegrationAuditCenterProjection now independently
+        // enforce organization-scoping, so this session needs real
+        // access to the seeded 'org-1' the same way SetTenantIntegrationEnabled
+        // (the write path) always required.
+        organizationAccess: {'org-1'},
       ),
     );
 

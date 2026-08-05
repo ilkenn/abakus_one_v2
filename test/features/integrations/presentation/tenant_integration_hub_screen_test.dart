@@ -1,4 +1,5 @@
 import 'package:abakus_one_v2/features/integrations/presentation/screens/tenant_integration_hub_screen.dart';
+import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,8 +9,18 @@ import '../test_support/integration_test_fixtures.dart';
 void main() {
   Future<void> pumpScreen(WidgetTester tester) async {
     await tester.pumpWidget(
-      const ProviderScope(
-        child: MaterialApp(
+      ProviderScope(
+        overrides: [
+          // BuildProviderHealthProjection/BuildIntegrationAuditCenterProjection
+          // now independently authorize themselves (Phase 8 closure sprint)
+          // via the real posAuthorizationPolicyProvider — override it here
+          // the same way the screen's own write-path AllowAllIntegrationPolicy
+          // already permits everything, so the read path isn't denied by
+          // the default "no active session" policy.
+          posAuthorizationPolicyProvider
+              .overrideWithValue(const AllowAllIntegrationPolicy()),
+        ],
+        child: const MaterialApp(
           home: TenantIntegrationHubScreen(
             organizationId: 'org-1',
             authorizationPolicy: AllowAllIntegrationPolicy(),

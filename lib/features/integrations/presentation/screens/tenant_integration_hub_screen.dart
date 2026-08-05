@@ -80,17 +80,37 @@ class _TenantIntegrationHubScreenState
   }
 
   Future<void> _load() async {
-    final providers = await ref
-        .read(buildProviderHealthProjectionProvider)
-        .call(organizationId: widget.organizationId);
-    final activity = await ref
-        .read(buildIntegrationAuditCenterProjectionProvider)
-        .call(organizationId: widget.organizationId, limit: 10);
-    if (!mounted) return;
-    setState(() {
-      _providers = providers;
-      _recentActivity = activity;
-    });
+    try {
+      final providers =
+          await ref.read(buildProviderHealthProjectionProvider).call(
+                organizationId: widget.organizationId,
+                actorStaffId: widget.performedByStaffId,
+              );
+      final activity =
+          await ref.read(buildIntegrationAuditCenterProjectionProvider).call(
+                organizationId: widget.organizationId,
+                actorStaffId: widget.performedByStaffId,
+                limit: 10,
+              );
+      if (!mounted) return;
+      setState(() {
+        _providers = providers;
+        _recentActivity = activity;
+        _error = null;
+      });
+    } catch (e) {
+      // Both read projections now independently authorize themselves
+      // (Phase 8 closure sprint) — a denial here is a real "this actor
+      // cannot view this tenant's integration data" outcome, not just a
+      // UI-gating formality, so it must be surfaced, never left as an
+      // indefinite spinner.
+      if (!mounted) return;
+      setState(() {
+        _providers = const [];
+        _recentActivity = const [];
+        _error = e.toString();
+      });
+    }
   }
 
   Future<void> _toggle(ProviderHealthEntry entry, bool enabled) async {

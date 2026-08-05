@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../marketplace/presentation/providers/marketplace_dependencies_provider.dart';
 import '../../../payment_hub/presentation/providers/payment_hub_dependencies_provider.dart';
+import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../application/identity/integration_credential_ref_id_generator.dart';
 import '../../application/identity/tenant_integration_configuration_id_generator.dart';
 import '../../application/identity/webhook_delivery_record_id_generator.dart';
@@ -159,10 +160,14 @@ final webhookDeliveryRecordIdGeneratorProvider =
   return SequentialWebhookDeliveryRecordIdGenerator();
 });
 
-/// Phase 8M — Provider Health Monitoring.
+/// Phase 8M — Provider Health Monitoring. Phase 8 closure sprint: now
+/// independently authorizes itself (`docs/decisions.md` ADR-025),
+/// wired with the real `posAuthorizationPolicyProvider` rather than
+/// relying on the consuming screen's `RoleGate` alone.
 final buildProviderHealthProjectionProvider =
     Provider<BuildProviderHealthProjection>((ref) {
   return BuildProviderHealthProjection(
+    authorizationPolicy: ref.watch(posAuthorizationPolicyProvider),
     providerRegistry: ref.watch(integrationProviderRegistryProvider),
     tenantIntegrationRepository:
         ref.watch(tenantIntegrationConfigurationRepositoryProvider),
@@ -173,10 +178,13 @@ final buildProviderHealthProjectionProvider =
 /// marketplace/payment-hub audit repositories mirrors
 /// `admin_dependencies_provider.dart`'s `buildAuditCenterProjectionProvider`
 /// (Phase 6M) precedent for the same "unify several bounded contexts'
-/// audit trails" shape.
+/// audit trails" shape. Phase 8 closure sprint: now independently
+/// authorizes itself, same reasoning as
+/// `buildProviderHealthProjectionProvider` above.
 final buildIntegrationAuditCenterProjectionProvider =
     Provider<BuildIntegrationAuditCenterProjection>((ref) {
   return BuildIntegrationAuditCenterProjection(
+    authorizationPolicy: ref.watch(posAuthorizationPolicyProvider),
     integrationAuditRepository:
         ref.watch(integrationAuditEntryRepositoryProvider),
     marketplaceAuditRepository:

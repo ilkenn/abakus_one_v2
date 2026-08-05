@@ -3081,13 +3081,55 @@ not building a screen at all where a real one would take real, separately-scoped
   with `isReleaseReady: false` and `isStoreCompliant: false` reported truthfully by real code, not
   glossed over in prose.
 
+### Decision 12 — Final Security Closure sprint: independent read-projection authorization, and a
+structural (not caller-discipline) gate on Development Login enumeration
+
+The dedicated 8S pass (Decision 11's own verification step) found the organization-scoping and
+credential-integrity gaps Decision 12's own name might suggest belonged here — those are recorded
+under 8S, closed the same day. This decision covers a **second, explicitly user-directed** follow-up
+pass ("PHASE 8 — FINAL SECURITY CLOSURE") that reopened the 2 findings 8S had accepted as residual risk
+rather than fixed, and closed both:
+
+**Read-projection self-authorization.** `BuildProviderHealthProjection`/
+`BuildIntegrationAuditCenterProjection` previously relied entirely on the consuming screen's `RoleGate`
+— consistent with this codebase's pre-existing read-projection convention (`BuildAdminOverviewSnapshot`,
+`BuildAuditCenterProjection`), but a real exception to "every privileged operation independently
+authorized, never solely by UI gating" once flagged directly. Both now take a `PosAuthorizationPolicy`
+and call `authorize()` (action `manageTenantIntegrations`, `kOrganizationIdAuthorizationContextKey` set
+to the requested organization) before touching any repository — mirrors every Phase 8 *mutation* use
+case's existing shape (Decision 2/8S), applied here to *reads* for the first time in this codebase.
+Deliberately scoped to only these two Phase 8 projections, not retroactively applied to the older,
+structurally-identical `BuildAdminOverviewSnapshot`/`BuildAuditCenterProjection` (Phase 6) — the
+Closure Sprint's own "do not modify any unrelated Phase 8 functionality" instruction, and a genuine
+architectural question (should *every* read-projection in this codebase self-authorize, as a standing
+rule?) that remains open, named for `flutter_architect` rather than decided unilaterally here.
+
+**Development Login enumeration.** `staffMemberRepositoryProvider`/`platformMemberRepositoryProvider`
+previously resolved to the real `InMemory*` repository unconditionally — `StaffSignInScreen`/
+`PlatformSignInScreen`'s own restraint (never enumerating in a context that implied release) was the
+only thing preventing roster exposure, not a structural gate. Both providers are now `kReleaseMode`-
+gated to new `ProductionUnavailableStaffMemberRepository`/`ProductionUnavailablePlatformMemberRepository`
+(`findAll`/`findById` return empty/`null`, `save` throws) — mirrors `staffAuthRepositoryProvider`/
+`platformAuthRepositoryProvider`'s existing auth-repository split exactly, extended from "sign-in fails
+closed" to "the underlying roster is structurally unavailable regardless of caller," the same "never
+trust the caller" reasoning the read-projection fix above uses. Confirmed safe against every other
+consumer of both providers (`StaffManagementScreen`/`StaffDetailScreen`,
+`BuildPlatformMonitoringSnapshot`) by tracing that none of them are reachable in a release build in the
+first place, since none can obtain a real session there either — this gate closes a real structural gap
+without narrowing any release-reachable functionality.
+
+19 new regression tests (10 for read-projection authorization: authorized/denied/no-org-access/
+cross-org/repository-never-queried-before-authorization, ×2 use cases; 9 for the member-repository
+gate: development behavior unchanged ×2, release-mode zero-enumeration ×2, release-mode `save` refused
+×2, plus 1 extra `findByBranch` case for the staff variant).
+
 ### Confidence
 
-Pending this ADR's own Decision 11 note and the 8S/8T passes referenced above — this entry will be
-superseded by an addendum (or a follow-up ADR) if 8S finds a genuine tenant-isolation gap requiring an
-architectural change, mirroring Phase 6's 6P and Phase 7's 7S precedent of the verification pass
-sometimes changing the final picture. Every decision above is grounded in code read and tests written
-this session; the residual uncertainty is concentrated in exactly the areas Decision 11 names as
-deferred (full Marketplace/Payment Hub CRUD UI, platform-side tenant/catalog management UI) and in
-whether 8S's adversarial check of the new organization-scoping rule (Decision 2) confirms it holds
-under every call path, not just the ones exercised by this session's own tests.
+Every decision above, including Decision 12, is grounded in code read and tests written this session —
+2136 tests passing at final close (up from 2117 at the original 8T close), 0 `flutter analyze` issues,
+`dart format` clean. The phase now carries **zero open accepted-residual-risk items**; Decision 12's own
+one remaining open question (should every read-projection in this codebase self-authorize as a standing
+rule, not just Phase 8's two) is named explicitly as future architectural work, not silently resolved.
+The residual uncertainty is concentrated in exactly the areas Decision 11 names as deferred (full
+Marketplace/Payment Hub CRUD UI, platform-side tenant/catalog management UI) — genuinely unbuilt scope,
+not an unverified claim.
