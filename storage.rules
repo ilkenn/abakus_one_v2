@@ -1,0 +1,89 @@
+rules_version = '2';
+
+// Phase 9 Sprint 9H (docs/decisions.md ADR-026) — see
+// docs/firestore_data_model.md for the collection-strategy document this
+// mirrors at the Storage layer. NOT YET DEPLOYED to any real Firebase
+// project — emulator-verified only (storage-tests/), same status as
+// firestore.rules (Sprint 9B).
+//
+// Mirrors firestore.rules' tenant-isolation reasoning exactly: every
+// tenant-owned path is scoped under /tenants/{organizationId}/..., and
+// authorization always reads request.auth.token (custom claims) —
+// never a client-supplied path segment alone — for the actual decision.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOrgMember(organizationId) {
+      return isSignedIn() &&
+        ('organizationAccess' in request.auth.token) &&
+        (organizationId in request.auth.token.organizationAccess);
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // "Size/MIME validation" — a customer-uploaded photo (profile photo,
+    // feedback attachment) may never exceed 5 MB and must be an image.
+    function isValidCustomerImageUpload() {
+      return request.resource.size < 5 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*');
+    }
+
+    // Customer-uploaded profile/verification photos — mirrors
+    // `CustomerPhoto.photoRef`'s existing "opaque ref, never raw bytes in
+    // the domain layer" discipline, extended to the backend: only the
+    // owning uid may upload here, and only an org member (staff) may
+    // ever read it back (a photo is for internal moderation, not public
+    // by default).
+    match /tenants/{organizationId}/customerPhotos/{uid}/{fileName} {
+      allow read: if isOrgMember(organizationId) || isOwner(uid);
+      allow write: if isOwner(uid) && isValidCustomerImageUpload();
+      allow delete: if isOwner(uid);
+    }
+
+    // Customer feedback attachments — same ownership/size/MIME shape as
+    // customer photos.
+    match /tenants/{organizationId}/feedbackAttachments/{uid}/{fileName} {
+      allow read: if isOrgMember(organizationId) || isOwner(uid);
+      allow write: if isOwner(uid) && isValidCustomerImageUpload();
+      allow delete: if false; // feedback attachments are immutable once submitted
+    }
+
+    // Menu images / tenant brand assets — publicly readable (the whole
+    // point is customers see them in the app), but never client-
+    // writable: staff-managed content goes through an authenticated
+    // admin/Cloud Function path this sprint does not build the upload
+    // side of yet (see docs/decisions.md ADR-026 Decision 9's "not yet
+    // implemented" list) — `allow write: if false` here is the honest,
+    // fail-closed placeholder until that exists, not a claim that staff
+    // upload already works.
+    match /tenants/{organizationId}/menuImages/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /tenants/{organizationId}/brandAssets/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Smart Import source files — staff-only, never public.
+    match /tenants/{organizationId}/importFiles/{uid}/{fileName} {
+      allow read: if isOrgMember(organizationId);
+      allow write: if isOwner(uid) && isOrgMember(organizationId) &&
+        request.resource.size < 20 * 1024 * 1024;
+      allow delete: if isOrgMember(organizationId);
+    }
+
+    // Fail closed — an unlisted path (including any future addition
+    // someone forgets to add a rule for) is denied by default, mirroring
+    // firestore.rules' own closing catch-all.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/account_deletion/account_deletion_providers.dart';
 import '../../../../core/account_deletion/domain/account_deletion_request.dart';
+import '../../../../core/device_tokens/device_token_providers.dart';
 import '../../domain/models/auth_session.dart';
 import '../../domain/models/otp_challenge.dart';
 import '../../domain/phone_number.dart';
@@ -215,8 +216,18 @@ class AuthNotifier extends Notifier<AuthState> {
     state = state.copyWith(isGuest: true);
   }
 
+  /// Sprint 9H (`docs/decisions.md` ADR-026): also revokes every active
+  /// device token for the signed-out uid — a signed-out device should
+  /// not keep receiving push notifications addressed to that identity.
+  /// No-ops safely if there was no session (nothing to revoke for).
   Future<void> logout() async {
+    final uid = state.session?.uid;
     await _repository.clearSession();
+    if (uid != null) {
+      await ref
+          .read(revokeDeviceTokensForUserProvider)
+          .call(uid: uid, now: DateTime.now());
+    }
     state = const AuthState(isAuthenticated: false, isGuest: false);
   }
 }

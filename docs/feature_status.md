@@ -1336,7 +1336,17 @@ at the end.
   future migration would use, not proof the two are wired together today. One real bug (`canCancel`
   reading the system clock instead of the caller's `now`) was found and fixed by this sprint's own
   tests. Dart: 2223 → 2257 tests.
-- **9H–9J: not yet started.**
+- **9H — Media, Push Notifications & Device Tokens: DONE for the authorization/ownership seam;
+  upload UI, real push delivery, and moderation are explicitly deferred.** New `storage.rules`
+  (tenant-scoped paths, size/MIME validation, fail-closed default) genuinely emulator-verified via a
+  new `storage-tests/` Node harness — 10/10 passing against the real local Storage Emulator. New
+  `core/device_tokens/` (registration, idempotent re-registration, revocation) wired into
+  `AuthNotifier.logout()` so signing out revokes every active device token for that uid. **Named
+  limitations**: no upload UI exists for any Storage path yet; no real FCM push is ever sent
+  (registration only); no quiet-hours/delivery-status/deep-link-versioning/malware-scanning; the
+  device-token repository is `InMemory` only (no real Firestore-backed counterpart this sprint). Dart:
+  2257 → 2263 tests.
+- **9I–9J: not yet started.**
 
 **Production limitations, stated plainly (still true after 9A–9E):** every repository except
 `CanonicalOrderRepository` (Firestore-backed once Firebase is ready, `InMemory*` otherwise) remains

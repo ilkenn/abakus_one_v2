@@ -3668,11 +3668,37 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Related Modules**: Auth, Profile, CRM, Notifications, Platform (Firebase infrastructure)
 - **Business Rule IDs**: BR-ACCOUNT-001, BR-ACCOUNT-002
 
+### DL-033 — Media, Push & Device Tokens (Phase 9, sprint 9H)
+- **Decision**: Real, emulator-verified `storage.rules` (tenant-scoped, size/MIME-validated, fail
+  closed) establish the authorization seam for customer photos, feedback attachments, menu images/
+  brand assets, and Smart Import files. `core/device_tokens/` establishes real FCM device-token
+  ownership/idempotent registration/revocation, wired into sign-out. Upload UI, real push delivery, and
+  moderation remain explicitly deferred — this sprint is the authorization/ownership seam only.
+- **Status**: DECIDED
+- **Source**: User, Phase 9 kickoff's 9H specification (production Storage metadata/paths, tenant-
+  scoped authorization, size/MIME validation; FCM device-token registration/ownership/revocation).
+- **Date**: 2026-08-05
+- **Consequences**: `docs/decisions.md` ADR-026 Decision 9 records the full design and the honest scope
+  list (no upload UI, no real push delivery, no quiet-hours/delivery-status/deep-link-versioning/
+  malware-scanning, `InMemory`-only device-token repository).
+- **Related Modules**: Profile, CRM, Notifications, Platform (Firebase infrastructure)
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.1 — 2026-08-05
+- **Version**: 3.1
+- **Date**: 2026-08-05
+- **Summary**: Phase 9 sprint 9H (Media, Push & Device Tokens). New DL-033: real, emulator-verified
+  `storage.rules` and `core/device_tokens/` (registration/revocation, wired into sign-out). No new
+  business rule IDs — infrastructure/authorization scope, not a new domain rule. See
+  `docs/decisions.md` ADR-026 Decision 9.
+- **Author**: Claude, at the user's direction (autonomous Phase 9 implementation mandate).
+- **Reason**: Record the Storage-layer tenant isolation and device-token ownership infrastructure this
+  sprint established, and its honest scope boundary (no upload UI, no real push delivery).
 
 ### v3.0 — 2026-08-05
 - **Version**: 3.0

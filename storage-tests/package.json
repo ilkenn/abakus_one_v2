@@ -1,0 +1,14 @@
+{
+  "name": "abakus-one-storage-rules-tests",
+  "private": true,
+  "description": "Emulator-backed Storage Security Rules tests for Phase 9 Sprint 9H (docs/decisions.md ADR-026). Runs entirely against the local Storage Emulator - no real Firebase project credentials are used or required.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test rules.test.js",
+    "test:emulator": "cd .. && firebase emulators:exec --only storage \"cd storage-tests && npm test\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.0.0"
+  }
+}

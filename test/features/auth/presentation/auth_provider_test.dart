@@ -3,6 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/core/account_deletion/account_deletion_providers.dart';
 import 'package:abakus_one_v2/core/account_deletion/data/account_deletion_request_repository.dart';
 import 'package:abakus_one_v2/core/account_deletion/domain/account_deletion_request.dart';
+import 'package:abakus_one_v2/core/device_tokens/application/device_token_id_generator.dart';
+import 'package:abakus_one_v2/core/device_tokens/application/register_device_token.dart';
+import 'package:abakus_one_v2/core/device_tokens/data/device_token_repository.dart';
+import 'package:abakus_one_v2/core/device_tokens/device_token_providers.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/development_local_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
@@ -134,6 +138,39 @@ void main() {
     expect(container.read(authProvider).isAuthenticated, isFalse);
     expect(container.read(authProvider).session, isNull);
     expect(storage.stored, isNull);
+  });
+
+  test(
+      'logout revokes every active device token for the signed-out uid '
+      '(Sprint 9H, ADR-026)', () async {
+    final deviceTokenRepository = InMemoryDeviceTokenRepository();
+    final deviceTokenContainer = ProviderContainer(
+      overrides: [
+        authRepositoryProvider.overrideWithValue(
+          DevelopmentLocalAuthRepository(sessionStorage: storage),
+        ),
+        deviceTokenRepositoryProvider.overrideWithValue(deviceTokenRepository),
+      ],
+    );
+    addTearDown(deviceTokenContainer.dispose);
+    final notifier = deviceTokenContainer.read(authProvider.notifier);
+    await notifier.requestOtp(validPhoneInput);
+    await notifier.verifyOtp(DevelopmentLocalAuthRepository.developmentOtpCode);
+    const uid = 'dev-+905321234567';
+    await RegisterDeviceToken(
+      repository: deviceTokenRepository,
+      idGenerator: SequentialDeviceTokenIdGenerator(),
+    ).call(
+      uid: uid,
+      token: 'fcm-token-abc',
+      platform: 'android',
+      now: DateTime.now(),
+    );
+    expect(await deviceTokenRepository.findActiveByUid(uid), hasLength(1));
+
+    await notifier.logout();
+
+    expect(await deviceTokenRepository.findActiveByUid(uid), isEmpty);
   });
 
   group('account deletion sign-in blocking (Sprint 9G, ADR-026)', () {

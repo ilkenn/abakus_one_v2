@@ -3574,3 +3574,45 @@ instead of the caller's `now`) was found and fixed by this sprint's own tests, n
 unverified. Cloud Functions — 4 new Node tests against the real Functions + Firestore emulators, 9/9
 passing across the whole `functions/` suite (5 from Sprint 9F + 4 new). `dart format`/`flutter analyze`
 clean.
+
+### Decision 9 — Media, Push & Device Tokens: real, emulator-verified Storage Security Rules; device-
+token ownership/revocation in Dart; upload UI and push delivery explicitly deferred (9H)
+
+**New `storage.rules`** (mirrors `firestore.rules`' exact structure/reasoning from Sprint 9B — shared
+helpers `isSignedIn`/`isOrgMember`/`isOwner`, a closing fail-closed catch-all): tenant-scoped paths
+under `/tenants/{organizationId}/...` for `customerPhotos/{uid}/...` and `feedbackAttachments/{uid}/...`
+(owner-write, size/MIME-validated — under 5 MB, `image/*` only — org-member-or-owner read),
+`menuImages/...` and `brandAssets/...` (publicly readable, client-write always denied — no upload path
+exists yet, so this is the honest, fail-closed placeholder, not a claim that staff upload already
+works), and `importFiles/{uid}/...` (org-member-only, up to 20 MB, for Smart Import source files).
+Genuinely emulator-verified: a new `storage-tests/` Node harness (mirrors `firestore-tests/`'s exact
+pattern) runs 10 tests against the real local Storage Emulator — ownership, size/MIME rejection, org-
+scoped read, immutable feedback attachments, public menu-image reads with denied writes, and the
+fail-closed default for an unlisted path — all 10 passing.
+
+**New `core/device_tokens/`** (mirrors `core/account_deletion`'s exact shape and "lives in `core/`
+because it's reachable from `features/auth`" reasoning): `DeviceToken` (uid/token/platform/
+registeredAt/revokedAt — a revoked token is marked, never hard-deleted, matching this codebase's
+append-first-then-mark convention), `InMemoryDeviceTokenRepository`, `RegisterDeviceToken` (idempotent
+— re-registering an already-active token returns the existing record; re-registering a *revoked* one
+creates a fresh record under a new id rather than silently un-revoking history), `RevokeDeviceTokensForUser`.
+Wired into `AuthNotifier.logout()` — signing out now also revokes every active device token for that
+uid, so a signed-out device stops being addressable by that identity. The raw FCM token itself is
+documented as a value `LogRedactor` must treat like any other token if ever logged (no code path logs
+it today, but the doc comment records the requirement for when one does).
+
+**Scope, stated honestly — this is the ownership/authorization seam, not the full feature**: no upload
+UI exists yet for any Storage path (customer photo capture, feedback attachment picker, menu-image/
+brand-asset staff upload); no real FCM push is ever sent (registration is real, delivery is not); no
+quiet-hours suppression, delivery-status tracking, deep-link payload versioning, or malware-scanning
+seam were built. `deviceTokens`'s Firestore collection (named in `docs/firestore_data_model.md` since
+Sprint 9B) has no real Firestore-backed Dart repository this sprint either — `InMemory` only, the same
+"one pilot slice" discipline every prior sprint in this phase has applied. These are named, bounded
+gaps for a future sprint, not silently claimed as done.
+
+### Confidence
+
+9H: Dart — 2257 → 2263 tests (`DeviceToken`/`RegisterDeviceToken`/`RevokeDeviceTokensForUser` unit
+tests, plus a new `AuthNotifier.logout()` device-token-revocation test). Storage rules — 10 new Node
+tests, genuinely run against the real local Storage Emulator, 10/10 passing. `dart format`/
+`flutter analyze` clean.
