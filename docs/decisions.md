@@ -3616,3 +3616,49 @@ gaps for a future sprint, not silently claimed as done.
 tests, plus a new `AuthNotifier.logout()` device-token-revocation test). Storage rules — 10 new Node
 tests, genuinely run against the real local Storage Emulator, 10/10 passing. `dart format`/
 `flutter analyze` clean.
+
+### Decision 10 — Observability & Operations: documentation-first, per the kickoff's own framing (9I)
+
+New `docs/observability_and_operations.md`: an honest inventory table (real: Crashlytics, `LoggingService`/
+`LogRedactor`, `firebaseReadyProvider`, per-domain audit trails, Cloud Function structured logs,
+`orderEvents`' explicit not-yet-processed markers; foundation-only: maintenance mode, feature kill
+switches; unbuilt: correlation IDs, user-safe error reference codes, a tenant-aware diagnostics
+dashboard, support incident records, aggregated security-denial metrics) plus 8 named runbook entries
+(Firebase unreachable, Firestore permission-denied storm, OTP delivery failure, emulator/CI drift,
+Cloud Function cold-start/timeout, Storage quota/oversized-upload, cash reconciliation mismatch,
+courier location loss) — each a Symptom → Likely cause → First checks → Mitigation foundation, not an
+exhaustively tested playbook (this app has no production traffic yet, so none of these have been
+exercised against a real incident). No new code this sprint — the kickoff's own 9I specification is
+overwhelmingly documentation/process content once the real infrastructure (Crashlytics, logging,
+audit trails) was already built in earlier sprints; inventing new code surface here just to have
+"something to commit" would not have served the sprint's actual purpose.
+
+### Decision 11 — Backup, Deployment & CI/CD Foundation: real CI extension; the rest documented,
+explicitly not executed against a real project (9J)
+
+**Real, added to `.github/workflows/ci.yml`**: a new `emulator-tests` job (installs JDK 21 + Node 20 +
+`firebase-tools`, then runs the exact three `firebase emulators:exec` commands this phase already
+proved work locally — `firestore-tests/` 22 tests, `storage-tests/` 10 tests, `functions/` 9 tests) and
+a new `forbidden-secrets-scan` job (a lightweight grep for private-key/service-account patterns,
+excluding the known-safe committed FlutterFire client-config files). **Honesty note, stated in the
+workflow's own commit and in `docs/deployment_and_operations.md`**: neither new job has been observed
+to actually pass in a real GitHub Actions run during this phase — no CI runner was available in this
+session to verify it; the jobs mirror commands already proven correct locally, but "should work" is not
+the same claim as "verified green in CI," and this document does not conflate the two.
+
+New `docs/deployment_and_operations.md` covers environments (the three real, already-provisioned
+Firebase projects and how `AppEnvironment`/`FirebaseOptionsSelector` pick between them), secrets
+handling (what's genuinely safe to commit vs. never), a documented-not-tested Firestore PITR/export
+backup strategy, a documented-not-tested Storage retention approach, migration-versioning/rollback
+intent (no tooling exists), the real `firebase deploy --only ...` commands `firebase.json` is already
+wired for (never run against a real project this phase — no `.firebaserc` alias for the three real
+projects exists yet, deliberately, only the local-emulator-only `demo-` project id from Sprint 9F), and
+an explicit list of what CI does *not* yet check (a static "no release `InMemory`/`NoOp` fallback"
+analyzer, and an automated proof — beyond the existing manual code-review trail — that release builds
+can never reach a deterministic dev OTP).
+
+### Confidence
+
+9I/9J: documentation-only for 9I; 9J adds two new CI jobs (not independently runnable/verifiable in
+this session — no GitHub Actions runner available) plus two new docs. No Dart/Flutter files changed;
+`flutter analyze` reconfirmed clean.

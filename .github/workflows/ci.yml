@@ -25,3 +25,76 @@ jobs:
       - run: flutter analyze
 
       - run: flutter test
+
+  emulator-tests:
+    # Sprint 9J (docs/decisions.md ADR-026) — runs the three Firebase-
+    # emulator-backed suites this phase built (Firestore Security Rules,
+    # Storage Security Rules, Cloud Functions) in CI, not just locally.
+    # A separate job from `quality` (no Flutter toolchain needed here) so
+    # a failure here is clearly attributable to the emulator layer, not
+    # the Dart app.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21' # required by the Firestore Emulator
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm install -g firebase-tools
+
+      - name: Install firestore-tests dependencies
+        working-directory: firestore-tests
+        run: npm install
+
+      - name: Install storage-tests dependencies
+        working-directory: storage-tests
+        run: npm install
+
+      - name: Install and build functions
+        working-directory: functions
+        run: |
+          npm install
+          npm run build
+
+      - name: Run Firestore Security Rules tests
+        run: firebase emulators:exec --only firestore "cd firestore-tests && npm test"
+
+      - name: Run Storage Security Rules tests
+        run: firebase emulators:exec --only storage "cd storage-tests && npm test"
+
+      - name: Run Cloud Functions tests
+        run: firebase emulators:exec --only firestore,functions "cd functions && node --test lib/test/*.test.js"
+
+  forbidden-secrets-scan:
+    # Sprint 9J — a lightweight, real check for the kickoff's "no
+    # production secret in Flutter source / no raw secrets in Firestore"
+    # requirement. Deliberately simple (grep-based, not a dedicated
+    # secret-scanning service) — catches the obvious, common patterns;
+    # documented in docs/deployment_and_operations.md as a floor, not a
+    # substitute for a real secret-scanning tool before this app ever
+    # takes real production traffic.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for obvious secret patterns
+        run: |
+          set -e
+          # Excludes firebase_options*.dart / google-services.json / GoogleService-Info.plist:
+          # these are standard FlutterFire client-config artifacts, not secrets
+          # (docs/decisions.md ADR-026 Decision 1) - only real credential shapes
+          # (private keys, service-account JSON) are checked for.
+          if grep -RIn --exclude-dir=.git --exclude-dir=build --exclude-dir=node_modules \
+              --exclude='firebase_options*.dart' --exclude='google-services.json' \
+              --exclude='GoogleService-Info.plist' \
+              -E "BEGIN (RSA |EC )?PRIVATE KEY|\"type\": *\"service_account\"" . ; then
+            echo "::error::Possible private key or service-account credential found in the repository."
+            exit 1
+          fi
+          echo "No obvious secret patterns found."

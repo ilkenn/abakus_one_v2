@@ -1346,7 +1346,23 @@ at the end.
   (registration only); no quiet-hours/delivery-status/deep-link-versioning/malware-scanning; the
   device-token repository is `InMemory` only (no real Firestore-backed counterpart this sprint). Dart:
   2257 → 2263 tests.
-- **9I–9J: not yet started.**
+- **9I — Observability, Support & Operations: DONE (documentation-first, per the kickoff's own framing
+  of this sprint).** New `docs/observability_and_operations.md` — an honest real/foundation-only/unbuilt
+  inventory table plus 8 named runbook foundations. No new code — the real infrastructure this
+  inventory documents (Crashlytics, `LoggingService`/`LogRedactor`, `firebaseReadyProvider`, audit
+  trails) was already built in Sprints 9A/9B/1; this sprint's job was the honest accounting, not new
+  surface.
+- **9J — Backup, Deployment & CI/CD Foundation: DONE for a real CI extension; the rest is documented,
+  not executed against a real project.** `.github/workflows/ci.yml` gained an `emulator-tests` job
+  (runs the 9B/9F/9G/9H emulator suites — 41 tests total — in CI) and a `forbidden-secrets-scan` job.
+  **Not independently verified in this session** — no GitHub Actions runner was available; the jobs
+  mirror commands already proven correct locally. New `docs/deployment_and_operations.md` covers
+  environments, secrets handling, a documented-not-tested Firestore PITR/backup strategy, migration-
+  versioning intent, the real (never-yet-run) `firebase deploy` commands, and what CI still doesn't
+  check.
+- **9A–9J: all ten sub-parts of the Phase 9 kickoff have now landed.** See the mandatory final
+  adversarial security review and the 30-item final report (below/`docs/decisions.md`) for the
+  phase-gate verdict.
 
 **Production limitations, stated plainly (still true after 9A–9E):** every repository except
 `CanonicalOrderRepository` (Firestore-backed once Firebase is ready, `InMemory*` otherwise) remains

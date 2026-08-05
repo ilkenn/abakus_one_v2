@@ -3683,11 +3683,39 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
   malware-scanning, `InMemory`-only device-token repository).
 - **Related Modules**: Profile, CRM, Notifications, Platform (Firebase infrastructure)
 
+### DL-034 — Observability & Operations; Backup, Deployment & CI/CD Foundation (Phase 9, sprints 9I–9J)
+- **Decision**: 9I is documentation-first (an honest observability inventory + 8 runbook foundations) —
+  no new code, since the real infrastructure it documents was already built in earlier sprints. 9J adds
+  two real CI jobs (`emulator-tests` running all 41 emulator-backed tests from 9B/9F/9G/9H;
+  `forbidden-secrets-scan`) plus deployment/backup documentation — explicitly not executed against any
+  real Firebase project, and the CI jobs themselves not independently verified in a live GitHub Actions
+  run this session (no runner available).
+- **Status**: DECIDED
+- **Source**: User, Phase 9 kickoff's 9I/9J specifications, both of which are largely
+  operational/process content by their own wording ("runbook foundations," "do not deploy production
+  automatically without explicit release approval").
+- **Date**: 2026-08-05
+- **Consequences**: `docs/decisions.md` ADR-026 Decisions 10–11 record the full reasoning. New
+  `docs/observability_and_operations.md` and `docs/deployment_and_operations.md`.
+- **Related Modules**: Platform (Firebase infrastructure), all modules (runbook coverage)
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.2 — 2026-08-05
+- **Version**: 3.2
+- **Date**: 2026-08-05
+- **Summary**: Phase 9 sprints 9I–9J (Observability & Operations; Backup, Deployment & CI/CD
+  Foundation). New DL-034. Two new docs (`docs/observability_and_operations.md`,
+  `docs/deployment_and_operations.md`), two new CI jobs. No new business rule IDs — process/
+  infrastructure scope. See `docs/decisions.md` ADR-026 Decisions 10–11.
+- **Author**: Claude, at the user's direction (autonomous Phase 9 implementation mandate).
+- **Reason**: Record the observability inventory, runbook foundations, and CI/deployment
+  documentation these two sprints established, and the explicit honesty note that the new CI jobs were
+  not independently verified against a live GitHub Actions run this session.
 
 ### v3.1 — 2026-08-05
 - **Version**: 3.1
