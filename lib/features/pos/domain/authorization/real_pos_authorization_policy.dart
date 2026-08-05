@@ -18,6 +18,17 @@ const String kBranchIdAuthorizationContextKey = 'branchId';
 /// own doc comment for why.
 const String kOrganizationIdAuthorizationContextKey = 'organizationId';
 
+/// The context key a caller passing a restaurant-scoped action's target
+/// restaurant id must use — Phase 9 (`docs/decisions.md` ADR-026),
+/// closing the restaurant-scope gap `CheckModuleAccess`'s own doc
+/// comment previously named as "a separate, pre-existing gap, not
+/// invented here." Resolved to the owning organization and checked with
+/// the exact same no-role-exemption rule
+/// [kOrganizationIdAuthorizationContextKey] already uses — a restaurant
+/// is tenant data one hop below `Organization`, never its own
+/// independent boundary.
+const String kRestaurantIdAuthorizationContextKey = 'restaurantId';
+
 /// The first real, production-capable [PosAuthorizationPolicy]
 /// implementation in this codebase — Sprint 5E, resolving the Phase 5
 /// phase-gate blocker recorded in `docs/decisions.md` ADR-012/ADR-022.
@@ -65,12 +76,39 @@ const String kOrganizationIdAuthorizationContextKey = 'organizationId';
 /// separate platform-role stack (`features/platform/`) ever spans more
 /// than one organization. As with branch scoping, this is additive —
 /// existing call sites that never pass this context key are unaffected.
+///
+/// **Phase 9 restaurant scoping** (`docs/decisions.md` ADR-026): when
+/// `context` carries [kRestaurantIdAuthorizationContextKey], the
+/// restaurant is resolved to its owning organization via the injected
+/// [_resolveRestaurantOrganizationId] closure, then checked with the
+/// exact same no-exemption rule as organization scoping above — a
+/// restaurant is tenant data one hop below `Organization`, never its
+/// own boundary. If no resolver was wired, or it can't resolve the
+/// given id, this **denies** (fail closed) rather than skipping the
+/// check — closes the gap `CheckModuleAccess` previously documented as
+/// "a separate, pre-existing gap" for `EntitlementScopeType.restaurant`.
 class RealPosAuthorizationPolicy implements PosAuthorizationPolicy {
   const RealPosAuthorizationPolicy({
     required ActorSession? Function() currentSession,
-  }) : _currentSession = currentSession;
+    Future<String?> Function(String restaurantId)?
+        resolveRestaurantOrganizationId,
+  })  : _currentSession = currentSession,
+        _resolveRestaurantOrganizationId = resolveRestaurantOrganizationId;
 
   final ActorSession? Function() _currentSession;
+
+  /// Resolves a restaurant id to its owning organization id — injected
+  /// as a closure (mirrors [_currentSession]'s own shape) so this class
+  /// stays free of any repository dependency; the real implementation is
+  /// wired at the provider level against `RestaurantRepository`
+  /// (`features/admin`), never imported here directly (`domain -> data`
+  /// stays forbidden even across features — `CLAUDE.md` §3).
+  ///
+  /// `null` (not wired at all) is treated identically to "resolution
+  /// failed" — Phase 9's Fail Closed principle: a restaurant-scoped
+  /// check this policy cannot actually resolve must never silently pass.
+  final Future<String?> Function(String restaurantId)?
+      _resolveRestaurantOrganizationId;
 
   @override
   Future<AuthorizationResult> authorize({
@@ -128,6 +166,30 @@ class RealPosAuthorizationPolicy implements PosAuthorizationPolicy {
         reason:
             'Actor does not have access to organization "$targetOrganizationId"',
       );
+    }
+    final targetRestaurantId = context[kRestaurantIdAuthorizationContextKey];
+    if (targetRestaurantId != null) {
+      final resolve = _resolveRestaurantOrganizationId;
+      final resolvedOrganizationId =
+          resolve == null ? null : await resolve(targetRestaurantId);
+      if (resolvedOrganizationId == null) {
+        // Fail closed — unresolvable (no resolver wired, or the
+        // restaurant id doesn't exist) is never treated as "no
+        // restriction," the same reasoning "unknown actor" already uses.
+        return AuthorizationResult(
+          granted: false,
+          reason: 'Restaurant "$targetRestaurantId" could not be resolved '
+              'to an organization',
+        );
+      }
+      if (!session.hasOrganizationAccess(resolvedOrganizationId)) {
+        return AuthorizationResult(
+          granted: false,
+          reason: 'Actor does not have access to organization '
+              '"$resolvedOrganizationId" (via restaurant '
+              '"$targetRestaurantId")',
+        );
+      }
     }
     return const AuthorizationResult(granted: true);
   }

@@ -398,5 +398,94 @@ void main() {
 
       expect(result.isGranted, isTrue);
     });
+
+    test(
+        'a restaurant-scoped grant is denied for a manager without access '
+        'to the resolved organization (Phase 9 regression — closes the '
+        'restaurant-scope gap)', () async {
+      final entitlementRepository = InMemoryEntitlementGrantRepository(seed: [
+        EntitlementGrant(
+          id: 'g1',
+          module: EntitlementModule.crm,
+          scopeType: EntitlementScopeType.restaurant,
+          scopeId: 'restaurant-1',
+          status: EntitlementStatus.active,
+          grantedByStaffId: 'admin-1',
+          grantedAt: DateTime(2026, 1, 1),
+          revision: 1,
+        ),
+      ]);
+      const session = ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        // Deliberately no organizationAccess for the organization
+        // "restaurant-1" resolves to.
+      );
+      final useCase = CheckModuleAccess(
+        entitlementRepository: entitlementRepository,
+        featureFlagsService: FakeFeatureFlagsService(
+          enabledKeys: {FeatureFlagsKeys.crmEnabled},
+        ),
+        authorizationPolicy: RealPosAuthorizationPolicy(
+          currentSession: () => session,
+          resolveRestaurantOrganizationId: (restaurantId) async =>
+              restaurantId == 'restaurant-1' ? 'org-1' : null,
+        ),
+      );
+
+      final result = await useCase(
+        module: EntitlementModule.crm,
+        scopeType: EntitlementScopeType.restaurant,
+        scopeId: 'restaurant-1',
+        actorStaffId: 'manager-1',
+      );
+
+      expect(result.isGranted, isFalse);
+      expect(result.denialReason, ModuleAccessDenialReason.permissionDenied);
+    });
+
+    test(
+        'a restaurant-scoped grant is allowed for a manager with access to '
+        'the resolved organization', () async {
+      final entitlementRepository = InMemoryEntitlementGrantRepository(seed: [
+        EntitlementGrant(
+          id: 'g1',
+          module: EntitlementModule.crm,
+          scopeType: EntitlementScopeType.restaurant,
+          scopeId: 'restaurant-1',
+          status: EntitlementStatus.active,
+          grantedByStaffId: 'admin-1',
+          grantedAt: DateTime(2026, 1, 1),
+          revision: 1,
+        ),
+      ]);
+      const session = ActorSession(
+        actorId: 'manager-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+        organizationAccess: {'org-1'},
+      );
+      final useCase = CheckModuleAccess(
+        entitlementRepository: entitlementRepository,
+        featureFlagsService: FakeFeatureFlagsService(
+          enabledKeys: {FeatureFlagsKeys.crmEnabled},
+        ),
+        authorizationPolicy: RealPosAuthorizationPolicy(
+          currentSession: () => session,
+          resolveRestaurantOrganizationId: (restaurantId) async =>
+              restaurantId == 'restaurant-1' ? 'org-1' : null,
+        ),
+      );
+
+      final result = await useCase(
+        module: EntitlementModule.crm,
+        scopeType: EntitlementScopeType.restaurant,
+        scopeId: 'restaurant-1',
+        actorStaffId: 'manager-1',
+      );
+
+      expect(result.isGranted, isTrue);
+    });
   });
 }

@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../domain/authorization/actor_session.dart';
 import '../../domain/authorization/pos_authorization_policy.dart';
 import '../../domain/authorization/real_pos_authorization_policy.dart';
@@ -27,8 +28,19 @@ final actorSessionProvider = StateProvider<ActorSession?>((ref) => null);
 /// Reads [actorSessionProvider] on every check, so a role switch or
 /// sign-out takes effect on the very next authorization call, with no
 /// stale cached grant.
+///
+/// **Phase 9** (`docs/decisions.md` ADR-026): wires the real
+/// restaurant-to-organization resolver against `RestaurantRepository`
+/// (`features/admin`) — the one place `RealPosAuthorizationPolicy`'s
+/// restaurant-scope check actually touches a repository, kept out of
+/// the policy class itself to preserve `domain -> data` layering.
 final posAuthorizationPolicyProvider = Provider<PosAuthorizationPolicy>((ref) {
   return RealPosAuthorizationPolicy(
     currentSession: () => ref.read(actorSessionProvider),
+    resolveRestaurantOrganizationId: (restaurantId) async {
+      final restaurant =
+          await ref.read(restaurantRepositoryProvider).findById(restaurantId);
+      return restaurant?.organizationId;
+    },
   );
 });

@@ -445,5 +445,150 @@ void main() {
         expect(result.granted, isTrue);
       });
     });
+
+    group('restaurant scoping (Phase 9)', () {
+      test(
+          'a restaurant id resolved to an organization the actor lacks '
+          'access to is denied', () async {
+        const session = ActorSession(
+          actorId: 'admin-1',
+          roles: {StaffRole.admin},
+          activeRole: StaffRole.admin,
+          organizationAccess: {'org-2'},
+        );
+        final policy = RealPosAuthorizationPolicy(
+          currentSession: () => session,
+          resolveRestaurantOrganizationId: (restaurantId) async =>
+              restaurantId == 'restaurant-1' ? 'org-1' : null,
+        );
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageRestaurant,
+          actorStaffId: 'admin-1',
+          context: const {
+            kRestaurantIdAuthorizationContextKey: 'restaurant-1',
+          },
+        );
+
+        expect(result.granted, isFalse);
+        expect(result.reason, contains('org-1'));
+      });
+
+      test(
+          'a restaurant id resolved to an organization the actor holds is '
+          'allowed', () async {
+        const session = ActorSession(
+          actorId: 'manager-1',
+          roles: {StaffRole.manager},
+          activeRole: StaffRole.manager,
+          organizationAccess: {'org-1'},
+        );
+        final policy = RealPosAuthorizationPolicy(
+          currentSession: () => session,
+          resolveRestaurantOrganizationId: (restaurantId) async =>
+              restaurantId == 'restaurant-1' ? 'org-1' : null,
+        );
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageBranch,
+          actorStaffId: 'manager-1',
+          context: const {
+            kRestaurantIdAuthorizationContextKey: 'restaurant-1',
+          },
+        );
+
+        expect(result.granted, isTrue);
+      });
+
+      test(
+          'no role is exempt from restaurant scoping, mirroring '
+          'organization scoping — admin without access is still denied',
+          () async {
+        const session = ActorSession(
+          actorId: 'admin-1',
+          roles: {StaffRole.admin},
+          activeRole: StaffRole.admin,
+        );
+        final policy = RealPosAuthorizationPolicy(
+          currentSession: () => session,
+          resolveRestaurantOrganizationId: (restaurantId) async => 'org-1',
+        );
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageOrganization,
+          actorStaffId: 'admin-1',
+          context: const {
+            kRestaurantIdAuthorizationContextKey: 'restaurant-1',
+          },
+        );
+
+        expect(result.granted, isFalse);
+      });
+
+      test(
+          'no resolver wired at all denies (fail closed), never silently '
+          'skips the check', () async {
+        const session = ActorSession(
+          actorId: 'admin-1',
+          roles: {StaffRole.admin},
+          activeRole: StaffRole.admin,
+          organizationAccess: {'org-1'},
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageOrganization,
+          actorStaffId: 'admin-1',
+          context: const {
+            kRestaurantIdAuthorizationContextKey: 'restaurant-1',
+          },
+        );
+
+        expect(result.granted, isFalse);
+      });
+
+      test(
+          'an unresolvable restaurant id (resolver returns null) denies, '
+          'never silently skips the check', () async {
+        const session = ActorSession(
+          actorId: 'admin-1',
+          roles: {StaffRole.admin},
+          activeRole: StaffRole.admin,
+          organizationAccess: {'org-1'},
+        );
+        final policy = RealPosAuthorizationPolicy(
+          currentSession: () => session,
+          resolveRestaurantOrganizationId: (restaurantId) async => null,
+        );
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageOrganization,
+          actorStaffId: 'admin-1',
+          context: const {
+            kRestaurantIdAuthorizationContextKey: 'unknown-restaurant',
+          },
+        );
+
+        expect(result.granted, isFalse);
+      });
+
+      test('an action with no restaurantId in context is unaffected', () async {
+        const session = ActorSession(
+          actorId: 'admin-1',
+          roles: {StaffRole.admin},
+          activeRole: StaffRole.admin,
+        );
+        final policy =
+            RealPosAuthorizationPolicy(currentSession: () => session);
+
+        final result = await policy.authorize(
+          action: PosAuthorizedAction.manageOrganization,
+          actorStaffId: 'admin-1',
+        );
+
+        expect(result.granted, isTrue);
+      });
+    });
   });
 }

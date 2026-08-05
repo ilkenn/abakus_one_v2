@@ -5,7 +5,8 @@ import '../../../pos/domain/authorization/pos_authorized_action.dart';
 import '../../../pos/domain/authorization/real_pos_authorization_policy.dart'
     show
         kBranchIdAuthorizationContextKey,
-        kOrganizationIdAuthorizationContextKey;
+        kOrganizationIdAuthorizationContextKey,
+        kRestaurantIdAuthorizationContextKey;
 import '../../data/entitlement_grant_repository.dart';
 import '../../domain/entitlement_module.dart';
 import '../../domain/entitlement_scope_type.dart';
@@ -136,10 +137,12 @@ class CheckModuleAccess {
     // Phase 8S security pass (`docs/decisions.md` ADR-025): every scope
     // type that has a corresponding `RealPosAuthorizationPolicy` context
     // check must forward it — a scope this switch doesn't recognize must
-    // never silently skip authorization context. `EntitlementScopeType
-    // .restaurant` has no equivalent check anywhere in this codebase's
-    // authorization policy yet (only branch/organization exist) — a
-    // separate, pre-existing gap, not invented here.
+    // never silently skip authorization context. Phase 9
+    // (`docs/decisions.md` ADR-026) closed the `EntitlementScopeType
+    // .restaurant` gap this comment used to name — `RealPosAuthorizationPolicy`
+    // now resolves a restaurant id to its owning organization and applies
+    // the same no-exemption check, so this switch forwards a restaurant
+    // context key too, exhaustively covering all three scope types.
     final Map<String, String> authorizationContext;
     switch (scopeType) {
       case EntitlementScopeType.branch:
@@ -149,7 +152,9 @@ class CheckModuleAccess {
           kOrganizationIdAuthorizationContextKey: scopeId,
         };
       case EntitlementScopeType.restaurant:
-        authorizationContext = const {};
+        authorizationContext = {
+          kRestaurantIdAuthorizationContextKey: scopeId,
+        };
     }
     final authResult = await _authorizationPolicy.authorize(
       action: action,
