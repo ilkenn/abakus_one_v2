@@ -2139,3 +2139,19 @@ final class InvalidPurchaseOrderTransitionViolation
   String get description =>
       'Invalid purchase order transition: $fromStatusName -> $toStatusName';
 }
+
+/// `CancelAccountDeletionRequest` was called for a request that is not
+/// currently cancellable — either it never existed, or its cooling-off
+/// window has already elapsed/it was already cancelled or completed
+/// (Phase 9 Sprint 9G, `docs/decisions.md` ADR-026).
+final class AccountDeletionRequestNotCancellableViolation
+    extends BusinessRuleViolation {
+  const AccountDeletionRequestNotCancellableViolation(
+      {required this.requestId});
+
+  final String requestId;
+
+  @override
+  String get description =>
+      'Account deletion request "$requestId" is not cancellable';
+}

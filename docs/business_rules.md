@@ -3546,6 +3546,44 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
   BR-PLATFORM-001, BR-PLATFORM-002, BR-BRANDING-001, BR-BRANDING-002, BR-INTEGRATION-001,
   BR-INTEGRATION-002, BR-INTEGRATION-003, BR-PAYMENTHUB-001, BR-PAYMENTHUB-002
 
+# Account Deletion & Consent
+
+### BR-ACCOUNT-001 — Account deletion is a 7-day cooling-off request, cancellable, with idempotent
+  server-side anonymization and a PII-free audit trail (Phase 9 Sprint 9G, ADR-026)
+- **Status**: VERIFIED (Dart lifecycle fully tested; Cloud Function emulator-verified; not deployed)
+- **Rule**: Requesting deletion (`RequestAccountDeletion`) is idempotent (a second request for an
+  already-active uid returns the existing request, never a duplicate) and starts a 7-day cooling-off
+  window. During cooling-off, and permanently after completion, `AuthNotifier` refuses *new* sign-in
+  attempts for that uid (`OtpVerificationResult.accountBlocked`, a distinct case from `invalidCode` so
+  the UI never claims a correct code was wrong). The request remains cancellable
+  (`CancelAccountDeletionRequest`, window-checked via `AccountDeletionRequest.canCancelAt(now)`) because
+  the *currently open* session is deliberately not force-signed-out when the request is made — only
+  *future* sign-in attempts are blocked. Once the window elapses, the Cloud Function
+  `processAccountDeletion` anonymizes the linked CRM `Customer` record (`displayName`/`phoneNumber`
+  cleared, `accountStatus: restricted`) idempotently and writes an audit record carrying only
+  `requestId` and a timestamp — never `uid`, phone number, or display name. **Known limitations**: only
+  the CRM `Customer` record is anonymized this sprint (media/loyalty/notification cascading has no real
+  repository yet to reach into); orders/audit trails are deliberately left untouched (`Order.customerId`
+  keeps the same `uid` — a stable, non-PII reference on its own), satisfying "legally-required records
+  retained with identity minimization."
+- **Owner Agent**: security_engineer
+- **Related Modules**: Auth, Profile, CRM, Platform (Firebase infrastructure)
+
+### BR-ACCOUNT-002 — Privacy Policy / Terms acceptance is versioned evidence, never fabricated legal
+  content (Phase 9 Sprint 9G, ADR-026)
+- **Status**: VERIFIED (mechanism only — no live flow calls it yet)
+- **Rule**: `NotificationSettingsModel.privacyPolicyAcceptedAt`/`privacyPolicyAcceptedVersion` and
+  `termsAcceptedAt`/`termsAcceptedVersion` record consent evidence; the version string is always stamped
+  from `core/legal/legal_document_version.dart` (`acceptPrivacyPolicy`/`acceptTerms` never accept a
+  caller-supplied version) so an acceptance record can never claim consent to content that was never
+  actually shown. The current version (`'draft-1'`) is explicitly marked DRAFT — LEGAL REVIEW REQUIRED,
+  matching the kickoff's "do not fabricate final legal text" instruction; `AccountDataScreen`'s
+  pre-existing KVKK-adjacent paragraph carries the same explicit marker. **Known limitation**: no
+  onboarding/login screen calls either acceptance method yet — there is no real legal content to present
+  for acceptance.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Notifications, Profile
+
 ### DL-029 — Production Backend, Canonical Identity & Real Data Platform (Phase 9, sprints 9A–9C)
 - **Decision**: Firebase confirmed as the accepted backend (real dependencies added, emulator wiring
   for Auth/Firestore/Storage/Functions, real Crashlytics integration); a shared-project/shared-collection
@@ -3610,11 +3648,44 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Related Modules**: Orders, POS, Platform (Firebase infrastructure)
 - **Business Rule IDs**: BR-ORDER-012, BR-ORDER-013
 
+### DL-032 — Account Deletion, Export & Consent Backend (Phase 9, sprint 9G)
+- **Decision**: Implements the user-approved 7-day cooling-off account-deletion policy end to end for
+  its core lifecycle: idempotent requests, sign-in blocking for new attempts (not the current open
+  session, resolving the "blocked" vs. "cancellable" tension explicitly), window-checked cancellation,
+  and idempotent server-side anonymization via a Cloud Function. Consent evidence (versioned Privacy
+  Policy/Terms acceptance) is added as a real, tested mechanism with no live caller yet, since no real
+  legal content exists. Data export remains the pre-existing mock, deliberately not touched.
+- **Status**: DECIDED
+- **Source**: User, Phase 9 kickoff's explicit account-deletion policy (7-day default cooling-off;
+  login blocked/sessions revoked during cooling-off; cancellable after identity verification;
+  anonymize/retain-with-minimization after) plus `docs/phase9_architecture_analysis.md` §15's literal
+  consent-evidence spec.
+- **Date**: 2026-08-05
+- **Consequences**: See BR-ACCOUNT-001/002 above. `docs/decisions.md` ADR-026 Decision 8 records the
+  full design, the login-block/cancellation contradiction and its resolution, and the complete honest
+  scope list (only `Customer` anonymized; no live consent-acceptance caller; export still mocked; no
+  real Firestore-backed Dart repository for deletion requests this sprint).
+- **Related Modules**: Auth, Profile, CRM, Notifications, Platform (Firebase infrastructure)
+- **Business Rule IDs**: BR-ACCOUNT-001, BR-ACCOUNT-002
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.0 — 2026-08-05
+- **Version**: 3.0
+- **Date**: 2026-08-05
+- **Summary**: Phase 9 sprint 9G (Account Deletion, Export & Consent Backend). New "Account Deletion &
+  Consent" section: BR-ACCOUNT-001 (7-day cooling-off deletion lifecycle, idempotent, cancellable,
+  server-side anonymization) and BR-ACCOUNT-002 (versioned Privacy Policy/Terms consent evidence,
+  DRAFT — no legal content fabricated). New DL-032. See `docs/decisions.md` ADR-026 Decision 8.
+- **Author**: Claude, at the user's direction (autonomous Phase 9 implementation mandate).
+- **Reason**: Record the account-deletion business rules the user's own approved policy established,
+  including the explicit resolution of the "login blocked" vs. "request cancellable" tension the
+  literal policy wording creates, and the honest scope boundary (only the CRM Customer record is
+  anonymized; data export remains mocked; no live consent-acceptance caller exists yet).
 
 ### v2.9 — 2026-08-05
 - **Version**: 2.9

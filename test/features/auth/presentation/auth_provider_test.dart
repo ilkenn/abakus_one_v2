@@ -1,5 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:abakus_one_v2/core/account_deletion/account_deletion_providers.dart';
+import 'package:abakus_one_v2/core/account_deletion/data/account_deletion_request_repository.dart';
+import 'package:abakus_one_v2/core/account_deletion/domain/account_deletion_request.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/development_local_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
@@ -131,5 +134,147 @@ void main() {
     expect(container.read(authProvider).isAuthenticated, isFalse);
     expect(container.read(authProvider).session, isNull);
     expect(storage.stored, isNull);
+  });
+
+  group('account deletion sign-in blocking (Sprint 9G, ADR-026)', () {
+    // DevelopmentLocalAuthRepository derives uid as 'dev-$phoneNumber'.
+    const uid = 'dev-+905321234567';
+
+    test(
+        'verifyOtp refuses sign-in and clears the session for a coolingOff account',
+        () async {
+      final deletionRepository = InMemoryAccountDeletionRequestRepository();
+      await deletionRepository.save(AccountDeletionRequest(
+        id: 'req-1',
+        uid: uid,
+        status: AccountDeletionStatus.coolingOff,
+        requestedAt: DateTime.now(),
+        coolingOffEndsAt: DateTime.now().add(const Duration(days: 7)),
+        revision: 1,
+      ));
+      final blockedContainer = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            DevelopmentLocalAuthRepository(sessionStorage: storage),
+          ),
+          accountDeletionRequestRepositoryProvider
+              .overrideWithValue(deletionRepository),
+        ],
+      );
+      addTearDown(blockedContainer.dispose);
+      final notifier = blockedContainer.read(authProvider.notifier);
+      await notifier.requestOtp(validPhoneInput);
+
+      final result = await notifier.verifyOtp(
+        DevelopmentLocalAuthRepository.developmentOtpCode,
+      );
+
+      expect(result, OtpVerificationResult.accountBlocked);
+      expect(blockedContainer.read(authProvider).isAuthenticated, isFalse);
+      expect(blockedContainer.read(authProvider).error, isNotNull);
+      expect(storage.stored, isNull);
+    });
+
+    test('verifyOtp refuses sign-in for a completed (already-deleted) account',
+        () async {
+      final deletionRepository = InMemoryAccountDeletionRequestRepository();
+      await deletionRepository.save(AccountDeletionRequest(
+        id: 'req-1',
+        uid: uid,
+        status: AccountDeletionStatus.completed,
+        requestedAt: DateTime.now().subtract(const Duration(days: 8)),
+        coolingOffEndsAt: DateTime.now().subtract(const Duration(days: 1)),
+        completedAt: DateTime.now(),
+        revision: 2,
+      ));
+      final blockedContainer = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            DevelopmentLocalAuthRepository(sessionStorage: storage),
+          ),
+          accountDeletionRequestRepositoryProvider
+              .overrideWithValue(deletionRepository),
+        ],
+      );
+      addTearDown(blockedContainer.dispose);
+      final notifier = blockedContainer.read(authProvider.notifier);
+      await notifier.requestOtp(validPhoneInput);
+
+      final result = await notifier.verifyOtp(
+        DevelopmentLocalAuthRepository.developmentOtpCode,
+      );
+
+      expect(result, OtpVerificationResult.accountBlocked);
+      expect(blockedContainer.read(authProvider).isAuthenticated, isFalse);
+    });
+
+    test('verifyOtp allows sign-in for a cancelled deletion request', () async {
+      final deletionRepository = InMemoryAccountDeletionRequestRepository();
+      await deletionRepository.save(AccountDeletionRequest(
+        id: 'req-1',
+        uid: uid,
+        status: AccountDeletionStatus.cancelled,
+        requestedAt: DateTime.now().subtract(const Duration(days: 1)),
+        coolingOffEndsAt: DateTime.now().add(const Duration(days: 6)),
+        cancelledAt: DateTime.now(),
+        revision: 2,
+      ));
+      final allowedContainer = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            DevelopmentLocalAuthRepository(sessionStorage: storage),
+          ),
+          accountDeletionRequestRepositoryProvider
+              .overrideWithValue(deletionRepository),
+        ],
+      );
+      addTearDown(allowedContainer.dispose);
+      final notifier = allowedContainer.read(authProvider.notifier);
+      await notifier.requestOtp(validPhoneInput);
+
+      final result = await notifier.verifyOtp(
+        DevelopmentLocalAuthRepository.developmentOtpCode,
+      );
+
+      expect(result, OtpVerificationResult.success);
+      expect(allowedContainer.read(authProvider).isAuthenticated, isTrue);
+    });
+
+    test(
+        'checkPersistedSession refuses to restore a session for a coolingOff account',
+        () async {
+      storage.stored = AuthSession(
+        uid: uid,
+        phoneNumber: '+905321234567',
+        createdAt: DateTime.now(),
+        expiresAt: DateTime.now().add(const Duration(days: 1)),
+      );
+      final deletionRepository = InMemoryAccountDeletionRequestRepository();
+      await deletionRepository.save(AccountDeletionRequest(
+        id: 'req-1',
+        uid: uid,
+        status: AccountDeletionStatus.coolingOff,
+        requestedAt: DateTime.now(),
+        coolingOffEndsAt: DateTime.now().add(const Duration(days: 7)),
+        revision: 1,
+      ));
+      final blockedContainer = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            DevelopmentLocalAuthRepository(sessionStorage: storage),
+          ),
+          accountDeletionRequestRepositoryProvider
+              .overrideWithValue(deletionRepository),
+        ],
+      );
+      addTearDown(blockedContainer.dispose);
+
+      await blockedContainer
+          .read(authProvider.notifier)
+          .checkPersistedSession();
+
+      expect(blockedContainer.read(authProvider).isAuthenticated, isFalse);
+      expect(storage.stored, isNull);
+    });
   });
 }

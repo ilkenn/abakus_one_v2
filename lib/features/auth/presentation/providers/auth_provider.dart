@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../bootstrap/firebase_ready_provider.dart';
+import '../../../../core/account_deletion/account_deletion_providers.dart';
+import '../../../../core/account_deletion/domain/account_deletion_request.dart';
 import '../../domain/models/auth_session.dart';
 import '../../domain/models/otp_challenge.dart';
 import '../../domain/phone_number.dart';
@@ -78,6 +80,23 @@ class AuthNotifier extends Notifier<AuthState> {
 
   AuthRepository get _repository => ref.read(authRepositoryProvider);
 
+  /// Sprint 9G (`docs/decisions.md` ADR-026) — "during cooling-off: login
+  /// blocked/restricted"; a [AccountDeletionStatus.completed] account
+  /// stays blocked permanently (its data has already been anonymized —
+  /// there is no account left to sign back into). Only
+  /// [AccountDeletionStatus.cancelled] (or no request at all) allows
+  /// sign-in through. Deliberately reads `core/account_deletion` — never
+  /// `features/profile` — for the `core -> feature` layering reason
+  /// `AccountDeletionRequestRepository`'s own doc comment explains.
+  Future<bool> _isBlockedByDeletionRequest(String uid) async {
+    final request = await ref
+        .read(accountDeletionRequestRepositoryProvider)
+        .findLatestByUid(uid);
+    if (request == null) return false;
+    return request.status == AccountDeletionStatus.coolingOff ||
+        request.status == AccountDeletionStatus.completed;
+  }
+
   /// Called once by Splash at startup. Looks for a persisted session and,
   /// if a valid one exists, marks the user authenticated — this is the
   /// entire "auto login" behavior. Never throws: a broken/unreadable
@@ -85,9 +104,15 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> checkPersistedSession() async {
     try {
       final session = await _repository.loadSession();
-      if (session != null) {
-        state = state.copyWith(isAuthenticated: true, session: session);
+      if (session == null) return;
+      if (await _isBlockedByDeletionRequest(session.uid)) {
+        await _repository.clearSession();
+        state = state.copyWith(
+          error: 'Bu hesap için silme talebi bulunmaktadır. Giriş engellendi.',
+        );
+        return;
       }
+      state = state.copyWith(isAuthenticated: true, session: session);
     } catch (_) {
       // Defensive last line — loadSession itself should never throw, but
       // a corrupted/unreadable session must never crash the app.
@@ -154,6 +179,16 @@ class AuthNotifier extends Notifier<AuthState> {
       );
       if (result == OtpVerificationResult.success) {
         final session = await _repository.loadSession();
+        if (session != null && await _isBlockedByDeletionRequest(session.uid)) {
+          await _repository.clearSession();
+          state = state.copyWith(
+            isLoading: false,
+            clearPendingPhoneNumber: true,
+            error:
+                'Bu hesap için silme talebi bulunmaktadır. Giriş engellendi.',
+          );
+          return OtpVerificationResult.accountBlocked;
+        }
         state = state.copyWith(
           isLoading: false,
           isAuthenticated: true,

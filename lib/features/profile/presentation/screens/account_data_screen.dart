@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/account_deletion/domain/account_deletion_request.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -7,6 +8,15 @@ import '../../../../core/theme/app_radius.dart';
 import '../providers/account_data_provider.dart';
 import '../../domain/models/account_data_model.dart';
 
+/// Sprint 9G (`docs/decisions.md` ADR-026): the delete-account flow here
+/// is now backed by a real `AccountDeletionRequest`
+/// (`core/account_deletion`), not a UI-only confirmation dialog. There is
+/// no password field — this app has no password-based auth at all
+/// (phone + OTP only, `CLAUDE.md` §3/§9); the caller's already-
+/// authenticated session is this sprint's identity verification for
+/// *requesting* deletion (see `AccountDataNotifier.requestAccountDeletion`'s
+/// own doc comment for the fuller reasoning, including why cancellation
+/// does not force a sign-out first).
 class AccountDataScreen extends ConsumerStatefulWidget {
   const AccountDataScreen({super.key});
 
@@ -15,58 +25,80 @@ class AccountDataScreen extends ConsumerStatefulWidget {
 }
 
 class _AccountDataScreenState extends ConsumerState<AccountDataScreen> {
-  final _passwordController = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
   bool _understandCheck = false;
+  bool _busy = false;
 
-  @override
-  void dispose() {
-    _passwordController.dispose();
-    super.dispose();
-  }
+  Future<void> _processDeleteAccount() async {
+    if (!_understandCheck) return;
 
-  void _processDeleteAccount() {
-    if (!(_formKey.currentState?.validate() ?? false) || !_understandCheck) {
-      return;
-    }
-
-    showDialog(
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Son Onay'),
         content: const Text(
-          'Hesabınız ve tüm kişisel verileriniz geri döndürülemez şekilde kalıcı olarak silinecektir. Bu işlemi onaylıyor musunuz?',
+          'Hesabınız $_coolingOffDaysLabel gün içinde geri alınamaz şekilde '
+          'silinecektir. Bu süre içinde talebinizi iptal edebilirsiniz. '
+          'Devam etmek istiyor musunuz?',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, false),
             child: const Text('Vazgeç'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Hesabınız başarıyla silinmiştir. Verileriniz anonimleştirilecektir.',
-                  ),
-                  backgroundColor: Colors.redAccent,
-                ),
-              );
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            },
+            onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Kalıcı Olarak Sil'),
+            child: const Text('Silme Talebini Başlat'),
           ),
         ],
       ),
     );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _busy = true);
+    final success =
+        await ref.read(accountDataProvider.notifier).requestAccountDeletion();
+    if (!mounted) return;
+    setState(() => _busy = false);
+
+    if (!success) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Hesap silme talebiniz alındı. Bekleme süresi boyunca bu ekrandan '
+          'iptal edebilirsiniz.',
+        ),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
   }
+
+  Future<void> _cancelDeletion() async {
+    setState(() => _busy = true);
+    final success =
+        await ref.read(accountDataProvider.notifier).cancelAccountDeletion();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          success
+              ? 'Hesap silme talebiniz iptal edildi.'
+              : 'Talep artık iptal edilemiyor.',
+        ),
+      ),
+    );
+  }
+
+  static const String _coolingOffDaysLabel = '7';
 
   @override
   Widget build(BuildContext context) {
     final accountState = ref.watch(accountDataProvider);
     final notifier = ref.read(accountDataProvider.notifier);
+    final deletionRequest = accountState.deletionRequest;
+    final isCoolingOff =
+        deletionRequest?.status == AccountDeletionStatus.coolingOff;
 
     return Scaffold(
       appBar: AppBar(
@@ -106,7 +138,13 @@ class _AccountDataScreenState extends ConsumerState<AccountDataScreen> {
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
-                    'KVKK ve yasal mevzuatlar gereği geçmiş sipariş kayıtlarınız, mali yükümlülükler süresince güvenli sistemlerimizde saklanır. Hesap silme sonrasında tüm kişisel verileriniz kalıcı olarak anonimleştirilecektir.',
+                    'KVKK ve yasal mevzuatlar gereği geçmiş sipariş kayıtlarınız, '
+                    'mali yükümlülükler süresince güvenli sistemlerimizde saklanır. '
+                    'Hesap silme sonrasında tüm kişisel verileriniz kalıcı olarak '
+                    'anonimleştirilecektir.\n\n'
+                    'TASLAK — HUKUKİ İNCELEME GEREKLİ (DRAFT — LEGAL REVIEW '
+                    'REQUIRED): Bu metin nihai bir gizlilik politikası veya yasal '
+                    'metin değildir.',
                     style: AppTypography.bodyMedium.copyWith(
                       color: AppColors.textSecondary,
                     ),
@@ -244,55 +282,70 @@ class _AccountDataScreenState extends ConsumerState<AccountDataScreen> {
                 borderRadius: AppRadius.kMedium,
                 border: Border.all(color: Colors.red.withValues(alpha: 0.2)),
               ),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Hesabınızı sildiğinizde kazanılan tüm boncuklar, aktif kuponlar ve tanımlı adresler kalıcı olarak silinecektir. Bu işlem geri alınamaz.',
-                      style: AppTypography.bodyMedium.copyWith(
-                        color: Colors.redAccent,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    TextFormField(
-                      controller: _passwordController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Güvenlik İçin Şifrenizi Girin',
-                        hintText: '••••••',
-                      ),
-                      validator: (val) => (val == null || val.trim().isEmpty)
-                          ? 'Güvenlik doğrulaması için şifre gereklidir'
-                          : null,
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    CheckboxListTile(
-                      title: const Text(
-                        'Hesabımın ve verilerimin kalıcı olarak silineceğini anlıyorum.',
-                      ),
-                      value: _understandCheck,
-                      activeColor: Colors.red,
-                      contentPadding: EdgeInsets.zero,
-                      onChanged: (val) =>
-                          setState(() => _understandCheck = val ?? false),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed:
-                            _understandCheck ? _processDeleteAccount : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
+              child: isCoolingOff
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Hesap silme talebiniz beklemede. '
+                          '${deletionRequest!.coolingOffEndsAt.day.toString().padLeft(2, '0')}.'
+                          '${deletionRequest.coolingOffEndsAt.month.toString().padLeft(2, '0')}.'
+                          '${deletionRequest.coolingOffEndsAt.year} tarihinde '
+                          'kalıcı olarak silinecektir.',
+                          style: AppTypography.bodyMedium.copyWith(
+                            color: Colors.redAccent,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                        child: const Text('Hesap Silme Talebini Onayla'),
-                      ),
+                        const SizedBox(height: AppSpacing.md),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton(
+                            onPressed: _busy ? null : _cancelDeletion,
+                            child: const Text('Silme Talebini İptal Et'),
+                          ),
+                        ),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Hesabınızı sildiğinizde $_coolingOffDaysLabel günlük '
+                          'bekleme süresinin ardından kazanılan tüm boncuklar, '
+                          'aktif kuponlar ve tanımlı adresler kalıcı olarak '
+                          'silinecektir. Bekleme süresi içinde talebinizi iptal '
+                          'edebilirsiniz.',
+                          style: AppTypography.bodyMedium.copyWith(
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        CheckboxListTile(
+                          title: const Text(
+                            'Hesabımın ve verilerimin kalıcı olarak silineceğini anlıyorum.',
+                          ),
+                          value: _understandCheck,
+                          activeColor: Colors.red,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (val) =>
+                              setState(() => _understandCheck = val ?? false),
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: (_understandCheck && !_busy)
+                                ? _processDeleteAccount
+                                : null,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                            ),
+                            child: const Text('Hesap Silme Talebini Onayla'),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
             ),
           ],
         ),

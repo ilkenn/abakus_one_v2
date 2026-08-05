@@ -3486,3 +3486,91 @@ it yet in the app's own test suite.
 9F: 5 new Node tests, genuinely run against the real Functions + Firestore emulators together (not
 merely written and assumed correct) — 5/5 passing. No Dart/Flutter files changed; `flutter analyze`
 reconfirmed clean.
+
+### Decision 8 — Account Deletion: real request/cooling-off/cancel lifecycle in Dart; anonymization
+as a real, emulator-verified Cloud Function; the login-block/cancellation tension resolved explicitly
+(9G)
+
+Implements the user-approved policy verbatim: default 7-day cooling-off, login blocked during
+cooling-off and permanently after completion, request cancellable, cascading anonymization with
+legally-required records retained under identity minimization, PII-free audit.
+
+**New `core/account_deletion/`** (not a feature — see its own doc comment): `AccountDeletionRequest`
+(`pendingVerification -> coolingOff -> {cancelled | completed}`, mirroring
+`docs/firestore_data_model.md`'s `deletionRequests` collection shape), `AccountDeletionRequestRepository`
+(`InMemory` only this sprint), `RequestAccountDeletion` (idempotent — a second call for an already-
+active uid returns the existing request), `CancelAccountDeletionRequest` (window-checked via
+`AccountDeletionRequest.canCancelAt(now)`, which takes `now` explicitly rather than reading
+`DateTime.now()` internally — a real bug caught by this sprint's own tests: the first version silently
+compared against the wrong instant). Lives under `core/` specifically because it must be reachable from
+both `features/auth` (the sign-in gate) and `features/profile` (the request/cancel UI) without adding a
+second feature-to-feature import exception beyond the one documented auth↔crm case (`docs/decisions.md`
+ADR-022) — `core -> feature` stays forbidden either way, so the actual cascading anonymization (which
+needs to reach `features/crm`'s `Customer`) could not live here; see the Cloud Function below for where
+it actually lives instead.
+
+**The login-block / cancellation tension, resolved explicitly**: a naive reading of "login blocked
+during cooling-off" + "request cancellable" is self-contradicting — if sign-in is fully blocked, the
+user can never reach a screen to cancel. Resolved by scope: `AuthNotifier.checkPersistedSession`/
+`verifyOtp` block only *new* sign-in attempts (a fresh OTP verification, or restoring a persisted
+session after the app was closed) for `coolingOff`/`completed` accounts — a new `OtpVerificationResult
+.accountBlocked` case was added so the OTP screen shows the real reason, not a fabricated "wrong code"
+message (`invalidCode` was reused first, then corrected — the code was never actually wrong).
+`AccountDataNotifier.requestAccountDeletion` deliberately does **not** force-sign-out the *current*
+already-open session afterward, specifically so cancellation stays reachable without needing to pass
+through the now-blocking sign-in gate — documented as the same accepted "no live-session push-
+invalidation mechanism" limitation this codebase already carries for staff forced-revocation. Real,
+cross-device, mid-session revocation remains unbuilt, honestly.
+
+**Cloud Function `processAccountDeletion`** (`functions/src/processAccountDeletion.ts`) — an HTTPS
+**callable** function, chosen specifically because the kickoff asks for "callable/API entry points for
+both the Flutter app and a future public web page," which is exactly what `onCall` provides (a
+Scheduler-driven automatic sweep is reasonable future work, not built this sprint). Anonymizes the
+linked `customers/{uid}` document (`displayName`/`phoneNumber` cleared, `accountStatus: 'restricted'`)
+only once the cooling-off window has elapsed, inside a Firestore transaction; idempotent
+(`alreadyProcessed: true` on a repeat call for a `completed` request, never a second anonymization);
+fails closed (`HttpsError`) for an unknown request, a not-yet-due window, or any other unexpected state.
+Writes a PII-free audit record (`accountDeletionAuditEvents/{requestId}-completed` — `requestId` and a
+timestamp only, never `uid`/phone/display name). Genuinely emulator-verified: 4 new Node tests
+(anonymization, idempotency, fails-closed-not-due, fails-closed-unknown-request) calling the real
+callable endpoint over HTTP with the documented callable-functions wire protocol, all passing.
+
+**Scope, stated honestly — this is the one narrow slice, not the full cascade**: only the CRM `Customer`
+record is anonymized. Media (Storage), loyalty reward history, and notification preferences cascading
+are explicitly deferred — those don't have a real repository (Dart or Cloud Function) for this function
+to reach into yet; anonymizing a record that isn't real yet would be nothing to do. Orders/audit trails
+are deliberately left untouched (`Order.customerId` keeps the same `uid` string — a stable, non-PII
+opaque reference on its own) — "legally-required records retained with identity minimization." The Dart
+`InMemoryAccountDeletionRequestRepository` has no real Firestore-backed counterpart this sprint (mirrors
+Sprint 9E's "one pilot slice" discipline) — `processAccountDeletion` is built and emulator-tested
+against the exact document shape a future Firestore-backed Dart repository would write, ready for that
+migration, not proof that the two are wired together today.
+
+**Consent evidence** (`docs/phase9_architecture_analysis.md` §15's own literal spec): `NotificationSettingsModel`
+gained `privacyPolicyAcceptedAt`/`privacyPolicyAcceptedVersion`/`termsAcceptedAt`/`termsAcceptedVersion`,
+recorded only via `acceptPrivacyPolicy`/`acceptTerms` (which always stamp the current version from
+`core/legal/legal_document_version.dart` — a caller can never claim consent to an arbitrary version
+string). Those versions are explicitly `'draft-1'` — **DRAFT — LEGAL REVIEW REQUIRED**, per the
+kickoff's own "do not fabricate final legal text" instruction; no real legal content exists anywhere in
+this codebase. `AccountDataScreen`'s existing KVKK-adjacent paragraph is now explicitly marked with the
+same DRAFT warning inline, closing a real, pre-existing honesty gap (static legal-sounding copy that
+was never actually reviewed). **Not built this sprint**: no onboarding/login screen actually calls
+`acceptPrivacyPolicy`/`acceptTerms` yet — the recording mechanism is real, but nothing in the live
+sign-up flow invokes it, since there is no real legal content to present for acceptance yet either.
+
+**Data export remains the pre-existing mock, deliberately**: `AccountDataNotifier.requestDataExport`'s
+4-second fake `Future.delayed` is untouched. A real cross-feature JSON export (profile + addresses +
+order history assembled from every relevant repository into a downloadable artifact) is substantial,
+separate future work — building it partially this sprint would risk exactly the kind of half-real
+feature this whole session's discipline avoids.
+
+### Confidence
+
+9G: Dart — 2223 → 2257 tests, including full coverage of `AccountDeletionRequest`/`InMemoryAccountDeletionRequestRepository`/
+`RequestAccountDeletion`/`CancelAccountDeletionRequest`, the four new `AuthNotifier` sign-in-blocking
+scenarios (coolingOff/completed/cancelled/persisted-session), `AccountDataNotifier`'s request/cancel
+wiring, and the new consent-acceptance methods. One real bug (`canCancel` reading the system clock
+instead of the caller's `now`) was found and fixed by this sprint's own tests, not shipped
+unverified. Cloud Functions — 4 new Node tests against the real Functions + Firestore emulators, 9/9
+passing across the whole `functions/` suite (5 from Sprint 9F + 4 new). `dart format`/`flutter analyze`
+clean.

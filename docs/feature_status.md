@@ -1307,7 +1307,36 @@ at the end.
   `stockConsumed` fields are explicit `false` markers for that future work, not silently implied done.
   See `functions/README.md` for the complete honest scope list. Not deployed to any real Firebase
   project.
-- **9G–9J: not yet started.**
+- **9G — Account Deletion, Export & Consent Backend: DONE for the request/cooling-off/cancel lifecycle
+  and one real, emulator-verified anonymization Cloud Function; data export remains the pre-existing
+  mock, deliberately.** New `core/account_deletion/` (`AccountDeletionRequest`, `InMemory` repository,
+  `RequestAccountDeletion`/`CancelAccountDeletionRequest`) implements the user-approved 7-day
+  cooling-off policy — idempotent requests, a window-checked cancel path. `AuthNotifier` now blocks
+  *new* sign-in attempts for `coolingOff`/`completed` accounts (a new `OtpVerificationResult
+  .accountBlocked` case shows the real reason, not a fabricated "wrong code"); the already-open current
+  session is deliberately left signed in after requesting deletion so cancellation stays reachable — a
+  documented resolution of the "login blocked" vs. "request cancellable" tension the naive reading of
+  the policy creates. `AccountDataScreen`'s previously 100%-fake delete flow (a UI-only dialog with a
+  password field this app doesn't even have, since auth is phone+OTP only) is replaced with the real
+  use cases. New Cloud Function `processAccountDeletion` (HTTPS callable — matching the kickoff's own
+  "callable/API entry points for the app and a future web page") anonymizes the linked CRM `Customer`
+  record once the cooling-off window elapses, idempotently, with a PII-free audit record — 4 new tests
+  against the real Functions + Firestore emulators (9/9 across the whole `functions/` suite). Consent
+  evidence added to `NotificationSettingsModel` (`privacyPolicyAcceptedAt`/`Version`,
+  `termsAcceptedAt`/`Version`) per the architecture doc's literal spec — versions are explicitly
+  `'draft-1'` (`core/legal/legal_document_version.dart`), **DRAFT — LEGAL REVIEW REQUIRED**, no real
+  legal text fabricated; `AccountDataScreen`'s pre-existing KVKK-adjacent paragraph now carries the same
+  explicit DRAFT marker. **Named limitations, not silently narrowed**: only the CRM `Customer` record is
+  anonymized (media/loyalty/notification cascading has no real repository yet to cascade into); no
+  onboarding/login screen actually calls the new consent-acceptance methods yet (no real legal content
+  exists to present); data export stays the original 4-second fake `Future.delayed` (a real cross-
+  feature export is substantial, separate future work); the Dart deletion-request repository has no
+  real Firestore-backed counterpart this sprint (`InMemory` only, mirrors Sprint 9E's one-pilot-slice
+  discipline) — `processAccountDeletion` is built and emulator-tested against the document shape a
+  future migration would use, not proof the two are wired together today. One real bug (`canCancel`
+  reading the system clock instead of the caller's `now`) was found and fixed by this sprint's own
+  tests. Dart: 2223 → 2257 tests.
+- **9H–9J: not yet started.**
 
 **Production limitations, stated plainly (still true after 9A–9E):** every repository except
 `CanonicalOrderRepository` (Firestore-backed once Firebase is ready, `InMemory*` otherwise) remains

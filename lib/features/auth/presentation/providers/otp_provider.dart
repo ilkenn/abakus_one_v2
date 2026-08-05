@@ -113,6 +113,11 @@ class OtpNotifier extends AutoDisposeNotifier<OtpState> {
         state = state.copyWith(
           screenError: 'Kodun süresi doldu. Lütfen yeni bir kod isteyin.',
         );
+      case OtpVerificationResult.accountBlocked:
+        state = state.copyWith(
+          screenError:
+              'Bu hesap için silme talebi bulunmaktadır. Giriş engellendi.',
+        );
     }
     return result;
   }
