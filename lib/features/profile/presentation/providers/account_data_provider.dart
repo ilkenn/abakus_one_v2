@@ -69,12 +69,14 @@ class AccountDataNotifier extends Notifier<AccountDataModel> {
   /// default" extends to this action too.
   Future<bool> cancelAccountDeletion() async {
     final request = state.deletionRequest;
-    if (request == null) return false;
+    final session = ref.read(authProvider).session;
+    if (request == null || session == null) return false;
 
     try {
       final cancelled =
           await ref.read(cancelAccountDeletionRequestProvider).call(
                 requestId: request.id,
+                uid: session.uid,
                 now: DateTime.now(),
               );
       state = state.copyWith(deletionRequest: cancelled);

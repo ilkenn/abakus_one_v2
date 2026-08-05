@@ -33,6 +33,44 @@ abstract interface class AccountDeletionRequestRepository {
   Future<List<AccountDeletionRequest>> findDueForProcessing(DateTime now);
 }
 
+/// Selected in release builds — closed during this phase's mandatory
+/// adversarial security review: no Firestore-backed implementation of
+/// this repository exists yet (Sprint 9E's "one pilot slice per sprint"
+/// discipline applies here too), so `InMemory*` was the *only* option
+/// `accountDeletionRequestProvider` could previously resolve to — in a
+/// release build, an account-deletion request would silently exist only
+/// in memory, lost on the next app restart, giving a false impression of
+/// durability for a security/privacy-sensitive feature. Fails closed
+/// instead (mirrors `ProductionUnavailableStaffMemberRepository`'s exact
+/// reasoning, `docs/decisions.md` ADR-025) — "do not claim production
+/// backend validation if none exists" extends to this repository too.
+class ProductionUnavailableAccountDeletionRequestRepository
+    implements AccountDeletionRequestRepository {
+  const ProductionUnavailableAccountDeletionRequestRepository();
+
+  @override
+  Future<void> save(AccountDeletionRequest request) async {
+    throw StateError(
+      'AccountDeletionRequestRepository is unavailable in release builds — '
+      'no real backend exists yet.',
+    );
+  }
+
+  @override
+  Future<AccountDeletionRequest?> findById(String requestId) async => null;
+
+  @override
+  Future<AccountDeletionRequest?> findActiveByUid(String uid) async => null;
+
+  @override
+  Future<AccountDeletionRequest?> findLatestByUid(String uid) async => null;
+
+  @override
+  Future<List<AccountDeletionRequest>> findDueForProcessing(
+          DateTime now) async =>
+      const [];
+}
+
 /// In-memory implementation — the only one this sprint (Sprint 9E's
 /// "one pilot slice per sprint" discipline applies here too; a real
 /// Firestore-backed implementation is future controlled migration work,

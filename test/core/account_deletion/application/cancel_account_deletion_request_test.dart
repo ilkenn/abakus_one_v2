@@ -21,6 +21,7 @@ void main() {
 
       final cancelled = await useCase.call(
         requestId: 'req-1',
+        uid: 'uid-1',
         now: DateTime(2026, 8, 3),
       );
 
@@ -47,7 +48,11 @@ void main() {
       final useCase = CancelAccountDeletionRequest(repository: repository);
 
       await expectLater(
-        useCase.call(requestId: 'req-1', now: DateTime(2026, 8, 9)),
+        useCase.call(
+          requestId: 'req-1',
+          uid: 'uid-1',
+          now: DateTime(2026, 8, 9),
+        ),
         throwsA(isA<AccountDeletionRequestNotCancellableViolation>()),
       );
     });
@@ -66,7 +71,11 @@ void main() {
       final useCase = CancelAccountDeletionRequest(repository: repository);
 
       await expectLater(
-        useCase.call(requestId: 'req-1', now: DateTime(2026, 8, 9)),
+        useCase.call(
+          requestId: 'req-1',
+          uid: 'uid-1',
+          now: DateTime(2026, 8, 9),
+        ),
         throwsA(isA<AccountDeletionRequestNotCancellableViolation>()),
       );
     });
@@ -77,8 +86,41 @@ void main() {
       );
 
       await expectLater(
-        useCase.call(requestId: 'missing', now: DateTime(2026, 8, 9)),
+        useCase.call(
+          requestId: 'missing',
+          uid: 'uid-1',
+          now: DateTime(2026, 8, 9),
+        ),
         throwsA(isA<AccountDeletionRequestNotCancellableViolation>()),
+      );
+    });
+
+    test(
+        'throws (never cancels) when the caller does not own the request — '
+        'IDOR protection, closed during the Phase 9 adversarial security '
+        'review', () async {
+      final repository = InMemoryAccountDeletionRequestRepository();
+      await repository.save(AccountDeletionRequest(
+        id: 'req-1',
+        uid: 'victim-uid',
+        status: AccountDeletionStatus.coolingOff,
+        requestedAt: DateTime(2026, 8, 1),
+        coolingOffEndsAt: DateTime(2026, 8, 8),
+        revision: 1,
+      ));
+      final useCase = CancelAccountDeletionRequest(repository: repository);
+
+      await expectLater(
+        useCase.call(
+          requestId: 'req-1',
+          uid: 'attacker-uid',
+          now: DateTime(2026, 8, 3),
+        ),
+        throwsA(isA<AccountDeletionRequestNotCancellableViolation>()),
+      );
+      expect(
+        (await repository.findById('req-1'))?.status,
+        AccountDeletionStatus.coolingOff,
       );
     });
   });

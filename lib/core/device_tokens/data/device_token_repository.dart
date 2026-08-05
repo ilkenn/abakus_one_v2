@@ -15,6 +15,32 @@ abstract interface class DeviceTokenRepository {
   Future<DeviceToken?> findByToken(String token);
 }
 
+/// Selected in release builds — closed during this phase's mandatory
+/// adversarial security review, the same "no release build may silently
+/// fall back to InMemory persistence" fix applied to
+/// `AccountDeletionRequestRepository`. Lower real-world severity here
+/// (a failed device-token registration only means no push notifications
+/// for that device, not a security gap), but the same structural rule
+/// applies uniformly rather than being judged case by case.
+class ProductionUnavailableDeviceTokenRepository
+    implements DeviceTokenRepository {
+  const ProductionUnavailableDeviceTokenRepository();
+
+  @override
+  Future<void> save(DeviceToken deviceToken) async {
+    throw StateError(
+      'DeviceTokenRepository is unavailable in release builds — no real '
+      'backend exists yet.',
+    );
+  }
+
+  @override
+  Future<List<DeviceToken>> findActiveByUid(String uid) async => const [];
+
+  @override
+  Future<DeviceToken?> findByToken(String token) async => null;
+}
+
 /// In-memory implementation — the only one this sprint (mirrors Sprint
 /// 9E/9G's "one pilot slice per sprint" discipline; a real Firestore-
 /// backed implementation is future controlled migration work).
