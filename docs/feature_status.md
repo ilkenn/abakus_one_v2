@@ -1256,14 +1256,30 @@ at the end.
   only production order-creation path today (`SubmitPosOrder`, POS-side) has no customer-selection UI,
   and the customer-facing order path that would naturally carry a real `customerId` is the legacy model
   9D unifies. 2166 → 2205 tests.
-- **9D–9J: not yet started.** 9D (Canonical Order Unification) is the next sprint and is explicitly a
-  blocking one per the kickoff — customer checkout must migrate off the legacy `OrderModel` onto the
-  tested 11-state canonical `Order` aggregate before 9E's repository migration can meaningfully cover
-  order data.
+- **9D — Canonical Order Unification: DONE (adapter-wrap design, not full field migration).** Customer
+  checkout (`checkout_screen.dart`) no longer hand-builds the legacy `OrderModel` — a new
+  `SubmitCustomerOrder` use case (mirrors `SubmitPosOrder` exactly: `CartToOrderMapper`, real
+  `OrderIdentityProvider`, `created -> pendingConfirmation` transition) creates a real canonical `Order`,
+  with `customerId` wired from `AuthSession.uid` (`null` for guest checkout). A new
+  `CanonicalOrderRepository` (`features/orders/data/`) is the shared persistence boundary both POS
+  (`InMemoryPosOrderRepository`, now delegating to it) and customer checkout submit through — one
+  in-memory store per running app instance, proven by a dedicated integration test that submits through
+  both paths and confirms they land together. `OrderModel` is **not deleted**: it's redefined as a
+  read/presentation projection of the canonical `Order` (`OrderModel.fromCanonicalOrder`, using the
+  pre-existing `OrderStatusLegacyLabel` bridge) so the three existing customer order screens
+  (`OrdersScreen`/`OrderDetailScreen`/`ActiveOrderScreen`) keep working unmodified. **Named limitation**:
+  `OrderModel`'s ~25 customer-UI-only fields (delivery-preference toggles, scheduling, review surveys)
+  have no structured equivalent on `Order` — their checkout-time values are folded into
+  `Order.customerNote` as readable text rather than lost, but the projection's individual
+  boolean/string fields are not reconstructed from that text (documented in `docs/decisions.md` ADR-026
+  Decision 5, not silently dropped). 2205 → 2213 tests.
+- **9E–9J: not yet started.**
 
-**Production limitations, stated plainly (still true after 9A–9C):** every repository except Firestore
-Security Rules themselves (emulator-verified only) remains `InMemory*` — no real backend persistence
-exists yet. No Cloud Function has been written (memberships→claims sync, order-status transitions,
-event/outbox processing — all Sprint 9F). Nothing is deployed to any real Firebase project. The legacy
-customer-checkout order path still exists as a second, unmigrated order model. Account deletion has no
-backend yet (Sprint 9G). Media/push/device-token infrastructure has no backend yet (Sprint 9H).
+**Production limitations, stated plainly (still true after 9A–9D):** every repository — including the
+new `CanonicalOrderRepository` — remains `InMemory*`; no real backend persistence exists yet (Sprint
+9E). No Cloud Function has been written (memberships→claims sync, order-status transitions, event/
+outbox processing — all Sprint 9F) — `OrdersNotifier`'s customer-facing lifecycle actions
+(cancel/review/status-update) still operate on the local `OrderModel` projection only, not real
+transitions on the underlying canonical `Order`. Nothing is deployed to any real Firebase project.
+Account deletion has no backend yet (Sprint 9G). Media/push/device-token infrastructure has no backend
+yet (Sprint 9H).

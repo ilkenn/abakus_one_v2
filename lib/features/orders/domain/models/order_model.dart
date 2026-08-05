@@ -1,4 +1,5 @@
 import 'courier_visibility.dart';
+import 'order.dart';
 import 'order_audit_entry.dart';
 import 'order_cancellation.dart';
 import 'order_channel.dart';
@@ -179,6 +180,65 @@ class OrderModel {
     this.packageWasHandledCarefully,
     this.courierReviewComment,
   });
+
+  /// Projects a canonical [Order] (`order.dart`) into the shape this
+  /// legacy, UI-facing model's screens (`orders_screen.dart`,
+  /// `order_detail_screen.dart`, `active_order_screen.dart`) already know
+  /// how to render — Sprint 9D (`docs/decisions.md` ADR-026). As of this
+  /// sprint, [Order] is the one authoritative, created/persisted/
+  /// lifecycle-tracked aggregate for both POS and customer checkout;
+  /// [OrderModel] is a **read/presentation projection** of it, not a
+  /// second source of truth.
+  ///
+  /// [status] is derived via [OrderStatusLegacyLabel.forStatus] (the
+  /// bridge already built for exactly this purpose). Money fields convert
+  /// [Order.pricing]'s [Money] values back to `double` — the mirror image
+  /// of `Money.fromLegacyDoubleTry`'s boundary, used only here, at the
+  /// canonical-to-legacy-projection edge.
+  ///
+  /// **Known, explicitly-reported limitation**: the ~25 customer-app-UI-only
+  /// fields this model carries (delivery-preference toggles, scheduling,
+  /// review/rating surveys) have no structured equivalent on [Order] —
+  /// [SubmitCustomerOrder] folds their checkout-time values into
+  /// [Order.customerNote] as readable text instead of losing them, but
+  /// this projection cannot losslessly reconstruct the individual
+  /// booleans/strings from that text, so they default to this
+  /// constructor's normal defaults here. The order note itself (surfaced
+  /// via [orderNote]) still carries the full information for a human to
+  /// read; only the *structured, individually-toggleable* display is
+  /// affected. Restoring first-class structured fields is separate,
+  /// future domain-model work, not silently dropped functionality.
+  factory OrderModel.fromCanonicalOrder(Order order) {
+    final created = order.timestamps.created;
+    return OrderModel(
+      id: order.id.value,
+      date: '${created.day.toString().padLeft(2, '0')}.'
+          '${created.month.toString().padLeft(2, '0')}.'
+          '${created.year}',
+      totalAmount: order.pricing.grandTotal.minorUnits /
+          order.pricing.grandTotal.currency.minorUnitsPerWhole,
+      status: OrderStatusLegacyLabel.forStatus(order.status),
+      channel: order.channel,
+      lifecycleStatus: order.status,
+      items: [
+        for (final line in order.lines)
+          OrderItemSnapshot(
+            productId: line.productId,
+            productName: line.productName,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice.minorUnits /
+                line.unitPrice.currency.minorUnitsPerWhole,
+            notes: line.kitchenNote,
+          ),
+      ],
+      timestamps: order.timestamps,
+      deliveryFeeAmount: order.pricing.deliveryFee.minorUnits /
+          order.pricing.deliveryFee.currency.minorUnitsPerWhole,
+      discountAmount: order.pricing.discount.minorUnits /
+          order.pricing.discount.currency.minorUnitsPerWhole,
+      orderNote: order.customerNote,
+    );
+  }
 
   OrderModel copyWith({
     String? id,

@@ -1,3 +1,4 @@
+import '../../orders/data/canonical_order_repository.dart';
 import '../../orders/domain/models/order.dart';
 import '../../orders/domain/models/order_id.dart';
 import '../domain/models/pos_order_session.dart';
@@ -44,8 +45,23 @@ abstract interface class PosOrderRepository {
 /// copies [PosOrderSession.lines]) — there is no mutable state here for a
 /// caller to reach back into after the fact.
 class InMemoryPosOrderRepository implements PosOrderRepository {
+  /// Sprint 9D (`docs/decisions.md` ADR-026): submitted orders are stored
+  /// through a shared [CanonicalOrderRepository] rather than a map local
+  /// to this class, so a POS-submitted order and a customer-checkout-
+  /// submitted order (`SubmitCustomerOrder`) land in the same store when
+  /// both are wired to the same provider instance
+  /// (`canonicalOrderRepositoryProvider`). Defaults to a fresh, private
+  /// instance when none is supplied — every existing caller/test that
+  /// constructs `InMemoryPosOrderRepository()` directly keeps working
+  /// identically, isolated from any other instance, exactly as before.
+  InMemoryPosOrderRepository(
+      {CanonicalOrderRepository? canonicalOrderRepository})
+      : _canonicalOrderRepository =
+            canonicalOrderRepository ?? InMemoryCanonicalOrderRepository();
+
   final Map<String, PosOrderSession> _drafts = {};
   final Map<String, Order> _submittedOrders = {};
+  final CanonicalOrderRepository _canonicalOrderRepository;
 
   /// Test-only failure injection — when set, the **next** call to the
   /// matching method throws [Exception] instead of succeeding, then the
@@ -95,12 +111,13 @@ class InMemoryPosOrderRepository implements PosOrderRepository {
       throw failure;
     }
     _submittedOrders[order.id.value] = order;
+    await _canonicalOrderRepository.submitOrder(order);
     return order;
   }
 
   @override
   Future<Order?> findById(OrderId orderId) async {
-    return _submittedOrders[orderId.value];
+    return _canonicalOrderRepository.findById(orderId);
   }
 
   /// Test/diagnostic access to what's actually been persisted — not part

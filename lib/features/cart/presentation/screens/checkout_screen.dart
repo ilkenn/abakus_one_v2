@@ -5,6 +5,8 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_theme_constants.dart';
+import '../../../../shared/models/money.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../profile/domain/models/address_model.dart';
 import '../../../profile/presentation/providers/addresses_provider.dart';
 import '../../../profile/presentation/screens/address_form_screen.dart';
@@ -179,7 +181,37 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     });
   }
 
-  void _submitOrder(double grandTotal) {
+  /// Builds the human-readable checkout-preferences note folded into
+  /// [Order.customerNote] — Sprint 9D (`docs/decisions.md` ADR-026).
+  /// [OrderModel]'s individual delivery-preference/scheduling fields have
+  /// no structured equivalent on the canonical [Order] aggregate; this is
+  /// the documented, deliberate interim choice (see
+  /// `OrderModel.fromCanonicalOrder`'s own doc comment) — the information
+  /// is preserved as readable text, not silently dropped.
+  String _buildPreferencesNote() {
+    final lines = <String>[
+      _selectedCutleryPreference == 'want'
+          ? 'Servis malzemesi: İstiyor'
+          : 'Servis malzemesi: İstemiyor',
+      if (_ringBell) 'Zil çalınsın',
+      if (_contactlessDelivery) 'Temassız teslimat',
+      if (!_courierCanCall) 'Kurye aramasın',
+      if (_leaveAtDoor)
+        'Kapıya bırak: $_leaveAtDoorLocation'
+            '${_leaveAtDoorLocation == 'Özel açıklama' ? ' (${_customLeaveDescriptionController.text.trim()})' : ''}',
+      if (_deliveryTimingType == 'scheduled' &&
+          _scheduledDeliveryDateTime != null)
+        'Planlanan teslimat: ${_formatDateTime(_scheduledDeliveryDateTime)}',
+      if (_noteController.text.trim().isNotEmpty)
+        'Not: ${_noteController.text.trim()}',
+    ];
+    return lines.join(' • ');
+  }
+
+  Future<void> _submitOrder(
+    double deliveryFee,
+    double discountAmount,
+  ) async {
     if (_selectedCutleryPreference == null) {
       setState(() {
         _showCutleryError = true;
@@ -196,38 +228,32 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       return;
     }
 
-    final newOrder = OrderModel(
-      id: 'ORD-${DateTime.now().year}-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}',
-      date:
-          '${DateTime.now().day.toString().padLeft(2, '0')}.${DateTime.now().month.toString().padLeft(2, '0')}.${DateTime.now().year}',
-      totalAmount: grandTotal,
-      status: 'Onay Bekliyor',
-      orderNote: _noteController.text.trim(),
-      serviceMaterialsPreference: _selectedCutleryPreference == 'want'
-          ? 'Malzeme İstiyor'
-          : 'Malzeme İstemiyor',
-      ringBell: _ringBell,
-      leaveAtDoor: _leaveAtDoor,
-      contactlessDelivery: _contactlessDelivery,
-      courierCanCall: _courierCanCall,
-      leaveAtDoorLocation: _leaveAtDoor ? _leaveAtDoorLocation : '',
-      customDeliveryInstruction:
-          (_leaveAtDoor && _leaveAtDoorLocation == 'Özel açıklama')
-              ? _customLeaveDescriptionController.text.trim()
-              : '',
-      deliveryTimingType: _deliveryTimingType,
-      scheduledDeliveryDateTime: _deliveryTimingType == 'scheduled'
-          ? _formatDateTime(_scheduledDeliveryDateTime)
-          : '',
-    );
+    final cartItems = ref.read(cartProvider);
+    final session = ref.read(authProvider);
+    final customerId = session.isAuthenticated ? session.session?.uid : null;
 
-    ref.read(ordersProvider.notifier).addOrder(newOrder);
+    final order = await ref.read(submitCustomerOrderProvider).call(
+          cartItems: cartItems,
+          customerId: customerId,
+          deliveryFee:
+              deliveryFee > 0 ? Money.fromLegacyDoubleTry(deliveryFee) : null,
+          orderLevelDiscount: discountAmount > 0
+              ? Money.fromLegacyDoubleTry(discountAmount)
+              : null,
+          customerNote: _buildPreferencesNote(),
+        );
+
+    if (!mounted) return;
+
+    ref
+        .read(ordersProvider.notifier)
+        .addOrder(OrderModel.fromCanonicalOrder(order));
     ref.read(cartProvider.notifier).clearCart();
 
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(
-        builder: (context) => OrderSuccessScreen(orderId: newOrder.id),
+        builder: (context) => OrderSuccessScreen(orderId: order.id.value),
       ),
       (route) => route.isFirst,
     );
@@ -861,7 +887,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: canSubmitOrder
-                          ? () => _submitOrder(grandTotal)
+                          ? () =>
+                              _submitOrder(effectiveDeliveryFee, finalDiscount)
                           : null,
                       style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(

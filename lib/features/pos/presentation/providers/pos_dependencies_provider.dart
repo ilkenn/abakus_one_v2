@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../shared/models/exchange_rate_provider.dart';
 import '../../../../shared/models/unavailable_exchange_rate_provider.dart';
+import '../../../orders/presentation/providers/orders_provider.dart';
 import '../../data/pos_order_repository.dart';
 
 /// The [PosOrderRepository] currently in use. [InMemoryPosOrderRepository]
@@ -9,8 +10,15 @@ import '../../data/pos_order_repository.dart';
 /// and `docs/feature_status.md`). A future Firebase-backed implementation
 /// overrides only this provider, mirroring `ordersRepositoryProvider`'s
 /// existing shape in this codebase.
+///
+/// Sprint 9D (`docs/decisions.md` ADR-026): wired to the same
+/// `canonicalOrderRepositoryProvider` instance customer checkout
+/// (`SubmitCustomerOrder`) submits through, so submitted orders share one
+/// store regardless of channel.
 final posOrderRepositoryProvider = Provider<PosOrderRepository>((ref) {
-  return InMemoryPosOrderRepository();
+  return InMemoryPosOrderRepository(
+    canonicalOrderRepository: ref.watch(canonicalOrderRepositoryProvider),
+  );
 });
 
 /// The [ExchangeRateProvider] currently in use. Defaults to

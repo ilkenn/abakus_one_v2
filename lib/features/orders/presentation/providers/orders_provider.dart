@@ -1,4 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/utils/clock_provider.dart';
+import '../../application/use_cases/submit_customer_order.dart';
+import '../../data/canonical_order_repository.dart';
 import '../../data/orders_repository.dart';
 import '../../domain/models/courier_visibility.dart';
 import '../../domain/models/order_actor.dart';
@@ -8,12 +11,42 @@ import '../../domain/models/order_model.dart';
 import '../../domain/models/order_status.dart';
 import '../../domain/models/order_timestamps.dart';
 import '../../domain/models/order_tracking_step.dart';
+import 'order_identity_provider.dart';
 
 /// The [OrdersRepository] implementation currently in use. A future
 /// backend-backed phase overrides only this provider — nothing in
 /// [OrdersNotifier] or any UI depends on [LocalOrdersRepository] directly.
 final ordersRepositoryProvider = Provider<OrdersRepository>((ref) {
   return const LocalOrdersRepository();
+});
+
+/// The [CanonicalOrderRepository] currently in use — Sprint 9D
+/// (`docs/decisions.md` ADR-026). A single app-wide instance: both
+/// `posOrderRepositoryProvider` (`features/pos`) and
+/// `SubmitCustomerOrder`/checkout wire through this same provider, so a
+/// POS-submitted and a customer-checkout-submitted [Order] land in the
+/// same store — "customer/POS/QR-created orders all enter the same
+/// lifecycle," verified at the storage level.
+final canonicalOrderRepositoryProvider =
+    Provider<CanonicalOrderRepository>((ref) {
+  return InMemoryCanonicalOrderRepository();
+});
+
+/// Builds and persists customer-checkout orders onto the canonical [Order]
+/// aggregate — Sprint 9D (`docs/decisions.md` ADR-026). `restaurantId`/
+/// `branchId` are hardcoded to the app's single seeded restaurant/branch
+/// (`'restaurant-1'`/`'branch-1'`) — the same honest-placeholder pattern
+/// `currentBranchIdProvider` (`features/navigation`) already documents:
+/// there is no restaurant/branch *selection* UI anywhere in the customer
+/// app yet, so there is nothing else this could meaningfully read from.
+final submitCustomerOrderProvider = Provider<SubmitCustomerOrder>((ref) {
+  return SubmitCustomerOrder(
+    clock: ref.watch(clockProvider),
+    identityProvider: ref.watch(orderIdentityProvider),
+    repository: ref.watch(canonicalOrderRepositoryProvider),
+    branchId: 'branch-1',
+    restaurantId: 'restaurant-1',
+  );
 });
 
 class OrdersNotifier extends Notifier<List<OrderModel>> {

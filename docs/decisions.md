@@ -3304,3 +3304,69 @@ Security Rules is backed by real Firestore yet — every `InMemory*` repository 
 (Sprint 9E); the legacy customer-checkout order path has not been unified onto the canonical `Order`
 aggregate yet (Sprint 9D, explicitly blocking); `RegisterStaffMember` does not yet link a Firebase Auth
 account (Decision 3, above); nothing is deployed to any real Firebase project.
+
+### Decision 5 — Canonical Order Unification: `Order` is the one authoritative aggregate; `OrderModel`
+becomes a read/presentation projection of it, not deleted (9D)
+
+Prior to this sprint, two order models coexisted: the tested, 11-state canonical `Order` aggregate
+(`features/orders/domain/models/order.dart`, used only by POS's `SubmitPosOrder`) and a legacy
+`OrderModel` (`order_model.dart`) the customer checkout screen (`checkout_screen.dart`) constructed by
+hand — no shared identity generation, no `CartToOrderMapper`, `items` never populated, no `customerId`
+field at all. The customer-facing order-history/tracking screens (`OrdersScreen`/`OrderDetailScreen`/
+`ActiveOrderScreen`) all read the legacy model exclusively.
+
+**The chosen design is "adapter-wrap," the kickoff's own second named option, not a full field-by-field
+migration**: `OrderModel` carries ~25 fields with no equivalent on `Order` (delivery-preference toggles,
+scheduling, two full review surveys) that are genuine, real UI functionality this sprint does not
+delete. Rather than force those fields onto the shared aggregate (which would leak customer-app-only
+UI concerns into a type POS/Kitchen/Courier/Admin all build on — exactly what `order.dart`'s own doc
+comment already names as the reason `OrderModel` stayed separate in the first place) or silently drop
+them, checkout submission now creates a real `Order` (via a new `SubmitCustomerOrder` use case,
+mirroring `SubmitPosOrder`'s exact steps: `CartToOrderMapper` → `created -> pendingConfirmation`
+transition, actor `customer`), and a new `OrderModel.fromCanonicalOrder(Order)` factory projects it
+back into the shape the three existing screens already render — using the `OrderStatusLegacyLabel`
+bridge that was already built (in an earlier phase) for exactly this purpose. **`Order` is now the one
+authoritative, created/persisted/lifecycle-tracked model; `OrderModel` is a read-side projection of it,
+not a second source of truth** — "do not maintain two authoritative order systems" is satisfied because
+there is structurally only one authority, even though the legacy type still exists as a view.
+
+**Shared storage, not just shared shape**: a new `CanonicalOrderRepository` (`features/orders/data/`,
+the neutral home) is the persistence boundary both channels write through.
+`InMemoryPosOrderRepository` (`features/pos`) now delegates its own `submitOrder`/`findById` to an
+injected `CanonicalOrderRepository` (defaulting to a fresh private instance so every existing
+`InMemoryPosOrderRepository()` construction/test is unaffected), and `posOrderRepositoryProvider`/
+`submitCustomerOrderProvider` are both wired to the **same** `canonicalOrderRepositoryProvider`
+instance — proven directly by a new integration test that submits one order through each path and
+confirms both land in one store, both reach `OrderStatus.pendingConfirmation` via the identical
+transition rule. This is "customer/POS/QR-created orders all enter the same lifecycle," verified at the
+storage level, not asserted from shape alone.
+
+`Order.customerId` is wired from the real canonical identity Sprint 9C established: `checkout_screen
+.dart` reads `authProvider`'s session and passes `session.uid` when authenticated, `null` for a guest —
+closing the exact gap 9C's own report named ("`Order.customerId` wiring is deferred to Sprint 9D").
+
+**Known, explicitly-reported limitations, not silently narrowed**:
+- `OrderModel.fromCanonicalOrder` cannot losslessly reconstruct `OrderModel`'s individual
+  delivery-preference booleans/strings (ring bell, leave-at-door, courier-can-call, scheduled time) from
+  a canonical `Order` — `SubmitCustomerOrder`/`checkout_screen.dart` fold their checkout-time values
+  into `Order.customerNote` as human-readable text instead (nothing is lost to the *user*; the
+  *structured, individually-toggleable* display on the projection is not populated for a freshly
+  migrated order). Restoring first-class structured fields for these is separate, future domain-model
+  work.
+- `OrdersNotifier`'s existing in-memory lifecycle methods (`updateLifecycleStatus`/`cancelOrder`/
+  `submitReview`) still operate purely on the projected `OrderModel` in local Riverpod state — they are
+  not yet driven by real transitions on the underlying canonical `Order`. This is unchanged from before
+  this sprint and is consistent with the survey finding that no downstream workflow (kitchen, delivery,
+  stock) is wired to fire from canonical `Order` submission regardless of channel yet (Sprint 9F).
+- The two channels' submitted orders share one *store* per running app instance, but that store is
+  still `InMemory*` — Sprint 9E's real Firestore migration is what makes this genuinely durable/
+  cross-device, not just cross-feature-within-one-process.
+- No true idempotency-key-based retry safety was added for customer checkout — it matches
+  `SubmitPosOrder`'s existing bar (a fresh `OrderId` per call, no dedup), not a stronger guarantee;
+  real retry-safe idempotency is a Sprint 9F (event/outbox) concern.
+
+### Confidence
+
+9D: 2205 → 2213 tests, including a dedicated cross-channel integration test proving shared storage/
+lifecycle and a projection-correctness test for `OrderModel.fromCanonicalOrder`. `dart format`/
+`flutter analyze` clean.

@@ -1001,6 +1001,24 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Kitchen, Orders, Courier
 
+### BR-ORDER-012 — `Order` is the one authoritative order aggregate; `OrderModel` is a read/presentation
+  projection of it, never a second source of truth (Phase 9 Sprint 9D, ADR-026)
+- **Status**: VERIFIED
+- **Rule**: Every order-creation path (`SubmitPosOrder`, `SubmitCustomerOrder`) builds a canonical
+  `Order` via `CartToOrderMapper` and persists it through `CanonicalOrderRepository` — the same
+  interface, same shared store instance, same `created -> pendingConfirmation` transition rule
+  regardless of channel. The legacy `OrderModel` continues to exist only as
+  `OrderModel.fromCanonicalOrder(Order)`, a projection the customer-facing order screens
+  (`OrdersScreen`/`OrderDetailScreen`/`ActiveOrderScreen`) render — it is never independently
+  constructed with real data again. `Order.customerId` is the real, signed-in customer's canonical
+  Firebase Auth UID (`AuthSession.uid`, BR-AUTH-004) when authenticated, `null` for a guest checkout —
+  never a fabricated or phone-derived value. **Known limitation**: `OrderModel`'s delivery-preference/
+  scheduling/review fields have no structured equivalent on `Order`; their checkout-time values are
+  preserved as readable text in `Order.customerNote`, not as individually-toggleable structured data on
+  the projection — see `docs/decisions.md` ADR-026 Decision 5.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS, Cart, Auth
+
 # Cash Management
 
 ### BR-CASH-001 — Multiple cash drawers per branch, mutable registry (Phase 3 Sprint 3E)
@@ -3534,11 +3552,41 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Related Modules**: Auth, Profile, CRM, Staff/Admin, Platform, Security
 - **Business Rule IDs**: BR-AUTH-004, BR-AUTH-005
 
+### DL-030 — Canonical Order Unification (Phase 9, sprint 9D)
+- **Decision**: The tested 11-state canonical `Order` aggregate becomes the one authoritative,
+  created/persisted/lifecycle-tracked order model for both POS and customer checkout, sharing one
+  `CanonicalOrderRepository` store. The legacy `OrderModel` is not deleted — it becomes a read/
+  presentation projection of `Order` (`OrderModel.fromCanonicalOrder`) so the existing customer order-
+  history/tracking screens keep working unmodified. `Order.customerId` is wired from the real
+  `AuthSession.uid` established in sprint 9C.
+- **Status**: DECIDED
+- **Source**: User, Phase 9 kickoff — 9D named explicitly as "a REQUIRED blocking sprint," with two
+  named acceptable resolutions ("retiring or strictly adapter-wrapping the legacy model"); the
+  adapter-wrap option was chosen (see `docs/decisions.md` ADR-026 Decision 5 for the full reasoning).
+- **Date**: 2026-08-05
+- **Consequences**: See BR-ORDER-012 above. `docs/decisions.md` ADR-026 Decision 5 records the full
+  design and its explicitly-reported limitations (delivery-preference/scheduling/review fields folded
+  into free text, not structured; `OrdersNotifier`'s customer-facing lifecycle actions still operate on
+  the local projection, not real `Order` transitions; storage is still `InMemory*` pending Sprint 9E).
+- **Related Modules**: Orders, POS, Cart, Auth
+- **Business Rule IDs**: BR-ORDER-012
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v2.8 — 2026-08-05
+- **Version**: 2.8
+- **Date**: 2026-08-05
+- **Summary**: Phase 9 sprint 9D (Canonical Order Unification). Added BR-ORDER-012 (`Order` is the one
+  authoritative order aggregate for every channel; `OrderModel` is a read/presentation projection of
+  it, never a second source of truth). New DL-030. See `docs/decisions.md` ADR-026 Decision 5.
+- **Author**: Claude, at the user's direction (autonomous Phase 9 implementation mandate).
+- **Reason**: Record the order-unification business rule this required, blocking sprint established,
+  and its explicitly-named limitation (delivery-preference/scheduling/review fields preserved as free
+  text, not structured, on the legacy projection) so it is not mistaken for a silently-resolved gap.
 
 ### v2.7 — 2026-08-05
 - **Version**: 2.7
