@@ -16,6 +16,7 @@ StaffMember buildTestStaffMember({
   Set<String> organizationAccess = const {},
   StaffMemberStatus status = StaffMemberStatus.active,
   DateTime? sessionsRevokedAt,
+  String? authUid,
   int revision = 1,
 }) {
   return StaffMember(
@@ -27,6 +28,7 @@ StaffMember buildTestStaffMember({
     organizationAccess: organizationAccess,
     status: status,
     sessionsRevokedAt: sessionsRevokedAt,
+    authUid: authUid,
     createdAt: DateTime(2026, 1, 1),
     revision: revision,
   );

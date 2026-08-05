@@ -35,6 +35,7 @@ void main() {
   test('saveSession/clearSession guvenli sekilde no-op calisir', () async {
     await repository.saveSession(
       AuthSession(
+        uid: 'test-uid',
         phoneNumber: phoneNumber,
         createdAt: DateTime.now(),
         expiresAt: DateTime.now().add(const Duration(days: 1)),

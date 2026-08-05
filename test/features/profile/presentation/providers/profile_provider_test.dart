@@ -6,7 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _SignedInNotifier extends AuthNotifier {
-  _SignedInNotifier(this.phoneNumber);
+  _SignedInNotifier(this.uid, this.phoneNumber);
+  final String uid;
   final String phoneNumber;
 
   @override
@@ -14,6 +15,7 @@ class _SignedInNotifier extends AuthNotifier {
         isAuthenticated: true,
         isGuest: false,
         session: AuthSession(
+          uid: uid,
           phoneNumber: phoneNumber,
           createdAt: DateTime(2026, 1, 1),
           expiresAt: DateTime(2026, 12, 31),
@@ -27,7 +29,7 @@ class _SignedOutNotifier extends AuthNotifier {
 }
 
 void main() {
-  group('profileProvider identity bridge (Sprint 5E)', () {
+  group('profileProvider canonical identity bridge (Sprint 9C)', () {
     test('signed out keeps the existing mock profile id unchanged', () {
       final container = ProviderContainer(
         overrides: [authProvider.overrideWith(() => _SignedOutNotifier())],
@@ -38,14 +40,15 @@ void main() {
     });
 
     test(
-        'a signed-in session derives ProfileModel.id from the same phone '
-        'number currentCustomerProvider resolves its Customer from — the '
+        'a signed-in session sets ProfileModel.id to the same canonical uid '
+        'currentCustomerProvider resolves its Customer.id from — the '
         'signed-in user, profile, and CRM customer represent the same '
-        'person', () async {
+        'person via one literal shared id', () async {
+      const uid = 'uid-abc123';
       const phoneNumber = '+905551112233';
       final container = ProviderContainer(
         overrides: [
-          authProvider.overrideWith(() => _SignedInNotifier(phoneNumber)),
+          authProvider.overrideWith(() => _SignedInNotifier(uid, phoneNumber)),
         ],
       );
       addTearDown(container.dispose);
@@ -53,13 +56,11 @@ void main() {
       final profile = container.read(profileProvider);
       final customer = await container.read(currentCustomerProvider.future);
 
-      expect(profile.id, 'customer-$phoneNumber');
-      expect(customer!.phoneNumber, phoneNumber);
-      // Both are anchored to the exact same real signal (the auth
-      // session's phone number) - proving they resolve to the same person,
-      // even though the two id strings are not textually identical.
-      expect(profile.id, contains(phoneNumber));
-      expect(customer.phoneNumber, phoneNumber);
+      expect(profile.id, uid);
+      expect(customer!.id, uid);
+      expect(profile.id, customer.id);
+      expect(profile.name, phoneNumber);
+      expect(profile.email, isEmpty);
     });
 
     test(
@@ -67,13 +68,15 @@ void main() {
         'ids', () {
       final containerA = ProviderContainer(
         overrides: [
-          authProvider.overrideWith(() => _SignedInNotifier('+905550000001')),
+          authProvider
+              .overrideWith(() => _SignedInNotifier('uid-1', '+905550000001')),
         ],
       );
       addTearDown(containerA.dispose);
       final containerB = ProviderContainer(
         overrides: [
-          authProvider.overrideWith(() => _SignedInNotifier('+905550000002')),
+          authProvider
+              .overrideWith(() => _SignedInNotifier('uid-2', '+905550000002')),
         ],
       );
       addTearDown(containerB.dispose);

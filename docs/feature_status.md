@@ -1210,3 +1210,60 @@ at final close, only the explicitly out-of-scope/deferred items named above (ten
 workflow, real backend/billing, full Marketplace/Payment Hub admin UI, and the rest), none of which are
 one of the 8 named blocking conditions. The phase closes with every readiness claim backed by real,
 verified code rather than assumed.
+
+## Phase 9 — Production Backend, Canonical Identity & Real Data Platform (in progress)
+
+Governing document: `docs/phase9_architecture_analysis.md` (approved planning input) plus
+`docs/decisions.md` ADR-026 (the authoritative, per-sprint decision record — read that first for the
+full reasoning behind everything summarized here). Proceeding autonomously through sprints 9A–9J per
+explicit user authorization; this section is updated as each sprint closes, not written retroactively
+at the end.
+
+- **9A — Firebase Production Foundation: DONE.** `firebase_auth`/`cloud_firestore`/`firebase_storage`/
+  `firebase_messaging`/`firebase_crashlytics`/`cloud_functions` added as real dependencies. Firestore/
+  Storage/Functions emulator configs added (mirroring the existing Auth emulator config); `firebase.json`
+  updated. Real `FirebaseCrashlyticsService` wired through the existing `firebaseReadyProvider` gate,
+  redacting through `LogRedactor` before anything reaches the vendor. `ErrorMapper` extended with two
+  real `FirebaseException` branches. 2136 → 2166 tests.
+- **9B — Firestore Tenant Model & Security Rules: DONE (emulator-verified, not deployed).**
+  `docs/firestore_data_model.md` records the 15-collection strategy; `firestore.rules` implements it —
+  shared-project/shared-collection multi-tenancy, denormalized immutable `organizationId`, custom-claim
+  fast-path authorization, time-limited audited platform support access, fail-closed default-deny
+  catch-all. 22 emulator-backed Security Rules tests (`firestore-tests/`, real local Firestore Emulator)
+  pass — one test bug was found and fixed during that run (see ADR-026 Decision 2). Also closed a
+  Phase-9-relevant client-side gap: `RealPosAuthorizationPolicy` now resolves and enforces
+  restaurant-scoped authorization (previously a silent no-op), +10 tests. **Not deployed to any real
+  Firebase project** — that requires the console/deployment access this session's stop conditions
+  reserve for explicit approval.
+- **9C — Canonical Authentication & Identity: DONE (core identity + staff/platform sign-in; two named
+  limitations below).** `AuthSession` now carries a real Firebase Auth UID (`uid`), issued by the local
+  Auth Emulator in development or the real project in staging/production — replaces
+  `DevelopmentLocalAuthRepository`'s hardcoded `123456` OTP as the app's actual customer sign-in path
+  (`FirebaseAuthRepository`, gated by `firebaseReadyProvider`). `ResolveCurrentCustomer`/`ProfileModel.id`
+  now key off that same canonical `uid` — `Customer.id == AuthSession.uid == ProfileModel.id` for every
+  identity this sprint touches, closing the five-way id fragmentation `docs/phase9_architecture_analysis.md`
+  documented. `ProfileModel`'s hardcoded `'Ahmet Yılmaz'` name/email are gone from the authenticated
+  path (falls back to the real phone number; email is an honest empty string, not a fake address).
+  Staff/platform sign-in (`StaffSignInScreen`/`PlatformSignInScreen`) replaced the credential-free
+  member picker with a real Firebase email/password form (`FirebaseStaffAuthRepository`/
+  `FirebasePlatformAuthRepository`, requiring an exact `authUid` link to an active member, not just a
+  valid credential) — neither screen enumerates the member roster anymore, in any build mode.
+  `BootstrapFirstAdminAccount`/`BootstrapFirstPlatformOwnerAccount` now create the linked Firebase Auth
+  account directly. **Named limitations, not silently dropped**: `RegisterStaffMember`/
+  `StaffManagementScreen`'s admin-add-staff flow does not yet create a linked Firebase Auth account —
+  only the bootstrap path does, so additional staff beyond the bootstrapped admin cannot sign in via
+  this app yet without a follow-up sprint; `Order.customerId` wiring is deferred to Sprint 9D, since the
+  only production order-creation path today (`SubmitPosOrder`, POS-side) has no customer-selection UI,
+  and the customer-facing order path that would naturally carry a real `customerId` is the legacy model
+  9D unifies. 2166 → 2205 tests.
+- **9D–9J: not yet started.** 9D (Canonical Order Unification) is the next sprint and is explicitly a
+  blocking one per the kickoff — customer checkout must migrate off the legacy `OrderModel` onto the
+  tested 11-state canonical `Order` aggregate before 9E's repository migration can meaningfully cover
+  order data.
+
+**Production limitations, stated plainly (still true after 9A–9C):** every repository except Firestore
+Security Rules themselves (emulator-verified only) remains `InMemory*` — no real backend persistence
+exists yet. No Cloud Function has been written (memberships→claims sync, order-status transitions,
+event/outbox processing — all Sprint 9F). Nothing is deployed to any real Firebase project. The legacy
+customer-checkout order path still exists as a second, unmigrated order model. Account deletion has no
+backend yet (Sprint 9G). Media/push/device-token infrastructure has no backend yet (Sprint 9H).

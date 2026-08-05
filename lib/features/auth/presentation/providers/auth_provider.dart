@@ -1,28 +1,33 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../domain/models/auth_session.dart';
 import '../../domain/models/otp_challenge.dart';
 import '../../domain/phone_number.dart';
 import '../../data/repositories/auth_repository.dart';
-import '../../data/repositories/development_local_auth_repository.dart';
+import '../../data/repositories/firebase_auth_client.dart';
+import '../../data/repositories/firebase_auth_repository.dart';
 import '../../data/repositories/production_unavailable_auth_repository.dart';
 
 /// The [AuthRepository] implementation currently in use. Mirrors
-/// `ordersRepositoryProvider` in `orders_provider.dart`: a future
-/// backend-backed phase overrides only this provider — nothing in
+/// `ordersRepositoryProvider` in `orders_provider.dart`: nothing in
 /// [AuthNotifier] or any screen depends on either concrete implementation
 /// directly.
 ///
-/// The choice itself is the one place release builds are protected from
-/// ever authenticating without a real backend: [kReleaseMode] selects
-/// [ProductionUnavailableAuthRepository] (fails closed on every call);
-/// anything else (debug/profile — i.e. every build this app has today)
-/// selects [DevelopmentLocalAuthRepository].
+/// As of Sprint 9C (`docs/decisions.md` ADR-026), the choice is gated on
+/// [firebaseReadyProvider] — the same fail-closed seam every other
+/// Firebase-dependent provider uses (`crashReportingServiceProvider`,
+/// `appCheckServiceProvider`) — not `kReleaseMode`: a release build with a
+/// healthy Firebase connection genuinely authenticates users via
+/// [FirebaseAuthRepository] (connected to the local Auth Emulator in
+/// `AppEnvironment.development`, or the real project in staging/
+/// production); any build whose Firebase bootstrap failed falls back to
+/// [ProductionUnavailableAuthRepository] instead of ever faking success.
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
-  if (kReleaseMode) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
     return const ProductionUnavailableAuthRepository();
   }
-  return DevelopmentLocalAuthRepository();
+  return FirebaseAuthRepository(client: DefaultFirebaseAuthClient());
 });
 
 class AuthState {

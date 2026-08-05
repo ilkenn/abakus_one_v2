@@ -6,8 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('ResolveCurrentCustomer', () {
-    test('registers a new customer the first time a phone number is seen',
-        () async {
+    test(
+        'registers a new customer, keyed by the canonical uid, the first '
+        'time it is seen', () async {
       final repository = InMemoryCustomerRepository();
       final useCase = ResolveCurrentCustomer(
         repository: repository,
@@ -18,13 +19,15 @@ void main() {
       );
 
       final customer = await useCase(
+        uid: 'uid-1',
         phoneNumber: '+905551234567',
         displayName: '+905551234567',
         now: DateTime(2026, 1, 1),
       );
 
+      expect(customer.id, 'uid-1');
       expect(customer.phoneNumber, '+905551234567');
-      expect(await repository.findByPhoneNumber('+905551234567'), customer);
+      expect(await repository.findById('uid-1'), customer);
     });
 
     test(
@@ -40,16 +43,19 @@ void main() {
       );
 
       final first = await useCase(
+        uid: 'uid-1',
         phoneNumber: '+905551234567',
         displayName: '+905551234567',
         now: DateTime(2026, 1, 1),
       );
       final second = await useCase(
+        uid: 'uid-1',
         phoneNumber: '+905551234567',
         displayName: '+905551234567',
         now: DateTime(2026, 1, 2),
       );
       final third = await useCase(
+        uid: 'uid-1',
         phoneNumber: '+905551234567',
         displayName: '+905551234567',
         now: DateTime(2026, 1, 3),
@@ -57,10 +63,11 @@ void main() {
 
       expect(second.id, first.id);
       expect(third.id, first.id);
+      expect(first.id, 'uid-1');
       expect(await repository.findAll(), hasLength(1));
     });
 
-    test('different phone numbers resolve to different customers', () async {
+    test('different uids resolve to different customers', () async {
       final repository = InMemoryCustomerRepository();
       final useCase = ResolveCurrentCustomer(
         repository: repository,
@@ -71,11 +78,13 @@ void main() {
       );
 
       final a = await useCase(
+        uid: 'uid-1',
         phoneNumber: '+905550000001',
         displayName: '+905550000001',
         now: DateTime(2026, 1, 1),
       );
       final b = await useCase(
+        uid: 'uid-2',
         phoneNumber: '+905550000002',
         displayName: '+905550000002',
         now: DateTime(2026, 1, 1),

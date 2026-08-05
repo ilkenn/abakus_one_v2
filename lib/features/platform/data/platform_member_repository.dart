@@ -6,6 +6,11 @@ abstract interface class PlatformMemberRepository {
   Future<void> save(PlatformMember member);
   Future<PlatformMember?> findById(String platformMemberId);
   Future<List<PlatformMember>> findAll();
+
+  /// The credential-linkage lookup key — Sprint 9C
+  /// (`docs/decisions.md` ADR-026). Mirrors
+  /// `StaffMemberRepository.findByAuthUid` exactly.
+  Future<PlatformMember?> findByAuthUid(String authUid);
 }
 
 /// Selected in release builds — Phase 8 closure sprint
@@ -32,6 +37,9 @@ class ProductionUnavailablePlatformMemberRepository
 
   @override
   Future<List<PlatformMember>> findAll() async => const [];
+
+  @override
+  Future<PlatformMember?> findByAuthUid(String authUid) async => null;
 }
 
 class InMemoryPlatformMemberRepository implements PlatformMemberRepository {
@@ -47,4 +55,12 @@ class InMemoryPlatformMemberRepository implements PlatformMemberRepository {
   @override
   Future<List<PlatformMember>> findAll() async =>
       List.unmodifiable(_byId.values);
+
+  @override
+  Future<PlatformMember?> findByAuthUid(String authUid) async {
+    for (final member in _byId.values) {
+      if (member.authUid == authUid) return member;
+    }
+    return null;
+  }
 }

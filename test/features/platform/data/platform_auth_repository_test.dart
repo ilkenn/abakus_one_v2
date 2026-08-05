@@ -21,7 +21,8 @@ void main() {
         sessionDuration: () => const Duration(hours: 1),
       );
 
-      final session = await repository.signIn(platformMemberId: 'platform-1');
+      final session =
+          await repository.signIn(email: 'platform-1', password: 'unused');
 
       expect(session, isNotNull);
       expect(session!.actorId, 'platform-1');
@@ -35,7 +36,8 @@ void main() {
         sessionDuration: () => const Duration(hours: 1),
       );
 
-      final session = await repository.signIn(platformMemberId: 'missing');
+      final session =
+          await repository.signIn(email: 'missing', password: 'unused');
 
       expect(session, isNull);
     });
@@ -55,7 +57,8 @@ void main() {
         sessionDuration: () => const Duration(hours: 1),
       );
 
-      final session = await repository.signIn(platformMemberId: 'platform-1');
+      final session =
+          await repository.signIn(email: 'platform-1', password: 'unused');
 
       expect(session, isNull);
     });
@@ -75,7 +78,8 @@ void main() {
         platformMemberRepository: memberRepository,
         sessionDuration: () => const Duration(hours: 1),
       );
-      final original = await repository.signIn(platformMemberId: 'platform-1');
+      final original =
+          await repository.signIn(email: 'platform-1', password: 'unused');
       await Future<void>.delayed(const Duration(milliseconds: 5));
 
       final member = await memberRepository.findById('platform-1');
@@ -102,7 +106,8 @@ void main() {
         platformMemberRepository: memberRepository,
         sessionDuration: () => const Duration(hours: 1),
       );
-      final original = await repository.signIn(platformMemberId: 'platform-1');
+      final original =
+          await repository.signIn(email: 'platform-1', password: 'unused');
 
       final member = await memberRepository.findById('platform-1');
       await memberRepository.save(member!.copyWith(
@@ -122,7 +127,8 @@ void main() {
         'path"', () async {
       const repository = ProductionUnavailablePlatformAuthRepository();
 
-      final session = await repository.signIn(platformMemberId: 'platform-1');
+      final session =
+          await repository.signIn(email: 'platform-1', password: 'unused');
 
       expect(session, isNull);
     });

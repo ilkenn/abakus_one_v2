@@ -6,6 +6,8 @@ import 'package:abakus_one_v2/features/platform/data/platform_member_repository.
 import 'package:abakus_one_v2/features/platform/domain/authorization/platform_role.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../core/services/auth/fake_email_password_auth_client.dart';
+
 void main() {
   group('BootstrapFirstPlatformOwnerAccount', () {
     test(
@@ -16,14 +18,18 @@ void main() {
         idGenerator: SequentialPlatformMemberIdGenerator(),
         repository: repository,
         auditRepository: InMemoryPlatformAuditEntryRepository(),
+        authClient: FakeEmailPasswordAuthClient(),
       );
 
       final member = await useCase(
         displayName: 'İlk Platform Sahibi',
         createdAt: DateTime(2026, 1, 1),
+        email: 'owner@abakus.test',
+        password: 'S3curePass!',
       );
 
       expect(member.roles, {PlatformRole.platformOwner});
+      expect(member.authUid, isNotNull);
       expect(await repository.findAll(), [member]);
     });
 
@@ -33,17 +39,22 @@ void main() {
         idGenerator: SequentialPlatformMemberIdGenerator(),
         repository: repository,
         auditRepository: InMemoryPlatformAuditEntryRepository(),
+        authClient: FakeEmailPasswordAuthClient(),
       );
 
       await useCase(
         displayName: 'İlk Platform Sahibi',
         createdAt: DateTime(2026, 1, 1),
+        email: 'owner@abakus.test',
+        password: 'S3curePass!',
       );
 
       expect(
         () => useCase(
           displayName: 'İkinci Platform Sahibi',
           createdAt: DateTime(2026, 1, 2),
+          email: 'owner2@abakus.test',
+          password: 'S3curePass!',
         ),
         throwsA(isA<PlatformAlreadyBootstrappedViolation>()),
       );
@@ -56,11 +67,14 @@ void main() {
         idGenerator: SequentialPlatformMemberIdGenerator(),
         repository: repository,
         auditRepository: auditRepository,
+        authClient: FakeEmailPasswordAuthClient(),
       );
 
       final member = await useCase(
         displayName: 'İlk Platform Sahibi',
         createdAt: DateTime(2026, 1, 1),
+        email: 'owner@abakus.test',
+        password: 'S3curePass!',
       );
 
       final entries = await auditRepository.findByTargetEntityId(member.id);

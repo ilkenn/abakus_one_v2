@@ -109,6 +109,7 @@ void main() {
     (WidgetTester tester) async {
       final storage = _FakeSessionStorage(
         stored: AuthSession(
+          uid: 'uid-1',
           phoneNumber: '+905321234567',
           createdAt: DateTime.now(),
           expiresAt: DateTime.now().add(const Duration(days: 1)),

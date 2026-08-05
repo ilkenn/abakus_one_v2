@@ -14,9 +14,9 @@ class PlatformSessionController {
   final Ref _ref;
   final PlatformAuthRepository _authRepository;
 
-  Future<bool> signIn(String platformMemberId) async {
+  Future<bool> signIn({required String email, required String password}) async {
     final session =
-        await _authRepository.signIn(platformMemberId: platformMemberId);
+        await _authRepository.signIn(email: email, password: password);
     _ref.read(platformActorSessionProvider.notifier).state = session;
     return session != null;
   }

@@ -2177,6 +2177,40 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Owner Agent**: security_engineer
 - **Related Modules**: Staff/Admin
 
+### BR-AUTH-004 — A Firebase Auth UID is the one canonical identity; phone number/sequential ids are
+  never the permanent identity (Phase 9, ADR-026)
+- **Status**: VERIFIED
+- **Rule**: `AuthSession.uid` (a real Firebase Auth UID, issued by the local Auth Emulator in
+  development or the real Firebase project in staging/production) is the identity every other record
+  links through: `ProfileModel.id == AuthSession.uid` directly (no derivation), and
+  `ResolveCurrentCustomer` resolves/creates the CRM `Customer` by that same `uid`
+  (`Customer.id == AuthSession.uid`) rather than a phone-derived or sequentially-issued string. Phone
+  number remains a verified login/lookup attribute (`CustomerRepository.findByPhoneNumber` still
+  exists for legitimate lookup-by-phone needs, e.g. staff searching a customer in POS) — never the
+  permanent identity itself. A session persisted before this rule existed (no `uid` field) is treated
+  as invalid (`AuthSession.tryFromJson` returns `null`), forcing re-sign-in rather than fabricating an
+  identity — judged safe because no production data exists yet (greenfield).
+- **Owner Agent**: security_engineer
+- **Related Modules**: Auth, Profile, CRM
+
+### BR-AUTH-005 — Staff/platform sign-in requires a real Firebase credential AND an exact linked-account
+  match; a valid credential alone is not enough (Phase 9, ADR-026)
+- **Status**: VERIFIED
+- **Rule**: `FirebaseStaffAuthRepository`/`FirebasePlatformAuthRepository` authenticate the
+  `email`/`password` credential against real Firebase Auth, then require the resulting uid to exactly
+  match `StaffMember.authUid`/`PlatformMember.authUid` for an active member with at least one role —
+  a working Firebase login for an account with no linked member record is denied, never treated as
+  "a new member." Neither `StaffSignInScreen` nor `PlatformSignInScreen` enumerates the member roster
+  to perform sign-in anymore (superseding the Phase 8/ADR-025 "Development Login" picker), in every
+  build mode, not only release. `staffAuthRepositoryProvider`/`platformAuthRepositoryProvider`/
+  `authRepositoryProvider` select the real Firebase-backed implementation only once
+  `firebaseReadyProvider` is `true`; otherwise every one fails closed
+  (`ProductionUnavailable*AuthRepository`), regardless of `kReleaseMode`. **Known limitation, not
+  silently narrowed**: `RegisterStaffMember` (the admin "add a new staff member" flow) does not yet
+  create a linked Firebase Auth account — only the bootstrap-admin/bootstrap-owner path does.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin, Platform
+
 ### BR-ADMIN-001 — Customer administration access is role-tiered: admin unrestricted, manager
   branch-scoped, staff limited, courier none (Phase 6)
 - **Status**: VERIFIED
@@ -3477,11 +3511,48 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
   BR-PLATFORM-001, BR-PLATFORM-002, BR-BRANDING-001, BR-BRANDING-002, BR-INTEGRATION-001,
   BR-INTEGRATION-002, BR-INTEGRATION-003, BR-PAYMENTHUB-001, BR-PAYMENTHUB-002
 
+### DL-029 — Production Backend, Canonical Identity & Real Data Platform (Phase 9, sprints 9A–9C)
+- **Decision**: Firebase confirmed as the accepted backend (real dependencies added, emulator wiring
+  for Auth/Firestore/Storage/Functions, real Crashlytics integration); a shared-project/shared-collection
+  Firestore tenant-isolation model with denormalized immutable `organizationId` and custom-claim
+  authorization, emulator-verified via 22 real Security Rules tests; and a real Firebase Auth UID as
+  the one canonical identity, replacing five independent id-issuance schemes across
+  `AuthSession`/`ProfileModel`/CRM `Customer`, plus real Firebase email/password credentials (with an
+  exact linked-member-account check) replacing the credential-free staff/platform sign-in picker in
+  every build mode.
+- **Status**: DECIDED (in progress — sprints 9D–9J still open)
+- **Source**: User, Phase 9 kickoff — an explicit autonomous-implementation mandate spanning 10
+  lettered parts (9A–9J), five named stop conditions, and a mandatory 30-item final report ending in a
+  phase-gate verdict, governed by the previously-approved `docs/phase9_architecture_analysis.md`.
+- **Date**: 2026-08-05
+- **Consequences**: See BR-AUTH-004/005 above. `docs/decisions.md` ADR-026 records the full
+  architecture, every judgment call, and the honest "not yet done" list (no Cloud Function exists yet,
+  no repository beyond Security Rules is backed by real Firestore, the legacy customer-checkout order
+  path is not yet unified onto the canonical `Order` aggregate, `RegisterStaffMember` does not yet link
+  a Firebase account, nothing is deployed to any real Firebase project). `docs/feature_status.md`
+  carries the sprint-by-sprint Phase 9 progress section.
+- **Related Modules**: Auth, Profile, CRM, Staff/Admin, Platform, Security
+- **Business Rule IDs**: BR-AUTH-004, BR-AUTH-005
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v2.7 — 2026-08-05
+- **Version**: 2.7
+- **Date**: 2026-08-05
+- **Summary**: Phase 9 sprints 9A–9C (Production Backend, Canonical Identity & Real Data Platform, in
+  progress). Added BR-AUTH-004 (Firebase Auth UID is the one canonical identity across
+  `AuthSession`/`ProfileModel`/CRM `Customer`) and BR-AUTH-005 (staff/platform sign-in requires a real
+  Firebase credential AND an exact linked-account match, replacing the credential-free Development
+  Login picker in every build mode). New DL-029. See `docs/decisions.md` ADR-026.
+- **Author**: Claude, at the user's direction (autonomous Phase 9 implementation mandate).
+- **Reason**: Record the canonical-identity and credential-based-sign-in business rules this sprint's
+  approved architecture established, and the two explicitly-named limitations (no Firebase account
+  link for `RegisterStaffMember`-created staff yet; `Order.customerId` wiring deferred to Sprint 9D)
+  so they are not mistaken for silently-resolved gaps.
 
 ### v2.6 — 2026-08-03
 - **Version**: 2.6

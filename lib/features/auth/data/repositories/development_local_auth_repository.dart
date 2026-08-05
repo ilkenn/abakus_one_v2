@@ -3,20 +3,24 @@ import '../../domain/models/otp_challenge.dart';
 import '../session_storage.dart';
 import 'auth_repository.dart';
 
-/// Development/test-only [AuthRepository] — there is no real backend, no
-/// real SMS delivery, and no real OTP security behind this class. It
-/// exists so the Login → OTP → session flow can be built and tested
-/// end-to-end before a backend exists, per the AI Development
-/// Constitution's dependency-abstraction rule. It must never be selected
-/// in a release build — see `authRepositoryProvider` in `auth_provider.dart`,
-/// which only ever constructs this when `kReleaseMode` is `false`.
+/// Test/dev-tooling [AuthRepository] fixture — there is no real backend, no
+/// real SMS delivery, and no real OTP security behind this class. It exists
+/// so widget/provider tests can exercise the Login → OTP → session flow
+/// without a real Firebase Auth Emulator running.
+///
+/// As of Sprint 9C (`docs/decisions.md` ADR-026) this is **no longer the
+/// app's own default dev-mode implementation** — `authRepositoryProvider`
+/// now selects `FirebaseAuthRepository` (real Firebase Auth, connected to
+/// the local Auth Emulator in `AppEnvironment.development`) whenever
+/// Firebase is ready, and `ProductionUnavailableAuthRepository` otherwise —
+/// never this class. It remains in `lib/` (not `test/`) only because ~10
+/// existing test files already construct it directly as an explicit
+/// provider override; do not wire it into any production provider again.
 ///
 /// The OTP code is a **fixed, publicly documented development value**
 /// ([developmentOtpCode]) rather than a randomly generated one that's then
 /// hidden from the user — a random code the user couldn't see would make
-/// this untestable and would look like real security it isn't. The OTP
-/// screen shows this value directly to the user, but only when
-/// `kReleaseMode` is `false`.
+/// this untestable and would look like real security it isn't.
 class DevelopmentLocalAuthRepository implements AuthRepository {
   /// The only code [verifyOtp] ever accepts. Never referenced or honored
   /// in a release build.
@@ -109,6 +113,7 @@ class DevelopmentLocalAuthRepository implements AuthRepository {
 
     final now = DateTime.now();
     await saveSession(AuthSession(
+      uid: 'dev-$phoneNumber',
       phoneNumber: phoneNumber,
       createdAt: now,
       expiresAt: now.add(sessionValidity),

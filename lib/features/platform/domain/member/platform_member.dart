@@ -14,6 +14,7 @@ class PlatformMember {
     this.roles = const {},
     this.status = PlatformMemberStatus.active,
     this.sessionsRevokedAt,
+    this.authUid,
     required this.createdAt,
     required this.revision,
   });
@@ -27,6 +28,11 @@ class PlatformMember {
   /// contract.
   final DateTime? sessionsRevokedAt;
 
+  /// The linked Firebase Auth UID — Sprint 9C (`docs/decisions.md`
+  /// ADR-026). Mirrors `StaffMember.authUid` exactly; see its own doc
+  /// comment.
+  final String? authUid;
+
   final DateTime createdAt;
   final int revision;
 
@@ -38,6 +44,7 @@ class PlatformMember {
     PlatformMemberStatus? status,
     DateTime? sessionsRevokedAt,
     bool clearSessionsRevokedAt = false,
+    String? authUid,
     required int revision,
   }) {
     return PlatformMember(
@@ -48,6 +55,7 @@ class PlatformMember {
       sessionsRevokedAt: clearSessionsRevokedAt
           ? null
           : (sessionsRevokedAt ?? this.sessionsRevokedAt),
+      authUid: authUid ?? this.authUid,
       createdAt: createdAt,
       revision: revision,
     );

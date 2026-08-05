@@ -6,6 +6,13 @@ abstract interface class StaffMemberRepository {
   Future<StaffMember?> findById(String staffMemberId);
   Future<List<StaffMember>> findAll();
   Future<List<StaffMember>> findByBranch(String branchId);
+
+  /// The credential-linkage lookup key — Sprint 9C
+  /// (`docs/decisions.md` ADR-026). `null` when no member is linked to
+  /// this Firebase Auth UID — `FirebaseStaffAuthRepository` treats that
+  /// exactly like "member not found," never falling back to any other
+  /// lookup.
+  Future<StaffMember?> findByAuthUid(String authUid);
 }
 
 /// Selected in release builds — Phase 8 closure sprint
@@ -37,6 +44,9 @@ class ProductionUnavailableStaffMemberRepository
 
   @override
   Future<List<StaffMember>> findByBranch(String branchId) async => const [];
+
+  @override
+  Future<StaffMember?> findByAuthUid(String authUid) async => null;
 }
 
 class InMemoryStaffMemberRepository implements StaffMemberRepository {
@@ -57,5 +67,13 @@ class InMemoryStaffMemberRepository implements StaffMemberRepository {
     return List.unmodifiable(
       _byId.values.where((m) => m.branchAccess.contains(branchId)),
     );
+  }
+
+  @override
+  Future<StaffMember?> findByAuthUid(String authUid) async {
+    for (final member in _byId.values) {
+      if (member.authUid == authUid) return member;
+    }
+    return null;
   }
 }

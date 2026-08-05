@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../bootstrap/firebase_ready_provider.dart';
+import '../../../../core/services/auth/email_password_auth_client.dart';
 import '../../../courier/presentation/providers/courier_core_dependencies_provider.dart';
 import '../../../pos/presentation/providers/kds_dependencies_provider.dart';
 import '../../../restaurant/presentation/providers/restaurant_operations_dependencies_provider.dart';
@@ -72,15 +74,19 @@ final staffRoleChangeEventIdGeneratorProvider =
   return SequentialStaffRoleChangeEventIdGenerator();
 });
 
-/// `kReleaseMode` selects the fail-closed implementation — exactly
-/// mirroring `authRepositoryProvider`'s own release/debug split
-/// (`features/auth`). "Do not claim production backend validation if
-/// none exists."
+/// [firebaseReadyProvider] selects the fail-closed implementation — Sprint
+/// 9C (`docs/decisions.md` ADR-026), superseding the previous
+/// `kReleaseMode` split, exactly mirroring `authRepositoryProvider`'s own
+/// gate (`features/auth`). "Do not claim production backend validation if
+/// none exists" — now genuinely satisfied: a healthy Firebase connection
+/// means real credential-checked sign-in in every build, not just debug.
 final staffAuthRepositoryProvider = Provider<StaffAuthRepository>((ref) {
-  if (kReleaseMode) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
     return const ProductionUnavailableStaffAuthRepository();
   }
-  return DevelopmentStaffAuthRepository(
+  return FirebaseStaffAuthRepository(
+    authClient: DefaultEmailPasswordAuthClient(),
     staffMemberRepository: ref.watch(staffMemberRepositoryProvider),
     sessionDuration: () => const Duration(hours: 12),
   );

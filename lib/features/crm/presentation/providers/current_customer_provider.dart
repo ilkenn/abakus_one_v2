@@ -7,10 +7,11 @@ import '../../application/use_cases/resolve_current_customer.dart';
 import '../../domain/segmentation/customer.dart';
 import 'crm_dependencies_provider.dart';
 
-/// The signed-in app user's CRM [Customer] record — Sprint 5E's identity
-/// bridge (`docs/decisions.md` ADR-022). `null` when signed out, a guest
-/// session, or no session exists yet — never a fabricated/default
-/// customer.
+/// The signed-in app user's CRM [Customer] record — the canonical identity
+/// bridge (`docs/decisions.md` ADR-026, Sprint 9C; supersedes Sprint 5E's
+/// phone-derived ADR-022 version — see `ResolveCurrentCustomer`).
+/// `null` when signed out, a guest session, or no session exists yet —
+/// never a fabricated/default customer.
 ///
 /// **Deliberate, explicitly-reported exception to this codebase's usual
 /// "no cross-feature imports" convention** (`CLAUDE.md` §3): resolving
@@ -36,6 +37,7 @@ final currentCustomerProvider = FutureProvider<Customer?>((ref) async {
   );
 
   return resolveCurrentCustomer(
+    uid: session.uid,
     phoneNumber: session.phoneNumber,
     displayName: session.phoneNumber,
     now: ref.watch(clockProvider).now(),

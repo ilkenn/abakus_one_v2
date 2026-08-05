@@ -6,6 +6,8 @@ import 'package:abakus_one_v2/features/admin/data/staff_member_repository.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../core/services/auth/fake_email_password_auth_client.dart';
+
 void main() {
   group('BootstrapFirstAdminAccount', () {
     test(
@@ -16,15 +18,19 @@ void main() {
         idGenerator: SequentialStaffMemberIdGenerator(),
         repository: repository,
         auditRepository: InMemoryAdminAuditEntryRepository(),
+        authClient: FakeEmailPasswordAuthClient(),
       );
 
       final member = await useCase(
         displayName: 'İlk Yönetici',
         organizationId: 'org-1',
         createdAt: DateTime(2026, 1, 1),
+        email: 'admin@abakus.test',
+        password: 'S3curePass!',
       );
 
       expect(member.roles, {StaffRole.admin});
+      expect(member.authUid, isNotNull);
       expect(await repository.findAll(), [member]);
     });
 
@@ -34,12 +40,15 @@ void main() {
         idGenerator: SequentialStaffMemberIdGenerator(),
         repository: repository,
         auditRepository: InMemoryAdminAuditEntryRepository(),
+        authClient: FakeEmailPasswordAuthClient(),
       );
 
       await useCase(
         displayName: 'İlk Yönetici',
         organizationId: 'org-1',
         createdAt: DateTime(2026, 1, 1),
+        email: 'admin@abakus.test',
+        password: 'S3curePass!',
       );
 
       expect(
@@ -47,6 +56,8 @@ void main() {
           displayName: 'İkinci Yönetici',
           organizationId: 'org-1',
           createdAt: DateTime(2026, 1, 2),
+          email: 'admin2@abakus.test',
+          password: 'S3curePass!',
         ),
         throwsA(isA<AdminPlatformAlreadyBootstrappedViolation>()),
       );
@@ -59,12 +70,15 @@ void main() {
         idGenerator: SequentialStaffMemberIdGenerator(),
         repository: repository,
         auditRepository: auditRepository,
+        authClient: FakeEmailPasswordAuthClient(),
       );
 
       final member = await useCase(
         displayName: 'İlk Yönetici',
         organizationId: 'org-1',
         createdAt: DateTime(2026, 1, 1),
+        email: 'admin@abakus.test',
+        password: 'S3curePass!',
       );
 
       final entries = await auditRepository.findByTargetEntityId(member.id);

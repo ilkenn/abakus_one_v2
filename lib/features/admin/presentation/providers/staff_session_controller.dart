@@ -17,10 +17,12 @@ class StaffSessionController {
   final StaffAuthRepository _authRepository;
 
   /// Returns `true` on success. `false` (session left unchanged, still
-  /// `null`) if [staffMemberId] doesn't resolve to an active member with
-  /// at least one role — "deny by default" extends to sign-in itself.
-  Future<bool> signIn(String staffMemberId) async {
-    final session = await _authRepository.signIn(staffMemberId: staffMemberId);
+  /// `null`) if the credential is invalid or doesn't resolve to an active
+  /// member with at least one role — "deny by default" extends to
+  /// sign-in itself.
+  Future<bool> signIn({required String email, required String password}) async {
+    final session =
+        await _authRepository.signIn(email: email, password: password);
     _ref.read(actorSessionProvider.notifier).state = session;
     return session != null;
   }

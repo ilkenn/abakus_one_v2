@@ -3133,3 +3133,174 @@ rule, not just Phase 8's two) is named explicitly as future architectural work, 
 The residual uncertainty is concentrated in exactly the areas Decision 11 names as deferred (full
 Marketplace/Payment Hub CRUD UI, platform-side tenant/catalog management UI) — genuinely unbuilt scope,
 not an unverified claim.
+
+---
+
+## ADR-026 — Production Backend, Canonical Identity & Real Data Platform (Phase 9)
+
+- Date: 2026-08-05
+- Status: Accepted (in progress — sprints land incrementally; this ADR is extended, not replaced, as
+  each sprint 9A–9J closes)
+
+### Context
+
+Phase 8 closed with a genuinely tested, multi-tenant-*shaped* client architecture, but — as
+`docs/phase9_architecture_analysis.md`'s approved analysis documents in full — every one of its 184
+repositories is `InMemory*`, every "authentication" is a local mock or a credential-free picker, and
+there is no server anywhere enforcing any of the authorization/tenant-isolation rules the client-side
+code already models correctly. Phase 9's mandate: transform this into "a persistent, secure and
+server-authoritative multi-tenant platform suitable for an internal Abaküs Street Food pilot" —
+real Firebase persistence, canonical identity, real customer OTP, tenant isolation enforced server-side
+(not just client-side), canonical order creation, durable audit, and an honest accounting of what is
+real vs. emulator-tested-only vs. still-requires-console/legal/external-setup. The kickoff pre-approved
+the backend platform (Firebase), named the canonical Order and canonical identity decisions, and set an
+explicit account-deletion policy — this ADR records the *how*, not those top-level choices, which were
+decided by the user directly.
+
+### Decision 1 — Firebase is the accepted backend; Supabase remains documented fallback only (9A)
+
+`firebase_auth`, `cloud_firestore`, `firebase_storage`, `firebase_messaging`, `firebase_crashlytics`,
+`cloud_functions` added as real dependencies alongside the already-present `firebase_core`. Three real,
+already-provisioned Firebase projects (`abakusone`/production, `abakus-one-dev`/development,
+`abakus-one-staging`/staging) are wired through the pre-existing `FirebaseOptionsSelector` — this ADR
+does not re-litigate that selection (already ADR-005/`docs/decisions.md`'s environment-separation
+decision); it only confirms Firebase itself as the platform, per the kickoff's explicit "do not re-open
+the backend platform decision unless direct implementation evidence proves Firebase cannot satisfy a
+mandatory requirement" — no such evidence arose. `firebase.json`/`google-services.json`/
+`GoogleService-Info.plist`/`firebase_options*.dart` are confirmed **not secrets** (standard FlutterFire
+client-config artifacts, safe to commit) — the artifacts that must never be committed are service-account
+JSON files and Cloud Functions runtime secrets, neither of which exist in this repo.
+
+The Firebase Emulator Suite (Auth :9099, Firestore :8080, Storage :9199, Functions :5001, UI :4000) is
+the only backend `AppEnvironment.development` may connect to (`FirebaseAuthEmulatorConfig`/
+`FirebaseFirestoreEmulatorConfig`/`FirebaseStorageEmulatorConfig`/`FirebaseFunctionsEmulatorConfig`,
+each `shouldUseEmulator(environment) => environment == AppEnvironment.development`, exhaustively —
+staging/production always reach the real project). `FirebaseBootstrapService` now also connects the
+Auth Emulator (`FirebaseAuth.instance.useAuthEmulator`) as a separate, non-fatal step after core
+`Firebase.initializeApp()` succeeds — an emulator-connection failure is caught, logged, and does not
+undo an otherwise-successful boot; Auth-dependent calls simply fail at their own call site later,
+mirroring `ProductionUnavailableAuthRepository`'s existing fail-closed shape rather than introducing a
+second one.
+
+`FirebaseCrashlyticsService` is the first real (non-`NoOp`) vendor integration wired through the
+existing `firebaseReadyProvider` gate (`crashReportingServiceProvider`) — every value passed to it is
+redacted through the existing `LogRedactor` first, treating Crashlytics as an untrusted third-party
+destination exactly like local logs. `ErrorMapper` gained two new `FirebaseException` branches
+(`plugin: 'firebase_auth'` and the Firestore-like default), using real Dart 3 object-pattern matching
+against the imported `firebase_core` type rather than the pre-existing `dart:io`-avoidance convention's
+runtime-type-name string comparison — the string-comparison approach was tried first and demonstrably
+failed on `FirebaseAuthException` subclasses (needed in tests, since the real constructor is
+`@protected`), which is why the object-pattern rewrite is the one used; `firebase_core` is judged safe
+to import directly because it is a real, always-present, web-safe dependency, unlike `dart:io`.
+
+### Decision 2 — Firestore tenant model: shared project/shared collections, denormalized immutable
+`organizationId`, custom claims as the fast authorization path (9B)
+
+`docs/firestore_data_model.md` records the full 15-collection strategy `firestore.rules` implements.
+The isolation model denormalizes `organizationId` onto every tenant-owned document rather than
+re-deriving the branch→restaurant→organization parent chain on every read — verified once, at
+document-creation time, by a trusted Cloud Function (not yet built; Sprint 9F), then treated as
+immutable (`organizationIdUnchanged()` rule helper) for the document's lifetime. Authorization reads a
+custom claim (`organizationAccess: [orgId, ...]`, `roles: {orgId: [roleName, ...]}`, a wholly separate
+`platformRole` namespace for platform staff) as the fast path; a durable `memberships/{orgId}_{uid}`
+Firestore collection is the source of truth a future Cloud Function syncs into those claims — this ADR
+does not yet build that sync function (also 9F). Every collection with a "clients cannot self-assign an
+organization/role/entitlement" requirement (`organizations`, `memberships`, `staffMembers`,
+`entitlements`, etc.) is enforced structurally, not just by convention: `allow write: if false` for
+every client path, so only a trusted Admin-SDK-backed Cloud Function (which bypasses Security Rules
+entirely) can ever write them. Time-limited, audited platform-support access to one tenant's data is a
+separate `supportGrants/{orgId}_{uid}` collection checked against `request.time`, not a permanent grant.
+The canonical `orders` collection allows client `create` only in `status == 'created'`; every
+subsequent transition is `update: if false` — status changes are Cloud-Function-only (9F).
+`firestore.rules` ends in an explicit `match /{document=**} { allow read, write: if false; }` — an
+unlisted/future collection defaults to fully denied, "Fail Closed" applied structurally.
+
+22 emulator-backed Security Rules tests (`firestore-tests/`, Node + `@firebase/rules-unit-testing`, run
+via `firebase emulators:exec`) prove this file's behavior against a real (local) Firestore instance —
+not merely written and assumed correct. One test bug was found and fixed during that verification: a
+`self-provision denied` test reused a uid a prior test had already seeded, silently turning an intended
+`create` into an allowed `update`; fixed by using a never-seeded uid, since this suite has no
+`clearFirestore` between cases (documented as a known suite-level constraint, not worked around by
+adding one — deliberately out of this sprint's scope). **Not yet done, honestly**: rules are not
+deployed to any real Firebase project — emulator-verified only, per the kickoff's own stop condition on
+requiring real console/deployment access to go further.
+
+### Decision 3 — Canonical identity: a real Firebase Auth UID replaces every phone-derived/sequential
+identity string across `AuthSession`/`ProfileModel`/CRM `Customer` (9C)
+
+Prior to this sprint, five independent id-issuance schemes coexisted with exactly one narrow bridge
+between two of them (`ResolveCurrentCustomer`, phone number → sequential `Customer.id`, Sprint 5E's
+ADR-022) — `AuthSession` had no id field at all; `ProfileModel.id` was a separately-derived
+`'customer-<phone>'` string that could silently diverge from `Customer.id`; `StaffMember.id`/
+`PlatformMember.id` were sequential counters with no link to any authentication at all; `Order.customerId`
+existed but was never populated at any real call site. `AuthSession` now carries a required `uid` — a
+real Firebase Auth UID, issued by the local Auth Emulator in development or the real project in
+staging/production, never a client-fabricated string. `ResolveCurrentCustomer` now resolves/creates the
+CRM `Customer` by `uid` directly (`Customer.id == AuthSession.uid` for every customer this use case
+touches going forward) — `findByPhoneNumber` remains on `CustomerRepository` as a lookup key for
+legitimate uses elsewhere (e.g. staff searching a customer in POS), never again as the identity-resolution
+path itself. `ProfileModel.id` is now `session.uid` directly — no derivation, no possible divergence
+from the CRM record. `ProfileModel.name`/`.email` no longer show the hardcoded `'Ahmet Yılmaz'`/
+`'ahmet.yilmaz@abakusbowl.com'` literals for a real authenticated session: `name` falls back to the
+phone number itself (real, not fabricated) since there is no cross-feature import available to read
+`Customer.displayName` without introducing a second `profile↔crm` exception to the existing "auth↔crm
+is the one allowed cross-feature import" rule (`current_customer_provider.dart`'s own doc comment) —
+adding that second exception is deliberately out of this sprint's scope, not a silent shortcut; `email`
+is an honest empty string, since phone-OTP auth never collects one. A pre-9C persisted session (no
+`uid` field) decodes to `null` via `AuthSession.tryFromJson` — the user simply signs in again; this is
+judged safe because there is no real production data behind any such session yet (greenfield).
+
+**`RegisterCustomer`/`RegisterStaffMember` are unchanged in one respect, deliberately**: `RegisterCustomer`
+gained an optional `id` parameter (canonical callers pass the uid; the `CustomerIdGenerator` path
+remains for any future caller with no canonical uid yet, e.g. a staff-initiated walk-in registration —
+not built). `RegisterStaffMember`/`StaffManagementScreen`'s admin-registration flow does **not** yet
+create a linked Firebase Auth account — only the bootstrap-admin/bootstrap-owner path does. This is an
+explicit, reported limitation, not a silently narrowed claim: for this sprint, only the bootstrapped
+admin (and, by extension, whoever they manually provision credentials for outside this app) can sign in
+via `FirebaseStaffAuthRepository`; wiring `RegisterStaffMember` to also create a Firebase Auth account
+is deferred, named here so it is not mistaken for "done."
+
+### Decision 4 — Staff/platform sign-in: real Firebase email/password credentials replace the
+credential-free member picker, in every build (9C)
+
+`StaffAuthRepository.signIn`/`PlatformAuthRepository.signIn` now take `{email, password}`, not a bare
+member id. `EmailPasswordAuthClient` (`core/services/auth/` — shared by both features deliberately: it
+is generic Firebase Auth plumbing, not a role/permission concept, so sharing it does not cross the
+tenant/platform role-namespace separation ADR-025 established) wraps `FirebaseAuth`'s email/password
+API behind a narrow, mockable interface, mirroring `FirebaseAuthClient`'s and `CrashlyticsClient`'s
+existing injectable-wrapper pattern — including the same "resolve `FirebaseAuth.instance` lazily, not
+in the constructor" fix both needed, since a `flutter test` run that overrides `firebaseReadyProvider`
+to prove provider *wiring* (not the real SDK) must not crash at construction. `FirebaseStaffAuthRepository`/
+`FirebasePlatformAuthRepository` require an **exact `StaffMember.authUid`/`PlatformMember.authUid`
+match** in addition to a valid credential — a working Firebase login alone is not enough; the signed-in
+account must also be linked to an active member record. `StaffSignInScreen`/`PlatformSignInScreen` no
+longer call `findAll()` on the member repository at all — the "no-credential picker" gap and the
+Phase-8-era enumeration concern (ADR-025's "Development Login enumeration" fix) are now structurally
+moot for sign-in specifically, in every build mode, not just release. `staffAuthRepositoryProvider`/
+`platformAuthRepositoryProvider`/`authRepositoryProvider` all switched their selection gate from
+`kReleaseMode` to `firebaseReadyProvider` — the same fail-closed seam `crashReportingServiceProvider`/
+`appCheckServiceProvider` already use — so a release build with a healthy Firebase connection
+genuinely authenticates users, and any build (including debug) whose Firebase bootstrap failed falls
+back to the `ProductionUnavailable*` implementation instead of ever faking a success. `BootstrapFirstAdminAccount`/
+`BootstrapFirstPlatformOwnerAccount` now create the Firebase Auth account themselves
+(`EmailPasswordAuthClient.createAccount`) as the one deliberate self-service account-creation path in
+the app — mirrors why the role-grant itself was already self-authorized (ADR-023/ADR-025): there is no
+existing admin/owner account to have created this one in advance. `DevelopmentLocalAuthRepository`/
+`DevelopmentStaffAuthRepository`/`DevelopmentPlatformAuthRepository` remain in `lib/` only as documented
+test fixtures (existing widget/provider tests construct them directly as explicit overrides) — none are
+wired into any production provider anymore.
+
+### Confidence
+
+9A: 2136→2166 tests. 9B: +10 (restaurant-scope authorization) plus 22 emulator-backed Security Rules
+tests (run against the real local Firestore Emulator, not merely written). 9C: 2176→2205 tests,
+including new coverage for `FirebaseAuthRepository`, `FirebaseStaffAuthRepository`,
+`FirebasePlatformAuthRepository`, `EmailPasswordAuthClient`'s test fixture, and all three
+`firebaseReadyProvider`-gated provider switches. `dart format`/`flutter analyze` clean at every commit
+in this ADR. **Not yet done, honestly** (tracked here so later sprints/the final Phase 9 report can
+verify against this list rather than re-discover it): no Cloud Function exists yet (memberships→claims
+sync, order-status transitions, event/outbox processing — all Sprint 9F); no repository beyond
+Security Rules is backed by real Firestore yet — every `InMemory*` repository is still exactly that
+(Sprint 9E); the legacy customer-checkout order path has not been unified onto the canonical `Order`
+aggregate yet (Sprint 9D, explicitly blocking); `RegisterStaffMember` does not yet link a Firebase Auth
+account (Decision 3, above); nothing is deployed to any real Firebase project.

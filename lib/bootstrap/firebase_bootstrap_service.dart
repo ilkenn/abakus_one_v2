@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import '../core/config/firebase_options_selector.dart';
@@ -5,6 +6,7 @@ import '../core/errors/error_mapper.dart';
 import '../core/services/logging/log_level.dart';
 import '../core/services/logging/logging_service.dart';
 import 'app_environment.dart';
+import 'firebase_auth_emulator_config.dart';
 
 /// Matches [Firebase.initializeApp]'s signature, narrowed to the part this
 /// service actually needs (nothing here uses the returned [FirebaseApp]).
@@ -14,6 +16,15 @@ typedef FirebaseInitializer = Future<void> Function({FirebaseOptions? options});
 
 Future<void> _defaultFirebaseInitializer({FirebaseOptions? options}) async {
   await Firebase.initializeApp(options: options);
+}
+
+/// Matches [FirebaseAuth.useAuthEmulator]'s signature. Injected for the same
+/// testability reason as [FirebaseInitializer] — real `firebase_auth` isn't
+/// available under `flutter test`.
+typedef AuthEmulatorConnector = void Function(String host, int port);
+
+void _defaultConnectAuthEmulator(String host, int port) {
+  FirebaseAuth.instance.useAuthEmulator(host, port);
 }
 
 /// Initializes Firebase for [AppEnvironment.current], safely: any failure
@@ -36,18 +47,21 @@ class FirebaseBootstrapService {
   FirebaseBootstrapService({
     required LoggingService loggingService,
     FirebaseInitializer? initializeApp,
+    AuthEmulatorConnector? connectAuthEmulator,
   })  : _loggingService = loggingService,
-        _initializeApp = initializeApp ?? _defaultFirebaseInitializer;
+        _initializeApp = initializeApp ?? _defaultFirebaseInitializer,
+        _connectAuthEmulator =
+            connectAuthEmulator ?? _defaultConnectAuthEmulator;
 
   final LoggingService _loggingService;
   final FirebaseInitializer _initializeApp;
+  final AuthEmulatorConnector _connectAuthEmulator;
 
   Future<bool> initialize() async {
     try {
       await _initializeApp(
         options: FirebaseOptionsSelector.forEnvironment(AppEnvironment.current),
       );
-      return true;
     } catch (error, stackTrace) {
       final failure = ErrorMapper.map(error);
       _loggingService.log(
@@ -58,5 +72,30 @@ class FirebaseBootstrapService {
       );
       return false;
     }
+
+    // Auth-emulator wiring is deliberately a separate, non-fatal step: a
+    // failure here (e.g. the local emulator isn't running) must not undo a
+    // successful core Firebase init — Firestore/Storage/other Firebase
+    // features stay usable either way; only Auth-dependent calls will fail
+    // at their own call site later, the same fail-closed shape
+    // `ProductionUnavailableAuthRepository` already establishes.
+    if (FirebaseAuthEmulatorConfig.shouldUseEmulator(AppEnvironment.current)) {
+      try {
+        _connectAuthEmulator(
+          FirebaseAuthEmulatorConfig.host,
+          FirebaseAuthEmulatorConfig.port,
+        );
+      } catch (error, stackTrace) {
+        final failure = ErrorMapper.map(error);
+        _loggingService.log(
+          LogLevel.error,
+          'Firebase Auth Emulator connection failed: ${failure.message}',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
+
+    return true;
   }
 }

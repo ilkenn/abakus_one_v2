@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../bootstrap/firebase_ready_provider.dart';
+import '../../../../core/services/auth/email_password_auth_client.dart';
 import '../../application/identity/platform_member_id_generator.dart';
 import '../../data/platform_audit_entry_repository.dart';
 import '../../data/platform_auth_repository.dart';
@@ -36,14 +38,17 @@ final platformAuditEntryRepositoryProvider =
   return InMemoryPlatformAuditEntryRepository();
 });
 
-/// `kReleaseMode` selects the fail-closed implementation — exactly
-/// mirroring `staffAuthRepositoryProvider`'s own release/debug split.
-/// "Release builds must never expose this path" (Phase 8 kickoff).
+/// [firebaseReadyProvider] selects the fail-closed implementation —
+/// Sprint 9C (`docs/decisions.md` ADR-026), superseding the previous
+/// `kReleaseMode` split, exactly mirroring `staffAuthRepositoryProvider`'s
+/// own gate.
 final platformAuthRepositoryProvider = Provider<PlatformAuthRepository>((ref) {
-  if (kReleaseMode) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
     return const ProductionUnavailablePlatformAuthRepository();
   }
-  return DevelopmentPlatformAuthRepository(
+  return FirebasePlatformAuthRepository(
+    authClient: DefaultEmailPasswordAuthClient(),
     platformMemberRepository: ref.watch(platformMemberRepositoryProvider),
     sessionDuration: () => const Duration(hours: 12),
   );

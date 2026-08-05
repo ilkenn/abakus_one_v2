@@ -88,6 +88,7 @@ void main() {
 
   test('loadSession suresi dolmus oturumu temizler ve null doner', () async {
     storage.stored = AuthSession(
+      uid: 'test-uid',
       phoneNumber: phoneNumber,
       createdAt: DateTime.now().subtract(const Duration(days: 31)),
       expiresAt: DateTime.now().subtract(const Duration(days: 1)),
@@ -101,6 +102,7 @@ void main() {
 
   test('loadSession gecerli oturumu doner', () async {
     final validSession = AuthSession(
+      uid: 'test-uid',
       phoneNumber: phoneNumber,
       createdAt: DateTime.now(),
       expiresAt: DateTime.now().add(const Duration(days: 1)),
@@ -115,6 +117,7 @@ void main() {
 
   test('clearSession depolamayi temizler', () async {
     storage.stored = AuthSession(
+      uid: 'test-uid',
       phoneNumber: phoneNumber,
       createdAt: DateTime.now(),
       expiresAt: DateTime.now().add(const Duration(days: 1)),

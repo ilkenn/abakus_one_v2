@@ -92,6 +92,7 @@ void main() {
       'kalici gecerli oturum varsa checkPersistedSession isAuthenticated yapar',
       () async {
     storage.stored = AuthSession(
+      uid: 'uid-1',
       phoneNumber: '+905321234567',
       createdAt: DateTime.now(),
       expiresAt: DateTime.now().add(const Duration(days: 1)),

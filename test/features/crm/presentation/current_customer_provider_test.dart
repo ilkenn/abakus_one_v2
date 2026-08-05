@@ -6,7 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _SignedInNotifier extends AuthNotifier {
-  _SignedInNotifier(this.phoneNumber);
+  _SignedInNotifier(this.uid, this.phoneNumber);
+  final String uid;
   final String phoneNumber;
 
   @override
@@ -14,6 +15,7 @@ class _SignedInNotifier extends AuthNotifier {
         isAuthenticated: true,
         isGuest: false,
         session: AuthSession(
+          uid: uid,
           phoneNumber: phoneNumber,
           createdAt: DateTime(2026, 1, 1),
           expiresAt: DateTime(2026, 12, 31),
@@ -40,11 +42,12 @@ void main() {
     });
 
     test(
-        'resolves a real Customer for a signed-in session, keyed by phone '
-        'number', () async {
+        'resolves a real Customer for a signed-in session, keyed by the '
+        'canonical uid', () async {
       final container = ProviderContainer(
         overrides: [
-          authProvider.overrideWith(() => _SignedInNotifier('+905559998877')),
+          authProvider
+              .overrideWith(() => _SignedInNotifier('uid-1', '+905559998877')),
         ],
       );
       addTearDown(container.dispose);
@@ -52,7 +55,8 @@ void main() {
       final customer = await container.read(currentCustomerProvider.future);
 
       expect(customer, isNotNull);
-      expect(customer!.phoneNumber, '+905559998877');
+      expect(customer!.id, 'uid-1');
+      expect(customer.phoneNumber, '+905559998877');
     });
 
     test(
@@ -60,7 +64,8 @@ void main() {
         'id — idempotent, not a new registration each time', () async {
       final container = ProviderContainer(
         overrides: [
-          authProvider.overrideWith(() => _SignedInNotifier('+905559998877')),
+          authProvider
+              .overrideWith(() => _SignedInNotifier('uid-1', '+905559998877')),
         ],
       );
       addTearDown(container.dispose);

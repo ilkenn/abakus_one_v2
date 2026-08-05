@@ -10,12 +10,11 @@ import 'app_environment.dart';
 /// for a single well-known constant. See `docs/firebase_emulator.md` for
 /// the emulator startup command and setup steps.
 ///
-/// Nothing calls [shouldUseEmulator] yet — `FirebaseAuthRepository`
-/// (Sprint 4) is the first real consumer, mirroring how P1-011/P1-012
-/// built `Failure`/`ErrorMapper` as tested contracts ahead of their
-/// consumer. It's built and tested now so that decision is deterministic
-/// and reviewable on its own, not authored inline alongside the real
-/// Firebase Auth integration later.
+/// [shouldUseEmulator] is consulted by `FirebaseBootstrapService.initialize`
+/// (Sprint 9C, `docs/decisions.md` ADR-026), which calls
+/// `FirebaseAuth.instance.useAuthEmulator(host, port)` exactly when this
+/// returns `true` — the one place the app decides whether phone-OTP sign-in
+/// talks to the local emulator or a real Firebase Auth backend.
 abstract final class FirebaseAuthEmulatorConfig {
   FirebaseAuthEmulatorConfig._();
 

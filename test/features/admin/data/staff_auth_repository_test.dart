@@ -17,7 +17,8 @@ void main() {
         sessionDuration: () => const Duration(hours: 1),
       );
 
-      final session = await repository.signIn(staffMemberId: 'staff-1');
+      final session =
+          await repository.signIn(email: 'staff-1', password: 'unused');
 
       expect(session, isNotNull);
       expect(session!.actorId, 'staff-1');
@@ -31,7 +32,8 @@ void main() {
         sessionDuration: () => const Duration(hours: 1),
       );
 
-      final session = await repository.signIn(staffMemberId: 'missing');
+      final session =
+          await repository.signIn(email: 'missing', password: 'unused');
 
       expect(session, isNull);
     });
@@ -47,7 +49,8 @@ void main() {
         sessionDuration: () => const Duration(hours: 1),
       );
 
-      final session = await repository.signIn(staffMemberId: 'staff-1');
+      final session =
+          await repository.signIn(email: 'staff-1', password: 'unused');
 
       expect(session, isNull);
     });
@@ -60,7 +63,8 @@ void main() {
         sessionDuration: () => const Duration(hours: 1),
       );
 
-      final session = await repository.signIn(staffMemberId: 'staff-1');
+      final session =
+          await repository.signIn(email: 'staff-1', password: 'unused');
 
       expect(session, isNull);
     });
@@ -75,7 +79,8 @@ void main() {
         staffMemberRepository: memberRepository,
         sessionDuration: () => const Duration(hours: 1),
       );
-      final original = await repository.signIn(staffMemberId: 'staff-1');
+      final original =
+          await repository.signIn(email: 'staff-1', password: 'unused');
 
       // The role is removed out-of-band (simulating AssignStaffRole/
       // RevokeStaffRole having run elsewhere).
@@ -101,7 +106,8 @@ void main() {
         staffMemberRepository: memberRepository,
         sessionDuration: () => const Duration(hours: 1),
       );
-      final original = await repository.signIn(staffMemberId: 'staff-1');
+      final original =
+          await repository.signIn(email: 'staff-1', password: 'unused');
       await Future<void>.delayed(const Duration(milliseconds: 5));
 
       final member = await memberRepository.findById('staff-1');
@@ -123,7 +129,8 @@ void main() {
         staffMemberRepository: memberRepository,
         sessionDuration: () => const Duration(hours: 1),
       );
-      final original = await repository.signIn(staffMemberId: 'staff-1');
+      final original =
+          await repository.signIn(email: 'staff-1', password: 'unused');
 
       final member = await memberRepository.findById('staff-1');
       await memberRepository.save(member!.copyWith(
@@ -143,7 +150,8 @@ void main() {
         'validation if none exists"', () async {
       const repository = ProductionUnavailableStaffAuthRepository();
 
-      final session = await repository.signIn(staffMemberId: 'staff-1');
+      final session =
+          await repository.signIn(email: 'staff-1', password: 'unused');
 
       expect(session, isNull);
     });

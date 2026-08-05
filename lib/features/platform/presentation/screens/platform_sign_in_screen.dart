@@ -1,39 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/services/auth/email_password_auth_client.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
-import '../../../../shared/widgets/cards/app_card.dart';
-import '../../../../shared/widgets/feedback/empty_view.dart';
-import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../application/use_cases/bootstrap_first_platform_owner_account.dart';
-import '../../domain/member/platform_member.dart';
-import '../../domain/member/platform_member_status.dart';
 import '../providers/platform_dependencies_provider.dart';
 import '../providers/platform_session_controller.dart';
 import 'platform_shell_screen.dart';
 
-/// Development Login for the platform-owner hierarchy — Phase 8
-/// (`docs/decisions.md` ADR-025). Mirrors `StaffSignInScreen`'s exact
-/// shape and reasoning one tier up: **deliberately not a password/PIN
-/// prompt** ("do not create an insecure local password system"). Lists
-/// already-registered, active [PlatformMember]s and signs in by
-/// selection only (`DevelopmentPlatformAuthRepository`, debug/profile
-/// builds only). In release builds `platformAuthRepositoryProvider`
-/// resolves to `ProductionUnavailablePlatformAuthRepository`, which
-/// always fails — "release builds must never expose this path."
+/// Platform-owner sign-in — Phase 8 (`docs/decisions.md` ADR-025), mirrors
+/// `StaffSignInScreen`'s exact shape one tier up.
 ///
-/// "Development login exists solely until real OTP authentication
-/// becomes available" — this screen is the one, explicit, temporary
-/// substitute for that, not a permanent platform-owner login mechanism.
+/// **Sprint 9C** (`docs/decisions.md` ADR-026): a real email/password
+/// credential form, not a picker over the platform-member roster — closes
+/// the "no-credential member picker" gap structurally: this screen never
+/// queries `PlatformMemberRepository.findAll()`, so there is no roster to
+/// enumerate regardless of build mode. `platformAuthRepositoryProvider`
+/// resolves to `FirebasePlatformAuthRepository` once Firebase is ready, or
+/// `ProductionUnavailablePlatformAuthRepository` (always fails)
+/// otherwise.
 ///
 /// A successful sign-in pushes [PlatformShellScreen] (Phase 8R) — this
 /// screen has no `go_router` route of its own (still a raw
 /// `Navigator.push` entry point, matching every other in-app screen
 /// transition per `CLAUDE.md` §3); reaching this screen at all still
-/// requires a direct `Navigator.push` from calling code (e.g. a test,
-/// or a future hidden platform-owner entry point) since it is
+/// requires a direct `Navigator.push` from calling code since it is
 /// intentionally not linked from the tenant-side `AdminShellScreen`.
 class PlatformSignInScreen extends ConsumerStatefulWidget {
   const PlatformSignInScreen({super.key});
@@ -44,33 +37,34 @@ class PlatformSignInScreen extends ConsumerStatefulWidget {
 }
 
 class _PlatformSignInScreenState extends ConsumerState<PlatformSignInScreen> {
-  List<PlatformMember>? _members;
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
   String? _error;
   bool _busy = false;
+  bool _showBootstrap = false;
 
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 
-  Future<void> _load() async {
-    final members = await ref.read(platformMemberRepositoryProvider).findAll();
-    if (!mounted) return;
-    setState(() => _members = members);
-  }
-
-  Future<void> _signIn(PlatformMember member) async {
+  Future<void> _signIn() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() {
       _busy = true;
       _error = null;
     });
-    final success =
-        await ref.read(platformSessionControllerProvider).signIn(member.id);
+    final success = await ref.read(platformSessionControllerProvider).signIn(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+        );
     if (!mounted) return;
     setState(() => _busy = false);
     if (!success) {
-      setState(() => _error = 'Oturum açılamadı. Hesap aktif değil olabilir.');
+      setState(() => _error = 'Giriş başarısız. Bilgilerinizi kontrol edin.');
       return;
     }
     Navigator.of(context).pushReplacement(
@@ -79,6 +73,7 @@ class _PlatformSignInScreenState extends ConsumerState<PlatformSignInScreen> {
   }
 
   Future<void> _bootstrapFirstOwner() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -88,8 +83,21 @@ class _PlatformSignInScreenState extends ConsumerState<PlatformSignInScreen> {
         idGenerator: ref.read(platformMemberIdGeneratorProvider),
         repository: ref.read(platformMemberRepositoryProvider),
         auditRepository: ref.read(platformAuditEntryRepositoryProvider),
-      )(displayName: 'İlk Platform Sahibi', createdAt: DateTime.now());
-      await _load();
+        authClient: DefaultEmailPasswordAuthClient(),
+      )(
+        displayName: 'İlk Platform Sahibi',
+        createdAt: DateTime.now(),
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _showBootstrap = false;
+      });
+      await _signIn();
+    } on EmailPasswordAuthClientException catch (e) {
+      setState(() => _error = e.message);
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -99,77 +107,104 @@ class _PlatformSignInScreenState extends ConsumerState<PlatformSignInScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final members = _members;
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Platform Girişi (Geliştirme)'),
+        title: const Text('Platform Girişi'),
         backgroundColor: AppColors.surface,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
       ),
       body: SafeArea(
-        child: members == null
-            ? const LoadingView(message: 'Platform hesapları yükleniyor...')
-            : _buildBody(members),
-      ),
-    );
-  }
-
-  Widget _buildBody(List<PlatformMember> members) {
-    if (members.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            EmptyView(
-              icon: Icons.public_outlined,
-              message: 'Henüz kayıtlı bir platform hesabı yok.',
-              actionLabel: 'İlk Platform Sahibi Hesabını Oluştur',
-              onAction: _busy ? null : _bootstrapFirstOwner,
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: AppSpacing.md),
-              Text(_error!,
-                  style:
-                      AppTypography.bodySmall.copyWith(color: AppColors.error)),
-            ],
-          ],
-        ),
-      );
-    }
-
-    return ListView(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      children: [
-        if (_error != null) ...[
-          Text(_error!,
-              style: AppTypography.bodySmall.copyWith(color: AppColors.error)),
-          const SizedBox(height: AppSpacing.sm),
-        ],
-        for (final member in members)
-          Padding(
-            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-            child: AppCard(
-              padding: EdgeInsets.zero,
-              child: ListTile(
-                enabled: member.status == PlatformMemberStatus.active && !_busy,
-                leading: const Icon(Icons.public, color: AppColors.primary),
-                title: Text(member.displayName, style: AppTypography.bodyLarge),
-                subtitle: Text(
-                  member.status == PlatformMemberStatus.active
-                      ? member.roles.map((r) => r.name).join(', ')
-                      : '${member.status.name} — giriş yapılamaz',
-                  style: AppTypography.bodySmall
-                      .copyWith(color: AppColors.textSecondary),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextFormField(
+                  controller: _emailController,
+                  enabled: !_busy,
+                  keyboardType: TextInputType.emailAddress,
+                  autofillHints: const [AutofillHints.email],
+                  decoration: const InputDecoration(
+                    labelText: 'E-posta',
+                    prefixIcon: Icon(Icons.mail_outline_rounded),
+                  ),
+                  validator: (value) => (value == null || value.trim().isEmpty)
+                      ? 'Lütfen e-posta adresinizi girin'
+                      : null,
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _signIn(member),
-              ),
+                const SizedBox(height: AppSpacing.md),
+                TextFormField(
+                  controller: _passwordController,
+                  enabled: !_busy,
+                  obscureText: true,
+                  autofillHints: const [AutofillHints.password],
+                  decoration: const InputDecoration(
+                    labelText: 'Şifre',
+                    prefixIcon: Icon(Icons.lock_outline_rounded),
+                  ),
+                  validator: (value) => (value == null || value.isEmpty)
+                      ? 'Lütfen şifrenizi girin'
+                      : null,
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  Text(_error!,
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.error)),
+                ],
+                const SizedBox(height: AppSpacing.lg),
+                ElevatedButton(
+                  onPressed: _busy ? null : _signIn,
+                  style: ElevatedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                  ),
+                  child: _busy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Giriş Yap'),
+                ),
+                const SizedBox(height: AppSpacing.xl),
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() => _showBootstrap = true),
+                  child: const Text('İlk platform sahibi hesabını oluştur'),
+                ),
+                if (_showBootstrap) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'Yalnızca hiç platform hesabı kayıtlı değilse çalışır — '
+                    'yukarıdaki e-posta/şifre ile yeni bir platform sahibi '
+                    'hesabı oluşturulur.',
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  OutlinedButton(
+                    onPressed: _busy ? null : _bootstrapFirstOwner,
+                    style: OutlinedButton.styleFrom(
+                      padding:
+                          const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                    ),
+                    child: const Text('İlk Platform Sahibi Hesabını Oluştur'),
+                  ),
+                ],
+              ],
             ),
           ),
-      ],
+        ),
+      ),
     );
   }
 }

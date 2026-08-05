@@ -2,12 +2,14 @@ import '../../domain/models/auth_session.dart';
 import '../../domain/models/otp_challenge.dart';
 import 'auth_repository.dart';
 
-/// Selected in release builds until a real backend-backed [AuthRepository]
-/// exists — fails closed on every operation instead of faking success.
-/// This is what makes it impossible for a release build to ever
-/// authenticate a user without a real backend, per the explicit "do not
-/// show authentication success without a real backend" requirement:
-/// nothing in a release build ever reuses `DevelopmentLocalAuthRepository`.
+/// Selected whenever Firebase is not ready (`firebaseReadyProvider` is
+/// `false` — see `authRepositoryProvider`) — fails closed on every
+/// operation instead of faking success. As of Sprint 9C
+/// (`docs/decisions.md` ADR-026) this is no longer gated on `kReleaseMode`:
+/// a release build with a healthy Firebase connection uses the real
+/// `FirebaseAuthRepository` and genuinely authenticates users, while any
+/// build — debug, profile, or release — whose Firebase bootstrap failed
+/// falls back here instead of ever faking a success.
 class ProductionUnavailableAuthRepository implements AuthRepository {
   const ProductionUnavailableAuthRepository();
 

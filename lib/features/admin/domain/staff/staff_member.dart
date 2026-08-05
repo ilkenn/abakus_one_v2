@@ -23,12 +23,21 @@ class StaffMember {
     this.organizationAccess = const {},
     this.status = StaffMemberStatus.active,
     this.sessionsRevokedAt,
+    this.authUid,
     required this.createdAt,
     required this.revision,
   });
 
   final String id;
   final String displayName;
+
+  /// The linked Firebase Auth UID — Sprint 9C (`docs/decisions.md`
+  /// ADR-026). `null` for a member that hasn't been linked to a real
+  /// credential yet (a legacy/seed record); `FirebaseStaffAuthRepository`
+  /// requires an exact match here before issuing a session, so a member
+  /// with no [authUid] simply cannot sign in — fail closed, never an
+  /// implicit "any credential works" fallback.
+  final String? authUid;
   final Set<StaffRole> roles;
   final Set<String> branchAccess;
   final Set<String> restaurantAccess;
@@ -61,6 +70,7 @@ class StaffMember {
     StaffMemberStatus? status,
     DateTime? sessionsRevokedAt,
     bool clearSessionsRevokedAt = false,
+    String? authUid,
     required int revision,
   }) {
     return StaffMember(
@@ -74,6 +84,7 @@ class StaffMember {
       sessionsRevokedAt: clearSessionsRevokedAt
           ? null
           : (sessionsRevokedAt ?? this.sessionsRevokedAt),
+      authUid: authUid ?? this.authUid,
       createdAt: createdAt,
       revision: revision,
     );
