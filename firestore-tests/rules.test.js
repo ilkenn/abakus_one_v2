@@ -181,6 +181,20 @@ test('an order can be created by an org member in the created status', async () 
   );
 });
 
+test('an order can be created by an org member directly in the pendingConfirmation status — matches the real client, which applies the created -> pendingConfirmation transition in-memory before the first write (Phase 9 adversarial review fix)', async () => {
+  const alice = testEnv
+    .authenticatedContext('alice', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertSucceeds(
+    setDoc(doc(alice, 'orders/order-2'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      status: 'pendingConfirmation',
+    }),
+  );
+});
+
 test('an order cannot be created directly into a non-created status — status transitions are server-authoritative', async () => {
   const alice = testEnv
     .authenticatedContext('alice', { organizationAccess: ['org-1'] })

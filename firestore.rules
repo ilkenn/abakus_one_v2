@@ -196,8 +196,22 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow read: if isOrgMember(resource.data.organizationId);
+      // Both 'created' and 'pendingConfirmation' are accepted at create
+      // time — closed during the Phase 9 adversarial security review:
+      // the real Dart client (SubmitPosOrder/SubmitCustomerOrder) builds
+      // the order at 'created' then immediately applies the one valid
+      // 'created -> pendingConfirmation' transition in-memory before the
+      // first persistence write, so the actual create write always
+      // carries 'pendingConfirmation'. A rule that only accepted
+      // 'created' would reject every real order create against a
+      // Firestore-backed repository. This does not weaken security:
+      // 'update' stays permanently denied below, so a client can still
+      // never forge any transition after the single create write, and
+      // 'created' alone (without number-only progression) still can't
+      // reach any further state on its own.
       allow create: if isOrgMember(request.resource.data.organizationId) &&
-        request.resource.data.status == 'created';
+        (request.resource.data.status == 'created' ||
+          request.resource.data.status == 'pendingConfirmation');
       allow update: if false; // Cloud Function only — every status
                                // transition after creation is
                                // server-authoritative (Sprint 9F).
