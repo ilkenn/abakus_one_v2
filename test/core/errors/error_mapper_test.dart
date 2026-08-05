@@ -1,9 +1,18 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/core/errors/error_mapper.dart';
 import 'package:abakus_one_v2/core/errors/failure.dart';
+
+/// [FirebaseAuthException]'s own constructor is `@protected` — only
+/// reachable from within its defining library or a subclass, which this
+/// test-only subclass legitimately is (mirrors how the real SDK's own
+/// concrete exceptions are constructed internally).
+class _FakeFirebaseAuthException extends FirebaseAuthException {
+  _FakeFirebaseAuthException({required super.code, super.message});
+}
 
 /// A stand-in for `dart:io`'s `SocketException` — same runtime-type
 /// *name*, deliberately not the real class (see `error_mapper.dart`'s doc
@@ -92,6 +101,152 @@ void main() {
     test('ClientException-shaped errors map to NetworkFailure', () {
       final failure = ErrorMapper.map(ClientException());
       expect(failure, isA<NetworkFailure>());
+    });
+  });
+
+  group('ErrorMapper.map — FirebaseAuthException (Phase 9)', () {
+    test('invalid-verification-code maps to ValidationFailure', () {
+      final failure = ErrorMapper.map(
+        _FakeFirebaseAuthException(code: 'invalid-verification-code'),
+      );
+      expect(failure, isA<ValidationFailure>());
+    });
+
+    test('too-many-requests maps to UnavailableFailure', () {
+      final failure = ErrorMapper.map(
+        _FakeFirebaseAuthException(code: 'too-many-requests'),
+      );
+      expect(failure, isA<UnavailableFailure>());
+    });
+
+    test('user-disabled maps to AuthorizationFailure', () {
+      final failure = ErrorMapper.map(
+        _FakeFirebaseAuthException(code: 'user-disabled'),
+      );
+      expect(failure, isA<AuthorizationFailure>());
+    });
+
+    test('session-expired maps to AuthenticationFailure', () {
+      final failure = ErrorMapper.map(
+        _FakeFirebaseAuthException(code: 'session-expired'),
+      );
+      expect(failure, isA<AuthenticationFailure>());
+    });
+
+    test('network-request-failed maps to NetworkFailure', () {
+      final failure = ErrorMapper.map(
+        _FakeFirebaseAuthException(code: 'network-request-failed'),
+      );
+      expect(failure, isA<NetworkFailure>());
+    });
+
+    test(
+        'an unrecognized code still maps deterministically to '
+        'AuthenticationFailure, never crashes', () {
+      final failure = ErrorMapper.map(
+        _FakeFirebaseAuthException(code: 'some-future-unknown-code'),
+      );
+      expect(failure, isA<AuthenticationFailure>());
+    });
+
+    test(
+        'the vendor code is preserved in debugMessage, never in the '
+        'user-facing message', () {
+      final failure = ErrorMapper.map(
+        _FakeFirebaseAuthException(
+          code: 'user-disabled',
+          message: 'The user account has been disabled.',
+        ),
+      );
+      expect(failure.debugMessage, contains('user-disabled'));
+      expect(failure.message, isNot(contains('user-disabled')));
+    });
+  });
+
+  group(
+      'ErrorMapper.map — FirebaseException (Phase 9, Firestore/Storage/'
+      'Functions)', () {
+    test('permission-denied maps to AuthorizationFailure', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(plugin: 'cloud_firestore', code: 'permission-denied'),
+      );
+      expect(failure, isA<AuthorizationFailure>());
+    });
+
+    test('unauthenticated maps to AuthorizationFailure', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(plugin: 'cloud_firestore', code: 'unauthenticated'),
+      );
+      expect(failure, isA<AuthorizationFailure>());
+    });
+
+    test('not-found maps to NotFoundFailure', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(plugin: 'cloud_firestore', code: 'not-found'),
+      );
+      expect(failure, isA<NotFoundFailure>());
+    });
+
+    test('already-exists maps to ConflictFailure', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(plugin: 'cloud_firestore', code: 'already-exists'),
+      );
+      expect(failure, isA<ConflictFailure>());
+    });
+
+    test('deadline-exceeded maps to TimeoutFailure', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(plugin: 'cloud_functions', code: 'deadline-exceeded'),
+      );
+      expect(failure, isA<TimeoutFailure>());
+    });
+
+    test('unavailable maps to UnavailableFailure', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(plugin: 'cloud_firestore', code: 'unavailable'),
+      );
+      expect(failure, isA<UnavailableFailure>());
+    });
+
+    test('resource-exhausted maps to UnavailableFailure', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(
+            plugin: 'cloud_firestore', code: 'resource-exhausted'),
+      );
+      expect(failure, isA<UnavailableFailure>());
+    });
+
+    test(
+        'an unrecognized code still maps deterministically to '
+        'UnexpectedFailure, never crashes', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(
+            plugin: 'firebase_storage', code: 'some-future-unknown-code'),
+      );
+      expect(failure, isA<UnexpectedFailure>());
+    });
+
+    test(
+        'the vendor code is preserved in debugMessage, never in the '
+        'user-facing message', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+          message: 'Missing or insufficient permissions.',
+        ),
+      );
+      expect(failure.debugMessage, contains('permission-denied'));
+      expect(failure.message, isNot(contains('permission-denied')));
+    });
+
+    test(
+        'applies equally to a firebase_storage-plugin exception (shared '
+        'FirebaseException type)', () {
+      final failure = ErrorMapper.map(
+        FirebaseException(plugin: 'firebase_storage', code: 'not-found'),
+      );
+      expect(failure, isA<NotFoundFailure>());
     });
   });
 

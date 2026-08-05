@@ -1,5 +1,6 @@
 import 'package:abakus_one_v2/bootstrap/app_bootstrap.dart';
 import 'package:abakus_one_v2/core/services/app_check/noop_app_check_service.dart';
+import 'package:abakus_one_v2/core/services/crash_reporting/noop_crash_reporting_service.dart';
 import 'package:abakus_one_v2/core/services/feature_flags/remote_config_feature_flags_service.dart';
 import 'package:abakus_one_v2/core/services/remote_config/noop_remote_config_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +25,7 @@ void main() {
       expect(result.isFirebaseReady, isFalse);
       expect(result.remoteConfigService, isA<NoOpRemoteConfigService>());
       expect(result.appCheckService, isA<NoOpAppCheckService>());
+      expect(result.crashReportingService, isA<NoOpCrashReportingService>());
       expect(
           result.featureFlagsService, isA<RemoteConfigFeatureFlagsService>());
     });
@@ -38,7 +40,7 @@ void main() {
         () async {
       final result = await bootstrapApp();
 
-      expect(result.providerOverrides, hasLength(5));
+      expect(result.providerOverrides, hasLength(6));
     });
   });
 }

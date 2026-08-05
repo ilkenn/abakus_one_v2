@@ -5,6 +5,9 @@ class NoOpCrashReportingService implements CrashReportingService {
   const NoOpCrashReportingService();
 
   @override
+  Future<void> initialize() async {}
+
+  @override
   Future<void> recordError(
     Object error, {
     StackTrace? stackTrace,

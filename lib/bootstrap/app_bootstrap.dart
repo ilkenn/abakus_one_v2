@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/services/app_check/app_check_provider.dart';
 import '../core/services/app_check/app_check_service.dart';
+import '../core/services/crash_reporting/crash_reporting_provider.dart';
+import '../core/services/crash_reporting/crash_reporting_service.dart';
 import '../core/services/feature_flags/feature_flags_provider.dart';
 import '../core/services/feature_flags/feature_flags_service.dart';
 import '../core/services/logging/logging_provider.dart';
@@ -22,6 +24,7 @@ class AppBootstrapResult {
     required this.featureFlagsService,
     required this.remoteConfigService,
     required this.appCheckService,
+    required this.crashReportingService,
   });
 
   final bool isFirebaseReady;
@@ -29,6 +32,7 @@ class AppBootstrapResult {
   final FeatureFlagsService featureFlagsService;
   final RemoteConfigService remoteConfigService;
   final AppCheckService appCheckService;
+  final CrashReportingService crashReportingService;
 
   /// The [ProviderScope] overrides that make the running app use exactly
   /// the service instances this bootstrap already initialized, instead of
@@ -40,6 +44,7 @@ class AppBootstrapResult {
         featureFlagsServiceProvider.overrideWithValue(featureFlagsService),
         remoteConfigServiceProvider.overrideWithValue(remoteConfigService),
         appCheckServiceProvider.overrideWithValue(appCheckService),
+        crashReportingServiceProvider.overrideWithValue(crashReportingService),
       ];
 }
 
@@ -81,10 +86,12 @@ Future<AppBootstrapResult> bootstrapApp() async {
   final featureFlagsService = container.read(featureFlagsServiceProvider);
   final remoteConfigService = container.read(remoteConfigServiceProvider);
   final appCheckService = container.read(appCheckServiceProvider);
+  final crashReportingService = container.read(crashReportingServiceProvider);
 
   await Future.wait([
     featureFlagsService.initialize(),
     appCheckService.initialize(),
+    crashReportingService.initialize(),
   ]);
 
   container.dispose();
@@ -94,6 +101,7 @@ Future<AppBootstrapResult> bootstrapApp() async {
     loggingService: loggingService,
     featureFlagsService: featureFlagsService,
     remoteConfigService: remoteConfigService,
+    crashReportingService: crashReportingService,
     appCheckService: appCheckService,
   );
 }

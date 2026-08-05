@@ -1,8 +1,12 @@
-# Firebase Auth Emulator — local development setup
+# Firebase Emulator Suite — local development setup
 
-Sprint 1 (P2-004) scope only: the **Auth emulator**, nothing else. No
-Firestore/Functions/Storage emulator is configured — none is needed until a
-task actually adds one of those products.
+Auth emulator: Sprint 1 (P2-004). Firestore/Storage/Functions emulators:
+Phase 9 Sprint 9A (`docs/decisions.md` ADR-026) — configuration and
+connection-decision classes only, mirroring Sprint 1's own "establish the
+emulator and the tested decision of which environment may use it, ahead of
+a real consumer" scope. No Messaging emulator exists (Cloud Messaging has
+no local emulator in the Firebase Emulator Suite as of this writing — real
+FCM sends always go through the real backend, even in development).
 
 ## Prerequisites (fresh clone)
 
@@ -10,65 +14,77 @@ task actually adds one of those products.
    already-installed one — check with `firebase --version`).
 2. Sign in once: `firebase login`. Use the Google account with access to
    the `abakus-one-dev` project (ask the project owner for access if you
-   don't have it — the emulator itself needs no real project permissions
-   to *run*, but the CLI still needs to resolve a project context from
-   `firebase.json`/`.firebaserc`).
+   don't have it — the emulators themselves need no real project
+   permissions to *run*, but the CLI still needs to resolve a project
+   context from `firebase.json`/`.firebaserc`).
 
-## Starting the emulator
+## Starting the emulators
 
-From the repository root:
+From the repository root, start everything this app currently configures:
 
 ```sh
-firebase emulators:start --only auth
+firebase emulators:start
 ```
 
-- **Port**: `9099` (fixed, declared in `firebase.json`'s `emulators.auth.port`
-  and mirrored in `lib/bootstrap/firebase_auth_emulator_config.dart`'s
-  `FirebaseAuthEmulatorConfig.port` — if you ever change one, change both).
-- **Emulator UI**: `http://localhost:4000` (enabled in `firebase.json`) —
-  shows the Auth tab, useful for inspecting/adding test users while
-  developing.
-- Leave it running in its own terminal while you `flutter run
-  --dart-define=ENVIRONMENT=development`.
+Or start only what a given task needs (faster startup):
+
+```sh
+firebase emulators:start --only auth,firestore
+```
+
+| Emulator | Port | Config class |
+|---|---|---|
+| Auth | `9099` | `lib/bootstrap/firebase_auth_emulator_config.dart` (`FirebaseAuthEmulatorConfig`) |
+| Firestore | `8080` | `lib/bootstrap/firebase_firestore_emulator_config.dart` (`FirebaseFirestoreEmulatorConfig`) |
+| Storage | `9199` | `lib/bootstrap/firebase_storage_emulator_config.dart` (`FirebaseStorageEmulatorConfig`) |
+| Functions | `5001` | `lib/bootstrap/firebase_functions_emulator_config.dart` (`FirebaseFunctionsEmulatorConfig`) |
+| Emulator UI | `4000` | n/a — `http://localhost:4000` |
+
+Every port is declared in `firebase.json`'s `emulators` block **and**
+mirrored by hand in its matching config class — `firebase.json` is read by
+the `firebase` CLI, not by this app, so there's no single source of truth
+to derive one from the other without adding a JSON-parsing dependency for a
+handful of well-known constants. If you ever change one, change both.
+
+Leave the emulator suite running in its own terminal while you
+`flutter run --dart-define=ENVIRONMENT=development`.
 
 ## Which environment connects
 
-Only `AppEnvironment.development` — see
-`FirebaseAuthEmulatorConfig.shouldUseEmulator()`. Staging and production
-always reach a real Firebase Auth backend; the emulator has no real
-security behind it (by design — that's what makes it fast to develop
-against), so it must never be reachable from a staging or production build,
-the same reasoning `ProductionUnavailableAuthRepository` already applies to
-the mock repository in release builds.
+Only `AppEnvironment.development`, for every one of the four config
+classes' `shouldUseEmulator()` — staging and production always reach the
+real backend. None of the local emulators have real security-rule
+enforcement guaranteed under active local edits, and none persist data
+reliably across a machine reset — letting staging or production connect
+would be the same class of mistake `ProductionUnavailableAuthRepository`'s
+`kReleaseMode` gate already exists to prevent for the mock auth repository,
+applied identically here to every emulator.
 
-**Nothing in the app actually calls `useAuthEmulator()` yet** — that's
-`FirebaseAuthRepository`'s job (Sprint 4, once `firebase_auth` is added).
-This sprint only establishes the emulator itself and the (tested) decision
-of which environment is allowed to use it.
+**Nothing in the app actually calls `useFirestoreEmulator()`/
+`useStorageEmulator()`/`useFunctionsEmulator()` yet** — connecting real
+`FirebaseAuth`/`FirebaseFirestore`/`FirebaseStorage`/
+`FirebaseFunctions` SDK instances to these emulators is each consuming
+sprint's own job (9B for Firestore, 9H for Storage, 9F for Functions).
+This sprint only establishes the emulators themselves and the (tested)
+decision of which environment is allowed to use each — the same shape
+Sprint 1 already established for Auth, extended to the other three.
 
 ## Test phone number strategy
 
-The Auth Emulator never sends a real SMS for any phone number — every
-`verifyPhoneNumber` call against it succeeds without needing a live carrier,
-and the generated verification code is visible in the Emulator UI's Auth
-tab (`http://localhost:4000/auth`) or in the CLI's own log output. This
-requires no seed data or fixed test-number list to get started.
-
-For a *deterministic*, script-friendly number+code pair (useful once
-automated emulator-backed tests exist — Sprint 4's `P2-017`), add a fixed
-test phone number via the Emulator UI (Authentication → Sign-in method →
-Phone numbers for testing) and export it with
-`firebase emulators:export ./emulator-seed` so it's reproducible across
-machines. Not done in this sprint — no automated test needs one yet, and
-`FirebaseAuthRepository` doesn't exist to test against.
+Unchanged from Sprint 1 — see the Auth Emulator UI's own Authentication tab
+for adding deterministic test phone numbers once an automated
+emulator-backed auth test needs one.
 
 ## What this file intentionally does not cover
 
-- Firestore, Functions, or Storage emulators — out of Sprint 1 scope.
-- Seeding any test *data* (users, documents) — nothing consumes the
-  emulator yet.
-- CI wiring — decided once `P2-017`'s emulator-backed tests exist and their
-  startup time is actually measured (see the Phase 2 backlog, §2.12).
+- Seeding any test *data* (Firestore documents, Storage objects) — nothing
+  consumes these emulators yet.
+- CI wiring for emulator-backed tests — decided once a real emulator-backed
+  test suite exists and its startup time is actually measured.
+- Security Rules content — see `firestore.rules`/`storage.rules` (Phase 9
+  Sprint 9B) once they exist, not this file.
+- Cloud Functions source/deployment — see `functions/` (Phase 9 Sprint 9F)
+  once it exists.
 
 No secret, API key, or credential appears in this file or in
-`firebase.json`'s emulator configuration — the emulator needs none to run.
+`firebase.json`'s emulator configuration — the emulators need none to run.
