@@ -260,7 +260,12 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final freshOrders = ref.watch(ordersProvider);
+    // `.valueOrNull ?? [widget.order]` — while `ordersProvider` is still
+    // loading/erroring (a real possibility now that it's a Firestore fetch,
+    // not a synchronous in-memory read), fall back to the snapshot the
+    // caller already navigated here with instead of showing a spinner over
+    // an order the user is already looking at.
+    final freshOrders = ref.watch(ordersProvider).valueOrNull ?? [widget.order];
     final freshOrder = freshOrders.firstWhere(
       (o) => o.id == widget.order.id,
       orElse: () => widget.order,

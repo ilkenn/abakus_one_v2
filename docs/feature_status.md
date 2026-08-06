@@ -1376,7 +1376,34 @@ at the end.
   emulator suites (firestore 24, storage 10, functions 9) re-verified passing in this same pass. See
   `docs/phase9_final_report.md` for the full 30-item closure report and phase-gate verdict.
 
-**Production limitations, stated plainly (current, post-9J):** `CanonicalOrderRepository`,
+- **9K — Canonical Customer Orders Closure: DONE.** Closes Phase 9's one BLOCKING finding
+  ("legacy order path remains competing truth," `docs/phase9_adversarial_security_review.md` §7).
+  `OrdersNotifier` (`orders_provider.dart`) converted from a synchronous `Notifier` to an
+  `AsyncNotifier<List<OrderModel>>`; `build()` now sources exclusively from
+  `canonicalOrderRepositoryProvider.findByCustomerId(uid)` (the signed-in session's real uid — empty list
+  when signed out) instead of the legacy, always-identical-for-every-user `LocalOrdersRepository` seed.
+  All four real consumer screens (`orders_screen.dart`, `active_order_screen.dart`,
+  `order_detail_screen.dart`, `home_screen.dart`'s "Aktif Siparişin" card) updated to handle the resulting
+  `AsyncValue` explicitly — loading/error states render `LoadingView`/`ErrorView`, `orders_screen.dart`
+  gained a `RefreshIndicator` (the proportionate stand-in for realtime updates, since neither Firestore
+  streams nor polling existed anywhere in this path before this sprint — inventing either now would have
+  been out-of-scope architecture, not a fix). A second, previously undiscovered gap was closed as a
+  required part of this fix: `firestore.rules`' `orders` collection had no rule letting a customer read
+  their own order at all — added an additive customer-scoped read clause, write rules untouched, verified
+  by 4 new adversarial emulator tests (own-order read, cross-customer IDOR denial, unauthenticated denial,
+  staff-read-unaffected). `OrderModel`'s ~25 customer-review/UI-only fields were deliberately **not**
+  folded into canonical `Order` — same pre-existing, unchanged, session-local-only limitation as before
+  this sprint. `LocalOrdersRepository`/`ordersRepositoryProvider` are now orphaned (zero production
+  references) but **not deleted**, per the standing "never delete/orphan code unilaterally" rule —
+  reported for a human decision. 14 new Dart tests (10 provider-level incl. a race-condition test proving
+  `addOrder` can't be clobbered by a still-in-flight initial load, 4 widget-level covering
+  loading/error/empty/data states); one pre-existing test fixed, not weakened
+  (`home_screen_redesign_test.dart`'s "aktif siparis" test asserted the old, now-intentionally-corrected
+  guest-sees-global-demo-data behavior). Dart: 2264 → 2278 tests; `firestore-tests`: 24 → 28. Full
+  four-answer adversarial verification and the updated phase-gate verdict — **PHASE 9 — APPROVED** — are
+  in `docs/phase9_final_report.md`'s Sprint 9K Addendum.
+
+**Production limitations, stated plainly (current, post-9K):** `CanonicalOrderRepository`,
 `AccountDeletionRequestRepository`, and `DeviceTokenRepository` are now genuinely release-safe
 (`firebaseReadyProvider`/`kReleaseMode`-gated, real Firestore-backed implementation or fail-closed —
 never a silent in-memory fallback in release). Every other repository in the app (staff/platform were
@@ -1385,14 +1412,8 @@ already gated in Phase 8; CRM/menu/POS/courier/admin/inventory/etc. were not tou
 Functions now exist and run (`onOrderCreated`, `onOrderCompleted`, both idempotent) — but nothing
 downstream of order completion (visit recording, reward granting, stock deduction) is wired to them yet,
 by design, and explicitly marked as such in the outbox record itself
-(`visitRecorded/rewardsEvaluated/stockConsumed: false`). **A known, currently open gap**: the
-customer-facing `OrdersNotifier`/`ordersProvider` (backing `orders_screen.dart`,
-`order_detail_screen.dart`, the Home "Aktif Siparişin" card) still reads exclusively from the legacy
-in-memory `LocalOrdersRepository`, not the canonical `Order` this phase built — checkout bridges a
-one-time write into both stores, but nothing reads canonical status transitions back, so the customer's
-own Orders screen has no live or restart-safe connection to the real, server-authoritative order. This
-is the one finding serious enough to block an outright APPROVED verdict this phase — see
-`docs/phase9_adversarial_security_review.md` §7 and `docs/phase9_final_report.md` for the required
-follow-up scope ("Sprint 9K"). Nothing is deployed to any real Firebase project; all verification this
-phase is against the local emulator suite only. Firebase environment separation (dev/staging/
-production) is still the single `abakusone` project (`CLAUDE.md` §5).
+(`visitRecorded/rewardsEvaluated/stockConsumed: false`). The customer-facing Orders experience now reads
+exclusively from the canonical `Order` aggregate (Sprint 9K, above) — there is exactly one production
+truth for orders. Nothing is deployed to any real Firebase project; all verification this phase is
+against the local emulator suite only. Firebase environment separation (dev/staging/production) is still
+the single `abakusone` project (`CLAUDE.md` §5).

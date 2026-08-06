@@ -245,9 +245,10 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
 
     if (!mounted) return;
 
-    ref
+    await ref
         .read(ordersProvider.notifier)
         .addOrder(OrderModel.fromCanonicalOrder(order));
+    if (!mounted) return;
     ref.read(cartProvider.notifier).clearCart();
 
     Navigator.pushAndRemoveUntil(

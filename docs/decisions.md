@@ -3718,3 +3718,65 @@ self-attestation. High for the BLOCKING finding's diagnosis (traced via direct g
 provider wiring and the actual screen call sites, not inferred) and honest about the finding not being
 fixed — this is judgment about proportionate scope under a very long session, stated as such, not
 hidden.
+
+### Decision 13 — Sprint 9K: canonical customer-orders read-path migration, under its own explicit
+plan and approval (closes the Phase 9 phase-gate blocker)
+
+A dedicated follow-up sprint, kicked off explicitly and narrowly ("close this one blocker, nothing
+else — no new features, no architecture redesign, no unrelated repository migration"). Per `CLAUDE.md`
+§16, a concrete implementation plan was written and explicitly approved before any code was touched —
+this decision was not made under Phase 9's own "do not stop for intermediate approval" autonomy, which
+governed only Sprints 9F–9J.
+
+**What changed**: `OrdersNotifier` (`lib/features/orders/presentation/providers/orders_provider.dart`)
+became an `AsyncNotifier<List<OrderModel>>` sourcing exclusively from `canonicalOrderRepositoryProvider
+.findByCustomerId(uid)` — the real, `firebaseReadyProvider`-gated store every order-creation path
+already wrote to — instead of the always-identical-for-every-user `LocalOrdersRepository` seed. All
+four real customer-facing consumers (`orders_screen.dart`, `active_order_screen.dart`,
+`order_detail_screen.dart`, `home_screen.dart`'s active-order card) were updated to handle the resulting
+`AsyncValue` explicitly, per `CLAUDE.md` §4/§7's loading/error-state requirement.
+
+**What was deliberately not changed**: `OrderModel`'s ~25 customer-review/UI-only fields stayed exactly
+where they already lived — additive, session-local, non-durable display state on top of the canonical
+projection, not folded into `Order`. This was a genuine design choice, not an oversight: `Order` is the
+shared aggregate every channel (POS, courier, kitchen, admin) is meant to build on
+(`order.dart`'s own doc comment), and a customer's five-star rating of their delivery courier has no
+business living on that shared type. No realtime/streaming mechanism was invented — neither Firestore
+streams nor client polling existed anywhere in this read path before this sprint, and building either
+now would have been exactly the "redesign architecture" this sprint's kickoff explicitly forbade; a
+`RefreshIndicator`-driven manual refresh was added instead, the minimal standard-widget substitute.
+`LocalOrdersRepository`/`ordersRepositoryProvider` are now orphaned but were **not deleted**, matching
+this project's standing rule against unilateral deletion (`CLAUDE.md` §13/§15) — reported in
+`docs/phase9_final_report.md`'s Sprint 9K Addendum for a human decision.
+
+**A second, previously undiscovered gap, closed as a required part of this fix, not scope creep**:
+`firestore.rules`' `orders` collection had no rule granting a customer read access to their own order at
+all — the stated objective was unreachable without fixing this. An additive customer-scoped read clause
+was added (`resource.data.customerId == request.auth.uid`); every write rule stayed untouched. Verified
+adversarially: a customer can read their own order, cannot read another customer's (new IDOR emulator
+test), an unauthenticated request is denied, staff read is unaffected.
+
+**One pre-existing test needed a fix, not a weakening**: `home_screen_redesign_test.dart`'s "aktif
+siparis" test asserted the *old, incorrect* behavior — a signed-out session seeing the global hardcoded
+demo order, only because the legacy seed never checked who was asking. Updated to seed a real canonical
+order under a real signed-in session and assert the corrected, per-customer-scoped behavior — a guest
+correctly seeing nothing is this fix's intended outcome, not a regression.
+
+**Verification**: `flutter analyze` clean; `flutter test` 2264 → 2278 (14 new, 0 weakened);
+`firestore-tests` 24 → 28; `storage-tests`/`functions` unchanged at 10/9. All four of the original
+kickoff's adversarial verification questions answered directly and affirmatively in
+`docs/phase9_final_report.md`'s Sprint 9K Addendum — no production customer screen reads InMemory, no
+second authoritative Order model remains, Firestore is the single production source of truth for
+`Order`, every customer-facing order experience uses the canonical aggregate.
+
+**Phase-gate consequence**: closes the one BLOCKING finding that kept Phase 9 at APPROVED WITH REQUIRED
+FIXES. With every one of the kickoff's nine disqualifying conditions now closed with direct evidence,
+the phase-gate verdict is updated to **PHASE 9 — APPROVED** (`docs/phase9_final_report.md`'s Sprint 9K
+Addendum).
+
+### Confidence
+
+High. Every claim in this decision is backed by a freshly-run test in this same session — the
+race-condition fix for `addOrder` (a still-in-flight initial load could otherwise clobber a
+just-submitted order) was itself verified by a dedicated test that fails without the fix, not asserted
+from reasoning alone.

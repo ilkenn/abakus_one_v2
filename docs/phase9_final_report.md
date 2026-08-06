@@ -237,7 +237,8 @@ like any adversarial pass performed by a single reviewer in one session, is not 
 dedicated third-party penetration test before this app takes real production traffic (already named as
 future PLAT-module work in item 25).
 
-**30. Final verdict: APPROVED WITH REQUIRED FIXES.**
+**30. Verdict at original closure: APPROVED WITH REQUIRED FIXES** — superseded below by the Sprint 9K
+Addendum's final verdict; this item's original text is kept for record.
 
 Phase 9 (Sprints 9F–9J) is substantively complete against its own kickoff scope, with real,
 emulator-verified backend infrastructure now existing for orders, account deletion, and device tokens
@@ -249,3 +250,118 @@ bounded, does not compromise tenant isolation or security, has a clear and propo
 scoped (item 26), and every other disqualifying condition is closed with direct evidence. Phase 9 may
 be treated as APPROVED outright once Sprint 9K (item 26) closes item 11 under its own explicit plan and
 approval, per `CLAUDE.md` §16.
+
+---
+
+## Sprint 9K Addendum — Canonical Customer Orders Closure
+
+A dedicated follow-up sprint, kicked off explicitly to close item 11/15's one BLOCKING finding and
+nothing else ("Do not start Phase 10. Do not add new features. Do not redesign architecture. Do not
+migrate unrelated repositories."). Per `CLAUDE.md` §16, a concrete plan was presented and explicitly
+approved before any code was written — not a continuation of Phase 9's own "do not stop for approval"
+autonomy, which applied only to Sprints 9F–9J.
+
+**Root cause.** `OrdersNotifier` (`lib/features/orders/presentation/providers/orders_provider.dart`)
+read exclusively from `ordersRepositoryProvider` → `LocalOrdersRepository` (3 hardcoded demo orders,
+identical for every user, no per-customer scoping at all) — never from `canonicalOrderRepositoryProvider`,
+the real, Firestore-backed store `SubmitCustomerOrder`/`SubmitPosOrder` already wrote to.
+`checkout_screen.dart` bridged a one-time write into both stores at submission time, but nothing ever
+read canonical status transitions back — confirmed by direct inspection of every real consumer
+(`orders_screen.dart`, `active_order_screen.dart`, `order_detail_screen.dart`,
+`home_screen.dart`'s "Aktif Siparişin" card), not assumed.
+
+**Architecture decision.** `OrdersNotifier` was converted from a synchronous `Notifier` to an
+`AsyncNotifier<List<OrderModel>>`. `build()` now reads the signed-in session's `uid`
+(`ref.watch(authProvider).session`, mirroring `features/crm`'s established `currentCustomerProvider`
+pattern), returns an empty list when signed out, and otherwise calls
+`canonicalOrderRepositoryProvider.findByCustomerId(uid)` — a method that already existed on the
+interface, built in Sprint 9E specifically for this and never called until now — mapping each `Order`
+through the pre-existing `OrderModel.fromCanonicalOrder` projection (already handled legacy status-label
+compatibility via `OrderStatusLegacyLabel`). All existing mutator methods
+(`addOrder`/`updateScheduledTime`/`updateLifecycleStatus`/`setCourierVisibleToCustomer`/`cancelOrder`/
+`submitReview`) kept their exact signatures, now guarded against a still-loading state; `addOrder`
+specifically awaits the notifier's own `future` first so a still-in-flight initial load can never
+clobber a just-submitted order once it resolves (verified by a dedicated race-condition test).
+`OrderModel`'s ~25 customer-review/UI-only fields were **not** folded into the canonical `Order` — they
+remain exactly where they already lived, an explicitly-documented, pre-existing, unchanged limitation
+(they never persisted anywhere even before this fix). `LocalOrdersRepository`/`ordersRepositoryProvider`
+were **not deleted**, per this project's standing "never delete/orphan code unilaterally" rule — left in
+place and reported here as newly orphaned for a human decision on removal. No realtime/streaming
+mechanism was invented: none existed on either side (client polling or Firestore streams) before this
+fix, so building one now would have been exactly the "redesign architecture"/"introduce unnecessary
+complexity" this sprint's kickoff explicitly forbade — a pull-to-refresh affordance
+(`RefreshIndicator` on `orders_screen.dart`, calling `ref.refresh(ordersProvider.future)`) was added
+instead, the minimal standard-widget way to let a customer manually re-sync a one-shot-fetch-backed
+screen.
+
+**A second, previously undiscovered gap closed as a required part of this fix.** `firestore.rules`'
+`orders` collection allowed `read` only to `isOrgMember` (staff) — a customer reading their own order by
+`customerId` had no rule granting it at all, meaning the objective was unreachable without this. Fixed
+with an additive customer-scoped read clause (`resource.data.customerId == request.auth.uid`); every
+write rule (`create`/`update`/`delete`) is untouched, so this does not widen who can ever modify an
+order. Verified adversarially with 4 new emulator tests: a customer can read their own order, cannot
+read another customer's order (IDOR check), an unauthenticated request is denied, staff read is
+unaffected.
+
+**Tests.** 14 new Dart tests: 10 provider-level (`test/features/orders/presentation/providers/
+orders_provider_test.dart` — signed-out empty list, new-customer empty history, per-customer scoping/
+IDOR-equivalent check, newest-first ordering, completed/cancelled status-label round-trip, `addOrder`
+race-safety, `cancelOrder`/`submitReview` local-mutation behavior) and 4 widget-level
+(`test/features/orders/presentation/screens/orders_screen_test.dart` — loading renders `LoadingView`,
+error renders `ErrorView` with a working retry, real empty state, a real seeded order renders end to
+end). One pre-existing test required a fix, not a weakening: `home_screen_redesign_test.dart`'s "aktif
+siparis" test previously asserted the *old, incorrect* behavior (a signed-out session seeing the global
+demo order) — updated to seed a real canonical order under a real signed-in session and assert the
+*corrected* behavior, since a guest correctly seeing nothing is this fix's intended outcome, not a
+regression to paper over.
+
+**Verification, all fresh in this pass.** `flutter analyze`: 0 issues. `flutter test`: 2278/2278 passing
+(2264 → 2278; net +14 new, 0 skipped/weakened). `firestore-tests/rules.test.js`: 28/28 passing (24 → 28).
+`storage-tests/rules.test.js`: 10/10, unchanged. `functions/` suite: 9/9, unchanged. `dart format`: clean.
+
+**Security verification, explicit.** Tenant isolation: unaffected (the new rule only adds a
+customer-scoped branch; org-member scoping is untouched and still separately tested). Authenticated
+customer access: real — `findByCustomerId` is keyed by the live session's `uid`, never a client-supplied
+value. Customer-cannot-read-another-customer's-orders: verified both at the rules layer (new emulator
+IDOR test) and at the provider layer (new `OrdersNotifier` test seeding two customers' orders and
+asserting only the signed-in one's are returned). Organization boundaries: unaffected, still enforced.
+Firestore rules: 28/28 passing, including the 4 new tests. No IDOR introduced — one was specifically
+tested against and found closed.
+
+**Final adversarial verification — the kickoff's own four questions, answered directly:**
+
+1. **Does any production customer order screen still read from InMemory?** **NO.** `orders_screen.dart`,
+   `active_order_screen.dart`, `order_detail_screen.dart`, and `home_screen.dart`'s active-order card all
+   read `ordersProvider`/`activeOrderProvider`, which now source exclusively from
+   `canonicalOrderRepositoryProvider` — `firebaseReadyProvider`-gated to `FirestoreCanonicalOrderRepository`
+   whenever Firebase is ready, `InMemoryCanonicalOrderRepository` only as the same universal test/
+   not-yet-configured fallback every other Phase 9 repository already uses (not a customer-order-specific
+   gap). `ordersRepositoryProvider`/`LocalOrdersRepository` are referenced by zero production code paths.
+2. **Does any second authoritative Order model remain?** **NO.** `OrderModel` is now, unambiguously, a
+   read/presentation projection of the canonical `Order` (via `OrderModel.fromCanonicalOrder`) for every
+   real order — never an independently-seeded or independently-authoritative list. Its customer-review/
+   UI-only fields are additive display state on top of that projection, not a competing order identity,
+   status, or line-item source.
+3. **Is Firestore now the single production source of truth?** **YES**, for `Order` specifically —
+   `CanonicalOrderRepository` (Firestore-backed once ready) is the one repository every real order
+   creation (`SubmitCustomerOrder`, `SubmitPosOrder`) and every real order read (this sprint's fix) goes
+   through. (Scope note, not a gap in this answer: the ~35 other, unrelated feature repositories named in
+   the original review's §2 remain outside `Order`'s scope entirely and were correctly not touched, per
+   this sprint's explicit "do not migrate unrelated repositories" instruction.)
+4. **Does every customer-facing order experience use the canonical Order aggregate?** **YES** — order
+   history, active-order tracking, order detail, and the Home active-order card all resolve through the
+   same `ordersProvider`/`activeOrderProvider` pair, which now has exactly one upstream source
+   (`canonicalOrderRepositoryProvider`). Session-local-only UI state (reviews, delivery-preference
+   toggles, the pre-existing non-durable cancel/status mutations) remains a documented, unchanged,
+   pre-existing limitation — not a second order model, and not newly introduced by this sprint.
+
+**PHASE 9 — APPROVED.**
+
+All nine of the original kickoff's disqualifying conditions are now closed with direct, current-session
+evidence (items 12–20 above), including the one that was open at original closure (item 15/§7,
+"legacy order path remains competing truth" — closed by this addendum). No unresolved Critical, High, or
+Medium security finding remains. The full Dart and emulator quality gate is green. Two items are
+explicitly named, not silently dropped, as pre-existing/orphaned for a future human decision, not as
+conditions on this verdict: `LocalOrdersRepository`/`ordersRepositoryProvider` (orphaned, not deleted)
+and the `'ORD-2026-001'`-hardcoded reorder shortcut in `orders_screen.dart` (pre-existing demo logic,
+now dead in practice against real order ids, unrelated to this sprint's own scope).

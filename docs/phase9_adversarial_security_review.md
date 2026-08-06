@@ -1,11 +1,13 @@
 # Phase 9 — Mandatory Adversarial Security Review
 
-Status: **COMPLETE**. Performed at the close of Phase 9 (Sprints 9A–9J), per the
-explicit kickoff instruction to run a mandatory adversarial security review before
-any phase-gate verdict. Every finding below is graded against direct evidence — a
-file read, a grep, or a test run performed in this session — not recollection.
-Evidence Classification tags (Verified / Inferred / Assumed) are used throughout per
-this project's standing rule.
+Status: **COMPLETE, and its one BLOCKING finding is now CLOSED** (Sprint 9K,
+`docs/decisions.md` ADR-026 Decision 13). Originally performed at the close of Phase 9
+(Sprints 9A–9J), per the explicit kickoff instruction to run a mandatory adversarial
+security review before any phase-gate verdict — see §7 below for the finding and its
+closure. Every finding below is graded against direct evidence — a file read, a grep,
+or a test run performed in this session — not recollection. Evidence Classification
+tags (Verified / Inferred / Assumed) are used throughout per this project's standing
+rule.
 
 See [phase9_final_report.md](phase9_final_report.md) for the 30-item closing report
 and phase-gate verdict this review feeds into.
@@ -137,9 +139,14 @@ use, not just its existence:
 
 ## 7. Canonical Order aggregate — sole authoritative model
 
-**BLOCKING.** This is the one finding in this review serious enough to block an
-outright APPROVED verdict, found during this review by tracing what the customer's
-own Orders screen actually reads from, not what it was designed to read from.
+**CLOSED, Sprint 9K (`docs/decisions.md` ADR-026 Decision 13).** This was the one
+finding in this review serious enough to block an outright APPROVED verdict, found
+during the original review by tracing what the customer's own Orders screen actually
+reads from, not what it was designed to read from. A dedicated follow-up sprint
+(Sprint 9K) closed it under its own explicit plan and approval, per `CLAUDE.md` §16 —
+summary below; full detail in `docs/phase9_final_report.md`'s Sprint 9K Addendum.
+
+**Original finding (for record):**
 
 **Evidence:**
 - `SubmitCustomerOrder`/`SubmitPosOrder` write real orders into
@@ -169,25 +176,46 @@ genuinely different order models (`Order` canonical aggregate vs. `OrderModel`
 legacy UI model) back two different screens' worth of state, connected by one
 one-directional bridge at submission time only.
 
-**Why this was not fixed in this session, and why that's the right call, not an
-excuse:** a proper fix means giving `OrdersNotifier` a real read-through path off
-`canonicalOrderRepositoryProvider` (a stream or an explicit refresh), while
-preserving the extra fields `OrderModel` carries that `Order` does not yet model
-(ratings, reviews, cancellation UI copy, courier-visibility legacy mirroring). That
-is a genuine UI/state-architecture change to the screen customers actually use most,
-not a backend-wiring task — the kind of change this project's own workflow rules
-require a plan and explicit approval for before writing code, and not something
-Sprints 9F–9J's own named scope ("server-authoritative events & outbox," "account
-deletion," "media/push," "observability," "backup/CI") ever included. Silently
-rewriting it now, unreviewed, this late in an already very long session, would trade
-one undisclosed risk for another.
+**Why this was not fixed in the original review session, and why that was the right
+call, not an excuse:** a proper fix meant giving `OrdersNotifier` a real read path off
+`canonicalOrderRepositoryProvider`, while preserving the extra fields `OrderModel`
+carries that `Order` does not model (ratings, reviews, cancellation UI copy,
+courier-visibility legacy mirroring). That is a genuine UI/state-architecture change
+to the screen customers actually use most, not a backend-wiring task — the kind of
+change this project's own workflow rules require a plan and explicit approval for
+before writing code, and not something Sprints 9F–9J's own named scope ever included.
+Silently rewriting it unreviewed, that late in an already very long session, would
+have traded one undisclosed risk for another.
 
-**Required fix, scoped for a following sprint ("Sprint 9K — Orders screen
-read-through migration"):** give `OrdersNotifier` (or a successor) a real
-subscription to `canonicalOrderRepositoryProvider`, keep `OrderModel`'s
-customer-review/UI-only fields as a genuinely separate, additive layer keyed by
-order id rather than folding them into the canonical `Order`, and delete
-`LocalOrdersRepository`/`ordersRepositoryProvider` once nothing depends on it.
+**Closure (Sprint 9K, `docs/decisions.md` ADR-026 Decision 13):** a dedicated
+kickoff scoped the fix narrowly ("close this one blocker, nothing else"), a concrete
+plan was presented and explicitly approved before any code was written (per
+`CLAUDE.md` §16), then implemented:
+- `OrdersNotifier` (`lib/features/orders/presentation/providers/orders_provider.dart`)
+  is now an `AsyncNotifier` whose `build()` sources exclusively from
+  `canonicalOrderRepositoryProvider.findByCustomerId(uid)` — no production code path
+  reads `ordersRepositoryProvider`/`LocalOrdersRepository` anymore.
+- `OrderModel`'s customer-review/UI-only fields were **not** folded into `Order` —
+  they stay exactly where they already were (client-local, session-only mutations on
+  the projected `OrderModel`, via the existing `OrderModel.fromCanonicalOrder`
+  projection), matching the "unchanged, not a new regression" limitation this review
+  already documented: they never persisted anywhere even before this fix.
+- `firestore.rules`' `orders` collection gained a customer-scoped read rule
+  (`resource.data.customerId == request.auth.uid`, additive — org-member/staff read
+  and every write rule are untouched), closing a second, previously-undiscovered gap
+  this fix's own implementation surfaced (a customer could not have read their own
+  order at all without it). Verified adversarially: a customer can read their own
+  order, cannot read another customer's (IDOR check), an unauthenticated request is
+  denied, staff read is unaffected — 4 new passing emulator tests.
+- `LocalOrdersRepository`/`ordersRepositoryProvider` were **not deleted** (per this
+  project's standing "never delete/orphan code unilaterally" rule) — left in place,
+  reported as newly orphaned, for a human decision on removal.
+- 14 new Dart tests (10 provider-level, 4 widget-level) plus a pre-existing test
+  regression fix (`home_screen_redesign_test.dart`'s "aktif siparis" test previously
+  asserted the old, now-intentionally-changed guest-sees-global-demo-data behavior —
+  updated to assert the corrected, per-customer-scoped behavior instead, not silently
+  weakened). Full Dart suite: 2264 → 2278 passing. `firestore-tests`: 24 → 28 passing.
+  `flutter analyze`: clean.
 
 ## 8. Event idempotency
 
@@ -305,7 +333,7 @@ session including immediately before this review.
 | 4 | Restaurant/branch resolution | ACCEPTED LOW RISK |
 | 5 | Platform/tenant separation | CLOSED |
 | 6 | Canonical identity | CLOSED |
-| 7 | Canonical Order — sole truth | **BLOCKING** |
+| 7 | Canonical Order — sole truth | CLOSED (Sprint 9K) |
 | 8 | Event idempotency | CLOSED |
 | 9 | Reward/stock single execution | ACCEPTED / OUT OF SCOPE |
 | 10 | Account deletion | CLOSED |
@@ -316,6 +344,8 @@ session including immediately before this review.
 | 15 | Observability | ACCEPTED / OUT OF SCOPE |
 | 16 | CI checks | CLOSED |
 
-**One BLOCKING finding remains open** (§7). Per the kickoff's own rule, this forces
-the phase-gate verdict to **APPROVED WITH REQUIRED FIXES**, not outright APPROVED —
-see [phase9_final_report.md](phase9_final_report.md) item 30.
+**Zero findings remain open.** The one BLOCKING finding (§7) is now CLOSED, per
+Sprint 9K's own dedicated closure work above. Every other area was already CLOSED or
+ACCEPTED LOW RISK/OUT OF SCOPE at the original review. See
+[phase9_final_report.md](phase9_final_report.md)'s Sprint 9K Addendum for the updated
+phase-gate verdict.

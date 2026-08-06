@@ -6,6 +6,8 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
+import '../../../../shared/widgets/feedback/error_view.dart';
+import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
 import '../../../menu/data/abakus_menu_catalog.dart';
 import '../../../profile/presentation/screens/help_screen.dart';
@@ -45,9 +47,8 @@ class ActiveOrderScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final orders = ref.watch(ordersProvider);
+    final ordersAsync = ref.watch(ordersProvider);
     final active = ref.watch(activeOrderProvider);
-    final order = _resolveOrder(orders, active);
 
     return Scaffold(
       appBar: AppBar(
@@ -61,15 +62,26 @@ class ActiveOrderScreen extends ConsumerWidget {
         foregroundColor: AppColors.textPrimary,
       ),
       body: SafeArea(
-        child: order == null
-            ? EmptyView(
-                icon: Icons.receipt_long_rounded,
-                message:
-                    'Şu anda takip edebileceğiniz aktif bir siparişiniz yok.',
-                actionLabel: 'Menüye Göz At',
-                onAction: () => Navigator.pop(context),
-              )
-            : _ActiveOrderBody(order: order),
+        child: ordersAsync.when(
+          loading: () => const LoadingView(),
+          error: (error, stackTrace) => ErrorView(
+            message: 'Sipariş bilgileri yüklenirken bir sorun oluştu.',
+            retryLabel: 'Tekrar Dene',
+            onRetry: () => ref.invalidate(ordersProvider),
+          ),
+          data: (orders) {
+            final order = _resolveOrder(orders, active);
+            return order == null
+                ? EmptyView(
+                    icon: Icons.receipt_long_rounded,
+                    message:
+                        'Şu anda takip edebileceğiniz aktif bir siparişiniz yok.',
+                    actionLabel: 'Menüye Göz At',
+                    onAction: () => Navigator.pop(context),
+                  )
+                : _ActiveOrderBody(order: order);
+          },
+        ),
       ),
     );
   }

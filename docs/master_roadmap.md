@@ -268,11 +268,13 @@
   (`onOrderCreated`, `onOrderCompleted`), both idempotent and covered by
   passing emulator tests. This is real progress on `Order` specifically, not
   the full `Tenant`/`Brand`/`Branch`/`User`/`Menu`/`Product` schema this item
-  names — those remain mock/in-memory. See
-  `docs/phase9_adversarial_security_review.md` §7 for an open gap even within
-  the `Order` slice: the customer-facing Orders screen still reads from a
-  separate legacy in-memory store, not this new backend, pending a follow-up
-  sprint.
+  names — those remain mock/in-memory. **Sprint 9K update (2026-08-06)**: the
+  customer-facing Orders screen previously read from a separate legacy
+  in-memory store instead of this backend (`docs/
+  phase9_adversarial_security_review.md` §7) — closed. `OrdersNotifier` now
+  sources exclusively from `CanonicalOrderRepository.findByCustomerId`; see
+  `docs/decisions.md` ADR-026 Decision 13 and `docs/phase9_final_report.md`'s
+  Sprint 9K Addendum.
 
 #### BE-002 — Environment Separation & Deployment Pipeline
 - Description: Dev/staging/production environment separation with a repeatable deployment process, replacing the current single-environment (nonexistent) setup — `app_environment.dart`/`app_environment_config.dart` are the client-side half of this.

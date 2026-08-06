@@ -123,7 +123,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final restaurantStatus = ref.watch(restaurantStatusProvider);
     final deliveryZoneNotifier = ref.watch(deliveryZoneProvider.notifier);
     final featuredProducts = ref.watch(featuredMenuProductsProvider);
-    final activeOrder = ref.watch(activeOrderProvider);
+    // Phase 9K: activeOrderProvider is now sourced from the canonical
+    // Firestore-backed order store, scoped by the signed-in customer's uid
+    // — gated on isAuthenticated for the same reason loyaltyState is right
+    // below (no session means nothing real to query; avoids an unnecessary
+    // watch, mirrors the existing pattern rather than introducing a new
+    // one).
+    final activeOrder = isAuthenticated ? ref.watch(activeOrderProvider) : null;
     final loyaltyState = isAuthenticated ? ref.watch(loyaltyProvider) : null;
 
     final eligibility = deliveryZoneNotifier.checkEligibility(selectedAddress);

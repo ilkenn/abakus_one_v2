@@ -1,19 +1,46 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
 import 'package:abakus_one_v2/features/home/presentation/screens/home_screen.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_filter_provider.dart';
 import 'package:abakus_one_v2/features/navigation/presentation/providers/navigation_provider.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_line.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_number.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_timestamps.dart';
+import 'package:abakus_one_v2/features/orders/domain/pricing/price_calculator.dart';
+import 'package:abakus_one_v2/features/orders/domain/pricing/tax_policy.dart';
+import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
 import 'package:abakus_one_v2/features/orders/presentation/screens/orders_screen.dart';
 import 'package:abakus_one_v2/features/qr/presentation/screens/qr_scanner_screen.dart';
+import 'package:abakus_one_v2/shared/models/currency.dart';
+import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:abakus_one_v2/shared/widgets/images/product_image.dart';
 
+/// Carries a real [AuthSession] (uid `'uid-1'`) — Phase 9K: the canonical
+/// customer-orders read path (`OrdersNotifier.build`) keys off
+/// `AuthState.session.uid`, not just `isAuthenticated`, so any test relying
+/// on order/loyalty data being scoped to a signed-in user needs a real
+/// session, not just the boolean.
 class _AuthenticatedNotifier extends AuthNotifier {
   @override
-  AuthState build() => const AuthState(isAuthenticated: true, isGuest: false);
+  AuthState build() => AuthState(
+        isAuthenticated: true,
+        isGuest: false,
+        session: AuthSession(
+          uid: 'uid-1',
+          phoneNumber: '+905321234567',
+          createdAt: DateTime(2026, 1, 1),
+          expiresAt: DateTime(2026, 12, 31),
+        ),
+      );
 }
 
 void main() {
@@ -82,7 +109,43 @@ void main() {
   });
 
   group('aktif siparis', () {
+    // Phase 9K (docs/decisions.md ADR-026): activeOrderProvider now sources
+    // from the canonical Firestore-backed order store, scoped to the
+    // signed-in customer's uid — a guest session correctly shows nothing
+    // (closes the Phase 9 adversarial review's BLOCKING finding), so this
+    // test needs a real signed-in session with a real seeded canonical
+    // order, not the old always-present global demo seed.
+    setUp(() {
+      container = ProviderContainer(
+        overrides: [authProvider.overrideWith(() => _AuthenticatedNotifier())],
+      );
+    });
+
     testWidgets('varsayilan aktif siparisi gosterir', (tester) async {
+      final line = OrderLine.create(
+        productId: 'prod_falafel_bowl',
+        productName: 'Falafel Bowl',
+        quantity: 2,
+        unitPrice: Money.fromLegacyDoubleTry(132.5),
+        taxRate: TaxPolicy.defaultRate,
+      );
+      final order = Order(
+        id: OrderId('order-active-1'),
+        orderNumber: OrderNumber('A-100'),
+        status: OrderStatus.preparing,
+        channel: OrderChannel.delivery,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        customerId: 'uid-1',
+        lines: [line],
+        pricing: PriceCalculator.calculate(
+          lines: [line],
+          currency: Currency.tryLira,
+        ),
+        timestamps: OrderTimestamps(created: DateTime(2026, 7, 20)),
+      );
+      await container.read(canonicalOrderRepositoryProvider).submitOrder(order);
+
       await pumpHome(tester);
 
       expect(find.text('Aktif Siparişin'), findsOneWidget);

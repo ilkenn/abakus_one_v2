@@ -92,10 +92,11 @@
   substrate for those three entities specifically, not the general API layer
   this module describes — no REST/GraphQL surface, no job queue, and roughly
   35 other feature repositories across the app remain unconditionally
-  in-memory (pre-Phase-9 scope, unchanged). A known gap even within the
-  `Order` slice: the customer-facing Orders screen still reads from a
-  separate legacy in-memory store, not this new backend (see the adversarial
-  review §7) — flagged as required follow-up work, not silently accepted.
+  in-memory (pre-Phase-9 scope, unchanged). **Sprint 9K update (2026-08-06)**:
+  the customer-facing Orders screen previously read from a separate legacy
+  in-memory store instead of this backend — closed (`docs/decisions.md`
+  ADR-026 Decision 13); `OrdersNotifier` now sources exclusively from
+  `CanonicalOrderRepository.findByCustomerId`, verified by 14 new tests.
 
 ## CMS — Menu & Dynamic CMS Management
 

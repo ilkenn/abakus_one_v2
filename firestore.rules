@@ -195,7 +195,15 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
 
     match /orders/{orderId} {
-      allow read: if isOrgMember(resource.data.organizationId);
+      // A customer may read their own order (Phase 9K, `docs/decisions.md`
+      // ADR-026) — the customer-facing Orders/Order-Detail screens query
+      // `CanonicalOrderRepository.findByCustomerId(uid)`, which requires
+      // this. Org-member (staff) read is unchanged. Neither branch grants
+      // write — `create`/`update`/`delete` below are untouched, so this
+      // does not widen who can ever modify an order, only who can read
+      // their own.
+      allow read: if isOrgMember(resource.data.organizationId) ||
+        (isSignedIn() && resource.data.customerId == request.auth.uid);
       // Both 'created' and 'pendingConfirmation' are accepted at create
       // time — closed during the Phase 9 adversarial security review:
       // the real Dart client (SubmitPosOrder/SubmitCustomerOrder) builds

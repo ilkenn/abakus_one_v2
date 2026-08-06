@@ -226,6 +226,64 @@ test('a client cannot transition an existing order\'s status directly (client up
   );
 });
 
+test('a customer can read their own order (Phase 9K, docs/decisions.md ADR-026) — required for CanonicalOrderRepository.findByCustomerId, the customer-facing Orders/Order-Detail read path', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/order-3'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      status: 'pendingConfirmation',
+      customerId: 'customer-alice',
+    });
+  });
+  const alice = testEnv.authenticatedContext('customer-alice').firestore();
+
+  await assertSucceeds(getDoc(doc(alice, 'orders/order-3')));
+});
+
+test('a customer cannot read another customer\'s order — IDOR protection, verified adversarially for the Phase 9K read-path migration', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/order-4'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      status: 'pendingConfirmation',
+      customerId: 'customer-victim',
+    });
+  });
+  const eve = testEnv.authenticatedContext('customer-attacker').firestore();
+
+  await assertFails(getDoc(doc(eve, 'orders/order-4')));
+});
+
+test('an unauthenticated request cannot read a customer order by customerId', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/order-5'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      status: 'pendingConfirmation',
+      customerId: 'customer-alice',
+    });
+  });
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  await assertFails(getDoc(doc(anon, 'orders/order-5')));
+});
+
+test('an org member (staff) can still read a customer order that is not their own customerId — staff read is unaffected by the customer-scoped rule addition', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/order-6'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      status: 'pendingConfirmation',
+      customerId: 'customer-someone-else',
+    });
+  });
+  const staffMember = testEnv
+    .authenticatedContext('staff-bob', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(staffMember, 'orders/order-6')));
+});
+
 test('audit events are read-only for members, never client-writable (append-only, server-only)', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'auditEvents/evt-1'), {

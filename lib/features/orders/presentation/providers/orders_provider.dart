@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/utils/clock_provider.dart';
 import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../application/use_cases/submit_customer_order.dart';
 import '../../data/canonical_order_repository.dart';
 import '../../data/order_firestore_client.dart';
@@ -16,9 +17,16 @@ import '../../domain/models/order_timestamps.dart';
 import '../../domain/models/order_tracking_step.dart';
 import 'order_identity_provider.dart';
 
-/// The [OrdersRepository] implementation currently in use. A future
-/// backend-backed phase overrides only this provider — nothing in
-/// [OrdersNotifier] or any UI depends on [LocalOrdersRepository] directly.
+/// The [OrdersRepository] implementation this codebase previously seeded
+/// customer order history from (3 hardcoded demo orders, identical for
+/// every user). **Orphaned as of the Phase 9K canonical read-path
+/// migration** (`docs/decisions.md` ADR-026, closing the Phase 9
+/// adversarial review's BLOCKING finding): [OrdersNotifier] no longer
+/// references this provider or [LocalOrdersRepository], and nothing else
+/// in production code does either. Left in place rather than deleted, per
+/// this project's standing "never delete/orphan code unilaterally" rule
+/// (`CLAUDE.md` §13/§15) — reported in `docs/phase9_final_report.md` for
+/// the human to decide on removal.
 final ordersRepositoryProvider = Provider<OrdersRepository>((ref) {
   return const LocalOrdersRepository();
 });
@@ -29,7 +37,9 @@ final ordersRepositoryProvider = Provider<OrdersRepository>((ref) {
 /// `SubmitCustomerOrder`/checkout wire through this same provider, so a
 /// POS-submitted and a customer-checkout-submitted [Order] land in the
 /// same store — "customer/POS/QR-created orders all enter the same
-/// lifecycle," verified at the storage level.
+/// lifecycle," verified at the storage level. As of Phase 9K, this is also
+/// the **sole** read source for the customer-facing order screens (see
+/// [OrdersNotifier]) — there is exactly one production truth for orders.
 ///
 /// Gated on [firebaseReadyProvider] — Sprint 9E — mirroring every other
 /// Firebase-backed provider in this codebase: [FirestoreCanonicalOrderRepository]
@@ -72,24 +82,64 @@ final submitCustomerOrderProvider = Provider<SubmitCustomerOrder>((ref) {
   );
 });
 
-class OrdersNotifier extends Notifier<List<OrderModel>> {
+/// Customer-facing order history/tracking — Phase 9K (`docs/decisions.md`
+/// ADR-026): sources exclusively from [canonicalOrderRepositoryProvider]
+/// via [CanonicalOrderRepository.findByCustomerId], the same store
+/// `SubmitCustomerOrder`/`SubmitPosOrder` both write to. Closes the Phase 9
+/// adversarial review's one BLOCKING finding, "legacy order path remains
+/// competing truth" — no production read path in this class touches
+/// [ordersRepositoryProvider]/[LocalOrdersRepository] anymore.
+///
+/// `AsyncNotifier`, not `Notifier` — the initial load is now a real,
+/// fallible Firestore call, not a synchronous in-memory return, so
+/// loading/error states must be modeled explicitly (`CLAUDE.md` §4/§7)
+/// rather than assumed away. `null`/signed-out sessions resolve to an
+/// empty list (mirrors `features/crm`'s `currentCustomerProvider` — the
+/// established shape in this codebase for "resolve real data for the
+/// signed-in session, empty/`null` when signed out").
+///
+/// **Known, unchanged limitation, not a new regression**: none of this
+/// notifier's mutator methods below (`updateScheduledTime`,
+/// `updateLifecycleStatus`, `setCourierVisibleToCustomer`, `cancelOrder`,
+/// `submitReview`) persist anywhere — they never did even before this
+/// migration ([LocalOrdersRepository] never had a `save`/`update` method
+/// at all, so these were always session-local-only). Making them durable
+/// is new use-case work, out of this sprint's scope ("fix the read path,"
+/// not "add order-mutation backend support").
+class OrdersNotifier extends AsyncNotifier<List<OrderModel>> {
   @override
-  List<OrderModel> build() {
-    return ref.read(ordersRepositoryProvider).loadInitialOrders();
+  Future<List<OrderModel>> build() async {
+    final session = ref.watch(authProvider).session;
+    if (session == null) return const [];
+
+    final repository = ref.watch(canonicalOrderRepositoryProvider);
+    final orders = await repository.findByCustomerId(session.uid);
+    final sorted = [...orders]
+      ..sort((a, b) => b.timestamps.created.compareTo(a.timestamps.created));
+    return [for (final order in sorted) OrderModel.fromCanonicalOrder(order)];
   }
 
-  void addOrder(OrderModel order) {
-    state = [order, ...state];
+  /// Prepends a just-submitted order to the current session's list — the
+  /// one-time write-through bridge `checkout_screen.dart` uses immediately
+  /// after a real canonical submit, so the customer sees their own order
+  /// without waiting on a Firestore round-trip. Awaits [future] first so a
+  /// still-in-flight initial [build] can never clobber this mutation once
+  /// it resolves.
+  Future<void> addOrder(OrderModel order) async {
+    final current = await future;
+    state = AsyncData([order, ...current]);
   }
 
   void updateScheduledTime(String orderId, String newDateTime) {
-    state = [
-      for (final order in state)
+    final current = state.value;
+    if (current == null) return;
+    state = AsyncData([
+      for (final order in current)
         if (order.id == orderId)
           order.copyWith(scheduledDeliveryDateTime: newDateTime)
         else
           order,
-    ];
+    ]);
   }
 
   /// Moves [orderId] to [newStatus] if [OrderStatusTransitions.canTransition]
@@ -111,32 +161,34 @@ class OrdersNotifier extends Notifier<List<OrderModel>> {
     OrderStatus newStatus, {
     OrderActor actor = OrderActor.system,
   }) {
-    final index = state.indexWhere((order) => order.id == orderId);
+    final current = state.value;
+    if (current == null) return false;
+    final index = current.indexWhere((order) => order.id == orderId);
     if (index < 0) return false;
 
-    final current = state[index];
+    final existing = current[index];
     if (!OrderStatusTransitions.canTransition(
-      current.lifecycleStatus,
+      existing.lifecycleStatus,
       newStatus,
     )) {
       return false;
     }
 
     final now = DateTime.now();
-    final baseTimestamps = current.timestamps ?? OrderTimestamps(created: now);
+    final baseTimestamps = existing.timestamps ?? OrderTimestamps(created: now);
 
-    final updated = current.copyWith(
+    final updated = existing.copyWith(
       lifecycleStatus: newStatus,
       status: OrderStatusLegacyLabel.forStatus(newStatus),
       timestamps: baseTimestamps.recordedAt(newStatus, now),
       courierVisibility: newStatus == OrderStatus.outForDelivery
-          ? current.courierVisibility
+          ? existing.courierVisibility
           : CourierVisibility.hidden,
       auditTrail: [
-        ...current.auditTrail,
+        ...existing.auditTrail,
         OrderAuditEntry.statusChange(
-          id: 'audit_${current.id}_${current.auditTrail.length + 1}',
-          from: current.lifecycleStatus,
+          id: 'audit_${existing.id}_${existing.auditTrail.length + 1}',
+          from: existing.lifecycleStatus,
           to: newStatus,
           actor: actor,
           at: now,
@@ -144,10 +196,10 @@ class OrdersNotifier extends Notifier<List<OrderModel>> {
       ],
     );
 
-    state = [
-      for (final order in state)
+    state = AsyncData([
+      for (final order in current)
         if (order.id == orderId) updated else order,
-    ];
+    ]);
     return true;
   }
 
@@ -158,31 +210,35 @@ class OrdersNotifier extends Notifier<List<OrderModel>> {
   /// can't be "on the way to this customer" before that leg has started);
   /// no-ops and returns `false` otherwise.
   bool setCourierVisibleToCustomer(String orderId) {
-    final index = state.indexWhere((order) => order.id == orderId);
+    final current = state.value;
+    if (current == null) return false;
+    final index = current.indexWhere((order) => order.id == orderId);
     if (index < 0) return false;
 
-    final current = state[index];
-    if (current.lifecycleStatus != OrderStatus.outForDelivery) return false;
+    final existing = current[index];
+    if (existing.lifecycleStatus != OrderStatus.outForDelivery) return false;
 
-    state = [
-      for (final order in state)
+    state = AsyncData([
+      for (final order in current)
         if (order.id == orderId)
           order.copyWith(
             courierVisibility: CourierVisibility.visibleToCustomer,
           )
         else
           order,
-    ];
+    ]);
     return true;
   }
 
   void cancelOrder(String orderId, String reason, String description) {
-    final index = state.indexWhere((order) => order.id == orderId);
+    final current = state.value;
+    if (current == null) return;
+    final index = current.indexWhere((order) => order.id == orderId);
     if (index < 0) return;
 
-    final current = state[index];
+    final existing = current[index];
     if (!OrderStatusTransitions.canTransition(
-      current.lifecycleStatus,
+      existing.lifecycleStatus,
       OrderStatus.cancelled,
     )) {
       return;
@@ -193,8 +249,8 @@ class OrdersNotifier extends Notifier<List<OrderModel>> {
         '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year} '
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
 
-    state = [
-      for (final order in state)
+    state = AsyncData([
+      for (final order in current)
         if (order.id == orderId)
           order.copyWith(
             status: 'İptal Edildi',
@@ -211,12 +267,14 @@ class OrdersNotifier extends Notifier<List<OrderModel>> {
           )
         else
           order,
-    ];
+    ]);
   }
 
   void submitReview(String orderId, OrderModel updatedReviewFields) {
-    state = [
-      for (final order in state)
+    final current = state.value;
+    if (current == null) return;
+    state = AsyncData([
+      for (final order in current)
         if (order.id == orderId)
           order.copyWith(
             overallRating: updatedReviewFields.overallRating,
@@ -236,25 +294,31 @@ class OrdersNotifier extends Notifier<List<OrderModel>> {
           )
         else
           order,
-    ];
+    ]);
   }
 }
 
-final ordersProvider = NotifierProvider<OrdersNotifier, List<OrderModel>>(() {
+final ordersProvider =
+    AsyncNotifierProvider<OrdersNotifier, List<OrderModel>>(() {
   return OrdersNotifier();
 });
 
-/// The customer's current active order, or `null` if none exists.
+/// The customer's current active order, or `null` if none exists — also
+/// `null` while [ordersProvider] is loading or has errored, matching every
+/// consumer screen's existing "no active order" empty-state handling (no
+/// new state needed there).
 ///
 /// "Active" means [OrderTrackingTimeline.isActiveForCustomer] — a
 /// delivered/completed/refunded/cancelled/rejected order is never active,
 /// per the product rule. [ordersProvider]'s list is newest-first
-/// ([OrdersNotifier.addOrder] prepends), so the first match is the most
+/// ([OrdersNotifier.build] sorts by [OrderTimestamps.created] descending;
+/// [OrdersNotifier.addOrder] also prepends), so the first match is the most
 /// recently placed active order. This is the single provider both the Home
 /// "Aktif Siparişin" card and `ActiveOrderScreen`'s default (no explicit
 /// `orderId`) case read from.
 final activeOrderProvider = Provider<OrderModel?>((ref) {
-  final orders = ref.watch(ordersProvider);
+  final orders = ref.watch(ordersProvider).valueOrNull;
+  if (orders == null) return null;
   for (final order in orders) {
     if (OrderTrackingTimeline.isActiveForCustomer(order.lifecycleStatus)) {
       return order;
