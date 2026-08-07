@@ -98,10 +98,11 @@ class AuthNotifier extends Notifier<AuthState> {
         request.status == AccountDeletionStatus.completed;
   }
 
-  /// Called once by Splash at startup. Looks for a persisted session and,
-  /// if a valid one exists, marks the user authenticated — this is the
-  /// entire "auto login" behavior. Never throws: a broken/unreadable
-  /// session must never crash the app, only leave the user logged out.
+  /// Called once by `bootstrapApp()` (`lib/bootstrap/app_bootstrap.dart`),
+  /// before `runApp()`. Looks for a persisted session and, if a valid one
+  /// exists, marks the user authenticated — this is the entire "auto
+  /// login" behavior. Never throws: a broken/unreadable session must never
+  /// crash the app, only leave the user logged out.
   Future<void> checkPersistedSession() async {
     try {
       final session = await _repository.loadSession();
@@ -235,3 +236,29 @@ class AuthNotifier extends Notifier<AuthState> {
 final authProvider = NotifierProvider<AuthNotifier, AuthState>(() {
   return AuthNotifier();
 });
+
+/// An [AuthNotifier] whose initial [build] returns an already-resolved
+/// [AuthState] instead of the default signed-out one — everything else
+/// (login/logout/OTP/etc.) is inherited unchanged.
+///
+/// Startup routing cleanup (splash removal): `bootstrapApp()`
+/// (`lib/bootstrap/app_bootstrap.dart`) now runs [AuthNotifier
+/// .checkPersistedSession] itself, before `runApp()`, so the very first
+/// Flutter frame can already resolve to the correct destination — no
+/// intermediate "checking session" screen. The resolved [AuthState] is
+/// captured there and installed via `authProvider.overrideWith(() =>
+/// SeededAuthNotifier(resolvedState))` in [AppBootstrapResult
+/// .providerOverrides], the same override mechanism every other
+/// bootstrap-initialized service already uses. Mirrors the test-double
+/// pattern this codebase's own tests have used throughout (e.g.
+/// `_SignedInNotifier` in `account_data_provider_test.dart`) — promoted to
+/// a real, documented production class now that bootstrap needs the same
+/// shape for real resolved state, not a test fake.
+class SeededAuthNotifier extends AuthNotifier {
+  SeededAuthNotifier(this._initial);
+
+  final AuthState _initial;
+
+  @override
+  AuthState build() => _initial;
+}

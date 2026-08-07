@@ -40,7 +40,17 @@ void main() {
         () async {
       final result = await bootstrapApp();
 
-      expect(result.providerOverrides, hasLength(6));
+      expect(result.providerOverrides, hasLength(7));
+    });
+
+    test(
+        'resolves auth state before returning — no persisted session in a '
+        'test environment resolves to not signed in, not left unresolved',
+        () async {
+      final result = await bootstrapApp();
+
+      expect(result.resolvedAuthState.isAuthenticated, isFalse);
+      expect(result.resolvedAuthState.isGuest, isFalse);
     });
   });
 }

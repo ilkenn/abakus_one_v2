@@ -6,7 +6,6 @@ import '../../features/auth/presentation/providers/auth_provider.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/otp_screen.dart';
 import '../../features/navigation/presentation/screens/main_navigation_screen.dart';
-import '../../features/navigation/presentation/screens/splash_screen.dart';
 import '../../features/onboarding/presentation/provider/onboarding_provider.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
 import 'app_route_guard.dart';
@@ -14,9 +13,9 @@ import 'app_routes.dart';
 
 /// Bridges the Riverpod state [AppRouteGuard] depends on into `GoRouter`'s
 /// `refreshListenable`, so a state change that happens without an
-/// explicit navigation call (e.g. Splash's persisted-session check
-/// resolving) still re-runs the guard against the current location
-/// instead of leaving a stale redirect decision in place.
+/// explicit navigation call (e.g. a login/logout elsewhere in the app)
+/// still re-runs the guard against the current location instead of
+/// leaving a stale redirect decision in place.
 class _RouterRefreshListenable extends ChangeNotifier {
   _RouterRefreshListenable(Ref ref) {
     ref.listen(authProvider, (previous, next) => notifyListeners());
@@ -40,15 +39,33 @@ CustomTransitionPage<void> _fadeTransitionPage(Widget child) {
   );
 }
 
-/// The app's router. Scoped to the Splash → Onboarding → Login/Otp → Main
-/// entry flow only (per ADR-006) — not a migration of every feature
-/// screen. `main` is intentionally left as a single opaque route rather
-/// than a `StatefulShellRoute`: giving `MainNavigationScreen` its own
-/// nested shell/tab routes would mean redesigning its existing internal
+/// The app's router. Scoped to the Onboarding → Login/Otp → Main entry
+/// flow only (per ADR-006) — not a migration of every feature screen.
+/// `main` is intentionally left as a single opaque route rather than a
+/// `StatefulShellRoute`: giving `MainNavigationScreen` its own nested
+/// shell/tab routes would mean redesigning its existing internal
 /// bottom-nav logic, which is out of scope for this foundation.
+///
+/// **No dedicated splash route** (startup routing cleanup, splash
+/// removal) — `bootstrapApp()` (`lib/bootstrap/app_bootstrap.dart`)
+/// already resolves the persisted-session check before `runApp()`, so by
+/// the time this provider is first read, `authProvider`'s state is
+/// already correct. `initialLocation` reads it once, here, with `ref
+/// .read` (not `ref.watch` — matches the `redirect` callback's own
+/// pattern below; this provider only needs the value at construction
+/// time, ongoing changes are what `redirect`/`refreshListenable` are for)
+/// to land the very first frame on the correct destination directly — no
+/// intermediate screen, no timer.
 final appRouterProvider = Provider<GoRouter>((ref) {
+  final authState = ref.read(authProvider);
+  final isOnboardingComplete = ref.read(onboardingCompleteProvider);
+  final signedIn = authState.isAuthenticated || authState.isGuest;
+  final initialLocation = signedIn
+      ? AppRoutes.main
+      : (isOnboardingComplete ? AppRoutes.login : AppRoutes.onboarding);
+
   return GoRouter(
-    initialLocation: AppRoutes.splash,
+    initialLocation: initialLocation,
     refreshListenable: _RouterRefreshListenable(ref),
     redirect: (context, state) {
       final authState = ref.read(authProvider);
@@ -61,12 +78,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       );
     },
     routes: [
-      GoRoute(
-        path: AppRoutes.splash,
-        pageBuilder: (context, state) {
-          return _fadeTransitionPage(const SplashScreen());
-        },
-      ),
       GoRoute(
         path: AppRoutes.onboarding,
         pageBuilder: (context, state) {

@@ -9,7 +9,6 @@ import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/otp_screen.dart';
 import 'package:abakus_one_v2/features/navigation/presentation/screens/main_navigation_screen.dart';
-import 'package:abakus_one_v2/features/navigation/presentation/screens/splash_screen.dart';
 import 'package:abakus_one_v2/features/onboarding/presentation/provider/onboarding_provider.dart';
 import 'package:abakus_one_v2/features/onboarding/presentation/screens/onboarding_screen.dart';
 
@@ -55,6 +54,41 @@ Future<void> _pumpAt(
   // change, not a build-time side effect.
   final router = container.read(appRouterProvider);
   router.go(location);
+
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp.router(routerConfig: router),
+    ),
+  );
+  await tester.pump();
+}
+
+/// Unlike [_pumpAt], never calls `router.go(...)` — proves
+/// `appRouterProvider`'s own `initialLocation` (resolved once, from
+/// whatever `authProvider`/`onboardingCompleteProvider` state [overrides]
+/// seed) lands the very first frame on the right screen by itself.
+/// Startup routing cleanup (splash removal): this is the direct test of
+/// "no Flutter splash route is entered" / "no double navigation" — with
+/// no dedicated splash route left at all, there is nothing else for the
+/// router to redirect *through* on the way to the first real screen.
+Future<void> _pumpInitial(
+  WidgetTester tester, {
+  List<Override> overrides = const [],
+}) async {
+  final container = ProviderContainer(
+    overrides: [
+      authRepositoryProvider.overrideWithValue(
+        DevelopmentLocalAuthRepository(
+          sessionStorage: _FakeSessionStorage(),
+        ),
+      ),
+      ...overrides,
+    ],
+  );
+  addTearDown(container.dispose);
+
+  final router = container.read(appRouterProvider);
 
   await tester.pumpWidget(
     UncontrolledProviderScope(
@@ -115,18 +149,33 @@ void main() {
   });
 
   group('appRouterProvider — guard redirects applied through the router', () {
-    testWidgets('/main redirects to SplashScreen when not signed in', (
-      tester,
-    ) async {
-      await _pumpAt(tester, '/main');
-      expect(find.byType(SplashScreen), findsOneWidget);
-      expect(find.byType(MainNavigationScreen), findsNothing);
+    testWidgets(
+      '/main redirects to OnboardingScreen when not signed in and '
+      'onboarding is not yet complete (no splash to redirect through)',
+      (tester) async {
+        await _pumpAt(tester, '/main');
+        expect(find.byType(OnboardingScreen), findsOneWidget);
+        expect(find.byType(MainNavigationScreen), findsNothing);
+      },
+    );
 
-      // Flush SplashScreen's own reveal-animation timers so none are
-      // left pending when the test ends.
-      await tester.pump(const Duration(milliseconds: 3000));
-      await tester.pumpAndSettle();
-    });
+    testWidgets(
+      '/main redirects to LoginScreen when not signed in and onboarding '
+      'is already complete',
+      (tester) async {
+        await _pumpAt(
+          tester,
+          '/main',
+          overrides: [
+            onboardingCompleteProvider.overrideWith(
+              _CompletedOnboardingNotifier.new,
+            ),
+          ],
+        );
+        expect(find.byType(LoginScreen), findsOneWidget);
+        expect(find.byType(MainNavigationScreen), findsNothing);
+      },
+    );
 
     testWidgets('/login redirects to MainNavigationScreen for a guest', (
       tester,
@@ -139,5 +188,69 @@ void main() {
       expect(find.byType(MainNavigationScreen), findsOneWidget);
       expect(find.byType(LoginScreen), findsNothing);
     });
+  });
+
+  group('appRouterProvider — initialLocation (startup, splash removal)', () {
+    testWidgets(
+      'a pre-resolved authenticated session lands the very first frame on '
+      'MainNavigationScreen directly — no other screen ever mounts',
+      (tester) async {
+        final resolvedSession = AuthSession(
+          uid: 'uid-1',
+          phoneNumber: '+905321234567',
+          createdAt: DateTime(2026, 1, 1),
+          expiresAt: DateTime(2026, 12, 31),
+        );
+        await _pumpInitial(
+          tester,
+          overrides: [
+            authProvider.overrideWith(
+              () => SeededAuthNotifier(
+                AuthState(
+                  isAuthenticated: true,
+                  isGuest: false,
+                  session: resolvedSession,
+                ),
+              ),
+            ),
+          ],
+        );
+
+        expect(find.byType(MainNavigationScreen), findsOneWidget);
+        expect(find.byType(OnboardingScreen), findsNothing);
+        expect(find.byType(LoginScreen), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'no session, onboarding not yet complete -> first frame is '
+      'OnboardingScreen directly',
+      (tester) async {
+        await _pumpInitial(tester);
+
+        expect(find.byType(OnboardingScreen), findsOneWidget);
+        expect(find.byType(MainNavigationScreen), findsNothing);
+        expect(find.byType(LoginScreen), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'no session, onboarding already complete -> first frame is '
+      'LoginScreen directly',
+      (tester) async {
+        await _pumpInitial(
+          tester,
+          overrides: [
+            onboardingCompleteProvider.overrideWith(
+              _CompletedOnboardingNotifier.new,
+            ),
+          ],
+        );
+
+        expect(find.byType(LoginScreen), findsOneWidget);
+        expect(find.byType(OnboardingScreen), findsNothing);
+        expect(find.byType(MainNavigationScreen), findsNothing);
+      },
+    );
   });
 }

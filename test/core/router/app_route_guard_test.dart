@@ -16,18 +16,6 @@ void main() {
       );
     });
 
-    test('at splash, no redirect (splash decides its own hand-off timing)', () {
-      expect(
-        AppRouteGuard.resolve(
-          location: AppRoutes.splash,
-          isAuthenticated: true,
-          isGuest: false,
-          isOnboardingComplete: true,
-        ),
-        isNull,
-      );
-    });
-
     test('at login, redirected to main', () {
       expect(
         AppRouteGuard.resolve(
@@ -78,18 +66,6 @@ void main() {
       );
     });
 
-    test('at splash, no redirect', () {
-      expect(
-        AppRouteGuard.resolve(
-          location: AppRoutes.splash,
-          isAuthenticated: false,
-          isGuest: true,
-          isOnboardingComplete: true,
-        ),
-        isNull,
-      );
-    });
-
     test('at login, redirected to main', () {
       expect(
         AppRouteGuard.resolve(
@@ -104,7 +80,22 @@ void main() {
   });
 
   group('AppRouteGuard.resolve — not signed in', () {
-    test('at main, redirected to splash (needs a resolved session check)', () {
+    test(
+        'at main, onboarding not yet complete, redirected to onboarding '
+        '(no splash to route back through — bootstrap already resolved '
+        'the session before the router was ever built)', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.main,
+          isAuthenticated: false,
+          isGuest: false,
+          isOnboardingComplete: false,
+        ),
+        AppRoutes.onboarding,
+      );
+    });
+
+    test('at main, onboarding already complete, redirected to login', () {
       expect(
         AppRouteGuard.resolve(
           location: AppRoutes.main,
@@ -112,19 +103,7 @@ void main() {
           isGuest: false,
           isOnboardingComplete: true,
         ),
-        AppRoutes.splash,
-      );
-    });
-
-    test('at splash, no redirect', () {
-      expect(
-        AppRouteGuard.resolve(
-          location: AppRoutes.splash,
-          isAuthenticated: false,
-          isGuest: false,
-          isOnboardingComplete: false,
-        ),
-        isNull,
+        AppRoutes.login,
       );
     });
 

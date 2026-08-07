@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches AppColors.background (lib/core/theme/app_colors.dart):
+         the native launch screen background, shown before the Flutter
+         engine draws its first frame. Startup routing cleanup (splash
+         removal): kept static and minimal per that task's own
+         requirement, same cream regardless of system light/dark mode,
+         since the app has no real dark theme yet. -->
+    <color name="launch_background">#FFF8F6F2</color>
+</resources>

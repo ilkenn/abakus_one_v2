@@ -20,7 +20,7 @@ abstract interface class SessionStorage {
 /// while reading — corrupt JSON, a missing field, the plugin itself
 /// throwing, or the platform channel never responding at all — is treated
 /// as "no valid session" rather than allowed to crash the app or hang
-/// Splash forever, per the explicit requirement that a broken/unreadable
+/// bootstrap forever, per the explicit requirement that a broken/unreadable
 /// session must fail safe. A bounded [_timeout] matters as much as the
 /// `try`/`catch` here: an unregistered or unresponsive platform channel
 /// doesn't throw, it simply never completes, so a `catch` alone can't

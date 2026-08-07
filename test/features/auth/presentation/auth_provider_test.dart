@@ -30,6 +30,25 @@ class _FakeSessionStorage implements SessionStorage {
   }
 }
 
+/// Simulates a corrupted/unreadable session — `readSession()` throwing
+/// rather than returning `null`. Startup routing cleanup (splash
+/// removal): `checkPersistedSession()` now runs from `bootstrapApp()`,
+/// before `runApp()`, so its own "never throws" contract is what stands
+/// between a corrupted session and a crashed app boot — this was
+/// previously true but untested.
+class _ThrowingSessionStorage implements SessionStorage {
+  @override
+  Future<AuthSession?> readSession() async {
+    throw StateError('corrupted session data');
+  }
+
+  @override
+  Future<void> writeSession(AuthSession session) async {}
+
+  @override
+  Future<void> clearSession() async {}
+}
+
 void main() {
   late _FakeSessionStorage storage;
   late ProviderContainer container;
@@ -116,6 +135,26 @@ void main() {
     await container.read(authProvider.notifier).checkPersistedSession();
 
     expect(container.read(authProvider).isAuthenticated, isFalse);
+  });
+
+  test(
+      'bozuk/okunamayan oturum checkPersistedSession\'i cokertmez, guvenli '
+      'sekilde isAuthenticated false kalir', () async {
+    final throwingContainer = ProviderContainer(
+      overrides: [
+        authRepositoryProvider.overrideWithValue(
+          DevelopmentLocalAuthRepository(
+            sessionStorage: _ThrowingSessionStorage(),
+          ),
+        ),
+      ],
+    );
+    addTearDown(throwingContainer.dispose);
+
+    await throwingContainer.read(authProvider.notifier).checkPersistedSession();
+
+    expect(throwingContainer.read(authProvider).isAuthenticated, isFalse);
+    expect(throwingContainer.read(authProvider).isGuest, isFalse);
   });
 
   test('misafir girisi oturum/telefon numarasi olusturmadan isGuest true yapar',

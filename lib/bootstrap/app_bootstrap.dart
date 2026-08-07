@@ -11,6 +11,7 @@ import '../core/services/logging/logging_provider.dart';
 import '../core/services/logging/logging_service.dart';
 import '../core/services/remote_config/remote_config_provider.dart';
 import '../core/services/remote_config/remote_config_service.dart';
+import '../features/auth/presentation/providers/auth_provider.dart';
 import 'firebase_bootstrap_service.dart';
 import 'firebase_ready_provider.dart';
 
@@ -25,6 +26,7 @@ class AppBootstrapResult {
     required this.remoteConfigService,
     required this.appCheckService,
     required this.crashReportingService,
+    required this.resolvedAuthState,
   });
 
   final bool isFirebaseReady;
@@ -33,6 +35,14 @@ class AppBootstrapResult {
   final RemoteConfigService remoteConfigService;
   final AppCheckService appCheckService;
   final CrashReportingService crashReportingService;
+
+  /// The result of resolving any persisted session — see [bootstrapApp]'s
+  /// own doc comment, step 4. Startup routing cleanup (splash removal):
+  /// this used to be resolved later, inside `SplashScreen.initState()`,
+  /// after the first Flutter frame had already rendered. Resolving it here
+  /// instead means the very first frame `runApp()` ever produces can
+  /// already be the correct destination screen.
+  final AuthState resolvedAuthState;
 
   /// The [ProviderScope] overrides that make the running app use exactly
   /// the service instances this bootstrap already initialized, instead of
@@ -45,6 +55,7 @@ class AppBootstrapResult {
         remoteConfigServiceProvider.overrideWithValue(remoteConfigService),
         appCheckServiceProvider.overrideWithValue(appCheckService),
         crashReportingServiceProvider.overrideWithValue(crashReportingService),
+        authProvider.overrideWith(() => SeededAuthNotifier(resolvedAuthState)),
       ];
 }
 
@@ -65,9 +76,21 @@ class AppBootstrapResult {
 ///    run concurrently. Neither implementation throws — a fetch failure,
 ///    a disabled API, or no network all leave safe defaults in place
 ///    rather than blocking startup, per Sprint 2's explicit requirement.
+/// 4. [AuthNotifier.checkPersistedSession] — resolved concurrently with
+///    step 3 in the same container. Startup routing cleanup (splash
+///    removal): this used to run later, inside `SplashScreen.initState()`,
+///    after the first Flutter frame had already rendered — the router
+///    would show Splash regardless, then redirect once this resolved.
+///    Running it here instead means [appRouterProvider]'s
+///    `initialLocation` can already read a fully-resolved [AuthState] the
+///    moment the app's real [ProviderScope] is built, so the very first
+///    frame is already the correct destination. Never throws (see
+///    [AuthNotifier.checkPersistedSession]'s own doc comment) — a broken
+///    session resolves to "not signed in," not a hang or a crash.
 ///
 /// This function contains no feature-specific or business logic — it only
-/// sequences already-tested services' own `initialize()` contracts.
+/// sequences already-tested services' own `initialize()`/session-check
+/// contracts.
 Future<AppBootstrapResult> bootstrapApp() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -87,12 +110,16 @@ Future<AppBootstrapResult> bootstrapApp() async {
   final remoteConfigService = container.read(remoteConfigServiceProvider);
   final appCheckService = container.read(appCheckServiceProvider);
   final crashReportingService = container.read(crashReportingServiceProvider);
+  final authNotifier = container.read(authProvider.notifier);
 
   await Future.wait([
     featureFlagsService.initialize(),
     appCheckService.initialize(),
     crashReportingService.initialize(),
+    authNotifier.checkPersistedSession(),
   ]);
+
+  final resolvedAuthState = container.read(authProvider);
 
   container.dispose();
 
@@ -103,5 +130,6 @@ Future<AppBootstrapResult> bootstrapApp() async {
     remoteConfigService: remoteConfigService,
     crashReportingService: crashReportingService,
     appCheckService: appCheckService,
+    resolvedAuthState: resolvedAuthState,
   );
 }
