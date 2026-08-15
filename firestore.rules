@@ -664,6 +664,38 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // Delivery Fraud Location Evidence — shared foundation (FRAUD-F.0,
+    // docs/decisions.md, docs/fraud_evidence_architecture.md).
+    //
+    // No human client — customer, courier, staff, manager, admin,
+    // unrelated tenant, platformAdministrator, or EVEN platformOwner — may
+    // read or write any of these four collections directly. This is
+    // deliberate and absolute, not an oversight to relax later:
+    // `getPreciseFraudEvidence` (Cloud Function/Admin SDK) is the sole
+    // access path for precise evidence, specifically because a Firestore
+    // Rule cannot itself produce the mandatory access-audit side effect
+    // FRAUD-F.0 requires on every read. Granting even platformOwner a
+    // rules-based `allow read` here would create a silent bypass of that
+    // audit guarantee — so no such branch exists, for any role.
+    // ---------------------------------------------------------------------
+
+    match /fraudEvidence/{evidenceId} {
+      allow read, write: if false; // Cloud Function only — no direct client access, ever.
+    }
+
+    match /fraudRiskContexts/{contextId} {
+      allow read, write: if false; // Cloud Function only.
+    }
+
+    match /fraudEvidenceAccessLog/{logId} {
+      allow read, write: if false; // Cloud Function only — append-only audit trail.
+    }
+
+    match /fraudEvidenceRetentionPolicies/{policyId} {
+      allow read, write: if false; // Cloud Function / ops tooling only.
+    }
+
+    // ---------------------------------------------------------------------
     // Default deny — anything not explicitly matched above (including any
     // future collection someone adds without also adding a rule for it)
     // is denied by default, never implicitly readable/writable. "Fail

@@ -2172,3 +2172,20 @@ final class AddressNotVerifiedForDeliveryViolation
       'Address "$addressId" is not server-verified and cannot authorize a '
       'delivery order';
 }
+
+/// A `FraudEvidence` was constructed with a tenant anchor
+/// (organizationId/branchId/orderId) that is neither fully `null`
+/// (pre-order evidence) nor fully populated (order evidence) — FRAUD-F.0
+/// (`docs/decisions.md`, `docs/fraud_evidence_architecture.md`). Partial
+/// anchoring is never a valid state: it would let evidence exist in an
+/// ambiguous tenant scope, undermining the rule that pre-order evidence
+/// has no tenant owner while order evidence is always fully tenant-scoped.
+final class PartialFraudEvidenceTenantAnchorViolation
+    extends BusinessRuleViolation {
+  const PartialFraudEvidenceTenantAnchorViolation();
+
+  @override
+  String get description =>
+      'FraudEvidence tenant anchor must be fully null (pre-order) or fully '
+      'populated (organizationId, branchId, orderId) — never partial';
+}

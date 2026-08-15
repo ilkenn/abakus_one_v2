@@ -2678,3 +2678,109 @@ test('customerAddresses: owner can delete their own address', async () => {
 
   await assertSucceeds(deleteDoc(doc(alice, 'customerAddresses/address-1')));
 });
+
+// ---------------------------------------------------------------------
+// Delivery Fraud Location Evidence — shared foundation (FRAUD-F.0,
+// docs/decisions.md, docs/fraud_evidence_architecture.md).
+//
+// Every one of these four collections must deny direct human read/write
+// for every role, with NO exception — not even platformOwner. Precise
+// evidence access exists only through the `getPreciseFraudEvidence`
+// Cloud Function, specifically because a Firestore Rule cannot itself
+// produce the mandatory access-audit side effect that endpoint provides.
+// This matrix proves that absence of a rules-based bypass for every role
+// this app's authorization model recognizes, not just the "obvious" ones.
+// ---------------------------------------------------------------------
+
+const FRAUD_COLLECTIONS = [
+  'fraudEvidence',
+  'fraudRiskContexts',
+  'fraudEvidenceAccessLog',
+  'fraudEvidenceRetentionPolicies',
+];
+
+function fraudRoleContexts() {
+  return {
+    unauthenticated: () => testEnv.unauthenticatedContext(),
+    customer: () => testEnv.authenticatedContext('fraud-customer', {}),
+    courier: () =>
+      testEnv.authenticatedContext('fraud-courier', {
+        organizationAccess: ['org-1'],
+        roles: { 'org-1': ['courier'] },
+      }),
+    staff: () =>
+      testEnv.authenticatedContext('fraud-staff', {
+        organizationAccess: ['org-1'],
+        roles: { 'org-1': ['staff'] },
+      }),
+    manager: () =>
+      testEnv.authenticatedContext('fraud-manager', {
+        organizationAccess: ['org-1'],
+        roles: { 'org-1': ['manager'] },
+      }),
+    admin: () =>
+      testEnv.authenticatedContext('fraud-admin', {
+        organizationAccess: ['org-1'],
+        roles: { 'org-1': ['admin'] },
+      }),
+    unrelatedTenant: () =>
+      testEnv.authenticatedContext('fraud-eve', {
+        organizationAccess: ['org-2'],
+        roles: { 'org-2': ['admin'] },
+      }),
+    platformAdministrator: () =>
+      testEnv.authenticatedContext('fraud-platform-admin', {
+        platformRole: 'platformAdministrator',
+      }),
+    platformOwner: () =>
+      testEnv.authenticatedContext('fraud-platform-owner', {
+        platformRole: 'platformOwner',
+      }),
+  };
+}
+
+for (const collectionName of FRAUD_COLLECTIONS) {
+  const roleContexts = fraudRoleContexts();
+  for (const [roleName, makeContext] of Object.entries(roleContexts)) {
+    test(`${collectionName}: ${roleName} cannot read a seeded document directly`, async () => {
+      const docId = `${collectionName}-read-${roleName}`;
+      await seed(async (db) => {
+        await setDoc(doc(db, `${collectionName}/${docId}`), { seeded: true });
+      });
+      const actor = makeContext().firestore();
+
+      await assertFails(getDoc(doc(actor, `${collectionName}/${docId}`)));
+    });
+
+    test(`${collectionName}: ${roleName} cannot create a document directly`, async () => {
+      const docId = `${collectionName}-create-${roleName}`;
+      const actor = makeContext().firestore();
+
+      await assertFails(
+        setDoc(doc(actor, `${collectionName}/${docId}`), { forged: true }),
+      );
+    });
+
+    test(`${collectionName}: ${roleName} cannot update a seeded document directly`, async () => {
+      const docId = `${collectionName}-update-${roleName}`;
+      await seed(async (db) => {
+        await setDoc(doc(db, `${collectionName}/${docId}`), { seeded: true });
+      });
+      const actor = makeContext().firestore();
+
+      await assertFails(
+        updateDoc(doc(actor, `${collectionName}/${docId}`), { seeded: false }),
+      );
+    });
+
+    test(`${collectionName}: ${roleName} cannot delete a seeded document directly`, async () => {
+      const docId = `${collectionName}-delete-${roleName}`;
+      await seed(async (db) => {
+        await setDoc(doc(db, `${collectionName}/${docId}`), { seeded: true });
+      });
+      const actor = makeContext().firestore();
+
+      await assertFails(deleteDoc(doc(actor, `${collectionName}/${docId}`)));
+    });
+  }
+}

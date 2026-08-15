@@ -8625,3 +8625,129 @@ explicitly rather than papered over, per this project's standing evidence-classi
 two gaps closed here (test coverage, documentation) are real and worth having regardless of whether
 either explains the original report; they don't by themselves prove or disprove what actually
 happened on the physical device.
+
+## FRAUD-F.0 — Delivery Fraud Location Evidence: Shared Security Foundation
+
+**Decision**: A three-round Architect Decision Review (interrupted-session resume → architecture audit
+→ two rounds of mandatory corrections) approved a shared, domain-neutral `FraudEvidence`/`FraudSignal`/
+`FraudRiskContext`/`FraudEvidenceRetentionPolicy` foundation, staged as FRAUD-F.0 (this entry) →
+FRAUD-F.1 (address-save capture, folded into `saveDeliveryAddress`, not a standalone callable) →
+FRAUD-F.2 (order-submit capture, folded into a future `submitDeliveryOrder`, hard-blocked on that
+callable's own existence). This entry implements FRAUD-F.0 only.
+
+### D1 — Precedent inspected, deliberately not copied wholesale
+
+`core/device_tokens/{domain,data,application}` was read in full before writing anything — the closest
+existing analog (cross-cutting, security-sensitive, Cloud-Function-mediated). Its `domain`/`data`
+shape was mirrored for `lib/core/fraud/`. Its `application`/`data`-provider shape was **not**
+replicated: FRAUD-F.0 has no real Dart-side consumer (no capture call site, no admin UI), so an unused
+gateway/use-case layer would be exactly the "fill a layer to satisfy the folder shape" anti-pattern
+`docs/architecture_bible.md` §2 warns against. Domain-only on the Dart side; the real substance
+(`getPreciseFraudEvidence`) lives on the backend, where it has a genuine caller.
+
+### D2 — No standalone capture callables (approved correction, applied structurally)
+
+`captureAddressSaveFraudEvidence`/`captureOrderSubmitFraudEvidence` do not exist anywhere in this
+codebase. Capture is deliberately deferred to fold into the *existing*/*future* authoritative
+operation (`saveDeliveryAddress`/`submitDeliveryOrder`) at F.1/F.2 time — a malicious client cannot
+bypass fraud evidence by simply skipping a second callable, because there will never be a second
+callable to skip. FRAUD-F.0 itself adds exactly one new network-facing callable:
+`getPreciseFraudEvidence`.
+
+### D3 — Timestamp provenance, three distinct fields
+
+`FraudEvidence`/`FraudEvidenceRecord` (Dart and TS) carry `clientLocation.clientCapturedAt`
+(untrusted, client-reported), `serverReceivedAt`, and `createdAt` (both authoritative) as separate
+fields. No risk-timing logic anywhere in FRAUD-F.0 reads `clientCapturedAt` — there is none yet to
+write, but the type-level separation is proven by `fraud_evidence_test.dart`'s own "distinct, not
+reconciled" test.
+
+### D4 — Precise access is audit-atomic, and the storage/rules split is why
+
+`getPreciseFraudEvidence` (`functions/src/getPreciseFraudEvidence.ts`) runs a single
+`db.runTransaction(fn, { maxAttempts: 1 })`: authenticate → require `fraudEvidence.readPrecise` → read
+→ not-found handled safely (throws before any audit write — there's nothing real to bound yet) →
+write one immutable `fraudEvidenceAccessLog` entry → only if the transaction commits, return the
+evidence. `{ maxAttempts: 1 }` was added beyond the literal spec, disclosed here: it removes any
+ambiguity about whether Firestore's default contention-retry behavior could theoretically produce more
+than one audit-log write for a single logical access — cheap, and directly strengthens the "exactly
+once" guarantee this endpoint exists to provide.
+
+`firestore.rules` denies **every** role, including `platformOwner`, on all four fraud collections
+unconditionally — not a stricter policy choice, a structural one: a Firestore Rule cannot itself write
+a side-effecting audit entry on read, so any rules-based read branch (even platformOwner-gated) would
+silently bypass the audit guarantee this callable exists to provide. Proven for 9 roles × 4 operations
+× 4 collections (144 new rules assertions, all passing).
+
+### D5 — `fraudEvidence.readPrecise` is a capability, not a role literal (corrected during architect review)
+
+**First pass (superseded)**: `requireFraudEvidenceReadPrecise`
+(`functions/src/fraud/fraudAuthorization.ts`) checked `platformRole === 'platformOwner'` directly
+inside a fraud-specific function. Architect review correctly rejected this as insufficient
+architecture: it coupled fraud-evidence access directly to a role literal, defeating the approved
+future-extensibility requirement, even though the *observable behavior* (platformOwner yes, everyone
+else no) was already correct.
+
+**Correction, implemented**: a real capability abstraction, `functions/src/platformCapabilities.ts`
+— `PlatformCapability` (currently the single value `"fraudEvidence.readPrecise"`),
+`capabilitiesForPlatformRole` (a pure, data-driven map lookup — the one and only place a role→capability
+grant is decided), `hasPlatformCapability`, `requirePlatformCapability`. Placed alongside
+`platformAuthorization.ts`, not under `fraud/`, since capabilities are a general platform-authorization
+concept, not a fraud-specific one — `fraudEvidence.readPrecise` is simply the first value.
+`getPreciseFraudEvidence` now calls only `requirePlatformCapability(request,
+"fraudEvidence.readPrecise")` — it contains no `platformRole` literal anywhere. The now-redundant
+`functions/src/fraud/fraudAuthorization.ts` (self-authored the same session, never committed, never
+shipped) was deleted rather than kept as a pass-through wrapper — an indirection with no remaining
+purpose once the callable depends on the capability function directly.
+
+Still no new `PlatformRole` value and no new custom claim — `platformRole` itself has no production
+claims-sync path anywhere in this codebase today (confirmed by grep: every
+`setCustomUserClaims({ platformRole: ... })` call in the entire repo is test-only, matching
+`platformAuthorization.ts`'s own pre-existing doc comment), so a capability derived, server-side, as a
+pure function of the existing trusted claim is preferable to inventing a second, parallel claims-setting
+mechanism for one new capability. A future dedicated fraud-investigator permission requires editing
+only `CAPABILITIES_BY_PLATFORM_ROLE`; the callable, storage, and rules never change.
+
+### D6 — Retention: mechanism only, explicitly no number
+
+`FraudEvidenceRetentionPolicy.computeExpiresAt` (Dart + TS) is implemented and tested. No production
+retention duration exists anywhere in the diff. `TEST_ONLY_RETENTION_POLICY`
+(`functions/src/fraud/fraudEvidenceRetentionPolicy.ts`) is explicitly labeled non-production. No
+scheduled delete sweep was built (explicit instruction: Firestore TTL is the primary mechanism, a
+sweep is added later only if proven required) — and the real Firestore TTL policy on the `expiresAt`
+field has **not** been configured against any actual Firestore instance this phase; that is a
+deployment/infra step, recorded here as residual work, not silently treated as done because the code
+supports it.
+
+### D7 — Two disclosed, non-blocking documentation/design nuances
+
+1. `fraudEvidenceAccessLog`'s own retention likely needs to outlive `fraudEvidence`'s (an audit trail
+   proving "who accessed what" is less useful if it expires alongside the data it describes) — flagged
+   in `docs/fraud_evidence_architecture.md`, not decided here; falls under D6's existing legal-gate
+   umbrella, not a new blocking decision.
+2. `FraudSignal.type` is a free-text `String`, not a closed enum — FRAUD-F.0 defines no real fraud
+   detector, and fabricating a taxonomy with nothing behind it would repeat the exact anti-pattern
+   `CourierFraudSignalType`'s own doc comment warns against.
+
+### Test verification
+
+4 new Dart domain test files (16 tests). 3 new backend test files (33 tests: 14 + 3 +
+`platformCapabilities.test.ts`'s 16, the last added during the architect-review correction, pure
+unit tests with no emulator dependency). `firestore.rules` +144 assertions in the existing
+`rules.test.js` (single-file test harness — no new file, per `firestore-tests/package.json`'s literal
+`node --test rules.test.js` script). `flutter analyze`: **0 issues.** `flutter test`: **2839/2839
+passing** (up from 2823, unchanged by the capability correction — no Dart file was touched). Functions:
+**596/596 passing** (up from 563; 580 after F.0's first pass, +16 for the capability correction),
+`npm run build` clean both times. Firestore Security Rules: **290/290 passing** (up from 146,
+unaffected by the correction). All gates executed for real this session against freshly-freed emulator
+ports with JDK 21 on `PATH`, not assumed from a prior baseline.
+
+### Confidence
+
+High for the implemented scope — every boundary (storage, rules, authorization, audit-atomicity) has a
+passing test proving it, not just a doc comment asserting it. Genuine, disclosed residual risk: no
+scheduled-retention/TTL infrastructure is actually configured yet (D6); `fraudEvidenceAccessLog`'s own
+retention duration relative to the evidence it logs is unresolved (D7.1); iOS has no OS-level
+mock-location signal, permanently (a platform ceiling this phase cannot close, only represent honestly
+via `MockLocationStatus.unsupported`); and App Check enforcement remains off by default in production
+pending the pre-existing, unrelated Web reCAPTCHA blocker. FRAUD-F.0 CLOSED: YES.
