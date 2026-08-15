@@ -25,6 +25,7 @@ import '../../../smart_import/presentation/screens/import_jobs_screen.dart';
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
 import '../../../pos/domain/authorization/actor_session.dart';
 import '../../../pos/domain/authorization/pos_authorized_action.dart';
+import '../../../pos/domain/authorization/role_permission_map.dart';
 import '../../../pos/domain/authorization/staff_role.dart';
 import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../../pos/presentation/widgets/role_gate.dart';
@@ -40,6 +41,7 @@ import 'customer_management_screen.dart';
 import 'customer_photo_moderation_screen.dart';
 import 'device_registry_screen.dart';
 import 'localization_admin_screen.dart';
+import 'reservation_operations_screen.dart';
 import 'system_health_admin_screen.dart';
 import 'staff_management_screen.dart';
 import 'staff_sign_in_screen.dart';
@@ -92,6 +94,21 @@ class AdminShellScreen extends ConsumerStatefulWidget {
 }
 
 class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
+  /// Faz R.3A.1 — the reservation module's sidebar visibility must follow
+  /// permission resolution, not a separately hand-authored role list: the
+  /// two had drifted (a hardcoded `{manager, admin}` silently excluded
+  /// `tenantOwner`, even though tenantOwner inherits `manageReservations`
+  /// from the manager tier per `RolePermissionMap`). Derived directly from
+  /// the exact same source `RoleGate.forAction(manageReservations)` itself
+  /// consults below, so role is only ever an *input* to permission
+  /// resolution here, never a second, independently-maintained gate.
+  static final Set<StaffRole> _reservationsVisibleToRoles = {
+    for (final role in StaffRole.values)
+      if (RolePermissionMap.permissionsFor(role)
+          .contains(PosAuthorizedAction.manageReservations))
+        role,
+  };
+
   List<_AdminNavGroup> _groups(String branchId, String actorId) {
     return [
       _AdminNavGroup(
@@ -139,6 +156,22 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
                 branchId: branchId,
                 authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
                 performedByStaffId: actorId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'reservations',
+            label: 'Rezervasyonlar',
+            icon: Icons.event_seat_outlined,
+            visibleToRoles: _reservationsVisibleToRoles,
+            builder: (context, ref) => ModuleEntitlementGate(
+              module: EntitlementModule.reservations,
+              scopeType: EntitlementScopeType.branch,
+              scopeId: branchId,
+              actorStaffId: actorId,
+              child: RoleGate.forAction(
+                PosAuthorizedAction.manageReservations,
+                child: const ReservationOperationsScreen(),
               ),
             ),
           ),

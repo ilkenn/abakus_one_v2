@@ -19,6 +19,18 @@ import '../../../../shared/widgets/cards/app_card.dart';
 import '../providers/cart_provider.dart';
 import 'order_success_screen.dart';
 
+/// **LEGACY — not the canonical Paket Servis (delivery) checkout path**
+/// (Faz P.1, `docs/decisions.md`). Writes through the legacy `OrderModel`/
+/// `orders_provider.dart`, not the canonical `Order`/
+/// `CanonicalOrderRepository` — and its `'Online Kredi/Banka Kartı'`
+/// option must never become the real delivery payment flow (LOCKED: the
+/// initial release is COD-only, exactly the 7 methods in
+/// `DeliveryPaymentPolicy`). A future phase (P.4) will route Paket Servis
+/// to a new canonical checkout built on the Faz P.1 foundation
+/// (`Order.deliveryAddressSnapshot`/`paymentMethodSnapshot`,
+/// `DeliveryChannelPricingPolicy`, `DeliveryPaymentPolicy`) instead of
+/// this screen. Not deleted or expanded in P.1 — kept exactly as-is per
+/// explicit instruction; do not add new delivery logic here.
 class CheckoutScreen extends ConsumerStatefulWidget {
   const CheckoutScreen({super.key});
 

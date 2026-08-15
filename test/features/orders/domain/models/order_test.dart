@@ -1,5 +1,6 @@
 import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/courier_visibility.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/delivery_address_snapshot.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_actor.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
@@ -8,13 +9,40 @@ import 'package:abakus_one_v2/features/orders/domain/models/order_line.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_number.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_timestamps.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/pickup_mode.dart';
 import 'package:abakus_one_v2/features/orders/domain/pricing/price_calculator.dart';
 import 'package:abakus_one_v2/features/orders/domain/pricing/tax_policy.dart';
+import 'package:abakus_one_v2/features/payment/domain/models/payment_method_seed_data.dart';
+import 'package:abakus_one_v2/features/payment/domain/models/payment_method_snapshot.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
 import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Order _buildOrder({OrderStatus status = OrderStatus.created}) {
+DeliveryAddressSnapshot _buildAddressSnapshot() {
+  return DeliveryAddressSnapshot(
+    savedAddressId: 'address-1',
+    label: 'Ev',
+    provinceId: 'il-34',
+    provinceName: 'İstanbul',
+    districtId: 'ilce-besiktas',
+    districtName: 'Beşiktaş',
+    neighborhoodId: 'mah-levent',
+    neighborhoodName: 'Levent',
+    buildingNo: '12',
+    apartmentNo: '4',
+    latitude: 41.08,
+    longitude: 29.02,
+    providerSource: 'manual',
+    serverVerifiedAt: DateTime(2026, 8, 1),
+  );
+}
+
+Order _buildOrder({
+  OrderStatus status = OrderStatus.created,
+  OrderChannel channel = OrderChannel.dineInStaff,
+  PickupMode? pickupMode,
+  DateTime? pickupTime,
+}) {
   final line = OrderLine.create(
     productId: 'p1',
     productName: 'Mexifit Bowl',
@@ -26,9 +54,11 @@ Order _buildOrder({OrderStatus status = OrderStatus.created}) {
     id: OrderId('order-1'),
     orderNumber: OrderNumber('A-001'),
     status: status,
-    channel: OrderChannel.dineInStaff,
+    channel: channel,
     branchId: 'branch-1',
     restaurantId: 'restaurant-1',
+    pickupMode: pickupMode,
+    pickupTime: pickupTime,
     lines: [line],
     pricing: PriceCalculator.calculate(
       lines: [line],
@@ -274,6 +304,157 @@ void main() {
       final updated = order.copyWith(customerNote: 'Updated');
       expect(updated.customerNote, 'Updated');
       expect(updated.kitchenNote, 'Original kitchen note');
+    });
+  });
+
+  group('Order — Gel Al (takeaway) additive fields, Faz B', () {
+    test(
+        'takeawayEntrySessionId/pickupMode/pickupTime/contact fields default to null',
+        () {
+      final order = _buildOrder();
+      expect(order.takeawayEntrySessionId, isNull);
+      expect(order.pickupMode, isNull);
+      expect(order.pickupTime, isNull);
+      expect(order.contactFirstName, isNull);
+      expect(order.contactLastName, isNull);
+      expect(order.contactPhone, isNull);
+    });
+
+    test('a non-takeaway order (dineInStaff/dineInQr/delivery) is unaffected',
+        () {
+      for (final channel in [
+        OrderChannel.dineInStaff,
+        OrderChannel.dineInQr,
+        OrderChannel.delivery,
+      ]) {
+        final order = _buildOrder(channel: channel);
+        expect(order.pickupMode, isNull, reason: '$channel');
+        expect(order.pickupTime, isNull, reason: '$channel');
+      }
+    });
+
+    test('takeaway + asap: pickupMode = asap, pickupTime may stay null', () {
+      final order = _buildOrder(
+        channel: OrderChannel.takeaway,
+        pickupMode: PickupMode.asap,
+      );
+      expect(order.pickupMode, PickupMode.asap);
+      expect(order.pickupTime, isNull);
+    });
+
+    test('takeaway + scheduled with a pickupTime is valid', () {
+      final order = _buildOrder(
+        channel: OrderChannel.takeaway,
+        pickupMode: PickupMode.scheduled,
+        pickupTime: DateTime(2026, 8, 10, 13, 30),
+      );
+      expect(order.pickupMode, PickupMode.scheduled);
+      expect(order.pickupTime, DateTime(2026, 8, 10, 13, 30));
+    });
+
+    test('takeaway + scheduled with a null pickupTime violates the invariant',
+        () {
+      // flutter test always runs with assertions enabled, so this is a
+      // reliable check of Order's own constructor-level invariant, not a
+      // best-effort one.
+      expect(
+        () => _buildOrder(
+          channel: OrderChannel.takeaway,
+          pickupMode: PickupMode.scheduled,
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('copyWith preserves the new fields when not given, updates when given',
+        () {
+      final order = _buildOrder(
+        channel: OrderChannel.takeaway,
+        pickupMode: PickupMode.asap,
+      ).copyWith(
+        takeawayEntrySessionId: 'session-1',
+        contactFirstName: 'Ada',
+        contactLastName: 'Yılmaz',
+        contactPhone: '+905551112233',
+      );
+
+      final untouched = order.copyWith(status: OrderStatus.pendingConfirmation);
+      expect(untouched.takeawayEntrySessionId, 'session-1');
+      expect(untouched.contactFirstName, 'Ada');
+      expect(untouched.contactLastName, 'Yılmaz');
+      expect(untouched.contactPhone, '+905551112233');
+      expect(untouched.pickupMode, PickupMode.asap);
+
+      final updated = order.copyWith(contactFirstName: 'Deniz');
+      expect(updated.contactFirstName, 'Deniz');
+      expect(updated.contactLastName, 'Yılmaz');
+    });
+  });
+
+  group('Order — Paket Servis (delivery) additive fields, Faz P.1', () {
+    test(
+        'deliveryAddressSnapshot/paymentMethodSnapshot default to null '
+        '(req 1)', () {
+      final order = _buildOrder();
+      expect(order.deliveryAddressSnapshot, isNull);
+      expect(order.paymentMethodSnapshot, isNull);
+    });
+
+    test(
+        'every existing channel (dineInQr/dineInStaff/takeaway/'
+        'reservationPreorder) still constructs unaffected (req 1)', () {
+      for (final channel in [
+        OrderChannel.dineInQr,
+        OrderChannel.dineInStaff,
+        OrderChannel.takeaway,
+        OrderChannel.reservationPreorder,
+      ]) {
+        final order = _buildOrder(channel: channel);
+        expect(order.deliveryAddressSnapshot, isNull, reason: '$channel');
+        expect(order.paymentMethodSnapshot, isNull, reason: '$channel');
+      }
+    });
+
+    test(
+        'copyWith sets deliveryAddressSnapshot/paymentMethodSnapshot and '
+        'preserves them when not given again (req 1, 2, 4)', () {
+      final addressSnapshot = _buildAddressSnapshot();
+      final paymentSnapshot =
+          PaymentMethodSnapshot.capture(PaymentMethodSeedData.cash);
+
+      final order = _buildOrder(channel: OrderChannel.delivery).copyWith(
+        deliveryAddressSnapshot: addressSnapshot,
+        paymentMethodSnapshot: paymentSnapshot,
+      );
+
+      expect(order.deliveryAddressSnapshot, addressSnapshot);
+      expect(order.paymentMethodSnapshot, paymentSnapshot);
+
+      final untouched = order.copyWith(status: OrderStatus.pendingConfirmation);
+      expect(untouched.deliveryAddressSnapshot, addressSnapshot);
+      expect(untouched.paymentMethodSnapshot, paymentSnapshot);
+    });
+
+    test(
+        'once attached, the snapshot is immutable historical data — a '
+        'later change to the source values never mutates the frozen '
+        'snapshot object (req 4)', () {
+      final addressSnapshot = _buildAddressSnapshot();
+      final order = _buildOrder(channel: OrderChannel.delivery)
+          .copyWith(deliveryAddressSnapshot: addressSnapshot);
+
+      // DeliveryAddressSnapshot has no setters/mutating methods at all —
+      // the only way to "change" it is to construct a new one, which
+      // copyWith'ing the Order with a different snapshot proves does not
+      // affect the original snapshot instance still referenced elsewhere.
+      final differentSnapshot = _buildAddressSnapshot();
+      final reAssigned =
+          order.copyWith(deliveryAddressSnapshot: differentSnapshot);
+
+      expect(order.deliveryAddressSnapshot, addressSnapshot);
+      expect(reAssigned.deliveryAddressSnapshot, differentSnapshot);
+      expect(addressSnapshot, differentSnapshot,
+          reason: 'value-equal but distinct instances');
     });
   });
 }

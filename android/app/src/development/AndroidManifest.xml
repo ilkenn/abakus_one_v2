@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Development-flavor-only override, merged additively into
+         src/main/AndroidManifest.xml by Gradle's manifest merger for the
+         "development" product flavor only (never staging/production —
+         see build.gradle.kts's flavorDimensions/productFlavors). Points
+         at network_security_config.xml, which allows cleartext HTTP only
+         to the local Firebase Emulator Suite's loopback addresses. Does
+         NOT set android:usesCleartextTraffic — that would weaken the
+         whole app rather than scoping the exception to this one flavor
+         and these specific hosts. -->
+    <application android:networkSecurityConfig="@xml/network_security_config"/>
+</manifest>

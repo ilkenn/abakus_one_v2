@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Development-flavor-only: permits cleartext (non-HTTPS) HTTP traffic to
+  the local Firebase Emulator Suite loopback addresses only. Never merged
+  into the staging/production flavor manifests (this file lives under
+  android/app/src/development/, a Gradle flavor-specific source set — see
+  build.gradle.kts's productFlavors), so those builds keep Android's
+  default cleartext-disabled behavior untouched.
+
+  127.0.0.1 / localhost: reached via `adb reverse tcp:port tcp:port`
+  from a physical Android device running the development flavor.
+  10.0.2.2: the Android Emulator's own host-loopback alias, for a
+  dart-define FIREBASE_EMULATOR_HOST=10.0.2.2 development run.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

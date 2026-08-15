@@ -1,3 +1,5 @@
+import '../../../orders/domain/models/order_channel.dart';
+import '../pricing/channel_price_rule.dart';
 import 'modifier_group.dart';
 import 'product_nutrition.dart';
 
@@ -25,6 +27,16 @@ class MenuProduct {
   /// flag on the product, not a duplicate `MenuCategory`/product entry.
   final bool isFeatured;
 
+  /// This product's own, explicit price override per channel — resolved by
+  /// `ChannelPriceResolver` ahead of `ChannelPricingPolicy`'s category/
+  /// channel defaults. A channel absent from this map (the default for
+  /// every existing product) behaves exactly like `UseChannelDefault`:
+  /// [basePrice] plus whatever the policy's category/channel default
+  /// resolves to (zero for a channel the policy has no rule for). Additive
+  /// field — every product defined before this existed keeps its current
+  /// price on every channel unchanged.
+  final Map<OrderChannel, ChannelPriceRule> channelPriceOverrides;
+
   const MenuProduct({
     required this.id,
     required this.categoryId,
@@ -36,6 +48,7 @@ class MenuProduct {
     this.nutrition,
     this.isAvailable = true,
     this.isFeatured = false,
+    this.channelPriceOverrides = const {},
   });
 
   MenuProduct copyWith({
@@ -49,6 +62,7 @@ class MenuProduct {
     ProductNutrition? nutrition,
     bool? isAvailable,
     bool? isFeatured,
+    Map<OrderChannel, ChannelPriceRule>? channelPriceOverrides,
   }) {
     return MenuProduct(
       id: id ?? this.id,
@@ -61,6 +75,8 @@ class MenuProduct {
       nutrition: nutrition ?? this.nutrition,
       isAvailable: isAvailable ?? this.isAvailable,
       isFeatured: isFeatured ?? this.isFeatured,
+      channelPriceOverrides:
+          channelPriceOverrides ?? this.channelPriceOverrides,
     );
   }
 }

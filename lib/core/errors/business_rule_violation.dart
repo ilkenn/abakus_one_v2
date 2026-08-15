@@ -2155,3 +2155,20 @@ final class AccountDeletionRequestNotCancellableViolation
   String get description =>
       'Account deletion request "$requestId" is not cancellable';
 }
+
+/// `SavedAddress.toDeliveryAddressSnapshot` was called on an address whose
+/// `verificationStatus` is not `verified` — Faz P.1's central architecture
+/// rule enforced structurally: a client-entered/unverified address can
+/// never become delivery-authorization truth, even temporarily. See
+/// `SavedAddress`'s own doc comment for the full reasoning.
+final class AddressNotVerifiedForDeliveryViolation
+    extends BusinessRuleViolation {
+  const AddressNotVerifiedForDeliveryViolation({required this.addressId});
+
+  final String addressId;
+
+  @override
+  String get description =>
+      'Address "$addressId" is not server-verified and cannot authorize a '
+      'delivery order';
+}

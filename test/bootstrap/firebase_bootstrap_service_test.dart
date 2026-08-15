@@ -1,6 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/bootstrap/firebase_auth_emulator_config.dart';
 import 'package:abakus_one_v2/bootstrap/firebase_bootstrap_service.dart';
+import 'package:abakus_one_v2/bootstrap/firebase_firestore_emulator_config.dart';
+import 'package:abakus_one_v2/bootstrap/firebase_functions_emulator_config.dart';
+import 'package:abakus_one_v2/bootstrap/firebase_storage_emulator_config.dart';
 import 'package:abakus_one_v2/core/services/logging/log_level.dart';
 import 'package:abakus_one_v2/core/services/logging/logging_service.dart';
 
@@ -31,6 +34,9 @@ void main() {
       final service = FirebaseBootstrapService(
         loggingService: logger,
         connectAuthEmulator: (host, port) {},
+        connectFirestoreEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) {},
+        connectFunctionsEmulator: (host, port) {},
         initializeApp: ({options}) async {},
       );
 
@@ -53,6 +59,9 @@ void main() {
           connectedHost = host;
           connectedPort = port;
         },
+        connectFirestoreEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) {},
+        connectFunctionsEmulator: (host, port) {},
         initializeApp: ({options}) async {},
       );
 
@@ -71,6 +80,9 @@ void main() {
         connectAuthEmulator: (host, port) {
           throw StateError('emulator not running');
         },
+        connectFirestoreEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) {},
+        connectFunctionsEmulator: (host, port) {},
         initializeApp: ({options}) async {},
       );
 
@@ -81,6 +93,156 @@ void main() {
       expect(
         logger.messages.single,
         contains('Firebase Auth Emulator connection failed'),
+      );
+    });
+
+    test(
+        'connects the Firestore Emulator using '
+        'FirebaseFirestoreEmulatorConfig\'s host/port', () async {
+      final logger = _RecordingLoggingService();
+      String? connectedHost;
+      int? connectedPort;
+      final service = FirebaseBootstrapService(
+        loggingService: logger,
+        connectAuthEmulator: (host, port) {},
+        connectFirestoreEmulator: (host, port) {
+          connectedHost = host;
+          connectedPort = port;
+        },
+        connectStorageEmulator: (host, port) {},
+        connectFunctionsEmulator: (host, port) {},
+        initializeApp: ({options}) async {},
+      );
+
+      await service.initialize();
+
+      expect(connectedHost, FirebaseFirestoreEmulatorConfig.host);
+      expect(connectedPort, FirebaseFirestoreEmulatorConfig.port);
+    });
+
+    test(
+        'a failure connecting the Firestore Emulator is caught and logged, '
+        'but does not undo an otherwise-successful core Firebase init',
+        () async {
+      final logger = _RecordingLoggingService();
+      final service = FirebaseBootstrapService(
+        loggingService: logger,
+        connectAuthEmulator: (host, port) {},
+        connectFirestoreEmulator: (host, port) {
+          throw StateError('emulator not running');
+        },
+        connectStorageEmulator: (host, port) {},
+        connectFunctionsEmulator: (host, port) {},
+        initializeApp: ({options}) async {},
+      );
+
+      final result = await service.initialize();
+
+      expect(result, isTrue);
+      expect(logger.levels, [LogLevel.error]);
+      expect(
+        logger.messages.single,
+        contains('Firebase Firestore Emulator connection failed'),
+      );
+    });
+
+    test(
+        'connects the Storage Emulator using '
+        'FirebaseStorageEmulatorConfig\'s host/port', () async {
+      final logger = _RecordingLoggingService();
+      String? connectedHost;
+      int? connectedPort;
+      final service = FirebaseBootstrapService(
+        loggingService: logger,
+        connectAuthEmulator: (host, port) {},
+        connectFirestoreEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) {
+          connectedHost = host;
+          connectedPort = port;
+        },
+        connectFunctionsEmulator: (host, port) {},
+        initializeApp: ({options}) async {},
+      );
+
+      await service.initialize();
+
+      expect(connectedHost, FirebaseStorageEmulatorConfig.host);
+      expect(connectedPort, FirebaseStorageEmulatorConfig.port);
+    });
+
+    test(
+        'a failure connecting the Storage Emulator is caught and logged, '
+        'but does not undo an otherwise-successful core Firebase init',
+        () async {
+      final logger = _RecordingLoggingService();
+      final service = FirebaseBootstrapService(
+        loggingService: logger,
+        connectAuthEmulator: (host, port) {},
+        connectFirestoreEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) {
+          throw StateError('emulator not running');
+        },
+        connectFunctionsEmulator: (host, port) {},
+        initializeApp: ({options}) async {},
+      );
+
+      final result = await service.initialize();
+
+      expect(result, isTrue);
+      expect(logger.levels, [LogLevel.error]);
+      expect(
+        logger.messages.single,
+        contains('Firebase Storage Emulator connection failed'),
+      );
+    });
+
+    test(
+        'connects the Functions Emulator using '
+        'FirebaseFunctionsEmulatorConfig\'s host/port', () async {
+      final logger = _RecordingLoggingService();
+      String? connectedHost;
+      int? connectedPort;
+      final service = FirebaseBootstrapService(
+        loggingService: logger,
+        connectAuthEmulator: (host, port) {},
+        connectFirestoreEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) {},
+        connectFunctionsEmulator: (host, port) {
+          connectedHost = host;
+          connectedPort = port;
+        },
+        initializeApp: ({options}) async {},
+      );
+
+      await service.initialize();
+
+      expect(connectedHost, FirebaseFunctionsEmulatorConfig.host);
+      expect(connectedPort, FirebaseFunctionsEmulatorConfig.port);
+    });
+
+    test(
+        'a failure connecting the Functions Emulator is caught and logged, '
+        'but does not undo an otherwise-successful core Firebase init',
+        () async {
+      final logger = _RecordingLoggingService();
+      final service = FirebaseBootstrapService(
+        loggingService: logger,
+        connectAuthEmulator: (host, port) {},
+        connectFirestoreEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) {},
+        connectFunctionsEmulator: (host, port) {
+          throw StateError('emulator not running');
+        },
+        initializeApp: ({options}) async {},
+      );
+
+      final result = await service.initialize();
+
+      expect(result, isTrue);
+      expect(logger.levels, [LogLevel.error]);
+      expect(
+        logger.messages.single,
+        contains('Firebase Functions Emulator connection failed'),
       );
     });
   });

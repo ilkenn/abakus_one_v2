@@ -26,9 +26,21 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Faz P.2.1 — Google Maps SDK for iOS. $(GOOGLE_MAPS_IOS_API_KEY) is
+	     an Xcode build-setting substitution, sourced from the gitignored
+	     ios/Flutter/ApiKeys.xcconfig (see that directory's own
+	     ApiKeys.xcconfig.example template) — never a literal key here.
+	     Read at launch by AppDelegate.swift via
+	     Bundle.main.object(forInfoDictionaryKey:). -->
+	<key>GMSApiKey</key>
+	<string>$(GOOGLE_MAPS_IOS_API_KEY)</string>
 	<!-- Sprint 5B: real courier GPS tracking. "When in use" covers active-
 	     delivery foreground tracking; "Always" is requested at runtime only
 	     while a courier has an active shift, never implicitly. -->
+	<!-- Masada Sipariş: scanning the table's QR code to open a real dine-in
+	     table session (lib/features/qr/presentation/screens/qr_scanner_screen.dart). -->
+	<key>NSCameraUsageDescription</key>
+	<string>Abaküs, masandaki QR kodu okutarak sipariş verebilmen için kamera erişimi ister.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Abaküs, teslimat sırasında konumunuzu görebilmek için kurye uygulamasında konum erişimi ister.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

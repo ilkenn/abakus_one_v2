@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
+import '../../../orders/domain/models/order_channel.dart';
 import '../../domain/models/cart_item.dart';
 
 class CartNotifier extends Notifier<List<CartItem>> {
@@ -22,6 +23,7 @@ class CartNotifier extends Notifier<List<CartItem>> {
     List<SelectedModifier> selectedModifiers = const [],
     String note = '',
     String customizationsKey = '',
+    OrderChannel? pricedForChannel,
   }) {
     final sortedModifierIds = selectedModifiers.map((m) => m.optionId).toList()
       ..sort();
@@ -62,6 +64,7 @@ class CartNotifier extends Notifier<List<CartItem>> {
           selectedModifiers: selectedModifiers,
           note: note,
           customizationsKey: targetKey,
+          pricedForChannel: pricedForChannel,
         ),
       ];
     }
@@ -141,6 +144,15 @@ class CartNotifier extends Notifier<List<CartItem>> {
 
   void clearCart() {
     state = const [];
+  }
+
+  /// Replaces the entire cart contents at once — Faz R.2, used by
+  /// `_PreorderCartBridge` to mirror a scoped `CartNotifier` instance's
+  /// state into `preorderCartProvider`'s own instance of this same class.
+  /// `Notifier.state` itself isn't settable from outside a `Notifier`
+  /// subclass in this Riverpod version, hence this explicit method.
+  void replaceAll(List<CartItem> items) {
+    state = items;
   }
 }
 

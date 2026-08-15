@@ -201,6 +201,7 @@ void main() {
       idGenerator: SequentialDeviceTokenIdGenerator(),
     ).call(
       uid: uid,
+      organizationId: 'org-1',
       token: 'fcm-token-abc',
       platform: 'android',
       now: DateTime.now(),

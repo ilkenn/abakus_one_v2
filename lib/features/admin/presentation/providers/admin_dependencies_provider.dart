@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/services/auth/email_password_auth_client.dart';
+import '../../../../core/services/auth/staff_claims_sync_client.dart';
 import '../../../courier/presentation/providers/courier_core_dependencies_provider.dart';
 import '../../../pos/presentation/providers/kds_dependencies_provider.dart';
 import '../../../restaurant/presentation/providers/restaurant_operations_dependencies_provider.dart';
@@ -89,6 +90,11 @@ final staffAuthRepositoryProvider = Provider<StaffAuthRepository>((ref) {
     authClient: DefaultEmailPasswordAuthClient(),
     staffMemberRepository: ref.watch(staffMemberRepositoryProvider),
     sessionDuration: () => const Duration(hours: 12),
+    claimsSyncClient: DefaultStaffClaimsSyncClient(),
+    // Faz R.3A.2 — the same organization this admin app instance serves,
+    // resolved once here rather than re-declared as a second literal
+    // inside the repository.
+    organizationId: () => ref.read(currentOrganizationIdProvider),
   );
 });
 
@@ -139,6 +145,19 @@ final branchRepositoryProvider = Provider<BranchRepository>((ref) {
       id: 'branch-1',
       restaurantId: 'restaurant-1',
       name: 'Merkez Şube',
+      // Corrected, Faz C (Gel Al architecture analysis): this branch
+      // already genuinely serves dineInQr/dineInStaff/delivery today
+      // (real, tested customer-app flows) — the seed literal simply never
+      // declared that until a real caller (`ListTakeawayEligibleBranches`)
+      // needed to check `supportedOrderChannelIds` for the first time.
+      // `reservationPreorder` stays excluded — that flow is still an
+      // explicit "coming soon" placeholder (`home_screen.dart`).
+      supportedOrderChannelIds: const {
+        'dineInQr',
+        'dineInStaff',
+        'delivery',
+        'takeaway',
+      },
       createdAt: DateTime(2026, 1, 1),
       revision: 1,
     ),

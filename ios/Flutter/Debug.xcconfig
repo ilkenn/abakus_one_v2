@@ -1,1 +1,6 @@
 #include "Generated.xcconfig"
+// Faz P.2.1 — Google Maps SDK for iOS client key, gitignored per-machine
+// file. Optional include (`?`) so the project still builds with Maps
+// simply uninitialized when the file doesn't exist yet — see
+// ios/Flutter/ApiKeys.xcconfig.example.
+#include? "ApiKeys.xcconfig"

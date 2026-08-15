@@ -10,11 +10,14 @@ import '../../../../shared/widgets/cards/option_selection_card.dart';
 import '../../../../shared/widgets/images/product_image.dart';
 import '../../../../shared/widgets/layout/app_section_header.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
+import '../../../cart/presentation/providers/shopping_channel_provider.dart';
 import '../../../favorites/presentation/providers/favorites_provider.dart';
 import '../../domain/models/menu_product.dart';
 import '../../domain/models/modifier_group.dart';
 import '../../domain/models/product_nutrition.dart';
 import '../../domain/models/selected_modifier.dart';
+import '../../domain/pricing/channel_pricing_policy.dart';
+import '../providers/channel_price_display_provider.dart';
 
 class ProductDetailScreen extends ConsumerStatefulWidget {
   final MenuProduct product;
@@ -118,8 +121,25 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
     return result;
   }
 
+  /// The channel-resolved single-unit base price (before modifiers) —
+  /// [widget.product.basePrice] unchanged outside Gel Al, the resolved
+  /// takeaway price when shopping under it. `ref.watch` here (not
+  /// `.read`) so this screen re-renders if the policy snapshot resolves
+  /// after the widget already built.
+  double get _resolvedBasePrice {
+    final channelContext = ref.watch(shoppingChannelProvider);
+    final policy =
+        ref.watch(channelPricingPolicySnapshotProvider).valueOrNull ??
+            const ChannelPricingPolicy();
+    return resolveDisplayPrice(
+      product: widget.product,
+      channelContext: channelContext,
+      policy: policy,
+    );
+  }
+
   double get _unitPrice =>
-      widget.product.basePrice +
+      _resolvedBasePrice +
       _selectedModifiers.fold(0.0, (sum, m) => sum + m.extraPrice);
 
   double get _totalPrice => _unitPrice * _quantity;
@@ -138,10 +158,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
           id: widget.product.id,
           name: widget.product.name,
           desc: widget.product.description,
-          price: widget.product.basePrice,
+          price: _resolvedBasePrice,
           quantity: _quantity,
           selectedModifiers: _selectedModifiers,
           note: _noteController.text.trim(),
+          pricedForChannel: ref.read(shoppingChannelProvider).channel,
         );
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -216,7 +237,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                             ),
                             const SizedBox(height: AppSpacing.xs),
                             Text(
-                              '${widget.product.basePrice.toStringAsFixed(0)} TL',
+                              '${_resolvedBasePrice.toStringAsFixed(0)} TL',
                               style: AppTypography.priceLarge,
                             ),
                             const SizedBox(height: AppSpacing.md),

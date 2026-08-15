@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../../core/router/app_route_guard.dart';
 import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -24,7 +25,15 @@ String _maskPhoneNumber(String normalized) {
 }
 
 class OtpScreen extends ConsumerStatefulWidget {
-  const OtpScreen({super.key});
+  const OtpScreen({super.key, this.returnTo});
+
+  /// Faz R.2 — forwarded from [LoginScreen]. Re-sanitized on read here
+  /// (never trusted verbatim, even though this screen itself only ever
+  /// received it via [AppRouteGuard]/[LoginScreen]'s own forwarding) —
+  /// `/login`/`/otp` are reachable by direct deep link with an arbitrary
+  /// query string, so this is the defense-in-depth boundary, independent
+  /// of whatever produced the value.
+  final String? returnTo;
 
   @override
   ConsumerState<OtpScreen> createState() => _OtpScreenState();
@@ -49,7 +58,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     final result = await ref.read(otpProvider.notifier).submit();
     if (!mounted || result != OtpVerificationResult.success) return;
 
-    context.go(AppRoutes.main);
+    final sanitizedReturnTo = AppRouteGuard.sanitizeReturnTo(widget.returnTo);
+    context.go(sanitizedReturnTo ?? AppRoutes.main);
   }
 
   void _changePhoneNumber() {

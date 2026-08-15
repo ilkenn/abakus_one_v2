@@ -70,4 +70,60 @@ void main() {
 
     expect(results.map((t) => t.id), ['ticket-1']);
   });
+
+  group('watchActiveByBranch', () {
+    test('emits the current snapshot immediately on subscription', () async {
+      final repository = InMemoryKitchenTicketRepository();
+      await repository.save(_ticket(id: 'ticket-1', branchId: 'branch-a'));
+
+      final first = await repository.watchActiveByBranch('branch-a').first;
+
+      expect(first.map((t) => t.id), ['ticket-1']);
+    });
+
+    test('re-emits when a new ticket is saved for the watched branch',
+        () async {
+      final repository = InMemoryKitchenTicketRepository();
+      final emissions = <List<KitchenTicket>>[];
+      final subscription =
+          repository.watchActiveByBranch('branch-a').listen(emissions.add);
+      await Future<void>.delayed(Duration.zero);
+
+      await repository.save(_ticket(id: 'ticket-1', branchId: 'branch-a'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(emissions.last.map((t) => t.id), ['ticket-1']);
+      await subscription.cancel();
+    });
+
+    test('a save for a different branch does not emit on this branch\'s stream',
+        () async {
+      final repository = InMemoryKitchenTicketRepository();
+      final emissions = <List<KitchenTicket>>[];
+      final subscription =
+          repository.watchActiveByBranch('branch-a').listen(emissions.add);
+      await Future<void>.delayed(Duration.zero);
+      final countAfterInitial = emissions.length;
+
+      await repository.save(_ticket(id: 'ticket-2', branchId: 'branch-b'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(emissions.length, countAfterInitial);
+      await subscription.cancel();
+    });
+
+    test(
+        'a duplicate save of the same ticket id never produces two tickets for one order',
+        () async {
+      final repository = InMemoryKitchenTicketRepository();
+      await repository.save(_ticket(id: 'ticket-1', branchId: 'branch-a'));
+      await repository.save(
+          _ticket(id: 'ticket-1', branchId: 'branch-a').copyWith(revision: 2));
+
+      final results = await repository.watchActiveByBranch('branch-a').first;
+
+      expect(results, hasLength(1));
+      expect(results.single.revision, 2);
+    });
+  });
 }

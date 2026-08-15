@@ -8,6 +8,20 @@ import '../../data/repositories/address_data_repository.dart';
 import '../../domain/models/address_model.dart';
 import '../providers/addresses_provider.dart';
 
+/// **LEGACY — not the canonical customer saved-address creation path**
+/// (Faz P.2.1.1, `docs/decisions.md`). Writes through the legacy, purely
+/// in-memory `AddressModel`/`addressesProvider` — no Firestore
+/// persistence, no server address verification, no Google Maps
+/// confirmation. `Profil → Adreslerim → +` no longer routes here (fixed
+/// Faz P.2.1.1; now routes to `AddressSearchScreen`, the real
+/// search → resolve → map confirmation → `SavedAddress` flow). **One
+/// entry point still reaches this screen**, disclosed rather than
+/// silently left: `features/cart/presentation/screens/checkout_screen.dart`'s
+/// own "Adres Ekle" button — left untouched this phase per that screen's
+/// own existing LEGACY marking (Faz P.1: "do not expand legacy delivery
+/// code"), out of this phase's explicit Profil→Adresler scope. Not
+/// deleted — kept exactly as-is, per explicit instruction, until a future
+/// phase either migrates or removes it.
 class AddressFormScreen extends ConsumerStatefulWidget {
   final AddressModel? addressToEdit;
 

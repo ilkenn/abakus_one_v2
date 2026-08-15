@@ -64,7 +64,7 @@ Future<void> _pumpOtpScreen(WidgetTester tester) async {
   );
   await tester.pumpAndSettle();
   await tester.enterText(find.byType(TextFormField), '5321234567');
-  await tester.tap(find.text('OTP Gönder'));
+  await tester.tap(find.text('Devam Et'));
   await tester.pumpAndSettle();
 }
 

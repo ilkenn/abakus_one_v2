@@ -6,7 +6,17 @@ import 'order_channel.dart';
 import 'order_item_snapshot.dart';
 import 'order_status.dart';
 import 'order_timestamps.dart';
+import 'pickup_mode.dart';
 
+/// **LEGACY** — mixes canonical lifecycle fields with customer-app-UI-only
+/// fields (delivery-instruction flags, review/rating fields, ...); see
+/// [Order]'s own doc comment for the approved architecture decision
+/// (Phase 3 Sprint 3A) keeping the two types separate, and Faz P.1
+/// (`docs/decisions.md`) for why the new Paket Servis (delivery) domain
+/// foundation — [Order.deliveryAddressSnapshot]/
+/// [Order.paymentMethodSnapshot] — was added to [Order], not here. Not
+/// migrated or replaced by this phase; that remains separate, future,
+/// out-of-scope work.
 class OrderModel {
   final String id;
   final String date;
@@ -92,11 +102,34 @@ class OrderModel {
   final double discountAmount;
 
   /// Frozen, display-ready delivery address text for [OrderChannel.delivery]
-  /// orders (e.g. `'Ev - Kadıköy, ...'`). Empty for other channels, which
-  /// have no address to show — a table/dine-in identifier belongs to the
-  /// Table QR domain (`lib/features/qr/`) once that ordering flow exists,
-  /// not here.
+  /// orders (e.g. `'Ev - Kadıköy, ...'`). Empty for other channels.
   final String deliveryAddressText;
+
+  /// Table identity for a [OrderChannel.dineInQr]/[OrderChannel.dineInStaff]
+  /// order (Masada Sipariş functional pass, 2026-08-08) — `null`/empty for
+  /// every other channel. [tableId] mirrors `Order.tableId`; [tableName] is
+  /// the display-ready name (`'Masa 12'`) frozen at submission time, the
+  /// same "snapshot, don't reference the live catalog" reasoning
+  /// [branchName] already follows — `ActiveOrderScreen` should never need
+  /// to re-resolve a `RestaurantTable` just to show its own order.
+  final String? tableId;
+  final String? tableName;
+
+  /// Gel Al (takeaway) pickup/contact data (Faz B, Gel Al architecture
+  /// analysis) — mirrors `Order.pickupMode`/`pickupTime`/`contactFirstName`/
+  /// `contactLastName`/`contactPhone` exactly, threaded straight through
+  /// [fromCanonicalOrder] the same way [tableId] already is. `null`/empty
+  /// for every non-takeaway order. Carried here (not just left on the
+  /// canonical [Order]) so this projection doesn't lose them either — the
+  /// same "don't let a projection silently drop a real field" reasoning
+  /// [tableId]/[tableName] already follow, and groundwork for POS/KDS
+  /// surfaces that may read through this model later (no such UI exists
+  /// yet — out of this phase's scope).
+  final PickupMode? pickupMode;
+  final DateTime? pickupTime;
+  final String? contactFirstName;
+  final String? contactLastName;
+  final String? contactPhone;
 
   // --- Mevcut (legacy) alanlar: bu faz tarafından değiştirilmedi ---
 
@@ -154,6 +187,13 @@ class OrderModel {
     this.deliveryFeeAmount = 0.0,
     this.discountAmount = 0.0,
     this.deliveryAddressText = '',
+    this.tableId,
+    this.tableName,
+    this.pickupMode,
+    this.pickupTime,
+    this.contactFirstName,
+    this.contactLastName,
+    this.contactPhone,
     this.orderNote = '',
     this.serviceMaterialsPreference = '',
     this.ringBell = true,
@@ -208,6 +248,16 @@ class OrderModel {
   /// read; only the *structured, individually-toggleable* display is
   /// affected. Restoring first-class structured fields is separate,
   /// future domain-model work, not silently dropped functionality.
+  ///
+  /// [tableName] can't be derived here — [Order] only carries [tableId]
+  /// (an id, not a display string), and this `orders`-domain model must
+  /// not depend on `features/qr`/`features/restaurant` to resolve one
+  /// (`CLAUDE.md` §3 layering). The caller that actually has a
+  /// `RestaurantTable`/`ActiveTableContext` in hand at submission time
+  /// (`DineInCheckoutScreen`) is expected to chain `.copyWith(tableName:
+  /// ...)` immediately after this factory, the same "caller supplies
+  /// context this layer can't reach" pattern already used elsewhere in
+  /// this projection.
   factory OrderModel.fromCanonicalOrder(Order order) {
     final created = order.timestamps.created;
     return OrderModel(
@@ -236,6 +286,12 @@ class OrderModel {
           order.pricing.deliveryFee.currency.minorUnitsPerWhole,
       discountAmount: order.pricing.discount.minorUnits /
           order.pricing.discount.currency.minorUnitsPerWhole,
+      tableId: order.tableId,
+      pickupMode: order.pickupMode,
+      pickupTime: order.pickupTime,
+      contactFirstName: order.contactFirstName,
+      contactLastName: order.contactLastName,
+      contactPhone: order.contactPhone,
       orderNote: order.customerNote,
     );
   }
@@ -260,6 +316,13 @@ class OrderModel {
     double? deliveryFeeAmount,
     double? discountAmount,
     String? deliveryAddressText,
+    String? tableId,
+    String? tableName,
+    PickupMode? pickupMode,
+    DateTime? pickupTime,
+    String? contactFirstName,
+    String? contactLastName,
+    String? contactPhone,
     String? orderNote,
     String? serviceMaterialsPreference,
     bool? ringBell,
@@ -306,6 +369,13 @@ class OrderModel {
       deliveryFeeAmount: deliveryFeeAmount ?? this.deliveryFeeAmount,
       discountAmount: discountAmount ?? this.discountAmount,
       deliveryAddressText: deliveryAddressText ?? this.deliveryAddressText,
+      tableId: tableId ?? this.tableId,
+      tableName: tableName ?? this.tableName,
+      pickupMode: pickupMode ?? this.pickupMode,
+      pickupTime: pickupTime ?? this.pickupTime,
+      contactFirstName: contactFirstName ?? this.contactFirstName,
+      contactLastName: contactLastName ?? this.contactLastName,
+      contactPhone: contactPhone ?? this.contactPhone,
       orderNote: orderNote ?? this.orderNote,
       serviceMaterialsPreference:
           serviceMaterialsPreference ?? this.serviceMaterialsPreference,

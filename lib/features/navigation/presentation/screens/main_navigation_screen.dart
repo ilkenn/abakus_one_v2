@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../bowl_builder/presentation/screens/bowl_builder_screen.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
 import '../../../cart/presentation/screens/cart_screen.dart';
 import '../../../home/presentation/screens/home_screen.dart';
@@ -8,19 +7,23 @@ import '../../../menu/presentation/screens/menu_screen.dart';
 import '../../../profile/presentation/screens/profile_screen.dart';
 import '../../../qr/presentation/screens/qr_scanner_screen.dart';
 import '../providers/navigation_provider.dart';
+import '../widgets/customer_bottom_navigation.dart';
+import '../widgets/qr_actions_bottom_sheet.dart';
 
-/// The app's shell: a Material 3 [NavigationBar] across 5 persistent
-/// destinations (Home/Menu/Build Bowl/Cart/Profile), each with its own
-/// nested [Navigator] so a push inside one tab (e.g. Product Detail from
-/// Menu) never touches the others' history. Tab widgets are built once in
+/// The app's shell: a premium [CustomerBottomNavigation] across 4 persistent
+/// destinations (Home/Menu/Cart/Profile), each with its own nested
+/// [Navigator] so a push inside one tab (e.g. Product Detail from Menu)
+/// never touches the others' history. Tab widgets are built once in
 /// [initState] and kept alive under an [IndexedStack] — switching tabs
 /// never rebuilds/disposes a tab's screen, which is what keeps scroll
 /// position and in-progress form state (e.g. Menu's search field) intact
 /// across a switch.
 ///
-/// QR order is intentionally not one of the 5 destinations — it's a
-/// one-shot scan action, pushed on the shell's own (root) Navigator so it
-/// overlays the whole shell including the bottom bar, exactly like before.
+/// QR is intentionally not one of the 4 tab destinations — it's the bottom
+/// bar's visually emphasized center action, which opens [QrActionsBottomSheet]
+/// (pushed on the shell's own root Navigator, overlaying the whole shell)
+/// without ever touching [navigationProvider] — whatever tab was showing
+/// underneath keeps showing once the sheet closes.
 class MainNavigationScreen extends ConsumerStatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -54,7 +57,7 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
     // the shell can re-evaluate the Android back-button decision (see
     // `build`) right when a tab's own stack actually changes — not on
     // some other, unrelated rebuild. `didPush` also fires once for a
-    // Navigator's *initial* route, i.e. while all 5 tab Navigators are
+    // Navigator's *initial* route, i.e. while all tab Navigators are
     // still being mounted for the first time — calling `setState`
     // synchronously there re-enters the framework's build/mount pass
     // mid-flight and trips an element-tree assertion. Deferring to a
@@ -70,7 +73,6 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
     _tabRoots = {
       AppTab.home: const HomeScreen(),
       AppTab.menu: const MenuScreen(),
-      AppTab.buildBowl: const BowlBuilderScreen(),
       AppTab.cart: const CartScreen(),
       AppTab.profile: const ProfileScreen(),
     };
@@ -87,10 +89,30 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
     };
   }
 
-  void _openQrOrder() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const QrScannerScreen()),
+  void _showQrActionsSheet(BuildContext shellContext) {
+    showModalBottomSheet(
+      context: shellContext,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => QrActionsBottomSheet(
+        onBoncukKazan: () {
+          Navigator.pop(sheetContext);
+          ScaffoldMessenger.of(shellContext).showSnackBar(
+            const SnackBar(
+              content: Text('Bu özellik yakında eklenecek.'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        },
+        onMasadaSiparisVer: () {
+          Navigator.pop(sheetContext);
+          Navigator.push(
+            shellContext,
+            MaterialPageRoute(builder: (context) => const QrScannerScreen()),
+          );
+        },
+      ),
     );
   }
 
@@ -128,45 +150,12 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
             for (final tab in AppTab.values) _tabNavigators[tab]!,
           ],
         ),
-        floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: _openQrOrder,
-          icon: const Icon(Icons.qr_code_scanner_rounded),
-          label: const Text('QR ile Sipariş'),
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: currentTab.index,
-          onDestinationSelected: (index) {
-            ref
-                .read(navigationProvider.notifier)
-                .selectTab(AppTab.values[index]);
-          },
-          destinations: [
-            const NavigationDestination(
-              icon: Icon(Icons.home_rounded),
-              label: 'Ana Sayfa',
-            ),
-            const NavigationDestination(
-              icon: Icon(Icons.restaurant_menu_rounded),
-              label: 'Menü',
-            ),
-            const NavigationDestination(
-              icon: Icon(Icons.blender_rounded),
-              label: 'Build Bowl',
-            ),
-            NavigationDestination(
-              icon: Badge(
-                isLabelVisible: cartItemCount > 0,
-                label: Text('$cartItemCount'),
-                child: const Icon(Icons.shopping_bag_rounded),
-              ),
-              label: 'Sepetim',
-            ),
-            const NavigationDestination(
-              icon: Icon(Icons.person_rounded),
-              label: 'Profil',
-            ),
-          ],
+        bottomNavigationBar: CustomerBottomNavigation(
+          currentTab: currentTab,
+          cartItemCount: cartItemCount,
+          onTabSelected: (tab) =>
+              ref.read(navigationProvider.notifier).selectTab(tab),
+          onQrTap: () => _showQrActionsSheet(context),
         ),
       ),
     );

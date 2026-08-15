@@ -1,1 +1,3 @@
 #include "Generated.xcconfig"
+// Faz P.2.1 — see Debug.xcconfig's own comment.
+#include? "ApiKeys.xcconfig"

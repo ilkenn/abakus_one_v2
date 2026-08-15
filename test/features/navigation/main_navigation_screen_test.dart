@@ -9,6 +9,7 @@ import 'package:abakus_one_v2/features/menu/presentation/screens/menu_screen.dar
 import 'package:abakus_one_v2/features/menu/presentation/screens/product_detail_screen.dart';
 import 'package:abakus_one_v2/features/navigation/presentation/providers/navigation_provider.dart';
 import 'package:abakus_one_v2/features/navigation/presentation/screens/main_navigation_screen.dart';
+import 'package:abakus_one_v2/features/navigation/presentation/widgets/customer_bottom_navigation.dart';
 import 'package:abakus_one_v2/features/profile/presentation/screens/profile_screen.dart';
 import 'package:abakus_one_v2/features/qr/presentation/screens/qr_scanner_screen.dart';
 
@@ -50,19 +51,18 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  group('5 sekme + QR push action', () {
+  group('4 sekme + QR bottom sheet', () {
     testWidgets(
-      'alt navigasyon 5 sekmeyi (Ana Sayfa, Menü, Build Bowl, Sepetim, Profil) gosterir, '
-      'QR ayri bir push action olarak durur',
+      'alt navigasyon 4 sekmeyi (Ana Sayfa, Menü, Sepetim, Profil) '
+      've QR aksiyonunu gosterir',
       (tester) async {
         await pumpShell(tester);
 
         expect(find.text('Ana Sayfa'), findsOneWidget);
         expect(find.text('Menü'), findsOneWidget);
-        expect(find.text('Build Bowl'), findsOneWidget);
         expect(find.text('Sepetim'), findsOneWidget);
         expect(find.text('Profil'), findsOneWidget);
-        expect(find.text('QR ile Sipariş'), findsOneWidget);
+        expect(find.text('Build Bowl'), findsNothing);
 
         expect(find.byType(HomeScreen), findsOneWidget);
         expect(container.read(navigationProvider), AppTab.home);
@@ -80,19 +80,6 @@ void main() {
       expect(find.byType(MenuScreen), findsOneWidget);
       expect(container.read(navigationProvider), AppTab.menu);
     });
-
-    testWidgets(
-      'Build Bowl sekmesine dokununca BowlBuilderScreen gorunur olur',
-      (tester) async {
-        await pumpShell(tester);
-
-        await tester.tap(find.text('Build Bowl'));
-        await tester.pumpAndSettle();
-
-        expect(find.byType(BowlBuilderScreen), findsOneWidget);
-        expect(container.read(navigationProvider), AppTab.buildBowl);
-      },
-    );
 
     testWidgets('Sepetim sekmesine dokununca CartScreen gorunur olur', (
       tester,
@@ -119,15 +106,36 @@ void main() {
     });
 
     testWidgets(
-      'QR butonuna dokununca QrScannerScreen push edilir, sekme degismez',
+      'QR butonuna dokununca once eylem secmesi icin bottom sheet acilir, '
+      'kamera dogrudan acilmaz',
       (tester) async {
         await pumpShell(tester);
 
-        await tester.tap(find.text('QR ile Sipariş'));
+        await tester.tap(find.byIcon(Icons.qr_code_scanner_rounded));
+        await tester.pumpAndSettle();
+
+        expect(find.text('QR İşlemleri'), findsOneWidget);
+        expect(find.text('Boncuk Kazan'), findsOneWidget);
+        expect(find.text('Masada Sipariş Ver'), findsOneWidget);
+        expect(find.byType(QrScannerScreen), findsNothing);
+        // QR bir sekme degil, navigasyon state'i hala Ana Sayfa'da.
+        expect(container.read(navigationProvider), AppTab.home);
+      },
+    );
+
+    testWidgets(
+      'QR sheet\'inde Masada Siparis Ver QrScannerScreen push eder, sekme '
+      'degismez',
+      (tester) async {
+        await pumpShell(tester);
+
+        await tester.tap(find.byIcon(Icons.qr_code_scanner_rounded));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Masada Sipariş Ver'));
         await tester.pumpAndSettle();
 
         expect(find.byType(QrScannerScreen), findsOneWidget);
-        // QR bir sekme degil, navigasyon state'i hala Ana Sayfa'da.
         expect(container.read(navigationProvider), AppTab.home);
 
         await tester.tap(find.byIcon(Icons.arrow_back_rounded));
@@ -136,33 +144,51 @@ void main() {
         expect(find.byType(HomeScreen), findsOneWidget);
       },
     );
-  });
 
-  group('cross-tab yonlendirme', () {
     testWidgets(
-      'Home\'daki Kendi Bowlunu Yarat bannerina dokununca push degil, '
-      'Build Bowl sekmesi aktif olur',
+      'QR sheet\'inde Boncuk Kazan henuz hazir olmadigini acikca bildirir',
       (tester) async {
         await pumpShell(tester);
 
-        final banner = find.text('Kendi Bowlunu Yarat');
+        await tester.tap(find.byIcon(Icons.qr_code_scanner_rounded));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Boncuk Kazan'));
+        await tester.pump();
+
+        expect(
+          find.text('Bu özellik yakında eklenecek.'),
+          findsOneWidget,
+        );
+      },
+    );
+  });
+
+  group('Bowl Builder artik bir sekme degil', () {
+    testWidgets(
+      'Home\'daki Kendi Bowlunu Yarat CTA\'sina dokununca push ile '
+      'BowlBuilderScreen acilir, sekme degismez',
+      (tester) async {
+        await pumpShell(tester);
+
+        final cta = find.text('Bowl\'unu Oluştur').first;
         await tester.dragUntilVisible(
-          banner,
-          find.byType(Scrollable),
+          cta,
+          find.byType(Scrollable).first,
           const Offset(0, -300),
         );
         await tester.pumpAndSettle();
-        await tester.tap(banner);
+        await tester.tap(cta);
         await tester.pumpAndSettle();
 
         expect(find.byType(BowlBuilderScreen), findsOneWidget);
-        expect(container.read(navigationProvider), AppTab.buildBowl);
+        expect(container.read(navigationProvider), AppTab.home);
       },
     );
 
     testWidgets(
-      'Menu\'deki Kendi Bowlunu Yarat kartina dokununca push degil, '
-      'Build Bowl sekmesi aktif olur',
+      'Menu\'deki Kendi Bowlunu Yarat kartina dokununca push ile '
+      'BowlBuilderScreen acilir, sekme degismez',
       (tester) async {
         await pumpShell(tester);
         await tester.tap(find.text('Menü'));
@@ -172,10 +198,12 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.byType(BowlBuilderScreen), findsOneWidget);
-        expect(container.read(navigationProvider), AppTab.buildBowl);
+        expect(container.read(navigationProvider), AppTab.menu);
       },
     );
+  });
 
+  group('cross-tab yonlendirme', () {
     testWidgets(
       'Home\'daki hizli kategori cipine dokununca Menu sekmesi aktif olur',
       (tester) async {
@@ -184,8 +212,8 @@ void main() {
         final chip = find.text('Bowl').first;
         await tester.dragUntilVisible(
           chip,
-          find.byType(Scrollable),
-          const Offset(0, -200),
+          find.byType(Scrollable).first,
+          const Offset(0, -400),
         );
         await tester.pumpAndSettle();
         await tester.tap(chip);
@@ -342,7 +370,7 @@ void main() {
 
       expect(
         find.descendant(
-          of: find.byType(NavigationBar),
+          of: find.byType(CustomerBottomNavigation),
           matching: find.text('3'),
         ),
         findsOneWidget,
@@ -354,7 +382,7 @@ void main() {
 
       expect(
         find.descendant(
-          of: find.byType(NavigationBar),
+          of: find.byType(CustomerBottomNavigation),
           matching: find.text('0'),
         ),
         findsNothing,

@@ -1,4 +1,5 @@
 import '../../../menu/domain/models/selected_modifier.dart';
+import '../../../orders/domain/models/order_channel.dart';
 
 /// A line in the customer's cart.
 ///
@@ -33,6 +34,16 @@ class CartItem {
   /// rule instead of implicit equality.
   final String customizationsKey;
 
+  /// The channel [price]/[selectedModifiers] were resolved for at
+  /// add-to-cart time (Faz C, Gel Al) — `null` means "resolved without
+  /// channel awareness," the unchanged behavior for every cart item added
+  /// before this field existed. Exists so a channel switch (delivery/
+  /// dine-in ↔ takeaway) with items already in the cart can be detected
+  /// and never silently priced under the wrong channel — see
+  /// `CartScreen`'s channel-mismatch guard, the single place this field is
+  /// actually read.
+  final OrderChannel? pricedForChannel;
+
   const CartItem({
     required this.id,
     required this.name,
@@ -47,6 +58,7 @@ class CartItem {
     this.selectedModifiers = const [],
     this.note = '',
     this.customizationsKey = '',
+    this.pricedForChannel,
   });
 
   /// Sum of this item's [extraCostPerUnit] and every selected modifier's
@@ -72,6 +84,7 @@ class CartItem {
     List<SelectedModifier>? selectedModifiers,
     String? note,
     String? customizationsKey,
+    OrderChannel? pricedForChannel,
   }) {
     return CartItem(
       id: id ?? this.id,
@@ -87,6 +100,7 @@ class CartItem {
       selectedModifiers: selectedModifiers ?? this.selectedModifiers,
       note: note ?? this.note,
       customizationsKey: customizationsKey ?? this.customizationsKey,
+      pricedForChannel: pricedForChannel ?? this.pricedForChannel,
     );
   }
 }

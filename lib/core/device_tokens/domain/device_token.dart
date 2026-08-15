@@ -14,6 +14,7 @@ class DeviceToken {
   const DeviceToken({
     required this.id,
     required this.uid,
+    required this.organizationId,
     required this.token,
     required this.platform,
     required this.registeredAt,
@@ -22,6 +23,13 @@ class DeviceToken {
 
   final String id;
   final String uid;
+
+  /// Faz R.3C: added to satisfy `firestore.rules`'s pre-existing
+  /// `deviceTokens` `organizationIdUnchanged()` update check, which
+  /// expected this field before any Firestore-backed repository actually
+  /// wrote it — mirrors the single-tenant `currentOrganizationIdProvider`
+  /// convention (`core/config/current_organization.dart`).
+  final String organizationId;
 
   /// The raw FCM registration token — opaque to this app, never logged
   /// (mirrors `LogRedactor`'s "token" marker — any future logging of a
@@ -48,6 +56,7 @@ class DeviceToken {
     return DeviceToken(
       id: id,
       uid: uid,
+      organizationId: organizationId,
       token: token,
       platform: platform,
       registeredAt: registeredAt,

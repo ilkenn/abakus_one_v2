@@ -1,0 +1,12 @@
+// Faz P.2.1 — Google Maps SDK for iOS client key.
+//
+// Copy this file to ApiKeys.xcconfig (gitignored — never commit the real
+// key) in this same directory, and fill in a real key restricted to:
+//   - iOS application restriction: this app's bundle id (com.abakus.one)
+//   - API restriction: Maps SDK for iOS only
+//
+// GOOGLE_MAPS_IOS_API_KEY is read into Info.plist's GMSApiKey entry via
+// Xcode's own $(VAR) build-setting substitution, then read from there by
+// AppDelegate.swift at launch — never hardcoded in source.
+
+GOOGLE_MAPS_IOS_API_KEY = YOUR_IOS_MAPS_KEY_HERE

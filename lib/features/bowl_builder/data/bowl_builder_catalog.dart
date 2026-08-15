@@ -48,6 +48,17 @@ abstract interface class BowlBuilderCatalogRepository {
 /// round number. Replacing these with real prices is the same one-line-per-
 /// ingredient edit as any other price change here.
 ///
+/// **Every `caloriesKcal`/`proteinGrams`/`fatGrams`/`carbohydrateGrams`
+/// value below is ALSO A DEVELOPMENT PLACEHOLDER** (v2 live-nutrition-
+/// dashboard redesign, 2026-08-08). No real nutrition data source exists
+/// for this catalog yet — these are rough, illustrative, per-selected-
+/// portion estimates typed in to demonstrate the live nutrition dashboard
+/// UI, **not** sourced from any nutrition database or verified against real
+/// recipe yields. Do not present them to a customer as accurate. Replacing
+/// them with real, kitchen-verified values is the same one-line-per-
+/// ingredient edit as any other field here — no UI, provider, or cart code
+/// needs to change alongside it.
+///
 /// Every `imageKey` below is the ingredient's own name, slugified to match
 /// [IngredientImageResolver]'s registry (Faz 8.1, 2026-07-24: real photos
 /// landed under `assets/images/products/`). Most now resolve to a real
@@ -95,7 +106,14 @@ const List<BowlBuilderCategory> _categories = [
   BowlBuilderCategory(id: kCategoryFruits, name: 'Meyveler'),
   BowlBuilderCategory(id: kCategoryPickles, name: 'Turşular'),
   BowlBuilderCategory(id: kCategoryCheeses, name: 'Peynirler'),
-  BowlBuilderCategory(id: kCategoryOthers, name: 'Diğerleri'),
+  // Customer-facing label is "Ekstralar" (v2 redesign) — id/name stay
+  // 'others'/'Diğerleri' everywhere else in the system; see
+  // BowlBuilderCategory.displayName's doc comment.
+  BowlBuilderCategory(
+    id: kCategoryOthers,
+    name: 'Diğerleri',
+    displayName: 'Ekstralar',
+  ),
   BowlBuilderCategory(id: kCategorySauces, name: 'Soslar'),
 ];
 
@@ -108,6 +126,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 40,
     imageKey: 'izgara_tavuk',
     sortOrder: 0,
+    caloriesKcal: 165,
+    proteinGrams: 31,
+    fatGrams: 4,
+    carbohydrateGrams: 0,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_citir_tavuk',
@@ -116,6 +138,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 40,
     imageKey: 'citir_tavuk',
     sortOrder: 1,
+    caloriesKcal: 220,
+    proteinGrams: 24,
+    fatGrams: 11,
+    carbohydrateGrams: 8,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_falafel',
@@ -124,6 +150,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 35,
     imageKey: 'falafel',
     sortOrder: 2,
+    caloriesKcal: 180,
+    proteinGrams: 8,
+    fatGrams: 10,
+    carbohydrateGrams: 17,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_soya_soslu_tavuk',
@@ -132,6 +162,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 40,
     imageKey: 'soya_tavuk',
     sortOrder: 3,
+    caloriesKcal: 190,
+    proteinGrams: 28,
+    fatGrams: 6,
+    carbohydrateGrams: 5,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_tatli_eksi_tavuk',
@@ -140,6 +174,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 40,
     imageKey: 'tatli_eksi_tavuk',
     sortOrder: 4,
+    caloriesKcal: 210,
+    proteinGrams: 26,
+    fatGrams: 6,
+    carbohydrateGrams: 12,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_kori_soslu_tavuk',
@@ -148,6 +186,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 40,
     imageKey: 'kori_tavuk',
     sortOrder: 5,
+    caloriesKcal: 195,
+    proteinGrams: 27,
+    fatGrams: 7,
+    carbohydrateGrams: 6,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_tatli_aci_tavuk',
@@ -156,6 +198,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 40,
     imageKey: 'aci_tavuk',
     sortOrder: 6,
+    caloriesKcal: 200,
+    proteinGrams: 26,
+    fatGrams: 6,
+    carbohydrateGrams: 10,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_izgara_kofte',
@@ -164,6 +210,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 70,
     imageKey: 'izgara_kofte',
     sortOrder: 7,
+    caloriesKcal: 250,
+    proteinGrams: 22,
+    fatGrams: 17,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_dana_bonfile',
@@ -172,6 +222,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 150,
     imageKey: 'dana_bonfile',
     sortOrder: 8,
+    caloriesKcal: 240,
+    proteinGrams: 30,
+    fatGrams: 12,
+    carbohydrateGrams: 0,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_tofu',
@@ -180,6 +234,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 150,
     imageKey: 'tofu',
     sortOrder: 9,
+    caloriesKcal: 120,
+    proteinGrams: 12,
+    fatGrams: 7,
+    carbohydrateGrams: 3,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_izgara_somon',
@@ -188,6 +246,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 250,
     imageKey: 'izgara_somon',
     sortOrder: 10,
+    caloriesKcal: 280,
+    proteinGrams: 28,
+    fatGrams: 18,
+    carbohydrateGrams: 0,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_somon_fume',
@@ -196,6 +258,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 300,
     imageKey: 'somon_fume',
     sortOrder: 11,
+    caloriesKcal: 200,
+    proteinGrams: 25,
+    fatGrams: 10,
+    carbohydrateGrams: 0,
   ),
   BowlBuilderIngredient(
     id: 'bb_protein_ton_baligi',
@@ -204,6 +270,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 150,
     imageKey: 'ton_baligi',
     sortOrder: 12,
+    caloriesKcal: 150,
+    proteinGrams: 30,
+    fatGrams: 3,
+    carbohydrateGrams: 0,
   ),
 
   // ---- Karbonhidratlar — istenildiği kadar eklenebilir (stepper). ----
@@ -214,6 +284,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'meksika_pilavi',
     sortOrder: 0,
+    caloriesKcal: 190,
+    proteinGrams: 4,
+    fatGrams: 4,
+    carbohydrateGrams: 34,
   ),
   BowlBuilderIngredient(
     id: 'bb_carbs_beyaz_basmati',
@@ -222,6 +296,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'beyaz_basmati_pirinc',
     sortOrder: 1,
+    caloriesKcal: 180,
+    proteinGrams: 3,
+    fatGrams: 0,
+    carbohydrateGrams: 40,
   ),
   BowlBuilderIngredient(
     id: 'bb_carbs_siyah_basmati',
@@ -230,6 +308,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'siyah_basmati_pirinc',
     sortOrder: 2,
+    caloriesKcal: 170,
+    proteinGrams: 4,
+    fatGrams: 1,
+    carbohydrateGrams: 35,
   ),
   BowlBuilderIngredient(
     id: 'bb_carbs_karisik_basmati',
@@ -238,6 +320,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'beyaz_siyah_basmati_karisimi',
     sortOrder: 3,
+    caloriesKcal: 175,
+    proteinGrams: 4,
+    fatGrams: 1,
+    carbohydrateGrams: 37,
   ),
   BowlBuilderIngredient(
     id: 'bb_carbs_meyhane_pilavi',
@@ -246,6 +332,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'meyhane_pilavi',
     sortOrder: 4,
+    caloriesKcal: 195,
+    proteinGrams: 4,
+    fatGrams: 5,
+    carbohydrateGrams: 33,
   ),
   BowlBuilderIngredient(
     id: 'bb_carbs_kinoa',
@@ -254,6 +344,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 20,
     imageKey: 'kinoa',
     sortOrder: 5,
+    caloriesKcal: 180,
+    proteinGrams: 6,
+    fatGrams: 3,
+    carbohydrateGrams: 32,
   ),
   BowlBuilderIngredient(
     id: 'bb_carbs_bulgur_pilavi',
@@ -262,6 +356,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'bulgur_pilavi',
     sortOrder: 6,
+    caloriesKcal: 170,
+    proteinGrams: 5,
+    fatGrams: 2,
+    carbohydrateGrams: 34,
   ),
   BowlBuilderIngredient(
     id: 'bb_carbs_kuskus',
@@ -270,6 +368,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'kuskus',
     sortOrder: 7,
+    caloriesKcal: 175,
+    proteinGrams: 5,
+    fatGrams: 1,
+    carbohydrateGrams: 36,
   ),
   BowlBuilderIngredient(
     id: 'bb_carbs_makarna',
@@ -278,6 +380,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 20,
     imageKey: 'makarna',
     sortOrder: 8,
+    caloriesKcal: 200,
+    proteinGrams: 7,
+    fatGrams: 1,
+    carbohydrateGrams: 40,
   ),
 
   // ---- Salatalar — bir porsiyon, tekrar tıklanınca kaldırılır. ----
@@ -288,6 +394,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'mevsim_salata',
     sortOrder: 0,
+    caloriesKcal: 20,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 4,
   ),
   BowlBuilderIngredient(
     id: 'bb_salad_kivircik_marul',
@@ -296,6 +406,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'kivircik_marul',
     sortOrder: 1,
+    caloriesKcal: 10,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_salad_roka',
@@ -304,6 +418,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'roka',
     sortOrder: 2,
+    caloriesKcal: 12,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_salad_baby_ispanak',
@@ -312,6 +430,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 30,
     imageKey: 'baby_ispanak',
     sortOrder: 3,
+    caloriesKcal: 15,
+    proteinGrams: 2,
+    fatGrams: 0,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_salad_coban_salata',
@@ -320,6 +442,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 30,
     imageKey: 'coban_salata',
     sortOrder: 4,
+    caloriesKcal: 30,
+    proteinGrams: 1,
+    fatGrams: 1,
+    carbohydrateGrams: 5,
   ),
 
   // ---- Sebzeler — bir porsiyon, tekrar tıklanınca kaldırılır. ----
@@ -333,6 +459,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'misir',
     sortOrder: 0,
+    caloriesKcal: 35,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 8,
   ),
   BowlBuilderIngredient(
     id: 'bb_vegetable_salatalik',
@@ -341,6 +471,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'salatalik',
     sortOrder: 1,
+    caloriesKcal: 8,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_vegetable_domates',
@@ -349,6 +483,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'domates',
     sortOrder: 2,
+    caloriesKcal: 10,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_vegetable_havuc',
@@ -357,6 +495,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 20,
     imageKey: 'izgara_havuc',
     sortOrder: 3,
+    caloriesKcal: 20,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 5,
   ),
   BowlBuilderIngredient(
     id: 'bb_vegetable_kirmizi_sogan',
@@ -365,6 +507,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 30,
     imageKey: 'kirmizi_sogan',
     sortOrder: 4,
+    caloriesKcal: 15,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 4,
   ),
   BowlBuilderIngredient(
     id: 'bb_vegetable_kapya_biber',
@@ -373,6 +519,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 40,
     imageKey: 'kapya_biber',
     sortOrder: 5,
+    caloriesKcal: 15,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 3,
   ),
   BowlBuilderIngredient(
     id: 'bb_vegetable_mor_lahana',
@@ -381,6 +531,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 50,
     imageKey: 'mor_lahana',
     sortOrder: 6,
+    caloriesKcal: 12,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 3,
   ),
   BowlBuilderIngredient(
     id: 'bb_vegetable_meksika_fasulyesi',
@@ -389,6 +543,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'meksika_fasulyesi',
     sortOrder: 7,
+    caloriesKcal: 60,
+    proteinGrams: 4,
+    fatGrams: 0,
+    carbohydrateGrams: 11,
   ),
 
   // ---- Meyveler — bir porsiyon, tekrar tıklanınca kaldırılır. ----
@@ -399,6 +557,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'ananas',
     sortOrder: 0,
+    caloriesKcal: 30,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 8,
   ),
   BowlBuilderIngredient(
     id: 'bb_fruit_yesil_elma',
@@ -407,6 +569,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'yesil_elma',
     sortOrder: 1,
+    caloriesKcal: 26,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 7,
   ),
   BowlBuilderIngredient(
     id: 'bb_fruit_nar',
@@ -415,6 +581,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 20,
     imageKey: 'nar',
     sortOrder: 2,
+    caloriesKcal: 40,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 9,
   ),
   BowlBuilderIngredient(
     id: 'bb_fruit_muz',
@@ -423,6 +593,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'muz',
     sortOrder: 3,
+    caloriesKcal: 45,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 11,
   ),
   BowlBuilderIngredient(
     id: 'bb_fruit_ahududu',
@@ -431,6 +605,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 20,
     imageKey: 'ahududu',
     sortOrder: 4,
+    caloriesKcal: 26,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 6,
   ),
   BowlBuilderIngredient(
     id: 'bb_fruit_bogurtlen',
@@ -439,6 +617,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 20,
     imageKey: 'bogurtlen',
     sortOrder: 5,
+    caloriesKcal: 22,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 5,
   ),
 
   // ---- Turşular — bir porsiyon, tekrar tıklanınca kaldırılır. ----
@@ -449,6 +631,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'mor_lahana_tursusu',
     sortOrder: 0,
+    caloriesKcal: 10,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_pickle_kornison',
@@ -457,6 +643,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'kornison_tursu',
     sortOrder: 1,
+    caloriesKcal: 8,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_pickle_sogan_tursu',
@@ -465,6 +655,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 20,
     imageKey: 'sogan_tursusu',
     sortOrder: 2,
+    caloriesKcal: 12,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 3,
   ),
   BowlBuilderIngredient(
     id: 'bb_pickle_jalapeno',
@@ -473,6 +667,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 20,
     imageKey: 'jalapeno',
     sortOrder: 3,
+    caloriesKcal: 8,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 2,
   ),
 
   // ---- Peynirler — bir porsiyon, tekrar tıklanınca kaldırılır. ----
@@ -483,6 +681,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'beyaz_peynir',
     sortOrder: 0,
+    caloriesKcal: 80,
+    proteinGrams: 5,
+    fatGrams: 6,
+    carbohydrateGrams: 1,
   ),
   BowlBuilderIngredient(
     id: 'bb_cheese_cheddar',
@@ -491,6 +693,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'cheddar_peyniri',
     sortOrder: 1,
+    caloriesKcal: 110,
+    proteinGrams: 7,
+    fatGrams: 9,
+    carbohydrateGrams: 1,
   ),
   BowlBuilderIngredient(
     id: 'bb_cheese_parmesan',
@@ -499,6 +705,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 20,
     imageKey: 'parmesan_peyniri',
     sortOrder: 2,
+    caloriesKcal: 120,
+    proteinGrams: 10,
+    fatGrams: 8,
+    carbohydrateGrams: 1,
   ),
   BowlBuilderIngredient(
     id: 'bb_cheese_labne',
@@ -507,9 +717,14 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'labne',
     sortOrder: 3,
+    caloriesKcal: 60,
+    proteinGrams: 3,
+    fatGrams: 5,
+    carbohydrateGrams: 2,
   ),
 
-  // ---- Diğerleri (Toppingler) — bir porsiyon, tekrar tıklanınca kaldırılır. ----
+  // ---- Diğerleri (Toppingler / "Ekstralar") — bir porsiyon, tekrar
+  // tıklanınca kaldırılır. ----
   BowlBuilderIngredient(
     id: 'bb_other_avokado',
     name: 'Avokado',
@@ -517,6 +732,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 25,
     imageKey: 'avokado',
     sortOrder: 0,
+    caloriesKcal: 80,
+    proteinGrams: 1,
+    fatGrams: 7,
+    carbohydrateGrams: 4,
   ),
   BowlBuilderIngredient(
     id: 'bb_other_zeytin',
@@ -525,6 +744,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'zeytin',
     sortOrder: 1,
+    caloriesKcal: 40,
+    proteinGrams: 0,
+    fatGrams: 4,
+    carbohydrateGrams: 1,
   ),
   BowlBuilderIngredient(
     id: 'bb_other_ceviz',
@@ -533,6 +756,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'ceviz',
     sortOrder: 2,
+    caloriesKcal: 130,
+    proteinGrams: 3,
+    fatGrams: 13,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_other_kabak_cekirdegi',
@@ -541,6 +768,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'kabak_cekirdegi',
     sortOrder: 3,
+    caloriesKcal: 90,
+    proteinGrams: 5,
+    fatGrams: 8,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_other_sote_mantar',
@@ -549,6 +780,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 15,
     imageKey: 'mantar_sote',
     sortOrder: 4,
+    caloriesKcal: 25,
+    proteinGrams: 2,
+    fatGrams: 1,
+    carbohydrateGrams: 2,
   ),
 
   // ---- Soslar — bir porsiyon, tekrar tıklanınca kaldırılır. ----
@@ -559,6 +794,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'zeytinyag_limon_sos',
     sortOrder: 0,
+    caloriesKcal: 90,
+    proteinGrams: 0,
+    fatGrams: 10,
+    carbohydrateGrams: 0,
   ),
   BowlBuilderIngredient(
     id: 'bb_sauce_nar_eksisi',
@@ -567,6 +806,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'nar_eksisi',
     sortOrder: 1,
+    caloriesKcal: 30,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 7,
   ),
   BowlBuilderIngredient(
     id: 'bb_sauce_yogurt',
@@ -575,6 +818,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'yogurt_sos',
     sortOrder: 2,
+    caloriesKcal: 25,
+    proteinGrams: 1,
+    fatGrams: 2,
+    carbohydrateGrams: 1,
   ),
   BowlBuilderIngredient(
     id: 'bb_sauce_balli_hardal',
@@ -583,6 +830,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'balli_hardal',
     sortOrder: 3,
+    caloriesKcal: 40,
+    proteinGrams: 0,
+    fatGrams: 2,
+    carbohydrateGrams: 6,
   ),
   BowlBuilderIngredient(
     id: 'bb_sauce_aci_sos',
@@ -591,6 +842,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'aci_sos',
     sortOrder: 4,
+    caloriesKcal: 10,
+    proteinGrams: 0,
+    fatGrams: 0,
+    carbohydrateGrams: 2,
   ),
   BowlBuilderIngredient(
     id: 'bb_sauce_caesar',
@@ -599,6 +854,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'caesar_sos',
     sortOrder: 5,
+    caloriesKcal: 80,
+    proteinGrams: 1,
+    fatGrams: 8,
+    carbohydrateGrams: 1,
   ),
   BowlBuilderIngredient(
     id: 'bb_sauce_soya',
@@ -607,6 +866,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'soya_sos',
     sortOrder: 6,
+    caloriesKcal: 10,
+    proteinGrams: 1,
+    fatGrams: 0,
+    carbohydrateGrams: 1,
   ),
   BowlBuilderIngredient(
     id: 'bb_sauce_pesto',
@@ -615,6 +878,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'pesto_sos',
     sortOrder: 7,
+    caloriesKcal: 90,
+    proteinGrams: 1,
+    fatGrams: 9,
+    carbohydrateGrams: 1,
   ),
   BowlBuilderIngredient(
     id: 'bb_sauce_tahin',
@@ -623,6 +890,10 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'tahin',
     sortOrder: 8,
+    caloriesKcal: 90,
+    proteinGrams: 3,
+    fatGrams: 8,
+    carbohydrateGrams: 3,
   ),
   BowlBuilderIngredient(
     id: 'bb_sauce_abakus',
@@ -631,5 +902,9 @@ const List<BowlBuilderIngredient> _ingredients = [
     price: 10,
     imageKey: 'abakus_sos',
     sortOrder: 9,
+    caloriesKcal: 70,
+    proteinGrams: 1,
+    fatGrams: 6,
+    carbohydrateGrams: 3,
   ),
 ];

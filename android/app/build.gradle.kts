@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // START: FlutterFire Configuration
@@ -6,6 +8,31 @@ plugins {
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// Faz P.2.1 — Google Maps SDK for Android client key. Read from
+// android/local.properties (gitignored, per-machine — same mechanism
+// settings.gradle.kts already uses for flutter.sdk), never a literal in
+// source control. Empty when unset — the manifest placeholder below then
+// resolves to an empty API_KEY value, which the Maps SDK treats as an
+// initialization failure the Flutter-side map screen already handles as
+// an expected fallback, not a build error.
+//
+// Faz P.2.1 fix: the package-qualified `java.util.Properties()` form
+// failed to resolve here ("Unresolved reference 'util'") — at the top
+// level of this Kotlin DSL script, the Android/Kotlin Gradle plugins'
+// auto-generated accessors shadow the bare `java` identifier, breaking
+// inline `java.util.*` qualification. A proper top-level `import
+// java.util.Properties` (above) resolves via Kotlin's import mechanism
+// instead, which isn't subject to that receiver-shadowing problem.
+val mapsApiKeyAndroid: String =
+    run {
+        val properties = Properties()
+        val localPropertiesFile = rootProject.file("local.properties")
+        if (localPropertiesFile.exists()) {
+            localPropertiesFile.inputStream().use { properties.load(it) }
+        }
+        properties.getProperty("mapsApiKeyAndroid", "")
+    }
 
 android {
     namespace = "com.abakus.one"
@@ -27,6 +54,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Faz P.2.1 — resolves AndroidManifest.xml's ${mapsApiKeyAndroid} placeholder.
+        manifestPlaceholders["mapsApiKeyAndroid"] = mapsApiKeyAndroid
     }
 
     buildTypes {

@@ -15,18 +15,21 @@ void main() {
       );
       await register.call(
         uid: 'uid-1',
+        organizationId: 'org-1',
         token: 'token-a',
         platform: 'android',
         now: DateTime(2026, 8, 1),
       );
       await register.call(
         uid: 'uid-1',
+        organizationId: 'org-1',
         token: 'token-b',
         platform: 'ios',
         now: DateTime(2026, 8, 1),
       );
       await register.call(
         uid: 'uid-2',
+        organizationId: 'org-1',
         token: 'token-c',
         platform: 'android',
         now: DateTime(2026, 8, 1),

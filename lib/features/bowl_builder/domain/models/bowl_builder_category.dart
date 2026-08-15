@@ -10,14 +10,25 @@
 /// Every other category is a simple toggle: one portion per ingredient, tap
 /// again to remove it, no cap on how many distinct ingredients can be
 /// selected.
+///
+/// [displayName] (added for the v2 category-driven redesign, 2026-08-08) is
+/// a customer-facing label override for when the catalog's own [name]
+/// shouldn't be shown verbatim — today only "Diğerleri" uses this, displayed
+/// as "Ekstralar" — while [id] (`'others'`) and [name] (`'Diğerleri'`) stay
+/// unchanged everywhere else in the system. `null` (every other category)
+/// means "show [name] as-is". UI code should always read
+/// `category.displayName ?? category.name`, never [name] directly, so this
+/// stays the single place the override lives.
 class BowlBuilderCategory {
   final String id;
   final String name;
   final bool allowsQuantity;
+  final String? displayName;
 
   const BowlBuilderCategory({
     required this.id,
     required this.name,
     this.allowsQuantity = false,
+    this.displayName,
   });
 }

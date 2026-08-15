@@ -53,9 +53,12 @@ void main() {
         assetImageCount(tester, 'assets/images/bowl/bowl_empty.png'),
         1,
       );
-      // Henuz gercek bowl_empty.png yok -> placeholder ikon gosterilir,
-      // kirik-resim ikonu degil.
-      expect(find.byIcon(Icons.ramen_dining_rounded), findsOneWidget);
+      // Henuz gercek bowl_empty.png yok -> notr bir "bowl" siluet
+      // ciziliyor (CustomPaint), jenerik bir yemek ikonu degil, kirik-
+      // resim ikonu hic degil.
+      expect(find.byIcon(Icons.ramen_dining_rounded), findsNothing);
+      expect(find.byType(Icon), findsNothing);
+      expect(find.byType(CustomPaint), findsWidgets);
       expect(find.byType(ErrorWidget), findsNothing);
       expect(tester.takeException(), isNull);
     },

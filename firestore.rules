@@ -47,6 +47,29 @@ service cloud.firestore {
         (roleName in request.auth.token.roles[organizationId]);
     }
 
+    // Faz R.3C.2 — branch-operational-data authorization. Mirrors hasRole's
+    // exact shape: branchAccess is a custom claim map { [organizationId]:
+    // [branchId, ...] }, synced from memberships/{organizationId}_{uid}'s
+    // own branchAccess field by resyncClaimsForUid
+    // (functions/src/staffMembership.ts) — never a client-supplied value.
+    // Organization membership alone is NOT sufficient for branch-scoped
+    // operational data (e.g. Orders/KDS) — see the `orders` match block
+    // below. No role-based bypass exists here for any role, including
+    // admin/tenantOwner — this mirrors the canonical membership model
+    // itself, which has no wildcard/"all branches" semantics (confirmed by
+    // direct inspection of staffMembership.ts before writing this: even
+    // bootstrapFirstAdminAccount's own admin membership starts with
+    // branchAccess: []). Fails closed structurally: a missing 'branchAccess'
+    // claim key, a missing organizationId entry, or a malformed (non-list)
+    // value all resolve to false via the same `in`-chain hasRole already
+    // established, not by caller discipline.
+    function hasBranchAccess(organizationId, branchId) {
+      return isOrgMember(organizationId) &&
+        ('branchAccess' in request.auth.token) &&
+        (organizationId in request.auth.token.branchAccess) &&
+        (branchId in request.auth.token.branchAccess[organizationId]);
+    }
+
     // Platform-level authorization uses a wholly separate claim namespace
     // from tenant roles/organizationAccess — mirrors PlatformActorSession's
     // "zero shared types with the tenant stack" design (ADR-025) at the
@@ -186,6 +209,284 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // Table Guest Session (QR table ordering, Phase 1) — a short-lived,
+    // server-authoritative record binding one anonymous (or later
+    // account-linked) Firebase Auth uid to exactly one organization/
+    // restaurant/branch/table for the duration of one physical table
+    // visit. Created exclusively by the `openTableGuestSession` Cloud
+    // Function, which independently re-resolves the scanned QR token
+    // server-side — a client's own organizationId/branchId/tableId claim
+    // is never the authorization source. `tableQrCodes`/`restaurantTables`
+    // (the collections that Function reads from) have no rule of their
+    // own here and are therefore covered by the fail-closed catch-all
+    // below — clients never read them directly, only through that
+    // Function's response.
+    //
+    // `orders` `create`/`read` are extended below (Phase 3) to accept a
+    // Table Guest Session in addition to — never instead of —
+    // `isOrgMember`-based staff authorization, which is completely
+    // untouched by this block.
+    // ---------------------------------------------------------------------
+
+    match /tableGuestSessions/{sessionId} {
+      // Only the session's own guest may ever read it — not org members,
+      // not other guests. A future staff "who's connected to this table"
+      // view would need its own, separately-approved read rule.
+      allow read: if isSignedIn() && resource.data.guestAuthUid == request.auth.uid;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
+    // Phase 3 — whether `sessionId` is a live, currently-usable Table
+    // Guest Session belonging to the caller. Every condition is checked
+    // against the server-written `tableGuestSessions` document itself,
+    // never against anything the order-create request claims about
+    // itself — this is the one place "request.auth.uid matches the
+    // session" and "the session hasn't expired/been revoked" are decided.
+    function isActiveTableGuestSession(sessionId) {
+      return isSignedIn() &&
+        sessionId is string &&
+        exists(/databases/$(database)/documents/tableGuestSessions/$(sessionId)) &&
+        get(/databases/$(database)/documents/tableGuestSessions/$(sessionId)).data.guestAuthUid == request.auth.uid &&
+        get(/databases/$(database)/documents/tableGuestSessions/$(sessionId)).data.status == 'active' &&
+        get(/databases/$(database)/documents/tableGuestSessions/$(sessionId)).data.expiresAt > request.time;
+    }
+
+    // Whether the order payload's own organization/restaurant/branch/table
+    // claims match the session's server-recorded scope for those same
+    // fields — the step that makes it impossible for a client to create an
+    // order "for" a different tenant/branch/table than the one their QR
+    // scan actually resolved to, no matter what it puts in the request
+    // body.
+    function tableGuestSessionMatchesOrderScope(sessionId, data) {
+      let session = get(/databases/$(database)/documents/tableGuestSessions/$(sessionId)).data;
+      return session.organizationId == data.organizationId &&
+        session.restaurantId == data.restaurantId &&
+        session.branchId == data.branchId &&
+        session.tableId == data.tableId &&
+        // Faz R.1C.2 §15 — exact reservationContextId equality, missing-
+        // field-safe (`.get(key, default)`) so a client can never bypass
+        // this by omitting the field from either side, coerce a real
+        // context id down to null, or claim a different reservation's
+        // context than the one the session was actually snapshotted with.
+        // `null == null` when neither side carries a context (the ordinary
+        // walk-in case) is the one case this must still allow.
+        session.get('reservationContextId', null) == data.get('reservationContextId', null);
+    }
+
+    // Faz R.3B §11/§14/§15 — a table-session order create must never be
+    // usable to place a NEW reservation-linked order once the referenced
+    // Reservation has gone terminal (cancelled/completed/noShow/rejected):
+    // the session itself is deliberately never deleted/killed on a
+    // terminal transition (its own read/lifetime behavior is preserved, an
+    // old session's immutable `reservationContextId` is never rewritten),
+    // but this rule is the actual invariant enforcement — every new order
+    // create checks the REFERENCED Reservation's own live `status`, not
+    // anything cached on the session. `reservationContextId == null` (the
+    // ordinary walk-in case) is always allowed, unaffected. A context that
+    // references a Reservation document that somehow doesn't exist fails
+    // closed (`exists(...)` first, never assumed).
+    function reservationContextIsOrderable(data) {
+      let reservationContextId = data.get('reservationContextId', null);
+      return reservationContextId == null ||
+        (exists(/databases/$(database)/documents/reservations/$(reservationContextId)) &&
+          get(/databases/$(database)/documents/reservations/$(reservationContextId)).data.status == 'confirmed');
+    }
+
+    // Phase 3.1 — whether the caller's Firebase Auth token was issued by a
+    // real phone-verification sign-in, never by `signInAnonymously()`.
+    // Empirically verified (this phase's own report) against the local
+    // Auth Emulator: `sign_in_provider` is `'anonymous'` for an anonymous
+    // sign-in and `'phone'` for a real phone sign-in — a claim Firebase
+    // itself issues based on the actual auth flow used, never something a
+    // client can set or fake. Checked as `== 'phone'` rather than the
+    // broader `!= 'anonymous'`: this app has exactly one real customer
+    // sign-in method today (phone OTP — `FirebaseAuthClient`), so the
+    // narrower, explicit allow-list doesn't silently start trusting some
+    // future sign-in method (e.g. email/password) without this rule being
+    // deliberately revisited.
+    function isRealCustomerAuth() {
+      return isSignedIn() &&
+        ('firebase' in request.auth.token) &&
+        ('sign_in_provider' in request.auth.token.firebase) &&
+        request.auth.token.firebase.sign_in_provider == 'phone';
+    }
+
+    // Variant A — an anonymous (or otherwise non-phone-verified) Table
+    // Guest Session order. `customerId` must be `null`: this is the one
+    // condition that keeps an anonymous guest from ever appearing as a
+    // real Abaküs customer, independent of `isRealCustomerAuth()` (a
+    // belt-and-suspenders pair, not a single point of failure).
+    function isValidGuestTableOrder(data) {
+      return data.tableSessionId is string &&
+        isActiveTableGuestSession(data.tableSessionId) &&
+        tableGuestSessionMatchesOrderScope(data.tableSessionId, data) &&
+        reservationContextIsOrderable(data) &&
+        data.customerId == null &&
+        data.guestAuthUid == request.auth.uid &&
+        data.channel == 'dineInQr' &&
+        (data.status == 'created' || data.status == 'pendingConfirmation');
+    }
+
+    // Variant B — a real, phone-verified Abaküs customer ordering at a
+    // table. Requires everything Variant A does (a live, owned, correctly-
+    // scoped Table Guest Session — customer identity is never a substitute
+    // for table authorization) **plus** `isRealCustomerAuth()` and
+    // `customerId == request.auth.uid`. The `isRealCustomerAuth()` check is
+    // what stops an anonymous guest from simply writing
+    // `customerId: request.auth.uid` to impersonate a customer — their
+    // token's `sign_in_provider` is `'anonymous'`, so this function is
+    // `false` for them regardless of what `customerId` value they claim.
+    function isValidAuthenticatedCustomerTableOrder(data) {
+      return isRealCustomerAuth() &&
+        data.tableSessionId is string &&
+        isActiveTableGuestSession(data.tableSessionId) &&
+        tableGuestSessionMatchesOrderScope(data.tableSessionId, data) &&
+        reservationContextIsOrderable(data) &&
+        data.customerId == request.auth.uid &&
+        data.guestAuthUid == request.auth.uid &&
+        data.channel == 'dineInQr' &&
+        (data.status == 'created' || data.status == 'pendingConfirmation');
+    }
+
+    // Faz C originally added `isValidAuthenticatedTakeawayOrder` here — a
+    // direct-client-create path for an authenticated in-app Gel Al order,
+    // validated entirely by rules-level shape checks (no session to
+    // anchor scope against, an `organizationId == 'org-1'` placeholder,
+    // no canonical catalog/pricing check possible from rules at all).
+    // **Removed, Faz D.3.1**: `submitTakeawayOrder` (Faz D.3, Admin SDK,
+    // bypasses rules by construction) is now the sole create path for an
+    // authenticated takeaway order — full server-authoritative canonical
+    // scope/pricing validation that no rules-only branch could ever
+    // provide. `docs/decisions.md` ADR-027 Faz D.3.1 records the removal.
+    // Every other branch below (staff, dine-in guest/authenticated) is
+    // completely unchanged — this was the one, isolated removal.
+
+    // Whether the caller may read `data` as the Table Guest Session
+    // identity who placed it — Phase 3.1: an immutable ownership snapshot
+    // on the order itself (`guestAuthUid`, set at create time regardless
+    // of whether the order also carries a real `customerId`), never a
+    // live join to `tableGuestSessions`. This is deliberately independent
+    // of that session document's continued existence or active/expired
+    // status — losing/expiring/cleaning up the session must never
+    // retroactively hide a guest's own order history for their visit.
+    function canReadAsTableGuest(data) {
+      return isSignedIn() && data.guestAuthUid == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------------
+    // Takeaway Guest Session (Gel Al QR, Faz D.2) — the takeaway analogue
+    // of the Table Guest Session block above, deliberately a SEPARATE
+    // collection rather than a reuse of `tableGuestSessions`: a takeaway
+    // visit has no table, and `isValidGuestTableOrder`/
+    // `tableGuestSessionMatchesOrderScope` above are shaped around
+    // `tableId` matching, which has no meaning here. Created exclusively
+    // by the `openTakeawayGuestSession` Cloud Function, which independently
+    // re-resolves the scanned QR token server-side against the real
+    // `organizations`/`restaurants`/`branches` canonical chain (Faz D.1/
+    // D.1.1) — a client's own organizationId/branchId claim is never the
+    // authorization source. `takeawayQrCodes` (the collection that
+    // Function reads from) has no rule of its own here either, for the
+    // exact same reason `tableQrCodes`/`restaurantTables` don't — both are
+    // therefore covered by the fail-closed catch-all below; clients never
+    // read them directly, only through that Function's minimized preview
+    // response.
+    //
+    // No `orders` branch is extended for takeaway guest sessions this
+    // phase — Faz D.2 is QR resolution + session creation only, no order
+    // create (that's Faz D.3, `submitTakeawayOrder`).
+    // ---------------------------------------------------------------------
+
+    match /takeawayGuestSessions/{sessionId} {
+      // Only the session's own guest may ever read it — mirrors
+      // `tableGuestSessions`'s exact same ownership rule.
+      allow read: if isSignedIn() && resource.data.guestAuthUid == request.auth.uid;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
+    // ---------------------------------------------------------------------
+    // Reservations — Faz R.1A (`docs/decisions.md` ADR-027 Faz R.0–R.0.7
+    // design). Unlike `orders`, there is deliberately **no** direct-client-
+    // create path here at all, not even a session-anchored one like
+    // `isValidGuestTableOrder` — Faz R.0.5 §14 made this an explicit
+    // backend-boundary decision: concurrency-safe capacity checking
+    // (`reservationSlotOccupancy`), the multi-step approval/hold workflow,
+    // and canonical scope resolution cannot be safely expressed as a
+    // rules-only shape check the way a single-write order sometimes can.
+    // `submitReservation` (Admin SDK, bypasses this file by construction)
+    // is the sole writer.
+    //
+    // `reservationAreas`/`reservationPolicies`/`reservationHolds`/
+    // `reservationSlotOccupancy` have no match block of their own below —
+    // covered by the fail-closed catch-all, mirroring `tableQrCodes`/
+    // `takeawayQrCodes`'s own precedent exactly: clients never read/write
+    // them directly, only through `submitReservation`'s own response.
+    // (`reservationAreas`/`reservationPolicies` client-read may be opened in
+    // a later phase once real UI needs to render them — not needed yet,
+    // not opened speculatively.)
+    // ---------------------------------------------------------------------
+
+    match /reservations/{reservationId} {
+      // A customer may read only their own reservation; org staff may read
+      // any reservation belonging to their tenant — mirrors `orders`' own
+      // dual read rule exactly (same two branches, same reasoning).
+      allow read: if isOrgMember(resource.data.organizationId) ||
+        (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow write: if false; // Cloud Function (Admin SDK) only — submitReservation.
+    }
+
+    // Reservation change proposals — Faz R.1B (`docs/decisions.md` ADR-027
+    // Faz R.1B design). Immutable audit trail; `respondToReservation`
+    // (create) / `respondToProposedChange` (accept/reject) /
+    // `reservationSweep` (expire) are the sole writers, all Admin SDK. Org
+    // staff may read a proposal belonging to their tenant — the same
+    // dual-read shape `reservations` uses is deliberately not extended to
+    // the owning customer here: no UI exists yet to consume it (Faz R.1B's
+    // own explicit "UI YAZMA" constraint), so customer-facing read access
+    // is deferred to that later phase rather than opened speculatively,
+    // mirroring this file's own precedent for `reservationAreas`/
+    // `reservationPolicies` above.
+    match /reservationChangeProposals/{proposalId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
+    // Physical table assignment data — Faz R.1C.1 (`docs/decisions.md`
+    // ADR-027 Faz R.1C.1 design). `assignReservationTable` (Admin SDK) is
+    // the sole writer of all three. Org-staff read only — same reasoning
+    // as `reservationChangeProposals` above (no UI exists yet; customer-
+    // facing read is deliberately not opened). `reservationTableOccupancy`/
+    // `tableProtectionMinuteBuckets` carry no `organizationId` field of
+    // their own read-cheaply-available at the document (they do carry one,
+    // denormalized at write time) — read is still org-scoped exactly like
+    // every other collection here.
+    match /reservationTableOccupancy/{bucketId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /reservationTableProtections/{reservationId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /tableProtectionMinuteBuckets/{bucketId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
+    // Active reservation table context — Faz R.1C.2 §4/§19.
+    // `openReservationTable`/`closeReservationTable` (Admin SDK) are the
+    // sole writers. Org-staff read only — the customer never needs to read
+    // this collection directly; `tableGuestSessions.reservationContextId`
+    // (an immutable snapshot taken server-side at session-open time) is
+    // the only place this context's existence is ever visible to a client,
+    // and even that is never the raw reservationId being confirmed as
+    // "belongs to a real reservation" beyond what the order-scope match
+    // above already requires.
+    match /activeReservationTableContext/{tableId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
+    // ---------------------------------------------------------------------
     // Orders — the one canonical Order aggregate (Sprint 9D). Creation is
     // client-initiated (staff at POS, an authenticated customer, a QR
     // guest session) but every field is validated server-side by shape;
@@ -198,12 +499,32 @@ service cloud.firestore {
       // A customer may read their own order (Phase 9K, `docs/decisions.md`
       // ADR-026) — the customer-facing Orders/Order-Detail screens query
       // `CanonicalOrderRepository.findByCustomerId(uid)`, which requires
-      // this. Org-member (staff) read is unchanged. Neither branch grants
-      // write — `create`/`update`/`delete` below are untouched, so this
-      // does not widen who can ever modify an order, only who can read
-      // their own.
-      allow read: if isOrgMember(resource.data.organizationId) ||
-        (isSignedIn() && resource.data.customerId == request.auth.uid);
+      // this. This same branch already covers a real customer's Table
+      // Guest Session order too (Phase 3.1 Variant B sets `customerId ==
+      // request.auth.uid`, exactly like any other customer order — no
+      // separate read logic needed for it). An anonymous Table Guest order
+      // (`customerId == null`) instead reads via `canReadAsTableGuest`'s
+      // immutable `guestAuthUid` ownership snapshot. Neither of these two
+      // branches is affected by the staff branch below — write
+      // (`create`/`update`/`delete`) remains completely untouched by this
+      // whole match block.
+      //
+      // **Staff branch — Faz R.3C.2, tightened.** Organization membership
+      // alone is no longer sufficient for this branch-operational
+      // collection: audited and confirmed (Faz R.3C.1) that org-only
+      // access let any staff member in an organization read every branch's
+      // orders, including branches they have no operational reason to see
+      // — unacceptable for the multi-branch SaaS architecture. Now also
+      // requires `hasBranchAccess` for the order's own `branchId`, sourced
+      // from the same canonical `memberships`-derived custom claim
+      // `hasRole` already uses, never a client-supplied query parameter —
+      // a caller cannot expand their own authority by choosing what
+      // `branchId` to query for; the rule checks the DOCUMENT's own
+      // `branchId`, not anything the query claimed to be scoped to.
+      allow read: if (isOrgMember(resource.data.organizationId) &&
+          hasBranchAccess(resource.data.organizationId, resource.data.branchId)) ||
+        (isSignedIn() && resource.data.customerId == request.auth.uid) ||
+        canReadAsTableGuest(resource.data);
       // Both 'created' and 'pendingConfirmation' are accepted at create
       // time — closed during the Phase 9 adversarial security review:
       // the real Dart client (SubmitPosOrder/SubmitCustomerOrder) builds
@@ -217,9 +538,29 @@ service cloud.firestore {
       // never forge any transition after the single create write, and
       // 'created' alone (without number-only progression) still can't
       // reach any further state on its own.
-      allow create: if isOrgMember(request.resource.data.organizationId) &&
-        (request.resource.data.status == 'created' ||
-          request.resource.data.status == 'pendingConfirmation');
+      //
+      // Phase 3/3.1 add two more independent ways to satisfy this rule —
+      // an anonymous Table Guest order (`isValidGuestTableOrder`) and a
+      // real-customer Table Guest order (`isValidAuthenticatedCustomerTableOrder`)
+      // — for the QR-guest/dine-in channel this PERMISSION_DENIED bug
+      // report was about. The original `isOrgMember` branch is completely
+      // unmodified: a staff/POS create that already worked continues to
+      // work exactly as before, evaluated first, independently of both
+      // new branches.
+      //
+      // Faz C had added one more independent branch here —
+      // `isValidAuthenticatedTakeawayOrder`, for an authenticated in-app
+      // Gel Al order — **removed, Faz D.3.1**: that order type is now
+      // created exclusively via `submitTakeawayOrder` (Admin SDK, bypasses
+      // this rule entirely), never a direct client `create`. No takeaway
+      // channel value can satisfy this rule anymore, from any actor.
+      // Every other branch below is unchanged.
+      allow create: if
+        (isOrgMember(request.resource.data.organizationId) &&
+          (request.resource.data.status == 'created' ||
+            request.resource.data.status == 'pendingConfirmation')) ||
+        isValidGuestTableOrder(request.resource.data) ||
+        isValidAuthenticatedCustomerTableOrder(request.resource.data);
       allow update: if false; // Cloud Function only — every status
                                // transition after creation is
                                // server-authoritative (Sprint 9F).
@@ -265,9 +606,48 @@ service cloud.firestore {
 
     match /deviceTokens/{tokenId} {
       allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      // Faz R.3C.1 — `create` moved Cloud-Function-only (`registerDeviceToken.ts`).
+      // A direct client create — even scoped to the caller's own uid, as
+      // this rule previously allowed — cannot detect that another,
+      // already-existing document holds the identical `token` *value*
+      // under a different owner: per-document rules have no primitive for
+      // "is there another document anywhere in this collection with this
+      // field value," only a server-side transaction across the whole
+      // collection can check that. Client `create` here would silently
+      // reintroduce a token active under two customers at once — the
+      // exact defect this Faz fixed. `read`/`update`/`delete` for a
+      // caller's own uid are unchanged: `RevokeDeviceTokensForUser`'s
+      // logout-time self-revocation still only ever touches a caller's
+      // own already-owned documents, which has no such cross-visibility
+      // problem.
+      allow create: if false;
       allow update: if isSignedIn() && resource.data.uid == request.auth.uid &&
         organizationIdUnchanged();
+    }
+
+    // ---------------------------------------------------------------------
+    // Customer delivery addresses (Faz P.2) — a customer manages only
+    // their own saved addresses. Provider-verification fields
+    // (verificationStatus/verifiedAt/providerSource/providerPlaceId/
+    // provinceName/districtName/neighborhoodName/streetName/buildingNo/
+    // buildingNoSource/latitude/longitude/formattedAddress) are
+    // server-owned — only `saveDeliveryAddress` (Admin SDK, bypasses
+    // these rules entirely) ever writes them. A direct client write can
+    // only touch the explicitly listed user-owned metadata fields, so a
+    // client can never self-mark an address `verified` or forge any
+    // canonical/provider field — see `docs/decisions.md` Faz P.2 for the
+    // full reasoning (mirrors `customers/{uid}`'s own allow-list-not-
+    // deny-list update pattern above).
+    // ---------------------------------------------------------------------
+
+    match /customerAddresses/{addressId} {
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if false; // Cloud Function only — saveDeliveryAddress.
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['label', 'isDefault', 'apartmentNo', 'floor',
+                    'addressDescription', 'buildingNoOverride', 'updatedAt']);
     }
 
     // ---------------------------------------------------------------------

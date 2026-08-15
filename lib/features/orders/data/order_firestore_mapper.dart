@@ -1,6 +1,10 @@
 import '../../../shared/models/currency.dart';
 import '../../../shared/models/money.dart';
+import '../../payment/domain/models/payment_method_reporting_category.dart';
+import '../../payment/domain/models/payment_method_snapshot.dart';
+import '../../payment/domain/models/payment_provider_id.dart';
 import '../domain/models/courier_visibility.dart';
+import '../domain/models/delivery_address_snapshot.dart';
 import '../domain/models/order.dart';
 import '../domain/models/order_actor.dart';
 import '../domain/models/order_audit_entry.dart';
@@ -11,6 +15,7 @@ import '../domain/models/order_line_modifier_selection.dart';
 import '../domain/models/order_number.dart';
 import '../domain/models/order_status.dart';
 import '../domain/models/order_timestamps.dart';
+import '../domain/models/pickup_mode.dart';
 import '../domain/pricing/price_breakdown.dart';
 import '../domain/pricing/tax_rate.dart';
 
@@ -56,6 +61,28 @@ abstract final class OrderFirestoreMapper {
       'tableId': order.tableId,
       'tableSessionId': order.tableSessionId,
       'guestSessionId': order.guestSessionId,
+      'guestAuthUid': order.guestAuthUid,
+      'reservationContextId': order.reservationContextId,
+      'takeawayEntrySessionId': order.takeawayEntrySessionId,
+      'pickupMode': order.pickupMode?.name,
+      'pickupTime': order.pickupTime?.toIso8601String(),
+      // A raw DateTime (not a string) so the real `cloud_firestore` write
+      // path stores this as a native Firestore Timestamp — Faz C. This is
+      // the one field `firestore.rules`' `isValidAuthenticatedTakeawayOrder`
+      // actually compares against `request.time` for the NOW+20 minimum
+      // pickup-lead-time check; `request.time` is itself a `timestamp`
+      // value and cannot be compared against the ISO-string `pickupTime`
+      // field above (which stays a string, matching every other date field
+      // on this document — `OrderTimestamps`' own fields included — so
+      // display/parsing code has exactly one convention to follow). This
+      // shadow field is write-only for rules' benefit: [fromFirestore]
+      // deliberately never reads it back — it carries no information
+      // `pickupTime` doesn't already have, it's just typed differently for
+      // the one consumer (Security Rules) that needs a native Timestamp.
+      'pickupTimeTimestamp': order.pickupTime,
+      'contactFirstName': order.contactFirstName,
+      'contactLastName': order.contactLastName,
+      'contactPhone': order.contactPhone,
       'courierVisibility': order.courierVisibility.name,
       'lines': [for (final line in order.lines) _lineToFirestore(line)],
       'pricing': _priceBreakdownToFirestore(order.pricing),
@@ -66,6 +93,12 @@ abstract final class OrderFirestoreMapper {
       'timestamps': _timestampsToFirestore(order.timestamps),
       'customerNote': order.customerNote,
       'kitchenNote': order.kitchenNote,
+      'deliveryAddressSnapshot': order.deliveryAddressSnapshot == null
+          ? null
+          : _deliveryAddressSnapshotToFirestore(order.deliveryAddressSnapshot!),
+      'paymentMethodSnapshot': order.paymentMethodSnapshot == null
+          ? null
+          : _paymentMethodSnapshotToFirestore(order.paymentMethodSnapshot!),
     };
   }
 
@@ -81,6 +114,14 @@ abstract final class OrderFirestoreMapper {
       tableId: data['tableId'] as String?,
       tableSessionId: data['tableSessionId'] as String?,
       guestSessionId: data['guestSessionId'] as String?,
+      guestAuthUid: data['guestAuthUid'] as String?,
+      reservationContextId: data['reservationContextId'] as String?,
+      takeawayEntrySessionId: data['takeawayEntrySessionId'] as String?,
+      pickupMode: _pickupModeFromName(data['pickupMode'] as String?),
+      pickupTime: _parseNullableDateTime(data['pickupTime'] as String?),
+      contactFirstName: data['contactFirstName'] as String?,
+      contactLastName: data['contactLastName'] as String?,
+      contactPhone: data['contactPhone'] as String?,
       courierVisibility:
           _courierVisibilityFromName(data['courierVisibility'] as String),
       lines: [
@@ -98,6 +139,14 @@ abstract final class OrderFirestoreMapper {
           Map<String, dynamic>.from(data['timestamps'] as Map)),
       customerNote: data['customerNote'] as String? ?? '',
       kitchenNote: data['kitchenNote'] as String? ?? '',
+      deliveryAddressSnapshot: data['deliveryAddressSnapshot'] == null
+          ? null
+          : _deliveryAddressSnapshotFromFirestore(Map<String, dynamic>.from(
+              data['deliveryAddressSnapshot'] as Map)),
+      paymentMethodSnapshot: data['paymentMethodSnapshot'] == null
+          ? null
+          : _paymentMethodSnapshotFromFirestore(
+              Map<String, dynamic>.from(data['paymentMethodSnapshot'] as Map)),
     );
   }
 
@@ -263,4 +312,110 @@ abstract final class OrderFirestoreMapper {
 
   static CourierVisibility _courierVisibilityFromName(String name) =>
       CourierVisibility.values.byName(name);
+
+  /// `null` for both a genuinely absent value and a pre-Faz-B document that
+  /// has no `pickupMode` key at all — the same "missing key reads as no
+  /// value" backward-compatibility every other additive nullable field on
+  /// this mapper already relies on (see [fromFirestore]'s `String?` casts).
+  static PickupMode? _pickupModeFromName(String? name) =>
+      name == null ? null : PickupMode.values.byName(name);
+
+  static DateTime? _parseNullableDateTime(String? iso) =>
+      iso == null ? null : DateTime.parse(iso);
+
+  static Map<String, dynamic> _deliveryAddressSnapshotToFirestore(
+      DeliveryAddressSnapshot snapshot) {
+    return {
+      'savedAddressId': snapshot.savedAddressId,
+      'label': snapshot.label,
+      'provinceId': snapshot.provinceId,
+      'provinceName': snapshot.provinceName,
+      'districtId': snapshot.districtId,
+      'districtName': snapshot.districtName,
+      'neighborhoodId': snapshot.neighborhoodId,
+      'neighborhoodName': snapshot.neighborhoodName,
+      'streetId': snapshot.streetId,
+      'streetName': snapshot.streetName,
+      'buildingNo': snapshot.buildingNo,
+      'buildingNoSource': snapshot.buildingNoSource,
+      'apartmentNo': snapshot.apartmentNo,
+      'floor': snapshot.floor,
+      'addressDescription': snapshot.addressDescription,
+      'latitude': snapshot.latitude,
+      'longitude': snapshot.longitude,
+      'providerSource': snapshot.providerSource,
+      'providerPlaceId': snapshot.providerPlaceId,
+      'serverVerifiedAt': snapshot.serverVerifiedAt.toIso8601String(),
+    };
+  }
+
+  static DeliveryAddressSnapshot _deliveryAddressSnapshotFromFirestore(
+      Map<String, dynamic> data) {
+    return DeliveryAddressSnapshot(
+      savedAddressId: data['savedAddressId'] as String,
+      label: data['label'] as String,
+      provinceId: data['provinceId'] as String,
+      provinceName: data['provinceName'] as String,
+      districtId: data['districtId'] as String,
+      districtName: data['districtName'] as String,
+      neighborhoodId: data['neighborhoodId'] as String?,
+      neighborhoodName: data['neighborhoodName'] as String?,
+      streetId: data['streetId'] as String?,
+      streetName: data['streetName'] as String?,
+      buildingNo: data['buildingNo'] as String?,
+      buildingNoSource: data['buildingNoSource'] as String?,
+      apartmentNo: data['apartmentNo'] as String,
+      floor: data['floor'] as String?,
+      addressDescription: data['addressDescription'] as String?,
+      latitude: (data['latitude'] as num).toDouble(),
+      longitude: (data['longitude'] as num).toDouble(),
+      providerSource: data['providerSource'] as String,
+      providerPlaceId: data['providerPlaceId'] as String?,
+      serverVerifiedAt: DateTime.parse(data['serverVerifiedAt'] as String),
+    );
+  }
+
+  static Map<String, dynamic> _paymentMethodSnapshotToFirestore(
+      PaymentMethodSnapshot snapshot) {
+    return {
+      'paymentMethodId': snapshot.paymentMethodId,
+      'displayName': snapshot.displayName,
+      'iconAssetPath': snapshot.iconAssetPath,
+      'brandColorValue': snapshot.brandColorValue,
+      'reportingCategory': snapshot.reportingCategory.name,
+      'providerId': snapshot.providerId?.name,
+      'supportsSplitPaymentAtCapture': snapshot.supportsSplitPaymentAtCapture,
+      'supportsRefundAtCapture': snapshot.supportsRefundAtCapture,
+      'requiresReferenceNumberAtCapture':
+          snapshot.requiresReferenceNumberAtCapture,
+      'requiresApprovalAtCapture': snapshot.requiresApprovalAtCapture,
+      'transactionReference': snapshot.transactionReference,
+      'authorizationCode': snapshot.authorizationCode,
+      'terminalId': snapshot.terminalId,
+    };
+  }
+
+  static PaymentMethodSnapshot _paymentMethodSnapshotFromFirestore(
+      Map<String, dynamic> data) {
+    return PaymentMethodSnapshot(
+      paymentMethodId: data['paymentMethodId'] as String,
+      displayName: data['displayName'] as String,
+      iconAssetPath: data['iconAssetPath'] as String,
+      brandColorValue: data['brandColorValue'] as int,
+      reportingCategory: PaymentMethodReportingCategory.values
+          .byName(data['reportingCategory'] as String),
+      providerId: data['providerId'] == null
+          ? null
+          : PaymentProviderId.values.byName(data['providerId'] as String),
+      supportsSplitPaymentAtCapture:
+          data['supportsSplitPaymentAtCapture'] as bool,
+      supportsRefundAtCapture: data['supportsRefundAtCapture'] as bool,
+      requiresReferenceNumberAtCapture:
+          data['requiresReferenceNumberAtCapture'] as bool,
+      requiresApprovalAtCapture: data['requiresApprovalAtCapture'] as bool,
+      transactionReference: data['transactionReference'] as String?,
+      authorizationCode: data['authorizationCode'] as String?,
+      terminalId: data['terminalId'] as String?,
+    );
+  }
 }

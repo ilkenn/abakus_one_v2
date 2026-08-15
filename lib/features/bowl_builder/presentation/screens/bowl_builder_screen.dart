@@ -2,23 +2,44 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/layout/app_breakpoints.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
-import '../../../../shared/widgets/layout/app_section_header.dart';
+import '../../../../shared/models/currency.dart';
+import '../../../../shared/models/money.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
+import '../../../cart/presentation/providers/shopping_channel_provider.dart';
+import '../../../menu/domain/pricing/channel_price_resolver.dart';
+import '../../../menu/domain/pricing/channel_pricing_policy.dart';
+import '../../../menu/presentation/providers/channel_price_display_provider.dart';
 import '../../data/bowl_builder_catalog.dart';
 import '../../domain/models/bowl_builder_category.dart';
 import '../../domain/models/bowl_builder_step.dart';
 import '../providers/bowl_builder_provider.dart';
 import '../providers/bowl_builder_recipe_provider.dart';
+import '../widgets/bowl_builder_action_bar.dart';
+import '../widgets/bowl_builder_category_selector.dart';
+import '../widgets/bowl_builder_live_metrics.dart';
 import '../widgets/bowl_canvas.dart';
-import '../widgets/builder_progress.dart';
+import '../widgets/build_your_bowl_hero.dart';
 import '../widgets/builder_summary.dart';
 import '../widgets/ingredient_card.dart';
 
+/// Bowl Builder v2 — category-driven redesign (2026-08-08). Replaces the
+/// old linear "Adım N/9" wizard (`BuilderProgress`, forced Geri/Devam Et)
+/// with free-roaming navigation: a horizontal category selector the
+/// customer can jump around in at any time, a hero + price/nutrition
+/// dashboard, and a persistent bottom action bar. The underlying state
+/// machine — `BowlBuilderStep`, `bowlBuilderProvider`'s selection/quantity/
+/// pricing rules, cart and recipe-snapshot wiring — is unchanged; this
+/// screen only reinterprets `state.currentStep` as "which category is
+/// active" instead of "which step of a linear form".
+///
+/// The main editing screen's hero is [BuildYourBowlHero] — a static
+/// approved banner (Bowl Builder Static Hero task, 2026-08-08), not a live
+/// `BowlCanvas` preview. `BowlCanvas` itself is untouched and still drives
+/// the live preview on the Summary step below.
 class BowlBuilderScreen extends ConsumerStatefulWidget {
   const BowlBuilderScreen({super.key});
 
@@ -48,17 +69,34 @@ class _BowlBuilderScreenState extends ConsumerState<BowlBuilderScreen> {
     final unitPrice = ref.read(bowlBuilderTotalPriceProvider);
     final id = 'custom_bowl_${DateTime.now().millisecondsSinceEpoch}';
 
+    // Gel Al (Faz C): the channel adjustment (+20 TL default) applies
+    // exactly once per bowl unit, never per ingredient — computed here as
+    // a standalone amount (ingredientTotal fed in as zero) and added to
+    // the item's own base `price`, since `selectedModifiers` already
+    // carries the full ingredient sum and `CartItem.unitPrice` would
+    // otherwise double-count it. Resolves to 0 for every non-takeaway
+    // channel (today's dine-in/delivery), so the "no starting price"
+    // product decision (2026-07-23) is unchanged outside Gel Al.
+    final channelContext = ref.read(shoppingChannelProvider);
+    final policy = ref.read(channelPricingPolicySnapshotProvider).valueOrNull ??
+        const ChannelPricingPolicy();
+    final channelAdjustment = ChannelPriceResolver.resolveBowlUnitPrice(
+      ingredientTotal: Money.zero(Currency.tryLira),
+      channel: channelContext.channel,
+      policy: policy,
+    );
+    final channelAdjustmentDouble = channelAdjustment.minorUnits /
+        channelAdjustment.currency.minorUnitsPerWhole;
+
     ref.read(cartProvider.notifier).addToCart(
           id: id,
           name: 'Kendi Bowlun',
           desc: selectedModifiers.map((m) => m.optionName).join(', '),
-          // Bowl Builder has no starting price (product decision,
-          // 2026-07-23) — the entire cost is carried by selectedModifiers,
-          // so the item's own base price is 0.
-          price: 0,
+          price: channelAdjustmentDouble,
           quantity: state.quantity,
           selectedModifiers: selectedModifiers,
           note: state.note.trim(),
+          pricedForChannel: channelContext.channel,
         );
 
     // Records an immutable Phase 7H recipe snapshot for this bowl at
@@ -91,17 +129,46 @@ class _BowlBuilderScreenState extends ConsumerState<BowlBuilderScreen> {
     Navigator.pop(context);
   }
 
+  Future<void> _handleReset(BuildContext context, WidgetRef ref) async {
+    final state = ref.read(bowlBuilderProvider);
+    if (state.selectedQuantitiesByIngredient.isEmpty) {
+      ref.read(bowlBuilderProvider.notifier).reset();
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Bowlu Sıfırla'),
+        content: const Text(
+          'Seçtiğin tüm malzemeler kaldırılacak. Emin misin?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Vazgeç'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sıfırla'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    ref.read(bowlBuilderProvider.notifier).reset();
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(bowlBuilderProvider);
     final catalog = ref.watch(bowlBuilderCatalogRepositoryProvider);
     final grandTotal = ref.watch(bowlBuilderGrandTotalProvider);
+    final totalCalories = ref.watch(bowlBuilderTotalCaloriesProvider);
+    final totalProtein = ref.watch(bowlBuilderTotalProteinProvider);
     final selectedModifiers = ref.watch(bowlBuilderSelectedModifiersProvider);
 
-    const steps = BowlBuilderStep.values;
-    final stepIndex = steps.indexOf(state.currentStep);
     final isSummaryStep = state.currentStep == BowlBuilderStep.summary;
-    final isFirstStep = stepIndex == 0;
     final currentCategory =
         isSummaryStep ? null : _categoryById(catalog, state.currentStep.name);
 
@@ -115,220 +182,154 @@ class _BowlBuilderScreenState extends ConsumerState<BowlBuilderScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         foregroundColor: AppColors.textPrimary,
+        actions: [
+          TextButton(
+            onPressed: () => _handleReset(context, ref),
+            child: const Text('Sıfırla'),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Column(
           children: [
+            // Always visible, always jumpable — no forced linear
+            // progression through categories.
             Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.xl,
                 vertical: AppSpacing.md,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isSummaryStep
-                        ? 'Özet'
-                        : 'Adım ${stepIndex + 1}/${steps.length - 1} · ${currentCategory?.name ?? ''}',
-                    style: AppTypography.labelLarge.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  BuilderProgress(
-                    currentIndex: stepIndex,
-                    totalSteps: steps.length,
-                  ),
-                ],
+              child: BowlBuilderCategorySelector(
+                categories: catalog.categories,
+                currentStep: state.currentStep,
+                onCategorySelected: (step) =>
+                    ref.read(bowlBuilderProvider.notifier).goToStep(step),
               ),
             ),
-            // Live preview while picking — hidden on the summary step,
-            // which already shows the same BowlCanvas at full size below.
-            // Sits outside the AnimatedSwitcher'd step content on purpose:
-            // it must stay mounted across step navigation so its per-layer
-            // enter/exit animations only ever fire on an actual ingredient
-            // change, never on switching steps.
-            if (!isSummaryStep)
-              const Padding(
-                padding: EdgeInsets.fromLTRB(
-                  AppSpacing.xl,
-                  0,
-                  AppSpacing.xl,
-                  AppSpacing.md,
-                ),
-                child: SizedBox(
-                  height: 120,
-                  child: ClipRRect(
-                    borderRadius: AppRadius.kMedium,
-                    child: ColoredBox(
-                      color: AppColors.surfaceVariant,
-                      child: BowlCanvas(),
-                    ),
-                  ),
-                ),
-              ),
             Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 260),
-                transitionBuilder: (child, animation) => FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0.04, 0),
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: child,
-                  ),
-                ),
-                child: KeyedSubtree(
-                  key: ValueKey(state.currentStep),
-                  child: isSummaryStep
-                      ? SingleChildScrollView(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.xl,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              const AspectRatio(
-                                aspectRatio: 1,
-                                child: ClipRRect(
-                                  borderRadius: AppRadius.kLarge,
-                                  child: ColoredBox(
-                                    color: AppColors.surfaceVariant,
-                                    child: BowlCanvas(),
-                                  ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Static editorial hero + live dashboard — hidden on
+                    // the summary step, which still shows its own live
+                    // BowlCanvas + BowlBuilderLiveMetrics below (Bowl
+                    // Builder Static Hero task, 2026-08-08: only the main
+                    // editing screen's hero swapped from a live preview to
+                    // the approved static banner; Summary is unchanged).
+                    if (!isSummaryStep) ...[
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          AppSpacing.xl,
+                          0,
+                          AppSpacing.xl,
+                          AppSpacing.md,
+                        ),
+                        child: BuildYourBowlHero(),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: AppSpacing.xl,
+                        ),
+                        child: BowlBuilderLiveMetrics(),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 260),
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: animation,
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0.04, 0),
+                            end: Offset.zero,
+                          ).animate(animation),
+                          child: child,
+                        ),
+                      ),
+                      child: KeyedSubtree(
+                        key: ValueKey(state.currentStep),
+                        child: isSummaryStep
+                            ? Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: AppSpacing.xl,
                                 ),
-                              ),
-                              const SizedBox(height: AppSpacing.lg),
-                              BuilderSummary(
-                                selectedModifiers: selectedModifiers,
-                                grandTotal: grandTotal,
-                                quantity: state.quantity,
-                                onIncrement: () => ref
-                                    .read(bowlBuilderProvider.notifier)
-                                    .incrementQuantity(),
-                                onDecrement: () => ref
-                                    .read(bowlBuilderProvider.notifier)
-                                    .decrementQuantity(),
-                                noteController: _noteController,
-                                onNoteChanged: (value) => ref
-                                    .read(bowlBuilderProvider.notifier)
-                                    .setNote(value),
-                              ),
-                            ],
-                          ),
-                        )
-                      : _CategoryStepBody(category: currentCategory!),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    const AspectRatio(
+                                      aspectRatio: 1,
+                                      child: ClipRRect(
+                                        borderRadius: AppRadius.kLarge,
+                                        child: ColoredBox(
+                                          color: AppColors.background,
+                                          child: BowlCanvas(),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: AppSpacing.lg),
+                                    BuilderSummary(
+                                      selectedModifiers: selectedModifiers,
+                                      grandTotal: grandTotal,
+                                      quantity: state.quantity,
+                                      onIncrement: () => ref
+                                          .read(bowlBuilderProvider.notifier)
+                                          .incrementQuantity(),
+                                      onDecrement: () => ref
+                                          .read(bowlBuilderProvider.notifier)
+                                          .decrementQuantity(),
+                                      noteController: _noteController,
+                                      onNoteChanged: (value) => ref
+                                          .read(bowlBuilderProvider.notifier)
+                                          .setNote(value),
+                                    ),
+                                    const SizedBox(height: AppSpacing.xl),
+                                  ],
+                                ),
+                              )
+                            : _IngredientCarousel(category: currentCategory!),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
           ],
         ),
       ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(AppSpacing.xl),
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          border: Border(top: BorderSide(color: AppColors.border)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (!isSummaryStep) ...[
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        'Toplam (şu ana kadar)',
-                        style: AppTypography.bodySmall.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 200),
-                      transitionBuilder: (child, animation) => ScaleTransition(
-                        scale: animation,
-                        child: FadeTransition(opacity: animation, child: child),
-                      ),
-                      child: Text(
-                        '${grandTotal.toStringAsFixed(0)} TL',
-                        key: ValueKey(grandTotal),
-                        style: AppTypography.priceMedium,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-              ],
-              Row(
-                children: [
-                  if (!isFirstStep) ...[
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => ref
-                            .read(bowlBuilderProvider.notifier)
-                            .previousStep(),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            vertical: AppSpacing.md,
-                          ),
-                        ),
-                        child: const Text('Geri'),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                  ],
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton(
-                      onPressed: isSummaryStep
-                          ? () => _addToCart(context, ref)
-                          : () =>
-                              ref.read(bowlBuilderProvider.notifier).nextStep(),
-                      style: ElevatedButton.styleFrom(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: AppSpacing.md),
-                      ),
-                      child: Text(
-                        isSummaryStep
-                            ? 'Sepete Ekle · ${grandTotal.toStringAsFixed(0)} TL'
-                            : 'Devam Et',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+      bottomNavigationBar: BowlBuilderActionBar(
+        isSummary: isSummaryStep,
+        grandTotal: grandTotal,
+        totalCalories: totalCalories,
+        totalProtein: totalProtein,
+        onPrimaryAction: isSummaryStep
+            ? () => _addToCart(context, ref)
+            : () => ref
+                .read(bowlBuilderProvider.notifier)
+                .goToStep(BowlBuilderStep.summary),
       ),
     );
   }
 }
 
-/// One category step's body — a responsive grid of [IngredientCard]s.
-/// Phones stay single-column on purpose (large food photography sells the
-/// experience harder than a thumbnail); tablets and wider get more columns
-/// since there's room without shrinking photos down (see [AppBreakpoints]).
+/// One category's ingredient list — a fixed-card-width horizontal
+/// carousel (`IngredientCard.width`) that shows ~2.2–2.6 cards on a phone
+/// viewport and simply more of them on a wider one, with no separate
+/// breakpoint/grid layout needed (v2 redesign, replaces the old
+/// `SliverGrid`-based `_CategoryStepBody`).
 ///
 /// No category is required and none has a cap, so this is purely a
 /// rendering choice: Proteinler/Karbonhidratlar cards show an always-visible
-/// +/- stepper (the same ingredient can be added any number of times);
-/// every other category's cards are a single tap-to-toggle (one portion,
-/// tap again to remove, unlimited distinct ingredients).
-class _CategoryStepBody extends ConsumerWidget {
+/// +/- stepper once selected (the same ingredient can be added any number of
+/// times); every other category's cards are a single tap-to-toggle (one
+/// portion, tap again to remove, unlimited distinct ingredients).
+class _IngredientCarousel extends ConsumerWidget {
   final BowlBuilderCategory category;
 
-  const _CategoryStepBody({required this.category});
+  static const double _carouselHeight = 400;
+
+  const _IngredientCarousel({required this.category});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -336,99 +337,81 @@ class _CategoryStepBody extends ConsumerWidget {
     final state = ref.watch(bowlBuilderProvider);
     final notifier = ref.read(bowlBuilderProvider.notifier);
     final ingredients = catalog.ingredientsFor(category.id);
+    final displayName = category.displayName ?? category.name;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final gridDelegate = _gridDelegateFor(
-          constraints.maxWidth - AppSpacing.xl * 2,
-          hasStepper: category.allowsQuantity,
-        );
-
-        return CustomScrollView(
-          slivers: [
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-              sliver: SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.md),
-                  child: AppSectionHeader(
-                    title: category.name,
-                    subtitle: category.allowsQuantity
-                        ? 'İstediğin kadar ekleyebilirsin — her biri kendi fiyatını ekler.'
-                        : 'İstediğin kadar malzeme seçebilirsin, her biri kendi fiyatını ekler.',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$displayName Seç',
+                style: AppTypography.titleLarge.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              // Only where behavior genuinely differs — quantity
+              // categories let you add the same ingredient more than
+              // once; every other category doesn't need this explained.
+              if (category.allowsQuantity) ...[
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'Birden fazla porsiyon ekleyebilirsin.',
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
                   ),
                 ),
-              ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-              sliver: SliverGrid(
-                gridDelegate: gridDelegate,
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final ingredient = ingredients[index];
-                    return RepaintBoundary(
-                      child: category.allowsQuantity
-                          ? IngredientCard(
-                              name: ingredient.name,
-                              price: ingredient.price,
-                              imageKey: ingredient.imageKey,
-                              quantity: state.quantityFor(ingredient.id),
-                              allowsQuantity: true,
-                              onIncrement: () =>
-                                  notifier.incrementIngredient(ingredient.id),
-                              onDecrement: () =>
-                                  notifier.decrementIngredient(ingredient.id),
-                            )
-                          : IngredientCard(
-                              name: ingredient.name,
-                              price: ingredient.price,
-                              imageKey: ingredient.imageKey,
-                              quantity: state.quantityFor(ingredient.id),
-                              allowsQuantity: false,
-                              onTap: () =>
-                                  notifier.toggleIngredient(ingredient.id),
-                            ),
-                    );
-                  },
-                  childCount: ingredients.length,
-                ),
-              ),
-            ),
-            const SliverPadding(
-              padding: EdgeInsets.only(bottom: AppSpacing.xl),
-            ),
-          ],
-        );
-      },
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        SizedBox(
+          height: _carouselHeight,
+          child: ListView.separated(
+            key: const Key('ingredientCarouselListView'),
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+            itemCount: ingredients.length,
+            separatorBuilder: (context, index) =>
+                const SizedBox(width: AppSpacing.md),
+            itemBuilder: (context, index) {
+              final ingredient = ingredients[index];
+              return RepaintBoundary(
+                child: category.allowsQuantity
+                    ? IngredientCard(
+                        name: ingredient.name,
+                        price: ingredient.price,
+                        imageKey: ingredient.imageKey,
+                        quantity: state.quantityFor(ingredient.id),
+                        allowsQuantity: true,
+                        caloriesKcal: ingredient.caloriesKcal,
+                        proteinGrams: ingredient.proteinGrams,
+                        onIncrement: () =>
+                            notifier.incrementIngredient(ingredient.id),
+                        onDecrement: () =>
+                            notifier.decrementIngredient(ingredient.id),
+                      )
+                    : IngredientCard(
+                        name: ingredient.name,
+                        price: ingredient.price,
+                        imageKey: ingredient.imageKey,
+                        quantity: state.quantityFor(ingredient.id),
+                        allowsQuantity: false,
+                        caloriesKcal: ingredient.caloriesKcal,
+                        proteinGrams: ingredient.proteinGrams,
+                        onTap: () => notifier.toggleIngredient(ingredient.id),
+                      ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
-}
-
-/// A grid delegate sized so each card's image reads as roughly square
-/// regardless of column count — [availableWidth] is the space the grid
-/// itself has (already excluding the screen's own horizontal padding).
-SliverGridDelegateWithFixedCrossAxisCount _gridDelegateFor(
-  double availableWidth, {
-  required bool hasStepper,
-}) {
-  final columns = AppBreakpoints.columnsForWidth(availableWidth);
-  const spacing = AppSpacing.md;
-  final totalSpacing = spacing * (columns - 1);
-  final cardWidth = (availableWidth - totalSpacing) / columns;
-  // Approximate fixed height of the text block below the square image
-  // (name up to 2 lines + price, plus the stepper row when present) —
-  // tuned so cards don't overflow at default text scale; independent of
-  // column count since it doesn't grow with card width.
-  final textBlockHeight = hasStepper ? 128.0 : 88.0;
-  final cardHeight = cardWidth + textBlockHeight;
-
-  return SliverGridDelegateWithFixedCrossAxisCount(
-    crossAxisCount: columns,
-    crossAxisSpacing: spacing,
-    mainAxisSpacing: spacing,
-    childAspectRatio: cardWidth / cardHeight,
-  );
 }
 
 /// The category whose id matches [categoryId], or `null` if the catalog

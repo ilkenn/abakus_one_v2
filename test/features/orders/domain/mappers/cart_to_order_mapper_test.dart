@@ -8,6 +8,7 @@ import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_number.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/pickup_mode.dart';
 import 'package:abakus_one_v2/features/orders/domain/pricing/tax_policy.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
 import 'package:abakus_one_v2/shared/models/money.dart';
@@ -223,6 +224,64 @@ void main() {
         ),
         throwsA(isA<EmptyOrderViolation>()),
       );
+    });
+  });
+
+  group('CartToOrderMapper.map — Gel Al (takeaway) fields, Faz B', () {
+    test('threads takeaway pickup/contact fields through onto the Order', () {
+      final cartItems = [
+        const CartItem(
+            id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+      ];
+
+      final order = CartToOrderMapper.map(
+        orderId: OrderId('order-1'),
+        orderNumber: OrderNumber('A-001'),
+        cartItems: cartItems,
+        channel: OrderChannel.takeaway,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        now: DateTime(2026, 7, 28),
+        takeawayEntrySessionId: 'session-1',
+        pickupMode: PickupMode.scheduled,
+        pickupTime: DateTime(2026, 7, 28, 13, 20),
+        contactFirstName: 'Ada',
+        contactLastName: 'Yılmaz',
+        contactPhone: '+905551112233',
+      );
+
+      expect(order.takeawayEntrySessionId, 'session-1');
+      expect(order.pickupMode, PickupMode.scheduled);
+      expect(order.pickupTime, DateTime(2026, 7, 28, 13, 20));
+      expect(order.contactFirstName, 'Ada');
+      expect(order.contactLastName, 'Yılmaz');
+      expect(order.contactPhone, '+905551112233');
+    });
+
+    test(
+        'every new field defaults to null when omitted (existing callers unaffected)',
+        () {
+      final cartItems = [
+        const CartItem(
+            id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+      ];
+
+      final order = CartToOrderMapper.map(
+        orderId: OrderId('order-1'),
+        orderNumber: OrderNumber('A-001'),
+        cartItems: cartItems,
+        channel: OrderChannel.dineInStaff,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        now: DateTime(2026, 7, 28),
+      );
+
+      expect(order.takeawayEntrySessionId, isNull);
+      expect(order.pickupMode, isNull);
+      expect(order.pickupTime, isNull);
+      expect(order.contactFirstName, isNull);
+      expect(order.contactLastName, isNull);
+      expect(order.contactPhone, isNull);
     });
   });
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../domain/kitchen/kitchen_ticket.dart';
 import '../../orders/domain/models/order_id.dart';
 
@@ -16,16 +18,26 @@ abstract interface class KitchenTicketRepository {
   /// The latest revision of every ticket currently fired for [branchId]
   /// — what the main kitchen screen (KDS) queries.
   Future<List<KitchenTicket>> findActiveByBranch(String branchId);
+
+  /// Faz R.3C — a live view of [findActiveByBranch], re-emitting whenever
+  /// the underlying active-ticket set for [branchId] changes, so the KDS
+  /// board updates without a manual refresh/app restart. Every
+  /// implementation must emit the current snapshot immediately on
+  /// subscription (not wait for the first subsequent change).
+  Stream<List<KitchenTicket>> watchActiveByBranch(String branchId);
 }
 
 /// In-memory [KitchenTicketRepository] — the only implementation this
 /// sprint.
 class InMemoryKitchenTicketRepository implements KitchenTicketRepository {
   final Map<String, List<KitchenTicket>> _historyById = {};
+  final _activeBranchControllers =
+      <String, StreamController<List<KitchenTicket>>>{};
 
   @override
   Future<void> save(KitchenTicket ticket) async {
     _historyById.putIfAbsent(ticket.id, () => []).add(ticket);
+    await _emitActive(ticket.branchId);
   }
 
   @override
@@ -57,5 +69,30 @@ class InMemoryKitchenTicketRepository implements KitchenTicketRepository {
     }
     result.sort((a, b) => a.firedAt.compareTo(b.firedAt));
     return List.unmodifiable(result);
+  }
+
+  @override
+  Stream<List<KitchenTicket>> watchActiveByBranch(String branchId) {
+    final controller = _activeBranchControllers.putIfAbsent(
+      branchId,
+      () => StreamController<List<KitchenTicket>>.broadcast(
+        onListen: null,
+      ),
+    );
+    // Emit the current snapshot for this new subscriber before anything
+    // else changes, matching the interface's "current snapshot on
+    // subscription" contract.
+    scheduleMicrotask(() async {
+      if (controller.hasListener) {
+        controller.add(await findActiveByBranch(branchId));
+      }
+    });
+    return controller.stream;
+  }
+
+  Future<void> _emitActive(String branchId) async {
+    final controller = _activeBranchControllers[branchId];
+    if (controller == null || !controller.hasListener) return;
+    controller.add(await findActiveByBranch(branchId));
   }
 }

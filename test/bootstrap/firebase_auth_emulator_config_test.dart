@@ -39,7 +39,12 @@ void main() {
 
   group('FirebaseAuthEmulatorConfig host/port', () {
     test('matches the documented, firebase.json-synchronized values', () {
-      expect(FirebaseAuthEmulatorConfig.host, 'localhost');
+      // 127.0.0.1, not 'localhost' — see the class doc comment: the
+      // Android firebase_auth plugin silently rewrites the literal string
+      // 'localhost' to 10.0.2.2, which breaks a physical device reached
+      // via `adb reverse`. Overridable via
+      // --dart-define=FIREBASE_EMULATOR_HOST for an Android Emulator run.
+      expect(FirebaseAuthEmulatorConfig.host, '127.0.0.1');
       expect(FirebaseAuthEmulatorConfig.port, 9099);
     });
   });

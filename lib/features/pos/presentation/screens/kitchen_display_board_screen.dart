@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart' as fs;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,6 +12,7 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/clock_provider.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
+import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../application/use_cases/enqueue_kitchen_work_items.dart';
 import '../../application/use_cases/record_kitchen_event.dart';
@@ -72,18 +76,62 @@ class _KitchenDisplayBoardScreenState
   KitchenStation? _selectedStation;
   bool _isFullscreen = false;
   String? _message;
+  StreamSubscription<List<KitchenTicket>>? _ticketSubscription;
+
+  /// Faz R.3C.2 — set when the repository denies this staff member access
+  /// to [widget.branchId] (`firestore.rules`' `hasBranchAccess`, not the
+  /// client-side `branchId` filter — see `FirestoreKitchenTicketRepository`
+  /// 's own doc comment). Fail-closed UX: the board never keeps trying to
+  /// render stale/partial data once this is true.
+  bool _accessDenied = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    // Faz R.3C: subscribe to the repository's live ticket stream so a
+    // reservation-preorder release (or any other order reaching a
+    // kitchen-eligible status) refreshes the board with no manual
+    // reload/app restart — `_load()`'s own enqueue step is idempotent per
+    // (ticket, line), so a redundant emission is harmless, and this is the
+    // one board-data reload path every existing action in this screen
+    // already reuses, not a parallel one.
+    _ticketSubscription = ref
+        .read(kitchenTicketRepositoryProvider)
+        .watchActiveByBranch(widget.branchId)
+        .listen((_) => _load(), onError: _handleLoadError);
+  }
+
+  @override
+  void dispose() {
+    _ticketSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _handleLoadError(Object error) {
+    if (!mounted) return;
+    if (error is fs.FirebaseException && error.code == 'permission-denied') {
+      setState(() {
+        _accessDenied = true;
+        _tickets = null;
+        _workItemsByTicketId = null;
+      });
+      return;
+    }
+    setState(() => _message = 'Mutfak ekranı yüklenirken bir sorun oluştu.');
   }
 
   Future<void> _load() async {
     final clock = ref.read(clockProvider);
-    final tickets = await ref
-        .read(kitchenTicketRepositoryProvider)
-        .findActiveByBranch(widget.branchId);
+    final List<KitchenTicket> tickets;
+    try {
+      tickets = await ref
+          .read(kitchenTicketRepositoryProvider)
+          .findActiveByBranch(widget.branchId);
+    } catch (error) {
+      _handleLoadError(error);
+      return;
+    }
 
     final enqueue = EnqueueKitchenWorkItems(
       clock: clock,
@@ -120,6 +168,7 @@ class _KitchenDisplayBoardScreenState
 
     if (!mounted) return;
     setState(() {
+      _accessDenied = false;
       _tickets = tickets;
       _workItemsByTicketId = grouped;
       _syncState = syncState;
@@ -175,33 +224,39 @@ class _KitchenDisplayBoardScreenState
     final now = _now ?? DateTime.now();
 
     final board = SafeArea(
-      child: tickets == null || grouped == null
-          ? const LoadingView(message: 'Mutfak ekranı yükleniyor...')
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _StationFilterBar(
-                  selected: _selectedStation,
-                  onSelected: (station) {
-                    setState(() => _selectedStation = station);
-                    _load();
-                  },
+      child: _accessDenied
+          ? ErrorView(
+              message: 'Bu şube için mutfak ekranı erişim yetkiniz yok.',
+              retryLabel: 'Tekrar Dene',
+              onRetry: _load,
+            )
+          : tickets == null || grouped == null
+              ? const LoadingView(message: 'Mutfak ekranı yükleniyor...')
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _StationFilterBar(
+                      selected: _selectedStation,
+                      onSelected: (station) {
+                        setState(() => _selectedStation = station);
+                        _load();
+                      },
+                    ),
+                    if (widget.deviceId != null)
+                      _SyncStatusBar(state: _syncState, onResync: _resync),
+                    if (_message != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
+                        child: Text(_message!,
+                            style: AppTypography.bodySmall
+                                .copyWith(color: AppColors.error)),
+                      ),
+                    Expanded(
+                      child: _buildBoard(tickets, grouped, now),
+                    ),
+                  ],
                 ),
-                if (widget.deviceId != null)
-                  _SyncStatusBar(state: _syncState, onResync: _resync),
-                if (_message != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
-                    child: Text(_message!,
-                        style: AppTypography.bodySmall
-                            .copyWith(color: AppColors.error)),
-                  ),
-                Expanded(
-                  child: _buildBoard(tickets, grouped, now),
-                ),
-              ],
-            ),
     );
 
     if (_isFullscreen) {

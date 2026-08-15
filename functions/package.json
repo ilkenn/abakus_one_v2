@@ -9,8 +9,16 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "test": "npm run build && node --test lib/test/*.test.js",
-    "test:emulator": "cd .. && firebase emulators:exec --only firestore,functions \"cd functions && npm test\""
+    "test": "npm run build && node --test --test-concurrency=1 lib/test/*.test.js",
+    "test:emulator": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && npm test\"",
+    "seed:dev-tenant": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs\"",
+    "seed:dev-takeaway-qr": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_takeaway_qr.mjs\"",
+    "seed:dev-table-qr": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_reservation.mjs && node scripts/seed_dev_table_qr.mjs\"",
+    "seed:dev-reservation": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_reservation.mjs\"",
+    "seed:dev-catalog": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_catalog.mjs\"",
+    "seed:dev-staff": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_staff.mjs\"",
+    "migrate:catalog": "cd .. && dart run tool/export_menu_catalog.dart && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/migrate_canonical_catalog.mjs\"",
+    "seed:dev-all": "cd .. && dart run tool/export_menu_catalog.dart && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_takeaway_qr.mjs && node scripts/seed_dev_reservation.mjs && node scripts/seed_dev_table_qr.mjs && node scripts/seed_dev_staff.mjs && node scripts/migrate_canonical_catalog.mjs\""
   },
   "dependencies": {
     "firebase-admin": "^12.7.0",

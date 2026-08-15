@@ -6,33 +6,52 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/images/product_image.dart';
 
-/// A single, large, photo-forward ingredient tile — Bowl Builder's premium
-/// replacement for the old compact text row. Deliberately its own widget,
-/// not a variant of `OptionSelectionCard` (Product Detail's shared modifier
-/// row) — that widget stays exactly as Faz 7 shipped it; this one is owned
-/// entirely by Bowl Builder and free to look completely different.
+/// A single, compact, photo-forward ingredient tile — sized for the v2
+/// horizontal ingredient carousel (`bowl_builder_screen.dart`'s ingredient
+/// section), where [width] cards fit ~2.2–2.6 to a phone-width viewport and
+/// simply more of them at once on a wider one, with no separate breakpoint
+/// layout needed. Deliberately its own widget, not a variant of
+/// `OptionSelectionCard` (Product Detail's shared modifier row) — that
+/// widget stays exactly as Faz 7 shipped it; this one is owned entirely by
+/// Bowl Builder and free to look completely different.
 ///
 /// Two interaction modes, matching the category's own rule:
 /// - Toggle ([allowsQuantity] false, 7 of 9 categories): the whole card is
-///   tappable via [onTap] — one portion, tap again to remove.
+///   tappable via [onTap] — one portion, tap again to remove. The trailing
+///   control is a label only ("Ekle" / "✓ Eklendi"), not a second tap
+///   target.
 /// - Quantity ([allowsQuantity] true, Proteinler/Karbonhidratlar only): the
-///   card itself isn't a single tap target — [onIncrement]/[onDecrement]
-///   drive an always-visible −/adet/+ stepper, since "how many" doesn't map
-///   to a single tap.
+///   card itself isn't a single tap target. Before selection it shows a
+///   tappable "Ekle" pill (calls [onIncrement]); once [quantity] > 0 that
+///   pill is replaced by an always-visible −/adet/+ stepper.
+///
+/// [caloriesKcal]/[proteinGrams] show a one-line nutrition summary under the
+/// price — the compact card intentionally omits fat/carbs (those live in
+/// the screen-level `BowlBuilderLiveMetrics` dashboard) to stay legible at
+/// this width.
 ///
 /// Both modes share the same selected-state visuals (border, tint, shadow,
 /// checkmark) and the same brief "pulse" whenever [quantity] increases —
-/// the tactile confirmation that a tap actually did something, which is
-/// the whole point of this widget over a plain checkbox list.
+/// the tactile confirmation that a tap actually did something. Per the v2
+/// brief's own guidance, this pulse plus `BowlCanvas`'s existing layer
+/// fade/scale-in animation are the entire "ingredient added to my bowl"
+/// feedback loop — a literal flight/transition from this card to the canvas
+/// was considered and deliberately not built (would need shared
+/// `GlobalKey`/coordinate plumbing across two independent widget subtrees
+/// for a cosmetic effect); see the final report for that call.
 class IngredientCard extends StatefulWidget {
   final String name;
   final double price;
   final String? imageKey;
   final int quantity;
   final bool allowsQuantity;
+  final double caloriesKcal;
+  final double proteinGrams;
   final VoidCallback? onTap;
   final VoidCallback? onIncrement;
   final VoidCallback? onDecrement;
+
+  static const double width = 168;
 
   const IngredientCard({
     super.key,
@@ -41,6 +60,8 @@ class IngredientCard extends StatefulWidget {
     required this.imageKey,
     required this.quantity,
     required this.allowsQuantity,
+    required this.caloriesKcal,
+    required this.proteinGrams,
     this.onTap,
     this.onIncrement,
     this.onDecrement,
@@ -116,6 +137,7 @@ class _IngredientCardState extends State<IngredientCard>
       child: ClipRRect(
         borderRadius: AppRadius.kLarge,
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // The card's own top-level Semantics label (below) already
@@ -133,7 +155,7 @@ class _IngredientCardState extends State<IngredientCard>
                     ProductImage(
                       imageKey: widget.imageKey ?? '',
                       borderRadius: BorderRadius.zero,
-                      placeholderIconSize: 40,
+                      placeholderIconSize: 36,
                     ),
                     Positioned(
                       top: AppSpacing.sm,
@@ -155,7 +177,7 @@ class _IngredientCardState extends State<IngredientCard>
                             child: const Icon(
                               Icons.check_rounded,
                               color: AppColors.onPrimary,
-                              size: 16,
+                              size: 14,
                             ),
                           ),
                         ),
@@ -190,18 +212,40 @@ class _IngredientCardState extends State<IngredientCard>
                             color: AppColors.primary,
                             fontWeight: FontWeight.bold,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${widget.caloriesKcal.toStringAsFixed(0)} kcal · '
+                          '${widget.proteinGrams.toStringAsFixed(0)} g protein',
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
-                  if (widget.allowsQuantity) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    _QuantityStepper(
-                      quantity: widget.quantity,
-                      onIncrement: widget.onIncrement!,
-                      onDecrement: widget.onDecrement!,
+                  const SizedBox(height: AppSpacing.xs),
+                  if (widget.allowsQuantity)
+                    isSelected
+                        ? _QuantityStepper(
+                            quantity: widget.quantity,
+                            onIncrement: widget.onIncrement!,
+                            onDecrement: widget.onDecrement!,
+                          )
+                        : _EklePill(onTap: widget.onIncrement!)
+                  else
+                    // Purely decorative in this mode — the parent
+                    // Semantics' explicit `label` above already fully
+                    // describes selected state; without this, the pill's
+                    // own "Ekle"/"✓ Eklendi" text would merge into (and
+                    // corrupt) that label.
+                    ExcludeSemantics(
+                      child: _StatusPill(isSelected: isSelected),
                     ),
-                  ],
                 ],
               ),
             ),
@@ -218,13 +262,15 @@ class _IngredientCardState extends State<IngredientCard>
       child: card,
     );
 
+    final sized = SizedBox(width: IngredientCard.width, child: animatedCard);
+
     if (widget.allowsQuantity) {
       return Semantics(
         container: true,
         explicitChildNodes: true,
         label: '${widget.name}, +${widget.price.toStringAsFixed(0)} TL, '
             '${widget.quantity} adet seçili',
-        child: animatedCard,
+        child: sized,
       );
     }
 
@@ -240,7 +286,74 @@ class _IngredientCardState extends State<IngredientCard>
         child: InkWell(
           onTap: widget.onTap,
           borderRadius: AppRadius.kLarge,
-          child: animatedCard,
+          child: sized,
+        ),
+      ),
+    );
+  }
+}
+
+/// Toggle-mode's trailing affordance — a label only, not its own tap
+/// target, since the whole card already handles the tap in that mode.
+class _StatusPill extends StatelessWidget {
+  final bool isSelected;
+
+  const _StatusPill({required this.isSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: isSelected ? AppColors.primary : Colors.transparent,
+        border: isSelected ? null : Border.all(color: AppColors.border),
+        borderRadius: AppRadius.kPill,
+      ),
+      child: Text(
+        isSelected ? '✓ Eklendi' : 'Ekle',
+        style: AppTypography.labelLarge.copyWith(
+          fontWeight: FontWeight.bold,
+          color: isSelected ? AppColors.onPrimary : AppColors.textPrimary,
+        ),
+      ),
+    );
+  }
+}
+
+/// Quantity-mode's initial (quantity == 0) affordance — independently
+/// tappable, since the card itself carries no [IngredientCard.onTap] in
+/// this mode.
+class _EklePill extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _EklePill({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: AppRadius.kPill,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: AppRadius.kPill,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.border),
+            borderRadius: AppRadius.kPill,
+          ),
+          child: Text(
+            'Ekle',
+            style: AppTypography.labelLarge.copyWith(
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
+          ),
         ),
       ),
     );
@@ -308,11 +421,8 @@ class _StepperButton extends StatelessWidget {
       shape: const CircleBorder(),
       child: IconButton(
         onPressed: onPressed,
-        icon: Icon(icon, size: 18),
-        constraints: const BoxConstraints(
-          minWidth: kMinInteractiveDimension,
-          minHeight: kMinInteractiveDimension,
-        ),
+        icon: Icon(icon, size: 16),
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         padding: EdgeInsets.zero,
         color: isPrimary ? AppColors.onPrimary : AppColors.textPrimary,
         disabledColor: AppColors.textDisabled,

@@ -777,7 +777,7 @@ class _DeliveryOrTableInfoCard extends StatelessWidget {
                       ? order.deliveryAddressText
                       : (order.channel == OrderChannel.takeaway
                           ? 'Gel Al'
-                          : 'Masada Servis'),
+                          : (order.tableName ?? 'Masada Servis')),
                   style: AppTypography.bodyLarge.copyWith(
                     fontWeight: FontWeight.w600,
                   ),

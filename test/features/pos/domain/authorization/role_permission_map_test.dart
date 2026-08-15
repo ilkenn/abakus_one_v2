@@ -106,6 +106,120 @@ void main() {
     });
   });
 
+  group('RolePermissionMap — manageReservations / manageBranch (Faz R.3A.1)',
+      () {
+    // Faz R.3A.1 — the admin "Rezervasyonlar" nav entry's visibility is now
+    // *derived* from this exact tiering (see
+    // AdminShellScreen._reservationsVisibleToRoles), rather than a
+    // separately hand-authored role list. These assertions are the
+    // regression guard for that derivation: if a future change moves
+    // manageReservations to a different tier, the nav visibility set
+    // changes automatically and correctly, and this test documents what
+    // the resulting set must be.
+    test(
+        'manager/admin/tenantOwner hold manageReservations; staff/courier do not',
+        () {
+      for (final role in {
+        StaffRole.manager,
+        StaffRole.admin,
+        StaffRole.tenantOwner
+      }) {
+        expect(
+          RolePermissionMap.permissionsFor(role)
+              .contains(PosAuthorizedAction.manageReservations),
+          isTrue,
+          reason: '$role should hold manageReservations',
+        );
+      }
+      for (final role in {StaffRole.staff, StaffRole.courier}) {
+        expect(
+          RolePermissionMap.permissionsFor(role)
+              .contains(PosAuthorizedAction.manageReservations),
+          isFalse,
+          reason: '$role should NOT hold manageReservations',
+        );
+      }
+    });
+
+    test('manager/admin/tenantOwner hold manageBranch; staff/courier do not',
+        () {
+      for (final role in {
+        StaffRole.manager,
+        StaffRole.admin,
+        StaffRole.tenantOwner
+      }) {
+        expect(
+          RolePermissionMap.permissionsFor(role)
+              .contains(PosAuthorizedAction.manageBranch),
+          isTrue,
+          reason: '$role should hold manageBranch',
+        );
+      }
+      for (final role in {StaffRole.staff, StaffRole.courier}) {
+        expect(
+          RolePermissionMap.permissionsFor(role)
+              .contains(PosAuthorizedAction.manageBranch),
+          isFalse,
+          reason: '$role should NOT hold manageBranch',
+        );
+      }
+    });
+  });
+
+  group(
+      'RolePermissionMap vs. backend DEFAULT_STAFF_ROLE_PERMISSIONS — '
+      'cross-system agreement (Faz R.3A.2)', () {
+    // A hand-verified mirror of functions/src/staffAuthorization.ts's
+    // DEFAULT_STAFF_ROLE_PERMISSIONS for exactly the two permissions the
+    // client currently gates on (manageReservations, manageBranch). Cannot
+    // literally import/run the TS source from a Dart test, so this is the
+    // regression guard: if either side's mapping for these two permissions
+    // ever drifts from the other, this test starts failing and the drift
+    // is caught here rather than silently reaching production as a UI/
+    // backend authorization mismatch.
+    const backendRolesWithManageReservations = {
+      'manager',
+      'admin',
+      'tenantOwner',
+    };
+    const backendRolesWithManageBranch = {
+      'manager',
+      'admin',
+      'tenantOwner',
+    };
+
+    test(
+        'every StaffRole\'s manageReservations grant matches the backend '
+        'default mapping', () {
+      for (final role in StaffRole.values) {
+        final dartGrants = RolePermissionMap.permissionsFor(role)
+            .contains(PosAuthorizedAction.manageReservations);
+        final backendGrants =
+            backendRolesWithManageReservations.contains(role.name);
+        expect(
+          dartGrants,
+          backendGrants,
+          reason: '$role: Dart=$dartGrants, backend=$backendGrants',
+        );
+      }
+    });
+
+    test(
+        'every StaffRole\'s manageBranch grant matches the backend '
+        'default mapping', () {
+      for (final role in StaffRole.values) {
+        final dartGrants = RolePermissionMap.permissionsFor(role)
+            .contains(PosAuthorizedAction.manageBranch);
+        final backendGrants = backendRolesWithManageBranch.contains(role.name);
+        expect(
+          dartGrants,
+          backendGrants,
+          reason: '$role: Dart=$dartGrants, backend=$backendGrants',
+        );
+      }
+    });
+  });
+
   group('RolePermissionMap.allows — multi-role union', () {
     test('a multi-role actor gets the union of every held role', () {
       final roles = {StaffRole.courier, StaffRole.manager};

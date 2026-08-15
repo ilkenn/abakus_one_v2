@@ -20,4 +20,22 @@ abstract final class AssetPaths {
   /// still empty until the official Abaküs Ingredient Asset Library is
   /// supplied. See `BowlLayerImageResolver`/`BowlCanvas`.
   static const String bowlImageDirectory = 'assets/images/bowl/';
+
+  /// Home screen redesign (Phase 1 — structure + asset integration): hero/
+  /// banner backgrounds and order-mode/category thumbnails. All three
+  /// directories are registered in `pubspec.yaml` but still empty — every
+  /// `Image.asset` call against them has an `errorBuilder` fallback to a
+  /// neutral placeholder, never a fabricated banner. See
+  /// `docs/feature_status.md`.
+  static const String homeImageDirectory = 'assets/images/home/';
+  static const String homeOrderModesDirectory =
+      'assets/images/home/order_modes/';
+  static const String homeCategoriesDirectory =
+      'assets/images/home/categories/';
+
+  /// Approved static editorial banners (Bowl Builder static hero
+  /// integration, 2026-08-08) — full-image compositions with their own
+  /// baked-in typography, dropped in manually rather than generated. See
+  /// `docs/feature_status.md`.
+  static const String bannersImageDirectory = 'assets/images/banners/';
 }

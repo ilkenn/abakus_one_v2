@@ -39,6 +39,16 @@ class StaffMember {
   /// implicit "any credential works" fallback.
   final String? authUid;
   final Set<StaffRole> roles;
+
+  /// **Faz R.3C.2 — profile/display metadata only, no longer
+  /// authorization-critical.** `ActorSession.branchAccess` (what
+  /// `firestore.rules`/`RealPosAuthorizationPolicy` actually check) is
+  /// built from the real `branchAccess` custom claim
+  /// (`StaffAuthorizationClaims.branchAccessFor`), never from this field
+  /// — see `staff_auth_repository.dart`'s doc comment. This field remains
+  /// useful for admin UI (e.g. an internal staff-list showing which
+  /// branches a member has been granted), but a divergence between it and
+  /// the real claim is a display staleness issue, never a security one.
   final Set<String> branchAccess;
   final Set<String> restaurantAccess;
 

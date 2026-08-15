@@ -3780,3 +3780,4848 @@ High. Every claim in this decision is backed by a freshly-run test in this same 
 race-condition fix for `addOrder` (a still-in-flight initial load could otherwise clobber a
 just-submitted order) was itself verified by a dedicated test that fails without the fix, not asserted
 from reasoning alone.
+
+### Decision 14 — Login Screen Hero Abacus: `shared_preferences` dependency, and `HeroAbacus` built as
+a pre-emptively reusable `shared/` component
+
+Unrelated to Phase 9's backend work above — a customer-facing Login screen redesign, approved via its
+own explicit plan per `CLAUDE.md` §16 before any code was written.
+
+**New dependency — `shared_preferences` (2.5.5)**: the Login master specification requires a
+once-per-launch teaser micro-animation that rotates sequentially through 12 hand-authored scenarios
+across real app restarts (Launch 1 → Scenario 1 ... Launch 13 → Scenario 1 again), which requires the
+rotation counter to survive a cold start. The app's only existing persistence mechanism,
+`flutter_secure_storage`, is reserved for the auth session and is a semantic/overhead mismatch for a
+single non-sensitive UI preference. Approved explicitly (asked via `AskUserQuestion`) rather than added
+silently, per `CLAUDE.md` §15.
+
+**`HeroAbacus` built ahead of the "promote to `shared/` on 2nd consumer" convention**: this project
+normally keeps a widget feature-local until a second real consumer exists. Here the product spec
+explicitly states "this exact component will become the official ABAKÜS signature object... future
+screens will reuse the same component with different sizes and interaction modes" — an explicit
+instruction to build for reuse now, not a unilateral architecture decision on my part. Placed at
+`lib/shared/widgets/hero/hero_abacus.dart` with a narrow, size/interaction-mode-only public API
+(`width`, `interactive`, `scenarioIndex`, `onIntroAnimationComplete`).
+
+**No new physics dependency**: the drag/collision/inertia interaction (constrained-to-rod dragging,
+neighbor push-resolution, edge clamping, release-time deceleration) is implemented entirely with
+Flutter SDK's own `package:flutter/physics.dart` (`FrictionSimulation`) — the same primitive that
+powers Flutter's own scrollable fling behavior — plus hand-rolled 1D collision resolution. `Ticker`-
+driven, isolated inside `HeroAbacus`'s own `RepaintBoundary`, so bead interaction never rebuilds
+`LoginScreen`.
+
+**Persistence kept out of the widget on purpose**: `HeroAbacusScenarioStore`
+(`hero_abacus_scenario_store.dart`) is a separate file/class mirroring the existing
+`SessionStorage`/`SecureSessionStorage` house pattern (interface + real implementation + fail-safe on
+any error). `HeroAbacus` itself takes `scenarioIndex` as a plain caller-supplied `int` and only reports
+completion via a callback — it has no `shared_preferences` import and no persistence logic at all,
+matching the spec's explicit "no authentication logic may exist inside it" requirement extended to
+persistence.
+
+**Bead/frame/rod palette as local, documented constants**, not new `AppColors` tokens — per `CLAUDE.md`
+§6's existing screen-local-decorative-color exception (one specific piece of brand artwork, not a
+general reusable UI-surface color), matching the precedent the earlier, now-orphaned
+`PremiumAbacusHero._beadColors` already set.
+
+**Verification**: `flutter analyze` clean; `flutter test` 2281 → 2293 (12 new: 6 scenario-store cases, 5
+`HeroAbacus` physics/teaser cases, 1 `LoginScreen` integration case), 0 weakened. See
+`docs/feature_status.md`'s "Login Screen — Hero Abacus signature object" section for the full file list.
+
+### Confidence
+
+High for the mechanics that were directly tested (collision/edge clamping, teaser fire-once, scenario
+persistence fail-safe/wrap behavior). Medium for the *visual* result specifically — materials, color
+balance, and haptic feel are inherently a real-device, human-judgment call (this project's standing
+no-desktop-automation rule means I never screenshot or simulate that assessment); the initial palette
+and geometry constants are reasoned starting points, explicitly expected to need on-device tuning.
+
+### Decision 15 — Table Ordering ("Masada Sipariş"): REAL CAMERA SCAN + DEV-ONLY RESOLVER
+
+Unrelated to Decision 14's Login redesign — the customer-facing "order at your table via QR" flow.
+
+**Architecture decision, preserved from this feature's original approval**: the QR entry point
+(`QrScannerScreen`) scans with a real device camera (`mobile_scanner` ^7.0.0) — it is never simulated
+or auto-succeeding — but the token *resolution* behind that scan (`ResolveTableQrToken`) runs against
+in-memory repositories seeded only by `DevTableQrSeed`'s four hardcoded dev tokens, because no backend
+exists yet to issue or verify a real per-table QR code (`docs/table_qr_architecture.md` §5/§10 already
+deferred server-side resolution). Splitting it this way — real camera, dev-only resolver — was chosen
+over either extreme: a fully simulated scanner would leave the actual scanning UX (camera permission
+handling, framing overlay, detection-in-frame guarding) completely unvalidated until a backend exists;
+conversely, blocking all of "Masada Sipariş" on a real backend would leave this entire customer flow
+unbuildable for an unrelated reason. `ResolveTableQrToken`'s own doc comment records that its boundary
+*shape* (opaque token in, resolved table/branch identity or a validity failure out — the caller never
+parses the token or learns identity any other way) is already exactly what a real backend-backed
+resolver would return, so swapping the dev seed for a real repository later should not require any
+caller-side change.
+
+**Dine-in checkout kept as a separate screen, not a branch in the existing checkout**:
+`DineInCheckoutScreen` is a new, self-contained screen rather than a conditional path threaded through
+the existing ~900-line delivery `CheckoutScreen` — that screen stays completely untouched, and the new
+one only ever asks for what a dine-in order actually needs (no delivery address, no delivery timing, no
+pickup wording). `CartScreen` routes to it instead of `CheckoutScreen` whenever
+`activeTableContextProvider` is non-null. The existing (non-functional) payment-method selector UI is
+reused as-is, matching this codebase's existing "preserve the current payment architecture" precedent.
+
+**Table/session identifiers threaded through the existing canonical-order seam, not a new one**:
+`SubmitCustomerOrder.call` already accepted `tableId`/`tableSessionId`/`guestSessionId` since Sprint 3A's
+`CartToOrderMapper` — this feature is what first exposes them to a customer-facing caller. On successful
+submission, the new order id is attached onto the live `TableSession` via the existing
+`TableSession.withOrderAdded` domain seam, the same mechanism staff-side flows already use — not a
+second, competing way of associating orders with tables.
+
+**Guards added, both test-verified**: (1) duplicate-submit protection — the submit button disables
+immediately on `_isSubmitting`, with a second, authoritative check at the top of `_submitOrder` itself,
+so two taps before the first rebuild lands can still only ever create one order; (2) a fresh
+`TableSessionRepository.findById` re-check immediately before submitting, rather than trusting the
+in-memory `ActiveTableContext`'s possibly-stale session — if staff closed the table while the customer
+was sitting on this screen, or the context itself has gone missing, the order is blocked with a Turkish
+message and the cart is left intact, not silently submitted or silently lost.
+
+**Verification**: `dine_in_checkout_screen_test.dart` 5/5 passing; `flutter analyze` 0 issues; full
+`flutter test` 2354/2354 passing. See `docs/feature_status.md`'s "Table Ordering — 'Masada Sipariş'"
+section for the full breakdown and the recorded production gap.
+
+### Confidence
+
+High for everything backed directly by the 5 dine-in-checkout tests (channel/id propagation, both
+guard paths, duplicate-submit protection) and by reading `QrScannerScreen`/`ResolveTableQrToken`/
+`DevTableQrSeed` source directly rather than inferring their behavior. **Explicitly not verified**: real
+end-to-end camera scanning on a physical device — this project's standing no-desktop-automation rule
+means that trial is the human's to run, not something claimed here as done. The dev-only resolver
+remains a real, recorded production gap, not a closed item.
+
+### Decision 16 — Table Guest Session Phase 1/2: server-authoritative QR resolution and session issuance
+
+Approved Decision Review: Firebase Anonymous Auth as the Table Guest Session's technical identity
+layer — an anonymous uid is never treated as a normal Abaküs customer account (no `customers/{uid}` is
+ever created or touched by this work; no Boncuk/loyalty/profile rights attach to it).
+
+**Server-authoritative token resolution, replacing the client-side gap BR-TABLE-005 recorded as
+ROADMAP**: `functions/src/qrTokenResolution.ts`'s `resolveTableQrTokenInternal` is now the one place a
+QR token maps to organization/restaurant/branch/table identity, reading `tableQrCodes`/
+`restaurantTables` via the Admin SDK — both collections have no rule of their own in `firestore.rules`,
+so they're covered by the existing fail-closed catch-all and are never client-readable. Two callables
+consume this shared resolver rather than duplicating its logic: `resolveTableQrToken` (public,
+unauthenticated — a scan hasn't signed in to anything yet) and `openTableGuestSession` (authenticated-
+only). **Critical property**: `openTableGuestSession`'s only client input is the opaque token itself —
+organization/branch/restaurant/table identity is always independently re-derived server-side, never
+accepted as a caller-supplied argument, closing off the obvious attack of reusing a previously-resolved
+id to open a session for a table never actually scanned.
+
+**Public response data-minimization (review fix)**: `resolveTableQrToken` originally echoed back
+`organizationId`/`restaurantId`/`branchId`/`tableId` — none of which the QR-scan confirmation UI
+actually needs (only display names do), and none of which any subsequent call needs either
+(`openTableGuestSession` takes only the token). Replaced with `TableQrPublicPreview` — status plus
+`tableDisplayName`/`branchDisplayName` only. `openTableGuestSession`'s own response still includes the
+resolved ids, since by that point they describe a session the caller genuinely now owns.
+
+**`tableGuestSessions` (new Firestore collection)**: server-created only (`allow write: if false`),
+owner-read-only (`resource.data.guestAuthUid == request.auth.uid`) — no staff-read exemption exists.
+Carries `organizationId`/`restaurantId`/`branchId`/`tableId`/`guestAuthUid`/`status`/`expiresAt`. No
+existing `isOrgMember`/staff rule was touched; `orders` create/read are explicitly **not** extended to
+consult this collection yet — that's Phase 3.
+
+**Session TTL — centralized, not hardcoded** (review fix): `functions/src/tableGuestSessionConfig.ts`'s
+`TABLE_GUEST_SESSION_TTL_MS`, derived from `TABLE_GUEST_SESSION_TTL_HOURS` (default 6 — no pre-existing
+business rule defined a table-visit duration; this is this phase's own new, documented decision, not an
+inferred one), overridable via a `TABLE_GUEST_SESSION_TTL_HOURS` environment variable for local testing
+only. `isTableGuestSessionActive` (status == active && expiresAt > now) is built and boundary-tested now
+even though it has no real caller yet — Phase 3's `orders` rule is expected to mirror this exact
+condition.
+
+**Verification**: emulator-tested only (Firestore + Functions + Auth). `flutter analyze` 0 issues;
+`flutter test` 2360/2360; Functions `tsc` clean, 35/35 Node tests passing; Firestore rules 35/35 passing
+(28 pre-existing + 7 new). See `functions/README.md` for the per-function breakdown and
+`docs/business_rules.md` BR-TABLE-005 for the updated status.
+
+### Confidence
+
+High for everything directly covered by the 35 Functions tests and 7 new rules tests (token resolution
+across valid/invalid/expired/notFound/non-orderable-table paths, session creation/ownership/tenant
+isolation, data-minimization, TTL boundary logic) — all run against real local emulators, not mocked.
+**Explicitly not yet done**: Phase 3 (`orders` rule extension, Flutter/QR-scanner integration, removal
+of the in-memory dev flow) — this phase is backend infrastructure only, by explicit scope instruction,
+and the existing in-memory customer-facing flow is completely unchanged and unaffected.
+
+### Decision 17 — Table Guest Session Phase 3/3.1: order create/read authorization and dual customer
+identity model
+
+**Note on Phase 3 itself**: the base `orders` rule extension (Table Guest Session-authorized `dineInQr`
+create/read) and the `QrScannerScreen`/`DineInCheckoutScreen` wiring onto the real backend were
+implemented in the immediately preceding sprint but, by oversight, never got their own ADR entry —
+recorded here retroactively alongside 3.1's refinement, rather than left permanently undocumented.
+
+**Phase 3 — `orders` create/read extended, `isOrgMember` untouched**: `firestore.rules`'s `orders`
+`create` gained an independent `||` branch for a valid Table Guest Session (never replacing the
+existing staff branch); `read` gained a `canReadAsTableGuest` branch. `QrScannerScreen` now calls the
+real `resolveTableQrToken`/`openTableGuestSession` Cloud Functions (via `TableGuestSessionGateway`) and
+`DineInCheckoutScreen` re-verifies session liveness against real Firestore before submitting — the
+pre-existing in-memory dev classes (`ResolveTableQrToken`, `OpenTableSession`, `DevTableQrSeed`, ...)
+remain in the codebase, deliberately unreferenced by production screens, per explicit instruction not
+to remove anything.
+
+**Phase 3.1 — the identity model that Phase 3 got wrong**: Phase 3 unconditionally set every Table
+Guest Session order's `customerId` to `null`, even when a real, phone-verified Abaküs customer was
+signed in — losing their order history/CRM/loyalty eligibility for every dine-in order. Corrected via
+two independent, deliberately separate conditions (BR-TABLE-008): table authorization (a valid Table
+Guest Session, required either way) and customer identity (`Order.customerId` = real uid when signed in
+as a real customer, `null` otherwise) — one is never a substitute for the other.
+
+**Canonical customer detection — investigated, not assumed**: `currentCustomerProvider`/
+`ResolveCurrentCustomer` derive "real customer" purely from `authProvider`'s own `AuthState`
+(`isAuthenticated && session != null && !expired`) — not from a `customers/{uid}` Firestore document,
+because **nothing creates one** (confirmed by search: only `processAccountDeletion.ts` ever touches
+that collection, and only to anonymize an existing record). Client-side this is trustworthy (`AuthNotifier`
+never reacts to `signInAnonymously()` — it manages its own state explicitly, only via `verifyOtp`/
+`checkPersistedSession`). Server-side, Firestore Rules cannot see `authProvider`'s Dart state at all, so
+a different, genuinely spoof-proof signal was required: `request.auth.token.firebase.sign_in_provider`
+— a claim Firebase itself issues based on the real authentication flow used, never client-settable.
+**Empirically verified**, not assumed (decoded real ID token JWTs against the local Auth Emulator): a
+`signInAnonymously()` token carries `sign_in_provider: 'anonymous'`; a real phone sign-in
+(`FirebaseAuthClient.confirmSmsCode`, this app's one real customer auth method) carries `sign_in_provider:
+'phone'`. Checked as `== 'phone'` rather than the broader `!= 'anonymous'` — an explicit allow-list of
+the one sign-in method this app actually trusts today, so a hypothetical future method (email/password,
+Google, ...) doesn't silently start being trusted without this rule being deliberately revisited.
+
+**`Order.guestAuthUid` — a new, additive field, independent of `customerId`**: the raw technical uid a
+`dineInQr` order was submitted with, snapshotted at create time regardless of whether that uid also
+belongs to a real customer. Exists specifically to decouple order *ownership* (who may read it back)
+from the *session's* lifecycle — `canReadAsTableGuest` now checks `resource.data.guestAuthUid ==
+request.auth.uid` directly, no live join to `tableGuestSessions`, so a guest never loses read access to
+their own past order if that session record later expires, is revoked, or is cleaned up entirely
+(rules-tested: a read succeeds even when no `tableGuestSessions` document for that session exists at
+all). `Order`/`CartToOrderMapper`/`SubmitCustomerOrder`/`OrderFirestoreMapper` all gained this one
+additive, nullable field — every existing non-`dineInQr` caller is unaffected, it stays `null`.
+
+**Explicit non-scope, honored**: the general (non-dine-in) authenticated-customer order-create path was
+investigated and found likely broken too (no `orders` rule branch exists for it either, and it has never
+been tested against real Security Rules) — flagged as a REQUIRED finding, deliberately **not** fixed
+here; reserved for a future takeaway/delivery-scoped task per explicit instruction.
+
+**Verification**: 60/60 Firestore rules tests (28 pre-existing + 21 Phase 3 + 11 Phase 3.1, including the
+empirical `sign_in_provider` proof simulated via `authenticatedContext`'s token options); `flutter
+analyze` 0 issues; `flutter test` full suite passing; Functions build/tests unaffected (no Functions code
+changed this phase — the `sign_in_provider` claim is inspected only by `firestore.rules`); real emulator
+E2E for both the anonymous-guest and authenticated-customer paths (see this phase's own report for the
+exact created order payloads).
+
+### Confidence
+
+High for everything directly rules-tested (all 11 new Phase 3.1 scenarios) and for the `sign_in_provider`
+claim shape specifically (decoded real emulator-issued JWTs, not assumed from documentation). **Residual
+risk, stated plainly**: the general customer-order-create gap noted above is real and unresolved: normal
+delivery/takeaway customer checkout may currently fail against real Security Rules exactly like the
+original dine-in bug did, until that separate task addresses it.
+
+## ADR-027 — Gel Al (Takeaway) Platform (Faz A: Channel Pricing Engine; Faz B: Order Model/Mapping;
+Faz B.1: Canonical Restaurant Scope Fix)
+
+- Date: 2026-08-10 (Faz A); extended 2026-08-10 (Faz B); extended 2026-08-10 (Faz B.1)
+- Status: Accepted (Faz A + Faz B + Faz B.1 only — pricing engine, additive Order/mapper/Firestore
+  model, and the isolated `restaurantId` propagation fix below; QR, checkout UI, admin pricing UI,
+  and POS/KDS UI are separate, not-yet-approved future phases of the same initiative — this ADR is
+  extended, not replaced, as each phase closes, mirroring ADR-026's own incremental-sprint shape)
+
+### Context
+
+A comprehensive, read-only architecture analysis (Gel Al / Takeaway akışı) surveyed the whole
+Takeaway-adjacent surface — `OrderChannel.takeaway`, `Order`/`OrderLine`/`CartToOrderMapper`/
+`SubmitCustomerOrder`/`OrderFirestoreMapper`, `MenuProduct`/`ModifierGroup`, Bowl Builder,
+`ChannelOperationPolicy`, `PackagePreparationStatus`, `KitchenTicketHeader` — and produced a full
+A–R report (Current Inventory, Pricing Architecture, Gaps, Proposed Domain Model, QR Architecture,
+Authenticated App Architecture, Pricing Engine, Pickup Time Model, Firestore Rule Strategy, Functions
+Requirements, Customer UX Flow, Admin Pricing Requirements, POS/KDS Data Requirements, Files Likely To
+Change, Test Plan, Migration/Regression Risks, Implementation Phases, REQUIRED/RECOMMENDED/OPTIONAL
+findings). Three REQUIRED decisions from that report gate this ADR:
+
+1. **DL-002/BR-PRICE-001 conflict**: DL-002 (2026-07-25, user-sourced) decided takeaway prices
+   identically to dine-in. The current product requirement (Gel Al: +20 TL default, İçecekler
+   exempted) directly contradicts that. **Resolved**: the user chose to supersede DL-002 — see
+   `docs/business_rules.md` DL-035/BR-PRICE-004.
+2. **Bowl Builder has no base bowl price** (`bowlBuilderTotalPriceProvider` is purely the sum of
+   selected ingredients — 2026-07-23 product decision, "no included/free tier"). The user's own +20
+   example presumed a base price that doesn't exist. **Resolved**: the +20 TL is added once to the
+   ingredient-sum total itself (`ChannelPriceResolver.resolveBowlUnitPrice`), not to a synthesized base
+   product line and not per-ingredient.
+3. **`submitCustomerOrderProvider` hardcodes `branchId`/`restaurantId`** (`'branch-1'`/`'restaurant-1'`
+   at DI-construction time) — even the shipped Table QR flow never threads the QR-resolved branch into
+   `Order`'s own fields. **Approved but deliberately deferred**: this fix belongs to the phase that
+   actually introduces Takeaway QR/branch selection (Faz D), not Faz A, since Faz A adds no new
+   call-time branch context to thread through.
+
+Faz A's scope, per the approved phase order (Q of the analysis report): pricing engine + product/
+category data model only — no takeaway UI, QR, checkout, or POS/KDS wiring. Faz B–F remain future,
+separately-approved work.
+
+### Decision 1 — Channel pricing as a generic, data-driven resolver, not a takeaway-only hack
+
+New `lib/features/menu/domain/pricing/`: `ChannelPriceRule` (sealed — `UseChannelDefault`,
+`ChannelFixedAdjustment`, `ChannelExplicitPrice`), `ChannelPricingPolicy` (immutable snapshot: channel
+default adjustments + category overrides), `ChannelPriceResolver` (pure, static — mirrors
+`PriceCalculator`'s "given already-resolved Money, compute deterministically" shape). New
+`lib/features/menu/data/channel_pricing_policy_repository.dart`:
+`ChannelPricingPolicyRepository`/`InMemoryChannelPricingPolicyRepository`, generic over every
+`OrderChannel` (mirrors `ChannelOperationPolicyRepository`'s shape) — a future delivery/marketplace
+price rule is a `setChannelDefaultAdjustment`/`setCategoryOverride` call against this same interface,
+not a new type. Seeded data (not hardcoded logic): `OrderChannel.takeaway` default = +20 TRY;
+`cat_icecekler` category override on `takeaway` = +0 TRY. No other channel has a configured default,
+so dine-in/delivery/reservation pricing is provably unaffected (regression-tested).
+
+Resolution order: a product's own `MenuProduct.channelPriceOverrides[channel]` (new, additive field,
+default `{}`) wins outright — `ChannelExplicitPrice` replaces the price entirely, `ChannelFixedAdjustment`
+adds to `basePrice`, `UseChannelDefault`/absent falls through to the policy's category override, then
+its channel default, then zero. `MenuProductRepository.save` already persists the extended model with
+no interface change — the future admin pricing screen's data layer already exists.
+
+### Decision 2 — Bowl Builder gets its own resolver entry point, not a synthesized base price
+
+`ChannelPriceResolver.resolveBowlUnitPrice(ingredientTotal, channel, policy)` adds the channel's
+default adjustment once to the already-summed ingredient total and returns a single unit price — no
+per-category lookup (Bowl Builder has no `MenuCategory` of its own) and no product-level override
+concept (no `MenuProduct` backs a bowl). The caller is expected to feed this into `CartItem.price`/
+`OrderLine.create` exactly as today, so quantity-N bowls apply the adjustment N times via the existing
+`(unitPrice + modifierTotal) * quantity` formula, with zero new multiplication logic — verified by a
+resolver→`CartLineMapper`→`OrderLine` integration test (`(100 + 20) * 2 = 240`).
+
+**Deliberately not wired into `bowl_builder_provider.dart`/`bowl_builder_screen.dart` this phase**: no
+channel-selection context exists anywhere in the app yet (no Takeaway UI, no branch-scoped checkout) —
+wiring a channel parameter into the live Bowl Builder screen now would either force a fake "current
+channel" concept or leave dead code. This is scoped as future Faz C/D work, alongside the UI that
+actually knows which channel is active.
+
+### Decision 3 — Snapshot discipline reused, not reinvented
+
+No new "don't retroactively change a placed order's price" mechanism was built: `OrderLine.create`
+already freezes `unitPrice`/`modifiers`/`lineTotal` at construction and never revisits them (Phase 3
+Sprint 3A). `ChannelPriceResolver` produces a `Money` meant to be read once, at cart-to-order mapping
+time, and fed into that existing freeze point — the resolver itself has no notion of "already placed"
+and needs none.
+
+### Verification
+
+`flutter analyze`: 0 issues. `flutter test`: full suite green, including 36 new tests across
+`channel_price_rule_test.dart`, `channel_pricing_policy_test.dart`,
+`channel_pricing_policy_repository_test.dart`, `channel_price_resolver_test.dart`, and
+`menu_product_test.dart` — covering category-default resolution, all three override modes, the
+negative-price guard (`NegativeAmountViolation`), the Bowl Builder single-application rule at multiple
+quantities, and non-takeaway-channel regression safety (dine-in/delivery resolve to an unchanged
+price). No existing file's behavior changed — every new field/type is additive.
+
+### Confidence (Faz A)
+
+High for everything implemented and tested this phase (pure, fully-covered domain logic with no
+external dependencies). **Explicit non-scope**: no UI reads or writes any of this yet. The
+`submitCustomerOrderProvider` branch/restaurant hardcoding (Decision context, item 3 above) was fixed
+in Faz B, below — see Decision 6. Faz C (authenticated in-app Takeaway), Faz D (guest kiosk QR), Faz E
+(POS/KDS ticket fields), and Faz F (admin pricing UI) remain separate, not-yet-approved future work.
+
+---
+
+## Faz B — Order Model, Mapping, Persistence
+
+- Date: 2026-08-10
+- Status: Accepted (Faz B only — additive Order/mapper/Firestore model; no UI, QR, checkout flow,
+  admin pricing UI, or POS/KDS UI)
+
+### Context
+
+Continuing the same Gel Al architecture-analysis report's phase order (Q), Faz B adds the additive
+domain/mapping/persistence fields Takeaway needs, and closes Faz A's Decision context item 3
+(`submitCustomerOrderProvider`'s hardcoded branch/restaurant). No pickup-time server validation
+(NOW+20), no Takeaway QR Function, no anonymous-takeaway auth, and no checkout/admin/POS/KDS UI —
+all remain future, not-yet-approved phases (Faz C/D/E/F).
+
+### Decision 4 — Six additive fields on `Order`, one new enum
+
+`lib/features/orders/domain/models/pickup_mode.dart`: new `enum PickupMode { asap, scheduled }`.
+`Order` gains six nullable, additive fields: `takeawayEntrySessionId`, `pickupMode`, `pickupTime`,
+`contactFirstName`, `contactLastName`, `contactPhone`. All default to `null`/absent for every
+existing order (dineInQr/dineInStaff/delivery/reservationPreorder/POS) — zero behavior change for
+any channel other than takeaway.
+
+`takeawayEntrySessionId` (not `takeawayEntryTokenId`, the name the request offered as a starting
+point) — the resolved server-side session/authorization record a guest kiosk-QR order was created
+under, mirroring `guestSessionId`'s exact role for dine-in, not the raw scanned token itself (that
+resolution architecture is Faz D's job, not this phase's). `null` for an authenticated in-app
+takeaway order (Scenario 2 uses `customerId`, no entry session exists) and every non-takeaway order.
+
+### Decision 5 — Pickup invariant enforced via constructor assertion, not a throwing factory
+
+`Order`'s constructor stays `const` (every existing call site, including test literals, is
+unaffected) and gained one `assert`: `pickupMode != PickupMode.scheduled || pickupTime != null`. A
+`const` constructor cannot throw a `BusinessRuleViolation` (that requires a non-const factory body,
+which `Order` has never had — `CartToOrderMapper`/`OrderLine.create` own that kind of validation
+today, not `Order` itself), so `assert` is the only invariant-enforcement mechanism available without
+either dropping `const` (a larger, riskier change than this phase's additive scope) or leaving the
+invariant unrepresented. Reliably checked under `flutter test` (assertions always enabled there);
+stripped in release builds, the same caveat every `assert`-based check in this codebase already
+carries — genuine, server-authoritative enforcement of "a scheduled pickup requires a time" is Faz C's
+NOW+20 validation work, not this one.
+
+### Decision 6 — `SubmitCustomerOrder`'s branch/restaurant scope: call-time override, not a breaking
+change
+
+`SubmitCustomerOrder`'s constructor is unchanged (`branchId`/`restaurantId` still required there) —
+those two parameters are now documented as this use case's *default* scope. `call()` gained optional
+`branchId`/`restaurantId` parameters that override the default for that one call only; omitting them
+(every existing caller) reproduces today's exact behavior byte-for-byte. `submitCustomerOrderProvider`
+itself is unchanged. `DineInCheckoutScreen` (the one call site with a real, QR-resolved scope already
+in hand) now passes `branchId: tableContext.branchId` — `restaurantId` is deliberately **not** threaded
+through this phase: `ActiveTableContext`/`TableQrResolutionResult` don't carry a `restaurantId` field
+at all (that chain hardcodes `'restaurant-1'` independently, `resolve_table_qr_token.dart`'s own
+documented placeholder), and adding one would touch the already-shipped QR resolution chain — flagged
+as a RECOMMENDED finding (this phase's closure report) rather than implemented, per the explicit
+"scope büyüyorsa önce raporla" instruction.
+
+### Decision 7 — Contact data is a snapshot, never an identity/authorization source; no duplicate
+customer model
+
+`contactFirstName`/`contactLastName`/`contactPhone` are plain, unvalidated-beyond-domain-safety
+snapshot fields on `Order` — the same "capture at checkout time, never re-resolve later" pattern
+`OrderLine.productName` already establishes. They carry no authorization meaning whatsoever (Firestore
+rules never read them for a create/read decision) and are reused as-is for both the guest kiosk flow
+(Scenario 1) and a future authenticated in-app takeaway checkout (Scenario 2) — no second,
+customer-profile-shaped field set was introduced. Full phone-format validation is explicit
+non-scope, deferred to Faz C/D's UX-facing validation work.
+
+### Verification (Faz B)
+
+`flutter analyze`: 0 issues. `flutter test` (full suite): 100% pass. New/extended coverage:
+`order_test.dart` (pickup invariant, additive-field defaults, non-takeaway unaffected, copyWith),
+`cart_to_order_mapper_test.dart` (new fields threaded through, defaults preserved),
+`submit_customer_order_test.dart` (branch/restaurant call-time override — both "omitted keeps default"
+and "override replaces default" — plus takeaway field pass-through),
+`order_firestore_mapper_test.dart` (new-field round-trip, non-takeaway nulls, and a dedicated
+pre-Faz-B-shaped document with the new keys entirely absent still deserializing cleanly),
+`dine_in_checkout_screen_test.dart` (new regression test proving the submitted order's `branchId`
+comes from the QR-resolved `ActiveTableContext`, using a branch value deliberately different from the
+use case's default, so the assertion cannot pass by coincidence). Cloud Functions: `tsc` build clean;
+35/35 emulator-backed Functions tests pass (untouched by this phase — confirms no incidental
+regression). Firestore Security Rules: 60/60 emulator-backed tests pass (`firestore.rules` itself was
+not modified this phase — confirmed no existing `hasOnly()`/schema whitelist exists on the `orders`
+collection that would have rejected the six new additive fields; the additive Firestore document
+shape needed no rule change).
+
+### Confidence (Faz B)
+
+High — every new field is additive and default-null, the pickup invariant is a single `assert`
+mirroring this codebase's existing `assert`-based invariant pattern (`TaxRate.fromBasisPoints`,
+`ModifierValidationResult`'s sealed shape), and the branch/restaurant fix is a pure override with a
+regression test proving the default path is unchanged. **Explicit non-scope, not silently dropped**:
+NOW+20 server-side pickup-time validation, Takeaway QR/entry-session issuance, anonymous-takeaway
+auth, authenticated-app takeaway checkout UI, pickup-slot UI, channel-pricing UI integration, admin
+UI, POS/KDS UI, delivery/marketplace pricing, and loyalty changes are all explicitly out of this
+phase, per direct instruction.
+
+---
+
+## Faz B.1 — Canonical Restaurant Scope Fix
+
+- Date: 2026-08-10
+- Status: Accepted (isolated fix only — no takeaway UI/QR/pricing/pickup/POS/KDS/admin work, per
+  direct instruction)
+
+### Context
+
+Faz B fixed `Order.branchId` being sourced from the QR-resolved `ActiveTableContext` instead of
+`submitCustomerOrderProvider`'s constructor default, but left `Order.restaurantId` on the default —
+`ActiveTableContext` had no `restaurantId` field to read at all. Tracing the full chain (QR token →
+`resolveTableQrToken`/`openTableGuestSession` Cloud Functions → `TableGuestSessionGateway` →
+`OpenTableGuestSessionFromQrScan` → `ActiveTableContext` → `DineInCheckoutScreen` →
+`SubmitCustomerOrder` → `Order.restaurantId`) found the real, server-authoritative
+`openTableGuestSession` response (`OpenedTableGuestSession`, `table_guest_session_gateway.dart`)
+**already carries `restaurantId`** — the Cloud Function has always returned it (`TableSession` was
+already correctly built with it too). The loss was a single, precise gap: `OpenTableGuestSessionFromQrScan
+.call()` read `opened.branchId` but never `opened.restaurantId` when constructing `ActiveTableContext`.
+
+**Correction to the task's own chain description**: `TableQrResolutionResult`/`ResolveTableQrToken`
+(the item named first in the request) is not actually part of the live production QR flow —
+`qr_scanner_screen.dart` uses `TableQrPreview` (the real, Cloud-Function-backed, deliberately
+minimized preview — no `restaurantId`/`branchId`/ids at all, by design, a Phase 1/2 security review
+fix) for the preview step, then `OpenedTableGuestSession` (has `restaurantId` already) for the actual
+session-open step that produces `ActiveTableContext`. `TableQrResolutionResult` is an earlier,
+superseded Dart-only/in-memory implementation still exercised by its own tests
+(`resolve_table_qr_token_test.dart`) but not reachable from `QrScannerScreen` — left untouched, no
+change needed or made there.
+
+### Security impact — this was a correctness/availability gap, not a security hole
+
+`firestore.rules`' `tableGuestSessionMatchesOrderScope()` (line 237-243) **already requires**
+`data.restaurantId == session.restaurantId` at order-create time, for both the guest and authenticated
+Table Guest Session variants. Because the client always submitted the same hardcoded default
+(`'restaurant-1'`) that today's single-restaurant seed data also always resolves to, this check has
+been passing by coincidence, not by correct wiring — the rule itself was never bypassed or weakened.
+Had a second restaurant/tenant ever existed, this bug would have caused legitimate dine-in orders for
+it to be **rejected** (`PERMISSION_DENIED`, a real order silently failing to submit), not accepted
+incorrectly — an availability/correctness risk, not a cross-tenant authorization gap. This fix makes
+the existing rule check meaningful for a real multi-restaurant future instead of trivially true.
+
+### Canonical propagation chain (after this fix)
+
+`openTableGuestSession` Cloud Function response → `OpenedTableGuestSession.restaurantId` (already
+present, untouched) → `ActiveTableContext.restaurantId` (**new** additive field, sourced in
+`OpenTableGuestSessionFromQrScan.call()`) → `DineInCheckoutScreen` passes
+`restaurantId: tableContext.restaurantId` to `submitCustomerOrderProvider.call()` (mirroring the
+`branchId` fix from Faz B) → `Order.restaurantId`. No Cloud Function, gateway, or `TableSession`
+change was needed — every layer below `ActiveTableContext` already carried the real value.
+
+### Backward compatibility
+
+`ActiveTableContext.restaurantId` is `required` (not nullable-with-default) — `OpenedTableGuestSession
+.restaurantId` is itself non-nullable, so there is no legitimate "unknown restaurant" state to model
+as null once a session is open, matching the field's own canonical-scope semantics. Every test fixture
+that constructs `ActiveTableContext` directly (`active_table_context_provider_test.dart`,
+`table_context_badge_test.dart`, `dine_in_checkout_screen_test.dart`) was updated to supply it —
+`dine_in_checkout_screen_test.dart`'s `_context()` helper gained a `restaurantId` parameter defaulting
+to `'restaurant-1'`, so every existing test call site is unaffected. No production call site outside
+`OpenTableGuestSessionFromQrScan` constructs `ActiveTableContext`. The dine-in guest/customer identity
+model (`customerId`/`guestAuthUid`, `isRealCustomerAuth()`, Variant A/B) is completely untouched.
+
+### Verification
+
+`flutter analyze`: 0 issues. `flutter test` (full suite): 2422/2422 (100%) — 2 more than Faz B's
+2420, from two new tests: `open_table_guest_session_from_qr_scan_test.dart` (`restaurantId` threaded
+from the callable response, independent of `branchId`, using distinct values so the assertion can't
+pass by coincidence) and `dine_in_checkout_screen_test.dart` (the submitted order's `restaurantId`
+matches a `tableContext.restaurantId` value deliberately different from the default, alongside a
+distinct `branchId`, proving the two fields propagate independently). Cloud Functions: 35/35
+emulator-backed tests pass (untouched by this fix). Firestore Security Rules: 60/60 emulator-backed
+tests pass (`firestore.rules` untouched).
+
+### Confidence
+
+High — the fix is three lines across three files (`ActiveTableContext`'s new field,
+`OpenTableGuestSessionFromQrScan` reading `opened.restaurantId`, `DineInCheckoutScreen` passing it
+through), every layer below `ActiveTableContext` already had the correct value verified end-to-end
+against the real Cloud Function response shape, and the security-relevant Firestore rule that depends
+on this value was independently re-verified passing. **Explicit non-scope, not silently dropped**:
+`TableQrResolutionResult`'s own `restaurantId` (already present, unused in production) was not
+touched; no takeaway UI/QR/pricing/pickup/POS/KDS/admin work was done, per direct instruction.
+
+## Faz D.1 — Canonical Restaurant/Branch Provisioning
+
+- Date: 2026-08-10
+- Status: Accepted (provisioning foundation only — no takeaway QR, guest sessions, pricing backend,
+  Flutter UI, router, Faz C flow, dine-in/table QR, or POS/KDS changes; `firestore.rules`'s
+  authenticated-takeaway `organizationId == 'org-1'` placeholder deliberately left untouched, per
+  direct instruction — that sits in Faz D.5)
+
+### Context
+
+Faz D's own architecture analysis (approved before this sub-phase) named two REQUIRED gaps left open
+by Faz C: no server-authoritative restaurant/branch provisioning, and no server-authoritative pricing.
+`docs/firestore_data_model.md` had already fully specified the target shape for `restaurants`/
+`branches` (`organizationId` denormalized, `branches` verified against its parent `restaurants` chain
+at write time) and `firestore.rules` already carried `allow write: if false // Cloud Function only`
+for both collections since Phase 9 — but no Cloud Function had ever actually been built to write them.
+Faz D.1 closes exactly that gap, and only that gap.
+
+### Decision
+
+Two new Platform Owner/Administrator-only callables, `provisionRestaurant`/`provisionBranch`
+(`functions/src/provisionRestaurant.ts`/`provisionBranch.ts`), rather than a bootstrap/seed script that
+writes Firestore directly. A callable was chosen over a direct-write script because: (1) it is the
+literal fulfillment of `firestore.rules`'s own existing "Cloud Function only" comment, not a workaround
+around it; (2) it is independently unit/emulator-testable via the same `node --test` + Functions
+emulator harness every other Cloud Function in this repo already uses (`npm run test:emulator`),
+whereas a raw script's correctness would rest on manual inspection alone; (3) it generalizes cleanly to
+a future Admin Panel calling the same function, without any rearchitecture, when that phase starts.
+`scripts/seed_dev_tenant.mjs` (`npm run seed:dev-tenant`) is the actual dev/emulator bootstrap tool the
+user asked for — but it works by *calling* these two callables over HTTP, exactly like a future Admin
+Panel would, never by writing to Firestore directly. This keeps the chain-verification/idempotency
+logic living in exactly one place.
+
+**Authorization**: `platformAuthorization.ts`'s `requirePlatformMember()` is a server-side mirror of
+`firestore.rules`'s own `isPlatformMember()` — a `platformRole` custom claim of `platformOwner`/
+`platformAdministrator`, the same separate claim namespace `firestore.rules` already documents as
+sharing zero types with the tenant `roles`/`organizationAccess` stack (ADR-025). Restaurant/branch
+provisioning is tenant-*onboarding*, a platform-level action — no tenant role, however senior within
+one tenant, is authorized to call either function. Neither callable is public/anonymous-reachable;
+both fail closed (`unauthenticated` then `permission-denied`) before touching Firestore.
+
+**Chain verification**: `provisionBranch` reads its parent `restaurants/{restaurantId}` document
+server-side, inside the same Firestore transaction, and requires that document's own `organizationId`
+to match the branch's claimed `organizationId` exactly — a caller's claimed scope is never trusted on
+its own for this check, closing the literal "cross-tenant branch" attack the Faz D analysis named.
+`provisionRestaurant`'s own `organizationId` is validated structurally only (non-empty string) — no
+`organizations` provisioning function exists yet, and building one is explicitly out of Faz D.1's named
+scope; see REQUIRED finding below.
+
+**Idempotency**: both functions take a caller-supplied, deterministic document id (`restaurantId`/
+`branchId`) rather than a Firestore auto-generated id — mirrors `Order.id`'s own established
+"external id, `.set()` is the idempotent-overwrite mechanism" convention
+(`CanonicalOrderRepository`/`SubmitCustomerOrder`, Faz C) rather than introducing a new
+auto-id-plus-dedup-query pattern nobody else in this codebase uses. A repeated call with identical
+tenant-binding fields upserts the same single document (`revision` increments); a repeated call
+claiming a *different* `organizationId`/`restaurantId` for an already-provisioned id is rejected
+outright — the tenant/parent binding, once set, is immutable, mirroring `organizationIdUnchanged()`'s
+own rule for every other tenant-owned document in `firestore.rules`.
+
+`firestore.rules` itself is untouched this sub-phase, by direct instruction — Admin-SDK writes bypass
+Security Rules entirely, so no rule change was needed for either function to work, and the
+authenticated-takeaway `organizationId == 'org-1'` placeholder rules sharpening is reserved for Faz
+D.5, once real canonical data exists to sharpen it against.
+
+### Verification
+
+`flutter analyze`/`flutter test`: unaffected (no Dart file touched this sub-phase) — reran anyway as a
+regression gate: 0 issues, 2458/2458 passing. Functions build: clean (`tsc`). Functions emulator tests:
+48/48 passing (35 pre-existing + 13 new `provisioning.test.ts` cases covering valid provision, chain
+verification, cross-tenant rejection, idempotent re-run, immutable-binding rejection, and both
+unauthenticated/non-platform-role rejection). Firestore Security Rules: 77/77 passing, unchanged (no
+rule touched). A standalone emulator E2E script (real anonymous sign-in, real `platformOwner` custom
+claim via Admin SDK, real callable invocations, real Admin-SDK read-back) independently confirmed both
+`restaurants/restaurant-1` and `branches/branch-1` are real, correctly-shaped Firestore documents after
+calling `provisionRestaurant`/`provisionBranch`, that a second identical call upserts (not duplicates)
+the same document, and that a cross-tenant `provisionBranch` attempt is rejected with no document
+written.
+
+### Confidence
+
+High for what was built and tested — restaurant/branch provisioning, authorization, chain
+verification, and idempotency are all real, emulator-verified mechanisms, not documented intent.
+**Explicit non-scope, not silently dropped**: `organizations` provisioning does not exist (REQUIRED
+finding — `provisionRestaurant`'s `organizationId` is structurally, not existence, validated); the
+`firestore.rules` `organizationId == 'org-1'` placeholder is untouched by direct instruction (Faz D.5);
+no takeaway QR/guest session/pricing backend/Flutter UI/router work was done, per direct instruction.
+
+## Faz D.1.1 — Canonical Organization Provisioning
+
+- Date: 2026-08-10
+- Status: Accepted (closes Faz D.1's one REQUIRED finding only — no takeaway QR, guest sessions,
+  pricing backend, Flutter UI, router, App Check, Faz C rule sharpening, or
+  `organizationId == 'org-1'` placeholder change; per direct instruction)
+
+### Context
+
+Faz D.1's own report named one REQUIRED gap: `provisionRestaurant` validated `organizationId`
+structurally only (a non-empty string), never against a real `organizations` document, because no
+function provisioned that collection. `docs/firestore_data_model.md` had already specified
+`organizations/{organizationId}` as `organizationId`-is-the-boundary, Cloud-Function-only — the same
+shape `restaurants`/`branches` already had before Faz D.1 closed those. Faz D.1.1 closes the same gap
+one level up, completing the `organizations -> restaurants -> branches` canonical chain the Faz D
+architecture analysis originally asked for.
+
+### Decision
+
+A third callable, `provisionOrganization` (`functions/src/provisionOrganization.ts`), following the
+exact same pattern as `provisionRestaurant`/`provisionBranch` (`requirePlatformMember` authorization,
+caller-supplied deterministic id, `.set()`-based idempotent upsert) — no new pattern was invented.
+`provisionRestaurant` now reads `organizations/{organizationId}` server-side, inside the same
+transaction as its own existing checks, and rejects (`failed-precondition`) if that document doesn't
+exist or its `isActive` field is not `true`, before writing anything. `provisionBranch`'s own existing
+parent-restaurant chain check is untouched — the two checks compose (branch verifies restaurant,
+restaurant now verifies organization), rather than branch re-deriving organization validity itself.
+
+**Why an organization has no "immutable binding" concept, unlike restaurants/branches**: a restaurant's
+`organizationId` and a branch's `organizationId`/`restaurantId` are *parent bindings* — reassigning them
+would silently move a tenant's data to a different tenant, which is why re-provisioning either with a
+different parent is rejected outright. An organization has no parent of its own to bind against; its
+own document id **is** the tenant boundary, which never changes regardless of how many times
+`provisionOrganization` is called for it. Its `name`/`isActive` fields may therefore be legitimately
+re-provisioned (a typo fix, deactivating a tenant) via the same idempotent upsert every other call gets
+— this is not a weaker rule than restaurants/branches, it is the correct rule for a document with no
+parent.
+
+**`isActive`** is new, Firestore-canonical-only state — the `Organization` Dart domain model
+(`lib/features/admin/domain/organization/organization.dart`) has no status field yet. Mirrors
+`Restaurant.isActive`'s own existing boolean convention rather than inventing a new status enum
+(`Branch.status` is the only enum-shaped status in this hierarchy, and organizations don't share
+branches' active/inactive/archived lifecycle needs today).
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **58/58 passing** (48 pre-existing Faz D.1
+tests + 10 new: `provisionOrganization` owner/administrator success, anonymous rejection, tenant-admin
+rejection (real `organizationAccess`/`roles` claims, no `platformRole` — proves tenant authority never
+satisfies platform authorization), duplicate/idempotent re-run, missing-field validation;
+`provisionRestaurant` missing-organization rejection, inactive-organization rejection, and the same
+tenant-admin rejection case). Every pre-existing `provisionRestaurant`/`provisionBranch` test that
+expects success now provisions its organization first via a shared `provisionOrg()` test helper — none
+of those tests' actual assertions changed, only their setup. `flutter analyze`/`flutter test`: unaffected
+(no Dart file touched) — reran anyway as a regression gate. Firestore Security Rules: 77/77, unchanged
+(no rule touched). A standalone emulator E2E script proved the full chain: a restaurant claiming
+`org-1` before `org-1` was ever provisioned is rejected; after seeding
+`org-1 -> restaurant-1 -> branch-1` in canonical order, all three documents exist with the correct
+cross-references (`restaurant.organizationId == org-1`, `branch.organizationId == org-1`,
+`branch.restaurantId == restaurant-1`); a second identical seed run upserts all three (revisions
+increment, no duplicates).
+
+### Confidence
+
+High — the organization-existence-and-liveness check is a direct structural mirror of
+`provisionBranch`'s own already-tested parent-verification pattern, applied one level up, and every
+new claim above (chain integrity, idempotency, authorization) was independently emulator-verified, not
+just documented. **Explicit non-scope, not silently dropped**: `firestore.rules`'s
+`organizationId == 'org-1'` placeholder is still untouched (Faz D.5's job — real canonical data now
+exists to sharpen it against, but that sharpening itself was not done here, per direct instruction); no
+takeaway QR/guest session/pricing backend/Flutter UI/router/App Check work was done. **Documentation
+gap noted, not fixed here** (per direct instruction — "Faz C dokümantasyonundaki eksikliği BU TASK'TA
+düzeltme"): `docs/decisions.md`/`docs/feature_status.md` still have no "Faz C" section, first noticed
+while writing Faz D.1's report and confirmed still true while writing this one.
+
+## Faz D.2 — Takeaway QR + Guest Session Backend
+
+- Date: 2026-08-10
+- Status: Accepted (QR resolution + guest session creation only — no order create, no
+  server-authoritative pricing, no Flutter wiring, no App Check provisioning, no rate-limit system,
+  no Faz C authenticated-takeaway migration, no `organizationId == 'org-1'` placeholder change; per
+  direct instruction)
+
+### Context
+
+Faz D's own architecture analysis proposed a separate `takeawayQrCodes`/`takeawayGuestSessions` domain
+for the kasadaki (register) Gel Al QR flow, reusing Table Guest Session's security *patterns* without
+reusing its *collections* (a takeaway visit has no table). Faz D.1/D.1.1 had, by this point, already
+built the real `organizations -> restaurants -> branches` canonical chain those patterns need to
+validate against — Faz D.2 is where that chain gets its first real consumer outside the provisioning
+functions themselves.
+
+### Decision
+
+Two new callables mirroring `resolveTableQrToken`/`openTableGuestSession`'s exact shape:
+`resolveTakeawayQrToken` (public, unauthenticated, minimized preview) and `openTakeawayGuestSession`
+(authenticated — anonymous sufficient — session creation), sharing one internal resolver
+(`takeawayQrTokenResolution.ts`'s `resolveTakeawayQrTokenInternal`) so `openTakeawayGuestSession` never
+trusts a prior preview call, exactly like the table case.
+
+**What's genuinely new, not just mirrored**: the internal resolver validates a takeaway QR's claimed
+`organizationId`/`restaurantId`/`branchId` against the **real** `organizations`/`restaurants`/`branches`
+documents (existence, `isActive` at two levels, chain consistency, branch `status`/`emergencyStopped`/
+`supportedOrderChannelIds`) — a table QR's target (`restaurantTables`) already denormalizes correct
+identity, so `resolveTableQrTokenInternal` never needed this extra layer. `notFound` is used for a
+broken/nonexistent link in the chain; `invalid` for a chain that's intact but not currently operational
+(inactive organization/restaurant, non-active/emergency-stopped/takeaway-unsupported branch) — mirrors
+`resolveTableQrTokenInternal`'s own `notFound`-vs-`invalid` split exactly, applied one layer deeper.
+
+**Separate config, separate TTL (RECOMMENDED, no prior business rule)**: `takeawayGuestSessionConfig.ts`
+defaults to 30 minutes, not `tableGuestSessionConfig.ts`'s 6 hours — a takeaway QR guest is completing
+one register-side checkout, not settling into a dine-in visit; see `docs/business_rules.md`
+BR-TAKEAWAY-002 for the full rationale, and that file for the TTL's own env-override mechanism
+(`TAKEAWAY_GUEST_SESSION_TTL_MINUTES`).
+
+**Idempotency via per-caller reuse, not a client-supplied key**: a second `openTakeawayGuestSession`
+call by the same `guestAuthUid` for the same `qrTokenId` reuses the existing active, unexpired session
+(a plain two-equality-filter Firestore query, deliberately avoiding a composite-index requirement this
+codebase has no index-management process for yet) — scoped per-caller so a different customer scanning
+the same physical register QR always gets an independent session, per this phase's own explicit
+requirement.
+
+**Revocation decision, stated explicitly, not left implicit**: an already-open session is not
+retroactively invalidated when its originating QR token is later revoked/rotated — only *new* session
+creation re-checks the QR's current status. This mirrors `canReadAsTableGuest`'s existing "independent
+of the session document's continued existence" precedent, moved one layer over (from "order read
+independent of session" to "session validity independent of QR"). Documented in
+`takeawayGuestSessionConfig.ts`'s own doc comment and BR-TAKEAWAY-002 as a deliberate tradeoff: token
+revocation stops future abuse, not an in-progress checkout, and the short 30-minute TTL already bounds
+exposure regardless.
+
+**No Flutter code this phase**, including no new Dart domain/gateway files — read literally as "prepare
+the *backend's* domain/gateway infrastructure," not "write Flutter domain+gateway scaffolding," per this
+phase's own explicit "Bu fazda Flutter wiring yapma" instruction and the absence of any Flutter file in
+Faz D's own DO-NOT-DO carve-outs for a domain-model exception. Stated here as a scope interpretation, not
+left to guesswork.
+
+**Dev seed**: `scripts/seed_dev_takeaway_qr.mjs` (`npm run seed:dev-takeaway-qr`) writes a real
+`takeawayQrCodes` document via direct Admin SDK write — the collection's only, intended write path (no
+callable creates `takeawayQrCodes` documents at all, by design, matching `tableQrCodes`'s own
+precedent) — bound to the dev tenant chain `seed_dev_tenant.mjs` already provisions.
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **89/89 passing** (58 pre-existing + 31 new:
+12 QR-resolution scenarios covering every chain-validation branch — valid, notFound, expired,
+inactive/rotated QR, inactive organization, inactive restaurant, missing branch, inactive branch,
+takeaway-unsupported branch, emergency-stopped branch, cross-tenant chain mismatch, missing-argument
+validation — plus 8 config boundary tests and 10 session-creation scenarios: anonymous accepted, a real
+phone-verified identity accepted without creating a `customers/{uid}` document, unauthenticated/invalid/
+expired/unknown-token rejection, same-caller reuse, and independent sessions for different callers).
+Firestore Security Rules: **85/85 passing** (77 pre-existing + 8 new: owner read, cross-uid read denial,
+unauthenticated read denial, client create/update/delete denial on `takeawayGuestSessions`, direct
+`takeawayQrCodes` read/write denial). `flutter analyze`/`flutter test`: unaffected (no Dart file
+touched) — reran anyway as a regression gate: 0 issues, 2458/2458 passing. A standalone emulator E2E
+script proved the full flow: real canonical chain provisioned via the real callables, a real
+`takeawayQrCodes` document seeded, a real anonymous sign-in, `resolveTakeawayQrToken` returning a
+correctly minimized preview, `openTakeawayGuestSession` creating a session whose every scope field
+(`organizationId`/`restaurantId`/`branchId`/`guestAuthUid`/`status`/`createdAt`/`expiresAt`/
+`lastActivityAt`/`qrTokenId`) was independently read back via the Admin SDK and confirmed server-derived
+— the client request never contained anything but the opaque token.
+
+### Confidence
+
+High — every new claim (chain validation, TTL boundary, idempotent reuse, revocation-independence, data
+minimization) was independently emulator-verified, not just documented. **Explicit non-scope, not
+silently dropped**: no `submitTakeawayOrder`/order-create path exists yet (Faz D.3); no Flutter code of
+any kind was written this phase; App Check is not enforced on either new public-adjacent callable
+(`resolveTakeawayQrToken` is fully public, `openTakeawayGuestSession` requires auth but no App Check) —
+flagged as a REQUIRED/RECOMMENDED finding in Faz D.2's own report per that phase's own explicit
+instruction to report, not build, this; the `firestore.rules`
+`organizationId == 'org-1'` placeholder remains untouched (Faz D.5); the pre-existing "no Faz C section"
+documentation gap (first noted in Faz D.1's report) remains unfixed, per direct instruction to note it
+again rather than correct it in this task.
+
+## Faz D.3 — Server-Authoritative Pricing + Takeaway Order Creation
+
+- Date: 2026-08-10
+- Status: Accepted — the single most security-critical decision in the Gel Al architecture-analysis
+  track to date. No delivery pricing, marketplace, POS/KDS UI, admin pricing UI, payment integration,
+  loyalty changes, or reservation work; per direct instruction.
+
+### Context
+
+Faz D's own original architecture analysis named the client-trusted-price gap as REQUIRED: no backend
+existed that could independently verify a product's identity, availability, category, or price, or
+compute a channel-adjusted total, without trusting whatever the client submitted. Faz D.1/D.1.1/D.2
+built the canonical tenant chain and QR/guest-session infrastructure this gap's fix needed to sit on top
+of. Faz D.3 closes it: a new callable, `submitTakeawayOrder`, is now the sole authority for both
+takeaway order-creation scenarios (QR guest, authenticated app customer).
+
+### Decision — architecture
+
+One callable, one pricing/validation pipeline, shared by both scenarios (no duplicated business logic,
+per explicit instruction). A new Firestore-canonical catalog
+(`menuProducts`/`bowlIngredients`/`channelPricingPolicies`, `docs/firestore_data_model.md`) mirrors the
+existing Dart domain model (`MenuProduct`/`ModifierGroup`/`ModifierOption`/`ChannelPricingPolicy`/
+`ChannelPriceRule`/`BowlBuilderIngredient`) rather than inventing a second, parallel pricing model. A new
+pricing engine (`functions/src/takeawayPricing.ts`/`takeawayMoney.ts`) hand-mirrors
+`ChannelPriceResolver`/`OrderLine.create`/`PriceCalculator`/`MoneyRounding` exactly — same reasoning as
+every other Dart<->TypeScript mirror in this codebase (`orderStatus.ts`, `qrTokenResolution.ts`'s status
+enums), operating on integer TRY minor units throughout, never a float.
+
+**Scope decision on catalog content, stated explicitly**: the seeded/tested catalog is a representative
+subset covering every pricing rule (a beverage at +0, a normal product at +20, a fixed-adjustment
+override, an explicit-price override, a product with modifier groups, a handful of bowl ingredients) —
+not the full ~84-product real menu (`AbakusMenuCatalog`). Proving the pricing *engine* is correct and
+authoritative was this phase's job; replatforming menu content into Firestore is separate, future work
+(RECOMMENDED finding).
+
+**Refactor, not duplication**: `takeawayScope.ts`'s `resolveActiveTakeawayBranch` (chain
+existence/`isActive`/branch-readiness checks) was extracted out of Faz D.2's
+`resolveTakeawayQrTokenInternal` so `submitTakeawayOrder`'s authenticated-customer branch — which has a
+client-supplied `restaurantId`/`branchId` but no QR token to resolve — validates against the exact same
+canonical-chain logic QR resolution uses, rather than a second, independently-drifting copy. Faz D.2's
+own emulator test suite, unmodified, re-verifies this refactor didn't change observable behavior.
+
+### Decision — identity and scope enforcement
+
+Two strictly separate, mutually-exclusive branches, dispatched on
+`request.auth.token.firebase.sign_in_provider === 'phone'` (an explicit allow-list, mirrors
+`isRealCustomerAuth()`'s own existing `firestore.rules` convention) — never inferred from which fields
+happen to be present. A caller on the wrong branch (an anonymous caller supplying any
+authenticated-branch field, or a phone-verified caller supplying `takeawaySessionId`) is rejected
+outright, never silently ignored — this single check also satisfies the required "QR guest attempts a
+scheduled pickup" rejection test, since `pickupMode`/`pickupTime` are themselves authenticated-branch
+fields.
+
+- **QR guest**: `takeawayGuestSessions/{id}` is read server-side inside the write transaction — exists,
+  owned by the caller (`guestAuthUid == request.auth.uid`), active, unexpired.
+  `organizationId`/`restaurantId`/`branchId` are derived from that session, never client input.
+  `customerId = null`, `guestAuthUid = request.auth.uid`, `pickupMode = 'asap'`, `pickupTime = null` —
+  the last two are forced server-side unconditionally for this branch, never read from the request at
+  all.
+- **Authenticated**: client-supplied `restaurantId`/`branchId` are validated against the real canonical
+  chain via the shared `resolveActiveTakeawayBranch`; `pickupTime` must be
+  `>= serverNow + 20 minutes`, `serverNow` being `Date.now()` evaluated inside the Function itself — the
+  server's own clock, never anything the client claims about "now," closing the exact gap Faz C's own
+  domain-level `PickupTimePolicy` doc comment already flagged as unenforced server-side.
+  `customerId = request.auth.uid`, `guestAuthUid = null` (preserves `Order.guestAuthUid`'s own existing
+  "null for takeaway" contract — no Dart change needed since the field was already generically typed).
+
+### Decision — price integrity
+
+Every catalog reference (`productId`, `selectedModifiers[].groupId`/`optionId`, bowl
+`ingredientIds`) is independently resolved and validated against the canonical Firestore catalog on
+every submission: existence, `isAvailable`, tenant ownership (rejects a productId belonging to a
+different restaurant), and modifier validity. **No price field of any kind exists in the accepted
+request shape** — `unitPrice`/`price`/`subtotal`/`grandTotal`/a modifier's own `extraPrice` sent by the
+client are not validated-and-rejected, they are simply never read, because there is no code path that
+reads them. `categoryId` is never accepted from the client either — every price resolution uses the
+canonical product's own `categoryId`, so a request claiming a different category for pricing purposes
+has literally nothing to attach that claim to.
+
+Bowl Builder pricing mirrors `bowl_builder_screen.dart`'s own split exactly: the resolved channel
+adjustment becomes the line's `unitPrice`, the summed canonical ingredient prices live entirely in
+`modifiers` — never combined into one number, and the channel adjustment is resolved exactly once per
+bowl line (never once per ingredient), verified by a test that would fail under a per-ingredient
+miscalculation.
+
+### Decision — idempotency
+
+`submissionKey` (client-supplied) + the caller's own `uid` deterministically derive the order's
+Firestore document id (`sha256(uid|submissionKey)`) — a tightening over Faz C's own external-id pattern
+(`SubmitCustomerOrder.call()`'s `orderId`/`orderNumber` override, which trusts a caller-supplied id
+outright): scoping the derivation to the caller's own uid makes it structurally impossible for one actor
+to collide with or overwrite another actor's order via a guessed/shared key, a property Faz C's own
+pattern does not have (flagged as a RECOMMENDED hardening for Faz C's own path, not fixed there this
+phase). The exact validated request payload is hashed into a stored `takeawaySubmissionFingerprint`; a
+retry with an unchanged effective payload reuses the existing order, a retry with a **different**
+payload under the same key is rejected fail-closed, and two different actors sharing an identical key
+never interact at all.
+
+### Decision — App Check readiness
+
+`appCheckConfig.ts`'s `shouldEnforceAppCheck()` (reads `ENFORCE_APP_CHECK` from the deployment
+environment, always `false` under `FIRESTORE_EMULATOR_HOST`) is now wired into
+`resolveTakeawayQrToken`/`openTakeawayGuestSession`/`submitTakeawayOrder` — closes Faz D.2's own
+REQUIRED finding for the takeaway domain. **`resolveTableQrToken` (the dine-in analogue) has the exact
+same public-endpoint abuse exposure and was not touched this phase** — reported again, not silently left
+inconsistent, per direct instruction not to fix it here. No custom rate-limiter was built, per direct
+instruction against a general-purpose rate-limit system.
+
+### Decision — Faz C migration strategy (the one explicitly deferred decision this phase)
+
+**The existing authenticated in-app takeaway flow (`TakeawayCheckoutScreen`, Flutter) is NOT migrated to
+`submitTakeawayOrder` in this phase.** It continues to write directly to Firestore client-side, through
+`firestore.rules`'s existing `isValidAuthenticatedTakeawayOrder` branch (Faz C) — completely unchanged,
+untouched, still passing its own full test suite.
+
+**Why**: a full migration requires (1) a new Firebase client dependency (`cloud_functions`, not
+currently in `pubspec.yaml` — a new-dependency decision of its own), (2) a new Dart gateway abstraction
+around the callable (mirroring `TableGuestSessionGateway`'s own pattern, needed for the screen to stay
+testable without a real network call), (3) a rewrite of `TakeawayCheckoutScreen._submitOrder()` and its
+existing widget test suite. This is genuine, non-trivial Flutter architecture work, not a small edit —
+bolting it onto an already-large backend security phase would violate this project's own "Minimize Scope
+of Changes"/"Plan Before Implementation" discipline (`ENGINEERING_CONSTITUTION.md`), and the user's own
+instruction explicitly anticipated and pre-authorized deferring it with a reported compatibility plan
+("Eğer Flutter Faz C migration'ı bu fazı aşırı büyütüyorsa: backend'i tamamla + authenticated path için
+compatibility plan raporla").
+
+**Why this is not "leaving two insecure paths," the one thing explicitly forbidden**: the QR guest
+scenario is brand new this phase — it has no pre-existing alternative path at all, and from the moment
+it exists, it exists *only* through `submitTakeawayOrder` (`firestore.rules` was given no new QR-guest
+direct-create branch, deliberately, per direct instruction). The authenticated path's security posture
+is exactly what it was before this phase — not worsened, and its own pre-existing REQUIRED gap (rules
+can validate shape/scope/pickup-time but not full price-catalog correctness, `docs/decisions.md`'s own
+Faz C report) is unchanged, not newly introduced. What genuinely exists now is two *live* order-creation
+mechanisms for takeaway with two different price-integrity guarantees — flagged here as a REQUIRED
+finding for the very next takeaway-touching phase, not silently accepted as a permanent state.
+
+**Compatibility plan** (for the migration, whenever undertaken): `submitTakeawayOrder`'s authenticated
+branch already fully supports the Faz C scenario end-to-end (validated by this phase's own test suite
+and emulator E2E) — the remaining work is purely Flutter-side: add `cloud_functions`, build a callable
+gateway, replace `TakeawayCheckoutScreen._submitOrder()`'s `submitCustomerOrderProvider` call with a
+call through that gateway, and only then remove `firestore.rules`'s `isValidAuthenticatedTakeawayOrder`
+branch (per this phase's own instruction: removal is conditional on the migration actually completing,
+never before).
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **140/140 passing** (89 pre-existing + 23 pure
+pricing/money-math unit tests + 28 new `submitTakeawayOrder` emulator integration tests covering both
+scenarios, every override-precedence case, bowl pricing, cross-tenant/inactive/invalid-modifier
+manipulation attempts, pickup-time boundaries, and all three idempotency scenarios). Firestore Security
+Rules: **85/85 passing, unchanged** — this phase touches `firestore.rules` not at all (Admin SDK bypasses
+rules for both `submitTakeawayOrder` branches; reads are already covered by the existing generic
+`resource.data.guestAuthUid == request.auth.uid` rule, itself channel-agnostic since Phase 3.1).
+`flutter analyze`/`flutter test`: unaffected (no Dart file touched) — reran anyway as a regression gate:
+0 issues, 2458/2458 passing. A standalone emulator E2E script proved both scenarios fully: real canonical
+chain + catalog (via the real `provision*` callables and direct catalog seeding) → real QR scan/session
+open (guest) or real phone sign-in (authenticated) → `submitTakeawayOrder` with a request containing no
+price field of any kind → Firestore order read-back independently confirming the price, scope, and
+identity were all server-derived, pickup semantics correct for each branch, and a duplicate submission
+produced no second order.
+
+### Confidence
+
+High — every claim in this entry (price-manipulation resistance, chain-validation reuse, idempotency
+collision-safety, App Check readiness) was independently emulator-verified during this phase, not just
+documented; one real bug (`buildOrderLine` not itself enforcing positive-integer quantity, relying
+entirely on an upstream caller) was caught by this phase's own pure unit test before being reported here,
+not left for the next phase to discover. **Explicit non-scope, not silently dropped**: the Faz C
+authenticated-app-takeaway Flutter migration (REQUIRED finding above); full menu catalog content
+migration into Firestore (RECOMMENDED); `resolveTableQrToken`'s own App Check gap (REQUIRED, reported
+again); no delivery/marketplace/POS/KDS/admin/payment/loyalty/reservation work of any kind was done, per
+direct instruction.
+
+## Faz D.3.1 — Full Canonical Catalog + Authenticated Takeaway Migration
+
+- Date: 2026-08-10
+- Status: Accepted — closes Faz D.3's own REQUIRED finding ("two live order-creation mechanisms for
+  takeaway with two different price-integrity guarantees"). No QR guest Flutter/web UI, delivery,
+  POS/KDS, payment, marketplace, reservation, or admin menu UI work; per direct instruction.
+
+### Context
+
+Faz D.3 built `submitTakeawayOrder` as a server-authoritative pricing/order-creation callable, but
+deliberately left two gaps open and reported them rather than closing them: (1) the seeded/tested
+catalog was a ~5-product representative subset, not the real ~79-product `AbakusMenuCatalog`, and (2)
+the pre-existing, unmigrated `TakeawayCheckoutScreen` still wrote orders directly to Firestore through
+`firestore.rules`'s `isValidAuthenticatedTakeawayOrder` branch (Faz C), leaving two live,
+differently-trusted order-creation paths for the same channel. Faz D.3.1 closes both.
+
+### Decision — single source of catalog truth: Dart is authored, Firestore is generated
+
+Rather than hand-maintaining the same ~79-product menu twice (Dart display data and a Firestore
+pricing catalog), a one-way, deterministic, idempotent export/migration pipeline was built:
+`tool/export_menu_catalog.dart` (pure Dart, no Flutter SDK dependency — the catalog source files
+import nothing from `package:flutter`) serializes the real `AbakusMenuCatalog` and
+`LocalBowlBuilderCatalogRepository` to `functions/scripts/data/menu_catalog_export.json`, converting
+every price to integer minor units (`(amountInTry * 100).round()`) to avoid float precision loss.
+`functions/src/catalogMigration.ts`'s `migrateCanonicalCatalog(db, exportData, scope)` is the single,
+unit/emulator-tested write implementation (deterministic ids matching the Dart catalog's own ids,
+`.set()`-based upsert, batched writes) that both `functions/scripts/migrate_canonical_catalog.mjs`
+(the real dev/prod migration script) and the automated test suite exercise — never two independently
+drifting implementations. The real catalog, once exported, is **7 categories, 79 products, 64 bowl
+ingredients** — verified from the export's own length at migration time, never hardcoded, per direct
+instruction not to hardcode a specific count. `npm run migrate:catalog` and `npm run seed:dev-all` now
+chain the Dart export step before migration.
+
+**Explicit, reported gap**: `npm run seed:dev-all` (the standard dev/emulator bootstrap chain) does not
+provision `channelPricingPolicies/{restaurantId}` for the canonical `restaurant-1` tenant —
+that document is only written by `seed_dev_catalog.mjs` (Faz D.3's now-superseded representative-fixture
+script), which `seed:dev-all` never calls. A fresh emulator bootstrap via `seed:dev-all` alone therefore
+has a fully migrated real catalog but no channel pricing policy, so `submitTakeawayOrder` cannot compute
+a takeaway price until `channelPricingPolicies/restaurant-1` is provisioned some other way (this
+session's own E2E script works around it by running `seed_dev_catalog.mjs` before migration, solely for
+that one document). Flagged as a REQUIRED finding for the next phase that touches dev tooling — not
+fixed here, since restructuring `seed:dev-all` was not part of this phase's approved scope.
+
+### Decision — cross-file emulator test race (a genuinely new bug class this session)
+
+Real catalog document ids are global and deterministic (`menuProducts/prod_mexifit_bowl`, etc.) —
+unlike every previous test file's synthetic, randomly-suffixed fixture ids. `node --test` runs
+different test files as separate concurrent processes against one shared Firestore emulator; two files
+independently migrating/re-migrating the real catalog under *different* `organizationId`/`restaurantId`
+scope values raced on those shared documents, causing intermittent `400 product does not belong to
+this restaurant` failures and empty query results. Fixed by convergence, not serialization: every
+real-catalog-touching test in both `catalogMigration.test.ts` and
+`submitTakeawayOrderRealCatalog.test.ts` (including `catalogMigration.test.ts`'s own
+idempotent-rerun test, which originally used a third, still-different scope) now migrates into the
+exact same literal scope (`real-catalog-shared-org`/`real-catalog-shared-restaurant`), and each file
+migrates only once via a `before()` hook rather than once per test — so regardless of how the two
+files' processes interleave, both converge on identical final document content. Verified stable across
+two consecutive full-suite runs after the fix (153/153 both times).
+
+### Decision — authenticated takeaway Flutter migration
+
+`lib/features/takeaway/data/submit_takeaway_order_gateway.dart` is a new gateway calling the
+`submitTakeawayOrder` callable, built via `cloud_functions` — **correcting an inaccuracy in Faz D.3's
+own closure report**, which listed `cloud_functions` as a new, not-yet-added dependency; it was already
+present in `pubspec.yaml` with a working emulator config
+(`lib/bootstrap/firebase_functions_emulator_config.dart`) and an established gateway pattern
+(`features/qr/data/table_guest_session_gateway.dart`) already wired into
+`lib/bootstrap/firebase_bootstrap_service.dart`, which the new gateway mirrors exactly. This closed
+Faz D.3's own primary reason for deferring the migration.
+
+`TakeawayCheckoutScreen` no longer builds an `Order` client-side or calls
+`CanonicalOrderRepository`/`submitCustomerOrderProvider` directly — it sends only intent (canonical
+`restaurantId`/`branchId`, `productId`/quantity/modifier selections or bowl ingredient ids, scheduled
+pickup time, contact fields, a `submissionKey`) and, on success, reads the backend's own order snapshot
+back via `CanonicalOrderRepository.findById()` before handing it to `OrdersNotifier.addOrder()` — the
+UI always reflects the server-computed price, never a client-side estimate. `customerId` is no longer
+sent by the client at all; the backend already derives it from `request.auth.uid` +
+`sign_in_provider == 'phone'` (Faz D.3). Bowl-vs-regular-product `CartItem` discrimination reuses the
+existing `id.startsWith('custom_bowl_')` convention already established in `bowl_builder_screen.dart`'s
+own `_addToCart`, rather than adding a new discriminator field to `CartItem` — deliberately minimal, to
+avoid a broader cart-model refactor outside this phase's scope.
+
+**Idempotency simplified, not duplicated**: Faz C's old client-side "catch a generic failure, then check
+if the order secretly already exists" safety-net pattern is no longer needed — the backend's own
+`sha256(uid|submissionKey)` idempotency (Faz D.3) means a bare retry with the same `_submissionKey`
+(generated once per checkout session in `initState()`) safely reuses the existing order through the
+normal success path. The screen's catch blocks were simplified accordingly.
+
+### Decision — removing the direct-create path
+
+With the migration complete and its own test coverage green, `firestore.rules`'s
+`isValidAuthenticatedTakeawayOrder(data)` function and its `||` branch in the `orders` collection's
+`allow create` rule were removed — the one, isolated removal this phase authorized. Every other branch
+(staff, dine-in QR guest/authenticated, delivery, reservation preorder) is untouched. Reads are
+unaffected (the existing generic `resource.data.guestAuthUid == request.auth.uid` /
+`resource.data.customerId == request.auth.uid` rules already covered backend-created orders, channel-
+agnostically, since Phase 3.1). This closes Faz D.3's own REQUIRED finding: takeaway now has exactly
+one live, server-authoritative order-creation mechanism for both QR guest and authenticated app
+scenarios, sharing one pricing/validation pipeline.
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **153/153 passing** (up from Faz D.3's 140 —
+5 new catalog-migration tests, 8 new real-catalog pricing/manipulation tests replacing/extending the
+representative-fixture coverage), stable across two consecutive full runs. Firestore Security Rules:
+**73/73 passing** (down from 85 — the old ~17-test "Faz C direct-create" block was replaced by a
+smaller, accurate 5-test "Faz D.3.1" block proving the direct-create path is gone and backend-created
+orders remain readable; every staff/dine-in/delivery/reservation test is untouched and still passing).
+`flutter analyze`: 0 issues. `flutter test`: **2458/2458 passing**. A standalone, human-readable emulator
+E2E script (`functions/scripts/e2e_takeaway_real_catalog.mjs`) proved the full canonical catalog
+end-to-end using real menu items deliberately excluded from Faz D.3's own representative-fixture ids
+(`prod_crispy_falafel_salad`, a normal product; `prod_acili_ayran`, a beverage; and a bowl built from
+real `bb_protein_izgara_tavuk`/`bb_carbs_meksika_pilavi` ingredients) — real phone auth, real
+`branch-1`, `submitTakeawayOrder`, and an independent Firestore read-back confirming
+`customerId`/`grandTotal` were server-derived for all three: 44000 (42000 base + 2000 takeaway
+adjustment), 8000 (beverage, unchanged), and 7500 (4000 + 1500 ingredients + 2000 adjustment, once).
+
+### Confidence
+
+High — the catalog migration, Flutter gateway rewrite, and rules-branch removal were each independently
+verified (unit/emulator tests plus a narrated E2E script), and the one intermittent test failure
+encountered (the cross-file race) was root-caused to an actual bug in test scope design, not silenced
+with a retry or a skip. **Explicit non-scope, not silently dropped**: QR guest Flutter/web UI (Faz D.4);
+`resolveTableQrToken`'s own App Check gap (still unfixed, reported again in Faz D.3, not reopened here);
+`seed:dev-all`'s missing `channelPricingPolicies` provisioning step (new REQUIRED finding, above); the
+Dart-display-vs-Firestore-backend price sync is now correct **by construction** (Firestore is generated
+from Dart), but there is still no reconciliation UI if a future Dart catalog edit ships without
+re-running `migrate:catalog` — flagged as a RECOMMENDED operational risk, not built this phase per the
+user's own "öner, zorunlu değil" (suggest, not mandatory) framing.
+
+## Faz D.3.1.1 — Dev Seed Completeness + Security Test Coverage Check
+
+- Date: 2026-08-11
+- Status: Accepted — a small closure task, not new feature work. Closes Faz D.3.1's one REQUIRED
+  finding (`seed:dev-all` never provisioning `channelPricingPolicies/restaurant-1`) and audits the
+  73-test Firestore rules regression against 8 explicitly named required security behaviors. No App
+  Check work, no D.4 QR guest UI, no reservation/delivery/POS/KDS/payment/catalog-admin-UI/unrelated
+  refactor; per direct instruction.
+
+### Decision — single canonical pricing seed, not two
+
+Rather than writing `channelPricingPolicies/{restaurantId}` a second time by hand inside
+`migrate_canonical_catalog.mjs` (which would have been literally the "two independent pricing seed
+implementations" this task was told not to create), `tool/export_menu_catalog.dart` now also serializes
+the real `InMemoryChannelPricingPolicyRepository` — the same policy object `ChannelPriceResolver`
+already reads throughout the app (`docs/business_rules.md` BR-PRICE-004: +20 TL takeaway default, +0
+İçecekler override) — into the same export JSON, and `catalogMigration.ts`'s `migrateCanonicalCatalog`
+writes `channelPricingPolicies/{restaurantId}` from that export as part of the same, single migration
+call. This closes the REQUIRED finding **and** removes the last hand-typed duplicate of the +20/+0
+values that previously lived only in `seed_dev_catalog.mjs` and, redundantly, inside
+`submitTakeawayOrderRealCatalog.test.ts`'s own chain-setup helper (also removed — that test now relies
+on `migrateCanonicalCatalog`'s own write, like every other real-catalog test).
+
+`seed:dev-all`'s own script chain (`seed_dev_tenant.mjs` → `seed_dev_takeaway_qr.mjs` →
+`migrate_canonical_catalog.mjs`) already never called `seed_dev_catalog.mjs` — the "hidden dependency"
+named in the task was that `channelPricingPolicies` silently required a manual, undocumented extra step
+outside that chain to make pricing actually work, not a literal script invocation. With the policy write
+folded into `migrate_canonical_catalog.mjs`, that gap is closed without changing `package.json` at all.
+`seed_dev_catalog.mjs` itself is left in place, marked SUPERSEDED in its own header (every id it writes,
+including its own separate policy write, is now redundant with the real migration) — not deleted, since
+deleting a file is the human's decision, not taken unilaterally (`CLAUDE.md` §15).
+
+### Decision — fresh emulator + idempotency proof
+
+A completely fresh `firebase emulators:exec` session (no `--import`, so genuinely empty Firestore) ran
+exactly `seed:dev-all`'s own chain — `seed_dev_tenant.mjs` → `seed_dev_takeaway_qr.mjs` →
+`migrate_canonical_catalog.mjs`, no `seed_dev_catalog.mjs` anywhere — followed, in the same session, only
+by the existing verification script (`e2e_takeaway_real_catalog.mjs`, itself updated to no longer
+reference `seed_dev_catalog.mjs` in its own run instructions or error messages). `submitTakeawayOrder`
+priced all three real-catalog scenarios correctly with zero additional manual seed step: a normal
+product at base+2000 (44000 = 42000+2000), a beverage unchanged (8000), and a bowl at ingredient total
++2000 once (7500 = 4000+1500+2000). The same chain was then run **twice** in one session: category/
+product/ingredient counts were identical both times (7/79/64), `channelPricingPolicies/restaurant-1`
+existed and was correct after both runs, and `organizations`/`restaurants`/`branches` reported
+"already existed (upserted)" on the second pass — the existing provisioning model's own revision/upsert
+semantics, unchanged.
+
+### Decision — rules test coverage audit
+
+The 85→73 test-count drop from Faz D.3.1 was re-examined against the 8 specific security behaviors this
+task named as mandatory. Two were found to be **provably true from the untouched rule text but not
+directly, explicitly exercised for the takeaway channel/shape** by any currently active test:
+
+1. **Staff create is unaffected.** The generic `isOrgMember(...) && status check` `orders` create branch
+   (`firestore.rules` ~L410) has no `channel` field check at all and was never touched by Faz D.3.1's
+   removal — but every pre-existing staff-create test omits `channel` entirely, so "unaffected for
+   `channel: 'takeaway'` specifically" was true by inspection, not by direct test. Added one test: a real
+   org-member context creating a `channel: 'takeaway'` order still succeeds via this branch.
+2. **QR guest takeaway order read-ownership.** `canReadAsTableGuest` (`guestAuthUid ==
+   request.auth.uid`, channel-agnostic) already covers a backend-created QR-guest takeaway order exactly
+   like a dine-in table guest order — but no test exercised the takeaway shape specifically (`customerId:
+   null`, `guestAuthUid` set, `channel: 'takeaway'`, the exact shape `submitTakeawayOrder`'s QR-guest
+   branch writes). Added two tests: the owning guest can read their own backend-created takeaway order;
+   a different uid cannot.
+
+No old, now-architecturally-meaningless test was reintroduced. The removed ~17-test Faz C block (Faz
+D.3.1's own report) tested the *behavior* of `isValidAuthenticatedTakeawayOrder` itself — payload-shape
+validation, pickup-time boundary enforcement inside the rules layer, contact-field checks, and a
+"direct create succeeds for a valid payload" positive case — all of which had nothing left to exercise
+once that rules function was deleted; that reasoning is preserved here, not re-litigated, since the
+function remains deleted and no security behavior it uniquely provided was left unproven (`submitTakeawayOrder`'s own extensive Functions-layer test suite, unchanged by this task, is what actually
+re-proves those same business rules now, server-side rather than in rules).
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **154/154 passing** (up from Faz D.3.1's 153 —
+one new `catalogMigration.test.ts` test proving the channel pricing policy write, plus its idempotency
+assertion folded into the existing rerun test), stable across three consecutive full runs. Firestore
+Security Rules: **76/76 passing** (up from 73 — the 3 audit-closing tests above; every other test
+unchanged). `flutter analyze`: 0 issues (one unused-import warning caught and fixed in
+`tool/export_menu_catalog.dart` during this task). `flutter test`: full suite passing, unaffected (no
+Flutter feature code touched this task, only the pure-Dart export tool). Fresh-emulator E2E: PASS (see
+Decision above).
+
+### Confidence
+
+High — every claim (single-seed convergence, fresh-emulator sufficiency, idempotency, the two audited
+test gaps) was independently re-verified against a genuinely empty emulator, not assumed from the
+previous phase's report. **Explicit non-scope, not silently dropped**: App Check activation (Faz D.3.2);
+QR guest Flutter/web UI (Faz D.4); `resolveTableQrToken`'s own App Check gap (still unfixed, reported
+again, not reopened here); the Dart-display-vs-Firestore-backend reconciliation-UI RECOMMENDED finding
+from Faz D.3.1 (still open, unchanged); `seed_dev_catalog.mjs` itself was not deleted, only marked
+superseded, per the no-unilateral-deletion rule.
+
+## Faz D.3.2 — Table QR App Check Hardening
+
+- Date: 2026-08-11
+- Status: Accepted — a small security-hardening task, not new feature work. Closes the REQUIRED finding
+  Faz D.3 reported and left open: `resolveTableQrToken` had the exact same public-endpoint App Check
+  exposure as `resolveTakeawayQrToken` but was never hardened. No D.4 guest Flutter/web UI, reservation,
+  pricing, order-flow, delivery, POS/KDS, payment, loyalty, or unrelated refactor; per direct
+  instruction.
+
+### Decision — reuse, not a parallel system
+
+`resolveTableQrToken`/`openTableGuestSession` now wire `appCheckConfig.ts`'s `shouldEnforceAppCheck()`
+into their `onCall` options — the exact same shared function `resolveTakeawayQrToken`/
+`openTakeawayGuestSession`/`submitTakeawayOrder` already used, imported the same way, with the same
+doc-comment framing. No new config file, no per-domain toggle, no second "should I enforce" decision
+anywhere in the codebase. `src/test/appCheckConfig.test.ts` (new) proves this by real module-wiring
+inspection — a monkey-patched shared function instance, freshly required into all five Function
+modules, is called exactly once per module — rather than by trusting the two files merely *look* similar.
+
+### Decision — environment behavior, unchanged pattern
+
+`shouldEnforceAppCheck()` itself was not modified: `false` whenever `FIRESTORE_EMULATOR_HOST` is set
+(unconditionally, regardless of `ENFORCE_APP_CHECK`), `true` only when `ENFORCE_APP_CHECK` is the exact
+string `"true"` outside the emulator — fails closed for any other value (`"TRUE"`, `"1"`, `"yes"`,
+empty), never fuzzy-truthy. This is not a new decision; it is Faz D.3's own already-approved pattern,
+now proven by a dedicated direct unit test for the first time (no test file exercised
+`shouldEnforceAppCheck()` in isolation before this phase, only indirectly through it being wired into
+three Functions). Table QR now inherits this exact behavior with zero code duplication.
+
+### Decision — App Check is not authentication
+
+`openTableGuestSession`'s existing `if (!request.auth) throw new HttpsError("unauthenticated", ...)`
+check is completely unchanged, still evaluated independently of App Check — a request from a genuine
+app build with no signed-in user is still rejected, and (once real enforcement is active in production)
+a signed-in user calling from a non-genuine client is separately rejected by App Check. Neither
+mechanism can substitute for the other; both apply. `resolveTableQrToken` remains intentionally
+unauthenticated (a QR scan happens before any sign-in), with App Check as its only abuse-boundary,
+mirroring `resolveTakeawayQrToken`'s own identical reasoning.
+
+### Decision — other callable audit (report only, per direct instruction not to touch scope-dish endpoints)
+
+Every `onCall`/`onRequest` Function in `functions/src` was enumerated (Firestore triggers —
+`onOrderCreated`/`onOrderCompleted` — are not reachable by any client call and are structurally exempt,
+not a finding). Two more gaps found, neither touched this phase:
+
+- **`processAccountDeletion`** (`src/processAccountDeletion.ts`) — public callable, no
+  `enforceAppCheck`, and (found while auditing, not previously documented as a gap) **no
+  `request.auth` check of any kind** — any caller, signed in or not, may invoke it with any
+  `requestId`. Impact is bounded (it can only early-trigger an already-existing, already-legitimately-
+  created `deletionRequests` document that is already due; it cannot create one or target arbitrary
+  data), but it is a real gap. Classified **REQUIRED** for the App Check piece (same public-endpoint
+  class as the QR resolvers) and **REQUIRED** for the missing-auth piece as a separate, likely
+  higher-severity finding — both left for a dedicated future phase, not fixed here.
+- **`provisionOrganization`/`provisionRestaurant`/`provisionBranch`** (Faz D.1/D.1.1) — no
+  `enforceAppCheck`, but already gated by `requirePlatformMember` (a real Platform Owner/Administrator
+  claim check, `platformAuthorization.ts`) — a strong authorization boundary already independent of App
+  Check. Classified **RECOMMENDED** (defense-in-depth, not urgent): these are low-traffic,
+  admin/platform-only operations, not customer-facing or scraping-exposed the way the QR resolvers are.
+
+No `onRequest` (raw HTTP, manual App Check verification) Functions exist in this codebase — every
+client-reachable Function uses `onCall`, so `enforceAppCheck` is available uniformly with no
+per-function verification-code variant needed.
+
+### Decision — production deployment prerequisites, documented explicitly
+
+`ENFORCE_APP_CHECK=true` alone is not sufficient to safely activate enforcement — a real App Check
+provider must be provisioned per platform first, or genuine clients get locked out along with abusers.
+`functions/README.md` now states this as an explicit two-part prerequisite, flagging the Web reCAPTCHA
+Enterprise site key specifically: the takeaway QR flow is deliberately web-reachable (a kasadaki QR
+scanned in a browser), so this is the platform most likely to be forgotten before a production
+`ENFORCE_APP_CHECK=true` rollout. The Flutter-side `FirebaseAppCheckService` was inspected and requires
+no code change — it is already fully provider-aware per platform (Android Play Integrity, iOS/macOS App
+Attest+DeviceCheck fallback, Web reCAPTCHA Enterprise pending only a site key, Windows debug-only by
+design); only real provider provisioning (external to this codebase) and the site key value are
+missing.
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **159/159 passing** (up from Faz D.3.1.1's
+154 — 5 new `appCheckConfig.test.ts` tests), stable across two consecutive full runs. Existing Table QR
+tests (`tableGuestSession.test.ts`, all 16) pass completely unchanged — `enforceAppCheck` evaluates to
+`false` under every emulator run, a structural no-op there by design, so no Table QR business logic
+(token resolution, canonical scope, session TTL, technical identity, table authorization) was touched
+or needed to change. Firestore Security Rules: **76/76 passing, unchanged** (no rule touched this
+phase). `flutter analyze`/`flutter test`: unaffected (no Dart file touched) — reran as a regression
+gate.
+
+### Confidence
+
+High — the fix is a minimal, mechanical reuse of an already-approved, already-tested pattern; the one
+new testing challenge (proving Table QR and Takeaway Functions share the exact same config function,
+without inventing a fake App Check token, which this task explicitly forbade) was solved with a real
+module-wiring proof rather than a weaker source-text check. **Explicit non-scope, not silently
+dropped**: `processAccountDeletion`'s two gaps (App Check + missing auth, REQUIRED, new findings this
+phase); `provisionOrganization`/`provisionRestaurant`/`provisionBranch`'s App Check gap (RECOMMENDED,
+already claim-gated); D.4 QR guest Flutter/web UI; every other named out-of-scope area (reservation,
+pricing, order flow, delivery, POS/KDS, payment, loyalty) — none touched.
+
+## Faz D.3.2.1 — Account Deletion Authorization + App Check Fail-Safe Audit
+
+- Date: 2026-08-11
+- Status: Accepted — a security hotfix closing the REQUIRED finding Faz D.3.2's own callable audit
+  surfaced (`processAccountDeletion` had no App Check *and* no authentication at all). No D.4 guest
+  Flutter/web UI, reservation, pricing, order flow, delivery, POS/KDS, payment, loyalty, or unrelated
+  refactor; per direct instruction.
+
+### Root cause — `processAccountDeletion`'s previous attack surface
+
+The function took only a `requestId` string, read `deletionRequests/{requestId}`, and — with **no
+`request.auth` check of any kind** — anonymized whichever `customers/{uid}` the document's own `uid`
+field named, once its cooling-off period had elapsed. `deletionRequests` ids are sequential and
+predictable (`SequentialAccountDeletionRequestIdGenerator`: `deletion-request-1`, `-2`, ...), not
+random. Combined, any unauthenticated caller who enumerated a handful of ids could trigger another
+real customer's already-due account anonymization — without ever being that customer, without any
+session, without App Check. `firestore.rules` itself was not the gap (`create`/`read` on
+`deletionRequests` already require `uid == request.auth.uid`) — the gap was entirely in the Cloud
+Function, which uses the Admin SDK and bypasses those rules by design. The Firebase Auth account was
+never deleted by this path (confirmed by code inspection) — only the Firestore CRM record; that remains
+true after this fix.
+
+### Decision — authorization model
+
+Real-customer self-service only, mirroring `submitTakeawayOrder`'s own established identity model
+exactly: `request.auth` required (else `unauthenticated`), `request.auth.token.firebase.sign_in_provider
+=== "phone"` required (else `permission-denied` — an anonymous technical identity, e.g. a QR guest
+session, can never reach this path). The account actually affected is always
+`deletionRequests/{requestId}.uid` — never a client-supplied uid, since the accepted payload has never
+contained one — but the function now independently re-verifies `data.uid === request.auth.uid` inside
+the same transaction before doing anything else, closing the guessable-id vector: a real, legitimately
+phone-authenticated customer still cannot process another customer's request by supplying its id. A
+mismatch resolves to the exact same `not-found` a genuinely nonexistent id returns — deliberately, so
+this endpoint can never be used to confirm or deny that a given (guessable) `requestId` belongs to
+someone else, closing a minor enumeration-oracle risk alongside the main authorization gap. No separate
+admin/staff account-deletion path exists anywhere in this codebase (verified by search) — nothing to
+keep separate from this self-service fix.
+
+### Decision — App Check fail-safe redesign
+
+Two distinct properties were previously conflated in this codebase's own language (a test title
+literally called the fail-open default "safe" and said it "never fails open" — backwards) and are now
+described precisely: the emulator short-circuit is genuinely fail-closed (nothing can turn enforcement
+*on* against a local emulator); the *default absence* of `ENFORCE_APP_CHECK` outside the emulator
+resolves to `false` — enforcement **off**, which is fail-*open*, and was previously silent. Fixed two
+ways:
+
+1. **`ENFORCE_APP_CHECK` is now a real Cloud Functions v2 Parameter**
+   (`firebase-functions/params`'s `defineBoolean`), not a raw `process.env` read — the literal "use
+   Firebase's own config/params approach" ask. Runtime *parsing* is unchanged (still strict
+   `=== "true"`, still fails closed against a typo silently enabling enforcement); what changes is
+   *visibility* — declared Parameters are discoverable via the Firebase CLI/Console instead of living
+   as an env var nobody would think to check.
+2. **A loud runtime warning replaces silence.** Outside the emulator, if enforcement resolves `false`,
+   `shouldEnforceAppCheck()` now logs one structured `logger.warn` (Firebase's own
+   `firebase-functions/logger`) per cold start, naming the exact condition — alertable in Cloud
+   Logging/the Console, not a `console.log` invented for this task.
+
+**A deploy-time hard failure (a required Parameter with no default) was considered and rejected for
+this task's scope** — it would make all six App-Check-ready Functions completely undeployable until a
+real App Check provider is provisioned for every platform, a materially larger and riskier decision
+than "close the account-deletion gap and the reported App Check inconsistency," and this project's App
+Check providers are not provisioned yet (`FirebaseAppCheckService`'s own doc comment). Recorded as a
+RECOMMENDED follow-up for once a real production rollout is imminent, not implemented here since it
+cannot be safely validated against a real `firebase deploy` from this environment.
+
+### The emulator-startup regression this change caused, and its root-caused fix
+
+Declaring the **first-ever** `firebase-functions/params` Parameter in this codebase changed
+`firebase emulators:start`/`emulators:exec`'s own Functions-discovery behavior: the CLI now opens an
+**interactive prompt** ("Enter a boolean value for ENFORCE_APP_CHECK") during discovery, even though the
+Parameter has a `default` — and since `emulators:exec` runs non-interactively (no attached TTY), every
+emulator-backed test run hung indefinitely. This was not assumed — it was proven by a controlled,
+minimal reproduction before any fix was applied:
+
+- Ports were confirmed genuinely free, then the Functions Emulator alone was started with `--debug`,
+  capped at 60 seconds via `timeout`, once with `ENFORCE_APP_CHECK=false` set directly in the process
+  environment and once with it entirely unset — an A/B comparison. **Both runs produced byte-for-byte
+  identical logs**, ending exactly at:
+  ```
+  [...] Got response from /__/functions.yaml {"endpoints":{...11 functions...},
+    "params":[{"name":"ENFORCE_APP_CHECK",...,"default":false}]}
+  ? Enter a boolean value for ENFORCE_APP_CHECK: ...
+  ```
+  Functions discovery/manifest generation completed successfully in both runs (all 11 functions listed,
+  including the new `params` array) — the blocker is strictly the interactive prompt after discovery,
+  not source loading, module resolution, or the Node runtime version mismatch warning (a separate,
+  pre-existing, non-blocking warning). Setting the variable directly in the process environment did
+  **not** prevent the prompt — the CLI's discovery-time prompt only reads a value from a `.env`/
+  `.env.local` file, not from an already-exported shell variable, which is itself a useful, confirmed
+  fact about this exact CLI version's behavior.
+- Fix: `functions/.env.local` (Firebase's own supported mechanism for local/CLI-only Parameter
+  overrides) supplies `ENFORCE_APP_CHECK=false` — the same value the code's own `default` already
+  specifies, so this changes no runtime behavior, only whether the CLI has a value to find before it
+  would otherwise ask. Verified: the exact same isolated `processAccountDeletion.test.ts` run that
+  previously hung now completes in ~3.6s with the log line `Loaded environment variables from
+  .env.local.` in place of the interactive prompt, and the full suite (164 tests) runs clean twice in a
+  row afterward. `.gitignore` did not already cover `.env.local`/`.env.*.local` (verified via `git
+  check-ignore`, which returned no match) — added, since Firebase's own convention treats these as
+  never-committed, machine/CLI-local overrides, distinct from a project-level `.env.<project-id>` file
+  (not used in this repo) that convention treats as committed, shared config.
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **164/164 passing** (up from Faz D.3.2's 159
+— 4 new `processAccountDeletion.test.ts` authorization tests, 1 new `appCheckConfig.test.ts` loud-
+warning test, plus `processAccountDeletion` added to the existing module-wiring proof), all passing on
+first attempt with no fixes needed, stable across two consecutive full runs. Firestore Security Rules:
+**76/76 passing, unchanged** (no rule touched this task). `flutter analyze`: 0 issues. `flutter test`:
+full suite passing, unaffected (no Flutter file touched). `functions/.env.local` confirmed git-ignored
+after the `.gitignore` fix.
+
+### Confidence
+
+High — the account-deletion vulnerability, its fix, and the emulator-hang regression were each
+independently root-caused with real evidence (code inspection for the vulnerability; a controlled A/B
+`timeout`-capped reproduction with byte-identical logs for the hang) rather than assumed, exactly as
+instructed before any fix was applied. **Explicit non-scope, not silently dropped**: a deploy-time hard
+failure for missing `ENFORCE_APP_CHECK` (RECOMMENDED follow-up, once App Check providers exist);
+`provisionOrganization`/`provisionRestaurant`/`provisionBranch`'s own App Check gap (RECOMMENDED,
+already claim-gated, re-flagged not re-scoped); D.4 and every other named out-of-scope area — none
+touched.
+
+## Faz D.4 — Gel Al QR Guest Flutter/Web Customer Flow
+
+- Date: 2026-08-11
+- Status: Accepted — a pure Flutter/web integration + UX phase; the backend
+  (`resolveTakeawayQrToken`/`openTakeawayGuestSession`/`submitTakeawayOrder`'s guest branch) was already
+  built and tested in Faz D.2/D.3 with **no Flutter caller at all** (confirmed by search before any code
+  was written — `grep -rl "takeawayGuestSession|TakeawayQr" lib` returned nothing). No new Cloud
+  Function, no Firestore rule change, no delivery/reservation/POS/KDS/payment/loyalty/marketplace/fiscal
+  work, no unrelated refactor; per direct instruction.
+
+### Decision — reuse over parallel construction, everywhere it was possible
+
+Every piece of this phase mirrors an already-approved, already-tested pattern rather than inventing a
+new one:
+
+- **Router**: `AppRouteGuard.resolve` gained one new, unconditional bypass (`location.startsWith
+  (AppRoutes.takeawayGuestPrefix)`, checked first) rather than a new guard mechanism. The bypass had to
+  precede the existing `signedIn -> redirect to /main` branch specifically — that branch redirects
+  *every* location once any session (real or guest) exists, which would otherwise bounce an
+  already-signed-in customer opening a QR link straight past the guest flow. `go_router`'s nested-shell
+  architecture (`MainNavigationScreen`'s own tab routing) was **not** touched — the new route is a single
+  flat `GoRoute`, matching the existing four exactly, per this project's own standing "do not
+  redesign the router foundation without separate approval" constraint.
+- **Technical identity**: `TechnicalIdentityProvider`/`FirebaseTechnicalIdentityProvider` (the dine-in
+  QR flow's own component) is reused verbatim, not duplicated — it was already channel-agnostic by
+  design (`table_guest_session_dependencies_provider.dart`'s own doc comment already documented this as
+  the intended reuse point).
+- **Gateway/domain shape**: `TakeawayGuestSessionGateway`/`TakeawayQrPreview`/
+  `OpenedTakeawayGuestSession`/`TakeawayGuestSessionException` mirror `TableGuestSessionGateway`'s exact
+  shape field-for-field (minus `tableId`/`tableDisplayName`, since a takeaway QR belongs to a branch, not
+  a table). `TakeawayGuestContext` mirrors `ActiveTableContext`'s role but is deliberately leaner — no
+  wrapped legacy `TableSession`/`GuestSession` objects, since nothing else in the app needs that shape
+  for takeaway.
+- **Order submission**: `SubmitTakeawayOrderGateway` gained one new method, `submitGuestOrder` —
+  extending the existing Faz D.3.1 interface/implementation rather than creating a second gateway. Both
+  scenarios now share one Dart-side gateway calling one backend callable, matching the backend's own
+  "one pipeline, no duplicated business logic" design.
+- **Menu/cart/checkout UI**: `MenuScreen`/`ProductDetailScreen`/Bowl Builder are used completely
+  unmodified — they already read `shoppingChannelProvider` and stamp `pricedForChannel` on add-to-cart,
+  which the guest entry screen sets via the exact same `shoppingChannelProvider.selectTakeaway(...)` call
+  `TakeawayBranchSelectionScreen` already makes for the authenticated flow. `CartScreen`'s existing
+  checkout-dispatch `if`-chain (dine-in / takeaway-authenticated / delivery) gained one new branch
+  (takeaway-guest, checked before the authenticated-takeaway branch, since both share `channelContext
+  .isTakeaway == true` and only an active `takeawayGuestContextProvider` distinguishes them) rather than
+  a parallel dispatch mechanism.
+
+### Decision — guest checkout screen, built new (nothing to reuse here)
+
+`TakeawayGuestCheckoutScreen` mirrors `TakeawayCheckoutScreen`'s pricing-display/duplicate-submission-
+guard/backend-snapshot-is-authoritative shape, minus everything that scenario doesn't have: no
+pickup-time picker at all (ASAP is unconditional server-side, `submitTakeawayOrder`'s guest branch
+always forces `pickupMode: 'asap'`/`pickupTime: null` — there is nothing for a picker to do), and contact
+phone now goes through `TurkishPhoneNumber.normalize` (the existing OTP-login field's own validation
+utility) before submission — closing a real gap: the authenticated `TakeawayCheckoutScreen`'s own phone
+field has never validated/normalized its input at all, only checked non-empty. That screen was left
+unchanged this phase (fixing it is a small, separate, reportable follow-up — see Remaining Findings in
+this phase's own report) since touching it wasn't necessary to ship the guest flow and this phase's own
+scope explicitly excludes unrelated changes.
+
+### Decision — guest orders are never added to `ordersProvider`
+
+Unlike the authenticated takeaway flow (which calls `ordersProvider.notifier.addOrder(...)` after a
+successful submission), the guest checkout screen deliberately does not — `ordersProvider` sources from
+`CanonicalOrderRepository.findByCustomerId(uid)`, and a guest order's `customerId` is always `null`, so
+adding it would either be a no-op the provider's own real data model would never produce via its normal
+read path, or (worse) a state-leak risk if the same device later signs in as a real customer and the
+provider is not properly reset. The success screen alone (reading the backend's own order snapshot
+directly) is sufficient — there is no order-history/tabs screen reachable from this standalone guest
+flow for a leftover entry to appear in anyway.
+
+### Decision — idempotency across a browser refresh, the minimal safe mechanism
+
+A full "resume the exact checkout state after a hard page reload" mechanism (restoring cart contents,
+contact form fields, and the guest session itself) was explicitly out of scope ("Yeni global persistence
+sistemi icat etme"). What was built instead: `TakeawayGuestSubmissionKeyStore`, a
+`shared_preferences`-backed store (mirroring `HeroAbacusScenarioStore`'s exact interface+impl+fail-safe
+shape — `shared_preferences` is an already-approved dependency, not a new one) that persists only the
+current `submissionKey` string, keyed by guest session id. On refresh, the checkout screen recovers the
+same key rather than generating a fresh one; a customer who then re-fills an equivalent order and
+resubmits gets recognized by the backend's own `sha256(uid|submissionKey)` idempotency (Faz D.3,
+BR-TAKEAWAY-004) as the same submission, not a duplicate real order. What this does **not** do: restore
+the cart or contact fields themselves — a genuinely larger feature. Reported, not silently assumed
+sufficient for every refresh scenario.
+
+### Decision — session expiry UX
+
+`TakeawayGuestContext.isExpiredAt(now)` is a client-side-only convenience the checkout screen uses to
+disable the submit button and show an explicit "Oturumun süresi doldu... QR kodu tekrar okut" message —
+`submitTakeawayOrder`'s own server-side session-liveness re-check (Faz D.2/D.3) remains the actual
+authority regardless of what this client-side check says. No silent failure path exists: an expired
+session either shows this banner before submission is even attempted, or (a race — expired between page
+load and tap) surfaces the server's own `failed-precondition` mapped to the same Turkish message.
+
+### Decision — real emulator E2E closes a genuine coverage gap, not a duplicate
+
+`e2e_takeaway_guest_real_catalog.mjs` (new) proves the QR-GUEST scenario against the real, fully-migrated
+catalog for the first time — `submitTakeawayOrderRealCatalog.test.ts` (Faz D.3.1) only ever exercised the
+AUTHENTICATED phone-customer scenario against real catalog products; the guest scenario had only been
+proven against Faz D.3's small synthetic fixtures until now. The script drives the exact sequence the new
+Flutter UI does at the backend level: public `resolveTakeawayQrToken` (no auth header, verified to leak
+no internal ids) -> real anonymous sign-in -> `openTakeawayGuestSession` -> `submitTakeawayOrder` (guest
+branch, `takeawaySessionId` only) -> Firestore read-back, for a real normal product and a real bowl, with
+every invariant (`channel`/`customerId`/`guestAuthUid`/`pickupMode`/`pickupTime`/canonical pricing)
+independently asserted. This is a backend-level proof script (matching Faz D.3.1's own established
+`e2e_takeaway_real_catalog.mjs` pattern), not a browser-automated Flutter UI test — per this project's
+own standing "no desktop automation" rule (visual/rendered UI verification is the user's own task), no
+tool in this session drove the actual rendered Flutter widgets end-to-end.
+
+### Decision — web responsive QA, code-level review only
+
+Per the same standing "no desktop automation" rule, no automated browser/viewport testing was performed.
+What was verified by code inspection instead: `TakeawayGuestCheckoutScreen`'s scrollable body is a
+`ListView` (not a fixed `Column`), which handles both long content and keyboard-open insets safely by
+Flutter's own scrolling/resize behavior; every cart-item row wraps its name `Text` in `Expanded` (the
+same pattern `TakeawayCheckoutScreen`/`CartScreen` already use), so a long product name wraps rather than
+overflowing horizontally; no fixed pixel widths were introduced anywhere in the new screens; the
+QR-preview confirmation screen's `Column(mainAxisSize: MainAxisSize.min)` inside a `Center` matches the
+same structural shape `ErrorView`/`LoadingView` (pre-existing, used everywhere in this app) already use.
+Actual rendered verification on a narrow mobile viewport, portrait, keyboard-open, and with genuinely
+long product names is the user's own visual QA, per this project's established convention — not claimed
+as done here.
+
+### Verification
+
+`flutter analyze`: 0 issues. `flutter test`: **2490/2490 passing** (up from the 2458 baseline — 32 new
+tests across router guard, the new use case, the two new screens, `OrderSuccessScreen`'s extended
+branch, and `CartScreen`'s dispatch), stable. Functions build/tests: **164/164 passing, unchanged** (no
+Functions source touched this phase). Firestore Security Rules: **76/76 passing, unchanged** (no rule
+touched this phase). Fresh-emulator guest E2E: PASS for both a real normal product and a real bowl (see
+Decision above).
+
+### Confidence
+
+High for everything actually built and tested (router bypass, gateway/context/use-case reuse pattern,
+guest checkout screen, idempotency-key persistence, session-expiry UX, the new E2E proof) — each
+independently verified against a genuinely fresh emulator or a real widget test, not assumed. Lower/
+explicit-unknown for the two things this phase could not verify itself, by design: actual rendered
+mobile-web appearance (code-level review only, per the standing no-automation rule) and native
+Android/iOS deep-linking (this phase targets the web-reachable QR-scan-opens-a-browser-link flow; native
+app-link/universal-link platform configuration is separate, larger infrastructure work, not attempted).
+**Explicit non-scope, not silently dropped**: `TakeawayCheckoutScreen`'s own pre-existing phone-field
+validation gap (RECOMMENDED, found while building the guest screen's better version, not fixed on the
+authenticated screen this phase); clean path-based web URLs (`usePathUrlStrategy`) would require adding
+`flutter_web_plugins` as a new direct pubspec dependency plus server-side SPA rewrite configuration for a
+real web host — deliberately not added silently (a new-dependency decision requires explicit approval);
+the app currently uses the default hash-based URL strategy (`/#/takeaway/TOKEN`), which works but is
+less clean for a QR-encoded URL — RECOMMENDED finding, not implemented; native Android/iOS deep-linking
+(RECOMMENDED, separate infrastructure); Web reCAPTCHA Enterprise site key still not provisioned
+(REQUIRED production prerequisite, already reported in Faz D.3.2, unchanged, re-flagged here since it
+directly blocks this exact flow's own App Check enforcement from ever activating in production).
+
+## Faz D.4.1 — QR Guest + Existing Phone-Auth Identity Consistency Fix
+
+- Date: 2026-08-11
+- Status: Accepted — a security/correctness hotfix closing a real contradiction between Faz D.4's
+  Flutter behavior and Faz D.3's backend dispatch. No new endpoints, no rules changes, no dependencies.
+
+### Root cause
+
+`submitTakeawayOrder`'s top-level branch dispatch (Faz D.3) keyed off `isRealCustomer`
+(`sign_in_provider === 'phone'`) as its *primary* signal, treating "phone-authenticated" and
+"authenticated in-app takeaway customer" as synonyms, and "not phone-authenticated" and "QR guest" as
+synonyms. That equivalence is false: `TechnicalIdentityProvider.ensureSignedIn()` (Faz D.2/D.4) was
+always specified to reuse whichever Firebase Auth session already exists — real, phone-verified or
+anonymous — never to overwrite one. A real customer who had already logged in with their phone and
+then scanned the physical Gel Al QR at the counter would keep their phone-auth session (correct,
+per Faz D.4's own design) but then have their guest checkout rejected outright by the old dispatch:
+
+```ts
+if (hasGuestField) {
+  invalid("An authenticated customer request must not include takeawaySessionId.");
+}
+```
+
+— because `isRealCustomer` was `true` for them, so the branch treated `takeawaySessionId` on their
+request as spoofing, not as the same valid guest flow an anonymous scanner would get. This was never
+exercised end-to-end before now: Faz D.3's own tests only covered anonymous QR guests and phone-auth
+in-app customers as two disjoint populations, and Faz D.4's report explicitly flagged this exact
+scenario as untested.
+
+### Previous failure scenario
+
+1. Customer logs in with phone OTP (normal app flow, `AuthNotifier`/real Firebase phone session).
+2. Later, at the counter, scans the Gel Al QR → `/takeaway/:token` → `TechnicalIdentityProvider.
+   ensureSignedIn()` correctly reuses their existing phone-auth uid (never overwritten).
+3. `openTakeawayGuestSession` succeeds (it never had a provider restriction — Faz D.2, unchanged).
+4. Customer builds a cart, enters contact info, taps submit → `submitTakeawayOrder` with
+   `takeawaySessionId` set → **rejected** with `invalid-argument`, because the caller's uid resolves
+   to `isRealCustomer: true` and the old dispatch treated that as disqualifying for the guest branch.
+
+A real, legitimate customer's QR-scanned counter order failed at the last step, every time.
+
+### Final entry-mode identity model
+
+Dispatch is now keyed on **entry mode** — does the request reference a `takeawayGuestSessions` record
+(proof the caller actually went through `openTakeawayGuestSession`) — not on which Firebase Auth
+provider backs the caller's uid:
+
+- **QR guest entry** (`takeawaySessionId` present): always `channel: 'takeaway'`, `pickupMode: 'asap'`,
+  `pickupTime: null`, `customerId: null`, `guestAuthUid: request.auth.uid`,
+  `takeawayEntrySessionId: <session>` — regardless of whether that uid is anonymous or a real,
+  phone-verified customer. Authorization is the session itself: `session.guestAuthUid ===
+  request.auth.uid`, `status === 'active'`, unexpired (Faz D.2/D.3's existing, unchanged
+  `submitGuestOrder` internals — verified by direct code reading to need zero changes for this fix).
+  A request mixing this with any authenticated-branch field (`restaurantId`/`branchId`/`pickupMode`/
+  `pickupTime`) is rejected outright (`permission-denied`), same as before.
+- **Authenticated in-app entry** (no `takeawaySessionId`): unchanged from Faz D.3 — still requires
+  `sign_in_provider === 'phone'` (there is no session to authorize scope with here, since there was no
+  QR scan), produces a scheduled `NOW+20` order with `customerId: request.auth.uid`. An anonymous
+  caller reaching this branch (with or without spoofed authenticated fields) is still denied
+  (`permission-denied`).
+
+The two entry modes remain mutually exclusive and are never confused with each other; what changed is
+*which signal* decides between them (payload shape, not auth provider).
+
+### Backend change
+
+`functions/src/submitTakeawayOrder.ts` — the ~20-line top-level dispatch block only. Old: branched on
+`isRealCustomer` first, rejecting any phone-auth caller sending `takeawaySessionId`. New: branches on
+`hasGuestField` (i.e. `takeawaySessionId` presence) first; the authenticated-path branch now applies
+its phone-verification requirement only to callers with no `takeawaySessionId` at all. `submitGuestOrder`
+and `openTakeawayGuestSession` needed no changes — both were already identity-provider-agnostic (read
+in full to confirm this, not assumed).
+
+### Flutter change
+
+None. `TechnicalIdentityProvider.ensureSignedIn()` (Faz D.2), `TakeawayGuestEntryScreen`, and
+`TakeawayGuestCheckoutScreen` (Faz D.4) never branched on auth provider to begin with — the "never
+overwrite an existing session" behavior these Faz D.4.1 requirements describe was already the
+implemented and already the *tested* behavior on the client (see
+`test/features/takeaway/presentation/screens/takeaway_guest_entry_screen_test.dart`'s existing
+"zaten gerçek (phone-verified) bir oturum varsa, o oturum ASLA anonim oturumla ezilmez" case, written
+in Faz D.4). The entire bug was isolated to the backend dispatch described above.
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **169/169 passing** (up from Faz D.3.2.1's
+164 — 5 new Faz D.4.1 tests: phone-auth caller with a valid guest session succeeds as a guest order
+[B]; a phone-auth caller with no session cannot fabricate one [C]; a phone-auth caller cannot reuse a
+*different* caller's session, cross-identity [C]; an anonymous caller with neither a session nor
+authenticated fields is denied [D]; and a phone-auth guest order leaves the caller's underlying
+Firebase Auth identity and CRM state completely untouched [F]) — the two closest pre-existing
+boundary tests (QR guest sending scheduled-pickup fields; anonymous caller spoofing authenticated
+fields) were read and hand-traced through the new dispatch before the suite run, then empirically
+confirmed unchanged. Firestore Security Rules: **76/76 passing, unchanged** (no rules touched this
+phase). `flutter analyze`: 0 issues. `flutter test`: **2490/2490 passing, unchanged** (no Flutter
+source touched this phase, confirming the "no Flutter change" claim above rather than assuming it).
+Fresh-emulator E2E (`e2e_takeaway_guest_real_catalog.mjs`, extended this phase): PASS for both the
+original anonymous-guest scenario and the new existing-phone-auth-session scenario — including an
+explicit `admin.auth().getUser()` before/after check proving the phone identity (uid, phone number,
+`phone` provider) is unaltered by the guest order, and a `customers/{uid}` read confirming no CRM
+document is created.
+
+### Confidence
+
+High — the fix is small (one dispatch block), the two existing tests closest to the boundary were
+verified compatible before relying on the full-suite run, and the new tests plus the extended E2E
+script directly exercise the exact scenario the bug report described (real phone-auth session → QR
+scan → guest submit) against a real emulator, not a mock. **Explicit non-scope, not silently
+dropped**: every REQUIRED/RECOMMENDED finding already open from Faz D.3.2/D.4 (Web reCAPTCHA
+Enterprise site key, native deep-linking, clean path URLs, `TakeawayCheckoutScreen`'s own phone-field
+validation gap) remains open and unchanged by this phase.
+
+## Faz D.5 — Final Security + Production Readiness Audit
+
+- Date: 2026-08-11
+- Status: Accepted — an audit phase, not new feature development. One code fix applied (§ below), per
+  this phase's own explicit instruction limiting scope to that one item.
+
+### Scope and method
+
+Re-verified every claim made across Faz D.1–D.4.1 against fresh evidence (a clean `seed:dev-all` run,
+a full emulator test suite run, and three fresh-emulator E2E scripts) rather than citing prior reports
+— per this phase's own instruction to audit, not summarize. No new endpoints, no rules changes, no new
+dependencies.
+
+### Finding — `TakeawayCheckoutScreen` contact validation gap (REQUIRED, now fixed)
+
+Confirmed by direct code reading: `_canSubmit`'s phone check was `_phoneController.text.trim().
+isNotEmpty` only — any non-empty string, including garbage, was accepted, sent to
+`submitTakeawayOrder` as `contactPhone` after only the backend's own loose structural sanitizer
+(`sanitizePhone`, 7–15 digits, never the authoritative UX validation this field needs). Meanwhile
+`TakeawayGuestCheckoutScreen` (Faz D.4) already validated via `TurkishPhoneNumber.normalize`. Fixed by
+reusing that exact model — same digits-only `inputFormatters`, same fixed "+90 " prefix UI, same
+`normalize() != null` gate on `_canSubmit` and at submit time. No new/parallel validator was written,
+per direct instruction.
+
+**One nuance a blind copy-paste would have broken**: `TakeawayCheckoutScreen` pre-fills its phone field
+from `AuthSession.phoneNumber`, which `AuthNotifier.requestOtp` stores already normalized
+(`+905XXXXXXXXX`) — `TurkishPhoneNumber.normalize` expects a bare 10-digit local number, so applying it
+directly to the pre-filled value would always fail (stripping to digits gives 12 digits, not 10,
+failing the `^5\d{9}$` check) and silently disable the submit button on first render for every real
+customer. Fixed by stripping the literal `+90` prefix back off before pre-filling, so the field shows
+(and normalizes) the same local-digits form the guest screen's empty field does.
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **169/169 passing, unchanged** (no Functions
+source touched this phase — the fix was Flutter-only). Firestore Security Rules: **76/76 passing,
+unchanged** (no rules touched). `flutter analyze`: 0 issues. `flutter test`: **2491/2491 passing** (up
+from 2490 — one new test proving the previously-accepted garbage phone number now disables submit,
+plus one existing test updated to target the field's new hint text/format). Fresh-emulator E2E, run
+together in one pass against a freshly reseeded canonical catalog: authenticated app takeaway (normal
+product, beverage, bowl — all three real-catalog scenarios, `customerId == uid`), anonymous QR guest,
+and existing-phone-auth QR guest — all **PASS**. `seed:dev-all` run twice in the same emulator session
+confirmed idempotent (second run: "already existed (upserted)" for tenant docs, identical catalog
+counts, no errors).
+
+### Audit matrix results (no code change needed — verified against fresh evidence)
+
+- **Identity matrix (A–G)**: dispatch (`submitTakeawayOrder.ts`) confirmed entry-mode-keyed per Faz
+  D.4.1, unchanged; cross-tenant/cross-branch product and ingredient ownership checks
+  (`product.restaurantId !== scope.restaurantId`) confirmed present; session ownership
+  (`session.guestAuthUid !== uid`), status, and expiry checks confirmed present; invalid/expired/
+  revoked/unknown QR token handling confirmed via `resolveTakeawayQrToken`'s own existing test suite
+  (12 tests covering notFound/expired/invalid/cross-tenant-binding-mismatch).
+- **Pricing**: `takeawayPricing.ts`'s resolver precedence (explicit price > fixed adjustment > category
+  override > channel default > zero) and the bowl "+20-once, not per-ingredient" invariant confirmed
+  unchanged and fully covered by the existing unit-test suite; client never has an authoritative price
+  field to manipulate (confirmed by reading `submitTakeawayOrder.ts`'s full accepted request shape —
+  there is no `unitPrice`/`subtotal`/`grandTotal` field in it for either path).
+- **App Check**: all three Gel Al callables (`resolveTakeawayQrToken`, `openTakeawayGuestSession`,
+  `submitTakeawayOrder`) confirmed wired to the one shared `appCheckConfig.ts`/`shouldEnforceAppCheck()`
+  — no drift between them.
+- **Firestore Rules**: confirmed no direct-client `create` path exists anywhere in the rules file for
+  `channel: 'takeaway'` (removed Faz D.3.1); every item in this phase's required rules matrix already
+  has dedicated test coverage (see the 76-test rules suite's own `takeaway`-prefixed tests).
+- **Idempotency**: `sha256(actorUid|submissionKey)` order-id derivation and the
+  `takeawaySubmissionFingerprint` fail-closed-on-mismatch check confirmed unchanged, both paths, fully
+  covered by existing tests.
+- **Web route**: `AppRouteGuard`'s `/takeaway` bypass confirmed checked first, unconditionally, before
+  the "signed in -> `/main`" branch — covered by 5 existing router-guard tests across every session
+  state.
+- **Regression**: dine-in QR, staff, and delivery paths confirmed untouched — no file under
+  `lib/features/{tables,delivery}` or their Functions counterparts was read or modified this phase; the
+  full 2491-test Flutter suite and 169-test Functions suite (which include their own coverage) both
+  passed unchanged.
+
+### Production blocker (REQUIRED, unchanged from Faz D.3.2/D.4, re-confirmed still true)
+
+Web reCAPTCHA Enterprise provider/site key is still not provisioned, and `ENFORCE_APP_CHECK` still
+defaults to `false` outside the emulator (`appCheckConfig.ts`, Faz D.3.2.1's deliberate fail-open-with-
+loud-warning design, unchanged this phase). Gel Al cannot be called PRODUCTION READY while this is
+true — this phase does not attempt to provision it, per direct instruction not to do real provider
+provisioning when it requires console/credential access this environment doesn't have.
+
+### Final status
+
+**PRODUCTION BLOCKED** — development/testing for the Gel Al track itself is complete and closed
+(every scenario in this phase's own audit matrix verified against fresh evidence, zero new
+REQUIRED/RECOMMENDED findings beyond the one fixed above), but the feature cannot be marked production
+ready until the App Check prerequisite above is provisioned and `ENFORCE_APP_CHECK=true` is set for the
+target deployment.
+
+## Faz R.1A — Rezervasyon: Backend Foundation + Availability + Submit Reservation
+
+- Date: 2026-08-12
+- Status: Accepted — first implementation phase of the Rezervasyon module. No UI; restaurant
+  response/proposal/table-assignment/KDS-release are explicitly out of scope (later phases).
+
+### Provenance — R.0 through R.0.7 were never persisted to this file
+
+Faz R.0/R.0.1/R.0.2/R.0.3/R.0.4/R.0.5/R.0.6/R.0.7 were a sequence of **read-only architecture design
+audits** ("KOD YAZMA. DOSYA DEĞİŞTİRME.") delivered as chat reports, never committed to this
+repository — there is no prior ADR-027 "Faz R.0" section in this file to point back to. This entry is
+the first place any of that design lineage is recorded in the repo. A brief summary of the locked
+design, for reference (full reasoning lives in session history, not restated here):
+
+- Reservation and Order are separate aggregates; a reservation may optionally reference a preorder
+  Order via a shared "operational context" id, never merged into one document.
+- `MINIMUM_ADVANCE_MINUTES = 30` (USER-LOCKED platform constant) and
+  `PREORDER_KITCHEN_RELEASE_LEAD_MINUTES = 60` (not implemented this phase — no preorder exists yet).
+- Customer selects a `ReservationArea` (branch-configurable canonical data, e.g. "Bahçe"/"İç Mekân"),
+  never a physical table directly.
+- Availability is modeled as deterministic, query-less `[start, end)` occupancy buckets
+  (`{branchId}__{areaId}__{slotStartIso}`), transaction-safe, tracking `confirmedPartySize`/
+  `heldPartySize` separately.
+- A full slot never rejects the reservation request — only whether a capacity hold is created.
+- No auto-confirm — every reservation starts `pendingRestaurantApproval`.
+- Physical-table protection (QR-block near a reservation's time, `reservationTableOccupancy`,
+  `tableProtectionMinuteBuckets`, `activeReservationTableContext`) is a **separate, later phase** — this
+  phase creates none of those collections, per explicit instruction.
+
+### What Faz R.1A actually implements
+
+- **`functions/src/reservationConfig.ts`** — `ReservationPolicy` type/loader (`reservationPolicies/
+  {branchId}`) and the `MINIMUM_ADVANCE_MINUTES` constant. `minimumAdvanceMinutes` is deliberately not a
+  policy field, matching the locked design above.
+- **`functions/src/reservationScope.ts`** — `resolveActiveReservationBranch` (hand-mirrors
+  `takeawayScope.ts`'s `resolveActiveTakeawayBranch`; capability is `ReservationPolicy.enabled`, never
+  `supportedOrderChannelIds` — the one point an earlier, unpersisted draft of this design had gotten
+  wrong and a later draft corrected) and `resolveReservationArea` (validates a client-claimed `areaId`
+  actually belongs to the already tenant-verified `branchId`, is active, and carries a usable capacity —
+  a cross-tenant `areaId` resolves `not-found`, never confirming its existence).
+- **`functions/src/reservationAvailability.ts`** — `isMinuteAligned` (safe epoch-arithmetic
+  `% 60000 == 0` check, never a `Date` accessor assumption), deterministic `[start, end)` slot-bucket
+  computation, and `checkAreaCapacity` (transaction-safe, `tx.get()` per bucket, never a query).
+- **`functions/src/submitReservation.ts`** — the callable. Real-phone-auth-only (`permission-denied`
+  for anonymous/no auth); validates contact fields, party size, minute/slot alignment, `NOW+30`
+  (inclusive `>=`), and booking horizon; resolves scope/area server-side; runs one transaction that
+  checks capacity, creates an `initialRequest`-purpose `reservationHold` + increments
+  `reservationSlotOccupancy.heldPartySize` when capacity exists, and always creates the `Reservation`
+  document (`status: 'pendingRestaurantApproval'`) regardless. `responseDeadlineAt = min(now +
+  restaurantResponseTimeoutMinutes, requestedTime)` (Faz R.0.4's own correction, now implemented).
+  Idempotent: `reservationId = sha256(uid|submissionKey)` (mirrors `submitTakeawayOrder.ts`'s
+  `deriveOrderId` exactly) — a retry with an unchanged payload reuses the same reservation
+  (`duplicate: true`, no double-counted capacity); a retry with a different payload under the same key
+  is rejected `failed-precondition`, fail-closed.
+- **`firestore.rules`** — new `reservations` match block: owner (`customerId`) or org-member read,
+  `allow write: if false` (Cloud Function only). `reservationAreas`/`reservationPolicies`/
+  `reservationHolds`/`reservationSlotOccupancy` have no match block of their own — covered by the
+  existing fail-closed catch-all, mirroring `tableQrCodes`/`takeawayQrCodes`'s own precedent exactly
+  (proven by 10 new rules tests asserting direct read/write denial on all four, not merely assumed from
+  the catch-all's existence).
+- **`functions/scripts/seed_dev_reservation.mjs`** (`npm run seed:dev-reservation`, chained into
+  `seed:dev-all`) — Admin SDK direct write (no callable exists for these collections, by design,
+  matching `tableQrCodes`/`takeawayQrCodes`'s own precedent) of `reservationPolicies/branch-1` (Faz
+  R.0.7's locked seed values) and two `reservationAreas` ("Bahçe"/"İç Mekân").
+- **No Firestore composite indexes added** — every read in this phase (`reservationPolicies`/
+  `reservationAreas`/`reservationSlotOccupancy`/`reservations` idempotency check) is a deterministic
+  get-by-id; zero range/composite queries exist to index.
+
+### Deliberate scope decisions (not silently dropped)
+
+- **`requestedAvailabilityAtSubmission` is binary (`'available'`/`'unavailable'`), not the three-state
+  `available`/`limited`/`full` the eventual Signature Calendar UX (Faz R.0.3 §14, unpersisted) will
+  want** — no numeric "limited" threshold was ever decided in any prior phase, and inventing one now
+  would be exactly the kind of speculative business rule this whole design series has consistently
+  refused to do (mirrors the original "R.0'da fiyat kuralı icat etme" discipline, applied here to
+  availability instead of price). A later phase can add the third state once a real threshold is
+  decided.
+- **`ReservationPolicy.timezone` is stored and preserved but not consulted for arithmetic** — every
+  time check operates on absolute epoch instants (correct-by-construction for every real-world UTC
+  offset, all of which are themselves whole-minute increments) rather than converting through a
+  timezone library this project doesn't depend on. Branch-local business-hours display is a future UI
+  concern, not attempted here.
+- **No physical table / QR protection collections created** — `reservationTableOccupancy`,
+  `reservationTableProtections`, `tableProtectionMinuteBuckets`, `activeReservationTableContext` all
+  remain future-phase work, per explicit instruction.
+- **No preorder, no Order of any kind created** — `submitReservation`'s accepted request shape has no
+  `items` field at all this phase. `PREORDER_KITCHEN_RELEASE_LEAD_MINUTES` exists only as a documented
+  future constant, not implemented.
+
+### Verification
+
+Functions build (`tsc`): clean. Functions emulator tests: **193/193 passing** (up from Faz D.5's
+169 — 24 new: `reservationAvailability.test.ts` pure-function tests for `isMinuteAligned`/bucket
+`[start,end)` semantics/disjoint-back-to-back-bucket-sets, `submitReservation.test.ts` covering the
+full required matrix — anonymous rejected, phone accepted, unauthenticated rejected, NOW+30 boundary
+(both sides), booking horizon, party-size cap, cross-tenant area, inactive area, available-slot hold
+creation, `heldPartySize` increment correctness, full-slot-still-creates-reservation-with-no-hold,
+`responseDeadlineAt` min() formula (both branches), concurrent-requests-never-exceed-capacity, and
+idempotent submit (both same-payload-reuse and different-payload-fail-closed)). Firestore Security
+Rules: **92/92 passing** (up from 76 — 16 new: reservation owner/staff/cross-tenant/unauthenticated
+read, direct create/update/delete denial, and direct read/write denial for
+`reservationAreas`/`reservationPolicies`/`reservationHolds`/`reservationSlotOccupancy`). `flutter
+analyze`: 0 issues, unchanged (no Dart file touched — this phase is backend-only, no UI). `flutter
+test`: **2491/2491 passing, unchanged**. `seed:dev-reservation` verified against a fresh emulator, and
+`submitReservation` verified live end-to-end against that seed (phone-auth submit → 200,
+`pendingRestaurantApproval`, hold created, `heldPartySize` correctly incremented).
+
+### A genuine test bug found and fixed during this phase (worth recording)
+
+The first test-writing pass used a `alignedFutureIso()` helper that only guaranteed *minute* alignment,
+not the branch policy's own 15-minute *slot* alignment — since real wall-clock test-execution time is
+effectively random relative to a 15-minute grid, roughly 2/3 of runs would spuriously fail
+`submitReservation`'s own (correct) slot-alignment check with `invalid-argument`. Root-caused via a
+controlled A/B (embedding actual computed values in the assertion failure message, since `node --test`'s
+default reporter swallows plain `console.log` output from within a test) rather than guessed — the fix
+floors the helper to the 15-minute grid and gives the two exact-boundary tests (`NOW+30`) a wide enough
+margin (15 min under / 45 min over) to stay robust against the floor's own worst-case lag, since no
+mockable server clock exists in this architecture for true millisecond-precision boundary testing (an
+accepted, pre-existing limitation, consistent with `submitTakeawayOrder.test.ts`'s own analogous
+NOW+20 boundary tests).
+
+### Confidence
+
+High for everything built and tested this phase — each mechanism (identity check, time invariants,
+scope/area resolution, transaction-safe capacity+hold, idempotency, rules denial) independently
+verified against a real emulator, not assumed. **Explicit non-scope, not silently dropped**: restaurant
+approval/change-proposal/hold-accept-reject workflow, physical table assignment/QR protection, preorder,
+KDS integration, any customer or admin UI, App Check activation status (unchanged from Faz D.5 —
+`submitReservation` wires the same shared `appCheckConfig.ts`, still fail-open outside the emulator by
+default, same production prerequisite already reported and unchanged).
+
+## Faz R.1A.1 — Rezervasyon: Final Backend Hardening
+
+- Date: 2026-08-12
+- Status: Accepted — three REQUIRED fixes to Faz R.1A, no scope expansion.
+
+### Fix #1 — Transaction-consistent authoritative reads (TOCTOU)
+
+`resolveActiveReservationBranch`/`resolveReservationArea`/`loadReservationPolicy` previously used plain
+`.get()` reads for `restaurants`/`organizations`/`branches`/`reservationPolicies`/`reservationAreas` —
+authoritative data that decides accept/reject, but not tracked by Firestore's optimistic-concurrency
+conflict detection the way a `tx.get()` read is. A write to any of these documents landing while the
+transaction was in flight would previously go unnoticed, letting the transaction commit against a stale
+snapshot instead of Firestore forcing the automatic retry a `tx.get()` read gets for free. All three
+functions now **require** a `Transaction` parameter — the plain-read path can no longer be reintroduced
+by accident (a compile-time guarantee, not just a convention). Proven with a real race test (a direct
+Admin SDK write disabling a `reservationArea`, fired ~15ms into an in-flight `submitReservation` call) —
+passed on every run once the fix landed, never before it.
+
+### Fix #2 — Verified phone source
+
+`contactPhone` is no longer part of `submitReservation`'s request contract at all — removed, not merely
+ignored (Faz R.1A.1's own "backward compatibility gerekmiyorsa gereksiz alan bırakma" instruction, and
+there was no real caller to break: no UI exists yet). `Reservation.contactPhone` is now derived
+exclusively from the caller's own verified Firebase Auth ID token (`request.auth.token.phone_number` —
+the standard Firebase phone-auth claim, mirrors this codebase's own client-side convention,
+`AuthSession.phoneNumber`, which is likewise always the verified post-OTP phone). A client sending a
+different phone number in its payload has zero effect on the stored value.
+
+### Fix #3 — Timezone-aware booking horizon
+
+`ReservationPolicy.bookingHorizonDays` is now resolved as a **branch-local calendar-day** horizon
+(`reservationTimezone.ts`), not a bare `serverNow + N*24h` epoch approximation — DST-correct, using
+Node's built-in `Intl`/ICU timezone database. **No new dependency** — evaluated and rejected in favor of
+the runtime's own built-in capability, which is already fully sufficient for "what calendar date is this
+instant, in timezone X." Slot-boundary alignment (sub-day granularity) stays pure epoch arithmetic,
+unaffected — only the day-level horizon check consults `ReservationPolicy.timezone`.
+
+### Verification
+
+Functions build: clean. Functions emulator tests: **204/204 passing** (up from Faz R.1A's 193 — 11 new:
+2 transaction-consistency, 2 verified-phone, 2 timezone-horizon in `submitReservation.test.ts`, 5 pure
+DST/calendar-day tests in the new `reservationTimezone.test.ts`). Firestore Security Rules: **92/92
+passing, unchanged**. `flutter analyze`: 0 issues. `flutter test`: **2491/2491 passing, unchanged** (no
+Dart file touched — this phase is backend-only).
+
+**A genuine, pre-existing test-suite fragility found and fixed during this phase**: the full-suite
+`npm test` run became measurably flakier after this phase's own test additions increased total test
+(and phone-auth-user-creation) volume — Node's default concurrent multi-file test execution was pushing
+the shared local Auth/Firestore emulator into occasional contention, manifesting as sporadic, unrelated
+failures in **pre-existing, untouched** test files (`submitTakeawayOrder.test.ts`), never reproducing
+when that file ran in isolation. Root-caused via controlled isolation + concurrency-reduction testing
+(not guessed): `node --test --test-concurrency=1` reproduced a clean, reliable 204/204 across repeated
+runs where the default concurrent mode failed ~2 times in 4. `package.json`'s `test` script now runs
+with `--test-concurrency=1` — a real reliability fix this phase's own test growth made necessary, not
+scope creep.
+
+### Confidence
+
+High — each fix independently verified against a real emulator (including a genuine concurrency race
+for fix #1, not merely a sequential-state assertion). **Explicit non-scope, not silently dropped**:
+everything Faz R.1A already listed as out of scope remains out of scope; this phase touched only the
+three named areas plus the test-reliability fix its own growth necessitated.
+
+## Faz R.1B — Rezervasyon: Restaurant Response + Change Proposal + Hold Lifecycle
+
+- Date: 2026-08-12
+- Status: Accepted — full scope implemented, no UI, no physical-table assignment, no QR T-20, no
+  preorder/KDS release (all explicitly out of scope this phase, per the phase's own instruction).
+
+### Status model (Faz R.1B §1)
+
+Five statuses, exactly as specified — no new state invented: `pendingRestaurantApproval` (initial, and
+the state a rejected/expired proposal returns to — explicitly not terminal), `changeProposed`,
+`confirmed`, `rejected`, `cancelled` (untouched this phase — no cancellation flow exists yet).
+
+### `respondToReservation` (staff callable, `functions/src/respondToReservation.ts`)
+
+Server-authoritative staff action — `confirm` / `reject` / `proposeChange`. Authorization is the first
+TS-side check of the `organizationAccess`/`roles` custom-claims namespace in this codebase
+(`functions/src/reservationAuthorization.ts`'s `requireReservationManagerPermission`) — mirrors
+`firestore.rules`' own `isOrgMember`/`hasRole` claim shape exactly, and
+`role_permission_map.dart`'s `manageReservations` tiering (`manager`/`admin`/`tenantOwner` authorized;
+base `staff`/`courier` are not). The reservation's real `organizationId` is read server-side before
+authorization is checked — a client-supplied `organizationId` is never trusted, closing cross-tenant
+off by construction.
+
+- **Confirm**: blocked if `responseDeadlineAt` has already passed (a stale confirm attempt after the
+  window closed is rejected, not blindly honored — the sweep should already have resolved it, but this
+  is not trusted blindly). If the initial hold is `active` and unexpired, it is consumed
+  (`heldPartySize` → `confirmedPartySize` on its buckets, hold → `consumed`). Otherwise, a **fresh**
+  transaction-safe capacity check runs against current occupancy; if capacity is available,
+  `confirmedPartySize` is claimed directly (no hold involved) — this is the path that lets a
+  reservation that was full at submission (`requestedAvailabilityAtSubmission: 'unavailable'`, no hold
+  ever created) still confirm later once capacity opens. If capacity is unavailable either way,
+  `failed-precondition` — a Reservation is never silently overbooked. A duplicate confirm retry (already
+  `confirmed`) returns the current state gracefully instead of erroring or re-mutating.
+- **Reject**: only from `pendingRestaurantApproval`. Releases the initial hold if one is active
+  (`heldPartySize` decremented, hold → `released`). `reasonCode`/`reason` stored on the Reservation —
+  same `reasonCode`-on-a-shared-status convention the response-timeout sweep also uses (see below).
+- **ProposeChange**: only from `pendingRestaurantApproval` — this single status gate *is* the
+  single-active-proposal invariant (Faz R.1B §7): a Reservation already `changeProposed` cannot receive
+  a second proposal, and two concurrent `proposeChange` calls race on the same document's
+  optimistic-concurrency read-set — Firestore's automatic transaction retry forces the loser to re-read
+  and see `changeProposed` already committed, failing closed. Validates `proposedTime`/`proposedAreaId`
+  with the exact same invariants `submitReservation` uses (minimum-advance, booking horizon, slot
+  alignment, transaction-safe capacity) — no new/duplicated logic. Releases the *old* initial hold
+  before creating the *new* alternative-proposal hold (Faz R.1B §11) — a Reservation never carries two
+  simultaneous active holds. If the proposed slot is unavailable, no proposal is created at all.
+
+### `reservationChangeProposals` (immutable collection)
+
+New collection, Admin-SDK-only writer (`respondToReservation` creates, `respondToProposedChange`
+accepts/rejects, `reservationSweep` expires — never overwritten by any other path). Fields per Faz R.1B
+§5: `proposalId`, `reservationId`, `organizationId`, `restaurantId`, `branchId`, `fromTime`,
+`fromAreaId`, `proposedTime`, `proposedAreaId`, `createdByStaffId`, `createdAt`,
+`customerResponseDeadlineAt`, `status` (`pendingCustomerResponse`/`accepted`/`rejected`/`expired`),
+`holdId`. `customerResponseDeadlineAt = min(now + ReservationPolicy.proposalHoldMinutes, proposedTime)`
+— the same `min()` shape `responseDeadlineAt` already used, applied to the proposal window.
+
+### `respondToProposedChange` (customer callable, `functions/src/respondToProposedChange.ts`)
+
+Real phone-auth required (`isRealCustomer` gate identical to `submitReservation`'s own) — an anonymous
+identity is rejected outright. Ownership is always `reservation.customerId == request.auth.uid`, the
+verified identity; no `customerId` is ever accepted from the client.
+
+- **Accept**: requires the Reservation still `changeProposed` and this exact proposal still the
+  reservation's `activeProposalId`. The hold's own integrity is re-verified independently and
+  fail-closed at accept time — `status == 'active'` **and** `expiresAt > serverNow`, checked directly
+  against the hold document, never inferred from the proposal's own status alone (mirrors Faz R.0.3's
+  race-safety precedent). `proposedTime`'s minute-alignment invariant (Faz R.0.7 §2) is re-validated
+  here too, not assumed. On success: hold consumed (held → confirmed on its buckets), proposal →
+  `accepted`, Reservation → `confirmed` with `confirmedTime`/`confirmedAreaId` set from the proposal. A
+  duplicate accept retry (proposal already `accepted`) returns gracefully; accepting an already-expired
+  proposal fails `failed-precondition` even if the expiry sweep has not run yet.
+- **Reject**: releases the hold, proposal → `rejected`, Reservation → **`pendingRestaurantApproval`**,
+  explicitly not terminal — restaurant staff can subsequently propose again, confirm directly (if
+  capacity has since changed), or reject outright. A duplicate reject retry is safe.
+
+### Hold lifecycle (Faz R.1B §11, `functions/src/reservationHoldOps.ts`)
+
+Every release/consume/expire transition is guarded by the caller checking `status === 'active'` first,
+so a hold can never be released/consumed/expired twice by construction — not merely by convention. Bucket
+decrements are **not** blind `FieldValue.increment` (safe for additions, not guaranteed-safe for
+subtractions): each decrement `tx.get()`s the bucket first and clamps to `Math.max(0, current -
+partySize)`, a hard non-negative guarantee (Faz R.1B §14), spent as a deliberate extra read on a
+correctness-critical invariant. **A real bug was found and fixed during this phase, not merely
+avoided**: Firestore transactions require *every* read in the whole transaction to precede *every*
+write — a naive per-bucket "read, then write" loop breaks the instant a reservation spans more than one
+slot bucket (the default policy's 90-minute duration / 15-minute slots is 6 buckets), which is every
+realistic reservation in this codebase. `decrementHeldOnBuckets`/
+`decrementHeldIncrementConfirmedOnBuckets` now batch all bucket reads (`Promise.all`, still `tx.get()`
+so every read still participates in optimistic-concurrency conflict detection) strictly before any
+bucket write — found via the emulator's own transaction error, not guessed, and covered by every
+multi-bucket-touching test in the new suite (default policy fixtures all use the 90/15 shape).
+
+### Response-timeout and proposal-hold-expiry sweeps (Faz R.1B §12/§13, `functions/src/reservationSweep.ts`)
+
+The first `onSchedule` usage in this codebase (confirmed via grep before starting — no prior scheduled
+function exists to mirror). One scheduled function (`reservationSweep`, `every 5 minutes`) runs both
+concerns sequentially rather than two separate deployed functions — one Cloud Scheduler job, not two;
+each concern's own logic is exported as a plain, directly-callable function
+(`runReservationResponseTimeoutSweep`/`runReservationProposalExpirySweep`) so tests call it directly
+rather than needing to trigger a scheduled function through the emulator's HTTP surface. Every due
+document gets its own small transaction that **re-validates its own precondition inside the
+transaction** — idempotent and retry-safe: a document already resolved by a concurrent sweep run, or by
+a staff/customer action landing in the gap between the query and the transaction, is simply skipped, not
+double-processed. Two new composite indexes (`firestore.indexes.json`):
+`reservations(status, responseDeadlineAt)` and `reservationChangeProposals(status,
+customerResponseDeadlineAt)`.
+
+**Faz R.1B §12's "challenge the requirement" analysis** (the phase explicitly required this before
+implementing): the spec's own stated preference — `status: 'rejected'`, `reasonCode:
+'restaurantResponseTimeout'`, no new terminal status — is followed, and is judged the right call, not
+merely deferred to. Every other reason a Reservation reaches a rejected outcome (a direct staff decline)
+already shares the same `'rejected'` status with a distinguishing `reasonCode`; there is no existing
+precedent in this phase's own five-status model for a reason-specific status, and the customer-facing
+*outcome* (no reservation, must rebook) is identical either way. Carving out one new status for exactly
+one reason code, when every other reason already goes through `reasonCode`, would be an arbitrary,
+inconsistent special case rather than a genuinely distinct state. A future phase that needs to treat
+timeouts differently (e.g. restaurant-performance SLA tracking) can still filter on `reasonCode` without
+a schema change.
+
+### Capacity-accounting invariants (Faz R.1B §14)
+
+Enforced throughout, not merely asserted: `heldPartySize`/`confirmedPartySize` never negative (hard
+clamp, see hold lifecycle above); no double release/consume (hold-status-transition guard, see above);
+`checkAreaCapacity` (unchanged from Faz R.1A, reused verbatim) still sums `confirmedPartySize +
+heldPartySize` against `areaCapacity` before any hold or direct-confirm write, inside the same
+transaction that performs the write — a concurrent conflicting write is caught by Firestore's own
+optimistic-concurrency retry, proven with a real concurrency test (two reservations racing to confirm
+into freed 2-seat capacity — exactly one wins).
+
+### Idempotency (Faz R.1B §15)
+
+No staff/customer callable retry double-mutates: every mutation is gated on reading the current,
+authoritative pre-state inside the transaction and proceeding only if it matches the expected starting
+state (`pendingRestaurantApproval` for confirm/reject/proposeChange, `changeProposed` +
+`pendingCustomerResponse` for accept/reject-proposal) — a retry after success either returns the
+already-reached state gracefully (confirm, accept) or fails closed without mutating (reject family).
+Scheduler retries are safe by the same "re-validate inside the transaction" mechanism described above.
+
+### Security (Faz R.1B §16)
+
+New `firestore.rules` match block: `reservationChangeProposals` allows org-staff read
+(`isOrgMember(resource.data.organizationId)`) and denies all client writes — the owning customer does
+**not** get direct read access this phase (no UI exists yet to consume it; deferred, not opened
+speculatively, mirroring this file's own existing precedent for `reservationAreas`/
+`reservationPolicies`). `reservationHolds`/`reservationSlotOccupancy` remain covered by the existing
+fail-closed catch-all (already tested in Faz R.1A's suite, unchanged). Cross-tenant staff access fails
+closed (`requireReservationManagerPermission` checked only after the reservation's real
+`organizationId` is read server-side).
+
+### Events/outbox (Faz R.1B §17, `functions/src/reservationEvents.ts`)
+
+All 7 named events modeled (`reservationConfirmed`/`reservationRejected`/`reservationChangeProposed`/
+`reservationChangeAccepted`/`reservationChangeRejected`/`reservationChangeExpired`/
+`reservationResponseTimedOut`) as durable outbox records in a new `reservationEvents` collection —
+mirrors `onOrderCompleted.ts`'s exactly-once shape (deterministic id, `.create()`, swallow
+`ALREADY_EXISTS`), but is written directly from each handler/sweep after its transaction commits, not
+from a separate Firestore trigger. Deliberate deviation from the trigger pattern, reasoned explicitly:
+a trigger watching `reservations/{id}` updates cannot always tell *which* action produced a status
+transition — `changeProposed -> pendingRestaurantApproval` happens identically whether the customer
+rejected or the expiry sweep did it, ambiguous for 2 of the 7 events from a pure before/after diff. Every
+call site here already knows exactly which event occurred. No delivery (push/SMS/email) is implemented —
+`delivered: false` markers only, exactly like `orderEvents`' own `visitRecorded: false` markers — and
+every write happens **after**, not inside, the mutating transaction (Faz R.1B §17's own explicit
+"notification delivery must never be part of transaction correctness" requirement).
+
+### Verification
+
+Functions build: clean. Functions emulator tests: **232/232 passing** (up from Faz R.1A.1's 204 — 28
+new: 16 in `respondToReservation.test.ts`, 9 in `respondToProposedChange.test.ts`, 3 in
+`reservationSweep.test.ts`, covering all 31 named scenarios — several scenarios share one test where the
+same assertion proves both, e.g. the capacity-accounting invariant is proven inline inside the
+concurrency/release/consume tests rather than as an isolated 32nd test). Firestore Security Rules:
+**99/99 passing** (up from 92 — 7 new `reservationChangeProposals` tests: staff read, cross-tenant read
+denied, customer read denied, unauthenticated read denied, create/update/delete all denied). `flutter
+analyze`: 0 issues. `flutter test`: **2491/2491 passing, unchanged** (no Dart file touched — this phase
+is backend-only, exactly like Faz R.1A/R.1A.1). `--test-concurrency=1` preserved unchanged, per this
+phase's own explicit instruction — no evidence surfaced during this phase that would justify removing
+it.
+
+### Known limitation, disclosed not hidden
+
+Confirm's "fresh capacity recheck" path (hold missing/expired/wrong-status) claims capacity directly
+without touching the stale hold, if one exists — per the phase's own spec, which only asks for
+"recheck & increment confirmed" on this path, not also cleaning up the stale hold. Under today's design
+this path is reachable via the genuinely-common "no hold was ever created" case (full at submission), but
+the "hold *exists and is independently expired*" sub-case is not reachable through any current normal
+flow (`reservationHolds.expiresAt` is always set equal to `Reservation.responseDeadlineAt` for the
+initial hold, and a passed `responseDeadlineAt` is rejected by confirm before the hold is even
+inspected) — it is defensive code, tested via direct Firestore manipulation of the hold document, not a
+naturally-occurring scenario today. Should a future phase make hold expiry independently configurable,
+an orphaned stale hold from this specific path would leave `heldPartySize` on its old buckets
+uncollected until the (separate) proposal-expiry-style sweep logic is extended to also reap initial
+holds independent of their Reservation's own status — not built this phase, not currently needed.
+
+### Explicit non-scope (unchanged from the phase's own instruction, not silently dropped)
+
+Physical table assignment, QR T-20 protection, reservation table context, preorder/KDS release, and any
+UI remain entirely unbuilt — nothing in this phase touches any of them, matching Faz R.1B's own explicit
+"UI YAZMA / PHYSICAL TABLE ASSIGNMENT YAPMA / QR T-20 YAPMA / PREORDER/KDS RELEASE YAPMA" constraints.
+
+### Confidence
+
+High for the implemented scope — every one of the 31 named test scenarios has a corresponding, passing
+test; the one genuine bug found during implementation (transaction read/write ordering under
+multi-bucket reservations) was root-caused via the emulator's own error message and fixed with a
+regression-proof batch-then-write restructuring, not patched around. Medium-High on the
+events/outbox design choice (direct-write-after-transaction vs. a trigger) — reasoned explicitly above,
+but this is the first time this codebase has modeled an event whose *cause* isn't recoverable from a
+document diff alone, so there is no prior precedent to validate the choice against.
+
+## Faz R.1B.1 — Rezervasyon: Final Security + Outbox Hardening
+
+- Date: 2026-08-12
+- Status: Accepted — two REQUIRED fixes to Faz R.1B, no scope expansion.
+
+### Fix #1 — Permission-based authorization, not a role-name check
+
+Faz R.1B's `reservationAuthorization.ts` hardcoded `MANAGE_RESERVATIONS_ROLES = new
+Set(["manager","admin","tenantOwner"])` directly inside the reservation domain — `respondToReservation`
+was checking a **role list**, not a **permission**, despite the report describing it as a permission
+check. Researched first, as required: `CheckModuleAccess`
+(`lib/features/entitlements/application/use_cases/check_module_access.dart`) and
+`RealPosAuthorizationPolicy.authorize` (`lib/features/pos/domain/authorization/
+real_pos_authorization_policy.dart`) both resolve permissions via `RolePermissionMap.allows(roles,
+action)` — a genuine permission resolver, even though today it's role-tier-derived with no per-staff
+override mechanism anywhere in this codebase (Dart or TS) — `StaffMember`/`ActorSession` carry only
+`roles: Set<StaffRole>`, no independent `permissions` field.
+
+New `functions/src/staffAuthorization.ts` — a generic, reusable permission resolver, the TS analogue of
+`RolePermissionMap`/`RealPosAuthorizationPolicy`, not a reservation-specific role hack:
+`roleHasPermission(role, permission, rolePermissions = DEFAULT_STAFF_ROLE_PERMISSIONS)` is genuinely
+data-driven (the role/permission mapping is a parameter with a default, not a hardcoded branch in the
+function body), and `requireStaffPermission(request, organizationId, permission)` is the callable-facing
+entry point. `reservationAuthorization.ts`'s `requireReservationManagerPermission` is now a one-line
+delegation to `requireStaffPermission(..., "manageReservations")` — `respondToReservation.ts` itself
+never references a role name at all; every role name lives in exactly one place
+(`DEFAULT_STAFF_ROLE_PERMISSIONS`), matching `RolePermissionMap`'s own "one static mapping, many call
+sites ask for a permission" shape. The moment a real per-staff override mechanism exists (Firestore
+field + claims sync — not built, no ADR covers it yet), it becomes the `rolePermissions` argument this
+resolver already accepts, with zero change to any callable.
+
+Proven at two levels: `staffAuthorization.test.ts` (8 new pure-function tests) exercises the resolver
+directly against override maps the *default* mapping has no opinion on — a role outside today's
+manager-tier granted the permission, and `manager` itself denied it — proving the mechanism is genuinely
+permission-driven, not a disguised role check. `respondToReservation.test.ts` gained a `tenantOwner`
+end-to-end test, proving the real HTTP path resolves through the same canonical mechanism as `manager`,
+not a separate code path per role.
+
+### Fix #2 — Real transactional outbox (atomic event + state transition)
+
+Faz R.1B wrote `reservationEvents` records via `db.collection(...).doc(id).create()` **after** `db
+.runTransaction()` had already resolved — reasoned at the time as keeping "notification delivery"
+outside transaction correctness, but this conflated delivery (legitimately async/outside any
+transaction) with the outbox record's own existence, which is exactly what an outbox pattern exists to
+guarantee. A crash or network failure between the state-transition commit and the event write would
+silently lose the event forever, with the Reservation already showing its new status and no trace
+anything was missed.
+
+`reservationEvents.ts`'s `recordReservationEvent` (async, post-commit) is replaced by
+`writeReservationEvent(tx, db, params)` — synchronous, takes the mutating `Transaction` itself, called
+by `respondToReservation.ts`/`respondToProposedChange.ts`/`reservationSweep.ts` as one more `tx.set` at
+the end of each handler/sweep transaction, alongside the state-transition writes. Either both commit or
+neither does — genuine atomicity, not a best-effort follow-up step.
+
+Uses `.set()` on the same deterministic ids Faz R.1B already established (`{reservationId}-{eventType}`
+or `{reservationId}-{eventType}-{proposalId}`), deliberately not `.create()` — reasoned explicitly in
+`reservationEvents.ts`'s own doc comment: `.create()`'s "fails if it exists" semantics exist in
+`onOrderCompleted.ts` to distinguish a second *trigger* invocation from a genuine duplicate, a retrigger
+source this module doesn't have. Every call site here is already gated on the business precondition
+first (Faz R.1B's own idempotency design — confirm/reject/accept/reject-proposal all re-check status and
+return early on a repeat; sweeps re-query for documents still in the due state), so the event-writing
+code is only ever reached once per real business outcome — `.set()` degrading to "overwrite the same
+doc" is a cheaper safety net on top of that gate, not the primary mechanism, and doesn't risk aborting
+the surrounding state transition on a condition that isn't really an error.
+
+Proven with explicit assertions added across the existing suite (not a separate exhaustive suite): every
+successful confirm/reject/proposeChange/accept/reject-proposal/timeout-sweep/expiry-sweep test now
+asserts its `reservationEvents/{id}` document exists immediately with the right `type`; every existing
+duplicate/retry test (`duplicate confirm`, `duplicate accept`, `sweep retry`) now additionally asserts
+the event document's `recordedAt` is byte-identical before and after the retry — proving the retry never
+re-reaches `writeReservationEvent` at all, not merely that it produces an equivalent result.
+
+### Fix #3 (OPTIONAL, requested as a re-evaluation, not a required fix) — stale initial-hold gap
+
+Re-examined, including a case not explicitly walked through in the original Faz R.1B disclosure:
+concurrent duplicate confirm attempts on a reservation with an active hold. Traced precisely: the second
+of two racing `confirm` transactions is forced to retry by Firestore (it read the same `reservations`
+document the first one wrote), and on retry it observes `status === 'confirmed'` already — hitting the
+graceful-duplicate branch before ever inspecting the hold. No path — single-request or concurrent —
+reaches the "hold exists but is independently stale" branch under any code that exists today, because
+`reservationHolds.expiresAt` is only ever set once, equal to `Reservation.responseDeadlineAt`, and never
+independently modified; a passed `responseDeadlineAt` is rejected by confirm before the hold is even
+read. **Decision: KEEP, not FIX.** Adding cleanup code for a scenario with zero reachable path today
+would itself violate this codebase's own "don't validate for scenarios that can't happen" rule
+(`CLAUDE.md` §1's architecture principles) — the gap remains disclosed (unchanged from Faz R.1B's own
+report) as a should-revisit item only if a future phase makes hold expiry independently configurable
+from its Reservation's own deadline.
+
+### Verification
+
+Functions build: clean. Functions emulator tests: **241/241 passing** (up from Faz R.1B's 232 — 9 new:
+8 pure `staffAuthorization.test.ts` resolver tests, 1 `tenantOwner` end-to-end test in
+`respondToReservation.test.ts`; the remaining outbox-atomicity coverage was added as assertions inside
+already-existing tests, not new test functions, so it doesn't move the count). Firestore Security Rules:
+**99/99 passing, unchanged**. `flutter analyze`: 0 issues. `flutter test`: **2491/2491 passing,
+unchanged** (no Dart file touched). `--test-concurrency=1` preserved, unchanged.
+
+### Confidence
+
+High. Both REQUIRED fixes close a genuine gap between what Faz R.1B's report claimed and what the code
+actually did (a role check described as a permission check; a post-commit write described informally as
+"the event" without the atomicity an outbox pattern is supposed to provide) — both root-caused against
+this codebase's own existing conventions (`RolePermissionMap`, `onOrderCompleted.ts`) rather than
+invented from scratch. The stale-hold item was re-examined more rigorously than Faz R.1B's own
+disclosure (including the concurrent-duplicate-confirm case) and the KEEP decision is reasoned, not a
+default.
+
+## Faz R.1C.1 — Rezervasyon: Physical Table Assignment + Exclusive Occupancy + QR Protection Data
+
+- Date: 2026-08-12
+- Status: Accepted — full scope implemented. No QR enforcement, no `openReservationTable`/
+  `closeReservationTable`/`activeReservationTableContext`/`reservationContextId` anywhere, no
+  preorder/KDS, no UI — all explicitly out of scope this phase, per the phase's own instruction.
+
+### Research before implementation (this phase's own explicit "önce mevcut pattern'leri analiz et" requirement)
+
+Confirmed, not assumed: `restaurantTables/{tableId}` (`organizationId`/`restaurantId`/`branchId`,
+`areaName` free text, `isActive`, `status`, no callable write path — Admin SDK/dev-seed only) has **no
+existing canonical relation to `reservationAreas`** anywhere in this codebase. `docs/
+table_qr_architecture.md`'s own `areaName` field is explicitly documented as a deliberate free-text
+exception, never a foreign key. The QR/table-guest-session pattern (`qrTokenResolution.ts`,
+`resolveTableQrToken.ts`) is **not** transaction-based and denormalizes tenant fields straight off the
+table doc with no live join — deliberately **not** mirrored here; this phase mirrors
+`reservationScope.ts`'s stronger, transaction-consistent pattern instead (Faz R.1A.1's own precedent).
+
+### `restaurantTables.reservationAreaId` — a disclosed, additive data-model addition
+
+Faz R.1C.1 requires assignment to validate a table's canonical area/zone relation against the
+Reservation's own `confirmedAreaId` — with no existing relation to validate against, inventing one
+silently would have violated CLAUDE.md §15's No Silent Decisions rule. Added `reservationAreaId`
+(nullable) to `restaurantTables` — additive, backward-compatible (no callable write path existed before,
+so no existing reader is affected at all), disclosed explicitly here and in `docs/
+firestore_data_model.md` rather than silently assumed. A table with no `reservationAreaId` configured
+fails closed (`failed-precondition`), never silently permitted into any area. The Dart `RestaurantTable`
+domain model is deliberately **not** updated this phase (backend-only scope, no UI consumes it).
+
+### `assignReservationTable` (`functions/src/assignReservationTable.ts`)
+
+Single callable serving both first assignment and reassignment (same contract:
+`{reservationId, tableId}`). Authorization via `staffAuthorization.ts`'s `requireStaffPermission(...,
+"manageReservations")` — Faz R.1B.1's generic resolver, reused verbatim, never a role check embedded
+in this callable either. Validates, in order: Reservation exists/`confirmed`/has
+`confirmedTime`+`confirmedAreaId`/`confirmedTime` minute-aligned (Faz R.0.7 §2, fail closed); Table
+exists/same org+restaurant+branch (cross-tenant fails closed as `not-found`, mirrors
+`resolveReservationArea`'s own not-found-not-an-existence-oracle precedent)/`isActive`/
+`reservationAreaId` matches `confirmedAreaId`; `ReservationPolicy.reservationDurationMinutes` within the
+structural cap (see write-limit section below). Idempotent: an exact retry of the current assignment
+(first-time or already-reassigned-to-this-table) returns `{duplicate: true}` without re-mutating.
+
+### Physical occupancy model (`functions/src/reservationTableOccupancy.ts`)
+
+Deliberately separate from `reservationSlotOccupancy` (Faz R.1A's area-capacity/party-size accounting)
+— a confirmed Reservation may exist with zero physical table assigned, and this collection never
+touches area capacity math. `{tableId}__{slotStartEpoch}` (epoch **milliseconds**, this codebase's own
+convention) buckets are **exclusive locks**, not counters: existence (with `assignedReservationId` set)
+means occupied; `tx.delete()` releases, never a decrement. Conflict detection reuses
+`computeSlotBucketStarts` (unchanged from Faz R.1A) keyed by table instead of area — deterministic,
+query-less, `tx.get()` per bucket id only, exactly mirroring `reservationSlotOccupancy`'s own "no
+open-ended overlap query" design.
+
+### Atomic reassignment model
+
+Read ordering is the whole safety guarantee here: every read (Reservation, Table, Policy, new table's
+occupancy buckets, and — only when reassigning — the old table's occupancy buckets and protection-minute
+buckets) happens before any write. A conflict on the *new* table is detected purely from data already
+read, and the function throws before a single write is issued — the *old* table's lock is provably
+never released on a failed reassignment, because that write is only reached after the conflict check
+passes. A successful reassignment releases the old table's occupancy + protection membership and locks
+the new table's, all in one transaction.
+
+**A real bug was found and fixed during this phase** (not merely avoided) — the exact same category Faz
+R.1B's own `reservationHoldOps.ts` fix addressed: a first draft of the occupancy/protection release
+helpers interleaved `tx.get()`/`tx.set()` per bucket in a loop, which breaks the instant more than one
+bucket is touched (true for every realistic policy). Fixed by batching all reads (`Promise.all`) before
+any write, mirroring Faz R.1B's own established fix exactly — caught before merge this time (Faz R.1B's
+own precedent made the failure mode immediately recognizable), not via a fresh emulator error.
+
+### Protection model (`functions/src/reservationTableProtection.ts`)
+
+`protectionStartAt = confirmedTime - PROTECTION_LEAD_MINUTES` (20, USER-LOCKED, Faz R.0.4, re-confirmed
+here as a platform-wide constant never a policy field), `protectionEndAt = confirmedTime +
+reservationDurationMinutes`, `confirmedTime`'s Faz R.0.7 §2 minute-alignment invariant re-verified, fail
+closed, never silently rounded. Explicitly **data only** — no QR scan is blocked by any of this yet,
+matching the phase's own "Hot-path source değildir" instruction.
+
+### Minute-bucket implementation
+
+One `tableProtectionMinuteBuckets/{tableId}__{epochMinute}` document per whole minute in
+`[protectionStartAt, protectionEndAt)`. `epochMinute` is an integer minutes-since-epoch (not an ISO
+string) — compact, unambiguous, matches `isMinuteAligned`'s own `% 60000` epoch-arithmetic convention.
+Locking is a blind `FieldValue.arrayUnion` (safe — an addition can't corrupt another reservation's
+membership, and the bucket's denormalized scope fields are set unconditionally in the same write so a
+never-before-touched bucket is fully initialized without a read).
+
+### Shared bucket removal
+
+`removeReservationTableProtection` is exported as a standalone, reusable helper (deliberately not
+inlined into `assignReservationTable` alone) — only the specific `reservationId` is removed
+(`FieldValue.arrayRemove`), and the document is deleted only once its `reservationIds` array is
+computed to be empty (from a read already taken in the transaction's read phase, never a fresh read at
+delete-decision time). Not wired to any cancellation flow this phase — explicitly out of scope, per the
+phase's own instruction — but designed so a future cancellation flow can call it directly.
+
+### Firestore write-limit decision (Faz R.1C.1 §12 — required to report explicitly)
+
+A transaction shares Firestore's ~500-mutation cap with a batched write. Worst case (reassignment) is
+`2 x occupancyBucketCount + 2 x minuteBucketCount + 3`, dominated by `minuteBucketCount =
+PROTECTION_LEAD_MINUTES + reservationDurationMinutes` (one document per minute) — not bounded by any
+existing policy validation. **Two-layer decision, not one**: (1) a new, backend-only, structural
+`MAX_RESERVATION_DURATION_MINUTES_FOR_TABLE_ASSIGNMENT = 180` (mirrors `submitReservation.ts`'s own
+`MAX_PARTY_SIZE_HARD_CAP` precedent — independent of any single policy's configured values); (2) the
+function additionally computes the *actual* worst-case write count for the specific policy in play and
+refuses (`resource-exhausted`) before attempting a single write if it exceeds a 450-write safety
+threshold (leaving margin below the real ~500 cap). Layer (1) alone is insufficient — worked through
+explicitly: at the 180-minute cap with a pathologically small `slotIntervalMinutes` (e.g. 1), the
+occupancy-bucket count alone approaches the duration in minutes, and `2 x 180 (occupancy, worst case) +
+2 x 200 (minutes) + 3` exceeds 500 — layer (2) is the real safety net, proven by a dedicated test using
+exactly this combination (duration within the structural cap, pathological `slotIntervalMinutes`).
+
+### Authorization/security
+
+Cross-tenant fails closed as `not-found` for the table lookup (never distinguishable from "table
+doesn't exist," mirroring this codebase's own not-found-not-an-existence-oracle precedent). New
+`firestore.rules` blocks for all three new collections: org-staff read, all client writes denied — same
+shape as `reservationChangeProposals` (Faz R.1B), customer-facing read deliberately not opened (no UI
+exists yet).
+
+### Idempotency
+
+Both first assignment and reassignment retries are safe no-ops (`duplicate: true`, zero re-mutation) —
+gated on `reservation.assignedTableId === tableId` already matching, checked before any read of the
+occupancy/protection buckets even begins.
+
+### A pre-existing, load-sensitive test — disclosed, not a regression
+
+`respondToReservation.test.ts`'s "confirmed capacity never exceeds area capacity under concurrent
+fresh-recheck confirms" (Faz R.1B) intermittently failed ([400,400] instead of the expected [200,400])
+when run as part of this phase's now much larger full suite, across repeated full-suite runs. Investigated
+per this project's own established discipline (isolate, don't guess): run alone, on a fresh emulator,
+it passed reliably (17/17, zero failures) — proving the underlying `respondToReservation.ts` logic
+(untouched this phase) is correct, and the flake is a suite-scale emulator-load/timing sensitivity
+(the same category Faz R.1A.1 already documented and partially fixed via `--test-concurrency=1`, which
+bounds *file*-level concurrency but not a single test's own internal `Promise.all` race timing under a
+heavier cumulative load). Not modified — the code is proven correct, and weakening its own strict
+[200,400] assertion to hide this would remove a genuine safety proof for a cosmetic full-suite pass rate.
+Disclosed here and in the final report rather than silently ignored or falsely claimed as zero flakiness.
+
+### Verification
+
+Functions build: clean. Functions emulator tests: **270/270 in a clean isolated run** (241 baseline +
+29 new, all in `assignReservationTable.test.ts`, covering all 30 named scenarios); **269/270 in the full
+combined suite** due to the one disclosed pre-existing load-sensitive test above (reproducibly passes in
+isolation, fails intermittently only at full-suite scale — not a functional regression). Firestore
+Security Rules: **109/109 passing** (up from 99 — 10 new: read/cross-tenant-denial/write-denial for all
+three new collections). `flutter analyze`: 0 issues. `flutter test`: **2491/2491 passing, unchanged**
+(no Dart file touched — backend-only, like every prior reservation phase). `--test-concurrency=1`
+preserved, unchanged.
+
+### Explicit non-scope (unchanged from the phase's own instruction, not silently dropped)
+
+QR enforcement, `openReservationTable`/`closeReservationTable`, `activeReservationTableContext`,
+`tableGuestSession.reservationContextId`, `Order.reservationContextId`, preorder/KDS, and any UI remain
+entirely unbuilt.
+
+### Confidence
+
+High for the implemented scope — every one of the 30 named test scenarios has a corresponding, passing
+test (in isolation); the write-limit analysis was worked through with real numbers, not asserted from
+intuition, and both layers of the resulting guard are independently tested. Medium-High on the
+`restaurantTables.reservationAreaId` addition — a genuine, disclosed data-model decision made without
+the chance to pause for approval mid-phase (this session's established pattern treats a detailed,
+explicit spec as the approval to execute exactly what it describes) — flagged prominently here and in
+the final report rather than silently folded in, so it can be revisited if the human's intent differs
+from this read.
+
+## Faz R.1C.1.1 — Rezervasyon: Final Gate + Table Area Migration Hardening
+
+- Date: 2026-08-12
+- Status: Accepted — two REQUIRED fixes, no scope expansion.
+
+### Fix #1 — Full functions suite root-caused to genuinely 100% green
+
+Faz R.1C.1's disclosed "269/270 full suite, pre-existing flaky" was correctly rejected as insufficient
+— "pre-existing flaky" is a label, not a root cause, and a quality gate cannot be waived by relabeling
+a failure. Re-investigated with real diagnostics (temporary `console.log` dumps of the pre-race bucket
+state and both callables' actual response bodies, injected directly into the failing test, run against
+the full suite until it reproduced) rather than continuing to theorize about Firestore transaction
+timing.
+
+**Root cause, found and proven, not guessed**: the pre-race bucket dump showed `{capacity: 10,
+confirmedPartySize: 4, heldPartySize: 0}` for a chain whose own policy had seeded `capacity: 2` —
+impossible for that chain's own writes to have produced. Every test file's `nextId(prefix)` helper
+(and `provisioning.test.ts`'s `nextOrganizationId`/`nextRestaurantId`/`nextBranchId`) is a per-file
+counter starting at `0` — `branch-87`/`area-88` in one file is not guaranteed distinct from
+`branch-87`/`area-88` independently generated by a *different* file, and both write to Firestore
+documents keyed by those exact strings (including derived `reservationSlotOccupancy` bucket ids). Two
+unrelated test files' fixtures silently shared the same documents — real shared-emulator-state leakage
+across files, invisible when any single file runs in isolation (its own counter alone, no collision
+possible) and only manifesting in the full multi-file suite, which is exactly the failure pattern
+observed. Not Firestore nondeterminism, not "load" — a genuine, deterministic test-isolation bug.
+
+**Fix**: every affected file (`assignReservationTable`, `reservationSweep`, `respondToProposedChange`,
+`respondToReservation`, `submitReservation`, `submitTakeawayOrder`,
+`submitTakeawayOrderRealCatalog`, `takeawayGuestSession`, `processAccountDeletion`, `provisioning`
+— ten files, the full set using this counter pattern, not just the one symptom file) now seeds a
+per-file random `TEST_RUN_ID`/`PHONE_NAMESPACE` at module load and folds it into every generated id and
+phone number. Collision probability across files in one run is now negligible (module-load-time
+`Date.now()` + `Math.random()` entropy) rather than structurally guaranteed-possible. One incidental
+follow-on fix: `submitReservation.test.ts` had a test asserting the *exact* old phone-number shape
+(`/^\+1555555\d{4}$/`) as a proxy for "this is the real verified number" — widened to
+`/^\+1\d{9,15}$/`, since the test's actual intent (not the spoofed payload value) doesn't depend on the
+specific digit count.
+
+**Verification**: full functions suite run **three consecutive times** after the fix, each **fully
+green with zero failures** (270/270, 270/270, 270/270) — not cherry-picked, not the best of several
+attempts.
+
+### Fix #2 — `restaurantTables.reservationAreaId` dev seed migration
+
+`restaurantTables/table-12` (`scripts/seed_dev_table_qr.mjs`) predates Faz R.1C.1's new
+`reservationAreaId` field and never had it set — `assignReservationTable` would fail closed
+(`failed-precondition`) against the dev-seeded table even for its own obviously-intended area ("Bahçe
+1"/`areaName: "Bahçe"`). Fixed: `reservationAreaId: "garden"` added to the seed payload (the canonical
+mapping the user specified — `reservationAreas/garden` is `seed_dev_reservation.mjs`'s own "Bahçe").
+
+**Referential consistency, not just a field addition**: `seed_dev_table_qr.mjs` now hard-requires
+`reservationAreas/garden` to already exist (mirrors its own pre-existing `branches/branch-1` existence
+check) — never writes a dangling reference. `package.json`'s `seed:dev-table-qr` and `seed:dev-all`
+chains were reordered so `seed_dev_reservation.mjs` always runs before `seed_dev_table_qr.mjs` (minimal
+diff — only the relative order of those two scripts changed, `seed_dev_tenant.mjs` still runs first in
+both, `seed:dev-takeaway-qr`/`seed:dev-catalog`/`migrate:catalog` untouched).
+
+**Verified live** (not folded into the automated `node --test` suite — deliberately: doing so would
+touch the shared canonical `org-1`/`restaurant-1`/`branch-1`/`table-12` namespace from a *new* file,
+reintroducing the exact cross-file collision class Fix #1 just closed, for a scenario this phase's own
+instruction scopes as "development fixture consistency," not permanent regression coverage). Mirrors
+this session's own earlier precedent (the Masada Sipariş QR dev seed task): ran the real seed chain
+against a fresh emulator, then real callable calls + direct Firestore reads, via a temporary script
+(`functions/scripts/tmp_verify_table_area_seed.mjs`, deleted after use — never committed). All 8
+assertions passed: table-12 exists post-seed with `reservationAreaId === "garden"`; a confirmed "Bahçe"
+reservation assigns to table-12 successfully; a confirmed "İç Mekân" reservation is rejected
+(`FAILED_PRECONDITION`, "This table does not belong to the reservation's confirmed area"); re-running
+the full seed chain a second time leaves table-12 with the same `reservationAreaId`, the same `revision`
+value, and exactly one document for it (idempotent, no duplication).
+
+### Verification
+
+Functions build: clean. Functions emulator tests: **270/270, three consecutive fully green runs**
+(zero failures, zero skips). Firestore Security Rules: **109/109 passing, unchanged**. `flutter
+analyze`: 0 issues. `flutter test`: **2491/2491 passing, unchanged** (no Dart file touched).
+`--test-concurrency=1` preserved, unchanged — it was never the cause of, nor the fix for, this bug (it
+bounds concurrent *execution*, not id-namespace collisions between sequentially-run files).
+
+### Confidence
+
+High. The flaky-test investigation is now a closed loop: hypothesis (shared-fixture leakage) formed
+from a real diagnostic capture, not assumption; fix applied to the *entire* class of vulnerable files,
+not just the one symptom; verified with repeated full-suite runs, not a single pass. The dev-seed fix
+closes a real gap the phase's own new authorization check would otherwise have silently broken for
+anyone following the documented dev-seed workflow.
+
+## Faz R.1C.2 — Rezervasyon: QR T-20 Enforcement + Reservation Table Context + Order Linkage
+
+- Date: 2026-08-12
+- Status: Accepted — full scope implemented, including the phase's own explicitly-requested minimal
+  Flutter surface (QR T-20 enforcement is a real, previously-inert `tableProtectionMinuteBuckets`
+  becoming the actual QR-blocking source; a new `activeReservationTableContext` operational-state
+  collection; `openReservationTable`/`closeReservationTable`; server-generated
+  `reservationContextId` propagated through `tableGuestSessions` into `orders`, enforced by an exact-
+  equality Firestore Rule). No reservation customer/admin UI, no physical-table-assignment UI, no
+  preorder, no KDS reservation release, no push delivery, no completion/no-show UI — all explicitly
+  out of scope per the phase's own instruction.
+
+### QR T-20 enforcement (`functions/src/qrTokenResolution.ts`)
+
+`tableProtectionMinuteBuckets` (written since Faz R.1C.1, never read by anything until now) becomes
+the real, server-authoritative QR-blocking source, inside the one shared `resolveTableQrTokenInternal`
+both `resolveTableQrToken` (preview) and `openTableGuestSession` (actual open) call — each call
+independently re-evaluates against its own current server time, so `openTableGuestSession` never
+trusts a prior preview's result, and a client cannot bypass the block by skipping the preview and
+calling `openTableGuestSession` directly (proven by a dedicated test). Deterministic get-by-id only
+(`{tableId}__{epochMinute}`, `epochMinute = floor(serverNowMillis / 60000)`) — no query, no scheduler
+dependency, exactly as required. A missing bucket, or one whose `reservationIds` is empty, is ordinary
+`valid` behavior; a non-empty bucket downgrades the resolution to a new `reserved` status — a genuinely
+distinct value from the pre-existing `invalid` (a table `status !== 'available'` for an unrelated
+reason), since the customer-facing message must be the exact required string, never a generic "invalid
+code" message.
+
+### Reserved response contract (§2)
+
+`toPublicPreview` already stripped every field but `status` for any non-`'valid'` resolution (Faz
+R.1A/D.2's own existing data-minimization design) — `reserved` needed **zero** change there, proven by
+a dedicated leak-check test asserting the response's only key is `status`. No reservationId, customer
+name, phone, partySize, time, or area/staff detail is ever computable from this path.
+
+### `activeReservationTableContext` (`functions/src/reservationTableContext.ts`)
+
+Read-time invariant, not a write-time guarantee: a context is "live" only if `active == true` **and**
+`serverNow < contextEndAt`, re-derived on every read (`readLiveReservationTableContext`) — no scheduler
+expires a stale context (the phase's own explicit "yeni scheduler eklemek REQUIRED değil" instruction).
+One shared helper serves all three readers (`openReservationTable`'s conflict/idempotency check,
+`openTableGuestSession`'s snapshot decision, `assignReservationTable`'s reassignment guard) rather than
+three independently-drifting re-implementations.
+
+### `openReservationTable` (§5-§9)
+
+`manageReservations` permission (via `staffAuthorization.ts` — Faz R.1B.1's generic resolver, never a
+role check embedded here either); `tableId` always resolved server-side from
+`Reservation.assignedTableId`, never client-supplied. Validates the reservation is confirmed, has a
+matching `reservationTableProtections` record (cross-checked against `assignedTableId`, defensive
+consistency), and that record's own `protectionEndAt` (reused directly as `contextEndAt` — the single
+source of truth for "when does this reservation's table-time end," never independently recomputed from
+policy) hasn't already passed.
+
+**Two-step conflict handshake, two genuinely different kinds of conflict**: an active *walk-in*
+`tableGuestSessions` session on the table (found via a query — explicitly not the QR hot path, so a
+query here is fine, this is a low-frequency staff action) is soft — the first call
+(`acknowledgeActiveSessionConflict` omitted/`false`) mutates nothing and returns a structured
+`{code: 'activeSessionExists', conflictingSessionCount}` conflict; a retry with `true` proceeds. A
+*different Reservation's* already-live context on the same table is hard — `acknowledgeActiveSessionConflict`
+can never override it, because two Reservations must never simultaneously own one physical table's
+context; this is checked, and can fail, **before** the walk-in check even runs. Every call — including
+the acknowledged retry — re-reads and re-validates the full canonical state inside one transaction from
+scratch; there is no cross-call caching for a second call to trust a stale result from (proven by a
+dedicated test that changes canonical state between two calls and shows the second one independently
+notices).
+
+### Protection removal / future protection behavior (§8-§9)
+
+Reuses Faz R.1C.1's `removeReservationTableProtection` helper verbatim — only this reservation's own
+`reservationIds` membership is removed from each minute bucket it touches; a bucket shared with another
+reservation's overlapping protection window keeps that other reservation's membership untouched, and a
+bucket left with zero remaining ids is deleted rather than left as an empty array. Proven both from the
+QR-enforcement side (`qrTableProtectionEnforcement.test.ts`) and the mechanics side
+(`openReservationTable.test.ts`) — a later reservation on the same table is still correctly blocked by
+its own, still-intact protection window after an earlier one opens.
+
+### Table guest session snapshot / Flutter propagation (§11-§13)
+
+`openTableGuestSession` reads `activeReservationTableContext/{tableId}` *after* the QR resolve/
+protection check and *before* creating the session — the canonical check order the phase specifies —
+and stamps `reservationContextId` onto the new `tableGuestSessions` document: the live context's
+`reservationId`, or `null` for the ordinary walk-in case. Server-generated, immutable — never
+re-derived after creation, proven directly: an old session opened before a table was opened for a
+reservation keeps `reservationContextId: null` forever, even after that reservation's context goes
+live, and even after that context later expires past its own `contextEndAt` ceiling (proven with no
+scheduler involved, purely from the read-time invariant). Threaded through the Flutter client exactly
+as far as the phase asks and no further: `OpenedTableGuestSession` (gateway response model) ->
+`ActiveTableContext` (client session state) -> `SubmitCustomerOrder`/`CartToOrderMapper` ->
+`Order.reservationContextId`. No reservation UI was built — the QR scanner screen gained exactly one
+new message string (`'reserved'` -> the required exact text), nothing else changed about its visual
+language.
+
+### `Order.reservationContextId` (§14)
+
+New nullable field, sibling to `guestAuthUid` — same optionality, same "immutable snapshot, not an
+identity" shape, threaded through `Order`/`copyWith`/`CartToOrderMapper`/`SubmitCustomerOrder`/
+`OrderFirestoreMapper` exactly like every other additive nullable field this codebase's own convention
+already establishes (`takeawayEntrySessionId`'s own precedent). `customerId`/`guestAuthUid` semantics
+are completely unchanged — verified explicitly, not merely assumed, since this is the one identity-
+adjacent boundary this phase touches.
+
+### Firestore Rules — exact equality (§15)
+
+`tableGuestSessionMatchesOrderScope` (shared by both dine-in-QR order-create branches — anonymous guest
+and real customer) now also requires `session.get('reservationContextId', null) == data.get
+('reservationContextId', null)` — missing-field-safe on both sides, so a client can neither bypass by
+omitting the field, coerce a real context down to `null`, nor claim a different reservation's context
+than the one actually snapshotted. Every pre-existing dine-in-QR rules test, unmodified, already proves
+the "both sides absent" ordinary walk-in case still passes (absent reads as `null` on both sides) —
+direct evidence Faz R.1C.2 didn't silently change existing behavior. New tests cover: exact match
+allowed; omission denied; explicit `null` against a real context denied; a forged different id denied;
+a claimed context against a walk-in (`null`) session denied; the same shape proven once more on the
+real-customer variant.
+
+### Identity preservation (§16)
+
+`reservationContextId` never appears on either side of any identity check — `isRealCustomerAuth()`,
+`customerId == request.auth.uid`, `guestAuthUid == request.auth.uid` are byte-for-byte unchanged. It is
+checked *in addition to*, never *instead of*, every existing ownership condition. No code path derives
+a `customerId`, a loyalty grant, or a CRM record from it anywhere in this phase.
+
+### `closeReservationTable` (§17)
+
+Deliberately narrow — an operational override, not a business-outcome decision. Never touches
+`Reservation.status` (no automatic `completed`), never closes/kills existing `tableGuestSessions`, never
+restores the reservation's protection window. Idempotent (closing an already-closed context is a safe
+no-op) and ownership-checked (`context.reservationId` must match the requested reservation).
+
+### Reassignment guard (§18)
+
+`assignReservationTable`'s reassignment branch now hard-fails, before any write, if this exact
+Reservation's `activeReservationTableContext` on its *current* table is still live — silent context
+migration is explicitly forbidden; the staff workflow is `closeReservationTable` ->
+`assignReservationTable` -> `openReservationTable`, never a reassign-while-open shortcut. Reuses the
+same `readLiveReservationTableContext` helper `openReservationTable` uses, not a second implementation.
+
+### Verification
+
+Functions build: clean. Functions emulator tests: **303/303, three consecutive fully green runs** (270
+baseline + 33 new: 8 in `qrTableProtectionEnforcement.test.ts`, 18 in `openReservationTable.test.ts`, 5
+in `closeReservationTable.test.ts`, 2 reassignment-guard tests appended to
+`assignReservationTable.test.ts`). Firestore Security Rules: **121/121 passing** (up from 109 — 12 new:
+6 `reservationContextId` exact-equality tests, 6 `activeReservationTableContext`/session-immutability
+tests). `flutter analyze`: 0 issues. `flutter test`: **2496/2496 passing** (up from 2491 — 5 new: 2
+`OrderFirestoreMapper` round-trip tests, 2 `OpenTableGuestSessionFromQrScan` propagation tests, 1
+`DineInCheckoutScreen` end-to-end propagation test). `--test-concurrency=1` and the Faz R.1C.1.1
+per-file `TEST_RUN_ID`/`PHONE_NAMESPACE` namespacing convention were both followed by every new test
+file in this phase — no new file reintroduces a bare `idCounter` starting at 0.
+
+### Explicit non-scope (unchanged from the phase's own instruction, not silently dropped)
+
+Reservation customer/admin UI, physical-table-assignment UI, preorder, KDS reservation release, push
+notification delivery, and reservation completion/no-show UI remain entirely unbuilt.
+
+### Confidence
+
+High for the implemented scope — every one of the 44 named test scenarios has a corresponding, passing
+test, several proven from more than one angle (the QR-enforcement and the table-context-mechanics test
+files independently both prove "a future reservation's protection survives an earlier one's open," for
+instance). The Dart-side propagation is new territory for this reservation feature arc (every prior
+phase was backend-only) — kept deliberately minimal and mechanical (mirroring `guestAuthUid`'s own
+established shape at every step) rather than inventing new patterns, and verified with `flutter analyze`/
+`flutter test` exactly like every other Dart change in this codebase, not treated as a lesser-verified
+addendum.
+
+## Faz R.1D.1 — Rezervasyon: Optional Preorder + Server Pricing + Reservation Lifecycle Binding
+
+**Decision**: a Reservation may optionally carry a preorder — a second, separate `orders` document
+(channel `reservationPreorder`), created atomically with the Reservation, server-priced against the
+canonical catalog at table/base price (never a Gel Al packaging or delivery surcharge), and bound to the
+Reservation's own confirm/reject/proposal/timeout lifecycle. Reservation and Order remain two aggregates;
+the Order is never embedded inside the Reservation document.
+
+### Product invariant (§1)
+
+Preorder is strictly optional — omitting it from `submitReservation`'s request reproduces Faz R.1A/R.1B's
+existing behavior exactly, byte-for-byte. When present, its price is the same canonical price a table/
+dine-in order would get: no packaging surcharge (Gel Al), no delivery surcharge.
+
+### `Order.reservationContextId` reuse, not a new field (D1)
+
+`Order.reservationContextId` already existed, with a distinct Faz R.1C.2 meaning ("snapshot of the
+active table context at the moment a `tableGuestSessions` document opened"). This phase reuses the same
+field for a second, textually different but conceptually related meaning: "the id of the Reservation this
+preorder was created for." This is safe because the only place the field is *enforced* by Firestore Rules
+(`tableGuestSessionMatchesOrderScope`) is scoped exclusively to the `dineInQr` client-create branches — a
+`reservationPreorder` order is created exclusively via Admin SDK inside `submitReservation`'s own
+transaction, which bypasses Firestore Rules entirely, so that rule never evaluates this channel. The
+existing `orders` read rule already grants the owning customer read access via
+`customerId == request.auth.uid` (true for a preorder's real phone-auth customer) with zero rule changes.
+The field's Dart doc comment (`lib/features/orders/domain/models/order.dart`) now documents both meanings
+explicitly, one per channel.
+
+### Server-authoritative pricing, explicit channel isolation
+
+`functions/src/reservationPreorder.ts` reuses `takeawayCatalog.ts`/`takeawayPricing.ts` — the same
+engine `submitTakeawayOrder.ts` already uses — with the channel hardcoded to the literal
+`"reservationPreorder"` at a single point, never threaded as a parameter, so there is no code path that
+could accidentally resolve pricing against `"takeaway"` (or any other channel) instead. Verified, not
+assumed: no "unknown channel -> takeaway/default" fallback exists anywhere in the pricing engine — every
+lookup is channel-keyed with a zero-adjustment fallback for an unconfigured channel, and
+`pricing.packagingFee`/`pricing.deliveryFee` are structurally `moneyField(0)` for every channel today
+(not a reservationPreorder-specific carve-out). A dedicated test proves this holds even when the *same*
+restaurant has real, non-zero `takeaway`/`delivery` adjustments configured on its own
+`channelPricingPolicies` document.
+
+### Transaction-safety addition to `takeawayCatalog.ts` (D2)
+
+`loadCanonicalMenuProduct`/`loadCanonicalBowlIngredient`/`loadCanonicalChannelPricingPolicy` gained an
+optional `tx?: Transaction` parameter — when supplied, the read goes through `tx.get()` instead of a
+plain `.get()`, so it participates in the surrounding transaction's optimistic-concurrency read-set
+(consistent with this reservation arc's own repeatedly-enforced "every authoritative transactional read
+is `tx.get()`" rule — Faz R.1A.1 REQUIRED fix #1). Every existing call site
+(`submitTakeawayOrder.ts`) is unaffected — it keeps calling these functions with a plain `db`, unchanged,
+exactly as before. This is a disclosed, deliberate scope boundary, not an oversight: `submitTakeawayOrder
+.ts`'s own catalog reads are *textually* inside its own transaction but use the plain, non-transactional
+read path — a pre-existing gap this phase chose not to fix, since doing so would touch another feature's
+established, tested, working behavior outside this phase's own scope. Tracked as technical debt in
+`docs/feature_status.md`, to be picked up by a future small phase.
+
+### Atomic creation + idempotency (§5)
+
+Preorder catalog reads and the Order write happen inside `submitReservation`'s own transaction — all
+reads (idempotency check, scope/policy/area resolution, capacity check, preorder catalog reads) complete
+before any write (hold/bucket writes, the preorder Order write, the Reservation write), preserving the
+"all reads before all writes, transaction-wide" rule this arc has needed to relearn twice before (Faz
+R.1B's `reservationHoldOps.ts`, Faz R.1C.1's occupancy/protection release helpers). The Reservation's own
+`submissionKey`-derived idempotency fingerprint now folds in the normalized preorder items (via
+`normalizePreorderItems` — a pure, DB-free function shared between the fingerprint computation, done
+before the transaction opens, and the actual line-building inside it, so the two can never drift apart) —
+reusing `submissionKey` with a different preorder is rejected fail-closed exactly like every other changed
+field. `Reservation.preorderOrderId` is a nullable, immutable field, deterministically derived
+(`` `reservation-preorder-${reservationId}` ``) — chosen after confirming no existing relation already
+served this purpose (§9's own explicit "research first" instruction; `Reservation` had no such field
+before this phase). No independent idempotency fingerprint exists on the Order itself — its entire
+existence is gated by the Reservation's own check, which a retry never bypasses.
+
+### Confirmation-timing binding (§8-§12)
+
+New locked platform constant `PREORDER_KITCHEN_RELEASE_LEAD_MINUTES = 60` (`reservationConfig.ts`) — a
+platform-wide constant, never branch-configurable, mirroring `MINIMUM_ADVANCE_MINUTES`'s own precedent
+(that file's own doc comment already documents an earlier draft's speculative, later-rejected
+`preorderPreparationLeadMinutes` *policy* field — this phase deliberately does not resurrect that shape).
+`computePreorderKitchenTiming(confirmedTime, now)` is the one shared computation every confirm/accept call
+site uses — `remaining = confirmedTime - now`; `remaining > 60m` stays `pendingConfirmation`
+(`kitchenReleaseAt` set to the future release instant); `remaining <= 60m` (inclusive) transitions
+immediately to `confirmed`; `kitchenReleaseAt = confirmedTime - 60m` always, computed entirely from
+server-supplied `Date`s. Applied, in the same transaction as the reservation's own state change: direct
+confirm and restaurant reject (`respondToReservation.ts`), proposal accept (`respondToProposedChange.ts`),
+response-timeout (`reservationSweep.ts`). Proposal reject and proposal expiry deliberately touch nothing —
+leaving the preorder untouched (still `pendingConfirmation`, `kitchenReleaseAt` still `null`) is already
+the correct behavior by simply not adding preorder-touching code to those two paths, confirmed by reading
+both files in full before concluding no change was needed there.
+
+### `cancelReservation` audit (§13)
+
+Confirmed via grep — zero matches anywhere in the codebase. Not built this phase, per the phase's own
+explicit "don't scope-creep" instruction. Remains an open, reported gap: an already-confirmed/released
+preorder has no cancellation path today.
+
+### Security (§17)
+
+A `reservationPreorder` order can only ever be created via `submitReservation`'s own Admin-SDK transaction
+— `firestore.rules`' `orders` `create` rule has no branch that could ever match this channel from a
+client (mirrors the existing, already-closed `takeaway` precedent: "That order type is now created
+exclusively via `submitTakeawayOrder`... No takeaway channel value can satisfy this rule anymore, from
+any actor," per that rule's own comment). `update: false` blocks any client-side status transition
+unconditionally. Every confirm/reject/sweep code path resolves the linked preorder purely from
+`Reservation.preorderOrderId` (or its deterministic re-derivation) — none of them read an order id from
+the request payload at all, so a forged `orderId`/`preorderOrderId` field in a client request has nothing
+to influence. A cross-tenant preorder item (a product/ingredient belonging to a different restaurant) is
+rejected fail-closed by the existing `product.restaurantId !== scope.restaurantId` check, reused as-is.
+
+### Events (§18)
+
+No new `orderEvents`/`reservationEvents` write was added for preorder creation or status transitions.
+Checked: `submitTakeawayOrder.ts` itself writes no creation-time order event (`orderEvents` is only ever
+written by `onOrderCompleted.ts`'s own trigger) — inventing one for only this one channel would be a new,
+inconsistent pattern. The existing `reservationEvents` outbox (already written for every reservation-side
+transition — confirm/reject/proposal/timeout) remains the audit trail driving preorder's timing; no
+information is lost by not duplicating it onto a second event stream. Revisit if/when the scheduled
+KDS-release phase needs its own event.
+
+### Verification
+
+Functions build: clean. Functions emulator tests: **331/331, three consecutive fully green runs** (303
+baseline + 28 new, in `reservationPreorder.test.ts`, covering all 38 numbered spec scenarios except 36/37
+which are Dart-side and 38 which is proven by the unchanged, still-green existing suites). Firestore
+Security Rules: **121/121 passing, unchanged** — no rules changes were needed. `flutter analyze`: 0
+issues. `flutter test`: **2496/2496 passing**, including 1 new Dart test
+(`kitchen_ticket_mapper_test.dart`) proving `KitchenTicketMapper.fromOrder` handles the
+`reservationPreorder` channel correctly.
+
+### Explicit non-scope (unchanged from the phase's own instruction, not silently dropped)
+
+The scheduled KDS-release poller (nothing today automatically moves a `pendingConfirmation` preorder to
+`confirmed` once its `kitchenReleaseAt` passes without a confirm/accept event happening — only the
+at-confirmation-time immediate-release case is wired), reservation customer UI, admin reservation UI,
+physical-table UI, `cancelReservation`, and push notification delivery all remain entirely unbuilt. Faz
+R.1D.2 is expected to cover the scheduled release poller.
+
+### Confidence
+
+High for the implemented scope. Every numbered test scenario has a corresponding, passing test (two test
+authoring bugs were caught and fixed during verification — a non-slot-aligned `requestedTime` offset and
+an incorrect expected-status assertion at a >60m boundary — neither was an implementation defect; both
+were confirmed by rereading the exact boundary logic against the fixed constant). The exact `remaining ==
+60m` boundary is proven mathematically via a pure-function unit test against `computePreorderKitchenTiming`
+directly, not just via safe-margin integration tests (mirroring this codebase's own established pattern
+for every other reservation timing boundary). The channel-isolation guarantee (no Gel Al/delivery
+surcharge) is proven against a policy document that has real, non-zero adjustments configured for those
+other channels on the same restaurant — the strongest version of that test available without a full real-
+catalog migration.
+
+## Faz R.1D.2 — Rezervasyon: Scheduled Preorder KDS Release + Retry-Safe Delivery to Kitchen
+
+**Decision**: a new, separate scheduled Cloud Function moves a due `reservationPreorder` Order from
+`pendingConfirmation` to `confirmed` — the gap Faz R.1D.1 explicitly left open (only the at-confirmation-
+time immediate-release case, `remaining <= 60m`, was wired; nothing moved a *future*-releasing preorder
+once its `kitchenReleaseAt` actually arrived).
+
+### Scheduler architecture (§2)
+
+`reservationPreorderKdsRelease` (`functions/src/reservationSweep.ts`), `onSchedule("every 1 minutes",
+...)` — a genuinely separate exported Cloud Function from `reservationSweep`'s own `onSchedule("every 5
+minutes", ...)`, not a change to that function's cadence or a bolt-on inside it. `onSchedule` fixes one
+cadence per Cloud Function; the two concerns (response-timeout/proposal-expiry vs. preorder KDS release)
+need genuinely different granularities, so two functions is the correct shape, not a compromise.
+`runPreorderKdsReleaseSweep` mirrors `runReservationResponseTimeoutSweep`/
+`runReservationProposalExpirySweep`'s own exact, already-proven shape: bounded query, one independent
+transaction per candidate, each re-validating its own precondition from scratch rather than trusting the
+query result.
+
+### Candidate query + index (§3, §12)
+
+`orders` collection: `channel == "reservationPreorder"`, `status == "pendingConfirmation"`,
+`kitchenReleaseAtTimestamp <= now`, `orderBy kitchenReleaseAtTimestamp asc`, `limit(50)`. New composite
+index (`firestore.indexes.json`): `orders(channel ASC, status ASC, kitchenReleaseAtTimestamp ASC)` —
+mirrors the two existing 2-field indexes `reservationSweep`'s own two queries already required. Never an
+unbounded scan; a backlog beyond one 50-document batch is picked up by the following minute's run
+(oldest-due-first ordering means a persistent backlog drains in order rather than starving).
+
+### New companion field: `kitchenReleaseAtTimestamp`
+
+`kitchenReleaseAt` (Faz R.1D.1) is stored only as an ISO string — not usable for an idiomatic, indexable
+Firestore range/orderBy query. `submitTakeawayOrder.ts` already established the precedent for exactly
+this situation: `pickupTime` (ISO string, display) alongside `pickupTimeTimestamp` (real `Timestamp`,
+querying). This phase adds the identical dual-field pattern: `kitchenReleaseAtTimestamp`, always set/
+cleared together with `kitchenReleaseAt`, everywhere the latter is written
+(`buildPreorderOrderDocument`'s initial `null`, `buildPreorderConfirmationPatch`'s both branches,
+`buildPreorderCancellationPatch`'s `null`). A disclosed, required change to already-closed Faz R.1D.1
+code — approved explicitly before implementation — not scope creep; without it there is no idiomatic
+bounded/indexed query possible.
+
+### Release transaction + canonical timing revalidation (§4, §5)
+
+`buildPreorderKdsReleasePatch` (`functions/src/reservationPreorder.ts`) is the scheduler's own complete,
+independent revalidation chain, run inside each candidate's own transaction against freshly `tx.get()`'d
+Order and Reservation snapshots — the bounded query's result is never trusted on its own. Every check:
+Order exists, `channel == 'reservationPreorder'`, `status == 'pendingConfirmation'`,
+`reservationContextId` present, `kitchenReleaseAt`/`kitchenReleaseAtTimestamp` present, linked
+Reservation exists, `Reservation.preorderOrderId == order.id` (the *reverse*-link integrity check —
+guards against a corrupted/mismatched linkage in either direction), `Reservation.status == 'confirmed'`,
+`Reservation.confirmedTime` present. The canonical expected release instant is then *recomputed* —
+`expectedPreorderKitchenReleaseAt(Reservation.confirmedTime)`, extracted from
+`computePreorderKitchenTiming` itself so the two can never independently drift — and must **exactly**
+match the stored `kitchenReleaseAtTimestamp`. A mismatch (a bug, or a document touched outside the normal
+write paths) is a data-integrity condition: the candidate is skipped with a structured, stable
+machine-readable `reason` (never a free-text message, so tests/logs can assert on it precisely), never
+silently released, never silently repaired. Only once every check passes does the actual
+`pendingConfirmation -> confirmed` write happen — same shape as `buildPreorderConfirmationPatch`'s own
+confirmed branch (`canTransition` check, `status`, `version + 1`, `timestamps.confirmed`, `statusHistory`
+append) — there is no separate "canonical Order transition helper" beyond `orderStatus.ts`'s
+`canTransition`/`isOrderStatus` (pure validation) plus this established hand-written write shape, reused
+a third time now (`onOrderCreated.ts`, `buildPreorderConfirmationPatch`, and this).
+
+### Exact eligibility boundary vs. execution latency (§9, §15)
+
+Two genuinely different things, kept explicitly distinct, never conflated: **eligibility** —
+`expectedReleaseAt <= now` — is an exact, deterministic boundary, proven mathematically via a
+pure-function unit test against `buildPreorderKdsReleasePatch` with synthetic timestamps one millisecond
+either side of the boundary. **Execution** — when the scheduler's Cloud Scheduler trigger actually fires
+and a candidate's transaction actually runs — follows the platform's own `"every 1 minutes"` cadence,
+meaning real-world release can land up to roughly a minute after the exact boundary, never before it. This
+codebase makes no claim of millisecond-exact wall-clock delivery by Cloud Scheduler — only that a preorder
+is never released before its canonical `kitchenReleaseAt`, and is released within one scheduler cycle after
+it.
+
+### Retry/idempotency + concurrency safety (§7, §14, §17)
+
+The same `status == 'pendingConfirmation'` gate that makes every other transition in this reservation arc
+retry-safe applies here unchanged: an already-`confirmed`/`cancelled` order is excluded by the query
+itself (wrong `status`) and, defensively, also fails the transaction-level re-check
+(`wrong-order-status`) if it were ever somehow re-selected. Verified with three genuinely overlapping
+`runPreorderKdsReleaseSweep` invocations against the identical due order (`Promise.all`) — exactly one
+effective transition, `version` incremented exactly once, exactly one `confirmed` entry in
+`statusHistory`. Firestore's own optimistic-concurrency transaction retry is what makes this safe, not
+any additional application-level locking.
+
+### Reservation-state safety (§7)
+
+The scheduler only ever releases when `Reservation.status == 'confirmed'` — `pendingRestaurantApproval`/
+`changeProposed`/`rejected`/`cancelled` all fail closed via the `reservation-not-confirmed` check. A
+proposal accept that moves `confirmedTime` later already recomputes `kitchenReleaseAt`/
+`kitchenReleaseAtTimestamp` in the same accept transaction (Faz R.1D.1 §10) — so the scheduler's own
+canonical-timing revalidation naturally means a sweep run at the *old*, now-superseded release instant
+finds nothing due (the stored value has already moved to the new, later instant); only the new instant
+releases it. Verified end-to-end: propose+accept a later time, sweep at the old instant (no release),
+sweep at the new instant (release).
+
+### Failure isolation (§13)
+
+Each candidate's transaction is wrapped in its own `try`/`catch` inside the sweep loop — a
+document that causes a genuine error (tested via a deliberately malformed `reservationContextId`
+containing a `/`, which the Admin SDK's `.doc()` rejects synchronously with an odd path-segment count) is
+logged and skipped, never aborting the batch; a valid candidate in the same run still releases correctly.
+
+### Audit event decision (§11)
+
+`onOrderCreated.ts` already writes a generic, cross-cutting `auditEvents` record
+(`type: 'order.statusChanged'`) for its own `created -> pendingConfirmation` transition — the one existing
+generic order-transition audit mechanism in this codebase, not reservation- or takeaway-specific. Rather
+than invent a new, inconsistent event pattern for only the scheduler's transition, this phase reuses that
+exact shape. **Explicitly requested during approval**: the *immediate*-release path
+(`buildPreorderConfirmationPatch`'s confirmed branch, direct confirm/proposal accept at `remaining <=
+60m`) now writes the identical record too — the same underlying `pendingConfirmation -> confirmed`
+preorder transition is audited consistently regardless of which of the two paths produced it (previously
+only the scheduler's own path would have been audited, an inconsistency the approval explicitly rejected).
+`buildPreorderConfirmationPatch` stays a pure function — it returns `{ patch, auditEvent }` rather than
+writing anything itself; every caller (`respondToReservation.ts`, `respondToProposedChange.ts`, and the
+new scheduler) `tx.set()`s both the order patch and the audit record in the same transaction, so they
+commit atomically or neither does, and the same status-gate that prevents a duplicate state transition on
+retry prevents a duplicate event by construction.
+
+### KDS eligibility behavior (§10) — confirmed gap, not silently narrowed
+
+Deeper research this phase (beyond Faz R.1D.1's own finding that KDS never queries Firestore directly)
+found that `FireKitchenTicket`/`KitchenTicketMapper.fromOrder` are invoked **nowhere in the Flutter app
+at all**, for any channel — `KitchenDisplayBoardScreen` loads from
+`kitchenTicketRepositoryProvider.findActiveByBranch(...)`, an in-memory mock repository with no
+Firestore-backed `Order` stream feeding it. There is, today, no live pipeline connecting a real Firestore
+Order to a kitchen ticket for *any* channel, not only `reservationPreorder`. Given this, and per explicit
+confirmation during approval: no `isKitchenEligibleOrder` predicate was built this phase — there is no
+live query/filter site in the current architecture for one to attach to, and inventing one against a
+pipeline that doesn't exist yet would be speculative, not a real integration. This phase's claim is
+therefore scoped precisely: the scheduler correctly transitions a due preorder Order to `confirmed`, and
+`KitchenTicketMapper.fromOrder` (Faz R.1D.1's own Dart test, unchanged and still green) correctly maps
+that Order's channel/label if and when something eventually feeds it in. "A confirmed `reservationPreorder`
+order is visible in KDS end-to-end" is explicitly **not** claimed. Building the real ingestion pipeline is
+future scope.
+
+### Verification
+
+Functions build: clean. Functions emulator tests: **353/353, three consecutive fully green runs** (331
+baseline + 22 new, `reservationPreorderKdsRelease.test.ts`, covering all 33 numbered spec scenarios —
+several combined per `test()` block, several of the defensive/invariant branches tested as pure-function
+cases against `buildPreorderKdsReleasePatch` rather than contrived live state). Firestore Security Rules:
+**121/121 passing, unchanged** — no rules changes were needed this phase either. `flutter analyze`: 0
+issues, unchanged. `flutter test`: **2496/2496 passing, unchanged** — no Dart files were touched this
+phase.
+
+### Explicit non-scope (unchanged from the phase's own instruction, not silently dropped)
+
+Reservation customer UI, admin reservation UI, physical-table UI, push notification delivery,
+`cancelReservation`, any new payment logic, and kitchen-preparation-status redesign all remain entirely
+unbuilt. The scheduler fails closed on a non-`confirmed` Reservation (§7/§16), but `cancelReservation`
+itself is still not implemented — when it eventually is, its own transaction will need to cancel a
+still-pending-release preorder and invalidate a future release, symmetric to the existing reject/timeout
+handling (Faz R.1D.1 §12).
+
+### Confidence
+
+High for the implemented scope. Every numbered test scenario has a corresponding, passing test; the
+defensive/invariant branches (wrong channel, wrong status, missing/mismatched linkage, non-confirmed
+Reservation, tampered `kitchenReleaseAt`) are proven deterministically via pure-function tests against
+hand-built fake snapshots rather than relying on live states that the system's own invariants mostly
+prevent from arising in the first place. Concurrency safety and failure isolation are both proven against
+real overlapping/corrupt conditions in the emulator, not merely asserted. The one area with a genuinely
+lower confidence ceiling — by design, not oversight — is KDS end-to-end visibility, explicitly scoped
+down to what the current architecture can actually support, and reported as an open gap rather than
+overclaimed.
+
+## Faz R.2 — Rezervasyon: Customer Reservation Experience + Signature Calendar + Optional Preorder UI
+
+**Decision**: build the first customer-facing UI for the Rezervasyon domain on top of the fully
+backend-only foundation R.1A–R.1D.2 established — a guided 6-step flow (party size, area, date,
+time, optional preorder, review+submit) over one canonical draft state object, a bespoke "Signature
+Calendar" date picker, a fully isolated preorder cart reusing existing menu/product-detail/Bowl
+Builder UI unmodified, real `go_router` routes with open-redirect-safe `returnTo` handling, and a
+customer reservation detail screen with change-proposal accept/reject. Six decisions (D1–D6) were
+revised from the original proposal before implementation began; each is recorded below with the
+revision that was actually built, not the original proposal.
+
+### D1/D2 — Real `go_router` routes, not raw `Navigator` (§1, revised)
+
+Originally proposed as a raw-`Navigator`-pushed screen, matching most of the rest of the app
+(`CLAUDE.md` §3's own note that only the entry flow is on `go_router`). Revised: the reservation
+flow gets real routes — `/reservation`, `/reservation/:reservationId`,
+`/reservation/confirmation/:reservationId` — specifically so a deep link or an auth-interrupted
+entry (unauthenticated visitor taps "Rezervasyon" from Home) can be resumed correctly after
+login/OTP, which a raw `Navigator.push` cannot express.
+
+`AppRouteGuard.resolve` gained a new `isRealCustomer`-gated branch, checked *before* the existing
+generic `signedIn` branch (`isAuthenticated || isGuest`) — deliberately stricter, since a guest
+session is sufficient to reach `/main` but not to reach `/reservation*`. An unauthenticated or
+guest-only visitor is redirected to `/login` (or `/onboarding` if onboarding isn't complete yet)
+with the original location preserved as a `returnTo` query param.
+
+Open redirect is prevented by a strict allowlist, not a blocklist: `AppRouteGuard.sanitizeReturnTo`
+accepts only the exact three known reservation-route shapes via `RegExp`, applied twice — once when
+the guard generates the redirect, once again when `OtpScreen` consumes the `returnTo` param after a
+successful OTP — since `/login`/`/otp` remain reachable by direct deep link with an arbitrary query
+string, and the second application is the actual defense against a malicious `returnTo` value
+crafted independently of the guard. `LoginScreen`/`OtpScreen` both gained an optional `returnTo`
+parameter threaded through the login → OTP → post-success `context.go(sanitizedReturnTo ??
+AppRoutes.main)` chain.
+
+### D3 — Real-phone-auth predicate promoted to `core/auth` (§9, approved as proposed)
+
+`isRealCustomer(AuthState) -> bool` (phone-verified, non-guest, non-expired session) existed only in
+`features/takeaway/domain/real_customer_check.dart` before this phase. Once the reservation route
+guard and flow-screen entry gate needed the identical check, it was promoted to
+`core/auth/real_customer_check.dart` — this codebase's own established "second consumer promotes a
+thing to shared" convention (`CLAUDE.md` §3), applied here to a small domain predicate rather than a
+widget. The original `features/takeaway/domain/real_customer_check.dart` was deleted only after
+confirming zero remaining references; `TakeawayCheckoutScreen`/`TakeawayBranchSelectionScreen` and
+the new reservation call sites all share this one function now, never an independently-maintained
+copy.
+
+### D4 — Preorder cart isolation via nested `ProviderScope` + bridge, not provider aliasing (§11, conditional -> built as the fallback)
+
+The condition attached to the original proposal — "accept a `ProviderScope` override of the real
+`cartProvider` only if the pushed `ProductDetailScreen`/`BowlBuilderScreen` routes are proven to
+actually inherit that scope" — was met structurally (`ReservationPreorderScope` hosts those screens
+in its own nested `Navigator`, so they resolve `ref.read(cartProvider.notifier)` to whatever
+`cartProvider` means at that point in the tree), but the specific mechanism proposed
+(`cartProvider.overrideWithProvider(preorderCartProvider)`, true provider aliasing — one instance
+under two names) turned out to be deprecated in this Riverpod version (`^2.5.1`; IDE diagnostic:
+"'overrideWithProvider' is deprecated and shouldn't be used. Will be removed in 3.0.0. Use
+overrideWith instead"), which `CLAUDE.md` §4/§18 forbids using.
+
+Built instead: `ReservationPreorderScope` overrides `cartProvider` with a genuinely fresh, separate
+`CartNotifier` instance (`cartProvider.overrideWith(CartNotifier.new)`) scoped to its own nested
+`ProviderScope`, and a `_PreorderCartBridge` widget inside that scope (`ref.listenManual` against the
+scoped `cartProvider`, mirroring every change into `preorderCartProvider` via a `ProviderContainer`
+captured from *outside* the nested scope before it was entered) keeps the always-outer-visible
+`preorderCartProvider` in sync — the same externally observable effect as the originally-proposed
+aliasing, without the deprecated API. `CartNotifier` gained one new public method,
+`replaceAll(List<CartItem>)`, since `Notifier.state` isn't settable from outside the `Notifier`
+subclass in this Riverpod version and the bridge needed a way to push the mirrored state in.
+
+The explicitly required proof — "Global cart'ın hiç değişmediğini integration/widget test ile
+kanıtla" — is `test/features/reservation/presentation/widgets/reservation_preorder_scope_test.dart`:
+seeds the real global `cartProvider` from outside the scope, adds a *different* item from inside
+`ReservationPreorderScope`, and asserts the real cart still contains only the original item (never
+the new one) while `preorderCartProvider` contains only the new one, in both call orders.
+
+**A real bug was found while writing that proof, not merely covered by it**: `_PreorderCartBridge
+.initState` originally called `ref.listenManual(cartProvider, ..., fireImmediately: true)`, and the
+`fireImmediately` callback wrote into the *outer* container's `preorderCartProvider` synchronously,
+during `initState` — i.e. while the widget tree was still building. Riverpod's build-phase safety
+check ("Tried to modify a provider while the widget tree was building") fires on this regardless of
+which container is targeted, meaning this exact code path would have thrown the very first time any
+real user opened the optional-preorder step, not just in the test. Fixed by dropping
+`fireImmediately: true` and instead scheduling the equivalent initial sync via
+`WidgetsBinding.instance.addPostFrameCallback`, so it always runs after the current build finishes.
+
+### D5 — Signature Calendar: widget composition, never `CustomPainter`, never the stock `DatePicker` (§3, approved as proposed)
+
+A hard UI requirement, not a preference: `shared/widgets/calendar/signature_calendar.dart` never
+uses Material's `showDatePicker`/`CalendarDatePicker`/`DatePickerDialog`. Built from real widgets
+(`GridView.count` for the day grid, `AnimatedSwitcher` for month transitions, `AnimatedScale`/
+`AnimatedContainer` for selection feedback) rather than a `CustomPainter` — the one deliberate
+deviation from this codebase's other bespoke-widget precedent, `HeroAbacus` (a `CustomPainter`
+physics toy) — because a date picker is a form control with hard accessibility requirements
+(semantic labels per day cell, keyboard/focus behavior on web, text-scale support) that a raw canvas
+would need extensive manual `Semantics` re-implementation to satisfy, where real widgets get correct
+semantics for free. Built entirely from existing `AppColors`/`AppTypography`/`AppSpacing`/
+`AppRadius`/`AppShadows` tokens (`primaryLight`/`primaryExtraLight`/`background` already carry the
+requested "açık krem zemin, adaçayı yeşili" palette) — no new widget-local palette class was needed,
+unlike `HeroAbacusPalette`, which exists precisely because its brand colors have no `AppColors`
+equivalent.
+
+Client-side only: `firstSelectableDate`/`lastSelectableDate` bound which days render enabled, purely
+for UX — `submitReservation`'s own minimum-advance/booking-horizon checks remain the authoritative
+ones, unchanged by this phase's own "client clock authority değil" rule (§7 of the original request).
+
+### D6 — Branch-configurable operating hours: one general model, not a reservation-specific schema (§backend, revised — major)
+
+The original proposal (a reservation-specific service-window schema, scoped to the reservation
+feature alone) was rejected outright. The explicit instruction: "Reservation availability ayrı
+hardcoded/service-window saatleri kullanmayacak. Canonical source of truth: branch-level operating
+hours configured from the management panel," with a fully specified general requirement — weekly
+schedule by weekday, different hours per day, closed days, multiple opening intervals per day,
+branch timezone, date-specific overrides (closed OR custom intervals) with override-wins-over-weekly
+priority, no client writes, admin editing UI deferred to a future R.3 but the model and read logic
+required now — and an explicit prohibition: "Do NOT create a separate reservation-hours source of
+truth."
+
+Built: `functions/src/branchOperatingHours.ts` — `BranchOperatingHours {branchId, organizationId,
+restaurantId, weeklySchedule: WeeklyOperatingSchedule (7 day fields, each a list of
+`{startMinute, endMinute}` intervals), dateOverrides: Record<dateKey, {closed, intervals?}>}`,
+`loadBranchOperatingHours`, `resolveEffectiveIntervals` (override wins outright when present for a
+date, else falls back to the weekly schedule for that weekday), `isWithinOperatingHours`. Missing
+config resolves to closed every day, matching `loadReservationPolicy`'s own established fail-safe-
+closed (never fail-open) convention. `submitReservation` now checks `isWithinOperatingHours` inside
+its own transaction as an authoritative rejection (`failed-precondition`,
+"requestedTime is outside this branch's operating hours."); `getReservationAvailability` (new
+callable, see below) reads the same model to generate/filter candidate slots. No reservation-
+specific hours source exists anywhere in the codebase.
+
+Local-wall-time <-> UTC conversion needed a new primitive not previously required by this codebase:
+`localWallTimeToUtc(dateKey, minuteOfDay, timeZone)` — the inverse of the existing
+`branchLocalDateParts`/`branchLocalMinuteOfDay` instant-to-local-parts functions — implemented as a
+2-iteration fixed-point conversion (guess an instant, observe what local wall time it actually
+produces via `Intl.DateTimeFormat`, correct the guess by the observed error, repeat once more),
+verified correct across a real DST fall-back transition
+(`functions/src/test/reservationTimezone.test.ts`).
+
+Documented explicitly, per instruction: changing branch hours affects future availability
+immediately, but never silently cancels an already-created/confirmed reservation — those remain
+explicit operational records that require staff action if a later schedule change creates a
+conflict with them. Migration/seed impact: `functions/scripts/seed_dev_reservation.mjs` gained a
+placeholder `branchOperatingHours/branch-1` document (11:00–23:00 daily, explicitly commented as
+placeholder, not real business data); 10 existing backend test files gained a
+`seedWideOpenBranchOperatingHours` helper call so pre-existing reservation tests continue exercising
+an always-open branch rather than failing closed against the new default.
+
+### New backend surface (§backend)
+
+Two new phone-auth-required callables: `getReservationBranchInfo` (`{policy: {maxPartySize,
+slotIntervalMinutes, reservationDurationMinutes, bookingHorizonDays, timezone,
+minimumAdvanceMinutes}, areas: [{id, displayName}]}` — areas filtered `isActive == true`, sorted,
+stripped to the two customer-facing fields) and `getReservationAvailability` (`{restaurantId,
+branchId, areaId, date, partySize} -> {slots: [{time, available}]}` — resolves scope/area/operating-
+hours in one zero-write transaction, generates candidate slots via `localWallTimeToUtc` filtered by
+minimum-advance/booking-horizon, one bulk `reservationSlotOccupancy` query widened by
+`reservationDurationMinutes` past day-end, computes availability in-memory via the existing
+`computeReservationSlotBuckets`). New composite index:
+`reservationSlotOccupancy(branchId ASC, areaId ASC, slotStart ASC)`.
+
+The customer detail screen's change-proposal UX needed to read the *active* proposal, but
+`reservationChangeProposals` stays org-staff-read-only (Faz R.1B's own scope decision, unchanged
+here). Rather than opening a new customer read path onto that collection, the active proposal's
+`proposedTime`/`proposedAreaId`/`customerResponseDeadlineAt` are denormalized directly onto the
+`Reservation` document (already customer-readable) by `respondToReservation.ts`'s
+`handleProposeChange`, and cleared to `null` on resolution by `respondToProposedChange.ts` (both
+`handleAccept`/`handleReject`) and by `reservationSweep.ts`'s own proposal-expiry sweep — a
+disclosed, minimal, security-neutral backend addition rather than a new Firestore Rules read grant.
+
+### Customer flow architecture (§UI)
+
+One canonical `ReservationDraft` (`partySize`/`area`/`date`/`time`/`hasPreorder`/
+`contactFirstName`/`contactLastName`, plus `isReadyToReview`/`copyWith`/`clearingTime`/
+`clearingDateAndTime`), held in `reservationDraftProvider` — every step screen reads/writes this one
+object, never step-local `State`, so navigating back and forth through the guided flow never loses a
+prior selection. `ReservationFlowScreen` (a `ConsumerStatefulWidget`) owns step navigation
+(`_stepIndex`), the submission idempotency key, and the two name-field `TextEditingController`s;
+each step is built from the shared `ReservationStepScaffold` chrome (title/subtitle/body/primary-
+secondary action row) so the six steps read as one consistent experience. `ReservationSummaryBar`
+shows only the selections already made, never a placeholder dash for an unmade one.
+
+Copy specifics enforced throughout: a full-but-still-requestable slot gets "Bu saat için doğrudan
+müsaitlik görünmüyor. Talebinizi yine de restorana iletebiliriz." rather than being disabled (mirrors
+the backend's own R.1A rule that a full-slot request can still be created); the submit button always
+reads "Rezervasyon Talebini Gönder", never implying confirmation; the five status values each map to
+approved Turkish copy, never a raw enum name.
+
+### A second real production bug found by this phase's own test-writing
+
+Writing the flow-screen submit-success test surfaced a genuine race, unrelated to D4:
+`ReservationFlowScreen._submit()` originally reset the draft and cleared the preorder cart
+immediately after a successful `submitReservation` call, then called
+`context.go(AppRoutes.reservationConfirmation(...))`. `go_router`'s route matching is internally
+asynchronous even for a simple, non-redirecting route, so the still-mounted `ReservationFlowScreen`
+could rebuild against the just-reset (now-null) draft before the navigation actually unmounted it —
+`ReviewStep.build` reads `draft.time!` unconditionally and crashed with a null-check error on that
+rebuild. Reordering the two calls does not fix this: Flutter's dirty-element processing is depth-
+based, not call-order-based, so either ordering can race depending on exactly when go_router's
+internal listener notification lands relative to the widget's own next frame. Fixed deterministically
+instead with a `_submitSucceeded` flag checked at the very top of `build()`, short-circuiting to a
+lightweight redirecting placeholder before any step content (including `ReviewStep`) can be reached
+again — this removes the race entirely rather than narrowing its window.
+
+### Explicit non-scope (unchanged from the phase's own instruction, not silently dropped)
+
+Admin reservation management UI, physical-table-assignment UI, KDS ingestion, push notification
+infrastructure, and any backend architecture change beyond what D6 required all remain out of scope
+this phase, matching the phase's own explicit exclusions. `cancelReservation` remains unbuilt
+(pre-existing gap, not touched here).
+
+### Test verification
+
+71 new Dart tests this phase: Signature Calendar (7 — renders as a real widget tree and never a
+`CalendarDatePicker`/`DatePickerDialog`, past/horizon-boundary dates disabled, selection reports the
+correct date, selected-state semantic label, month navigation), the D4 cart-isolation proof (2,
+including the bridge-timing bug fix above), `reservationDraftProvider`/`preorderCartProvider` (16),
+domain models — `ReservationDraft.isReadyToReview`/`copyWith`/`clearingTime`/`clearingDateAndTime`,
+`reservationErrorMessage`'s full code/message-text branch coverage (never leaking raw backend text),
+`ReservationStatus.fromName` (25), flow-screen smoke tests — auth gate, branch-info loading/error/
+retry, step navigation, exact submit payload correctness, double-submit prevention, submit-failure-
+then-retry, the post-submit race fix above (8), reservation detail screen — every status's approved
+copy, change-proposal accept/reject calling the gateway with the correct ids, expired-proposal-
+cannot-accept, all four preorder-status copy branches (13).
+
+`flutter analyze`: 0 issues. `flutter test`: **2573/2573 passing** (up from 2496 at Faz R.1D.2
+close). `dart format`: clean. The backend surface above (branchOperatingHours schema +
+`getReservationBranchInfo`/`getReservationAvailability` + `submitReservation`'s operating-hours
+check + the denormalized-proposal-field changes) was implemented and verified **386/386 passing —
+three consecutive fully green full-suite runs** earlier in this same phase, before any Dart file was
+touched; no backend file changed afterward, so that verified state stands unchanged through the rest
+of this phase's work. `npm run build` (`tsc`) re-confirmed clean at phase close. The emulator-backed
+functions test suite (`npm run test:emulator`) could not be re-run at phase close in this specific
+environment — `firebase-tools` now requires a JDK ≥ 21 and only JDK 17 is installed here, a pre-
+existing environment constraint unrelated to any change in this phase, disclosed rather than silently
+skipped. Firestore Security Rules: 121/121 passing, unchanged (no rules changes this phase).
+
+### Confidence
+
+High for the implemented scope, and specifically higher than a typical "wrote tests after the fact"
+pass: two of the tests written this phase caught genuine crashes/exceptions that a real user would
+have hit in production (the D4 build-phase provider-mutation bug, the post-submit rebuild race), both
+found by writing the test the phase's own instructions required anyway (the D4 isolation proof) or a
+natural smoke-test of the submit flow — not from a separate audit pass. The D6 operating-hours model
+is a genuine, general-purpose backend primitive (not a reservation-specific shortcut), matching the
+explicit instruction to build it that way. Lower-confidence areas, disclosed rather than glossed
+over: the emulator-backed functions suite could not be physically re-run at phase close in this
+environment (Java version constraint), so this entry's backend confidence rests on the earlier-in-
+phase 386/386×3 run plus an unchanged-since-then diff, not a fresh run; and — as with every prior
+Rezervasyon phase — the areas explicitly out of scope (admin UI, push, KDS ingestion, cancellation)
+remain real, disclosed gaps, not silently implied to be handled.
+
+## Faz R.3A — Rezervasyon: Admin Reservation Operations + Staff Identity Foundation + Table Assignment UI
+
+**Decision**: build the admin-facing side of the Rezervasyon module — list/calendar views,
+confirm/reject, propose-alternative-time-or-area, physical table assignment/reassignment, an
+explicit two-step open/close-table handshake, branch operating-hours management UI, and a
+kitchen-timing-aware preorder admin view — on top of R.1A–R.2's customer-only, backend-only
+foundation. Before any admin UI could be authorized, this phase first had to close a real
+prerequisite gap: the codebase had no production-safe mechanism for a signed-in staff member to
+actually *hold* the custom claims (`organizationAccess`/`roles`) that every existing
+`manageReservations`-gated callable already checked, and no Firestore-backed persistence for staff
+membership at all — only `InMemoryStaffMemberRepository` on the Dart side and a dev-only staff-
+claims bridge. Three separate approvals (D1, D2, D3 below) authorized closing that gap as a scoped
+foundation, explicitly bounded short of the full deferred Sprint 9E staff migration, before the
+admin UI itself could be built on real authorization rather than invented authority.
+
+### D1 — `syncOwnStaffClaims`: self-service, zero-client-trusted-input claims sync (approved as scoped, revised mechanism)
+
+Required invariants, all satisfied by the implementation in `functions/src/staffMembership.ts`:
+authenticated callers only; the caller supplies no `organizationId`/`role`/`permissions` — the
+server resolves everything from `request.auth.uid` and the caller's own `memberships` documents;
+self-elevation and cross-tenant elevation are both structurally impossible since the function reads
+only the caller's own active memberships; disabled/archived staff derive no active claims; the
+Admin SDK (`setCustomUserClaims`) is the only claims writer anywhere in the codebase; the operation
+is idempotent (repeated calls with unchanged membership state produce identical claims); the
+callable is deliberately **not** gated by existing custom claims, since its entire purpose is to
+bootstrap them from zero.
+
+Originally sketched in `docs/firestore_data_model.md` (since Sprint 9B) as an automatic Firestore
+*trigger* on `memberships` writes; built instead as a **client-invoked callable** the signed-in user
+calls themselves, then force-refreshes their own ID token (`getIdToken(true)`) — the caller's own
+client-side token only updates on their own next sync+refresh, an inherent property of Firebase
+custom claims, not a gap. Every other mutating staff callable (`assignStaffRole`/`revokeStaffRole`/
+`grantStaffBranchAccess`/`revokeStaffBranchAccess`/`setStaffMemberStatus`) also re-syncs the
+*affected* uid's claims server-side as a courtesy, so a staff member's own permission change takes
+effect for them without a separate action once they next sign in or explicitly re-sync.
+`FirebaseStaffAuthRepository.signIn` calls `syncOwnStaffClaims` + refreshes automatically right
+after every real sign-in, so this needs no manual step in the ordinary admin flow. Generalized per
+instruction — not reservation-specific — `syncOwnStaffClaims`/`bootstrapFirstAdminAccount` are
+reusable staff identity/authorization infrastructure for POS/Admin/KDS/any future staff-gated
+surface, not a Rezervasyon-only mechanism.
+
+No schema gap was found — the existing `memberships` shape (already documented since Sprint 9B as
+the claims-sync source of truth) was sufficient to derive `organizationAccess`/`roles` without
+inventing any new authority, so the "STOP and report the gap" fallback in the approval did not
+trigger.
+
+### D2 — `manageBranch`: new TS permission, mirroring the existing Dart `PosAuthorizedAction.manageBranch` exactly (approved as proposed)
+
+Added to `StaffPermission` and `DEFAULT_STAFF_ROLE_PERMISSIONS` in
+`functions/src/staffAuthorization.ts` (`manager`/`admin`/`tenantOwner` all grant it, matching the
+Dart-side role/permission mapping this phase mirrors). `updateBranchOperatingHours` is gated on
+`manageBranch`, **not** `manageReservations` — a distinct, narrower authorization surface, proven
+genuinely independent of `manageReservations` by an explicit test (a role-permission override map
+where a role has one but not the other, asserting each callable respects only its own gate).
+`getBranchOperatingHours` (the read side) is deliberately gated on the broader
+`manageReservations` instead, since any staff member who can operate the reservation calendar
+legitimately needs to see the hours it is filtered against, even without hours-editing rights.
+
+### D3 — Scoped Firestore-backed staff/membership foundation, not full Sprint 9E migration (approved with explicit guardrails)
+
+Built the minimum canonical persistence `syncOwnStaffClaims`/`manageReservations`/`manageBranch`
+strictly require: `memberships/{organizationId}_{uid}` (the pre-existing "minimal shape" collection
+documented since Sprint 9B) is now genuinely written and read by real Cloud Functions
+(`bootstrapFirstAdminAccount`, `registerStaffMember`, `assignStaffRole`/`revokeStaffRole`,
+`grantStaffBranchAccess`/`revokeStaffBranchAccess`, `setStaffMemberStatus`), never directly by a
+client. Existing register/assign/grant/status use-case *semantics* (self-promotion blocked
+structurally before the permission check, role-scoped permission split — granting/revoking `admin`
+itself requires the admin-tier `manageStaffAdminRole`, any other role only the manager-tier
+`manageStaffRoles`, mirroring `AssignStaffRole.dart`/`RevokeStaffRole.dart` exactly) now persist to
+Firestore instead of being purely in-memory.
+
+Deliberately **not** done, per the approval's own guardrails, and disclosed here rather than
+silently implied complete: `staffMembers/{staffMemberId}` (the fuller admin-display record —
+display name, session-revocation timestamp, etc.) remains unbuilt; the Dart-side `StaffMember`/
+`ActorSession` domain types and `InMemoryStaffMemberRepository` are untouched and still in-memory;
+no existing InMemory path used elsewhere in the app was removed. The full Sprint 9E staff-migration
+scope (moving the Dart admin UI itself off `InMemoryStaffMemberRepository` onto the new Firestore
+collections) remains explicitly open, future work — this phase closed only the server-side
+authorization prerequisite, not the client-side staff-management screens.
+
+`functions/scripts/seed_dev_staff.mjs` seeds/signs-in the existing Abaküs owner/admin development
+account (`admin@abakus.dev`) via real Auth REST API calls and real `bootstrapFirstAdminAccount` +
+`syncOwnStaffClaims` HTTP callable requests (never a direct Firestore write), wired into
+`npm run seed:dev-all`. The full chain was proven end-to-end with a real Firebase Auth user in the
+emulator suite: sign in → real `memberships` document → `syncOwnStaffClaims` → force token refresh
+→ `manageReservations`/`manageBranch`-gated callables succeed — not merely unit-tested in isolation.
+
+### New backend surface (§backend)
+
+Reservation-admin-specific, all `manageReservations`-gated unless noted: `listReservationsForBranch`
+(bounded date-range query — `branchId` + `requestedTime` range, capped at 62 days and an internal
+400-document fetch, status/area filters applied in-memory rather than a combinatorial composite-
+index explosion; paginated with a cursor tracked from the last document actually walked in the loop,
+not the raw snapshot's last entry — a real bug caught and fixed before shipping, see Bugs below),
+`listReservationTablesForArea` (reuses `checkTableOccupancyConflict` from
+`reservationTableOccupancy.ts` verbatim — the same helper `assignReservationTable` itself uses, so
+the admin table-picker preview can never drift from what actual assignment enforces),
+`getReservationBranchInfoForStaff` (a small, deliberate duplication of the customer-only
+`getReservationBranchInfo`, which stays hard-gated to `sign_in_provider === 'phone'` by its own
+design and was not repurposed), `getBranchOperatingHours` (`manageReservations`-gated read) and
+`updateBranchOperatingHours` (`manageBranch`-gated write, verifies the target branch belongs to the
+caller's own `organizationId` before writing — cross-tenant fails closed as `not-found`). New
+Firestore indexes: `reservations(branchId ASC, requestedTime ASC)`,
+`reservationChangeProposals(reservationId ASC, createdAt DESC)`.
+
+### Admin UI architecture (§UI)
+
+`ReservationOperationsScreen` (nav destination "Rezervasyonlar", `Icons.event_seat_outlined`, under
+the existing "Operasyonlar" group, `manager`/`admin` roles only) — four tabs (Bugün/Yaklaşan/Tümü/
+Takvim), responsive split-pane: a list-only view below 600px width, an inline detail panel beside
+the list from 600px up (`isDesktopOrTablet`, panel width 420px desktop / 340px tablet), a pushed
+full-screen detail below that. `ReservationDetailPanel` composes status header, core info, active
+proposal (if any), confirm/reject actions, physical table assignment (`ReservationTableAssignment
+Section`, backed by `listReservationTablesForArea`), the two-step table-session open/close handshake
+(`ReservationTableSessionSection` — an active-session conflict surfaces an explicit confirm-to-
+override step, never a silent overwrite), a full preorder summary (line items, modifiers, total,
+and the three required kitchen-timing copy states — scheduled send time, "Mutfağa iletildi", or
+cancelled — not just a raw order id, a gap caught and fixed during this phase's own test-writing,
+see Bugs below), and proposal history. `BranchOperatingHoursScreen` — weekly schedule + date-override
+editor, `manageBranch`-gated, with an explicit on-screen reminder that saving never affects existing
+reservations. Both screens reuse existing customer-domain models (`ReservationStatus`,
+`ReservationArea`, the `ReservationPreorderSummary` family) directly rather than duplicating them —
+consistent with this codebase's existing precedent of `features/admin` importing across other
+features' domain layers. The "Rezervasyonlar" destination inherits the pre-existing
+`reservationsEnabled` feature flag (default off) plus `EntitlementModule.reservations` plus
+`PosAuthorizedAction.manageReservations` — the same triple-gate pattern every other Phase 7/8
+white-label module already uses; no new gating mechanism was invented for this phase.
+
+### Four real bugs found and fixed during this phase's own required test-writing (not a separate audit pass)
+
+1. **`listReservationsForBranch` pagination cursor** — caught during implementation, before any
+   test ran: the original cursor was the raw Firestore snapshot's last document regardless of
+   whether the loop broke early at `pageSize`, silently skipping documents on the next page. Fixed
+   by tracking the `requestedTime` of the last document actually walked inside the loop.
+2. **Responsive tablet dead zone** — `ReservationOperationsScreen` used one width threshold
+   (`>= 600`) to decide push-vs-inline navigation but a *different*, stricter one (`>= 1000`) to
+   actually render the inline panel, so at 600–999px width tapping a reservation set state but
+   rendered nothing visible. Fixed by using the same `isDesktopOrTablet` threshold for both the
+   navigation decision and the render condition.
+3. **Mobile card overflow** — `ReservationListCard`'s single horizontal `Row` genuinely overflowed
+   at real phone widths (390px) once area/table/preorder badges, a long status label, and response-
+   urgency text competed for space in one row. Fixed with a `LayoutBuilder` that stacks the status
+   chip below the header below 420px width, plus converting the badge row from `Row` to `Wrap`.
+4. **Preorder admin view completeness** — self-caught while reasoning through the required test
+   scenarios, not user-reported: the initial `_PreorderSummaryCard` showed only a raw order id.
+   Extended `AdminReservationRepository` with `watchPreorderOrder` (reusing the customer-side
+   `ReservationPreorderSummary` mapping) and rewrote the card to show full line items, modifiers,
+   total, and the three required kitchen-timing copy strings.
+
+### Explicit non-scope (unchanged from the phase's own instruction, not silently dropped)
+
+`cancelReservation`, completed/no-show lifecycle, push notification infrastructure, real
+Firestore→KDS ingestion, and the full Sprint 9E staff-migration (Dart admin UI onto Firestore-backed
+`staffMembers`) all remain out of scope this phase, matching the phase's own explicit exclusions.
+
+### Test verification
+
+New backend tests: `staffMembership.test.ts` (all 10 required D1 scenarios plus CRUD correctness),
+`staffAuthorization.test.ts` extended (5 required `manageBranch` scenarios, including the explicit
+`manageBranch`-vs-`manageReservations` independence proof), `updateBranchOperatingHours.test.ts`,
+`getBranchOperatingHours.test.ts`, `listReservationsForBranch.test.ts`,
+`listReservationTablesForArea.test.ts`, `getReservationBranchInfoForStaff.test.ts` (all new).
+Functions: **445/445 passing — three consecutive fully green runs**. `npm run build` clean.
+Firestore Security Rules: 121/121 passing, unchanged.
+
+New Dart tests: nav wiring (Rezervasyonlar opens with flag+permission; feature-flag-disabled denial;
+staff-only session never sees the destination — 3), reservation domain model + error-message
+coverage, admin status-copy coverage, `reservation_operations_screen_test.dart` (~22 tests spanning
+list/calendar/detail/confirm/reject/propose/table-assignment/table-session/preorder/responsive
+breakpoints — the two responsive bugs above were caught by this suite), `branch_operating_hours_
+screen_test.dart` (7 tests). `flutter analyze`: 0 issues. `flutter test`: **2628/2628 passing** (up
+from 2573 at Faz R.2 close). `dart format`: clean.
+
+### Confidence
+
+High for the implemented scope. As with Faz R.2, this phase's test-writing itself surfaced real
+defects rather than only achieving coverage numbers — the pagination cursor bug was caught before
+shipping, and the two responsive-layout bugs were caught by the widget tests the phase's own
+required-scenarios list demanded anyway. The staff-identity foundation was proven end-to-end with a
+real Firebase Auth user, not just unit-tested in isolation. Disclosed, not glossed over: the scoped-
+foundation boundary (D3) leaves `staffMembers`/`InMemoryStaffMemberRepository`/the Dart admin staff-
+management screens untouched — real, deliberate remaining scope, not silently implied complete —
+and, as with every prior Rezervasyon phase, the areas explicitly excluded above (cancellation,
+no-show/completed lifecycle, push, real KDS ingestion) remain real, disclosed gaps.
+
+## Faz R.3B — Rezervasyon: Cancellation + Completed + No-Show Terminal Lifecycle
+
+**Decision**: close the Reservation lifecycle's remaining terminal states — customer/staff
+cancellation, staff-marked completion, staff-marked no-show — production-safely, on top of R.1A–R.3A's
+confirm/reject/table-assignment/preorder foundation. Required by the phase's own instruction to
+research every existing lifecycle mechanism first ("Varsayım yapma") rather than reinvent any of it —
+every cleanup step below reuses an existing, already-tested helper (`releaseHold`,
+`releaseTableOccupancyBuckets`, `removeReservationTableProtection`, `buildPreorderCancellationPatch`)
+rather than a parallel implementation; only the genuinely new pieces (a confirmed-capacity release
+counterpart to the existing hold-release helpers, and the shared cleanup orchestration) are new code.
+
+### D1 — Final status model (§1, approved as proposed)
+
+Added `completed`/`noShow` to the existing five-value `ReservationStatus` enum (Dart and the
+backend's own informal status-string contract) — no other terminal state introduced. Canonical
+terminal set: `rejected`, `cancelled`, `completed`, `noShow`. Every one of the three new callables
+treats a Reservation already in a *different* terminal status as a hard rejection
+(`failed-precondition`, "already terminal ... cannot be ...") — a terminal Reservation never
+re-enters active lifecycle, and never silently transitions from one terminal outcome to another.
+
+### D2 — `cancelReservation`: one callable, server-resolved actor (§2/§3/§4, approved as proposed)
+
+`resolveReservationCancellationActor` (`reservationCancellationAuthorization.ts`) is the sole
+authority: a caller whose own uid equals `Reservation.customerId` (with real phone auth) resolves as
+CUSTOMER; anyone else must independently hold `manageReservations` for the Reservation's own
+organization to resolve as STAFF. The client sends no `actorType` field at all — there is nothing to
+spoof. An anonymous caller needs no separate rejection branch: an anonymous uid can never equal a
+real Reservation's `customerId` (`submitReservation` itself requires phone auth to create one), so it
+always falls through to the staff-permission check and is denied exactly like any other non-staff
+caller. Cross-tenant staff fails closed via `requireStaffPermission`'s existing, unchanged behavior.
+
+### D3 — Customer cancellation cutoff (§5, approved as proposed)
+
+`ReservationPolicy.customerCancellationCutoffMinutes` — part of the canonical policy shape since Faz
+R.1A but never consumed until this phase — is the sole cutoff-duration authority, checked against
+server time only (`new Date()` inside the transaction, never a client-supplied instant). Anchor
+resolution: `confirmedTime` once confirmed; the *earlier* of `requestedTime`/the active proposal's
+`proposedTime` while `changeProposed` (the phase's own explicit "fail-safe cutoff" instruction —
+erring toward the sooner of the two upcoming times); `requestedTime` otherwise. Staff cancellation is
+never bound by this cutoff (§4's own explicit instruction), checked as a structurally separate code
+path (the cutoff check only ever runs for a resolved-CUSTOMER actor).
+
+### D4 — LOCKED preorder rule (§6/§7, implemented exactly as specified, no deviation)
+
+`isReservationPreorderReleasedToKitchen` (`reservationPreorder.ts`) decides release status from the
+canonical `orderStatus.ts` state machine — `pendingConfirmation` = not released; `confirmed` and
+every real downstream kitchen state = released/operational; `cancelled`/`rejected`/`refunded` =
+already terminal, not blocking; any unrecognized status fails closed as released — never from
+`kitchenReleaseAt` timestamp presence alone (a timestamp can be *set* on a still-pending order
+without the order having actually been released — the confirm-time patch always sets it; release is
+a separate `status` transition). Enforced exactly as the phase's own locked text specified: a customer
+cannot self-cancel once released (`reservationPreorderReleasedToKitchen`, mapped to the required
+"contact restaurant" copy); staff always may, but a released preorder's Order is never automatically
+cancelled by that action, for either actor — a still-`pendingConfirmation` preorder, by contrast, is
+always auto-cancelled with the Reservation (`buildPreorderCancellationPatch`, reused verbatim from
+Faz R.1B/R.1D.1, unmodified), for both customer and staff cancellation.
+
+### D5 — Shared terminal-cleanup module, not three parallel implementations (§9/§10/§14/§15/§16, disclosed architecture choice)
+
+`reservationTerminalCleanup.ts` (new) — `readConfirmedReservationCleanupContext` (pure read phase) +
+`applyConfirmedReservationCleanup` (write phase, still performs its own internal read+write for
+capacity release) — shared verbatim by `cancelReservation`'s `confirmed` branch,
+`completeReservation`, and `markReservationNoShow`: area capacity, physical table occupancy, this
+reservation's own QR protection membership, and a live table context, released/deactivated
+identically regardless of *which* terminal transition produced the release. Every underlying
+mechanism reused, not reinvented: `releaseTableOccupancyBuckets`/`removeReservationTableProtection`
+already existed from Faz R.1C.1 (the latter's own doc comment explicitly said "designed for a future
+cancellation flow to call too, but not wired ... this phase" — confirmed and fulfilled here). The one
+genuinely new piece is `releaseConfirmedCapacity` (`reservationHoldOps.ts`) — the mirror image of the
+existing `claimConfirmedCapacityDirectly`, decrementing `confirmedPartySize` with the same
+`tx.get()`-then-clamp-to-zero shape `decrementHeldOnBuckets` already established, since a confirmed
+Reservation's `activeHoldId` is always `null` (already consumed at confirm time) and its bucket ids
+must instead be *recomputed* deterministically from `confirmedTime`/`confirmedAreaId`/branch policy —
+the exact same `computeReservationSlotBuckets` function `checkAreaCapacity` itself used at confirm
+time, reproducing identical bucket ids without needing to have stored them anywhere.
+
+A closing table context is deactivated with an explicit, non-fabricated actor (§14's own instruction):
+`closedByStaffId` is the real staff uid for a staff action, `null` for a customer's own cancellation
+— never invented — alongside a new `closeReason` field (`reservationCancelled`/`reservationCompleted`/
+`reservationNoShow`) disclosing *why* the context closed, distinct from a manual `closeReservationTable`
+call (which still leaves `closeReason` unset, unchanged).
+
+### D6 — Firestore Rules: terminal reservation context blocks new linked orders (§11, new invariant)
+
+`tableGuestSessions` are deliberately never deleted/killed on a terminal transition (a customer's own
+cart/order history for their visit must survive), and an old session's immutable
+`reservationContextId` is never rewritten — confirmed by research before implementing (§11's own
+"mevcut... rules'ı analiz et" instruction), this meant the *existing* dine-in order-create rules
+(`isValidGuestTableOrder`/`isValidAuthenticatedCustomerTableOrder`, Faz R.1C.2 §15) had no invariant
+at all connecting an order's `reservationContextId` to that Reservation's *current* status — a
+terminal reservation's own table-session could, before this phase, still be used to place a brand-new
+linked order. Closed via a new `reservationContextIsOrderable(data)` rules function: whenever
+`reservationContextId` is non-null, the referenced `reservations/{id}` document must both exist and
+currently be `status == 'confirmed'` — missing or any other status fails the create closed.
+`reservationContextId == null` (the ordinary walk-in order) is completely unaffected, verified by a
+dedicated regression test. This is a genuine, disclosed rules-layer security fix, not a UI-only
+guard — direct Firestore writes were already the create path for this order type (Faz R.1C.2), so
+this is the one place the invariant could actually be enforced.
+
+### D7 — Transactional outbox extension (§17, mirrors Faz R.1B.1's own atomicity precedent exactly)
+
+`reservationCancelled`/`reservationCompleted`/`reservationNoShow` extend `ReservationEventType`
+(`reservationEvents.ts`) and `writeReservationEvent` gained an optional `actor` parameter
+(`{actorType: 'customer' | 'staff', actorId}`) — never a role name or any other custom-claims
+content ("do not expose sensitive claims," §17's own instruction). Every event commits in the exact
+same transaction as the state transition that produced it (unchanged `tx.set`, deterministic id)
+— never a separate step after `runTransaction` resolves, matching every existing reservation event
+write site's own established discipline.
+
+### Idempotency and concurrency (§18/§19, verified, not merely assumed)
+
+Every one of the three callables re-checks the Reservation's current authoritative status inside its
+own transaction before doing anything else — a duplicate call (same outcome already applied) returns
+a `duplicate: true` response with zero re-mutation; a call racing a *different* concurrent transition
+(confirm vs. cancel, proposal-accept vs. cancel, complete vs. no-show, the preorder KDS-release
+scheduler vs. cancel) is resolved by Firestore's own optimistic-concurrency retry — the loser
+re-reads and sees the winner's already-applied state, and correctly no-ops or rejects rather than
+double-applying. The preorder KDS-release scheduler in particular needed no code change at all to be
+race-safe against cancellation: `buildPreorderKdsReleasePatch` already re-validates
+`reservation.status === 'confirmed'` fresh inside its own transaction (Faz R.1D.2, unmodified) — the
+moment a cancel/complete/no-show transaction commits a different status, the scheduler's own next
+read naturally sees it and skips the candidate (`reservation-not-confirmed`), with no coordination
+needed between the two code paths.
+
+### Explicit non-scope (unchanged from the phase's own instruction, not silently dropped)
+
+Push notification delivery, real Firestore→KDS ingestion, the full Sprint 9E staff migration, and Gel
+Al (Takeaway) all remain untouched — matching the phase's own explicit exclusions. `Order`/kitchen
+cancellation for an already-released preorder remains a wholly separate operation this phase
+deliberately does not fold into Reservation cancellation (§6's own explicit "gizli food cancellation
+ekleme" instruction).
+
+### Test verification
+
+**Backend**: `reservationTerminalLifecycle.test.ts` (new, ~50 tests) covering every numbered scenario
+the phase's own §25 required — authorization (unauthenticated/anonymous/own-reservation-only/
+cross-tenant), the customer cutoff (server-clock-enforced and before-cutoff-allowed, staff-exempt),
+hold/proposal release from each non-terminal status, confirmed-branch capacity/table/protection/
+context release (including a second, later reservation's own protection/occupancy on the same
+physical table proven untouched), the full LOCKED preorder matrix (pending auto-cancelled either
+actor, released blocks customer/allows staff/never auto-cancelled), `completeReservation`/
+`markReservationNoShow` authorization + confirmedTime gating + preorder handling, duplicate-call
+safety for all three callables, and outbox-event atomicity/actor-metadata/no-duplicate-on-retry.
+`firestore-tests/rules.test.js` gained 5 new tests for D6's new invariant (cancelled/completed/
+no-show/missing-reservation all deny; ordinary walk-in unaffected) plus fixed 2 pre-existing tests
+whose fixtures needed a seeded `confirmed` Reservation to keep passing under the new check.
+
+**A real, non-obvious test-infrastructure problem surfaced and was fixed during this phase's own
+test-writing**: `submitReservation` always requires `requestedTime` at least 30 minutes in the future,
+so no real submit+confirm round-trip can ever produce a `confirmedTime` that has already passed by
+the time a test calls `completeReservation`/`markReservationNoShow` — there is no way to fast-forward
+an emulator's real server clock. Resolved with a dedicated fixture
+(`directlyConfirmedReservationFixture`) that seeds an already-`confirmed` Reservation directly via the
+Admin SDK, with its matching `reservationSlotOccupancy` bucket(s) computed via the exact same
+`computeReservationSlotBuckets` the real backend uses (so cleanup logic finds the same buckets a real
+confirm would have produced) — `assignReservationTable`/`openReservationTable` have no future-time
+requirement of their own, so table-related tests still call those real callables afterward.
+
+**A second real bug was caught by this phase's own admin-UI test-writing**: the admin error-message
+mapper's new "only a confirmed reservation may be marked completed/no-show" checks were being shadowed
+by an older, more general `'confirmed reservation'` substring check earlier in the same `switch`
+chain (every new message also happens to contain that substring) — caught by a test asserting the
+exact required Turkish copy, fixed by reordering the more specific checks first.
+
+`flutter analyze`: 0 issues. `flutter test`: **2693/2693 passing** (up from 2656 at Faz R.3A.2 close).
+Functions: **480/480 passing — three consecutive fully green runs**. `npm run build` clean. Firestore
+Security Rules: **126/126 passing** (up from 121; the 5 new D6 tests plus 2 fixture updates for
+already-existing tests, no regression to any prior test).
+
+### Confidence
+
+High for the implemented scope. Every cleanup mechanism reused an existing, already-tested helper
+rather than a parallel implementation, closing the exact seam `removeReservationTableProtection`'s
+own Faz R.1C.1 doc comment had already flagged as intended for this. D6's Firestore Rules fix is a
+genuine, previously-undetected gap this phase's own required research (§11) surfaced, not a
+speculative hardening — confirmed via research that the direct-client dine-in order-create path
+really did have no connection to Reservation status at all before this phase. Two real bugs (the
+test-fixture clock problem, the admin error-message shadowing bug) were found and fixed by the
+phase's own required test-writing, consistent with every prior Rezervasyon phase's own pattern.
+Disclosed, not glossed over: push/KDS/Sprint 9E/Gel Al remain exactly as out-of-scope as the phase's
+own instruction required, and the admin UI's "confirmedTime has passed" gating for showing
+Complete/No-show buttons is a build-time check (no live-updating timer) — a real, minor, disclosed
+UX rough edge, not a security gap (the backend's own confirmedTime check remains authoritative
+regardless of what the UI shows or hides).
+
+## Faz R.3C — Rezervasyon: Real KDS Ingestion + Reservation Notification Delivery
+
+**Decision**: close the Reservation module's final operational gaps — the KDS board's production path
+reading from a mock repository instead of real Orders, and zero reservation push-notification delivery
+despite a fully-populated `reservationEvents` outbox — production-safely, on top of every prior
+Rezervasyon phase's foundation. Required by the phase's own explicit "Varsayım yapma" instruction to
+research the existing Order state machine, KDS ticket mapper, FCM/device-token scaffolding, and outbox-
+consumer precedent (`onOrderCompleted.ts`'s exactly-once claim pattern) before writing any code — every
+piece of new architecture below is an extension of something already proven in this codebase, not an
+invented pattern.
+
+### D1 — Real KDS repository, derived from canonical Orders, not a parallel persisted collection (§1/§2/§3, approved as proposed)
+
+`FirestoreKitchenTicketRepository` (`lib/features/pos/data/firestore_kitchen_ticket_repository.dart`)
+is the new production `KitchenTicketRepository` — a live, branch-scoped, status-filtered
+(`confirmed`/`preparing`/`ready`) read over the `orders` collection, reusing the already-correct
+`OrderFirestoreMapper.fromFirestore` + `KitchenTicketMapper.fromOrder` (unchanged; its
+`reservationPreorder -> 'Rezervasyon Ön Sipariş'` channel label already existed from Faz R.1D.1 and
+needed no new logic). Research confirmed `FireKitchenTicket`/a dedicated `kitchenTickets` collection
+are invoked nowhere in real app code (only their own unit tests) — building the production KDS path on
+a collection nothing ever writes to in production would have left the real path exactly as
+disconnected as the mock it replaces. A `KitchenTicket` is therefore a read-only *view* over an Order,
+never separately persisted; `save()` on this repository is a documented, intentional no-op. Ticket
+identity is deterministic (`'kt-${order.id.value}'`, never fresh/random per snapshot) so the existing,
+untouched per-ticket work-item tracking (`kitchenProjectionRepositoryProvider`) continues to correlate
+the same order across repeated snapshots exactly as it would a real fired ticket.
+
+`InMemoryKitchenTicketRepository` remains the dev/test fixture — gated behind `firebaseReadyProvider`
+(mirroring `canonicalOrderRepositoryProvider`/`deviceTokenRepositoryProvider`'s own real/in-memory
+split), closing a real, previously-undisclosed gap: `kitchenTicketRepositoryProvider` was completely
+ungated before this phase, resolving to the in-memory mock unconditionally, including in release
+builds.
+
+### D2 — Bounded, branch-scoped KDS query; no reservation-specific code path (§2/§3, approved as proposed)
+
+`orders.where('branchId','==',branchId).where('status', whereIn: ['confirmed','preparing','ready'])`,
+sorted client-side by `firedAt` (`timestamps.confirmed ?? timestamps.created`) — mirrors
+`InMemoryKitchenTicketRepository`'s own established "no query-level ordering, sort after collecting"
+precedent rather than adding a composite `orderBy`. A new composite index
+(`orders(branchId ASC, status ASC)`) was added to `firestore.indexes.json` regardless, matching this
+codebase's consistent practice of always explicitly declaring an index for a compound query. Kitchen
+eligibility is exactly the Order state machine's own kitchen-relevant window — `confirmed`/`preparing`/
+`ready` — excluding `created`/`pendingConfirmation` (not yet actionable) and `served`/`completed`/
+`cancelled`/`rejected`/`refunded` (past kitchen or terminal). This is identical for every channel;
+there is no `if (channel == reservationPreorder)` branch anywhere in the KDS read path — when the
+existing, unmodified `reservationPreorderKdsRelease` scheduler (Faz R.1D.2) flips an Order's `status`
+from `pendingConfirmation` to `confirmed`, the very next snapshot on this same query already reflects
+it. `branchId` alone is not treated as authorization truth — the KDS screen's existing
+`authorizationPolicy`/staff-session scope (Faz 4, unchanged) remains the actual gate on who may open a
+given branch's board at all; this phase only changed *what data* that board reads once opened.
+
+> **Superseded, Faz R.3C.2**: the paragraph above (and Faz R.3C.1's own D2 immediately below it in
+> this document) described organization membership alone as this codebase's genuine, accepted
+> canonical KDS/Orders authorization policy. Faz R.3C.2 judged that policy unacceptable for the
+> intended multi-branch SaaS architecture and replaced it with real per-branch enforcement
+> (`hasBranchAccess`, sourced from a new `branchAccess` custom claim). This note is left here rather
+> than editing the original text, per this document's own immutable-log convention — see Faz R.3C.2's
+> own D2 for the current, actual policy.
+
+### D3 — Realtime behavior via `watchActiveByBranch`, additive to the existing screen (§4, approved as proposed)
+
+`KitchenTicketRepository` gained `Stream<List<KitchenTicket>> watchActiveByBranch(String branchId)` —
+`FirestoreKitchenTicketRepository` implements it as `.snapshots().map(...)` over the same query;
+`InMemoryKitchenTicketRepository` implements it via a per-branch broadcast `StreamController`, emitting
+the current snapshot on subscription and again on every `save()`. `KitchenDisplayBoardScreen` was
+changed minimally (per the phase's own explicit "KDS UI redesign YAPMA" instruction) — one new
+subscription in `initState`, calling the screen's own existing `_load()` on every emission, cancelled in
+`dispose()`. `_load()`'s work-item enqueue step (`EnqueueKitchenWorkItems`) was already idempotent per
+`(ticketId, lineId)` before this phase, so a redundant reload from a duplicate/no-op snapshot is
+harmless — this is also what makes the required "a duplicate scheduler invocation never produces a
+duplicate KDS ticket" property hold structurally, not by new bookkeeping.
+
+### D4 — Notification delivery is an outbox consumer, never inside the state-transition transaction (§7/§10, approved as proposed)
+
+`onReservationEventCreated` (`functions/src/reservationNotificationDelivery.ts`), an
+`onDocumentCreated("reservationEvents/{eventId}", ...)` trigger, is the sole delivery path — no
+reservation callable or scheduler was touched to add a push call inline. `processReservationEventForDelivery`
+(exported standalone, mirroring the existing pure-function/thin-trigger-wrapper split
+`buildPreorderKdsReleasePatch`/`runPreorderKdsReleaseSweep` already established) does the full pipeline:
+classify the event type, claim `reservationNotificationDeliveries/{eventId}` via `.create()` (fails on
+`ALREADY_EXISTS`/code 6 — the exact same exactly-once pattern `onOrderCompleted.ts` already uses),
+resolve the Reservation's `customerId`, look up active `deviceTokens`, send, and record delivery state.
+The claim happens *before* the send, not after — the disclosed tradeoff being a crash between claim and
+send produces a missed (never duplicated) notification on retry, judged the correct direction for a
+best-effort, non-critical channel (this codebase's own `reservationEvents.delivered` field has long
+carried the same "best-effort, not guaranteed" framing).
+
+### D5 — Event classification: six of ten types notify; two are the customer's own action; two were challenged and excluded (§8, approved as proposed)
+
+`reservationConfirmed`, `reservationRejected`, `reservationChangeProposed`, `reservationChangeExpired`,
+`reservationResponseTimedOut`, `reservationCancelled` generate a push — exactly the phase's own stated
+minimum, no more. `reservationChangeAccepted`/`reservationChangeRejected` are always the direct result
+of the customer's own just-completed `respondToProposedChange` call — notifying them of their own
+action a second later is noise, not information, so `buildReservationNotificationCopy` returns `null`
+for both, and no delivery-claim record is ever written for them (verified by test: zero Firestore
+writes for a non-notifiable event). `reservationCompleted`/`reservationNoShow` were explicitly
+challenged per the phase's own instruction rather than defaulted to "notify everything": both are
+backward-looking, non-actionable records of something already over, with no confirmation dialog, no
+deadline, and no action a push-level interruption would motivate — a customer who cares can already see
+either status in-app. Decision: excluded. No new event type was invented to route around this list.
+`reservationResponseTimedOut` deliberately reuses `reservationRejected`'s exact copy — both resolve to
+the identical `Reservation.status == 'rejected'` outcome (Faz R.1B's own "a timeout is a `reasonCode`,
+never a separate status" design), so a separate message would imply a distinction that doesn't exist in
+the data.
+
+### D6 — Device tokens: real Firestore repository, own-uid-bound, and a genuine cross-customer bug fixed (§9/§15, approved as proposed)
+
+`FirestoreDeviceTokenRepository` (`lib/core/device_tokens/data/device_token_repository.dart`) is the
+new real implementation — `deviceTokenRepositoryProvider` re-gated from `kReleaseMode` to
+`firebaseReadyProvider` (a disclosed, intentional supersession of the prior "fail closed in every
+release build" gate, now that a real backing implementation exists — mirrors
+`canonicalOrderRepositoryProvider`'s identical real/in-memory split). `DeviceToken` gained an
+`organizationId` field: `firestore.rules`' pre-existing `deviceTokens` update rule already referenced
+`organizationIdUnchanged()`, and the rules test fixtures already seeded `organizationId: 'org-1'` —
+the Dart model was the one side of that contract that hadn't caught up yet. The value is sourced from a
+new `core/config/current_organization.dart` (`kSingleTenantOrganizationId`), extracted from
+`admin_dependencies_provider.dart`'s previously-duplicated `'org-1'` literal so `core/device_tokens`
+can read the same single-tenant value without a forbidden `core -> feature` import — the admin
+provider now wraps this same constant instead of repeating it, no behavior change.
+
+**A genuine, previously-undetected bug was found and fixed by this phase's own required research**:
+`RegisterDeviceToken.call()` returned any `existing.isActive` record found by `findByToken` without
+ever checking `existing.uid` matched the calling `uid`. On a shared/reused device, customer B signing
+in and re-registering the exact physical token customer A's session had registered would silently keep
+the token "active" under A — B's own pushes would never arrive, and A would keep receiving
+notifications meant for B. Fixed: a token found active under a *different* uid is now revoked first
+(same append-first-then-mark convention this codebase already uses for reactivation), then a fresh
+record is created for the calling uid. Regression-tested directly
+(`register_device_token_test.dart`'s new "the same physical token re-registering under a different uid"
+case).
+
+### D7 — Notification copy, deep-link safety (§12/§13, approved as proposed)
+
+Push bodies are the exact required minimal Turkish copy, containing no phone number, party size,
+preorder contents, or specific reject reason — any sensitive detail remains in-app-only, unchanged from
+every prior Rezervasyon phase's own privacy posture. The payload's `data` map carries only
+`reservationId`/`eventType` — verified by test to contain no other keys. Notification-tap routing
+(`ReservationNotificationTapRouter.resolveRoute`, `lib/core/notifications/`) is a pure function that
+builds `AppRoutes.reservationDetail(reservationId)` and validates it through the *existing*
+`AppRouteGuard.sanitizeReturnTo` allowlist — the same one this codebase already trusts for `returnTo`
+query-parameter deep links — rather than inventing a second validation rule. This is also what makes an
+open redirect structurally impossible here: the payload only ever contributes a `reservationId` used to
+*build* a known-safe path, never a raw URL taken as-is. `app.abakusortakoy.com`/DNS/Hosting work is
+untouched — this phase's routing code has no hardcoded domain assumption anywhere (it operates entirely
+on in-app `go_router` paths, never a full URL), so it needs no changes to accommodate that separate,
+ongoing migration.
+
+### D8 — FCM registration wiring: reactive, not part of the critical bootstrap sequence (§9/§15, approved as proposed)
+
+`FcmRegistrationService` (`lib/core/notifications/fcm_registration_service.dart`) is the first real
+`firebase_messaging` call site in this codebase (the package was a declared, zero-reference dependency
+before this phase) — gated on `firebaseReadyProvider`, `NoOpFcmRegistrationService` otherwise (so no
+`flutter test` run — `firebaseReadyProvider` defaults `false` — ever touches a real platform channel
+through this seam). Deliberately **not** added to `bootstrapApp()`'s pre-`runApp` sequence
+(`lib/bootstrap/app_bootstrap.dart`): registration needs a resolved, real-customer `AuthState`
+(guest/unauthenticated sessions never register a token) and is not routing-critical, so wiring it
+reactively in `AbakusApp` (via `ref.listenManual` on `authProvider`, once Firebase is confirmed ready)
+keeps that already carefully-sequenced, explicitly-documented startup path completely unchanged.
+Logout-time revocation (`RevokeDeviceTokensForUser`, wired into `AuthNotifier.logout` in Sprint 9H) was
+already in place before this phase and needed no change — confirmed by direct code reading before
+assuming it was still a gap.
+
+### Test verification
+
+Backend: **21 new tests** in `reservationNotificationDelivery.test.ts` (10 pure-function copy-
+classification tests, 11 emulator-integration tests covering send-once, duplicate-invocation safety,
+non-notifiable skip, zero-token skip, revoked-token exclusion, cross-customer isolation, multi-device
+fan-out, missing-reservation/no-customerId safety, and payload-privacy) — **501/501 passing, three
+consecutive fully green full-suite runs** (up from 480). `npm run build` clean. Firestore Security
+Rules: **3 new tests** (a spoofed-uid `deviceTokens` create is denied; `reservationEvents` and the new
+`reservationNotificationDeliveries` are both confirmed fully client-denied — the latter needing no new
+rule at all, covered by the pre-existing default-deny) — **129/129 passing** (up from 126).
+
+Dart: **19 new tests** — `register_device_token_test.dart` (+1, the cross-customer reassociation
+regression), `kitchen_ticket_repository_test.dart` (+4, `watchActiveByBranch`'s subscribe/re-emit/
+branch-isolation/no-duplicate-ticket behavior), `kitchen_display_board_screen_test.dart` (+1, a ticket
+appearing after the screen is already showing surfaces with no manual reload),
+`reservation_notification_tap_router_test.dart` (+6, new file — valid route, missing/empty/non-string
+reservationId, an attempted open-redirect payload, a path-traversal-shaped payload),
+`device_token_providers_test.dart`/`kitchen_ticket_dependencies_provider_test.dart`/
+`fcm_registration_provider_test.dart` (+2/+2/+3, new files — provider gating against
+`firebaseReadyProvider`, deliberately not exercising the Firebase-ready branch of any raw-
+`cloud_firestore`-backed provider, matching this codebase's own pre-existing untested-Firestore-
+constructor convention — see each file's own doc comment). `flutter analyze`: **0 issues**. `flutter
+test`: **2712/2712 passing** (up from 2693 at Faz R.3B close). `dart format`: clean.
+
+### Confidence
+
+High for the implemented scope. Every new piece of architecture is a direct extension of something
+already proven in this codebase — the KDS repository reuses the existing Order mapper and ticket
+mapper unchanged, the notification consumer reuses `onOrderCompleted.ts`'s exactly-once claim pattern
+verbatim, and the deep-link safety reuses `AppRouteGuard.sanitizeReturnTo` rather than a new validator.
+The cross-customer device-token bug is a genuine, previously-undetected defect this phase's own
+required research surfaced and fixed with a regression test, consistent with every prior Rezervasyon
+phase's pattern of test-writing catching real bugs. Disclosed, not glossed over: `FirestoreKitchenTicketRepository`'s
+`restaurantName`/`branchName` header fields are id-derived placeholders (no branch-name lookup
+dependency was added to avoid a second async join per snapshot) — currently inert since
+`KitchenDisplayBoardScreen` never renders either field, a real but currently-invisible limitation, not
+a hidden one. `FirestoreDeviceTokenRepository`/`FirestoreKitchenTicketRepository`'s Firebase-ready
+construction branch is not exercised by `flutter test` (no Firebase mock exists in this test suite for
+any raw-`cloud_firestore`-backed repository — a pre-existing, disclosed gap, not new to this phase);
+correctness there rests on direct code inspection plus the backend-side emulator integration coverage.
+Also disclosed: **`docs/feature_status.md`'s Faz R.3B entry lists "Gel Al (Takeaway)" among that
+phase's out-of-scope items in a way that reads as "still unfinished"** — `docs/feature_status.md`'s own
+Faz D.5 closure record already states Gel Al's development/testing is complete and closed, blocked only
+on an external Web reCAPTCHA Enterprise site key provisioning step outside this environment's reach,
+not on missing app code. This phase's own feature_status.md entry states that correction explicitly
+rather than silently editing the earlier text. The actual next major uncompleted product module is
+**Paket Servis** (delivery), not Gel Al.
+
+## Faz R.3C.1 — Rezervasyon: Final Production Safety Audit + Hardening
+
+**Decision**: before accepting R.3C's own "RESERVATION MODULE FINAL CLOSED = YES" verdict, audit and,
+where necessary, fix two REQUIRED production invariants R.3C's report had asserted but not actually
+verified against real production semantics — notification delivery retry-safety, and whether the KDS
+board's `branchId` query filter is a genuine authorization boundary — plus one disclosed risk
+(device-token reassociation) that R.3C's own InMemory-only tests could not have caught. All three
+findings were real. Two required code changes; one required documenting and proving an existing,
+already-approved architectural characteristic rather than inventing a new restriction.
+
+### D1 — Notification delivery: the original design could permanently lose a notification (real finding, fixed)
+
+**Audit finding, CONFIRMED**: R.3C's `processReservationEventForDelivery` claimed
+`reservationNotificationDeliveries/{eventId}` via `.create()` and then called `sender()` once, with no
+path back to that record afterward. A crash or a transient failure (network blip, FCM outage) between
+the claim and the send left the record permanently in a claimed-but-never-delivered state — any later
+invocation (a retried trigger, a manual replay) immediately hit `ALREADY_EXISTS` on the same `.create()`
+call and returned early, **never attempting to send again**. This was not a theoretical edge case: it is
+the exact failure mode a claim-before-send design produces whenever the send itself can fail, which real
+FCM calls genuinely can.
+
+**Final architecture, D1**: a lease/retry state machine, reusing this codebase's own established
+`reservationPreorderKdsRelease` scheduler shape (bounded candidate query on a due timestamp field, one
+independent re-validating transaction per candidate, per-candidate failure isolation) rather than
+inventing a new convention.
+
+- `status: 'pending' | 'delivered' | 'skipped' | 'permanentlyFailed'`, `attemptCount`, `claimedAt`,
+  `deliveredAt`, `lastErrorCode`.
+- `nextAttemptAt`/`nextAttemptAtTimestamp` (dual ISO+Timestamp, mirroring `kitchenReleaseAt`/
+  `kitchenReleaseAtTimestamp`'s own established precedent) does double duty as both the retry-backoff
+  due time (after a failed send) and a claim's lease/visibility-timeout (a worker that crashes mid-
+  attempt leaves the record reclaimable once the lease, pushed forward by `LEASE_DURATION_MS` = 5
+  minutes at claim time, expires) — one field, not two, since both are "when does this become claimable
+  again."
+- `claimForAttempt` is a transaction: refuses a terminal status, refuses an unexpired lease, otherwise
+  atomically pushes the lease forward and increments `attemptCount` — two workers racing the same
+  candidate cannot both win (Firestore's own transaction-contention retry, not additional locking).
+- A failed `sender()` call leaves the record `pending` with a `RETRY_BACKOFF_MS` = 5-minute due time and
+  `lastErrorCode` (never the raw token — only a short error code, mirroring `LogRedactor`'s "never log
+  the secret" discipline applied to this module's own equivalent). After `MAX_ATTEMPTS` = 5 failed
+  attempts, the record becomes terminal `permanentlyFailed` — no hot loop, no unbounded retry.
+- A new scheduled function, `reservationNotificationRetrySweep` (`onSchedule("every 5 minutes")`), is the
+  actual retry driver — querying `reservationNotificationDeliveries` where `status == 'pending' &&
+  nextAttemptAtTimestamp <= now` (new composite index, same file). The trigger's own first attempt is a
+  fast path (unchanged latency for the common case, first attempt succeeds); every retry after that goes
+  through the sweep, never through a second trigger-side retry loop.
+
+**Honest limit, disclosed explicitly, not glossed over**: FCM does not offer a transactional "send"
+primitive. A worker can still crash in the narrow window *after* `sender()` has already succeeded but
+*before* this module records that success — in that specific window, a genuinely-already-delivered push
+could be sent again by a later retry. This design eliminates the *lost-forever* failure mode R.3C
+actually shipped with; it does not, and structurally cannot, claim mathematically perfect exactly-once
+delivery — no design built on top of FCM can. The guarantee actually provided: a successful attempt is
+idempotent and terminal, a failed attempt is retried up to `MAX_ATTEMPTS` times, and two workers racing
+the same candidate normally resolve to exactly one winner.
+
+### D2 — KDS branch authorization: audited, confirmed to be this codebase's existing canonical policy, documented and proven, not silently accepted
+
+**Audit finding, CONFIRMED, then resolved as Option C** (per the audit's own explicit instruction: "if
+the current canonical backend identity model genuinely grants organization-wide order visibility to
+every authorized KDS actor, document that as the actual security model and prove it"). Direct evidence
+gathered before concluding this, not assumed:
+
+1. `firestore.rules`'s `orders` `read` rule is `isOrgMember(resource.data.organizationId)` —
+   organization-scoped only, unchanged by Faz R.3C, and identical for every existing Orders-reading
+   surface in this codebase (POS, admin screens), not something newly introduced for KDS.
+2. `StaffMembership.branchAccess` (`functions/src/staffMembership.ts`) is tracked as Firestore data but
+   is **deliberately never propagated into Firebase Auth custom claims** — `rebuildClaimsForUid` sets
+   only `organizationAccess`/`roles`. There has never been a branch-level claim for any rule or callable
+   to check.
+3. `listReservationsForBranch.ts` (Faz R.3A) — the closest existing precedent, a server-authoritative,
+   **permission-gated** (`requireStaffPermission(..., 'manageReservations')`), branch-scoped read
+   model — documents the identical policy in its own doc comment: cross-tenant access fails closed,
+   cross-branch-within-tenant access is not restricted at all.
+
+**Conclusion**: "any staff member who is a member of an organization at all may read every order in that
+organization, regardless of branch" is this codebase's existing, already-approved canonical policy, not
+a gap Faz R.3C introduced or is quietly accepting. `FirestoreKitchenTicketRepository`'s `branchId` filter
+is correctly described as a **query scope**, never an authorization boundary — the real boundary
+(organization membership) was already enforced, unchanged, before this phase. Building real per-branch
+enforcement (propagating `branchAccess` into claims, checking it in rules and every existing
+branch-scoped read path across POS/admin/KDS) is a cross-cutting authorization change spanning this
+whole codebase, not a KDS-specific fix — explicitly out of scope per the audit's own "do not begin
+Sprint 9E" instruction. `FirestoreKitchenTicketRepository`'s doc comment now states this finding and its
+evidence directly, and three new Firestore Rules tests prove the actual boundary: an org member can read
+another branch's orders within the same org (matches policy), a different organization's member is
+denied, and an arbitrary/spoofed client-side `branchId` cannot expand authority beyond the organization
+boundary that is actually enforced.
+
+> **Superseded, Faz R.3C.2**: this D2's "Option C, document and prove the existing org-only policy"
+> resolution was accepted at the time (per this audit's own explicit instruction to choose it *if*
+> genuinely canonical), but was then independently judged unacceptable for the intended multi-branch
+> SaaS architecture in the very next phase, regardless of precedent. Real per-branch enforcement was
+> built — see Faz R.3C.2's own D2. Left unedited here per this document's immutable-log convention.
+
+### D3 — Device-token reassociation: R.3C's fix was necessary but insufficient for the real path; moved server-side (real finding, fixed)
+
+**Audit finding, CONFIRMED — a genuinely deeper problem than R.3C's own report disclosed.** R.3C's
+`RegisterDeviceToken` fix (revoke a token found active under a different uid, then create a fresh record)
+is correct *logic*, but it cannot run against real Firestore from the client at all:
+`firestore.rules`'s `deviceTokens` read rule (`resource.data.uid == request.auth.uid`) means a customer
+can only ever read their *own* token documents. A different customer re-registering the same physical
+token could not even **detect** that it already belonged to someone else — `findByToken`'s query would
+silently return nothing usable from their perspective, so the client would create a **second** document
+sharing the same `token` value, leaving *both* the old and new owner "active" simultaneously — worse than
+"stuck under the wrong owner," since a push addressed to either customer would still reach the one
+physical device holding that token. This was not caught by R.3C's own regression test because that test
+ran against `InMemoryDeviceTokenRepository`, which has no per-document read-visibility restriction at
+all — verified against real Firestore Rules semantics only in this phase, per the audit's own explicit
+instruction not to rely on InMemory alone.
+
+**Final architecture, D3**: registration moved to a new server-authoritative callable,
+`registerDeviceToken` (Admin SDK, bypasses Firestore Rules entirely, so it *can* see across owners).
+`uid` is always `request.auth.uid`, never a client-supplied argument — nothing to spoof.
+`organizationId` is resolved server-side as a disclosed single-tenant constant (mirrors the Dart client's
+own `kSingleTenantOrganizationId`), never client-supplied. One transaction: find every active document
+sharing the given `token` value; revoke every one not owned by the caller; reuse the caller's own record
+if one already exists, otherwise create a fresh one. `firestore.rules`'s `deviceTokens` `create` is now
+`if false` (Cloud-Function-only) — a direct client create, even scoped to the caller's own uid as the
+prior rule allowed, could still reintroduce the identical duplicate-token risk, since per-document rules
+cannot dedupe by a field *value* across different document IDs; only a server-side transaction across the
+whole collection can. `read`/`update`/`delete` for a caller's own uid are unchanged —
+`RevokeDeviceTokensForUser`'s logout-time self-revocation continues to work via direct client writes,
+since it only ever touches a caller's own already-owned documents (no cross-visibility problem exists
+there). `FcmRegistrationService`'s real implementation now calls this callable directly
+(`cloud_functions.FirebaseFunctions.instance.httpsCallable('registerDeviceToken')`) instead of
+`RegisterDeviceToken`/`FirestoreDeviceTokenRepository`; `organizationId` was removed from
+`FcmRegistrationService.registerForUid`'s own signature since it is no longer a client-relevant value for
+the real path. `RegisterDeviceToken` (the Dart use case) remains correct, tested, and in active use for
+the in-memory/dev fixture path — its own cross-customer fix is not wrong, only insufficient in isolation
+for a path Firestore Rules can never let it see across.
+
+### Test verification
+
+Backend: `reservationNotificationDelivery.test.ts` grew from 21 to **28 tests** (the 8 new required
+retry-safety scenarios: successful send + duplicate invocation, transient-failure-then-later-retry,
+stale-lease recovery, delivered-is-terminal, permanently-failed after `MAX_ATTEMPTS` with no hot loop,
+invalid-token deactivation under the new schema, concurrent-workers-no-double-send, and
+delivered-idempotent-on-direct-recall). New `registerDeviceToken.test.ts` — **9 tests** (unauthenticated
+rejected, new-token registration, same-uid idempotent reuse, multi-device fan-out, the cross-customer
+reassociation itself proven against the real emulator, an unrelated token of the original owner left
+untouched, a spoofed uid argument ignored, missing token/platform rejected). **517/517 passing, three
+consecutive fully green full-suite runs** (up from 501). `npm run build` clean. Firestore Security Rules
+gained 4 new tests (the KDS branch-authorization boundary proof ×3; a same-uid self-revocation-still-
+works confirmation ×1) plus one existing test rewritten in place (the device-token create-rule
+tightening — R.3C's spoofed-uid test now also asserts a same-uid direct create is denied) —
+**133/133 passing** (up from 129). `flutter analyze`: **0 issues**. `flutter test`: **2712/2712 passing, unchanged** (this
+phase's Dart-side changes were signature-only — `FcmRegistrationService.registerForUid` dropping
+`organizationId` — not new business logic requiring new Dart test cases; existing tests were updated in
+place, not added to).
+
+### Confidence
+
+High for all three findings and their fixes. All three were verified via direct evidence before deciding
+an architecture, not assumed: D1's failure mode was traced through the actual code path that shipped;
+D2's "canonical policy" conclusion rests on three independent pieces of pre-existing evidence
+(`firestore.rules` itself, `staffMembership.ts`'s claims-sync behavior, and `listReservationsForBranch
+.ts`'s own written precedent), not a convenient assumption; D3's deeper "the client can't even detect the
+conflict" problem was found by re-checking R.3C's fix against real Firestore Rules semantics rather than
+trusting the InMemory test that had passed. Disclosed, not glossed over: D1's crash-between-send-and-
+record window is an inherent FCM limitation, not fully closed by any design; D2 intentionally leaves
+cross-branch order visibility exactly as broad as it already was everywhere else in this codebase,
+which is correct-per-existing-policy but is itself worth flagging as a genuine future hardening
+candidate if branch-level staff restriction ever becomes a real product requirement (tracked here, not
+actioned, per the explicit "no Sprint 9E" instruction).
+
+## Faz R.3C.2 — Rezervasyon: Final KDS Branch Authorization Hardening
+
+**Decision**: close the one REQUIRED blocker Faz R.3C.1's own audit left open on its own terms —
+organization membership alone is not an acceptable branch-operational-data authorization boundary for
+the intended multi-branch SaaS architecture, regardless of it being this codebase's pre-existing,
+already-approved policy. Build real per-branch enforcement, sourced entirely from the canonical
+`memberships.branchAccess` field this codebase already tracks — no second authorization store, no
+invented role-based bypass, no full Sprint 9E migration.
+
+### D1 — `branchAccess` custom claim, mirroring `roles`'s exact shape (§2, approved as proposed)
+
+`resyncClaimsForUid` (`functions/src/staffMembership.ts`) now also sets `branchAccess:
+Record<organizationId, string[]>` on every claims sync — the same function every mutating callable in
+this file already calls (`grantStaffBranchAccess`/`revokeStaffBranchAccess`/`assignStaffRole`/etc.), so
+no new resync path was needed, only a new field in the one existing derivation. Confirmed by direct
+inspection before writing this that the underlying `memberships.branchAccess` model has **no wildcard/
+"all branches" or role-based bypass semantics for any role, including `admin`/`tenantOwner`** —
+`bootstrapFirstAdminAccount` itself seeds `branchAccess: []` for the very first admin — so the claim
+mirrors that faithfully rather than inventing an exemption. Every value is derived from Firestore
+`memberships` documents only; nothing in `syncOwnStaffClaims`'s request payload is ever read.
+
+### D2 — Firestore Rules: `hasBranchAccess`, tightening the `orders` `read` rule's staff branch only (§4, approved as proposed)
+
+New `hasBranchAccess(organizationId, branchId)` helper, mirroring `hasRole`'s exact `in`-chain shape
+(`isOrgMember(...) && ('branchAccess' in token) && (organizationId in token.branchAccess) && (branchId
+in token.branchAccess[organizationId])`) — fails closed structurally on a missing claim key, a missing
+organization entry, or a malformed (non-map/non-list) value, not by caller discipline. `orders`' `read`
+rule's staff branch is now `isOrgMember(...) && hasBranchAccess(...)`, ORed with the customer-owns-order
+and table-guest branches exactly as before — neither of those two, nor `create`/`update`/`delete`, was
+touched. The rule checks the **document's own** `branchId`, never a client query parameter — an
+arbitrary/spoofed `branchId` in a client-side query cannot expand authority beyond what the document
+itself carries and the claim actually grants.
+
+### D3 — Dart: `branchAccess` is now claims-sourced, `StaffMemberRepository` demoted to display metadata only (§3, approved as proposed)
+
+`StaffAuthorizationClaims` gained `branchAccessByOrganization`/`branchAccessFor(...)`, parsed by the
+identical `_parseByOrganization` helper `rolesByOrganization` already used (refactored out, not
+duplicated) — the same "missing/malformed denies safely" contract `roles` already had.
+`FirebaseStaffAuthRepository.signIn`/`refreshSession` now build `ActorSession.branchAccess` from
+`claims.branchAccessFor(organizationId)`, never from `StaffMember.branchAccess` — closing a real
+divergence risk: the client-side `ActorSession` (which `RealPosAuthorizationPolicy`'s own branch-scoping
+check reads) could previously disagree with what the backend/rules would actually allow, since it was
+sourced from a completely different, non-authoritative record. `StaffMember.branchAccess` itself was not
+removed — it remains valid profile/display metadata (e.g. an admin staff-list screen) — only demoted
+from the authorization path, with its own doc comment updated to say so explicitly.
+
+### D4 — KDS: fail-closed access-denied UX, no redesign (§5, approved as proposed)
+
+`KitchenDisplayBoardScreen` now catches a `permission-denied` `FirebaseException` from either
+`findActiveByBranch` or the `watchActiveByBranch` stream and renders the existing shared `ErrorView`
+widget (retry action included) instead of an infinite loader or an unhandled exception — the one
+functional, non-redesign change this section's own explicit instruction allowed. `FirestoreKitchenTicketRepository`'s
+`branchId` query filter remains exactly what it always was: a query scope, not the authorization
+boundary — that boundary is now `firestore.rules` alone, restated in that class's own doc comment.
+
+### D5 — Other staff-facing Order readers, audited (§6)
+
+- **KDS** (`FirestoreKitchenTicketRepository`) — the primary subject of this phase, fixed (D2/D4).
+- **POS** (`PosOrderRepository`/`canonicalOrderRepositoryProvider`) — only ever does a single already-
+  known-`orderId` lookup (`findById`), never a branch-scoped list query; will simply require the
+  operating device's own staff session to hold matching `branchAccess`, consistent with the new policy,
+  no code change needed.
+- **Admin** (`AdminReservationRepository.watchPreorderOrder`) — a single already-known-`orderId`
+  `.snapshots()` lookup for a reservation's linked preorder. **Disclosed regression risk, not a code
+  fix**: `listReservationsForBranch.ts` (Faz R.3A, deliberately out of this phase's scope — it reads
+  `reservations`, not `orders`) remains organization-only, so a reservation-managing staff member
+  without matching `branchAccess` for a *specific* reservation's branch will now see a permission-denied
+  reading that reservation's linked preorder order specifically, even though they could already see the
+  reservation itself. This is not an invented bypass fix — per this phase's own explicit "no
+  role-based bypass" instruction, the correct resolution is provisioning: reservation-managing staff
+  need `branchAccess` grants (`grantStaffBranchAccess`) matching the branches they actually operate,
+  same as any other Orders-reading surface. Recorded as a RECOMMENDED provisioning follow-up, not a
+  REQUIRED code change — `listReservationsForBranch.ts` itself was explicitly out of scope (a different
+  collection, a different Faz R.3A precedent this phase does not touch).
+- **`CanonicalOrderRepository.findAll()`/`OrderFirestoreClient.getAllOrders()`** — confirmed unused
+  anywhere in production `lib/` (no callers found). An unconstrained, filterless collection `.get()`
+  like this was already structurally incompatible with Firestore Rules query-validation semantics
+  before this phase (a `list` query's security-rule evaluation must be satisfiable from the query's own
+  constraints; a query with zero `where` clauses can only succeed if literally every document in the
+  collection passes the rule for the caller, which was already effectively never true once more than
+  one tenant's data exists) — a pre-existing, unrelated dead-code characteristic, not a regression this
+  phase introduces or needs to fix.
+- **Courier** — confirmed no direct `orders` collection reads anywhere in `lib/features/courier`.
+
+### Test verification
+
+Backend: `staffMembership.test.ts` +4 tests (branch claim derived from membership per-organization;
+client cannot smuggle a stronger/forged `branchAccess` payload through `syncOwnStaffClaims`'s request
+body; a `grantStaffBranchAccess` grant is reflected only after the target resyncs and refreshes, not
+before; the bootstrap admin's own claims include an explicit empty `branchAccess` entry, not an implicit
+grant). **520/520 passing, three consecutive fully green full-suite runs** (up from 517). `npm run
+build` clean. Firestore Security Rules: 7 new tests replacing/superseding the 3 R.3C.1 KDS tests (Branch
+A staff reads Branch A order; Branch-A-only staff denied Branch B; multi-branch-granted staff reads
+both; cross-org denied; spoofed/arbitrary `branchId` cannot expand authority; missing `branchAccess`
+claim fails closed; malformed `branchAccess` claim fails closed) plus the pre-existing "staff can still
+read a customer order" test updated with a matching `branchAccess` claim to preserve its own intent —
+**137/137 passing** (up from 133).
+
+Dart: `staff_claims_sync_client_test.dart` +4 tests (`branchAccess` malformed-type/malformed-entry/
+non-string-id parsing, `branchAccessFor`'s own missing-entry-fails-closed test — mirrors every existing
+`roles` parsing test exactly). `firebase_staff_auth_repository_test.dart` +2 tests (`StaffMember
+.branchAccess` grants nothing when the claim disagrees or is absent; a branch granted after sign-in is
+reflected only after `refreshSession` re-syncs). `kitchen_display_board_screen_test.dart` +1 test
+(a `permission-denied` stream error renders the access-denied `ErrorView`, not a crash or infinite
+loader, via a small fake repository — never a real Firestore SDK). `flutter analyze`: **0 issues**.
+`flutter test`: **2719/2719 passing** (up from 2712 at Faz R.3C.1 close). `dart format`: clean.
+
+### Confidence
+
+High for the implemented scope. The claim shape, rules helper, and Dart parsing all directly mirror
+`roles`'s own already-proven pattern rather than inventing a parallel one — the same "missing/malformed
+denies safely" contract was extended, not redesigned. No role-based bypass was added despite the
+temptation of "surely admin should see everything" — confirmed via direct inspection of the membership
+model (`bootstrapFirstAdminAccount`'s own `branchAccess: []` seed) that no such semantics exist
+today, so none were invented. Disclosed, not glossed over: the admin-reservation-preorder-view
+regression risk (D5) is real and depends on correct `branchAccess` provisioning for reservation-managing
+staff going forward — a provisioning/process concern flagged as RECOMMENDED, deliberately not "fixed"
+with an invented Reservations-vs-Orders bypass that would have contradicted this phase's own explicit
+instruction. `listReservationsForBranch.ts` itself remains org-only, unchanged, out of this phase's
+explicitly Orders-scoped mandate.
+
+## Faz P.1 — Paket Servis: Canonical Delivery Order + Pricing + Payment Foundation
+
+**Decision**: build the delivery-domain/order/pricing/payment *foundation* only — no real,
+production-capable delivery checkout. Approves the Faz P.0 audit in full, but overrides P.0 §20's own
+recommendation ("`submitDeliveryOrder` accepts a client-supplied pre-resolved address snapshot") as
+explicitly REJECTED: client-supplied address data can never be delivery-authorization truth, even
+temporarily, until a real address-verification provider (Faz P.2) exists. P.3 (delivery zones/admin)
+and P.4 (real delivery checkout, courier cutover) both remain future, unauthorized work.
+
+### D1 — Canonical `Order` additions: `deliveryAddressSnapshot`/`paymentMethodSnapshot` (§1/§2, approved as proposed)
+
+`Order` (`lib/features/orders/domain/models/order.dart`) gains two additive, nullable fields —
+`deliveryAddressSnapshot: DeliveryAddressSnapshot?` and `paymentMethodSnapshot:
+PaymentMethodSnapshot?` — in both the constructor and `copyWith`. Every existing channel
+(`dineInQr`/`dineInStaff`/`takeaway`/`reservationPreorder`) is unaffected; both fields default to
+`null` for every caller that doesn't pass them. `paymentMethodSnapshot` reuses the existing
+`PaymentMethodSnapshot` type verbatim (ADR-012) rather than a new, order-specific one.
+`OrderFirestoreMapper` serializes/deserializes both fields, with a missing key reading as `null` —
+the same backward-compatibility contract every other additive field on this mapper already has
+(`pickupMode`'s own precedent).
+
+### D2 — `DeliveryAddressSnapshot`: `serverVerifiedAt` required, never optional (§1, approved as proposed)
+
+New `lib/features/orders/domain/models/delivery_address_snapshot.dart` — an immutable value type
+carrying the full address hierarchy (province/district/neighborhood/street where available,
+building/apartment/floor, description, coordinates, provider identity) plus a **required,
+non-nullable** `serverVerifiedAt: DateTime`. This is the central architecture rule from this phase's
+own decision, enforced structurally rather than by caller discipline: a `DeliveryAddressSnapshot`
+literally cannot be constructed without a verification timestamp, so no code path can accidentally
+attach unverified client data to an `Order` and call it a "snapshot." No production code in Faz P.1
+constructs a real one — no verification provider exists yet.
+
+### D3 — `SavedAddress`/`AddressVerificationStatus`: draft vs. verified, kept separate from the legacy `AddressModel` (§7, approved as proposed)
+
+New `lib/features/orders/domain/models/saved_address.dart` — `AddressVerificationStatus`
+(`unverified`/`verified`/`stale`) and `SavedAddress`, a customer-owned draft address with an
+`isDeliveryAuthorized` getter (`true` iff `verified`) and `toDeliveryAddressSnapshot()`, which throws
+`AddressNotVerifiedForDeliveryViolation` (new, `core/errors/business_rule_violation.dart`) unless
+authorized — including for `stale`, not just `unverified`. Deliberately a new, separate type from
+`features/profile/domain/models/address_model.dart` (the pure, in-memory UI prototype with no
+owner/verification concept at all), mirroring the same canonical-vs-legacy split already established
+between `Order` and `OrderModel`. **Deliberately minimal, per explicit "do not overbuild"
+instruction**: no `customerAddresses` Firestore collection, repository, or Security Rules were added
+in this phase — nothing yet writes a real `SavedAddress` (no address-provider integration, no UI
+consumer), so a persistence layer would have had no real caller to prove itself against. This is a
+disclosed scope decision, not an oversight; building it is natural P.2 scope once a real provider and
+UI exist to justify it. Test requirement #18 (customerAddresses cross-owner denied) does not apply as
+a result — recorded here rather than silently skipped.
+
+### D4 — Delivery pricing: proven correct, deliberately NOT wired into the live policy repository (§4/§5, DEVIATION — real risk found and avoided)
+
+The LOCKED rule (+140 TL standard, +20 TL beverage, +140 TL once per Bowl Builder bowl) is proven
+against the existing, unmodified `ChannelPriceResolver`/`ChannelPricingPolicy` engine — zero engine
+changes, exactly as `channelDefaultAdjustments`/`categoryOverrides` were designed to support. The
+original plan was to seed this into `InMemoryChannelPricingPolicyRepository`
+(`lib/features/menu/data/channel_pricing_policy_repository.dart`), mirroring how BR-PRICE-004's own
+takeaway rule is seeded there. **Direct inspection before editing found this would have been unsafe**:
+that repository backs `channelPricingPolicySnapshotProvider`, which `bowl_builder_screen.dart` reads
+*unconditionally* for whatever channel `shoppingChannelProvider` currently is — with no
+takeaway-only gate (unlike `resolveDisplayPrice`, which does gate on `OrderChannel.takeaway`
+specifically). `OrderChannel.delivery` is this app's existing **default** shopping channel
+(`ShoppingChannelContext`'s own doc comment: "this app's existing, unchanged default... before Faz
+C"). Seeding delivery there would have silently added a live +140 TL Bowl Builder price change for
+real customers today — directly violating this phase's own "do not start real delivery checkout"
+constraint. **Resolution**: the approved values live instead as an isolated, unwired constant —
+`DeliveryChannelPricingPolicy.value`
+(`lib/features/menu/domain/pricing/delivery_channel_pricing_policy.dart`) — proven correct by tests
+against the same resolver, never read by any live provider. `InMemoryChannelPricingPolicyRepository`
+itself is unchanged from before this phase. Backend: no new production TS module was needed —
+`takeawayPricing.ts`'s functions are already fully generic over `channel: string`; a test fixture
+(`functions/src/test/deliveryPricing.test.ts`) proves the same rule server-side by calling them with
+`channel: "delivery"`. `loadCanonicalChannelPricingPolicy` still reads the real, live
+`channelPricingPolicies/{restaurantId}` Firestore document, which nothing in this phase writes
+delivery data into.
+
+### D5 — Delivery payment policy: COD-only, structurally distinct from `PaymentMethod.isActive` (§2/§3, approved as proposed)
+
+New `DeliveryPaymentPolicy`/`DeliveryPaymentPolicyRepository`
+(`lib/features/payment/domain/models/delivery_payment_policy.dart`,
+`lib/features/payment/data/delivery_payment_policy_repository.dart`), seeded with exactly the 7
+LOCKED COD method ids (`cash`/`credit_card`/`pluxee`/`multinet`/`setcard`/`edenred`/`metropol_card`),
+mirroring `ChannelPricingPolicyRepository`'s own repository-over-a-small-ruleset shape so a future
+admin can enable a method one at a time (`setEnabledForDeliveryCheckout`) without a code change.
+`isAvailableForDeliveryCheckout` requires both `PaymentMethod.isActive` and
+`isEnabledForDeliveryCheckout` — the two are never collapsed into one flag, per this phase's own
+explicit distinction. No `PaymentProviderAdapter` is referenced anywhere in either file (verified by
+direct inspection, not assumed). Backend mirror: `functions/src/deliveryPaymentPolicy.ts` — a pure
+module exporting the same 7-id set and a boolean check, **no callable exported**, since this phase
+does not expose a production delivery-order-submission endpoint.
+
+### D6 — No `submitDeliveryOrder`, legacy checkout marked but not touched (§6/§11, approved as proposed)
+
+No delivery-order-submission callable was added or exposed this phase — the user's own stated
+preference ("prefer not to expose a callable yet if unnecessary") was followed literally; nothing in
+P.1's scope required one to exist for the foundation pieces (Order fields, pricing proof, payment
+policy) to be real and testable. `lib/features/cart/presentation/screens/checkout_screen.dart` and
+`lib/features/orders/domain/models/order_model.dart` each gained a class-level doc comment marking
+them LEGACY / not the canonical Paket Servis path, cross-referencing the new foundation types — no
+other change to either file, and neither was deleted, renamed, or functionally modified.
+
+### Test verification
+
+Dart: 8 new/extended test files — `order_test.dart` (+3, snapshot fields default null/copyWith/
+immutability), `delivery_address_snapshot_test.dart` (new, 3 tests, equality + optional fields),
+`saved_address_test.dart` (new, 7 tests, verification-status/authorization/snapshot-conversion),
+`order_firestore_mapper_test.dart` (+4, round-trip + backward-compatible legacy-document parsing),
+`delivery_channel_pricing_policy_test.dart` (new, 6 tests, +140/+20/bowl-once/no-ingredient-
+multiplication/other-channels-unaffected against the real `ChannelPriceResolver`),
+`delivery_payment_policy_test.dart` (new, 10 tests, 7-method seed/exclusions/isActive-independence/
+no-adapter-invocation). `channel_pricing_policy_repository_test.dart` unchanged and still passing —
+direct proof `InMemoryChannelPricingPolicyRepository` was not touched. `flutter analyze`: **0
+issues**. `flutter test`: **2770/2770 passing** (up from 2735 at Quick Test Login close). `dart
+format`: clean.
+
+Backend: 2 new pure (no-emulator) test files — `deliveryPaymentPolicy.test.ts` (6 tests) and
+`deliveryPricing.test.ts` (4 tests), both calling existing, unmodified production functions
+(`takeawayPricing.ts`) with `channel: "delivery"`, proving zero engine changes were needed. `npm run
+build`: clean. **530/530 passing, three consecutive fully green full-suite emulator runs** (up from
+520 at Faz R.3C.2 close — the +10 delta is exactly these two new pure files' test count). Firestore
+Security Rules: untouched this phase (no `firestore.rules` edit) — re-ran the full suite to confirm
+no regression: **137/137 passing**, same count as Faz R.3C.2's close.
+
+### Confidence
+
+High for the implemented scope, medium-high overall given how much of P.1's value is a foundation for
+work that hasn't happened yet (P.2 verification, P.3 zones, P.4 real checkout) rather than something
+end-to-end testable today. The one genuine risk this phase surfaced and fixed itself — the Bowl
+Builder live-pricing hazard in D4 — was found by reading the actual live provider chain before
+editing it, not assumed safe from the `resolveDisplayPrice` gate alone; that gate turned out to
+protect only one of at least two live consumers. Recorded as a DEVIATION from the originally-planned
+"seed the shared repository" approach, with the reasoning kept in both this document and the new
+type's own doc comment so a future phase wiring delivery pricing into checkout inherits the context
+rather than re-discovering the hazard. The deliberate SavedAddress persistence-layer omission (D3) is
+disclosed, not silent — test requirement #18 explicitly does not apply as a result, stated here rather
+than glossed over.
+
+## Faz P.2 — Paket Servis: Google Places API (New) Address Foundation + Coverage Spike
+
+**Decision**: build the real Google Places (New) address-search/verification foundation on top of
+Faz P.1's domain types, starting with a genuine, evidence-based coverage spike rather than
+documentation-derived assumptions. No client-side Google credential — only one server secret
+(`GOOGLE_PLACES_SERVER_KEY`) was provisioned, so autocomplete and resolution both run server-side via
+Cloud Function callables. No delivery-zone/eligibility work, no real delivery checkout, no courier
+integration, no map-pin confirmation (blocked on a real licensing constraint, see D6).
+
+### D0 — A real credential-exposure incident occurred and was disclosed immediately
+
+Mid-spike, a follow-up diagnostic script's error handler (`catch (err) { console.error(err) }`) logged
+a `child_process.execSync` error object whose `.stdout`/`.output` properties carried the just-printed
+raw secret value — the secret appeared in this session's tool output. This was surfaced to the user
+immediately, without minimizing it or attempting to continue silently. The user chose to rotate the
+key before any further work resumed. Both spike scripts
+(`functions/scripts/coverage_spike_places.mjs`/`coverage_spike_places_followup.mjs`) were hardened
+first: `fetchSecret()` now catches its own `execSync` failure and throws a new, description-only
+`Error` — the original error object (and whatever it captured) is discarded entirely, never logged,
+never re-thrown. The top-level `main().catch()` handler in both scripts likewise logs only
+`err.message`, never the error object itself. This is recorded here as a permanent lesson for any
+future script that shells out to retrieve a secret: an error path is exactly as much a leak vector as
+the happy path, and must be hardened with the same discipline.
+
+### D1 — Coverage spike: real evidence before implementation (§1, executed as specified)
+
+`functions/scripts/coverage_spike_places.mjs` (a one-off developer script, not part of the deployed
+Functions bundle) fetched the rotated secret into its own process memory via `firebase
+functions:secrets:access` (never printed/logged) and made real HTTP calls to Places API (New)
+Autocomplete + Place Details for representative addresses in Beşiktaş/Şişli/Beyoğlu/Kağıthane/
+Sarıyer, plus the two named operational areas Maslak/Okmeydanı. Raw results were written to
+`functions/scripts/coverage_spike_results.json` (structured data only, no key). Real findings:
+
+- **Province** (`administrative_area_level_1`): resolved 7/7 — fully reliable.
+- **District/ilçe** (`administrative_area_level_2`): resolved 6/7. The one failure (a "Maslak
+  Mahallesi..." query) resolved to a real place ("Esentepe, Büyükdere Cd.") with no district
+  component at all in that specific Place record — not a systemic gap, but proof that even a
+  legitimate, well-known place's address-component completeness cannot be assumed and must be
+  verified per-result, never trusted as always-present.
+- **Neighborhood/mahalle**: **does not use the `sublocality_level_1`/`sublocality` types Google's own
+  generic Places documentation emphasizes for this purpose.** A follow-up spike
+  (`coverage_spike_places_followup.mjs`) confirmed mahalle actually appears under
+  `administrative_area_level_4` for every Turkish result observed (Balmumcu, Meşrutiyet, Kuloğlu,
+  Ortabayır, Pınar, Esentepe, H. Edip Adıvar, Halil Rıfat Paşa, Kaptan Paşa — all real, all
+  `administrative_area_level_4`). This is the single most consequential finding of the spike, since it
+  directly contradicts what a documentation-only implementation would have built.
+  `googlePlacesFieldMapping.ts`'s `normalizePlaceDetails` encodes this directly.
+- **Street/route + building number**: resolve reliably (100%) whenever the query includes them;
+  correctly absent (not fabricated) for a mahalle-level-only query, which has no street context by
+  construction — not a provider failure.
+- **"Okmeydanı" is not one resolvable mahalle.** The initial query's own top-ranked autocomplete
+  suggestion returned only `"Şişli/İstanbul, Türkiye"` — district-level precision, no neighborhood at
+  all. A follow-up query proved this was a *ranking* artifact, not a coverage gap: lower-ranked
+  suggestions for the same query ("Halil Rıfat Paşa, Okmeydanı Kavşağı...",
+  "Okmeydanı/Şişli, H. Edip Adıvar...") resolved cleanly to real mahalles (`Halil Rıfat Paşa`,
+  `H. Edip Adıvar`, `Kaptan Paşa`) — all in Şişli, none literally named "Okmeydanı." This confirms
+  "Okmeydanı" is a colloquial, historical area name spanning several official mahalles after
+  Istanbul's 2008 mahalle restructuring, not a single Google-resolvable value — directly validating
+  Faz P.0/P.1's own architectural decision to keep "operational region" labels (Okmeydanı, Maslak)
+  structurally separate from formal address-hierarchy data. A future Faz P.3 admin screen must map
+  "Okmeydanı" to a *set* of real mahalles, never expect one canonical match.
+- **Autocomplete ranking is not always most-precise-first** — the Okmeydanı finding above is itself
+  proof: this validates the required real UX (§3: user picks from a suggestion list) over any
+  "auto-select the top suggestion" shortcut, which would have silently produced a worse result.
+- **Not tested this phase** (disclosed, not glossed over): place-id long-term stability across repeat
+  calls over time (a same-day spike cannot prove this); a genuinely nonexistent/fabricated building
+  number's behavior; any non-Istanbul TR location (out of this phase's explicit geographic scope).
+
+### D2 — Provider abstraction: `AddressSearchProvider`, Google-specific implementation kept isolated (§2, approved as proposed)
+
+`lib/features/address_search/domain/services/address_search_provider.dart` — `autocomplete`/
+`resolvePlace` only (no `reverseGeocode`; nothing in this phase's scope needs it, per "do not
+overbuild"). Both models it returns (`AddressSuggestion`/`ResolvedAddress`,
+`lib/features/address_search/domain/models/`) are provider-neutral — no Google Places SDK/response
+type appears anywhere in `domain/`. `GooglePlacesAddressSearchProvider`
+(`lib/features/address_search/data/`) is the **only** file in this app that knows a provider named
+"Google" exists at all — it calls the three new Cloud Function callables via the already-used
+`cloud_functions` package, never Google's API directly. Its response parsing is extracted into a pure,
+network-free module (`google_places_response_mapping.dart`) specifically so it's unit-testable without
+the `cloud_functions` SDK, which `SubmitTakeawayOrderGateway`'s own doc comment already established is
+unavailable under `flutter test`.
+
+### D3 — No client-side Google credential — everything proxied server-side (§4, disclosed architecture consequence)
+
+Only `GOOGLE_PLACES_SERVER_KEY` was provisioned (a Secret Manager secret, restricted to Places API
+(New) only) — no client-restricted key exists. The originally-sketched two-key model (a
+client-restricted key for low-latency Autocomplete typing, a server key for verification) was not
+built as a result: all three callables (`searchAddressAutocomplete`/`resolveAddressPlace`/
+`saveDeliveryAddress`, `functions/src/deliveryPlaces.ts`) run server-side, reading the secret via
+`defineSecret`/`.value()`, never read in emulator context (guarded explicitly, on top of the
+emulator-fake short-circuit already in `googlePlacesClient.ts`). Trade-off, disclosed rather than
+silently accepted: every autocomplete keystroke now costs one Cloud Functions round-trip in addition
+to the Places API call itself, versus a client-side key's direct-to-Google latency. A future phase
+could add a client-restricted key purely to shave that latency once real usage volume justifies the
+second credential to manage — not done here since nothing in this phase's scope required it and it
+wasn't provisioned.
+
+### D4 — Server verification: independent re-resolution, never trusting client or even its own prior preview (§5, approved as proposed)
+
+`saveDeliveryAddress` calls Google Place Details itself, with a fresh server-generated session token
+(deliberately not whatever session the client's own autocomplete sequence used — this is a distinct,
+independent verification call), and **never reads** any client-supplied address component at all —
+confirmed by test: a save request carrying deliberately bogus `provinceName`/`districtName`/
+`latitude`/`longitude`/`verificationStatus: 'verified'` values in its payload is saved using only the
+server's own resolution; the bogus values are never even parsed. `isSufficientlyResolved`
+(`googlePlacesFieldMapping.ts`) requires province+district+coordinates together; when it's `false`,
+the address is saved as `unverified` (never rejected outright, never silently marked `verified`) —
+literally implementing §5's "if provider cannot reliably resolve an address: keep it unverified and
+prevent future delivery authorization," now with a real provider behind Faz P.1's own architecture
+rule for the first time.
+
+### D5 — `customerAddresses` persistence: server-owned authoritative fields, allow-listed client metadata updates (§7/§8, approved as proposed)
+
+New real Firestore collection, `create: if false` (Cloud-Function-only, mirrors `deviceTokens`'
+Faz-R.3C.1 precedent exactly — a direct client create could never be trusted to have actually
+performed server-side verification). `allow update` uses the same allow-list-not-deny-list pattern
+`customers/{uid}` already established: only `label`/`isDefault`/`apartmentNo`/`floor`/
+`addressDescription`/`buildingNoOverride`/`updatedAt` may change via a direct client write —
+`request.resource.data.diff(resource.data).affectedKeys().hasOnly([...])` structurally prevents a
+client from ever touching `verificationStatus`/`verifiedAt`/`providerSource`/`providerPlaceId`/
+`provinceName`/`districtName`/`neighborhoodName`/`streetName`/`buildingNo`/`buildingNoSource`/
+`latitude`/`longitude`/`formattedAddress`/`uid` — proven by 4 dedicated rules tests (self-mark-verified
+rejected, provinceName/districtName/coordinates/providerPlaceId forgery rejected, uid-reassignment
+rejected, cross-owner update/delete rejected). `isDefault` mutual exclusivity (at most one default per
+customer) is enforced transactionally inside `saveDeliveryAddress` itself, proven by emulator test.
+`SavedAddressRepository` (`lib/features/orders/data/`) splits accordingly: `save` always calls the
+callable; `updateMetadata`/`delete`/`listForCurrentUser` are direct Firestore client SDK calls, safe
+because Rules already bound what they can touch.
+
+### D6 — Map pin confirmation: STOPPED on a real licensing constraint, not built (§9, explicit instruction followed)
+
+Fetched Google's own current Places API policy page directly rather than assuming: **"Places API
+results displayed on a map must be shown on a Google Map."** This app's existing map rendering
+(`flutter_map`, OpenStreetMap-based) would violate this the moment a Places-derived coordinate/address
+is shown as a pin on it. Per the phase's own explicit instruction ("If Places terms require Google map
+rendering for a specific data usage, STOP and report the exact constraint rather than violating
+terms"), no map-pin step was implemented. The rest of §3's flow (resolve → show address as structured
+text fields, province/district/neighborhood/street/building all labeled → apartment/floor/description
+→ save) is built and functional; only the visual pin-on-a-map confirmation sub-step is missing,
+disclosed as blocked rather than silently dropped. Resolving this (adding `google_maps_flutter`
+specifically for this one screen, versus dropping visual pin confirmation as a permanent product
+decision) is a genuine architecture choice for the user to make, not decided here.
+
+### D7 — Real-evidence correction to Faz P.1's own `SavedAddress`/`DeliveryAddressSnapshot` shape
+
+Faz P.1 declared `neighborhoodId`/`neighborhoodName`/`buildingNo` (and, on `SavedAddress` specifically,
+`provinceId`/`provinceName`/`districtId`/`districtName` too) as required, non-nullable fields — an
+assumption made before any real provider existed to test it against. The coverage spike's own
+evidence (D1: a mahalle-only query genuinely has no street/building context; a legitimate district can
+come back missing from a specific Place record) proved this assumption wrong. Corrected: on
+`SavedAddress` (the persisted, possibly-partially-resolved draft), all of province/district/
+neighborhood/street/buildingNo are now nullable — realistic, since any of them can be genuinely absent
+after a resolution attempt that still doesn't clear the `verified` bar. On `DeliveryAddressSnapshot`
+(only ever produced from an already-`verified` `SavedAddress`), province/district stay **required** —
+correctly reflecting the backend's own `isSufficientlyResolved` guarantee — while neighborhood/street/
+buildingNo remain nullable, since verification never required them. `SavedAddress
+.toDeliveryAddressSnapshot()` gained a new defensive check (province/district non-null, on top of the
+pre-existing lat/lng/verifiedAt/providerSource checks) so this invariant is enforced at the Dart type
+level too, not merely trusted from the backend. New `buildingNoSource` field (`'provider'`/
+`'customer'`) added to both types, closing Faz P.1's own gap around §6's "preserve provenance"
+requirement, which P.1 had documented as an intent but never actually modeled as a field. No canonical
+internal id source exists yet for province/district/neighborhood (that's Faz P.3's authoritative zone
+registry) — `SavedAddressRepository`'s `slugifyAddressComponent` derives a provisional, name-based id
+in the meantime, explicitly documented as non-canonical and subject to remapping once P.3 exists.
+
+### Test verification
+
+Dart: 6 new test files (`address_suggestion_test.dart`, `google_places_response_mapping_test.dart` —
+proving the real field-mapping logic against spike-shaped fixtures, `address_search_provider_test.dart`
+— debounce/session-token/error-handling via a fake provider, `saved_address_repository_test.dart` —
+`slugifyAddressComponent`) plus 2 extended (`saved_address_test.dart` +3 for the D7 correction).
+`flutter analyze`: **0 issues**. `flutter test`: **2789/2789 passing** (up from 2770 at Faz P.1 close).
+
+Backend: 4 new test files — `googlePlacesFieldMapping.test.ts` (pure, real spike-fixture-based),
+`googlePlacesClient.test.ts` (pure, TR-restriction/Istanbul-bias proof), `deliveryPlaces.test.ts`
+(emulator-backed, all 3 callables: auth/validation/ownership/isDefault-exclusivity/unverified-save/
+client-data-ignored). `npm run build` clean. **559/559 passing, three consecutive fully green
+full-suite emulator runs** (up from 530 at Faz P.1 close). Firestore Security Rules:
+9 new `customerAddresses` tests — **146/146 passing** (up from 137).
+
+### Confidence
+
+High for the implemented scope, and meaningfully *more* evidence-backed than Faz P.1 was, since P.1's
+address-shape assumptions were untested until this phase's real spike — D7's correction is proof the
+process worked as intended (assumption made, evidence gathered, assumption corrected, correction
+disclosed) rather than evidence of carelessness. D0's incident is the one genuine blemish this phase
+produced; it was caught, disclosed, and fixed at the process level (never log a caught error object
+verbatim) before any further secret-handling code was written, and the exposed key was rotated before
+reuse. D6's map-pin gap is a real, disclosed scope reduction driven by an actual licensing constraint
+found through direct research, not an assumption — the right call given the phase's own explicit
+instruction to stop rather than guess at a legal boundary.
+
+## Faz P.2.1 — Paket Servis: Google Map Address Confirmation
+
+**Decision**: close the map-pin gap Faz P.2's own D6 disclosed — add real Google Maps SDK rendering
+for the address create/edit/confirm flow specifically, leaving the courier live-tracking `flutter_map`
+implementation completely untouched. No client-side Google credential existed before this phase (only
+the P.2 server secret); this phase adds two new, separate, platform-restricted client keys.
+
+### D1 — `google_maps_flutter` added, scoped to the address flow only (§1, approved as proposed)
+
+`pubspec.yaml` gained `google_maps_flutter: ^2.18.0` via `flutter pub add` (real, currently-published
+version, not guessed). Confirmed via grep before touching anything: `lib/features/courier/presentation
+/screens/courier_live_map_screen.dart` is the *only* `flutter_map` usage in this app — left byte-for-
+byte untouched (`git diff --stat` on that file is empty). No global migration; the two map libraries
+now coexist deliberately, each scoped to what it's legally allowed to render (courier live-tracking
+data is not Places-derived, so `flutter_map`/OSM remains appropriate for it).
+
+### D2 — Two new client keys, neither reusing the P.2 server secret (§3/§4, approved as proposed)
+
+Android: `com.google.android.geo.API_KEY` manifest meta-data, resolved from a new Gradle
+`manifestPlaceholders["mapsApiKeyAndroid"]` read out of `android/local.properties` (gitignored,
+mirrors `settings.gradle.kts`'s own existing `flutter.sdk` property-reading pattern — no new
+convention invented). iOS: `Info.plist`'s new `GMSApiKey` entry resolves `$(GOOGLE_MAPS_IOS_API_KEY)`
+via Xcode build-setting substitution, sourced from a new gitignored `ios/Flutter/ApiKeys.xcconfig`
+(`#include?`-ed from `Debug.xcconfig`/`Release.xcconfig`, template committed as
+`ApiKeys.xcconfig.example`); `AppDelegate.swift` reads it via `Bundle.main.object(forInfoDictionaryKey:
+"GMSApiKey")` and calls `GMSServices.provideAPIKey(...)` only if non-empty. Neither key exists yet in
+this environment — both are placeholder-wired, real values to be supplied by the user (see the final
+report's exact setup steps). No Dart code touches either raw key value at all — `google_maps_flutter`
+consumes them entirely through native platform config, unlike the P.2 Places server key which Dart-side
+Cloud Function code never sees either but for a different reason (it's server-only). This is a
+structurally stronger position than P.2's own key-handling: there is no code path, Dart or TypeScript,
+that ever reads a Maps SDK client key's raw value at runtime.
+
+**Faz P.2.1 Android build fix (2026-08-14)**: `./gradlew signingReport` failed to compile
+`android/app/build.gradle.kts` — `java.util.Properties()` (the original inline-qualified form) raised
+"Unresolved reference 'util'", with a cascading type-inference error on the `.use { properties.load(it)
+}` call right after it. **Root cause**: at the top level of this Kotlin DSL build script, the applied
+Gradle plugins' (Android/Kotlin) auto-generated project-extension accessors shadow the bare `java`
+identifier in that scope, so an inline-qualified `java.util.Properties()` reference fails to resolve
+there — `settings.gradle.kts`'s own identical-looking `java.util.Properties()` usage is unaffected
+because it runs in the *Settings* script's scope, which doesn't have those accessors. **Fix**: added a
+proper top-level `import java.util.Properties` and call the now-imported `Properties()` directly —
+Kotlin's import resolution isn't subject to the same receiver-shadowing problem as inline qualification.
+No behavior change: still reads `mapsApiKeyAndroid` from `android/local.properties`, still resolves the
+same manifest placeholder, still never hardcodes/commits the key. Verified: `./gradlew signingReport`
+now succeeds (`BUILD SUCCESSFUL`); `developmentDebug` variant SHA1 =
+`A9:78:7D:46:41:74:F0:7D:04:22:66:74:14:7F:BB:07:5E:ED:F0:45`. `flutter analyze` 0 issues, `flutter
+test` 2797/2797 (unchanged — this was a Gradle-only fix, no Dart/TypeScript source changed).
+
+### D3 — Reverse geocoding: a new, disclosed infrastructure dependency (§2, approved as proposed with a flagged setup step)
+
+"If moved coordinates require reverse resolution: server must re-resolve/re-verify" required adding a
+capability P.2 didn't have: reverse geocoding (lat/lng -> a real place). This is a genuinely separate
+Google product (Geocoding API) from Places API (New) — new `functions/src/googleGeocodingClient.ts` +
+`reverseGeocodeAddressPoint` callable (`functions/src/deliveryPlaces.ts`), reusing the *same*
+`GOOGLE_PLACES_SERVER_KEY` secret (per §3's instruction, which is about not reusing it for the
+client-side *rendering* key specifically — this is a separate server-side call, same trust boundary).
+**Disclosed setup step, not silently assumed**: that secret's Google Cloud Console API restrictions
+were set in Faz P.2 to "Places API (New)" only — reverse geocoding will return `REQUEST_DENIED` against
+the real API until "Geocoding API" is added to that key's allowed APIs list. Flagged in the final
+report's setup steps, not worked around.
+
+### D4 — Pin-move authority model: reverse-resolve-then-reuse-the-existing-placeId-path, never a second write path (§2/§6, approved as proposed)
+
+`reverseGeocodeAddressPoint` returns the exact same shape `resolveAddressPlace` does (reusing
+`defaultPlaceDetailsFn`/`normalizePlaceDetails`/`isSufficientlyResolved` unmodified — no parallel
+resolution logic). The client (`AddressDetailsFormScreen._confirmMovedPin`) takes the response's own
+`resolved.providerPlaceId` and that becomes the new `_resolved` state — the *existing* `_save()` method
+needed zero changes, since it already only ever reads `_resolved.providerPlaceId`. A dragged-but-
+unconfirmed pin position (`_pendingPinPosition`) is structurally never read by `_save()` at all — proven
+by test: dragging the marker without tapping "Konumu Onayla" then tapping "Adresi Kaydet" saves using
+the *original* placeId, and `reverseGeocode` is never even called. This is Faz P.2.1 §6's "no second
+address source of truth" implemented literally: there is exactly one path from "a place" to "a saved
+address" (`saveDeliveryAddress`, unchanged from P.2), and reverse geocoding only ever feeds a *new
+candidate placeId* into that one path, never bypasses it.
+
+### D5 — Map failure fallback doubles as the honest test-environment behavior (§7, approved as proposed)
+
+`AddressMapConfirmationCard` arms a timer (`mapReadyTimeout`, default 5s, injectable) on `initState`;
+if `GoogleMap.onMapCreated` hasn't fired by the time it elapses, a safe address-summary-plus-retry
+fallback replaces the map — never a silent `flutter_map`/OSM substitution. Under `flutter test` (no
+real platform view support for `google_maps_flutter`), `onMapCreated` never fires at all, so this
+fallback path is *exercised for real* by the test suite, not merely unit-tested in isolation — the
+same code that protects a real device against a native init failure is what makes the widget testable
+at all in this harness. Disclosed limitation: the *actual* map/marker rendering (real tiles, a real
+native pin) cannot be verified by `flutter test` — only the widget's own configuration (the
+`GoogleMap`/`Marker` constructor arguments) is inspectable pre-fallback, which is what §8's tests 1/2
+actually assert. Real visual verification is the user's own device-testing step, matching this
+project's established pattern for anything requiring actual rendered output.
+
+### Test verification
+
+Dart: 3 new test files — `address_map_confirmation_card_test.dart` (map/marker configuration, drag
+callback, fallback-on-timeout), `address_details_form_screen_test.dart` (address summary renders,
+unverified-after-move never implied verified, moved-but-unconfirmed pin doesn't affect what's saved),
+`no_places_secret_in_flutter_test.dart` (a permanent repo-scanning regression guard — no `lib/**/*.dart`
+file may ever reference `GOOGLE_PLACES_SERVER_KEY`). `flutter analyze`: **0 issues**. `flutter test`:
+**2797/2797 passing** (up from 2789 at Faz P.2 close).
+
+Backend: 1 new test file (`deliveryPlacesReverseGeocode.test.ts`, emulator-backed: auth, argument
+validation, resolvable point, unresolvable sentinel point never throws). `npm run build` clean.
+**563/563 passing, three consecutive fully green full-suite emulator runs** (up from 559 at Faz P.2
+close). Firestore Security Rules: untouched this phase (no schema/rules change — the map is
+confirmation UX only, `saveDeliveryAddress`'s own contract is unchanged) — re-confirmed **146/146
+passing**, identical to Faz P.2's close.
+
+### Confidence
+
+High for the implemented scope. D4's design (route a moved pin back through the *existing*
+placeId-based save path rather than inventing a coordinate-accepting write path) is the strongest part
+of this phase — it means Faz P.2's entire security model (server-independent re-resolution, no
+client-trusted coordinates) extends to the map feature with zero new trust boundary, proven by the
+same kind of "bogus client data is ignored" test discipline P.2 established. D3's flagged Geocoding-API
+setup step and D2's two not-yet-provisioned client keys are genuine, disclosed gaps between "built" and
+"working on a real device" — consistent with how every credential-dependent phase this session has
+been handled: build the real architecture, disclose exactly what infrastructure step remains, never
+fabricate having tested what wasn't actually tested.
+
+## Faz P.2.1.1 — Paket Servis: Address Flow Route/Cutover Bug
+
+**Decision**: a physical-device retest of Faz P.2.1 found the canonical Google-Maps address flow was
+never actually reachable from the real customer entry point — `Profil → Adreslerim → +` still opened
+the legacy `AddressFormScreen`. Audited the real navigation graph rather than assuming P.2/P.2.1's own
+code was wired in; found a second, deeper defect in the same audit.
+
+### D1 — Root cause: two independent defects, not one
+
+1. **The routing bug itself**: `addresses_screen.dart`'s `+` action (`AppBar` action, not a distinct
+   "Yeni Adres Ekle" button — same effect) did `Navigator.push(..., AddressFormScreen())` directly —
+   Faz P.2/P.2.1 built the entire canonical flow (`AddressSearchScreen` → `AddressDetailsFormScreen` →
+   Google Map → `saveDeliveryAddress`) but never pointed any real navigation at it. Confirmed via grep:
+   `AddressSearchScreen` had **zero** references anywhere in `lib/` outside its own file before this
+   fix — a fully-built, fully-tested, entirely unreachable screen.
+2. **A second, more severe defect the audit surfaced unprompted**: `savedAddressRepositoryProvider`
+   (declared in `address_details_form_screen.dart`) was an unconditional `throw
+   UnimplementedError(...)` placeholder, and **no override for it existed anywhere** in
+   `lib/bootstrap/app_bootstrap.dart`'s real `providerOverrides` list or any other production wiring.
+   Even with the routing bug fixed, tapping "Adresi Kaydet" on the new flow would have crashed
+   immediately with an unhandled `UnimplementedError` — a defect the physical-device report didn't
+   describe (the tester never got far enough to hit it, since routing failed first) but would have
+   been the very next failure. Fixed in the same pass rather than leaving it for a third bug report.
+
+### D2 — Old route vs. new route
+
+- **Old**: `Profil` → `ListTile("Adreslerim")` → `AddressesScreen` → `+` action →
+  `Navigator.push(MaterialPageRoute(builder: (_) => const AddressFormScreen()))` (legacy, in-memory,
+  no Firestore, no Google Map, no server verification).
+- **New**: same `+` action → `Navigator.push(MaterialPageRoute(builder: (_) => const
+  AddressSearchScreen()))` → autocomplete → select suggestion → `AddressDetailsFormScreen` (server
+  `resolveAddressPlace` → Google Map confirmation → optional pin re-verification →
+  `SavedAddressRepository.save` → real `saveDeliveryAddress` Cloud Function → `customerAddresses`
+  Firestore document).
+
+### D3 — `savedAddressRepositoryProvider` real wiring (new)
+
+New `lib/features/orders/presentation/providers/saved_address_providers.dart` — builds a real
+`FirestoreSavedAddressRepository` whose `currentUid` closure reads `ref.read(authProvider).session
+?.uid` lazily (at save time, never a snapshot captured once), throwing a clear `StateError` if no
+session exists rather than silently proceeding as an unauthenticated write (matches this app's
+existing "no anonymous delivery checkout" posture). `address_details_form_screen.dart` now imports
+this instead of declaring its own throwing placeholder inline.
+
+### D4 — Legacy isolation, one remaining entry point disclosed, not silently left (§5, approved as proposed)
+
+`AddressFormScreen` was **not** deleted — marked LEGACY via its own doc comment (mirrors the existing
+`CheckoutScreen`/`OrderModel` LEGACY-marking convention from Faz P.1). One entry point besides the now-
+fixed `AddressesScreen` still reaches it: `checkout_screen.dart`'s own "Adres Ekle" button. **Left
+untouched deliberately** — `checkout_screen.dart` already carries its own Faz P.1 LEGACY marking
+("do not expand legacy delivery code"), and this ticket's own explicit scope was
+`Profil → Adresler → Yeni Adres Ekle`, not checkout. Disclosed here rather than silently fixed
+out-of-scope or silently left undocumented.
+
+### D5 — Existing address list left genuinely unmigrated, with a real, disclosed UX gap
+
+`AddressesScreen`'s list still reads `addressesProvider` (legacy, in-memory, one hardcoded seed
+address) — per this ticket's own "existing Address list/profile behavior must remain intact"
+instruction, the list itself was not touched. **Real, disclosed consequence**: an address created via
+the new canonical flow persists to `customerAddresses` (Firestore) — a completely different system
+from `addressesProvider` — so it will **not** appear in this list after creation. Migrating the list
+itself onto `SavedAddressRepository.listForCurrentUser()` is separate, future, out-of-scope work, not
+attempted here to avoid a much larger, riskier change than this ticket asked for.
+
+### D6 — Android manifest placeholder re-verified (§7)
+
+Confirmed via the real merged manifest (`processDevelopmentDebugMainManifest`), not just static
+source inspection: the `com.google.android.geo.API_KEY` meta-data entry resolves to a non-empty,
+`AIza`-prefixed value pulled from `android/local.properties`' `mapsApiKeyAndroid` (the user's own
+report that key setup was complete, confirmed independently). Checked via length/prefix assertions
+only — the raw key value itself was never printed into any tool output or this document, continuing
+the same discipline established after the Faz P.2 key-exposure incident.
+
+### Test verification
+
+Dart: 1 new test file (`addresses_screen_test.dart` — the `+` action opens `AddressSearchScreen` and
+never `AddressFormScreen`; a selected/resolved suggestion reaches `AddressDetailsFormScreen` with a
+real `GoogleMap` present; the existing seeded address list still renders) + 1 import fix
+(`address_details_form_screen_test.dart`, updated for the provider's new file location, no test
+content changed). `flutter analyze`: **0 issues**. `flutter test`: **2800/2800 passing** (up from 2797
+at Faz P.2.1's Android-build-fix close).
+
+### Confidence
+
+High. The routing fix itself was small and low-risk (one `Navigator.push` target swapped). The real
+value of this pass was the audit discipline that surfaced D1's second defect
+(`savedAddressRepositoryProvider` never wired) before it became a *third* bug report from another
+physical-device test — fixing only the reported symptom (routing) would have left the flow crashing on
+save, one step further down the same path. D5's disclosed list-migration gap is a deliberate scope
+boundary, not an oversight: fixing it properly is a genuinely separate, larger task this ticket did not
+ask for.
+
+## Faz P.2.1.2 — Paket Servis: Real Saved-Address List Cutover + Map-First UX Correction
+
+**Decision**: two directives landed in immediate succession within one turn. First, close Faz
+P.2.1.1's own disclosed gap — `AddressesScreen` must read the real `customerAddresses` source, not
+the legacy mock. Mid-implementation, a second, superseding product directive arrived: the primary
+address-creation UX changes from search-first to **map-first** (fixed center pin, camera-idle
+reverse-geocode, current-location default) — search becomes a secondary subflow feeding the same map,
+never a separate save path. Both are recorded together since the second directly reshaped how the
+first's "create"/"edit" actions are wired.
+
+### D1 — List cutover: real gaps found and fixed, not just the requested read-swap
+
+Beyond swapping `AddressesScreen`'s data source from `addressesProvider` to
+`savedAddressListProvider` (a new `AsyncNotifier` — explicit-refresh, not a live stream, since
+`SavedAddressRepository` has no `watch` method and the smallest-architecture instruction said to use
+one only "if already supported"), the audit surfaced that **`SavedAddress` itself was missing
+`isDefault` and `formattedAddress`** — both are written to Firestore by `saveDeliveryAddress` (Faz
+P.2) but were never read back by `SavedAddressRepository._map()`, since nothing had needed them until
+now. Fixed as part of this same pass (additive fields, `SavedAddress.copyWith` updated) rather than
+shipping a list screen that couldn't actually show a label or default badge.
+
+### D2 — UX correction: map-first primary, search demoted to a re-centering subflow
+
+New `MapFirstAddressScreen` (`lib/features/address_search/presentation/screens/`) is now the sole
+canonical create/edit surface, opened directly by `Profil → Adreslerim → +` and by each address's
+edit action (pre-centered at the saved `latitude`/`longitude`). It reuses every P.2/P.2.1
+server-authority primitive unmodified: `reverseGeocodeAddressPoint` (via
+`AddressSearchProvider.reverseGeocode`, added Faz P.2.1) is the *only* resolution call this screen
+ever makes; `SavedAddressRepository.save` is the *only* write path, unchanged. `AddressSearchScreen`
+was **not removed** (explicit instruction) — its role changed from "push `AddressDetailsFormScreen`"
+to "resolve the selected suggestion and pop with a `LatLng`," making it a pure camera-recentering
+utility the map screen pushes for a result. The map screen's own `onCameraIdle` then re-resolves that
+same point — so a searched place and a manually-panned place converge through the identical
+pipeline, never two.
+
+### D3 — Camera-idle debounce needs no manual timer
+
+`GoogleMap.onCameraMove` fires continuously during a pan (cheap: only updates
+`_pendingCameraPosition`, no `setState`, no network); `onCameraIdle` fires exactly once per genuine
+stop — the platform itself provides the debounce Faz P.2.1.2 §3 asked for. A request-generation
+counter (mirroring `AddressSearchNotifier`'s own debounce/discard pattern from Faz P.2) discards a
+stale in-flight `reverseGeocode` response if the camera moved again before it returned — proven by
+test with a controllable `Completer`-gated fake.
+
+### D4 — Location permission: reused `geolocator`, new gateway, courier untouched
+
+New `GeolocatorAddressLocationGateway` (`lib/features/address_search/data/`) mirrors
+`features/courier/data/geolocator_location_permission_gateway.dart`'s own translation discipline
+(raw `geo.*` types never cross the boundary) rather than reusing that courier-specific gateway
+directly — courier's own gateway/enum shape is tied to continuous shift-tracking concerns this
+one-shot "center the map" use case doesn't share. Every failure mode (denied, permanently denied,
+service disabled, any platform exception) resolves to `null`/`false`, never throws — matches §5's
+"never block address creation over GPS permission" literally. `myLocationButtonEnabled`/
+`myLocationEnabled` (real `GoogleMap` SDK properties) are also enabled once permission is granted, in
+addition to an explicit, independently-testable recenter FAB — belt-and-suspenders, not redundant:
+the SDK button is opaque to `flutter test`, the FAB is what the test suite actually exercises.
+
+### D5 — Two files superseded; one deleted (same-turn, unshipped), two kept (previously shipped, per "never delete")
+
+`SavedAddressMetadataEditSheet` — built earlier in this same turn for a metadata-only edit UX the
+map-first directive superseded before it was ever wired into any completed flow or reported as done —
+was deleted outright; it was self-authored, same-turn, and never shipped, so no prior-work-preservation
+concern applied. `AddressDetailsFormScreen` and `AddressMapConfirmationCard` (real, tested,
+previously-reported-done Faz P.2/P.2.1 work) were **not** deleted, only marked superseded via their
+own doc comments, per `CLAUDE.md`'s standing "never delete without explicit approval" — confirmed via
+grep that nothing in `lib/` navigates to either anymore, but both remain available if a future
+product decision revives a non-map fallback flow.
+
+### Test verification
+
+Dart: 2 new/rewritten test files (`map_first_address_screen_test.dart` — fixed pin, camera-move-vs-
+idle distinction, debounce/stale-discard, resolved-address updates, failed-reverse-geocode handling,
+apartment-required, save-uses-only-providerPlaceId, recenter action, all three location-permission
+states, edit pre-centering, search subflow re-centering; `addresses_screen_test.dart` — rewritten for
+the new map-first routing, canonical source, label/default rendering, edit routing, delete+refresh,
+empty state, error state) + 1 new gateway (no dedicated unit test file — its own logic is a thin,
+try/catch-wrapped pass-through over `geolocator`, exercised indirectly through the screen tests'
+fake). Pre-existing `address_details_form_screen_test.dart`/`address_map_confirmation_card_test.dart`
+confirmed still passing unmodified — proof the superseded screens remain individually sound even
+though unreachable. `flutter analyze`: **0 issues**. `flutter test`: **2818/2818 passing** (up from
+2800 before this turn). Backend/Firestore Rules: untouched this turn (no new callable, no schema
+change — the map-first flow is a pure client rebuild atop existing P.2.1 server primitives); no
+re-run required per this ticket's own "if backend changed" condition.
+
+### Confidence
+
+High for the implemented scope. D1's mid-cutover discovery of the missing `isDefault`/
+`formattedAddress` fields is the same pattern as every other phase this session — an audit-before-
+build habit that keeps surfacing real gaps before they become a next bug report. D2's convergent-
+pipeline design (search only ever re-centers, never saves) is the structurally strongest way to honor
+"no duplicate address authority" — there is exactly one `reverseGeocodeAddressPoint`-shaped
+resolution call in this entire screen, regardless of how the camera got to where it is. Genuine risk,
+disclosed: `onCameraIdle`'s real native timing (how "idle" is detected, exact debounce interval) is
+Google Maps SDK internal behavior this test suite cannot observe directly — the generation-discard
+logic is proven, but the *frequency* of real idle events on an actual device remains something only
+physical-device testing can confirm.
+
+## Dev Functions Emulator Routing Audit
+
+**Decision**: Physical-device report — `reverseGeocodeAddressPoint` produced no request/log in the
+Functions Emulator terminal despite `adb reverse` being confirmed correct for all four ports.
+Requested: full trace of Auth/Firestore/Functions emulator routing, specific inspection of
+`FirebaseFunctions` configuration/region/instance-timing, tests proving the routing contract, no
+change to reverse-geocoding business logic.
+
+### D1 — Audit result: the FirebaseFunctions Dart-side configuration is correct on every axis checked
+
+Traced end to end and verified, not assumed:
+- **Bootstrap sequencing**: `bootstrapApp()` fully `await`s `FirebaseBootstrapService.initialize()` —
+  which itself `await`s `Firebase.initializeApp()` then synchronously calls all four
+  `use*Emulator()` connectors — before `runApp()`. `GooglePlacesAddressSearchProvider` is only ever
+  constructed later, lazily, when a Riverpod consumer first reads `addressSearchProviderProvider`
+  (i.e. when an address screen opens) — always after the connectors have already run.
+- **Host/port**: `FirebaseFunctionsEmulatorConfig` (`127.0.0.1:5001`) matches `firebase.json`'s
+  `emulators.functions.port` and the ports the user confirmed via `adb reverse`.
+  `automaticHostMapping: false` is passed identically to all four connectors, preventing the
+  Android-only `127.0.0.1` → `10.0.2.2` plugin rewrite that this exact class of bug already broke
+  Auth with once before (see this file's Sprint 9C history).
+- **Region**: `deliveryPlaces.ts`'s `onCall` exports (including `reverseGeocodeAddressPoint`) set no
+  explicit `region` — Cloud Functions v2 defaults to `us-central1`. The Dart side never calls
+  `FirebaseFunctions.instanceFor(region: ...)` anywhere in `lib/` (`grep` confirmed zero matches) —
+  every call site, including `GooglePlacesAddressSearchProvider`'s default constructor argument, uses
+  `FirebaseFunctions.instance`, which itself defaults to `us-central1`. Same region both sides; no
+  mismatch, no divergent cached instance.
+- **Instance identity**: read `cloud_functions` 6.3.6's own source
+  (`FirebaseFunctions.instanceFor`) — instances are cached in a static map keyed by
+  `'${app.name}_$region'`. `FirebaseBootstrapService`'s connector and
+  `GooglePlacesAddressSearchProvider`'s default both resolve `Firebase.app()` (the default app) with
+  no region override, so both resolve to the *exact same singleton object*; `useFunctionsEmulator`
+  mutates that shared object's `_origin` field, which `httpsCallable()` reads at call time — correct
+  regardless of which call site touched `.instance` first.
+- **Cleartext policy**: `android/app/src/development/res/xml/network_security_config.xml` allows
+  cleartext to `127.0.0.1` at the *domain* level (all ports), not scoped to specific ports — already
+  covers `5001` with no change needed, applied via the `development`-flavor-only manifest merge.
+
+No divergence was found between Functions and the other three products (Auth/Firestore/Storage),
+which share the identical code path in `FirebaseBootstrapService.initialize` and are not reported
+broken.
+
+### D2 — Root cause: not established at the code level; two real, disclosed gaps closed instead
+
+Per the evidence-classification standard this project holds me to: I will not present an unverified
+guess as a confirmed root cause. Given D1's findings, a `FirebaseFunctions`-configuration bug
+specific to this one callable is the least likely explanation left, since all Functions callables in
+this app share one configuration code path. Two genuine, concrete gaps *were* found and closed,
+either of which is a plausible contributor to this specific report going undiagnosed until now:
+
+1. **No dedicated test existed for `FirebaseFunctionsEmulatorConfig`** — `FirebaseAuthEmulatorConfig`
+   has one (`test/bootstrap/firebase_auth_emulator_config_test.dart`, proving
+   development-only routing at the `shouldUseEmulator(AppEnvironment)` level, independent of the
+   fixed-at-process-start `AppEnvironment.current`); Functions had none. `firebase_bootstrap_service
+   _test.dart` already covered the *development* connect path and the swallowed-failure path for
+   Functions, but production/staging exclusion was previously true by code inspection only, never a
+   passing assertion.
+2. **`adb reverse` was undocumented anywhere in this repo** — `grep -rl "adb reverse" docs/` returned
+   nothing before this audit, despite every `FirebaseXEmulatorConfig` class's own doc comment
+   assuming it as the established physical-device workflow, and despite
+   `firebase_functions_emulator_config.dart`'s own comment explicitly flagging that port 5001 was
+   "not in this project's currently-documented adb reverse port list" — a gap the code already named
+   and nothing had closed.
+
+### D3 — What was deliberately not done
+
+No new production code path was added (no new logging, no new diagnostic branch, no change to
+`FirebaseBootstrapService`'s control flow) — the audit found the existing configuration correct, so
+there was nothing in that class to fix without inventing an unrequested feature. The most likely
+remaining explanations are operational, not code: confirm the Functions emulator is actually included
+in the running `firebase emulators:start` session (a `--only auth,firestore` invocation would produce
+exactly this symptom — no logs, nothing broken in code) and confirm the `adb reverse tcp:5001
+tcp:5001` binding is still active at call time (bindings drop on device reconnect). If both check out
+and the symptom persists, the next diagnostic step is outside this ticket's declared scope: confirm
+`onCameraIdle`/`reverseGeocode` is actually being invoked at all from `MapFirstAddressScreen` on a
+real device — reverse-geocoding business logic was explicitly excluded from this audit.
+
+### Test verification
+
+1 new test file (`firebase_functions_emulator_config_test.dart`, mirrors
+`firebase_auth_emulator_config_test.dart` exactly — development-only routing + host/port values).
+`flutter analyze`: **0 issues**. `flutter test`: **2823/2823 passing** (up from 2818). No production
+code changed; `docs/firebase_emulator.md` gained a "Physical Android device setup (adb reverse)"
+section (all five ports, including the previously-undocumented 5001) and an explicit "no
+request/log at all" triage checklist. Backend/Firestore Rules: untouched.
+
+### Confidence
+
+Medium-high on the audit itself (every requested configuration axis was traced against real plugin
+source, not assumed), low on having found *the* root cause of the original symptom — disclosed
+explicitly rather than papered over, per this project's standing evidence-classification rule. The
+two gaps closed here (test coverage, documentation) are real and worth having regardless of whether
+either explains the original report; they don't by themselves prove or disprove what actually
+happened on the physical device.

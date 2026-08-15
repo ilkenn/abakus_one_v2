@@ -1,3 +1,7 @@
+# Claude Code local-only tool state (mirrors the .env.local convention —
+# never committed; contains machine-specific paths/session state).
+.claude/settings.local.json
+
 # Miscellaneous
 *.class
 *.log
@@ -50,7 +54,30 @@ firestore-debug.log
 ui-debug.log
 .firebase/
 
+# Firebase Functions Parameters — local-only CLI/emulator overrides (Faz
+# D.3.2.1, `functions/.env.local`). Never committed, per Firebase's own
+# `.env.local`/`.env.*.local` convention — distinct from a project-level
+# `.env.<project-id>` file (not used in this repo), which Firebase's own
+# convention treats as committed, shared config, not a secret.
+.env.local
+.env.*.local
+
 # Node.js (Firestore Security Rules test harness, firestore-tests/; Cloud
 # Functions source, functions/)
 node_modules/
 functions/lib/
+
+# Places-API coverage spike output — captured research artifacts, not source
+# (functions/scripts/, Faz P.2).
+functions/scripts/coverage_spike_results.json
+functions/scripts/coverage_spike_followup_results.json
+
+# Generated Blender outputs (renders/.blend/.fbx/.glb) — large binaries,
+# regenerated from scripts/blender/*.py, not source.
+scripts/blender/output/
+
+# Faz P.2.1 — Google Maps SDK for iOS client key (per-machine; the
+# Android equivalent lives in android/local.properties, already
+# gitignored via android/.gitignore). Copy from the committed
+# ApiKeys.xcconfig.example template, never commit the real file.
+ios/Flutter/ApiKeys.xcconfig

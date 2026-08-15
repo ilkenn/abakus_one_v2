@@ -8,6 +8,11 @@ import '../../features/auth/presentation/screens/otp_screen.dart';
 import '../../features/navigation/presentation/screens/main_navigation_screen.dart';
 import '../../features/onboarding/presentation/provider/onboarding_provider.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
+import '../../features/reservation/presentation/screens/reservation_confirmation_screen.dart';
+import '../../features/reservation/presentation/screens/reservation_detail_screen.dart';
+import '../../features/reservation/presentation/screens/reservation_flow_screen.dart';
+import '../../features/takeaway/presentation/screens/takeaway_guest_entry_screen.dart';
+import '../auth/real_customer_check.dart';
 import 'app_route_guard.dart';
 import 'app_routes.dart';
 
@@ -75,6 +80,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         isAuthenticated: authState.isAuthenticated,
         isGuest: authState.isGuest,
         isOnboardingComplete: isOnboardingComplete,
+        isRealCustomer: isRealCustomer(authState),
       );
     },
     routes: [
@@ -87,19 +93,74 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.login,
         pageBuilder: (context, state) {
-          return _fadeTransitionPage(const LoginScreen());
+          // Faz R.2 — forwarded, unvalidated here (LoginScreen re-forwards
+          // it verbatim to OtpScreen without acting on it itself; OtpScreen
+          // is the one place it's ever consumed, and re-sanitizes it there
+          // — defense in depth, see AppRouteGuard.sanitizeReturnTo's own
+          // doc comment).
+          return _fadeTransitionPage(
+            LoginScreen(returnTo: state.uri.queryParameters['returnTo']),
+          );
         },
       ),
       GoRoute(
         path: AppRoutes.otp,
         pageBuilder: (context, state) {
-          return _fadeTransitionPage(const OtpScreen());
+          return _fadeTransitionPage(
+            OtpScreen(returnTo: state.uri.queryParameters['returnTo']),
+          );
         },
       ),
       GoRoute(
         path: AppRoutes.main,
         pageBuilder: (context, state) {
           return _fadeTransitionPage(const MainNavigationScreen());
+        },
+      ),
+      // Faz D.4 — public, login-free Gel Al QR guest entry. Never behind
+      // the onboarding/login/OTP gate — see `AppRouteGuard.resolve`'s own
+      // explicit bypass for this prefix, checked before either
+      // signed-in/not-signed-in branch.
+      GoRoute(
+        path: '${AppRoutes.takeawayGuestPrefix}/:token',
+        pageBuilder: (context, state) {
+          return _fadeTransitionPage(
+            TakeawayGuestEntryScreen(token: state.pathParameters['token']!),
+          );
+        },
+      ),
+      // Faz R.2 — customer reservation flow. Real-phone-auth-gated by
+      // `AppRouteGuard.resolve`'s own dedicated branch above, not by
+      // anything screen-local. `/reservation/confirmation/:id` is
+      // registered before `/reservation/:id` is even relevant here since
+      // both are top-level (sibling, not nested) routes distinguished by
+      // segment count — go_router matches structurally, no ordering
+      // trick needed, but declaring the more specific one first keeps the
+      // route list itself readable.
+      GoRoute(
+        path: AppRoutes.reservationPrefix,
+        pageBuilder: (context, state) {
+          return _fadeTransitionPage(const ReservationFlowScreen());
+        },
+      ),
+      GoRoute(
+        path: '${AppRoutes.reservationConfirmationPrefix}/:reservationId',
+        pageBuilder: (context, state) {
+          return _fadeTransitionPage(
+            ReservationConfirmationScreen(
+              reservationId: state.pathParameters['reservationId']!,
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${AppRoutes.reservationPrefix}/:reservationId',
+        pageBuilder: (context, state) {
+          return _fadeTransitionPage(
+            ReservationDetailScreen(
+              reservationId: state.pathParameters['reservationId']!,
+            ),
+          );
         },
       ),
     ],

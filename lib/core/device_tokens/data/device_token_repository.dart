@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart' as fs;
+
 import '../domain/device_token.dart';
 
 /// Storage for [DeviceToken] — mirrors every other repository interface's
@@ -65,5 +67,68 @@ class InMemoryDeviceTokenRepository implements DeviceTokenRepository {
       if (deviceToken.token == token) return deviceToken;
     }
     return null;
+  }
+}
+
+/// Faz R.3C — the real, production-backing implementation. `deviceTokens`
+/// is already owner-scoped in `firestore.rules` (own-uid read/write,
+/// `organizationIdUnchanged()` on update) — no rules change was needed for
+/// this repository. Every record is a full document at
+/// `deviceTokens/{deviceToken.id}`, `deviceToken.id` generated client-side
+/// by [DeviceTokenIdGenerator] (mirrors [InMemoryDeviceTokenRepository]'s
+/// own id scheme) rather than a Firestore auto-id, so [save] is always a
+/// deterministic `.set()`, never a query-then-write.
+class FirestoreDeviceTokenRepository implements DeviceTokenRepository {
+  FirestoreDeviceTokenRepository({fs.FirebaseFirestore? firestore})
+      : _firestore = firestore ?? fs.FirebaseFirestore.instance;
+
+  final fs.FirebaseFirestore _firestore;
+
+  fs.CollectionReference<Map<String, dynamic>> get _collection =>
+      _firestore.collection('deviceTokens');
+
+  @override
+  Future<void> save(DeviceToken deviceToken) async {
+    await _collection.doc(deviceToken.id).set({
+      'uid': deviceToken.uid,
+      'organizationId': deviceToken.organizationId,
+      'token': deviceToken.token,
+      'platform': deviceToken.platform,
+      'registeredAt': fs.Timestamp.fromDate(deviceToken.registeredAt),
+      'revokedAt': deviceToken.revokedAt == null
+          ? null
+          : fs.Timestamp.fromDate(deviceToken.revokedAt!),
+    });
+  }
+
+  @override
+  Future<List<DeviceToken>> findActiveByUid(String uid) async {
+    final snapshot = await _collection
+        .where('uid', isEqualTo: uid)
+        .where('revokedAt', isNull: true)
+        .get();
+    return snapshot.docs.map((d) => _map(d.id, d.data())).toList();
+  }
+
+  @override
+  Future<DeviceToken?> findByToken(String token) async {
+    final snapshot =
+        await _collection.where('token', isEqualTo: token).limit(1).get();
+    if (snapshot.docs.isEmpty) return null;
+    final doc = snapshot.docs.first;
+    return _map(doc.id, doc.data());
+  }
+
+  DeviceToken _map(String id, Map<String, dynamic> data) {
+    final revokedAt = data['revokedAt'] as fs.Timestamp?;
+    return DeviceToken(
+      id: id,
+      uid: data['uid'] as String,
+      organizationId: data['organizationId'] as String,
+      token: data['token'] as String,
+      platform: data['platform'] as String,
+      registeredAt: (data['registeredAt'] as fs.Timestamp).toDate(),
+      revokedAt: revokedAt?.toDate(),
+    );
   }
 }

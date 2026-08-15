@@ -295,11 +295,49 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Related Modules**: Table/QR, Payments, POS
 
 ### BR-TABLE-005 — Server-side-only QR token resolution
-- **Status**: ROADMAP
+- **Status**: VERIFIED
 - **Rule**: The QR token is opaque; table/branch identity must be resolved server-side only, never
-  parsed client-side. No backend exists to enforce this yet.
+  parsed client-side. `resolveTableQrToken`/`openTableGuestSession` (`functions/src/`, emulator-
+  verified) are the sole place a token maps to `organizationId`/`restaurantId`/`branchId`/`tableId`,
+  reading `tableQrCodes`/`restaurantTables` via the Admin SDK (both fail-closed to any client per
+  `firestore.rules`'s default-deny catch-all). `resolveTableQrToken`'s public response is itself
+  minimized to a `TableQrPublicPreview` (status + display names only) — no internal id ever leaves the
+  server through it. **Phase 3**: `QrScannerScreen` is wired onto these real backend functions (via
+  `TableGuestSessionGateway`) — the client never parses a token itself. The pre-existing, in-memory dev
+  classes (`ResolveTableQrToken`, `DevTableQrSeed`, etc.) remain in the codebase, unreferenced by
+  production screens, per explicit instruction not to remove them.
 - **Owner Agent**: firebase_engineer
 - **Related Modules**: Table/QR
+
+### BR-TABLE-008 — Table Guest Session customer identity model (Phase 3/3.1)
+- **Status**: VERIFIED
+- **Rule**: Two independent, deliberately separate conditions gate a `dineInQr` order — table
+  authorization and customer identity never substitute for each other:
+  - **Table authorization** (required for both): a live, owned, correctly-scoped `tableGuestSessions`
+    record — `request.auth.uid == session.guestAuthUid`, `status == 'active'`, `expiresAt >
+    request.time`, and organization/restaurant/branch/table all matching the order's own claimed
+    scope. No valid Table Guest Session → the order is denied, full stop, regardless of who's asking.
+  - **Customer identity** (independent of the above): `Order.customerId` is the real, phone-verified
+    Abaküs customer uid (`AuthSession.uid`, BR-AUTH-004) when one is signed in, `null` for an
+    anonymous/guest technical identity. Never inferred from `FirebaseAuth.instance.currentUser.uid`
+    alone — the Firestore rule additionally requires `request.auth.token.firebase.sign_in_provider ==
+    'phone'` (empirically verified against the local Auth Emulator: `'anonymous'` for
+    `signInAnonymously()`, `'phone'` for a real phone sign-in — a claim Firebase itself issues per auth
+    flow, never client-settable) before a `customerId` claim is trusted at all.
+  - `Order.guestAuthUid` is an **immutable ownership snapshot**, independent of `customerId`: set to
+    the raw technical Firebase Auth uid for every `dineInQr` order regardless of whether it also
+    carries a real `customerId`. Read authorization checks this field directly
+    (`resource.data.guestAuthUid == request.auth.uid`) — never a live join to `tableGuestSessions` — so
+    a guest never loses access to their own order history if that session record later expires or is
+    cleaned up.
+
+  **Summary**:
+  - `GUEST + VALID TABLE QR` → order allowed, `customerId = null`, no Boncuk/loyalty, no CRM profile.
+  - `AUTHENTICATED CUSTOMER + VALID TABLE QR` → order allowed, `customerId` = real uid, order history/
+    CRM/loyalty eligibility preserved exactly like any other customer order.
+  - `ANY USER + NO VALID TABLE QR` → `dineInQr` order denied, regardless of customer identity.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Table/QR, Orders, Auth, CRM
 
 ### BR-TABLE-006 — Floor plan and live floor map (Phase 3 Sprint 3D)
 - **Status**: VERIFIED
@@ -439,26 +477,63 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 # Pricing Rules
 
 ### BR-PRICE-001 — Takeaway uses direct-store (dine-in) pricing
-- **Status**: DECIDED
-- **Rule**: Takeaway is priced identically to walk-in dine-in — not an independent third pricing
-  tier — since it isn't routed through a marketplace's commission structure.
+- **Status**: **SUPERSEDED by BR-PRICE-004** (2026-08-10) — see that entry and DL-035. Kept here,
+  not deleted, per this doc's own "decisions are recorded" discipline: this was a real, explicit
+  2026-07-25 decision, not a mistake being erased.
+- **Rule (as originally decided, no longer in force)**: Takeaway is priced identically to walk-in
+  dine-in — not an independent third pricing tier — since it isn't routed through a marketplace's
+  commission structure.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Orders, Menu, Payments
 
 ### BR-PRICE-002 — Server-authoritative pricing
-- **Status**: DECIDED (principle) — enforcement is **ROADMAP** (no backend exists)
+- **Status**: DECIDED (principle) — **PARTIALLY ENFORCED** (2026-08-10, Faz D.3; catalog completeness
+  and the last client-authoritative path closed by Faz D.3.1, same date): takeaway order creation (both
+  the QR-guest and authenticated-app scenarios, via `submitTakeawayOrder`) is now fully
+  server-authoritative — product identity/availability/category/price, modifier identity/price,
+  channel-adjusted pricing, and computed totals are independently resolved server-side from a
+  Firestore-canonical catalog now covering the **real, full menu** (7 categories/79 products/64 bowl
+  ingredients, migrated from the real Dart `AbakusMenuCatalog` — Faz D.3.1), not the ~5-product
+  representative subset Faz D.3 shipped with. As of Faz D.3.1, takeaway has exactly **one** live
+  order-creation mechanism for both scenarios — the pre-existing authenticated-app direct-Firestore-write
+  path (Faz C) was migrated onto `submitTakeawayOrder` and its `firestore.rules` create branch removed.
+  Every other channel (staff POS, dine-in, delivery, discounts/coupons/Boncuk/payment outcomes/stock)
+  remains **ROADMAP** — enforcement is not yet backend-verified for any of them, and this entry's
+  original "no backend exists" caveat still applies to those. See BR-TAKEAWAY-003 for the
+  takeaway-specific detail.
 - **Rule**: Prices, discounts, coupons, Boncuk, payment outcomes, stock, and order totals are always
   computed and confirmed server-side, never trusted from a client-submitted value.
 - **Owner Agent**: security_engineer (enforcement) / restaurant_domain (rule definition)
 - **Related Modules**: Orders, Payments, Loyalty, Stock/Inventory
+- **Business Rule IDs**: BR-TAKEAWAY-003 (takeaway-specific enforcement detail, Faz D.3)
 
 ### BR-PRICE-003 — Single channel-agnostic price today
-- **Status**: VERIFIED (gap)
-- **Rule**: `MenuProduct.basePrice` is one price field with no per-channel or per-marketplace
-  override — BR-PRICE-001/BR-MKTPRICE-001's channel-pricing rules have no domain-model field to hold
-  a second price yet.
+- **Status**: **PARTIALLY RESOLVED** (2026-08-10) — `MenuProduct.channelPriceOverrides` now exists
+  (`lib/features/menu/domain/models/menu_product.dart`), so a per-channel override field is no longer
+  missing. The gap this entry originally flagged (BR-PRICE-001 having no domain-model field to hold a
+  second price) is closed for takeaway; BR-MKTPRICE-001's marketplace-pricing case is unaffected and
+  still unresolved.
+- **Rule (as originally decided)**: `MenuProduct.basePrice` is one price field with no per-channel or
+  per-marketplace override — BR-PRICE-001/BR-MKTPRICE-001's channel-pricing rules have no
+  domain-model field to hold a second price yet.
 - **Owner Agent**: restaurant_domain (decision) / flutter_architect (model change)
 - **Related Modules**: Menu, Orders
+
+### BR-PRICE-004 — Gel Al (takeaway) channel pricing differential
+- **Status**: DECIDED — supersedes BR-PRICE-001 for the takeaway channel specifically
+- **Rule**: Takeaway (Gel Al) is no longer priced identically to dine-in. Every non-drink product
+  defaults to `basePrice + 20 TL` on the takeaway channel; every product in the İçecekler
+  (`cat_icecekler`) category is exempted and stays at `basePrice + 0 TL`. Bowl Builder ("Kendi
+  Bowl'unu Yarat") applies the same +20 TL adjustment exactly once per ordered bowl unit, added to the
+  sum of its selected ingredients — never per ingredient/modifier. Both the category-level default and
+  any per-product override are configurable data (`ChannelPricingPolicyRepository`/
+  `MenuProduct.channelPriceOverrides`), not hardcoded values, and the same mechanism is meant to extend
+  to future channels (delivery, marketplace) without a new pricing type. Dine-in, delivery, and every
+  other channel are unaffected — this rule only configures a default for `OrderChannel.takeaway`.
+- **Owner Agent**: restaurant_domain (decision) / flutter_architect (implementation,
+  `ChannelPriceResolver`/`ChannelPricingPolicy`)
+- **Related Modules**: Orders, Menu, Bowl Builder, Payments
+- **Business Rule IDs**: supersedes BR-PRICE-001; see DL-035
 
 # VAT and Tax Rules
 
@@ -1035,6 +1110,302 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
   `stockConsumed` fields are explicit `false` markers for that deferred work.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Orders, Kitchen, CRM, Inventory
+
+### BR-ORDER-014 — Gel Al (takeaway) pickup mode/time and contact-data snapshot (Faz B, 2026-08-10)
+- **Status**: VERIFIED (model only — no server-side pickup-time validation yet, see BR-PRICE-002's
+  same enforcement caveat)
+- **Rule**: `Order.pickupMode` (`PickupMode.asap | .scheduled`) and `Order.pickupTime` are `null` for
+  every non-takeaway order. `pickupMode == PickupMode.scheduled` requires a non-null `pickupTime` —
+  enforced by `Order`'s own constructor assertion (debug/test-time; genuine server-side "is this
+  time actually achievable" validation is separate, future work). `Order.contactFirstName`/
+  `contactLastName`/`contactPhone` are an immutable snapshot captured at checkout time for a guest
+  Gel Al order — **never** an identity or authorization source (mirrors how `OrderLine.productName`
+  snapshots rather than re-resolves later); reused as-is for an authenticated in-app takeaway order
+  rather than a duplicate customer-profile field set. `Order.takeawayEntrySessionId` references the
+  (not-yet-built) server-resolved Gel Al entry session a guest kiosk-QR order was authorized under —
+  the takeaway analogue of `guestSessionId`, `null` for every other order.
+- **Owner Agent**: restaurant_domain (decision) / flutter_architect (implementation, `order.dart`/
+  `pickup_mode.dart`)
+- **Related Modules**: Orders, Menu
+- **Business Rule IDs**: see `docs/decisions.md` ADR-027 Faz B
+
+### BR-TAKEAWAY-001 — Server-side-only takeaway QR token resolution + canonical chain validation (Faz D.2, 2026-08-10)
+- **Status**: VERIFIED
+- **Rule**: A kasadaki (register) Gel Al QR token is opaque; branch/restaurant/organization identity
+  must be resolved server-side only, never parsed or trusted client-side — mirrors BR-TABLE-005 exactly,
+  extended one layer further. `resolveTakeawayQrToken`/`openTakeawayGuestSession`
+  (`functions/src/`, emulator-verified) are the sole place a token maps to
+  `organizationId`/`restaurantId`/`branchId`, reading `takeawayQrCodes` via the Admin SDK (client-read
+  denied, fail-closed catch-all, same as `tableQrCodes`). Unlike a table QR (whose `restaurantTables`
+  target already denormalizes correct identity), a takeaway QR's claimed
+  `organizationId`/`restaurantId`/`branchId` is independently **re-verified against the real canonical
+  `organizations`/`restaurants`/`branches` chain** (Faz D.1/D.1.1) on every single resolution — existence,
+  `isActive` at both the organization and restaurant level, chain consistency (branch's own
+  `organizationId`/`restaurantId` must match what the QR claims), `branches.status == 'active'`, not
+  `emergencyStopped`, and `'takeaway' in supportedOrderChannelIds`. `resolveTakeawayQrToken`'s public
+  response is minimized to branch display name only — no internal id ever leaves the server through it.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Menu (Gel Al), Orders, Admin (branch provisioning)
+
+### BR-TAKEAWAY-002 — Takeaway Guest Session identity, TTL, and revocation model (Faz D.2, 2026-08-10)
+- **Status**: VERIFIED (session creation only — no order-create path consumes this session yet, that's
+  Faz D.3's `submitTakeawayOrder`)
+- **Rule**: `takeawayGuestSessions` is a separate collection from `tableGuestSessions` — deliberately no
+  `tableId` (a takeaway visit has no table). Technical identity: Firebase Anonymous Auth is sufficient
+  ([request.auth] non-null is the only requirement — an already-real, phone-verified session is also
+  accepted without modification); `guestAuthUid = request.auth.uid`; this function never creates a
+  `customers/{uid}` document, never touches CRM, never grants loyalty — identical to
+  `openTableGuestSession`'s own BR-TABLE-008 guarantee for the dine-in case.
+  - **TTL — RECOMMENDED decision, no prior business rule existed**: 30 minutes by default
+    (`takeawayGuestSessionConfig.ts`'s `TAKEAWAY_GUEST_SESSION_TTL_MINUTES`, env-overridable, never
+    client-influenced) — deliberately **not** copied from `tableGuestSessionConfig.ts`'s 6-hour
+    dine-in-visit default: a takeaway QR guest is completing a single register-side checkout, not
+    settling into a multi-course meal. 30 minutes covers a customer briefly interrupted mid-checkout
+    without leaving a technical identity's session usable for hours after they've left.
+  - **Idempotency**: a second `openTakeawayGuestSession` call by the same `guestAuthUid` for the same
+    `qrTokenId` reuses the existing active, unexpired session rather than minting a new one — scoped
+    per-caller, so a different customer scanning the same physical QR always gets an independent
+    session; ownership is uid-based, never token-based alone.
+  - **Revocation behavior — deliberate security tradeoff, stated explicitly**: revoking/rotating a
+    `takeawayQrCodes` token stops *new* sessions from being opened against it (every resolution re-checks
+    the QR document's current `status`) but does **not** retroactively invalidate a session already
+    granted — a session's own `status`/`expiresAt` is the sole authority for its own remaining lifetime,
+    mirroring BR-TABLE-008's `canReadAsTableGuest` precedent (order-reading is independent of the
+    originating `tableGuestSessions` document's continued existence) applied to the QR side instead.
+    Revocation is meant to stop future abuse of a specific token, not to forcibly interrupt an
+    in-progress checkout — and the 30-minute TTL already bounds the exposure window regardless. A future
+    "kill all sessions for this token" admin action does not exist yet (OPTIONAL finding).
+- **Owner Agent**: security_engineer (session/identity model) / restaurant_domain (TTL business
+  judgment)
+- **Related Modules**: Orders, Auth, CRM (explicitly NOT touched)
+- **Business Rule IDs**: see `docs/decisions.md` ADR-027 Faz D.2
+
+### BR-TAKEAWAY-003 — Server-authoritative takeaway pricing and order creation (Faz D.3, 2026-08-10)
+- **Status**: VERIFIED
+- **Rule**: `submitTakeawayOrder` (`functions/src/submitTakeawayOrder.ts`) is the sole authority for
+  organization/restaurant/branch scope, product identity/availability/category/price, modifier
+  identity/price, channel-adjusted pricing, computed totals, pickup semantics, and initial status for
+  both takeaway scenarios (QR guest and authenticated app customer) it serves. A client-submitted price
+  of any kind is never read — the accepted request shape has no `unitPrice`/`subtotal`/`grandTotal`
+  field at all for either path. Product/modifier/category identity is resolved against a
+  Firestore-canonical catalog (`menuProducts`/`bowlIngredients`/`channelPricingPolicies` —
+  `docs/firestore_data_model.md`), independently re-validating existence, availability, tenant
+  ownership (a productId belonging to a different restaurant is rejected), and modifier validity on
+  every submission — never trusting a client's claimed category, price, or modifier selection.
+  Channel-adjusted pricing follows Faz A's exact precedence (BR-PRICE-004): explicit channel price >
+  fixed channel adjustment > category override > channel default > zero; Bowl Builder's channel
+  adjustment applies exactly once per bowl unit, never per ingredient, mirrored server-side from
+  `ChannelPriceResolver.resolveBowlUnitPrice`'s own contract. QR guest orders require a valid
+  `takeawayGuestSessions` document (BR-TAKEAWAY-002) read server-side inside the same transaction;
+  scope (`organizationId`/`restaurantId`/`branchId`) is derived from that session, never client input.
+  Authenticated orders validate their client-supplied `restaurantId`/`branchId` against the real
+  canonical chain (`takeawayScope.ts`'s `resolveActiveTakeawayBranch` — the same function
+  `resolveTakeawayQrTokenInternal` uses, BR-TAKEAWAY-001) and require `pickupTime >= serverNow + 20
+  minutes` (the server's own clock, never the client's) — QR guest orders are always `pickupMode:
+  'asap'`/`pickupTime: null`, forced server-side regardless of what the request contains; a QR guest
+  request that attempts to supply authenticated-branch fields (`pickupMode`/`pickupTime`/`restaurantId`/
+  `branchId`) is rejected outright (`permission-denied`), not silently ignored.
+- **Migration status (updated 2026-08-10, Faz D.3.1)**: the previously-deferred authenticated in-app
+  takeaway flow (`TakeawayCheckoutScreen`) is now migrated — it calls `submitTakeawayOrder` through a
+  new `SubmitTakeawayOrderGateway` (`lib/features/takeaway/data/submit_takeaway_order_gateway.dart`)
+  and no longer writes to Firestore directly. `firestore.rules`'s `isValidAuthenticatedTakeawayOrder`
+  branch has been removed. See `docs/decisions.md` ADR-027 Faz D.3.1 for the full migration decision and
+  verification; ADR-027 Faz D.3 for the original deferral rationale this closes.
+- **Dispatch model correction (updated 2026-08-11, Faz D.4.1)**: which of the two branches above a
+  request takes is decided by **entry mode** — whether the request references a `takeawayGuestSessions`
+  document (`takeawaySessionId` present) — never by which Firebase Auth provider backs the caller's
+  uid. A real, phone-verified customer who reaches the QR guest flow (because `TechnicalIdentityProvider`
+  correctly never overwrites their existing session, per BR-TAKEAWAY-005) still gets a guest order:
+  `customerId: null`, `pickupMode: 'asap'`, `guestAuthUid` set to their own real uid. Only requests with
+  no `takeawaySessionId` at all fall into the authenticated in-app branch, which still requires
+  `sign_in_provider === 'phone'`. Previously the dispatch keyed on the auth provider first, which
+  incorrectly rejected exactly this legitimate real-customer-via-QR case — see `docs/decisions.md`
+  ADR-027 Faz D.4.1 for the full root cause and fix.
+- **Owner Agent**: security_engineer (authoritative-pricing enforcement) / restaurant_domain (pricing
+  rule fidelity)
+- **Related Modules**: Orders, Menu, Auth
+- **Business Rule IDs**: BR-PRICE-002 (partially resolved), BR-PRICE-004 (precedence mirrored),
+  BR-TAKEAWAY-001/002 (chain validation, session model reused); see `docs/decisions.md` ADR-027 Faz D.3
+
+### BR-TAKEAWAY-004 — Takeaway order submission idempotency (Faz D.3, 2026-08-10)
+- **Status**: VERIFIED
+- **Rule**: `submitTakeawayOrder` requires a client-supplied `submissionKey`. The order's Firestore
+  document id is derived deterministically as `sha256(actorUid|submissionKey)` inside the write
+  transaction — never a client-chosen id, and never the caller-supplied `Order.id`
+  external-identity pattern Faz C's own `SubmitCustomerOrder.call()` override uses (that pattern lets a
+  caller pick an arbitrary id; this derivation is scoped to the caller's own uid specifically so no
+  actor can ever collide with, or overwrite, another actor's order — a real security tightening over
+  the untrusted-external-id precedent, applied at this new boundary). The exact, already-validated
+  request payload is hashed into a `takeawaySubmissionFingerprint` stored on the order: a retry with the
+  same key and an unchanged effective payload reuses the existing order (`duplicate: true` in the
+  response, no new write); a retry with the same key but a **different** payload is rejected
+  (`failed-precondition`), fail-closed, leaving the original order untouched — never silently
+  overwritten or silently ignored. Two different actors may use the identical `submissionKey` value
+  with no interaction at all, since the derivation always includes the actor's own uid.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Orders
+- **Business Rule IDs**: see `docs/decisions.md` ADR-027 Faz D.3
+
+### BR-TAKEAWAY-005 — Gel Al QR guest Flutter/web customer flow (Faz D.4, 2026-08-11)
+- **Status**: VERIFIED
+- **Rule**: A customer scanning a kasadaki Gel Al QR reaches a public, login-free route
+  (`AppRoutes.takeawayGuest`/`/takeaway/:token`) that `AppRouteGuard` never redirects to onboarding/
+  login/OTP, regardless of the caller's current session state — this bypass is checked first,
+  unconditionally, before the guard's existing "signed in -> redirect to `/main`" branch, which would
+  otherwise hijack the route for anyone already signed in (real customer or existing guest). The flow is
+  `resolveTakeawayQrToken` (public preview, only `branchDisplayName` ever shown — the client never
+  derives organization/restaurant/branch identity from the token itself) -> explicit customer
+  confirmation (never automatic, so a stray URL prefetch can never silently mint a real session) ->
+  `TechnicalIdentityProvider.ensureSignedIn()` (reused verbatim from the dine-in QR flow — anonymous
+  sign-in only when no session exists at all; an existing session, real or guest, is never overwritten)
+  -> `openTakeawayGuestSession` -> `shoppingChannelProvider.selectTakeaway(...)` with the session's own
+  server-derived branch scope -> the existing `MenuScreen`/`ProductDetailScreen`/Bowl Builder screens,
+  unmodified (no parallel menu system). Checkout (`TakeawayGuestCheckoutScreen`) asks only for
+  ad/soyad/telefon — no account, no OTP, no password, no pickup-time picker (ASAP is the only guest
+  semantics, forced server-side by `submitTakeawayOrder`'s own guest branch, BR-TAKEAWAY-003). Contact
+  phone is normalized client-side via `TurkishPhoneNumber` before submission — never an authorization
+  source. `OrderSuccessScreen` never implies loyalty/Boncuk accrual for a guest order (`customerId` is
+  always `null` for this path).
+- **Idempotency across a browser refresh**: `TakeawayGuestSubmissionKeyStore`
+  (`shared_preferences`-backed, an already-approved dependency, not a new persistence system) persists
+  only the current checkout attempt's `submissionKey`, keyed by guest session id — cart contents and
+  contact form fields are **not** restored across a refresh (a genuinely larger feature, out of this
+  phase's scope), but a retry that re-fills an equivalent order still reuses the same key, so the
+  backend's own `sha256(uid|submissionKey)` idempotency (BR-TAKEAWAY-004) recognizes it as the same
+  submission rather than creating a duplicate real order.
+- **Session expiry**: the client-side `TakeawayGuestContext.isExpiredAt` check (UX only —
+  `submitTakeawayOrder`'s own server-side session-liveness re-check, BR-TAKEAWAY-002, remains the actual
+  authority) disables the submit button and shows an explicit "QR kodu tekrar okut" message once the
+  30-minute guest session TTL elapses — never a silent failure or a raw server error surfaced to the
+  customer.
+- **Contact validation parity (updated 2026-08-11, Faz D.5)**: `TakeawayCheckoutScreen` (the
+  authenticated in-app flow) previously accepted any non-empty string as `contactPhone` — a real
+  validation gap this guest screen never had. It now reuses the exact same `TurkishPhoneNumber.
+  normalize` model and UI pattern (fixed "+90 " prefix, 10-digit-only local field) as this screen; the
+  session-prefilled phone (`AuthSession.phoneNumber`, stored as `+905XXXXXXXXX`) has its prefix stripped
+  before pre-filling so normalization still succeeds on first render. No new/parallel validator was
+  written. See `docs/decisions.md` ADR-027 Faz D.5.
+- **Owner Agent**: security_engineer (identity/session boundary) / ui_ux_designer (checkout flow)
+- **Related Modules**: Orders, Menu, Cart, Auth (technical identity only, never a customer account)
+- **Business Rule IDs**: BR-TAKEAWAY-001/002/003/004 (all reused, none changed); see
+  `docs/decisions.md` ADR-027 Faz D.4
+
+# Delivery Rules (Paket Servis)
+
+### BR-DELIVERY-001 — Client address data is never delivery-authorization truth (Faz P.1, 2026-08-13)
+- **Status**: DECIDED (foundation only — no real address-verification provider exists yet)
+- **Rule**: A client-supplied district/neighborhood/street/coordinates/address, even temporarily, can
+  never by itself authorize a delivery `Order` — this overrides the P.0 audit's own §20 recommendation
+  ("`submitDeliveryOrder` accepts a client-supplied pre-resolved address snapshot"), which is explicitly
+  REJECTED. Enforced at the type level: `DeliveryAddressSnapshot.serverVerifiedAt`
+  (`lib/features/orders/domain/models/delivery_address_snapshot.dart`) is a required, non-nullable
+  field — a snapshot cannot be constructed without it. `SavedAddress.toDeliveryAddressSnapshot()`
+  (`lib/features/orders/domain/models/saved_address.dart`) is the only sanctioned way to produce one,
+  and throws `AddressNotVerifiedForDeliveryViolation` unless `verificationStatus ==
+  AddressVerificationStatus.verified` (a `stale` address — previously verified, now suspect — is
+  explicitly **not** authorized either; it must be re-verified). No real address-verification provider
+  exists yet (deferred to Faz P.2); no production code path in Faz P.1 constructs a real, verified
+  `DeliveryAddressSnapshot` or a real delivery `Order` using one.
+- **Owner Agent**: security_engineer (decision) / restaurant_domain (delivery domain foundation)
+- **Related Modules**: Orders, Profile (address entry UI, unchanged)
+- **Business Rule IDs**: see `docs/decisions.md` Faz P.1
+
+### BR-DELIVERY-002 — Delivery channel pricing differential (Faz P.1, 2026-08-13)
+- **Status**: DECIDED — foundation configured, not yet live in any customer-facing UI
+- **Rule**: Delivery (Paket Servis) is priced from the same canonical Masa Satış Fiyatı
+  (`MenuProduct.basePrice`) as every other channel, via the existing, unmodified
+  `ChannelPriceResolver`/`ChannelPricingPolicy` engine (BR-PRICE-004's same mechanism, extended to a
+  new channel with zero engine changes). Every non-drink product defaults to `basePrice + 140 TL` on
+  the delivery channel; every product in the İçecekler (`cat_icecekler`) category is exempted to
+  `basePrice + 20 TL`. Bowl Builder applies the same +140 TL adjustment exactly once per ordered bowl
+  unit — added to the ingredient sum, never per ingredient — the same "once per bowl, never per
+  modifier" mechanism BR-PRICE-004 already established. **Deliberately not wired into the live
+  `InMemoryChannelPricingPolicyRepository`/`channelPricingPolicySnapshotProvider` chain**: that
+  repository backs at least one live customer screen (`bowl_builder_screen.dart`) that resolves a
+  channel-adjusted price unconditionally for whatever channel `shoppingChannelProvider` currently is,
+  with no takeaway-only gate — and `OrderChannel.delivery` is this app's existing *default* shopping
+  channel, so seeding it there would have silently changed a real customer-facing price today. The
+  approved values instead live as an isolated, unwired constant —
+  `DeliveryChannelPricingPolicy.value`
+  (`lib/features/menu/domain/pricing/delivery_channel_pricing_policy.dart`, backend mirror:
+  `functions/src/deliveryPricing.test.ts`'s policy fixture, reusing `takeawayPricing.ts`'s
+  channel-generic functions unmodified) — proven correct by tests against the same resolver every
+  other channel uses, ready for a future phase to wire into a real delivery checkout once one exists.
+- **Owner Agent**: restaurant_domain (decision) / flutter_architect (implementation, live-UI-safety
+  finding)
+- **Related Modules**: Orders, Menu, Bowl Builder
+- **Business Rule IDs**: extends BR-PRICE-004's mechanism; see `docs/decisions.md` Faz P.1
+
+### BR-DELIVERY-003 — Delivery checkout is Cash/Card-on-Delivery only at launch (Faz P.1, 2026-08-13)
+- **Status**: DECIDED — policy foundation only, no real checkout consumes it yet
+- **Rule**: The initial delivery-channel payment method list is exactly 7 methods, all collected by
+  the courier at the door, no online transaction: Kapıda Nakit, Kapıda Kredi/Banka Kartı, Kapıda
+  Pluxee Kod & Card, Kapıda Edenred Kod & Card, Kapıda Multinet Kod & Card, Kapıda Metropol Kod &
+  Card, Kapıda Setcard Kod & Card — underlying canonical ids `cash`, `credit_card`, `pluxee`,
+  `edenred`, `multinet`, `metropol_card`, `setcard` (reused from the existing `PaymentMethodSeedData`
+  catalog; the "Kapıda " display prefix is a UI concern, not a new catalog entry). `bank_transfer` and
+  `gift_voucher` are excluded, as is any online-payment method — the legacy `CheckoutScreen`'s "Online
+  Kredi/Banka Kartı" option must never become the real delivery payment flow. Enforced by
+  `DeliveryPaymentPolicy`/`InMemoryDeliveryPaymentPolicyRepository`
+  (`lib/features/payment/domain/models/delivery_payment_policy.dart`,
+  `lib/features/payment/data/delivery_payment_policy_repository.dart`) and its backend mirror
+  (`functions/src/deliveryPaymentPolicy.ts`, exports no callable). **Deliberately distinct from
+  `PaymentMethod.isActive`**: delivery-channel enablement is its own policy dimension
+  (`DeliveryPaymentPolicy.isAvailableForDeliveryCheckout` requires both `isActive` and
+  `isEnabledForDeliveryCheckout`), future-ready to enable additional methods (e.g. online payment) one
+  at a time without a code change, via `setEnabledForDeliveryCheckout` — no admin UI exists yet. No
+  `PaymentProviderAdapter` is ever invoked for a currently-enabled method.
+- **Owner Agent**: restaurant_domain (decision) / security_engineer (payment-authority review)
+- **Related Modules**: Payments, Orders
+- **Business Rule IDs**: reuses BR-PAY-001/012/013's catalog/snapshot mechanism; see
+  `docs/decisions.md` Faz P.1
+
+### BR-DELIVERY-004 — Google Places (New) address field mapping for Turkey (Faz P.2, 2026-08-13)
+- **Status**: VERIFIED — against a real coverage spike, not documentation alone
+- **Rule**: A real coverage spike against Google Places API (New) for Beşiktaş/Şişli/Beyoğlu/
+  Kağıthane/Sarıyer/Maslak/Okmeydanı found that Turkish addresses do **not** populate the
+  `sublocality_level_1`/`sublocality` component types Google's own generic documentation emphasizes
+  for neighborhood-level data. Mahalle (neighborhood) instead appears under
+  `administrative_area_level_4` — province is `administrative_area_level_1`, ilçe (district) is
+  `administrative_area_level_2`. This mapping is encoded directly in
+  `functions/src/googlePlacesFieldMapping.ts`'s `normalizePlaceDetails`, evidence-based rather than
+  assumed. A second real finding: "Okmeydanı" (one of the two named operational areas) is not itself
+  a single resolvable mahalle — it is a colloquial name spanning several official mahalles (Halil
+  Rıfat Paşa, Kaptan Paşa, Mahmut Şevket Paşa, ...) after Istanbul's 2008 mahalle restructuring; a
+  future operational-region admin screen (Faz P.3) must treat "Okmeydanı" as a label over a *set* of
+  real mahalles, never as one Google-resolvable value.
+- **Owner Agent**: restaurant_domain (decision) / security_engineer (verification architecture)
+- **Related Modules**: Orders (address foundation)
+- **Business Rule IDs**: see `docs/decisions.md` Faz P.2
+
+### BR-DELIVERY-005 — Address verification is server-independent, never client-trusted (Faz P.2, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `saveDeliveryAddress` (`functions/src/deliveryPlaces.ts`) independently re-resolves the
+  customer-selected `placeId` server-side via Google Place Details on every save — never trusting any
+  client-supplied address component, coordinate, or a `resolveAddressPlace` preview result the same
+  client received moments earlier. Verified by test: a save request carrying deliberately bogus
+  `provinceName`/`districtName`/`latitude`/`longitude`/`verificationStatus: 'verified'` values is
+  saved using only the server's own independently-resolved data — the bogus values are never even
+  read. If the provider cannot resolve province+district+coordinates together
+  (`isSufficientlyResolved`), the address is saved as `unverified`, never rejected outright and never
+  silently marked `verified` — matching Faz P.1's BR-DELIVERY-001 architecture rule exactly, now with
+  a real provider behind it for the first time.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Orders (address foundation)
+- **Business Rule IDs**: extends BR-DELIVERY-001; see `docs/decisions.md` Faz P.2
+
+### BR-DELIVERY-006 — Building number provenance, apartment number always customer input (Faz P.2, 2026-08-13)
+- **Status**: DECIDED
+- **Rule**: A delivery address's building number comes from the provider's own `street_number`
+  component when available; when the provider has none (a genuine, real gap — a mahalle-level
+  resolution has no street context), the customer's own typed override is used instead, and
+  `buildingNoSource` (`'provider'`/`'customer'`) records which — a customer-supplied building number
+  is never marked as provider-verified. Apartment number is unconditionally customer input in every
+  case — Google has no visibility into private unit/apartment inventory, and `saveDeliveryAddress`
+  rejects a save with no `apartmentNo` regardless of how well the rest of the address resolved.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders (address foundation)
+- **Business Rule IDs**: see `docs/decisions.md` Faz P.2
 
 # Cash Management
 
@@ -2945,12 +3316,13 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 
 ### DL-002 — Takeaway pricing policy
 - **Decision**: Takeaway uses the same direct-store price as dine-in.
-- **Status**: DECIDED
+- **Status**: **SUPERSEDED by DL-035** (2026-08-10) — see that entry. Kept here, not deleted, per
+  this doc's "decisions are recorded" discipline.
 - **Source**: User, during `restaurant_domain.md` creation session (via clarifying question, resolved
   in favor of this option).
 - **Date**: 2026-07-25
-- **Consequences**: Takeaway is not a third independent pricing tier; only marketplace pricing may
-  diverge from in-store pricing.
+- **Consequences (as originally decided, no longer in force)**: Takeaway is not a third independent
+  pricing tier; only marketplace pricing may diverge from in-store pricing.
 - **Related Modules**: Orders, Menu, Payments
 - **Business Rule IDs**: BR-PRICE-001
 
@@ -3549,7 +3921,8 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 # Account Deletion & Consent
 
 ### BR-ACCOUNT-001 — Account deletion is a 7-day cooling-off request, cancellable, with idempotent
-  server-side anonymization and a PII-free audit trail (Phase 9 Sprint 9G, ADR-026)
+  server-side anonymization and a PII-free audit trail (Phase 9 Sprint 9G, ADR-026; authorization
+  hardened Faz D.3.2.1, 2026-08-11)
 - **Status**: VERIFIED (Dart lifecycle fully tested; Cloud Function emulator-verified; not deployed)
 - **Rule**: Requesting deletion (`RequestAccountDeletion`) is idempotent (a second request for an
   already-active uid returns the existing request, never a duplicate) and starts a 7-day cooling-off
@@ -3565,7 +3938,21 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
   the CRM `Customer` record is anonymized this sprint (media/loyalty/notification cascading has no real
   repository yet to reach into); orders/audit trails are deliberately left untouched (`Order.customerId`
   keeps the same `uid` — a stable, non-PII reference on its own), satisfying "legally-required records
-  retained with identity minimization."
+  retained with identity minimization." The Firebase Auth account itself is never deleted by
+  `processAccountDeletion` — only the Firestore CRM record is anonymized.
+- **Security boundary (Faz D.3.2.1, closes a REQUIRED finding)**: `processAccountDeletion` previously had
+  no `request.auth` check of any kind, and `deletionRequests` ids are sequential/guessable
+  (`SequentialAccountDeletionRequestIdGenerator`) — any unauthenticated caller who guessed a `requestId`
+  could trigger another customer's already-due deletion side-effect. The callable now requires a real,
+  phone-verified caller (`request.auth.token.firebase.sign_in_provider == 'phone'`, the same identity
+  model `submitTakeawayOrder` uses — an anonymous technical identity is always denied) and independently
+  re-verifies `deletionRequests/{requestId}.uid === request.auth.uid` before processing anything — the
+  affected account is always derived from that server-written field (itself constrained by
+  `firestore.rules`'s `create` rule to `== request.auth.uid`), never from a client-supplied uid, which
+  the accepted payload has never contained. A mismatch resolves identically to a genuinely unknown
+  `requestId` (`not-found`) — the endpoint is never usable as an account/request-existence oracle. Also
+  now App Check-ready, sharing `appCheckConfig.ts`'s `shouldEnforceAppCheck()` like every other
+  App-Check-ready Function.
 - **Owner Agent**: security_engineer
 - **Related Modules**: Auth, Profile, CRM, Platform (Firebase infrastructure)
 
@@ -3699,11 +4086,965 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
   `docs/observability_and_operations.md` and `docs/deployment_and_operations.md`.
 - **Related Modules**: Platform (Firebase infrastructure), all modules (runbook coverage)
 
+### DL-035 — Gel Al (takeaway) channel pricing supersedes DL-002/BR-PRICE-001
+- **Decision**: DL-002/BR-PRICE-001 ("takeaway uses the same direct-store price as dine-in") is
+  superseded for the takeaway channel. Takeaway now defaults to `basePrice + 20 TL` for every
+  non-drink product; İçecekler (`cat_icecekler`) is exempted at `+0 TL`. Bowl Builder applies the same
+  +20 TL exactly once per ordered bowl unit, on the ingredient-sum total, never per ingredient. The
+  rule is implemented as admin-editable data (`ChannelPricingPolicyRepository` category defaults +
+  `MenuProduct.channelPriceOverrides` per-product overrides), generically shaped over every
+  `OrderChannel` so a future delivery/marketplace channel price reuses the same mechanism rather than
+  a new one. Dine-in/delivery/reservation pricing is unchanged — only a takeaway default was
+  configured this sprint.
+- **Status**: DECIDED
+- **Source**: User, explicit instruction during the Gel Al / Takeaway architecture-analysis task,
+  after being shown the DL-002/BR-PRICE-001 conflict and choosing to supersede rather than keep the
+  old rule.
+- **Date**: 2026-08-10
+- **Consequences**: BR-PRICE-001 is marked SUPERSEDED (not deleted). New BR-PRICE-004 records the new
+  rule. BR-PRICE-003's original gap (no per-channel price field) is closed by
+  `MenuProduct.channelPriceOverrides`; BR-MKTPRICE-001's marketplace case is untouched and still open.
+- **Related Modules**: Orders, Menu, Bowl Builder, Payments
+- **Business Rule IDs**: BR-PRICE-004 (new), supersedes BR-PRICE-001, partially resolves BR-PRICE-003
+
+# Reservations
+
+### BR-RESERVATION-001 — Real, phone-verified customer identity required (Faz R.1A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `submitReservation` (`functions/src/submitReservation.ts`) requires
+  `request.auth.token.firebase.sign_in_provider == 'phone'` — the same canonical real-customer check
+  `submitTakeawayOrder`'s authenticated branch uses. An anonymous Firebase Auth identity (or any
+  non-phone provider) is rejected outright, `permission-denied`, before any other validation runs.
+  Unlike the Gel Al/dine-in QR guest flows, there is no anonymous-guest path for reservations at all —
+  `docs/decisions.md` ADR-027 Faz R.0.6 §8's own explicit design decision.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Auth, Reservations
+
+### BR-RESERVATION-002 — Full slot never rejects the request; capacity only decides whether a hold is created (Faz R.1A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: A `Reservation` is always created (`status: 'pendingRestaurantApproval'`), regardless of
+  whether the requested area/time has capacity at submission time. Capacity is checked transaction-
+  safely (`reservationSlotOccupancy`, deterministic per-minute-interval buckets — see
+  `docs/firestore_data_model.md`) against the area's own `capacity`; if available, an
+  `initialRequest`-purpose `reservationHold` is created and `requestedAvailabilityAtSubmission ==
+  'available'`; if not, no hold is created and `requestedAvailabilityAtSubmission == 'unavailable'` —
+  the restaurant's own alternative-proposal workflow (not built in Faz R.1A) is expected to handle
+  that case in a later phase. This is `docs/decisions.md` ADR-027 Faz R.0.3's own explicit product
+  rule, now implemented.
+- **Owner Agent**: restaurant_domain / security_engineer (transaction safety)
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-003 — Minimum advance time and time-normalization invariants (Faz R.1A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `requestedTime` must be `>= serverNow + MINIMUM_ADVANCE_MINUTES` (30 minutes, USER-LOCKED
+  platform constant, never branch-configurable — `functions/src/reservationConfig.ts`), checked against
+  the server's own clock only, inclusive `>=` (a request exactly 30:00 away is accepted; 29:59 away is
+  rejected). `requestedTime` must also be minute-aligned (zero seconds/milliseconds, checked via safe
+  epoch arithmetic — `timestamp % 60000 == 0`) and aligned to the branch's own
+  `ReservationPolicy.slotIntervalMinutes` grid, and must fall within `ReservationPolicy
+  .bookingHorizonDays` — **updated, Faz R.1A.1**: the horizon check is a branch-local *calendar-day*
+  boundary (`functions/src/reservationTimezone.ts`, Node's built-in `Intl`/ICU timezone database,
+  DST-correct), never a bare `serverNow + N*24h` epoch approximation; slot/minute alignment remain pure
+  epoch arithmetic. `docs/decisions.md` ADR-027 Faz R.0.2/R.0.7/R.1A.1's own locked rules, now enforced.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-004 — Branch reservation capability is `ReservationPolicy.enabled`, never `supportedOrderChannelIds` (Faz R.1A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: Whether a branch accepts reservation requests at all is decided solely by
+  `reservationPolicies/{branchId}.enabled`. `OrderChannel.reservationPreorder` remains purely a label a
+  future preorder Order might carry — this phase creates no Order of any kind, and branch capability
+  checking never consults `supportedOrderChannelIds`. `docs/decisions.md` ADR-027 Faz R.0.5/R.0.6 §9's
+  explicit correction of an earlier (R.0.4) draft that had conflated the two.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Menu
+
+### BR-RESERVATION-005 — Server-authoritative scope; cross-tenant reservation areas fail closed as not-found (Faz R.1A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `restaurantId`/`branchId`/`areaId` are always independently re-resolved and validated against
+  the real `organizations`/`restaurants`/`branches` canonical chain and `reservationAreas` — never
+  trusted as client-supplied authorization. An `areaId` belonging to a different branch/tenant than the
+  one being submitted against resolves identically to a genuinely unknown area id (`not-found`), never
+  confirming its existence to a probing caller — mirrors this codebase's own not-found-not-an-existence-
+  oracle precedent (`processAccountDeletion`, `resolveTakeawayQrTokenInternal`). **Updated, Faz
+  R.1A.1**: every one of these reads is now transaction-consistent (`tx.get()`, never a plain read) —
+  a write to any of them while `submitReservation`'s transaction is in flight is guaranteed to be
+  noticed (Firestore's own optimistic-concurrency retry), never silently committed against a stale
+  snapshot.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Multi-Tenant
+
+### BR-RESERVATION-006 — No direct-client-create path; Cloud Function is the sole writer (Faz R.1A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `reservations`/`reservationHolds`/`reservationSlotOccupancy`/`reservationAreas`/
+  `reservationPolicies` all deny every client write in `firestore.rules` — `submitReservation` (Admin
+  SDK) is the only writer. Unlike dine-in orders (which have a rules-validated, session-anchored direct-
+  create path), reservations have **no** direct-client-create path of any kind — `docs/decisions.md`
+  ADR-027 Faz R.0.5 §14's explicit backend-boundary decision: concurrency-safe capacity checking cannot
+  be safely expressed as a rules-only shape check.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-007 — Restaurant response requires manageReservations (manager tier and above) (Faz R.1B, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `respondToReservation` (`functions/src/respondToReservation.ts`) requires the caller's
+  `organizationAccess`/`roles` custom claims to include the target Reservation's own `organizationId`
+  and a role of `manager`, `admin`, or `tenantOwner` for that organization — mirrors
+  `role_permission_map.dart`'s `PosAuthorizedAction.manageReservations` tiering (base `staff`/`courier`
+  are never authorized) and `firestore.rules`' own `isOrgMember`/`hasRole` claim shape. The target
+  `organizationId` is always read server-side from the Reservation document itself, never accepted from
+  the client — cross-tenant staff access fails closed (`permission-denied`), never leaking whether the
+  reservation even exists.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Multi-Tenant, Staff Authorization
+
+### BR-RESERVATION-008 — Confirm re-validates capacity when the initial hold is unusable; never silently overbooks (Faz R.1B, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: Direct confirm requires the Reservation still `pendingRestaurantApproval` and
+  `responseDeadlineAt` not yet passed. If the initial hold is `active` and unexpired, it is consumed
+  (`heldPartySize` → `confirmedPartySize`). Otherwise a fresh, transaction-safe capacity check runs
+  against current occupancy — this is what lets a reservation that was full at submission
+  (`requestedAvailabilityAtSubmission: 'unavailable'`, BR-RESERVATION-002) still confirm later once
+  capacity opens. If capacity is unavailable either way, confirm fails `failed-precondition` — a
+  Reservation is never confirmed against capacity that isn't actually available.
+- **Owner Agent**: restaurant_domain / security_engineer (transaction safety)
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-009 — A Reservation carries at most one active change proposal; proposal rejection is never terminal (Faz R.1B, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `proposeChange` is only valid while the Reservation is `pendingRestaurantApproval` — the
+  status gate itself enforces "at most one active proposal" (a Reservation already `changeProposed`
+  cannot receive a second one), race-safe under concurrent staff actions via Firestore's own transaction
+  retry. Each proposal creates its own `alternativeProposal`-purpose hold
+  (`customerResponseDeadlineAt = min(now + ReservationPolicy.proposalHoldMinutes, proposedTime)`),
+  after releasing the Reservation's prior initial hold — never two simultaneous active holds. If the
+  customer rejects (or the proposal expires unanswered), the Reservation returns to
+  `pendingRestaurantApproval` — **not** a terminal state; the restaurant may propose again, confirm
+  directly, or reject outright.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-010 — Response-timeout and proposal-expiry are swept automatically; timeout is a reasonCode, not a new status (Faz R.1B, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: A Reservation must never be left pending forever. A scheduled sweep
+  (`functions/src/reservationSweep.ts`, `onSchedule`, every 5 minutes) resolves two cases: (1) a
+  Reservation still `pendingRestaurantApproval` past its own `responseDeadlineAt` is rejected with
+  `reasonCode: 'restaurantResponseTimeout'` (not a new terminal status — every other reject reason
+  already shares the same `rejected` status with a distinguishing `reasonCode`; a reason-specific status
+  for exactly this one case would be an inconsistent special case, not a genuinely distinct outcome);
+  (2) a proposal still `pendingCustomerResponse` past its own `customerResponseDeadlineAt` is marked
+  `expired` and its Reservation returns to `pendingRestaurantApproval`. Both release their associated
+  hold. Both re-validate their own precondition inside the resolving transaction — idempotent and
+  retry-safe; a document already resolved by a concurrent sweep run or a staff/customer action is
+  skipped, never double-processed. An already-expired proposal cannot be accepted even if the sweep has
+  not yet run — `respondToProposedChange`'s own accept path independently re-verifies the hold's
+  `expiresAt` against server time, never trusting the proposal's own status alone.
+- **Owner Agent**: restaurant_domain / security_engineer (idempotency/retry-safety)
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-011 — Bucket capacity accounting never goes negative and is never double-mutated (Faz R.1B, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: Every hold release/consume/expire is guarded by the caller checking the hold's own
+  `status == 'active'` first — a hold can never be released/consumed/expired twice by construction.
+  Bucket decrements (`heldPartySize`) are hard-clamped to `Math.max(0, current - partySize)` (read the
+  current value inside the same transaction, not a blind decrement) — `confirmedPartySize +
+  heldPartySize <= areaCapacity` holds at all times, verified under real concurrency (two reservations
+  racing to confirm into the same freed capacity — exactly one wins, the loser's transaction retries and
+  correctly observes capacity already claimed). No staff/customer callable retry double-mutates: every
+  mutation is gated on the current authoritative state matching what that action expects before any
+  write happens.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-012 — Physical table assignment requires a confirmed reservation and a canonical area match (Faz R.1C.1, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `assignReservationTable` requires `manageReservations` permission (via
+  `staffAuthorization.ts`, the same Faz R.1B.1 generic resolver — never a role check embedded in this
+  callable either), the target Reservation to be `status == 'confirmed'` with both `confirmedTime`/
+  `confirmedAreaId` set, and the target `restaurantTables` document to belong to the same organization/
+  restaurant/branch (cross-tenant fails closed as `not-found`, never distinguishable from a genuinely
+  unknown table id), be `isActive`, and carry a `reservationAreaId` matching the reservation's own
+  `confirmedAreaId` exactly — a table with no `reservationAreaId` configured fails closed, never
+  silently allowed into an area it was never declared to belong to. `restaurantTables.reservationAreaId`
+  is a new, additive field this phase introduces (no canonical `restaurantTables`<->`reservationAreas`
+  relation existed before — confirmed via research, not assumed).
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Reservations, Table Management
+
+### BR-RESERVATION-013 — Physical table occupancy is an exclusive lock, separate from area capacity (Faz R.1C.1, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `reservationTableOccupancy` is a deliberately distinct model from `reservationSlotOccupancy`
+  (BR-RESERVATION-002's area-capacity/party-size accounting) — a confirmed Reservation may exist with no
+  physical table assigned at all, and table occupancy never affects area capacity math. Each
+  `{tableId}__{slotStartEpoch}` bucket is a single exclusive lock (existence == occupied, not a
+  counter); two reservations whose `[confirmedTime, confirmedTime + reservationDurationMinutes)`
+  intervals overlap can never both hold the same table (`FAILED_PRECONDITION`, no mutation), while
+  adjacent (`[start,end)`-touching but non-overlapping) intervals and two different tables hosting the
+  same time window are both explicitly allowed. No open-ended overlap query is ever used as the source
+  of truth — every bucket is read deterministically by id, exactly like `reservationSlotOccupancy`'s own
+  precedent.
+- **Owner Agent**: restaurant_domain / security_engineer (transaction safety)
+- **Related Modules**: Reservations, Table Management
+
+### BR-RESERVATION-014 — Table reassignment is atomic; a conflict on the new table never disturbs the old one (Faz R.1C.1, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `assignReservationTable` also serves reassignment (same callable, same contract) — every
+  read (old table's occupancy/protection buckets, new table's occupancy buckets) happens before any
+  write, so a conflict on the new table is detected and the whole transaction fails *before* the old
+  table's lock is ever released. A successful reassignment atomically releases the old table's occupancy
+  and protection-minute membership and locks the new table's, in one transaction. Retrying an identical
+  assignment or an already-completed reassignment is a safe no-op (`duplicate: true`, no re-mutation).
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Reservations, Table Management
+
+### BR-RESERVATION-015 — QR reservation-time protection T-20 invariant and shared minute-bucket membership (Faz R.1C.1, 2026-08-12)
+- **Status**: VERIFIED (data only — QR enforcement itself is NOT built this phase)
+- **Rule**: `reservationTableProtections.protectionStartAt = confirmedTime - 20 minutes`
+  (`PROTECTION_LEAD_MINUTES`, USER-LOCKED platform constant, Faz R.0.4) and `protectionEndAt =
+  confirmedTime + reservationDurationMinutes`, both requiring `confirmedTime` to already satisfy the Faz
+  R.0.7 §2 minute-alignment invariant — fail closed, never silently rounded. Every whole minute in that
+  window gets a deterministic `tableProtectionMinuteBuckets/{tableId}__{epochMinute}` document; because
+  two non-overlapping reservations on the same table can have overlapping 20-minute protection windows,
+  a bucket's `reservationIds` is an array (never overwritten wholesale) — removing one reservation's
+  membership (via reassignment) preserves every other reservation still recorded in a shared bucket, and
+  only deletes the bucket once its array becomes empty. This is audit/cleanup-list data only — no QR
+  scan is ever blocked by it this phase.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Reservations, Table Management, QR
+
+### BR-RESERVATION-016 — Physical table assignment fails closed before exceeding Firestore's transaction write limit (Faz R.1C.1, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: A single Firestore transaction is subject to the same ~500-mutation cap as a batched write.
+  `assignReservationTable` enforces a structural, backend-only
+  `MAX_RESERVATION_DURATION_MINUTES_FOR_TABLE_ASSIGNMENT` (180 minutes — independent of any branch's own
+  configured `ReservationPolicy`, mirrors `submitReservation.ts`'s own `MAX_PARTY_SIZE_HARD_CAP`
+  precedent) *and* computes the real worst-case write count for the specific policy in play, refusing
+  (`RESOURCE_EXHAUSTED`) before attempting a single write if it would exceed a safe threshold — closing
+  the gap a duration-only cap would miss under a pathologically small `slotIntervalMinutes`.
+- **Owner Agent**: security_engineer / performance_engineer
+- **Related Modules**: Reservations, Table Management
+
+### BR-RESERVATION-017 — QR T-20 enforcement is server-authoritative, deterministic, and query-less (Faz R.1C.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `tableProtectionMinuteBuckets` (written since Faz R.1C.1) is now the real QR-blocking source
+  — both `resolveTableQrToken` and `openTableGuestSession` independently re-check it, fresh, against
+  their own call's server clock (`epochMinute = floor(serverNowMillis / 60000)`), via a deterministic
+  get-by-id only — never a query, never a scheduler dependency. A missing bucket, or one whose
+  `reservationIds` is empty, is ordinary `valid` behavior; a non-empty bucket resolves to a new
+  `reserved` status (distinct from the pre-existing `invalid`, since the required customer-facing
+  message differs). `openTableGuestSession` never trusts a prior `resolveTableQrToken` preview's
+  result — calling it directly, skipping the preview, is blocked identically.
+- **Owner Agent**: security_engineer / restaurant_domain
+- **Related Modules**: Reservations, Table Management, QR
+
+### BR-RESERVATION-018 — A reserved-table QR scan leaks no personal reservation data (Faz R.1C.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: The public `resolveTableQrToken` response for a `reserved` table contains only `{status:
+  'reserved'}` — no reservationId, customer name, phone, party size, time, or area/staff detail. The
+  customer-facing message is the exact fixed string "Bu masa rezerve edilmiştir. Lütfen yetkili ile
+  görüşün." — no reservation-specific interpolation of any kind.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, QR, Privacy
+
+### BR-RESERVATION-019 — A physical table has at most one live reservation table context at a time (Faz R.1C.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `activeReservationTableContext/{tableId}` is "live" only if `active == true` **and**
+  `serverNow < contextEndAt` — re-derived on every read, never assumed from the stored `active` flag
+  alone (no scheduler expires a stale context). `openReservationTable` requires `manageReservations`
+  permission, resolves `tableId` exclusively from `Reservation.assignedTableId` (never client-supplied),
+  and distinguishes two conflict kinds: an active *walk-in* `tableGuestSessions` session on the table is
+  soft (first call mutates nothing and returns a structured `activeSessionExists` conflict; a second call
+  with `acknowledgeActiveSessionConflict: true` proceeds); a *different Reservation's* already-live
+  context on the same table is hard and **never** overridable by that acknowledgement — two Reservations
+  can never simultaneously own one table's context. `assignReservationTable` reassignment hard-fails
+  while this exact invariant would otherwise be violated (no silent context migration) — staff must
+  `closeReservationTable` first.
+- **Owner Agent**: security_engineer / restaurant_domain
+- **Related Modules**: Reservations, Table Management
+
+### BR-RESERVATION-020 — Opening a reservation's table removes only its own protection membership (Faz R.1C.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `openReservationTable` reuses Faz R.1C.1's `removeReservationTableProtection` helper
+  verbatim — only the opening reservation's own `reservationIds` membership is removed from each minute
+  bucket it touches; a bucket shared with another reservation's overlapping protection window keeps that
+  other reservation's membership untouched, and a bucket left with zero remaining ids is deleted. A
+  later reservation on the same table remains correctly QR-blocked by its own, still-intact protection
+  window after an earlier one opens. `closeReservationTable` never restores protection — closing a table
+  early is an operational override, not a reversal.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Table Management, QR
+
+### BR-RESERVATION-021 — `reservationContextId` is a server-generated, immutable order-linkage snapshot — never an identity (Faz R.1C.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `openTableGuestSession` snapshots `reservationContextId` onto a new `tableGuestSessions`
+  document — the live `activeReservationTableContext`'s `reservationId`, or `null` for the ordinary
+  walk-in case — checked in this exact order: QR resolve (including the T-20 block) -> active context
+  read -> session create -> snapshot. The value never changes after creation: an old session opened
+  before a table was opened for a reservation keeps `reservationContextId: null` forever, even after
+  that reservation's context later goes live or expires. `Order.reservationContextId` mirrors the
+  session's own value 1:1 — Firestore Rules require exact equality (`session.get('reservationContextId',
+  null) == data.get('reservationContextId', null)`, missing-field-safe on both sides) for both dine-in-
+  QR order-create branches, so a client can neither omit the field, coerce a real context to `null`, nor
+  claim a different reservation's context. **Never an identity signal**: it never produces a
+  `customerId`, never inherits a reservation owner's uid, and never creates loyalty/CRM ownership —
+  `customerId`/`guestAuthUid` semantics (R.0.6/Phase 3.1's own locked identity model) are completely
+  unchanged by this field's presence.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Table Management, QR, Orders
+
+### BR-RESERVATION-022 — A reservation preorder is optional and priced at table/base price, never a Gel Al or delivery surcharge (Faz R.1D.1, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `submitReservation`'s optional `preorder: { items: [...] }` field is priced against the
+  canonical catalog with the channel hardcoded to `"reservationPreorder"` — normal products at canonical
+  base price, bowls at canonical ingredient total, both with zero channel adjustment (no restaurant has a
+  `"reservationPreorder"` entry in `channelPricingPolicies`, and the pricing engine has no "unknown
+  channel -> takeaway/default" fallback). `pricing.packagingFee`/`pricing.deliveryFee` are structurally
+  zero for this channel, exactly like takeaway/dine-in. Verified even when the same restaurant has real,
+  non-zero `takeaway`/`delivery` adjustments configured on the same policy document — a preorder still
+  prices at base.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders, Menu Pricing
+
+### BR-RESERVATION-023 — A preorder Order is a separate aggregate, linked via `Order.reservationContextId`/`Reservation.preorderOrderId`, created atomically with its Reservation (Faz R.1D.1, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `Order.reservationContextId == Reservation.id` for a `reservationPreorder`-channel order —
+  the field's Faz R.1C.2 table-context-snapshot meaning and this meaning coexist, disambiguated by
+  channel, never by a second field. `Reservation.preorderOrderId` is a nullable, immutable field,
+  deterministically derived — every confirm/reject/sweep path resolves the linked preorder this way,
+  never from a client-supplied order id. Reservation creation and preorder Order creation happen in the
+  same Firestore transaction as `submitReservation`'s own idempotency-fingerprinted write — a retry with
+  the same `submissionKey` never creates a duplicate of either document, and a failure partway through
+  (e.g. an unavailable product) rolls back both, never leaving one without the other.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders
+
+### BR-RESERVATION-024 — A preorder starts `pendingConfirmation` with no kitchen release time, and only ever reaches the kitchen through the reservation's own confirmation (Faz R.1D.1, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: A newly created preorder Order always starts `status: 'pendingConfirmation'`,
+  `kitchenReleaseAt: null` — regardless of whether the Reservation itself had capacity available at
+  submission time (a full-slot Reservation still gets its preorder). The locked platform constant
+  `PREORDER_KITCHEN_RELEASE_LEAD_MINUTES = 60` (never branch-configurable) governs the one shared timing
+  computation applied at every reservation-confirming event (direct confirm, proposal accept): if more
+  than 60 minutes remain until the confirmed time, the preorder stays `pendingConfirmation` with
+  `kitchenReleaseAt = confirmedTime - 60m` recorded; if 60 minutes or fewer remain, it transitions
+  immediately to `confirmed`. A restaurant reject or a response-timeout cancels a still-`pendingConfirmation`
+  preorder (`status: 'cancelled'`, `kitchenReleaseAt` cleared) in the same transaction as the reservation's
+  own terminal transition. A proposal reject or expiry leaves the preorder untouched.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders, Kitchen/KDS
+
+### BR-RESERVATION-025 — A preorder never produces a table-guest identity (Faz R.1D.1, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: A `reservationPreorder` order always has `tableSessionId: null`, `guestAuthUid: null`,
+  `tableId: null` — no table session exists for this flow. `customerId` is always the real phone-auth uid
+  that submitted the reservation, never derived from `guestAuthUid` or any table-session concept.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Orders, Identity
+
+### BR-RESERVATION-026 — A preorder Order can only ever be created via `submitReservation`'s own Admin-SDK transaction (Faz R.1D.1, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `firestore.rules`' `orders` `create` rule has no branch that could ever match the
+  `reservationPreorder` channel from a client — mirrors the already-closed `takeaway` precedent exactly.
+  `update: false` blocks every client-side status transition unconditionally; every transition after
+  creation is Cloud-Function-only, resolving the target order purely from `Reservation.preorderOrderId`
+  (or its deterministic re-derivation), never from any client-supplied order id field.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Orders, Security Rules
+
+### BR-RESERVATION-027 — `cancelReservation` does not exist; an already-confirmed/released preorder has no cancellation path (Faz R.1D.1, 2026-08-12)
+- **Status**: CLOSED — Faz R.3B, 2026-08-13. `cancelReservation` now exists; see BR-RESERVATION-040
+  through -043 for its real behavior, and BR-RESERVATION-042 specifically for the released-preorder
+  interaction this entry originally flagged as missing. This entry is left in place, unedited below,
+  as the historical record of the gap at the time it was reported (Faz R.1D.1) — never silently
+  rewritten, per this document's own immutable-log convention.
+- **Rule**: Confirmed via codebase search — no `cancelReservation` callable exists anywhere. This phase
+  deliberately did not build one (scope boundary). Until it exists, a customer or restaurant has no way to
+  cancel a confirmed reservation, and by extension no way to cancel its already-confirmed/released
+  preorder either.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders
+
+### BR-RESERVATION-028 — A due preorder is released to the kitchen automatically, exactly once, only when its Reservation is genuinely confirmed (Faz R.1D.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: A separate scheduled function (`reservationPreorderKdsRelease`, every 1 minute) transitions a
+  `reservationPreorder` Order from `pendingConfirmation` to `confirmed` once its canonical
+  `kitchenReleaseAt` (`Reservation.confirmedTime - 60m`) has passed — closing the gap Faz R.1D.1 left
+  open (only the at-confirmation-time immediate case was previously wired). Before releasing, every
+  candidate is independently re-verified inside its own transaction: Order channel/status, Reservation
+  existence and `status == 'confirmed'`, the reverse link (`Reservation.preorderOrderId == order.id`),
+  and the canonical expected release instant recomputed from `Reservation.confirmedTime` must **exactly**
+  match the stored value — never trusted from the candidate query alone, never silently repaired on
+  mismatch. Never released while the Reservation is `pendingRestaurantApproval`/`changeProposed`/
+  `rejected`/`cancelled`. Concurrent/overlapping scheduler runs and retries produce exactly one effective
+  transition (Firestore's own optimistic-concurrency transaction retry), never a duplicate.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders, Kitchen/KDS
+
+### BR-RESERVATION-029 — A preorder's release eligibility boundary is exact; scheduler execution latency is not (Faz R.1D.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: Eligibility (`kitchenReleaseAt <= serverNow`) is a mathematically exact boundary — a preorder
+  is never released one millisecond before it. When the scheduler's Cloud Scheduler trigger actually
+  executes and performs that release follows the platform's own `"every 1 minutes"` cadence, meaning
+  real-world release can land up to roughly a minute after the exact boundary — never before it, but not
+  claimed to be millisecond-exact either. These two facts are never conflated in documentation or
+  customer-facing claims.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders, Kitchen/KDS
+
+### BR-RESERVATION-030 — No live KDS ingestion pipeline exists for any channel; a confirmed preorder's kitchen visibility is not proven end-to-end (Faz R.1D.2, 2026-08-12)
+- **Status**: GAP — explicitly reported, not built
+- **Rule**: Confirmed via research: `KitchenDisplayBoardScreen` reads from an in-memory mock
+  `KitchenTicketRepository`, never a real Firestore `Order` stream; `FireKitchenTicket`/
+  `KitchenTicketMapper.fromOrder` are invoked nowhere in the app outside tests, for any channel. The
+  scheduler (BR-RESERVATION-028) correctly transitions a due preorder to `confirmed`, and
+  `KitchenTicketMapper.fromOrder` correctly maps a `reservationPreorder`-channel Order when given one
+  directly (Faz R.1D.1's own Dart test) — but "a confirmed preorder becomes visible on the KDS board" is
+  not claimed or tested end-to-end, since the pipeline connecting the two doesn't exist yet for any
+  channel. Building it is future scope.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders, Kitchen/KDS
+
+### BR-RESERVATION-031 — A branch's operating hours are the sole source of truth for reservation availability; no separate reservation-specific hours config exists (Faz R.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `branchOperatingHours` (weekly schedule per weekday + date-specific overrides, override
+  wins over the weekly schedule when both apply to the same date) is a general, branch-level model —
+  not scoped to the reservation feature. `submitReservation`'s authoritative operating-hours check
+  and `getReservationAvailability`'s slot generation both read this exact same model; no reservation-
+  specific service-window schema exists anywhere in the codebase. A missing `branchOperatingHours`
+  document resolves to closed every day (fail-safe closed, never fail-open), matching
+  `loadReservationPolicy`'s own established convention.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Branch Configuration
+
+### BR-RESERVATION-032 — Changing branch operating hours affects future availability immediately but never silently cancels an existing reservation (Faz R.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: A branch-hours edit takes effect on the next `getReservationAvailability`/
+  `submitReservation` call — no caching layer holds a stale schedule. An already-created or already-
+  confirmed Reservation is never automatically cancelled or altered as a side effect of a later
+  schedule change that would now conflict with it; it remains an explicit operational record and
+  requires deliberate staff action (e.g. a change proposal or, once built, `cancelReservation`) to
+  resolve the conflict. Admin editing UI for operating hours is future R.3 scope — this rule governs
+  the read/enforcement side, which is live now.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Branch Configuration
+
+### BR-RESERVATION-033 — The reservation flow requires a real, phone-verified customer session — a guest session is not sufficient (Faz R.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `/reservation*` routes and `ReservationFlowScreen`'s own entry gate both check
+  `isRealCustomer` (phone-verified, non-guest, non-expired session) — stricter than the generic
+  "signed in" concept (`isAuthenticated || isGuest`) the rest of the app's router guard uses to reach
+  `/main`. An unauthenticated or guest-only visitor is redirected to login/onboarding with the
+  original destination preserved via a strict-allowlist `returnTo` mechanism (only the three known
+  reservation-route shapes are ever accepted; an absolute URL, protocol-relative URL, or unrelated
+  in-app route is rejected at both generation and consumption) and is returned there automatically
+  after a successful OTP.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Authentication, Routing
+
+### BR-RESERVATION-034 — An optional preorder attached during the reservation flow is priced and validated identically to a standalone order, in a fully isolated cart (Faz R.2, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: The reservation flow's optional preorder step reuses the existing menu/product-detail/
+  Bowl Builder UI unmodified, inside a cart instance fully isolated from the customer's real shopping
+  cart (`ReservationPreorderScope` — a nested `ProviderScope`-scoped `CartNotifier` instance, mirrored
+  into `preorderCartProvider` via a bridge widget). Client-side pricing shown during this step is
+  always a preview, never authoritative — the same caveat every other cart screen in this app already
+  carries; `submitReservation`'s own server-side pricing (Faz R.1D.1) is what actually prices the
+  preorder. Adding, removing, or modifying items during this step never touches the customer's real
+  shopping cart, in either direction.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders, Cart, Menu Pricing
+
+### BR-RESERVATION-035 — Staff custom claims derive only from the caller's own active memberships; self- and cross-tenant elevation are structurally impossible (Faz R.3A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `syncOwnStaffClaims` accepts no client-supplied `organizationId`/`role`/`permissions` —
+  it resolves `request.auth.uid` server-side and derives `organizationAccess`/`roles` entirely from
+  the caller's own `memberships` documents with `status === 'active'`; disabled/archived staff derive
+  no active claims. `setCustomUserClaims` (Admin SDK) is the only claims writer anywhere in the
+  codebase. The callable is deliberately not gated by existing custom claims, since its purpose is to
+  bootstrap them from zero. `assignStaffRole`/`revokeStaffRole` reject a caller targeting their own
+  uid before the permission check even runs (mirrors `AssignStaffRole.dart`'s existing precedent).
+  Granting/revoking the `admin` role itself requires the admin-tier `manageStaffAdminRole`; any other
+  role requires only the manager-tier `manageStaffRoles`.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff Identity, Authorization, Reservations, Branch Configuration
+
+### BR-RESERVATION-036 — `manageBranch` is a distinct permission from `manageReservations`; branch-hours writes never accept the reservation-tier grant (Faz R.3A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: `updateBranchOperatingHours` is gated on `manageBranch`, not `manageReservations` — a
+  staff member who can operate the reservation calendar cannot edit branch hours unless separately
+  granted `manageBranch`. `getBranchOperatingHours` (read) is deliberately gated on the broader
+  `manageReservations` instead, since anyone operating the calendar legitimately needs to see the
+  hours it is filtered against. `manageBranch` mirrors the existing Dart
+  `PosAuthorizedAction.manageBranch` semantics and is granted to the same roles
+  (`manager`/`admin`/`tenantOwner`).
+- **Owner Agent**: security_engineer
+- **Related Modules**: Branch Configuration, Reservations, Authorization
+
+### BR-RESERVATION-037 — Admin table assignment and the table-session open/close handshake never silently overwrite an active session (Faz R.3A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: The admin table-picker (`listReservationTablesForArea`) reuses
+  `checkTableOccupancyConflict` verbatim — the same helper `assignReservationTable` itself enforces —
+  so the preview can never drift from what assignment actually allows. Opening a reservation's table
+  when another session is already active surfaces an explicit conflict requiring a deliberate
+  confirm-to-override step; it is never silently overwritten. This governs the admin UI's use of the
+  existing table-assignment/occupancy backend (Faz R.1C.1/R.1C.2, BR-RESERVATION-013/014/019/020) —
+  no new occupancy rule was introduced.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Table Management
+
+### BR-RESERVATION-038 — Admin preorder view must show full order contents and kitchen-timing state, never a bare order id (Faz R.3A, 2026-08-12)
+- **Status**: VERIFIED
+- **Rule**: The admin reservation detail panel's preorder section shows line items, modifiers,
+  total, and one of three kitchen-timing copy states — scheduled send time, "delivered to kitchen,"
+  or cancelled — sourced from the same preorder Order the customer-facing preorder already links to
+  (BR-RESERVATION-023/028). A bare order id with no order content is not sufficient disclosure to
+  staff deciding how to handle a reservation's preorder.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders, Kitchen Operations
+
+### BR-RESERVATION-039 — Canonical terminal statuses; a terminal Reservation never re-enters active lifecycle (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `rejected`, `cancelled`, `completed`, and `noShow` are the four canonical terminal
+  statuses. `completeReservation`/`markReservationNoShow`/`cancelReservation` each idempotently
+  no-op on an exact retry of their own outcome, but reject outright (`failed-precondition`) if the
+  Reservation is already terminal via a *different* transition (e.g. cancelling an already-completed
+  reservation) — a terminal Reservation can never be moved to a different terminal status, nor back
+  to any active one.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-040 — `cancelReservation` resolves customer-vs-staff authority entirely server-side; a client never supplies actorType (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: One callable serves both customer self-cancellation and staff cancellation. The caller
+  is resolved as CUSTOMER only if `request.auth.uid === Reservation.customerId` (with real phone
+  auth required); otherwise the caller must independently hold `manageReservations` for the
+  Reservation's own organization to be resolved as STAFF. An anonymous caller, or a caller who is
+  neither the reservation's own customer nor staff for that organization, is rejected
+  (`permission-denied`) with no separate "anonymous" special case needed — an anonymous uid can
+  never equal a real Reservation's `customerId` in the first place.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Authorization
+
+### BR-RESERVATION-041 — Customer self-cancellation is bound by a server-clock cutoff; staff is exempt (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `ReservationPolicy.customerCancellationCutoffMinutes` (part of the canonical policy shape
+  since Faz R.1A, unconsumed until this phase) is the sole cutoff-duration authority, checked
+  against server time only. Anchor: `confirmedTime` once confirmed; the *earlier* of
+  `requestedTime`/the active proposal's `proposedTime` while `changeProposed` (a deliberately
+  fail-safe choice — see the phase's own instruction); `requestedTime` otherwise. Staff cancellation
+  is never subject to this cutoff.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-042 — LOCKED: a reservation preorder already released to the kitchen blocks customer self-cancellation but never blocks staff, and is never auto-cancelled by staff (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: Whether a linked preorder has reached the kitchen is decided from the canonical Order
+  status machine (`pendingConfirmation` = not yet released; `confirmed` and every real downstream
+  kitchen state = released/operational; `cancelled`/`rejected`/`refunded` = already terminal, not
+  blocking; any unrecognized status fails closed as released) — never from `kitchenReleaseAt`
+  timestamp presence alone. A customer may not self-cancel their Reservation from the app once their
+  preorder is released (`reservationPreorderReleasedToKitchen`, mapped to the required contact-
+  restaurant copy); staff may still cancel the Reservation, but a released preorder's Order is never
+  automatically cancelled by that action — a still-`pendingConfirmation` preorder, by contrast, is
+  always auto-cancelled with the Reservation (its `kitchenReleaseAt`/`kitchenReleaseAtTimestamp`
+  cleared), for both customer and staff cancellation.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Orders, Kitchen Operations
+
+### BR-RESERVATION-043 — Cancellation from each non-terminal status releases exactly what that status was holding, once (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `pendingRestaurantApproval` — the initial hold (if any) is released, `heldPartySize`
+  decremented once. `changeProposed` — the active proposal's hold is released, and the proposal
+  itself is terminalized to a new `cancelled` proposal status (never faked as `accepted`/`rejected`)
+  with the parent Reservation's own cancellation as the reason; proposal history stays immutable.
+  `confirmed` — `confirmedPartySize` is released (recomputed deterministically from
+  `confirmedTime`/`confirmedAreaId`/branch policy, the same function `checkAreaCapacity` itself used
+  at confirm time — never stored bucket ids), physical table occupancy is released, this
+  reservation's own QR protection membership is removed (never another reservation's — a later
+  reservation's protection/occupancy on the same physical table is untouched), and a live table
+  context is deactivated. Every decrement is clamped to never go negative and is idempotent — a
+  duplicate cancel/complete/no-show call is a safe no-op, never a double release.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations, Table Management
+
+### BR-RESERVATION-044 — `completeReservation`: staff-only, confirmedTime must have passed, never touches a linked preorder (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `manageReservations` required; only a `confirmed` Reservation whose `confirmedTime` has
+  already passed (server clock only — no client-supplied `completedAt`) may be marked `completed`.
+  Releases the same held resources as a confirmed cancellation (BR-RESERVATION-043's own capacity/
+  table/protection/context release), but deliberately never touches a linked preorder's Order or
+  kitchen lifecycle in any way, regardless of that preorder's own status.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-045 — `markReservationNoShow`: staff-only, confirmedTime must have passed, no invented grace period (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `manageReservations` required; only a `confirmed` Reservation whose `confirmedTime` has
+  already passed may be marked `noShow` — no grace-period minutes exist this phase; at/after
+  `confirmedTime`, staff operationally decides. Releases the same held resources as
+  BR-RESERVATION-043/044. Preorder handling mirrors cancellation's own LOCKED rule
+  (BR-RESERVATION-042): a still-`pendingConfirmation` preorder is auto-cancelled; a released one is
+  preserved, untouched.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Reservations
+
+### BR-RESERVATION-046 — A terminal Reservation's table-session context can never be used to place a new linked order (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `tableGuestSessions` are deliberately never deleted or killed on a terminal transition —
+  a customer's own cart/order history for their visit survives — and an old session's immutable
+  `reservationContextId` is never rewritten. Instead, `orders` `create` (the direct-client dine-in
+  path, `firestore.rules`) requires that whenever `reservationContextId` is non-null, the referenced
+  Reservation document both exists and is currently `status == 'confirmed'` — a cancelled/completed/
+  no-show/rejected Reservation, or a missing one, fails the create closed. An ordinary walk-in order
+  (`reservationContextId == null`) is completely unaffected by this check.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Table Management, Firestore Security Rules
+
+### BR-RESERVATION-047 — Every terminal transition writes its outbox event atomically, with real actor metadata, never sensitive claims (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `reservationCancelled`/`reservationCompleted`/`reservationNoShow` extend the existing
+  `reservationEvents` transactional outbox (Faz R.1B §17's own atomicity precedent, unchanged) — each
+  event commits in the exact same transaction as the state transition that produced it, keyed by a
+  deterministic id so a retried transaction never duplicates the event. Every event carries
+  `actorType`/`actorId` (`customer` for a customer's own cancellation, `staff` for every staff
+  action) — never a role name, permission list, or any other custom-claims content.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Audit
+
+### BR-RESERVATION-048 — No client-supplied authority anywhere in the terminal lifecycle (Faz R.3B, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `customerId`, `organizationId`, `branchId`, actor role, `completedAt`, `noShowAt`,
+  occupancy/hold/bucket ids, and preorder status are never accepted from the client as authority for
+  any of `cancelReservation`/`completeReservation`/`markReservationNoShow` — every one is
+  server-derived from the caller's verified identity, the Reservation's own stored fields, or server
+  clock time. Cross-tenant staff access fails closed exactly like every other reservation callable
+  (`requireStaffPermission`'s existing, unchanged fail-closed behavior). Direct Firestore mutation of
+  `reservations`/`reservationEvents`/`activeReservationTableContext`/`reservationTableOccupancy`/
+  `reservationTableProtections`/`tableProtectionMinuteBuckets` remains DENY for every client, exactly
+  as every prior Rezervasyon phase established — these three new callables are Admin-SDK writers
+  only, like every callable before them.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Authorization, Firestore Security Rules
+
+### BR-RESERVATION-049 — Kitchen visibility follows the canonical Order status, never a reservation-specific rule (Faz R.3C, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: The production KDS board reads live from the canonical `orders` collection, scoped to
+  `branchId == <branch>` and `status in {confirmed, preparing, ready}` — `pendingConfirmation` (a
+  reservation preorder not yet released to the kitchen, or any other channel's not-yet-actionable
+  order) is never visible; `served`/`completed`/`cancelled`/`rejected`/`refunded` are past the
+  kitchen's concern. This is the exact same query and status set for every channel
+  (`dineInQr`/`dineInStaff`/`takeaway`/`reservationPreorder`) — there is no reservation-specific
+  branch anywhere in the KDS read path. When the existing `reservationPreorderKdsRelease` scheduler
+  (Faz R.1D.2, unchanged) flips a preorder Order from `pendingConfirmation` to `confirmed`, the next
+  Firestore snapshot on this same query already reflects it — no separate signal, poke, or
+  reservation-aware code path is needed.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Kitchen Display System, Orders, Reservations
+
+### BR-RESERVATION-050 — Reservation push notifications are delivered by an outbox consumer, never inside the state-transition transaction (Faz R.3C, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: The existing `reservationEvents` transactional outbox (Faz R.1B §17, unchanged) remains
+  the sole trigger source for customer push notifications. A dedicated Firestore trigger
+  (`onReservationEventCreated`) consumes each event strictly *after* it commits — no reservation
+  callable/scheduler ever calls a push API itself, so a slow/failed push can never fail or delay a
+  Reservation state transition. Six of the ten existing event types generate a notification —
+  `reservationConfirmed`, `reservationRejected`, `reservationChangeProposed`,
+  `reservationChangeExpired`, `reservationResponseTimedOut`, `reservationCancelled`.
+  `reservationChangeAccepted`/`reservationChangeRejected` are the customer's own just-completed
+  action and are never self-notified; `reservationCompleted`/`reservationNoShow` are deliberately
+  non-actionable, backward-looking records and do not generate a push (challenged per this phase's
+  own explicit instruction before being excluded). `reservationResponseTimedOut` intentionally
+  reuses `reservationRejected`'s exact copy — both resolve to the identical `status == 'rejected'`
+  outcome, only `reasonCode` differs (Faz R.1B's own "no reason-specific status" design).
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Notifications
+
+### BR-RESERVATION-051 — A device token belongs to exactly one customer at a time; delivery is retry-safe and never duplicates a push (Faz R.3C, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: `deviceTokens` registration is bound to the authenticated caller's own uid
+  (`request.resource.data.uid == request.auth.uid`, `firestore.rules`, unchanged since Sprint 9H) —
+  a client can never register a token under another customer's uid. Re-registering the same physical
+  FCM token under a *different* uid (a shared/reused device) revokes the old owner's record and
+  creates a fresh one for the new uid — a token is never left "active" under two customers at once
+  (fixes a real gap found in `RegisterDeviceToken.call()`, which previously returned any active
+  record for a matching token without checking its `uid`). Delivery idempotency is claimed via
+  `reservationNotificationDeliveries/{eventId}.create()` (fails on `ALREADY_EXISTS`, the same
+  exactly-once outbox-append pattern `onOrderCompleted.ts` already established) *before* any send is
+  attempted — a duplicate Firestore trigger invocation for the same event (platform-guaranteed "at
+  least once," never "exactly once") always hits the existing claim and never sends a second push.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Notifications, Device Tokens
+
+### BR-RESERVATION-052 — Push copy is minimal and never leaks reservation detail; a tap can only ever open this app's own reservation-detail route (Faz R.3C, 2026-08-13)
+- **Status**: VERIFIED
+- **Rule**: Push notification bodies never contain a phone number, party size, preorder contents, or
+  a specific reject/cancellation reason — any sensitive detail belongs in the in-app detail screen
+  only (exact required copy: "Rezervasyonunuz onaylandı" / "Restoran rezervasyonunuz için yeni bir
+  saat önerdi" / "Rezervasyon talebinizle ilgili bir güncelleme var"). The notification's data payload
+  carries only `reservationId`/`eventType` — never a raw URL. A tap resolves through
+  `ReservationNotificationTapRouter`, which builds `AppRoutes.reservationDetail(reservationId)` and
+  validates it through the same `AppRouteGuard.sanitizeReturnTo` allowlist this codebase already
+  trusts for `returnTo` deep links — an arbitrary/malformed `reservationId` (an external URL,
+  path-traversal-shaped string) produces no route at all, never an open redirect.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Reservations, Notifications, Routing
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.17 — 2026-08-13
+- **Version**: 3.17
+- **Date**: 2026-08-13
+- **Summary**: Paket Servis (delivery) Faz P.2 — Google Places API (New) address foundation + real
+  coverage spike. New BR-DELIVERY-004 through -006. Ran a real coverage spike against live Google
+  Places API (New) for all 7 named Istanbul areas, finding Turkish addresses map neighborhood/mahalle
+  to `administrative_area_level_4`, not the `sublocality_*` types Google's own docs emphasize, and
+  that "Okmeydanı" is not one resolvable mahalle but a colloquial label over several real ones. New
+  provider-neutral `AddressSearchProvider` abstraction (`autocomplete`/`resolvePlace`), Google-specific
+  implementation behind it, three new Cloud Function callables
+  (`searchAddressAutocomplete`/`resolveAddressPlace`/`saveDeliveryAddress`, `functions/src/
+  deliveryPlaces.ts`) reading a Secret-Manager-held API key via `defineSecret`. `saveDeliveryAddress`
+  independently re-resolves every save server-side, never trusting client-supplied address data —
+  proven by test with deliberately bogus client-supplied values. Real `customerAddresses` Firestore
+  collection + Rules (owner-only, server-owned verification fields, allow-list update). Corrected a
+  real P.1 design flaw the spike's own evidence exposed: `SavedAddress`/`DeliveryAddressSnapshot` had
+  required non-nullable `neighborhoodId`/`neighborhoodName`/`buildingNo`, which real provider data
+  cannot always satisfy even for a legitimately verified address — relaxed to nullable, with a new
+  defensive check requiring province+district specifically (mirroring the backend's own verification
+  gate). Deliberately did NOT implement a map-pin confirmation step: Google's own Places API policy
+  requires Places-derived data shown on a map to render on a Google Map specifically, and this app's
+  existing map (`flutter_map`, OpenStreetMap-based) would have violated that — stopped and reported
+  rather than building it. A mid-implementation security incident (a script's error handler leaked
+  the raw `GOOGLE_PLACES_SERVER_KEY` value into tool output) was disclosed immediately; the key was
+  rotated before continuing. See `docs/decisions.md` Faz P.2 for the full report.
+- **Author**: Claude, at the user's direction (Paket Servis Faz P.2 approval).
+
+### v3.16 — 2026-08-13
+- **Version**: 3.16
+- **Date**: 2026-08-13
+- **Summary**: Paket Servis (delivery) Faz P.1 — canonical delivery order/pricing/payment domain
+  foundation, no real delivery checkout yet. New BR-DELIVERY-001 through -003. Central architecture
+  rule (overriding Faz P.0's own §20 recommendation): client-supplied address data can never be
+  delivery-authorization truth, even temporarily — enforced at the type level via
+  `DeliveryAddressSnapshot.serverVerifiedAt` (required, non-nullable) and
+  `SavedAddress.toDeliveryAddressSnapshot()` (throws unless `verificationStatus == verified`). New
+  additive, nullable `Order.deliveryAddressSnapshot`/`Order.paymentMethodSnapshot` fields (every
+  existing channel unaffected); new `SavedAddress`/`AddressVerificationStatus` domain foundation,
+  deliberately separate from the legacy `AddressModel` prototype. Delivery pricing (+140 TL standard /
+  +20 TL beverage / +140 TL once per bowl) proven correct against the existing, unmodified
+  `ChannelPriceResolver`, but deliberately **not** wired into the live pricing-policy repository — a
+  real risk was found and avoided during this phase: that repository backs at least one live customer
+  screen (`bowl_builder_screen.dart`) with no takeaway-only gate, and delivery is this app's default
+  shopping channel, so seeding it there would have silently changed a real customer-facing price
+  today. Delivery payment policy locked to exactly 7 cash/card-on-delivery methods, structurally
+  distinct from `PaymentMethod.isActive`. No `submitDeliveryOrder` callable added or exposed; legacy
+  `CheckoutScreen`/`OrderModel` explicitly marked LEGACY in their own doc comments, not touched
+  otherwise. See `docs/decisions.md` Faz P.1 for the full report.
+- **Author**: Claude, at the user's direction (Paket Servis Faz P.1 approval).
+
+### v3.15 — 2026-08-13
+- **Version**: 3.15
+- **Date**: 2026-08-13
+- **Summary**: Rezervasyon Faz R.3C — real KDS ingestion + reservation notification delivery, the
+  Reservation module's final operational closure phase. New BR-RESERVATION-049 through -052. Replaced
+  the KDS board's in-memory/mock production repository with a real, Firestore-`orders`-backed one
+  (`FirestoreKitchenTicketRepository`), branch-scoped and status-filtered
+  (`confirmed`/`preparing`/`ready`), live-streaming so a reservation preorder's scheduled release
+  appears with no app restart — the exact same generic pipeline every channel already uses, no
+  reservation-specific KDS code. Added a Firestore-trigger-based reservation notification delivery
+  consumer (`onReservationEventCreated`) reading the existing `reservationEvents` outbox, resolving
+  the customer's active device tokens (new `FirestoreDeviceTokenRepository`), and sending via FCM
+  (real sender in production, a safe no-op in the emulator/test context) with `.create()`-claimed,
+  retry-safe delivery idempotency. Fixed a real cross-customer device-token-reassociation bug found by
+  this phase's own required research. See `docs/decisions.md` Faz R.3C for the full report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.3C approval).
+
+### v3.14 — 2026-08-13
+- **Version**: 3.14
+- **Date**: 2026-08-13
+- **Summary**: Rezervasyon Faz R.3B — cancellation + completed + no-show terminal lifecycle. New
+  BR-RESERVATION-039 through -048. Three new callables: `cancelReservation` (single callable for both
+  customer and staff, actor resolved entirely server-side, customer bound by a server-clock cutoff
+  staff is exempt from), `completeReservation` and `markReservationNoShow` (both staff-only,
+  confirmedTime must have passed, no invented grace period). LOCKED business rule: a reservation
+  preorder already released to the kitchen blocks customer self-cancellation but never blocks staff,
+  and is never auto-cancelled by staff (a still-pending preorder is always auto-cancelled by either
+  actor). Cancellation from every non-terminal status releases exactly what that status was holding —
+  hold/heldPartySize, confirmedPartySize, physical table occupancy, this reservation's own QR
+  protection membership (never another reservation's), and a live table context — all idempotent,
+  clamped to never go negative. New Firestore Rules invariant: a table-linked order create now
+  requires the referenced Reservation to still be `confirmed`, closing a real gap where a terminal
+  reservation's own (deliberately never-deleted) table-session could otherwise place a new linked
+  order. Extended the `reservationEvents` outbox with three new atomic event types carrying real
+  actor metadata. See `docs/decisions.md` Faz R.3B for the full report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.3B approval).
+
+### v3.13 — 2026-08-12
+- **Version**: 3.13
+- **Date**: 2026-08-12
+- **Summary**: Rezervasyon Faz R.3A — admin reservation operations + staff identity foundation + table
+  assignment UI. New BR-RESERVATION-035 through -038. Closed a real prerequisite gap before any admin
+  UI could be authorized: `syncOwnStaffClaims`, a self-service, zero-client-trusted-input callable
+  that derives custom claims only from the caller's own active `memberships` documents (self- and
+  cross-tenant elevation both structurally impossible), plus a new `manageBranch` TS permission
+  distinct from `manageReservations`, plus a scoped Firestore-backed staff/membership persistence
+  layer (explicitly bounded short of the full deferred Sprint 9E migration — `staffMembers`/
+  `InMemoryStaffMemberRepository` remain untouched, disclosed as remaining scope). Built the admin
+  "Rezervasyonlar" UI on top of that real authorization: list/calendar views, confirm/reject,
+  propose-alternative-time-or-area, physical table assignment/reassignment reusing the existing
+  occupancy-conflict logic verbatim, a two-step table-session open/close handshake that never
+  silently overwrites an active session, branch operating-hours management UI, and a preorder admin
+  view with full order contents and kitchen-timing state. Four real production bugs (a pagination
+  cursor bug, a responsive tablet dead zone, a mobile card overflow, an incomplete preorder view)
+  were found and fixed while writing this phase's own required tests. Explicitly out of scope:
+  `cancelReservation`, completed/no-show lifecycle, push notifications, real KDS ingestion, full
+  Sprint 9E staff migration. See `docs/decisions.md` Faz R.3A for the full report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.3A approval — three sub-decisions
+  D1/D2/D3 approved separately before implementation).
+
+### v3.12 — 2026-08-12
+- **Version**: 3.12
+- **Date**: 2026-08-12
+- **Summary**: Rezervasyon Faz R.2 — customer reservation experience + Signature Calendar + optional
+  preorder UI. New BR-RESERVATION-031 through -034. The first customer-facing UI for the Rezervasyon
+  domain (every prior R.1x phase was backend-only): a guided 6-step flow over one canonical draft
+  state, a bespoke Signature Calendar (never the stock Material date picker), real `go_router` routes
+  with open-redirect-safe `returnTo` handling gated on a stricter real-phone-auth check, a fully
+  isolated optional-preorder cart reusing existing menu/product-detail/Bowl Builder UI, and a
+  reservation detail screen with change-proposal accept/reject. New general (not reservation-
+  specific) `branchOperatingHours` backend model — weekly schedule + date overrides, override wins,
+  fail-safe closed — is now the sole source of truth `submitReservation`/`getReservationAvailability`
+  both read; a schedule change never silently cancels an existing reservation. Two real production
+  bugs (a Riverpod build-phase provider-mutation crash, a post-submit rebuild race crash) were found
+  and fixed while writing this phase's own required tests. Explicitly out of scope: admin reservation
+  UI, physical-table UI, push delivery, `cancelReservation`, KDS ingestion. See `docs/decisions.md`
+  ADR-027 Faz R.2 for the full report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.2 approval).
+
+### v3.11 — 2026-08-12
+- **Version**: 3.11
+- **Date**: 2026-08-12
+- **Summary**: Rezervasyon Faz R.1D.2 — scheduled preorder KDS release + retry-safe delivery to kitchen.
+  New BR-RESERVATION-028 through -030. A new, separate `onSchedule("every 1 minutes")` function
+  (`reservationPreorderKdsRelease`) transitions a due `reservationPreorder` Order `pendingConfirmation ->
+  confirmed`, closing the gap Faz R.1D.1 left open. Bounded, indexed candidate query; full independent
+  server-side revalidation per candidate (never trusts the query result); new `kitchenReleaseAtTimestamp`
+  companion field (mirrors `pickupTime`/`pickupTimeTimestamp`); audit parity added to both the scheduler's
+  and the immediate-confirm-time release paths. Explicit, confirmed gap: no live KDS ingestion pipeline
+  exists for any channel yet, so "confirmed preorder visible in KDS" is not claimed end-to-end. No UI, no
+  `cancelReservation`, no payment logic, no kitchen-status redesign. See `docs/decisions.md` ADR-027 Faz
+  R.1D.2 for the full report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.1D.2 approval).
+
+### v3.10 — 2026-08-12
+- **Version**: 3.10
+- **Date**: 2026-08-12
+- **Summary**: Rezervasyon Faz R.1D.1 — optional preorder + server pricing + reservation lifecycle
+  binding. New BR-RESERVATION-022 through -027. A Reservation may optionally carry a preorder — a
+  second, separate `orders` document (channel `reservationPreorder`), created atomically with it,
+  server-priced at table/base price (no Gel Al/delivery surcharge), linked via
+  `Order.reservationContextId`/new `Reservation.preorderOrderId`, bound to the reservation's own
+  confirm/reject/proposal/timeout lifecycle via the new locked constant
+  `PREORDER_KITCHEN_RELEASE_LEAD_MINUTES = 60`. `cancelReservation` confirmed to still not exist
+  (reported gap, not built). No scheduled KDS-release poller, no reservation UI, no admin UI, no push
+  delivery. See `docs/decisions.md` ADR-027 Faz R.1D.1 for the full report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.1D.1 approval).
+
+### v3.9 — 2026-08-12
+- **Version**: 3.9
+- **Date**: 2026-08-12
+- **Summary**: Rezervasyon Faz R.1C.2 — QR T-20 enforcement + reservation table context + order
+  linkage. New BR-RESERVATION-017 through -021. `tableProtectionMinuteBuckets` becomes a real QR-
+  blocking source (new `reserved` status); new `activeReservationTableContext` collection; two new
+  callables (`openReservationTable`/`closeReservationTable`); new `tableGuestSessions
+  .reservationContextId`/`Order.reservationContextId` fields with exact-equality Firestore Rules
+  enforcement; minimal Flutter propagation (QR scanner reserved message, `ActiveTableContext` ->
+  `Order` threading) — this phase's own explicitly-scoped first touch of Dart code in the Rezervasyon
+  arc. No reservation UI, no physical-table-assignment UI, no preorder, no KDS release, no push
+  delivery, no completion/no-show UI. See `docs/decisions.md` ADR-027 Faz R.1C.2 for the full report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.1C.2 approval).
+
+### v3.8 — 2026-08-12
+- **Version**: 3.8
+- **Date**: 2026-08-12
+- **Summary**: Rezervasyon Faz R.1C.1.1 — final gate + table area migration hardening. No new
+  business rules (BR-RESERVATION-012's canonical table/area match requirement, already documented, is
+  now correctly reflected in the dev seed rather than clarified further). Root-caused and fixed a real
+  cross-test-file id-collision bug (ten test files affected) that had been masking as "flaky" —
+  functions suite now genuinely 100% green across three consecutive full runs. Migrated the dev table
+  seed (`restaurantTables/table-12`) to carry the new `reservationAreaId` field Faz R.1C.1 introduced,
+  with referential-consistency ordering fixed in `seed:dev-all`/`seed:dev-table-qr`. See
+  `docs/decisions.md` ADR-027 Faz R.1C.1.1 for the full report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.1C.1.1 approval).
+
+### v3.7 — 2026-08-12
+- **Version**: 3.7
+- **Date**: 2026-08-12
+- **Summary**: Rezervasyon Faz R.1C.1 — physical table assignment + exclusive occupancy + QR
+  protection data. New BR-RESERVATION-012 through -016. One new callable
+  (`assignReservationTable`), three new Firestore collections (`reservationTableOccupancy`,
+  `reservationTableProtections`, `tableProtectionMinuteBuckets`), one new additive field
+  (`restaurantTables.reservationAreaId` — the first canonical table<->area relation this codebase has
+  had). No QR enforcement, no `openReservationTable`/`activeReservationTableContext`/
+  `reservationContextId`, no preorder/KDS, no UI — scope deliberately limited per the approved phase
+  instruction. See `docs/decisions.md` ADR-027 Faz R.1C.1 for the full implementation report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.1C.1 approval).
+
+### v3.6 — 2026-08-12
+- **Version**: 3.6
+- **Date**: 2026-08-12
+- **Summary**: Rezervasyon Faz R.1B — restaurant response + change proposal + hold lifecycle. New
+  BR-RESERVATION-007 through -011. Two new callables (`respondToReservation`, `respondToProposedChange`),
+  one new scheduled function (`reservationSweep`, this codebase's first `onSchedule` usage), one new
+  Firestore collection (`reservationChangeProposals`, immutable) plus a new `reservationEvents` outbox
+  collection. No UI, no physical-table assignment, no QR T-20, no preorder/KDS release — scope
+  deliberately limited per the approved phase instruction. See `docs/decisions.md` ADR-027 Faz R.1B for
+  the full implementation report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.1B approval).
+
+### v3.5 — 2026-08-12
+- **Version**: 3.5
+- **Date**: 2026-08-12
+- **Summary**: Rezervasyon Faz R.1A — backend foundation + `submitReservation` implementation of the
+  `docs/decisions.md` ADR-027 Faz R.0–R.0.7 architecture design. New BR-RESERVATION-001 through -006.
+  Five new Firestore collections (`reservations`/`reservationAreas`/`reservationPolicies`/
+  `reservationHolds`/`reservationSlotOccupancy`), one new callable (`submitReservation`), no UI, no
+  physical-table concepts, no preorder/KDS — scope deliberately limited to reservation creation +
+  transaction-safe availability. See `docs/decisions.md` ADR-027 Faz R.1A for the full implementation
+  report.
+- **Author**: Claude, at the user's direction (Rezervasyon Faz R.1A approval).
+
+### v3.4 — 2026-08-10
+- **Version**: 3.4
+- **Date**: 2026-08-10
+- **Summary**: Gel Al (Takeaway) Faz B — Order model/mapping/persistence. New `PickupMode` enum; six
+  additive `Order` fields (`takeawayEntrySessionId`, `pickupMode`, `pickupTime`, `contactFirstName`,
+  `contactLastName`, `contactPhone`); new BR-ORDER-014. `SubmitCustomerOrder.call()` gained an
+  optional call-time `branchId`/`restaurantId` override (constructor default unchanged);
+  `DineInCheckoutScreen` now passes the QR-resolved `branchId`. `OrderFirestoreMapper`/`OrderModel`
+  (legacy projection) both carry the new fields; a pre-Faz-B document with none of the new keys still
+  deserializes cleanly. No UI/QR/checkout/admin/POS-KDS work — model and mapping only, per the
+  approved Faz B scope. See `docs/decisions.md` ADR-027 Faz B.
+- **Author**: Claude, at the user's direction (Gel Al architecture-analysis task, Faz B approval).
+- **Reason**: Record the additive Order-model groundwork Faz A's pricing engine needs to eventually
+  attach to a real order, and close the branch/restaurant hardcoding gap Faz A's own analysis flagged,
+  without yet building any of the QR/checkout/admin surfaces that would consume it.
+
+### v3.3 — 2026-08-10
+- **Version**: 3.3
+- **Date**: 2026-08-10
+- **Summary**: Gel Al (Takeaway) Faz A — channel pricing engine. New DL-035 (supersedes DL-002).
+  BR-PRICE-001 marked SUPERSEDED; new BR-PRICE-004; BR-PRICE-003 marked PARTIALLY RESOLVED. New
+  domain types `ChannelPriceRule`/`ChannelPricingPolicy`/`ChannelPriceResolver`
+  (`lib/features/menu/domain/pricing/`) and `ChannelPricingPolicyRepository`
+  (`lib/features/menu/data/`); additive `MenuProduct.channelPriceOverrides` field. No UI, QR, or
+  checkout wiring yet — engine and data model only, per the approved Faz A scope.
+- **Author**: Claude, at the user's direction (Gel Al architecture-analysis task, Faz A approval).
+- **Reason**: Record the DL-002/BR-PRICE-001 supersession the user explicitly approved, and the new
+  channel-pricing data model/resolver this and future Takeaway phases build on.
 
 ### v3.2 — 2026-08-05
 - **Version**: 3.2

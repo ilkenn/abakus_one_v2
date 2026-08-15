@@ -1,0 +1,1363 @@
+{
+  "exportedAt": "2026-08-11T20:00:57.549283",
+  "categories": [
+    {
+      "id": "cat_bowl",
+      "name": "Bowl",
+      "sortOrder": 0,
+      "isActive": true
+    },
+    {
+      "id": "cat_salata",
+      "name": "Salata",
+      "sortOrder": 1,
+      "isActive": true
+    },
+    {
+      "id": "cat_wrap",
+      "name": "Wrap",
+      "sortOrder": 2,
+      "isActive": true
+    },
+    {
+      "id": "cat_hamburger",
+      "name": "Hamburger",
+      "sortOrder": 3,
+      "isActive": true
+    },
+    {
+      "id": "cat_makarna",
+      "name": "Makarna",
+      "sortOrder": 4,
+      "isActive": true
+    },
+    {
+      "id": "cat_atistirmalik",
+      "name": "Atıştırmalık",
+      "sortOrder": 5,
+      "isActive": true
+    },
+    {
+      "id": "cat_icecekler",
+      "name": "İçecekler",
+      "sortOrder": 6,
+      "isActive": true
+    }
+  ],
+  "products": [
+    {
+      "id": "prod_mexifit_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Mexifit Bowl",
+      "basePriceMinorUnits": 43000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_meatball_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Meatball Bowl",
+      "basePriceMinorUnits": 51000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_citirti_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Çıtırtı Bowl",
+      "basePriceMinorUnits": 43000,
+      "isAvailable": true,
+      "isFeatured": true,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_falafel_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Falafel Bowl",
+      "basePriceMinorUnits": 43000,
+      "isAvailable": true,
+      "isFeatured": true,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_asian_chicken_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Asian Chicken Bowl",
+      "basePriceMinorUnits": 51000,
+      "isAvailable": true,
+      "isFeatured": true,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_ton_ton_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Ton Ton Bowl",
+      "basePriceMinorUnits": 56000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_golden_harmony",
+      "categoryId": "cat_bowl",
+      "name": "Golden Harmony",
+      "basePriceMinorUnits": 51000,
+      "isAvailable": true,
+      "isFeatured": true,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_breakfast_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Breakfast Bowl",
+      "basePriceMinorUnits": 51000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_sweet_sour_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Sweet Sour Bowl",
+      "basePriceMinorUnits": 51000,
+      "isAvailable": true,
+      "isFeatured": true,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_grill_salmon_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Grill Salmon Bowl",
+      "basePriceMinorUnits": 75000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_gronola_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Gronola Bowl",
+      "basePriceMinorUnits": 60000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_smoke_salmon_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Smoke Salmon Bowl",
+      "basePriceMinorUnits": 80000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_chefs_fire",
+      "categoryId": "cat_bowl",
+      "name": "Chef's Fire",
+      "basePriceMinorUnits": 51000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_vegan_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Vegan Bowl",
+      "basePriceMinorUnits": 43000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_lokum_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Lokum Bowl",
+      "basePriceMinorUnits": 70000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_atom_bowl",
+      "categoryId": "cat_bowl",
+      "name": "Atom Bowl",
+      "basePriceMinorUnits": 65000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_crispy_falafel_salad",
+      "categoryId": "cat_salata",
+      "name": "Crispy Falafel Salad",
+      "basePriceMinorUnits": 42000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_avokado_salad",
+      "categoryId": "cat_salata",
+      "name": "Avokado Salad",
+      "basePriceMinorUnits": 40000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_gavurdagi_salad",
+      "categoryId": "cat_salata",
+      "name": "Gavurdağı Salad",
+      "basePriceMinorUnits": 35000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_grill_caesar_salad",
+      "categoryId": "cat_salata",
+      "name": "Grill Caesar Salad",
+      "basePriceMinorUnits": 45000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_smoke_salmon_salad",
+      "categoryId": "cat_salata",
+      "name": "Smoke Salmon Salad",
+      "basePriceMinorUnits": 80000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_crispy_caesar_salad",
+      "categoryId": "cat_salata",
+      "name": "Crispy Caesar Salad",
+      "basePriceMinorUnits": 42000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_mixed_salad",
+      "categoryId": "cat_salata",
+      "name": "Mixed Salad",
+      "basePriceMinorUnits": 90000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_coban_salad",
+      "categoryId": "cat_salata",
+      "name": "Çoban Salad",
+      "basePriceMinorUnits": 35000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_ton_ton_salad",
+      "categoryId": "cat_salata",
+      "name": "Ton Ton Salad",
+      "basePriceMinorUnits": 50000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_moms_chicken_salad",
+      "categoryId": "cat_salata",
+      "name": "Mom's Chicken Salad",
+      "basePriceMinorUnits": 42000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_grill_salmon_salad",
+      "categoryId": "cat_salata",
+      "name": "Grill Salmon Salad",
+      "basePriceMinorUnits": 80000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_veggie_salad",
+      "categoryId": "cat_salata",
+      "name": "Veggie Salad",
+      "basePriceMinorUnits": 48000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_pineapple_salad",
+      "categoryId": "cat_salata",
+      "name": "Pineapple Salad",
+      "basePriceMinorUnits": 45000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_akdeniz_salad",
+      "categoryId": "cat_salata",
+      "name": "Akdeniz Salad",
+      "basePriceMinorUnits": 38000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_lokum_salad",
+      "categoryId": "cat_salata",
+      "name": "Lokum Salad",
+      "basePriceMinorUnits": 65000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_rokato_salad",
+      "categoryId": "cat_salata",
+      "name": "Rokato Salad",
+      "basePriceMinorUnits": 32000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_meatball_salad",
+      "categoryId": "cat_salata",
+      "name": "Meatball Salad",
+      "basePriceMinorUnits": 48000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_egg_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Egg Wrap",
+      "basePriceMinorUnits": 40000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_asian_chicken_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Asian Chicken Wrap",
+      "basePriceMinorUnits": 48000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_smoke_salmon_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Smoke Salmon Wrap",
+      "basePriceMinorUnits": 85000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_mexico_steak_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Mexico Steak Wrap",
+      "basePriceMinorUnits": 65000,
+      "isAvailable": true,
+      "isFeatured": true,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_caesar_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Caesar Wrap",
+      "basePriceMinorUnits": 48000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_crispy_chicken_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Crispy Chicken Wrap",
+      "basePriceMinorUnits": 48000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_avokado_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Avokado Wrap",
+      "basePriceMinorUnits": 45000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_steak_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Steak Wrap",
+      "basePriceMinorUnits": 65000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_mexico_chicken_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Mexico Chicken Wrap",
+      "basePriceMinorUnits": 52000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_grill_salmon_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Grill Salmon Wrap",
+      "basePriceMinorUnits": 75000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_asian_steak_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Asian Steak Wrap",
+      "basePriceMinorUnits": 65000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_texas_steak_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Texas Steak Wrap",
+      "basePriceMinorUnits": 65000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_veggie_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Veggie Wrap",
+      "basePriceMinorUnits": 48000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_ton_ton_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Ton Ton Wrap",
+      "basePriceMinorUnits": 55000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_meatball_wrap",
+      "categoryId": "cat_wrap",
+      "name": "Meatball Wrap",
+      "basePriceMinorUnits": 55000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_mexico_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Mexico Burger",
+      "basePriceMinorUnits": 60000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_cheese_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Cheese Burger",
+      "basePriceMinorUnits": 58000,
+      "isAvailable": true,
+      "isFeatured": true,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_onion_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Onion Burger",
+      "basePriceMinorUnits": 55000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_falafel_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Falafel Burger",
+      "basePriceMinorUnits": 45000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_double_chicken",
+      "categoryId": "cat_hamburger",
+      "name": "Double Chicken",
+      "basePriceMinorUnits": 50000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_grill_chicken",
+      "categoryId": "cat_hamburger",
+      "name": "Grill Chicken",
+      "basePriceMinorUnits": 48000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_swiss_mushroom_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Swiss Mushroom Burger",
+      "basePriceMinorUnits": 62000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_tripoli_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Tripoli Burger",
+      "basePriceMinorUnits": 75000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_steak_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Steak Burger",
+      "basePriceMinorUnits": 69000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_smoke_house_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Smoke House Burger",
+      "basePriceMinorUnits": 64000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_lokum_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Lokum Burger",
+      "basePriceMinorUnits": 75000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_abakus_burger",
+      "categoryId": "cat_hamburger",
+      "name": "Abaküs Burger",
+      "basePriceMinorUnits": 75000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_fettucine_beef_alfredo",
+      "categoryId": "cat_makarna",
+      "name": "Fettucine Beef Alfredo",
+      "basePriceMinorUnits": 55000,
+      "isAvailable": true,
+      "isFeatured": true,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_fettucine_mushroom_alfredo",
+      "categoryId": "cat_makarna",
+      "name": "Fettucine Mushroom Alfredo",
+      "basePriceMinorUnits": 38000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_crispy_midye",
+      "categoryId": "cat_makarna",
+      "name": "Crispy Midye",
+      "basePriceMinorUnits": 40000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_beef_midye",
+      "categoryId": "cat_makarna",
+      "name": "Beef Midye",
+      "basePriceMinorUnits": 53000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_fettucine_crispy_chicken_alfredo",
+      "categoryId": "cat_makarna",
+      "name": "Fettucine Crispy Chicken Alfredo",
+      "basePriceMinorUnits": 42000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_fettucine_meatball_alfredo",
+      "categoryId": "cat_makarna",
+      "name": "Fettucine Meatball Alfredo",
+      "basePriceMinorUnits": 50000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_meatball_midye",
+      "categoryId": "cat_makarna",
+      "name": "Meatball Midye",
+      "basePriceMinorUnits": 48000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_fettucine_chicken_alfredo",
+      "categoryId": "cat_makarna",
+      "name": "Fettucine Chicken Alfredo",
+      "basePriceMinorUnits": 42000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_grill_chicken_midye",
+      "categoryId": "cat_makarna",
+      "name": "Grill Chicken Midye",
+      "basePriceMinorUnits": 40000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_truflu_patates",
+      "categoryId": "cat_atistirmalik",
+      "name": "Trüflü Patates",
+      "basePriceMinorUnits": 30000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_sogan_halkasi",
+      "categoryId": "cat_atistirmalik",
+      "name": "Soğan Halkası (6 Adet)",
+      "basePriceMinorUnits": 20000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_citir_falafel",
+      "categoryId": "cat_atistirmalik",
+      "name": "Çıtır Falafel",
+      "basePriceMinorUnits": 28000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_cheddarli_patates_kizartmasi",
+      "categoryId": "cat_atistirmalik",
+      "name": "Cheddarlı Patates Kızartması",
+      "basePriceMinorUnits": 25000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_citir_tavuk",
+      "categoryId": "cat_atistirmalik",
+      "name": "Çıtır Tavuk",
+      "basePriceMinorUnits": 30000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_patates_kizartmasi",
+      "categoryId": "cat_atistirmalik",
+      "name": "Patates Kızartması",
+      "basePriceMinorUnits": 20000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_acili_ayran",
+      "categoryId": "cat_icecekler",
+      "name": "Acılı Ayran (Spice Ayran)",
+      "basePriceMinorUnits": 8000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_naneli_ayran",
+      "categoryId": "cat_icecekler",
+      "name": "Naneli Ayran (Mint Ayran)",
+      "basePriceMinorUnits": 8000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_eksili_ayran",
+      "categoryId": "cat_icecekler",
+      "name": "Ekşili Ayran (Minus Ayran)",
+      "basePriceMinorUnits": 8000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    },
+    {
+      "id": "prod_cocacola",
+      "categoryId": "cat_icecekler",
+      "name": "CocaCola Şişe",
+      "basePriceMinorUnits": 8000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [],
+      "channelPriceOverrides": {}
+    }
+  ],
+  "bowlIngredients": [
+    {
+      "id": "bb_protein_izgara_tavuk",
+      "categoryId": "protein",
+      "name": "Izgara Tavuk",
+      "priceMinorUnits": 4000,
+      "isAvailable": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "bb_protein_citir_tavuk",
+      "categoryId": "protein",
+      "name": "Çıtır Tavuk",
+      "priceMinorUnits": 4000,
+      "isAvailable": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "bb_protein_falafel",
+      "categoryId": "protein",
+      "name": "Falafel",
+      "priceMinorUnits": 3500,
+      "isAvailable": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "bb_protein_soya_soslu_tavuk",
+      "categoryId": "protein",
+      "name": "Soya Soslu Tavuk",
+      "priceMinorUnits": 4000,
+      "isAvailable": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "bb_protein_tatli_eksi_tavuk",
+      "categoryId": "protein",
+      "name": "Tatlı Ekşi Tavuk",
+      "priceMinorUnits": 4000,
+      "isAvailable": true,
+      "sortOrder": 4
+    },
+    {
+      "id": "bb_protein_kori_soslu_tavuk",
+      "categoryId": "protein",
+      "name": "Köri Soslu Tavuk",
+      "priceMinorUnits": 4000,
+      "isAvailable": true,
+      "sortOrder": 5
+    },
+    {
+      "id": "bb_protein_tatli_aci_tavuk",
+      "categoryId": "protein",
+      "name": "Tatlı Acı Tavuk",
+      "priceMinorUnits": 4000,
+      "isAvailable": true,
+      "sortOrder": 6
+    },
+    {
+      "id": "bb_protein_izgara_kofte",
+      "categoryId": "protein",
+      "name": "Izgara Köfte",
+      "priceMinorUnits": 7000,
+      "isAvailable": true,
+      "sortOrder": 7
+    },
+    {
+      "id": "bb_protein_dana_bonfile",
+      "categoryId": "protein",
+      "name": "Dana Bonfile",
+      "priceMinorUnits": 15000,
+      "isAvailable": true,
+      "sortOrder": 8
+    },
+    {
+      "id": "bb_protein_tofu",
+      "categoryId": "protein",
+      "name": "Tofu",
+      "priceMinorUnits": 15000,
+      "isAvailable": true,
+      "sortOrder": 9
+    },
+    {
+      "id": "bb_protein_izgara_somon",
+      "categoryId": "protein",
+      "name": "Izgara Somon",
+      "priceMinorUnits": 25000,
+      "isAvailable": true,
+      "sortOrder": 10
+    },
+    {
+      "id": "bb_protein_somon_fume",
+      "categoryId": "protein",
+      "name": "Somon Füme",
+      "priceMinorUnits": 30000,
+      "isAvailable": true,
+      "sortOrder": 11
+    },
+    {
+      "id": "bb_protein_ton_baligi",
+      "categoryId": "protein",
+      "name": "Ton Balığı",
+      "priceMinorUnits": 15000,
+      "isAvailable": true,
+      "sortOrder": 12
+    },
+    {
+      "id": "bb_carbs_meksika_pilavi",
+      "categoryId": "carbs",
+      "name": "Meksika Pilavı",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "bb_carbs_beyaz_basmati",
+      "categoryId": "carbs",
+      "name": "Beyaz Basmati Pirinç",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "bb_carbs_siyah_basmati",
+      "categoryId": "carbs",
+      "name": "Siyah Basmati Pirinç",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "bb_carbs_karisik_basmati",
+      "categoryId": "carbs",
+      "name": "Beyaz + Siyah Basmati Karışımı",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "bb_carbs_meyhane_pilavi",
+      "categoryId": "carbs",
+      "name": "Meyhane Pilavı",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 4
+    },
+    {
+      "id": "bb_carbs_kinoa",
+      "categoryId": "carbs",
+      "name": "Kinoa",
+      "priceMinorUnits": 2000,
+      "isAvailable": true,
+      "sortOrder": 5
+    },
+    {
+      "id": "bb_carbs_bulgur_pilavi",
+      "categoryId": "carbs",
+      "name": "Bulgur Pilavı",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 6
+    },
+    {
+      "id": "bb_carbs_kuskus",
+      "categoryId": "carbs",
+      "name": "Kuskus",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 7
+    },
+    {
+      "id": "bb_carbs_makarna",
+      "categoryId": "carbs",
+      "name": "Makarna",
+      "priceMinorUnits": 2000,
+      "isAvailable": true,
+      "sortOrder": 8
+    },
+    {
+      "id": "bb_salad_mevsim",
+      "categoryId": "salads",
+      "name": "Mevsim Salata",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "bb_salad_kivircik_marul",
+      "categoryId": "salads",
+      "name": "Kıvırcık Marul",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "bb_salad_roka",
+      "categoryId": "salads",
+      "name": "Roka",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "bb_salad_baby_ispanak",
+      "categoryId": "salads",
+      "name": "Baby Ispanak",
+      "priceMinorUnits": 3000,
+      "isAvailable": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "bb_salad_coban_salata",
+      "categoryId": "salads",
+      "name": "Çoban Salata",
+      "priceMinorUnits": 3000,
+      "isAvailable": true,
+      "sortOrder": 4
+    },
+    {
+      "id": "bb_vegetable_misir",
+      "categoryId": "vegetables",
+      "name": "Mısır",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "bb_vegetable_salatalik",
+      "categoryId": "vegetables",
+      "name": "Salatalık",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "bb_vegetable_domates",
+      "categoryId": "vegetables",
+      "name": "Domates",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "bb_vegetable_havuc",
+      "categoryId": "vegetables",
+      "name": "Havuç",
+      "priceMinorUnits": 2000,
+      "isAvailable": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "bb_vegetable_kirmizi_sogan",
+      "categoryId": "vegetables",
+      "name": "Kırmızı Soğan",
+      "priceMinorUnits": 3000,
+      "isAvailable": true,
+      "sortOrder": 4
+    },
+    {
+      "id": "bb_vegetable_kapya_biber",
+      "categoryId": "vegetables",
+      "name": "Kapya Biber",
+      "priceMinorUnits": 4000,
+      "isAvailable": true,
+      "sortOrder": 5
+    },
+    {
+      "id": "bb_vegetable_mor_lahana",
+      "categoryId": "vegetables",
+      "name": "Mor Lahana",
+      "priceMinorUnits": 5000,
+      "isAvailable": true,
+      "sortOrder": 6
+    },
+    {
+      "id": "bb_vegetable_meksika_fasulyesi",
+      "categoryId": "vegetables",
+      "name": "Meksika Fasulyesi",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 7
+    },
+    {
+      "id": "bb_fruit_ananas",
+      "categoryId": "fruits",
+      "name": "Ananas",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "bb_fruit_yesil_elma",
+      "categoryId": "fruits",
+      "name": "Yeşil Elma",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "bb_fruit_nar",
+      "categoryId": "fruits",
+      "name": "Nar",
+      "priceMinorUnits": 2000,
+      "isAvailable": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "bb_fruit_muz",
+      "categoryId": "fruits",
+      "name": "Muz",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "bb_fruit_ahududu",
+      "categoryId": "fruits",
+      "name": "Ahududu",
+      "priceMinorUnits": 2000,
+      "isAvailable": true,
+      "sortOrder": 4
+    },
+    {
+      "id": "bb_fruit_bogurtlen",
+      "categoryId": "fruits",
+      "name": "Böğürtlen",
+      "priceMinorUnits": 2000,
+      "isAvailable": true,
+      "sortOrder": 5
+    },
+    {
+      "id": "bb_pickle_mor_lahana",
+      "categoryId": "pickles",
+      "name": "Mor Lahana Turşusu",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "bb_pickle_kornison",
+      "categoryId": "pickles",
+      "name": "Kornişon Turşu",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "bb_pickle_sogan_tursu",
+      "categoryId": "pickles",
+      "name": "Soğan Turşusu",
+      "priceMinorUnits": 2000,
+      "isAvailable": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "bb_pickle_jalapeno",
+      "categoryId": "pickles",
+      "name": "Jalapeño",
+      "priceMinorUnits": 2000,
+      "isAvailable": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "bb_cheese_beyaz",
+      "categoryId": "cheeses",
+      "name": "Beyaz Peynir",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "bb_cheese_cheddar",
+      "categoryId": "cheeses",
+      "name": "Cheddar Peyniri",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "bb_cheese_parmesan",
+      "categoryId": "cheeses",
+      "name": "Parmesan Peyniri",
+      "priceMinorUnits": 2000,
+      "isAvailable": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "bb_cheese_labne",
+      "categoryId": "cheeses",
+      "name": "Labne",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "bb_other_avokado",
+      "categoryId": "others",
+      "name": "Avokado",
+      "priceMinorUnits": 2500,
+      "isAvailable": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "bb_other_zeytin",
+      "categoryId": "others",
+      "name": "Zeytin",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "bb_other_ceviz",
+      "categoryId": "others",
+      "name": "Ceviz",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "bb_other_kabak_cekirdegi",
+      "categoryId": "others",
+      "name": "Kabak Çekirdeği",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "bb_other_sote_mantar",
+      "categoryId": "others",
+      "name": "Sote Mantar",
+      "priceMinorUnits": 1500,
+      "isAvailable": true,
+      "sortOrder": 4
+    },
+    {
+      "id": "bb_sauce_zeytinyag_limon",
+      "categoryId": "sauces",
+      "name": "Zeytinyağ Limon Sos",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "bb_sauce_nar_eksisi",
+      "categoryId": "sauces",
+      "name": "Nar Ekşisi",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "bb_sauce_yogurt",
+      "categoryId": "sauces",
+      "name": "Yoğurt Sos",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "bb_sauce_balli_hardal",
+      "categoryId": "sauces",
+      "name": "Ballı Hardal",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "bb_sauce_aci_sos",
+      "categoryId": "sauces",
+      "name": "Acı Sos",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 4
+    },
+    {
+      "id": "bb_sauce_caesar",
+      "categoryId": "sauces",
+      "name": "Caesar Sos",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 5
+    },
+    {
+      "id": "bb_sauce_soya",
+      "categoryId": "sauces",
+      "name": "Soya Sos",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 6
+    },
+    {
+      "id": "bb_sauce_pesto",
+      "categoryId": "sauces",
+      "name": "Pesto Sos",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 7
+    },
+    {
+      "id": "bb_sauce_tahin",
+      "categoryId": "sauces",
+      "name": "Tahin",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 8
+    },
+    {
+      "id": "bb_sauce_abakus",
+      "categoryId": "sauces",
+      "name": "Abaküs Sos",
+      "priceMinorUnits": 1000,
+      "isAvailable": true,
+      "sortOrder": 9
+    }
+  ],
+  "channelPricingPolicy": {
+    "channelDefaultAdjustments": {
+      "takeaway": 2000
+    },
+    "categoryOverrides": {
+      "takeaway": {
+        "cat_icecekler": 0
+      }
+    }
+  }
+}

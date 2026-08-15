@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:abakus_one_v2/features/bowl_builder/presentation/screens/bowl_builder_screen.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_group.dart';
@@ -8,7 +9,6 @@ import 'package:abakus_one_v2/features/menu/domain/models/modifier_option.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 import 'package:abakus_one_v2/features/menu/presentation/screens/menu_screen.dart';
 import 'package:abakus_one_v2/features/menu/presentation/screens/product_detail_screen.dart';
-import 'package:abakus_one_v2/features/navigation/presentation/providers/navigation_provider.dart';
 
 const _modifierProduct = MenuProduct(
   id: 'test_modifier_prod',
@@ -71,20 +71,14 @@ void main() {
   );
 
   testWidgets(
-    'Kendi Bowlunu Yarat kartina dokununca push degil, Build Bowl sekmesi '
-    'aktif olur',
+    'Kendi Bowlunu Yarat kartina dokununca BowlBuilderScreen push edilir',
     (tester) async {
       await pumpMenuScreen(tester);
 
       await tester.tap(find.text('Kendi Bowlunu Yarat'));
       await tester.pumpAndSettle();
 
-      // MenuScreen burada tek basina pump edildigi icin sekme degisimi
-      // gercek bir ekran degisikligi olarak gorunmez - asil davranis
-      // main_navigation_screen_test.dart'ta uctan uca dogrulaniyor. Burada
-      // sadece MenuScreen'in dogru cagriyi (push degil, selectTab) yaptigini
-      // dogruluyoruz.
-      expect(container.read(navigationProvider), AppTab.buildBowl);
+      expect(find.byType(BowlBuilderScreen), findsOneWidget);
     },
   );
 

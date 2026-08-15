@@ -6,12 +6,15 @@ import '../../../../core/theme/app_theme_constants.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
+import 'bowl_builder_live_metrics.dart';
 
-/// Final review step: every selected ingredient grouped by category, the
-/// bowl's order-quantity stepper, an optional order note, and the dynamic
-/// total price. There is no starting price (product decision, 2026-07-23) —
-/// an empty selection prices at 0 TL, and this screen says so plainly
-/// rather than implying a base charge that no longer exists.
+/// Final review step ("Bowlu Hazır 🎉"): the live price/nutrition dashboard
+/// (same [BowlBuilderLiveMetrics] shown while picking — reused verbatim,
+/// not reimplemented), every selected ingredient grouped by category, the
+/// bowl's order-quantity stepper, and an optional order note. There is no
+/// starting price (product decision, 2026-07-23) — an empty selection
+/// prices at 0 TL, and this screen says so plainly rather than implying a
+/// base charge that no longer exists.
 class BuilderSummary extends StatelessWidget {
   final List<SelectedModifier> selectedModifiers;
   final double grandTotal;
@@ -45,9 +48,11 @@ class BuilderSummary extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Bowl Özeti',
+          'Bowlu Hazır 🎉',
           style: AppTypography.titleLarge.copyWith(fontWeight: FontWeight.bold),
         ),
+        const SizedBox(height: AppSpacing.md),
+        const BowlBuilderLiveMetrics(),
         const SizedBox(height: AppSpacing.md),
         AppCard(
           padding: const EdgeInsets.all(AppSpacing.md),
@@ -80,7 +85,9 @@ class BuilderSummary extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Adet', style: AppTypography.titleMedium),
+                  const Flexible(
+                    child: Text('Adet', style: AppTypography.titleMedium),
+                  ),
                   Container(
                     decoration: BoxDecoration(
                       border: Border.all(color: AppColors.border),
@@ -141,10 +148,14 @@ class BuilderSummary extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Birim fiyat',
-                      style: AppTypography.bodyMedium
-                          .copyWith(color: AppColors.textSecondary),
+                    Flexible(
+                      child: Text(
+                        'Birim fiyat',
+                        style: AppTypography.bodyMedium
+                            .copyWith(color: AppColors.textSecondary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     Text(
                       '${unitPrice.toStringAsFixed(0)} TL',
@@ -158,14 +169,23 @@ class BuilderSummary extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Toplam',
-                    style: AppTypography.titleMedium
-                        .copyWith(fontWeight: FontWeight.bold),
+                  Flexible(
+                    child: Text(
+                      'Toplam',
+                      style: AppTypography.titleMedium
+                          .copyWith(fontWeight: FontWeight.bold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  Text(
-                    '${grandTotal.toStringAsFixed(0)} TL',
-                    style: AppTypography.priceLarge,
+                  Flexible(
+                    child: Text(
+                      '${grandTotal.toStringAsFixed(0)} TL',
+                      style: AppTypography.priceLarge,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                    ),
                   ),
                 ],
               ),

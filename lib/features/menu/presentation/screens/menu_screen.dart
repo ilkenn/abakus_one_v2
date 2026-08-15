@@ -8,11 +8,15 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_theme_constants.dart';
 import '../../../../shared/widgets/cards/bowl_builder_feature_card.dart';
 import '../../../../shared/widgets/images/product_image.dart';
+import '../../../bowl_builder/presentation/screens/bowl_builder_screen.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
+import '../../../cart/presentation/providers/shopping_channel_provider.dart';
 import '../../../favorites/presentation/providers/favorites_provider.dart';
-import '../../../navigation/presentation/providers/navigation_provider.dart';
+import '../../../qr/presentation/widgets/table_context_badge.dart';
 import '../../../restaurant/presentation/providers/restaurant_status_provider.dart';
 import '../../domain/models/menu_product.dart';
+import '../../domain/pricing/channel_pricing_policy.dart';
+import '../providers/channel_price_display_provider.dart';
 import '../providers/menu_catalog_provider.dart';
 import '../providers/menu_filter_provider.dart';
 import 'product_detail_screen.dart';
@@ -92,6 +96,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
                       _RestaurantStatusPill(isOpen: isRestaurantOpen),
                     ],
                   ),
+                  const TableContextBadge(),
                   const SizedBox(height: AppSpacing.md),
                   TextField(
                     controller: _searchController,
@@ -136,9 +141,12 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
               child: BowlBuilderFeatureCard(
-                onTap: () => ref
-                    .read(navigationProvider.notifier)
-                    .selectTab(AppTab.buildBowl),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const BowlBuilderScreen(),
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
@@ -335,11 +343,19 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
       _openDetail();
       return;
     }
+    final channelContext = ref.read(shoppingChannelProvider);
+    final policy = ref.read(channelPricingPolicySnapshotProvider).valueOrNull ??
+        const ChannelPricingPolicy();
     ref.read(cartProvider.notifier).addToCart(
           id: product.id,
           name: product.name,
           desc: product.description,
-          price: product.basePrice,
+          price: resolveDisplayPrice(
+            product: product,
+            channelContext: channelContext,
+            policy: policy,
+          ),
+          pricedForChannel: channelContext.channel,
         );
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -356,6 +372,15 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
       favoritesProvider.select(
         (state) => state.items.any((item) => item.productId == product.id),
       ),
+    );
+    final channelContext = ref.watch(shoppingChannelProvider);
+    final policy =
+        ref.watch(channelPricingPolicySnapshotProvider).valueOrNull ??
+            const ChannelPricingPolicy();
+    final displayPrice = resolveDisplayPrice(
+      product: product,
+      channelContext: channelContext,
+      policy: policy,
     );
 
     return AnimatedScale(
@@ -449,7 +474,7 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            '${product.basePrice.toStringAsFixed(0)} TL',
+                            '${displayPrice.toStringAsFixed(0)} TL',
                             style: AppTypography.priceLarge,
                           ),
                           IconButton.filled(

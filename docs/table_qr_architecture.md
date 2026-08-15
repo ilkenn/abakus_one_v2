@@ -4,6 +4,18 @@
 > order submission, payment, POS, or kitchen integration exists yet — see §10 for the explicit
 > deferred list. This document describes the domain model added to support all of that future
 > work, and the rules any future implementation of it must follow.
+>
+> **This status line is now stale for several items below** — later phases (Faz D.2/D.3, Table
+> Guest Session Phase 1-3, and Rezervasyon Faz R.1C.2) implemented a real backend
+> (`resolveTableQrToken`/`openTableGuestSession` Cloud Functions), real networking, real QR
+> scanning (`QrScannerScreen`), and real order submission for the dine-in QR channel — none of that
+> is reflected in the body text below, which is left as an honest historical snapshot rather than
+> silently rewritten. For the current, authoritative state, see `docs/decisions.md` ADR-027 (the
+> relevant Faz sections) and `docs/firestore_data_model.md`. One addition directly relevant to §5/§6
+> below: **Faz R.1C.2** added a new `reserved` QR resolution status (a table currently protected by
+> an active reservation's T-20 window — server-authoritative, `tableProtectionMinuteBuckets`) and a
+> server-generated `reservationContextId` snapshot on `GuestSession`/`Order`, both layered on top of
+> the exact flow §5/§6 describe, not a replacement for it.
 
 ## 1. Purpose
 

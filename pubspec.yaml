@@ -25,7 +25,10 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   geolocator: ^14.0.3
   go_router: ^17.3.0
+  google_maps_flutter: ^2.18.0
   latlong2: ^0.10.1
+  mobile_scanner: ^7.0.0
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:
@@ -49,3 +52,8 @@ flutter:
     - assets/images/products/Soslar/
     - assets/images/bowl/
     - assets/images/bowl/layers/
+    - assets/images/branding/
+    - assets/images/home/
+    - assets/images/home/order_modes/
+    - assets/images/home/categories/
+    - assets/images/banners/

@@ -4,13 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// stable identifier this tab will be addressed by once deep links
 /// (`abakus://menu`, `abakus://cart`, ...) are wired up — chosen now so
 /// [NavigationNotifier.selectTab]/[NavigationNotifier.selectTabBySlug] don't
-/// need to change shape when that lands. QR order is deliberately not a
-/// tab here: it's a one-shot scan action pushed on top of whatever's
-/// currently showing, not a persistent destination.
+/// need to change shape when that lands.
+///
+/// Home redesign Phase 1: `buildBowl` removed — Bowl Builder is no longer a
+/// persistent tab/destination, only ever reached via `Navigator.push` (from
+/// Home's hero/banner, and Menu's feature card). QR is, as before,
+/// deliberately not a tab either: it's the bottom bar's emphasized center
+/// action, opening a one-shot bottom sheet rather than switching to a
+/// screen — see `CustomerBottomNavigation`.
 enum AppTab {
   home('home'),
   menu('menu'),
-  buildBowl('build-bowl'),
   cart('cart'),
   profile('profile');
 

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
 import '../../data/bowl_builder_catalog.dart';
+import '../../domain/models/bowl_builder_ingredient.dart';
 import '../../domain/models/bowl_builder_state.dart';
 import '../../domain/models/bowl_builder_step.dart';
 
@@ -144,4 +145,85 @@ final bowlBuilderGrandTotalProvider = Provider<double>((ref) {
   final unitPrice = ref.watch(bowlBuilderTotalPriceProvider);
   final quantity = ref.watch(bowlBuilderProvider).quantity;
   return unitPrice * quantity;
+});
+
+/// How many ingredient selections make up the current bowl — reuses
+/// [bowlBuilderSelectedModifiersProvider]'s already-expanded list (a
+/// quantity-N ingredient already appears there as N entries), so a bowl
+/// with "3x Izgara Tavuk + Roka" reads as 4, matching what the live
+/// nutrition dashboard's other totals already count.
+final bowlBuilderSelectedIngredientCountProvider = Provider<int>((ref) {
+  return ref.watch(bowlBuilderSelectedModifiersProvider).length;
+});
+
+/// Sums [select]'s value across every selected ingredient in [selections],
+/// each multiplied by its own selected quantity — the exact same "iterate
+/// `selectedQuantitiesByIngredient`, look up the catalog, multiply by
+/// quantity" shape [bowlBuilderSelectedModifiersProvider] already uses for
+/// price, applied to whichever nutrition field [select] reads. Shared by
+/// the four nutrition totals providers below so none of them duplicates
+/// this loop.
+double _sumSelectedNutrition(
+  Map<String, int> selections,
+  BowlBuilderCatalogRepository catalog,
+  double Function(BowlBuilderIngredient ingredient) select,
+) {
+  var total = 0.0;
+  selections.forEach((ingredientId, quantity) {
+    if (quantity <= 0) return;
+    final ingredient = catalog.ingredientById(ingredientId);
+    if (ingredient == null) return;
+    total += select(ingredient) * quantity;
+  });
+  return total;
+}
+
+/// Total calories across every selected ingredient, quantity-multiplied
+/// exactly like [bowlBuilderTotalPriceProvider]. See
+/// `BowlBuilderIngredient.caloriesKcal`'s doc comment for the current
+/// placeholder-data disclosure.
+final bowlBuilderTotalCaloriesProvider = Provider<double>((ref) {
+  final state = ref.watch(bowlBuilderProvider);
+  final catalog = ref.watch(bowlBuilderCatalogRepositoryProvider);
+  return _sumSelectedNutrition(
+    state.selectedQuantitiesByIngredient,
+    catalog,
+    (ingredient) => ingredient.caloriesKcal,
+  );
+});
+
+/// Total protein (grams) across every selected ingredient, quantity-
+/// multiplied exactly like [bowlBuilderTotalPriceProvider].
+final bowlBuilderTotalProteinProvider = Provider<double>((ref) {
+  final state = ref.watch(bowlBuilderProvider);
+  final catalog = ref.watch(bowlBuilderCatalogRepositoryProvider);
+  return _sumSelectedNutrition(
+    state.selectedQuantitiesByIngredient,
+    catalog,
+    (ingredient) => ingredient.proteinGrams,
+  );
+});
+
+/// Total fat (grams) across every selected ingredient, quantity-multiplied
+/// exactly like [bowlBuilderTotalPriceProvider].
+final bowlBuilderTotalFatProvider = Provider<double>((ref) {
+  final state = ref.watch(bowlBuilderProvider);
+  final catalog = ref.watch(bowlBuilderCatalogRepositoryProvider);
+  return _sumSelectedNutrition(
+    state.selectedQuantitiesByIngredient,
+    catalog,
+    (ingredient) => ingredient.fatGrams,
+  );
+});
+
+/// Total carbohydrates (grams) across every selected ingredient, quantity-
+/// multiplied exactly like [bowlBuilderTotalPriceProvider].
+final bowlBuilderTotalCarbsProvider = Provider<double>((ref) {
+  final state = ref.watch(bowlBuilderProvider);
+  final catalog = ref.watch(bowlBuilderCatalogRepositoryProvider);
+  return _sumSelectedNutrition(
+    state.selectedQuantitiesByIngredient,
+    catalog,
+    (ingredient) => ingredient.carbohydrateGrams,
+  );
 });

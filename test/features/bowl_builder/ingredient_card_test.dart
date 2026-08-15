@@ -25,6 +25,8 @@ void main() {
           imageKey: 'salad_mevsim',
           quantity: 0,
           allowsQuantity: false,
+          caloriesKcal: 20,
+          proteinGrams: 1,
           onTap: () => tapped = true,
         ),
       );
@@ -36,7 +38,7 @@ void main() {
       expect(tapped, isTrue);
     });
 
-    testWidgets('quantity 0 iken check rozeti gizli, gorunmez opaklikta', (
+    testWidgets('quantity 0 iken "Ekle" gosterir, check rozeti gizlidir', (
       tester,
     ) async {
       await pumpCard(
@@ -47,10 +49,15 @@ void main() {
           imageKey: 'salad_roka',
           quantity: 0,
           allowsQuantity: false,
+          caloriesKcal: 12,
+          proteinGrams: 1,
           onTap: () {},
         ),
       );
       await tester.pump();
+
+      expect(find.text('Ekle'), findsOneWidget);
+      expect(find.text('✓ Eklendi'), findsNothing);
 
       final opacity = tester.widget<AnimatedOpacity>(
         find.byType(AnimatedOpacity),
@@ -58,7 +65,7 @@ void main() {
       expect(opacity.opacity, 0.0);
     });
 
-    testWidgets('quantity 1 iken check rozeti gorunur opaklikta', (
+    testWidgets('quantity 1 iken "✓ Eklendi" gosterir, check rozeti gorunur', (
       tester,
     ) async {
       await pumpCard(
@@ -69,10 +76,15 @@ void main() {
           imageKey: 'salad_roka',
           quantity: 1,
           allowsQuantity: false,
+          caloriesKcal: 12,
+          proteinGrams: 1,
           onTap: () {},
         ),
       );
       await tester.pumpAndSettle();
+
+      expect(find.text('✓ Eklendi'), findsOneWidget);
+      expect(find.text('Ekle'), findsNothing);
 
       final opacity = tester.widget<AnimatedOpacity>(
         find.byType(AnimatedOpacity),
@@ -94,6 +106,8 @@ void main() {
           imageKey: 'salad_roka',
           quantity: 1,
           allowsQuantity: false,
+          caloriesKcal: 12,
+          proteinGrams: 1,
           onTap: () {},
         ),
       );
@@ -105,7 +119,34 @@ void main() {
   });
 
   group('miktar modu (allowsQuantity: true)', () {
-    testWidgets('+ butonu onIncrement tetikler', (tester) async {
+    testWidgets(
+      'quantity 0 iken "Ekle" gosterir, stepper gosterilmez',
+      (tester) async {
+        await pumpCard(
+          tester,
+          IngredientCard(
+            name: 'Izgara Tavuk',
+            price: 40,
+            imageKey: 'protein_izgara_tavuk',
+            quantity: 0,
+            allowsQuantity: true,
+            caloriesKcal: 165,
+            proteinGrams: 31,
+            onIncrement: () {},
+            onDecrement: () {},
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('Ekle'), findsOneWidget);
+        expect(find.byIcon(Icons.add_rounded), findsNothing);
+        expect(find.byIcon(Icons.remove_rounded), findsNothing);
+      },
+    );
+
+    testWidgets('"Ekle" tetiklendiginde onIncrement cagirilir', (
+      tester,
+    ) async {
       var incremented = false;
       await pumpCard(
         tester,
@@ -115,38 +156,46 @@ void main() {
           imageKey: 'protein_izgara_tavuk',
           quantity: 0,
           allowsQuantity: true,
+          caloriesKcal: 165,
+          proteinGrams: 31,
           onIncrement: () => incremented = true,
           onDecrement: () {},
         ),
       );
       await tester.pump();
 
-      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.tap(find.text('Ekle'));
       await tester.pump();
 
       expect(incremented, isTrue);
     });
 
-    testWidgets('quantity 0 iken - butonu devre disidir', (tester) async {
-      await pumpCard(
-        tester,
-        IngredientCard(
-          name: 'Izgara Tavuk',
-          price: 40,
-          imageKey: 'protein_izgara_tavuk',
-          quantity: 0,
-          allowsQuantity: true,
-          onIncrement: () {},
-          onDecrement: () {},
-        ),
-      );
-      await tester.pump();
+    testWidgets(
+      'quantity 1 iken stepper gosterilir, - butonu aktiftir',
+      (tester) async {
+        await pumpCard(
+          tester,
+          IngredientCard(
+            name: 'Izgara Tavuk',
+            price: 40,
+            imageKey: 'protein_izgara_tavuk',
+            quantity: 1,
+            allowsQuantity: true,
+            caloriesKcal: 165,
+            proteinGrams: 31,
+            onIncrement: () {},
+            onDecrement: () {},
+          ),
+        );
+        await tester.pump();
 
-      final minusButton = tester.widget<IconButton>(
-        find.widgetWithIcon(IconButton, Icons.remove_rounded),
-      );
-      expect(minusButton.onPressed, isNull);
-    });
+        expect(find.text('Ekle'), findsNothing);
+        final minusButton = tester.widget<IconButton>(
+          find.widgetWithIcon(IconButton, Icons.remove_rounded),
+        );
+        expect(minusButton.onPressed, isNotNull);
+      },
+    );
 
     testWidgets('quantity artinca pulse animasyonu exception firlatmaz', (
       tester,
@@ -169,6 +218,8 @@ void main() {
                       imageKey: 'protein_izgara_tavuk',
                       quantity: quantity,
                       allowsQuantity: true,
+                      caloriesKcal: 165,
+                      proteinGrams: 31,
                       onIncrement: () => setState(() => quantity++),
                       onDecrement: () => setState(() => quantity--),
                     ),
@@ -181,7 +232,7 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.tap(find.text('Ekle'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
 
@@ -200,6 +251,8 @@ void main() {
           imageKey: 'protein_izgara_tavuk',
           quantity: 3,
           allowsQuantity: true,
+          caloriesKcal: 165,
+          proteinGrams: 31,
           onIncrement: () {},
           onDecrement: () {},
         ),
@@ -225,11 +278,36 @@ void main() {
         imageKey: 'salad_roka',
         quantity: 0,
         allowsQuantity: false,
+        caloriesKcal: 12,
+        proteinGrams: 1,
         onTap: () {},
       ),
     );
     await tester.pump();
 
     expect(find.byIcon(Icons.fastfood_rounded), findsOneWidget);
+  });
+
+  testWidgets('kalori/protein ozeti kart uzerinde gosterilir', (
+    tester,
+  ) async {
+    await pumpCard(
+      tester,
+      IngredientCard(
+        name: 'Izgara Tavuk',
+        price: 40,
+        imageKey: 'protein_izgara_tavuk',
+        quantity: 0,
+        allowsQuantity: true,
+        caloriesKcal: 165,
+        proteinGrams: 31,
+        onIncrement: () {},
+        onDecrement: () {},
+      ),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('165 kcal'), findsOneWidget);
+    expect(find.textContaining('31 g protein'), findsOneWidget);
   });
 }

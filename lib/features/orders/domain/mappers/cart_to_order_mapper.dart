@@ -9,6 +9,7 @@ import '../models/order_id.dart';
 import '../models/order_number.dart';
 import '../models/order_status.dart';
 import '../models/order_timestamps.dart';
+import '../models/pickup_mode.dart';
 import '../pricing/price_calculator.dart';
 import '../pricing/tax_policy.dart';
 import '../pricing/tax_rate.dart';
@@ -45,6 +46,14 @@ abstract final class CartToOrderMapper {
     String? tableId,
     String? tableSessionId,
     String? guestSessionId,
+    String? guestAuthUid,
+    String? reservationContextId,
+    String? takeawayEntrySessionId,
+    PickupMode? pickupMode,
+    DateTime? pickupTime,
+    String? contactFirstName,
+    String? contactLastName,
+    String? contactPhone,
     TaxRate taxRate = TaxPolicy.defaultRate,
 
     /// Per-line discounts, index-aligned with [cartItems] — `null`/absent
@@ -100,6 +109,14 @@ abstract final class CartToOrderMapper {
       tableId: tableId,
       tableSessionId: tableSessionId,
       guestSessionId: guestSessionId,
+      guestAuthUid: guestAuthUid,
+      reservationContextId: reservationContextId,
+      takeawayEntrySessionId: takeawayEntrySessionId,
+      pickupMode: pickupMode,
+      pickupTime: pickupTime,
+      contactFirstName: contactFirstName,
+      contactLastName: contactLastName,
+      contactPhone: contactPhone,
       courierVisibility: CourierVisibility.hidden,
       lines: lines,
       pricing: pricing,

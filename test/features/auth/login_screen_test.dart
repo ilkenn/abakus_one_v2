@@ -62,25 +62,27 @@ Future<void> _pumpLogin(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('gecersiz telefon ile OTP Gonder OtpScreen acmaz', (
+  testWidgets('gecersiz telefon ile Devam Et OtpScreen acmaz', (
     tester,
   ) async {
     await _pumpLogin(tester);
 
     await tester.enterText(find.byType(TextFormField), '123');
-    await tester.tap(find.text('OTP Gönder'));
+    await tester.ensureVisible(find.text('Devam Et'));
+    await tester.tap(find.text('Devam Et'));
     await tester.pumpAndSettle();
 
     expect(find.byType(OtpScreen), findsNothing);
   });
 
-  testWidgets('gecerli telefon ile OTP Gonder OtpScreen\'e gecer', (
+  testWidgets('gecerli telefon ile Devam Et OtpScreen\'e gecer', (
     tester,
   ) async {
     await _pumpLogin(tester);
 
     await tester.enterText(find.byType(TextFormField), '5321234567');
-    await tester.tap(find.text('OTP Gönder'));
+    await tester.ensureVisible(find.text('Devam Et'));
+    await tester.tap(find.text('Devam Et'));
     await tester.pumpAndSettle();
 
     expect(find.byType(OtpScreen), findsOneWidget);
@@ -91,6 +93,7 @@ void main() {
     (tester) async {
       await _pumpLogin(tester);
 
+      await tester.ensureVisible(find.text('Misafir Olarak Devam Et'));
       await tester.tap(find.text('Misafir Olarak Devam Et'));
       await tester.pumpAndSettle();
 

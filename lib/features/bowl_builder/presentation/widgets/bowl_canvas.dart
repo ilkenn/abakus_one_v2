@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/theme/app_colors.dart';
 import '../../domain/models/bowl_builder_ingredient.dart';
+import '../../domain/models/bowl_builder_state.dart';
 import '../../domain/models/bowl_layer_type.dart';
 import '../../domain/services/bowl_layer_image_resolver.dart';
 import '../providers/bowl_builder_provider.dart';
@@ -35,28 +37,89 @@ import '../providers/bowl_builder_provider.dart';
 /// than once) still draws its overlay exactly once — this is a visual, not
 /// a per-unit render; how many times an ingredient was added only affects
 /// price, never how many copies of its layer appear on the bowl.
-class BowlCanvas extends ConsumerWidget {
+class BowlCanvas extends ConsumerStatefulWidget {
   final List<BowlBuilderIngredient>? ingredients;
 
   const BowlCanvas({super.key, this.ingredients});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final resolved = ingredients ?? _liveSelection(ref);
+  ConsumerState<BowlCanvas> createState() => _BowlCanvasState();
+}
+
+class _BowlCanvasState extends ConsumerState<BowlCanvas>
+    with SingleTickerProviderStateMixin {
+  // Bowl Canvas Visual Asset Fix (2026-08-08): a subtle whole-bowl scale
+  // pulse, layered on top of (never replacing) each ingredient's own
+  // fade/scale-in animation in `_BowlLayerStack` below — the two run
+  // independently and both stay small/restrained on purpose ("no bounce,
+  // no game effect"). Only fires in live mode ([ingredients] omitted):
+  // a frozen, externally-provided list (e.g. a Cart line) has no "just
+  // added" moment to react to.
+  static const _pulseDuration = Duration(milliseconds: 190);
+  static const _pulseMaxScale = 1.015;
+
+  late final AnimationController _pulseController;
+  late final Animation<double> _pulseScale;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: _pulseDuration,
+    );
+    _pulseScale = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween(begin: 1.0, end: _pulseMaxScale)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 1,
+      ),
+      TweenSequenceItem(
+        tween: Tween(begin: _pulseMaxScale, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeIn)),
+        weight: 1,
+      ),
+    ]).animate(_pulseController);
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  int _totalSelectedUnits(BowlBuilderState state) =>
+      state.selectedQuantitiesByIngredient.values.fold(0, (a, b) => a + b);
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.ingredients == null) {
+      ref.listen<BowlBuilderState>(bowlBuilderProvider, (previous, next) {
+        if (previous == null) return;
+        if (_totalSelectedUnits(next) > _totalSelectedUnits(previous)) {
+          _pulseController.forward(from: 0);
+        }
+      });
+    }
+
+    final resolved = widget.ingredients ?? _liveSelection(ref);
     final byLayer = _groupByLayer(resolved);
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        const _BowlBaseImage(),
-        for (final layer in BowlLayerType.values)
-          RepaintBoundary(
-            child: _BowlLayerStack(
-              key: ValueKey(layer),
-              ingredients: byLayer[layer]!,
+    return ScaleTransition(
+      scale: _pulseScale,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const _BowlBaseImage(),
+          for (final layer in BowlLayerType.values)
+            RepaintBoundary(
+              child: _BowlLayerStack(
+                key: ValueKey(layer),
+                ingredients: byLayer[layer]!,
+              ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -106,19 +169,93 @@ class _BowlBaseImage extends StatelessWidget {
   }
 }
 
+/// Neutral stand-in for the real `bowl_empty.png` — a plain generic-food
+/// icon (`Icons.ramen_dining_rounded`, the prior placeholder) reads as "no
+/// image", not as *this app's* empty bowl. This paints a simple, unbranded
+/// bowl silhouette instead, so the customer still recognizes "this is my
+/// bowl" before the real asset lands. Explicitly a temporary placeholder,
+/// not the final premium asset — see this feature's asset report.
 class _BowlBasePlaceholder extends StatelessWidget {
   const _BowlBasePlaceholder();
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Icon(
-        Icons.ramen_dining_rounded,
-        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-        size: 64,
+    return const Padding(
+      padding: EdgeInsets.all(24),
+      child: CustomPaint(
+        size: Size.infinite,
+        painter: _BowlSilhouettePainter(),
       ),
     );
   }
+}
+
+class _BowlSilhouettePainter extends CustomPainter {
+  const _BowlSilhouettePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final width = size.width;
+    final height = size.height;
+    final rimWidth = width * 0.72;
+    final rimHeight = height * 0.11;
+    final rimCenter = Offset(width / 2, height * 0.4);
+    final bodyBottomHalfWidth = rimWidth * 0.32;
+    final bodyBottomY = rimCenter.dy + height * 0.34;
+
+    final bodyPath = Path()
+      ..moveTo(rimCenter.dx - rimWidth / 2, rimCenter.dy)
+      ..quadraticBezierTo(
+        rimCenter.dx - rimWidth / 2,
+        bodyBottomY,
+        rimCenter.dx - bodyBottomHalfWidth,
+        bodyBottomY,
+      )
+      ..lineTo(rimCenter.dx + bodyBottomHalfWidth, bodyBottomY)
+      ..quadraticBezierTo(
+        rimCenter.dx + rimWidth / 2,
+        bodyBottomY,
+        rimCenter.dx + rimWidth / 2,
+        rimCenter.dy,
+      )
+      ..close();
+
+    canvas.drawPath(
+      bodyPath,
+      Paint()
+        ..color = AppColors.surfaceVariant
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawPath(
+      bodyPath,
+      Paint()
+        ..color = AppColors.primary.withValues(alpha: 0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+
+    final rimRect = Rect.fromCenter(
+      center: rimCenter,
+      width: rimWidth,
+      height: rimHeight,
+    );
+    canvas.drawOval(
+      rimRect,
+      Paint()
+        ..color = AppColors.background
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawOval(
+      rimRect,
+      Paint()
+        ..color = AppColors.primary.withValues(alpha: 0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _BowlSilhouettePainter oldDelegate) => false;
 }
 
 /// One [BowlLayerType]'s worth of overlays. Owns each currently-shown

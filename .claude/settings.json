@@ -5,7 +5,9 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8766/index.html)",
       "Bash(taskkill //F //PID 38876)",
       "Bash(taskkill //F //PID 17124)",
-      "Bash(xargs wc -l)"
+      "Bash(xargs wc -l)",
+      "Bash(git commit -m ' *)",
+      "Bash(echo \"EXIT: $?\")"
     ]
   },
   "enabledPlugins": {

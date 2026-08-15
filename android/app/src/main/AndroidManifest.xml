@@ -38,6 +38,16 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Faz P.2.1 — Google Maps SDK for Android. The value is a Gradle
+             manifest placeholder (never a literal key in source control),
+             resolved from android/local.properties' mapsApiKeyAndroid at
+             build time — see android/app/build.gradle.kts. Empty/missing
+             locally is safe: the Maps SDK simply fails to initialize,
+             which the Flutter-side map screen already treats as an
+             expected fallback case, never a crash. -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${mapsApiKeyAndroid}" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
