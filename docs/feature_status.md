@@ -3370,3 +3370,51 @@ All four gates run for real this session (JDK 21, ports freed before running), n
 deviations and residual risk. FRAUD-F.1 (fold address-save evidence into `saveDeliveryAddress`) and
 FRAUD-F.2 (fold order-submit evidence into a future real `submitDeliveryOrder`, not started) remain
 explicitly deferred — neither was started this phase.
+
+## Delivery Fraud Location Evidence — FRAUD-F.1: Address-Save Evidence Capture
+
+**FRAUD-F.1 (2026-08-15) — Address-Save Foreground Evidence Capture, CLOSED.** Folded into the
+existing authoritative `saveDeliveryAddress` callable, per explicit scope — no standalone client
+capture callable, no order-submit work, no `submitDeliveryOrder`, no `CourierFraudSignal` migration,
+no fraud admin UI, no background tracking, no permanent risk thresholds, no production KVKK retention
+duration.
+
+- **Client capture — DONE.** `AddressLocationGateway.captureLocationEvidence()`
+  (`lib/features/address_search/data/address_location_gateway.dart`) — one-shot foreground read,
+  deliberately separate from the pre-existing `currentPosition()` (map-camera centering only, never
+  sent as evidence). Every failure mode (permission denied/permanently denied, service disabled, GPS
+  timeout, platform error) degrades to an `unavailable` result with a reason; never throws, never
+  fabricates coordinates. Wired into `MapFirstAddressScreen._save()` immediately before the existing
+  save call — never affects `_cameraTarget`/the selected pin.
+- **Server integration — DONE, atomically coupled (a disclosed deviation from FRAUD-F.0's own
+  original after-commit sketch).** `saveDeliveryAddress` parses the optional
+  `deviceLocationCandidate` (`functions/src/fraud/deviceLocationCandidate.ts`, never throws),
+  independently reverse-geocodes the DEVICE point only, computes `distanceMeters` server-side
+  (`functions/src/fraud/geoDistance.ts`), and creates one `fraudEvidence` document **inside the same
+  transaction** as the address write — see `docs/fraud_evidence_architecture.md` FRAUD-F.1
+  "Failure/atomicity" for the full justification (safe because every fallible step already completed
+  before the transaction opens).
+- **Availability is now a first-class three-state concept — DONE.** `FraudEvidenceAvailability`
+  (`available`/`unavailable`/`incomplete`) added to both `lib/core/fraud/domain/fraud_evidence.dart`
+  and `functions/src/fraud/fraudEvidenceTypes.ts`; `FraudEvidence.clientLocation` is non-null iff
+  `availability == available`, enforced via a new `InconsistentFraudEvidenceAvailabilityViolation`.
+- **Server authority — DONE.** `distanceMeters`, every geocoded field, `phoneVerified`,
+  `appCheckState`, `policyVersion` are all server-derived only; proven never readable from
+  `request.data` via dedicated forged-field tests (spoofed uid, distance, riskScore, App Check state
+  all tested).
+- **Reverse geocode — DONE.** Building number and other derived fields are never fabricated; a
+  reverse-geocode failure leaves derived fields null while raw coordinates/accuracy remain valid
+  evidence.
+
+**Test verification:** 4 new Dart test files (address_location_gateway_test.dart's pure-function
+tests + 2 new MapFirstAddressScreen integration tests) + 4 fake-implementation files updated for the
+extended interfaces. 4 new backend files (geoDistance.test.ts 3, deviceLocationCandidate.test.ts 15,
+10 new tests appended to deliveryPlaces.test.ts). `flutter analyze`: **0 issues.** `flutter test`:
+**2860/2860 passing** (up from 2839). TypeScript build: clean. Functions: **623/623 passing** (up
+from 596). Firestore Security Rules: **290/290 passing** (unchanged — no rules file touched this
+phase). All gates run for real this session (JDK 21, ports freed before running), including catching
+and fixing one genuine test-authoring bug (a post-navigation widget lookup) before reporting green.
+
+**FRAUD-F.1 CLOSED: YES.** See `docs/decisions.md` FRAUD-F.1 for the full report. FRAUD-F.2 (order-
+submit evidence, folded into a future real `submitDeliveryOrder`, confirmed still absent from this
+codebase) remains explicitly deferred and hard-blocked.

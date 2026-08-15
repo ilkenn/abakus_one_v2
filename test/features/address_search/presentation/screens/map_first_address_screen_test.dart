@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:abakus_one_v2/core/fraud/domain/fraud_evidence.dart';
+import 'package:abakus_one_v2/core/fraud/domain/mock_location_status.dart';
 import 'package:abakus_one_v2/features/address_search/data/address_location_gateway.dart';
 import 'package:abakus_one_v2/features/address_search/data/address_search_exception.dart';
 import 'package:abakus_one_v2/features/address_search/domain/models/address_suggestion.dart';
@@ -75,11 +77,24 @@ class _FakeAddressSearchProvider implements AddressSearchProvider {
 }
 
 class _FakeAddressLocationGateway implements AddressLocationGateway {
-  _FakeAddressLocationGateway({this.position, this.permanentlyDenied = false});
+  _FakeAddressLocationGateway({
+    this.position,
+    this.permanentlyDenied = false,
+    this.captureResult = const DeviceLocationCaptureResult.unavailable(
+      DeviceLocationUnavailableReason.permissionDenied,
+    ),
+  });
 
   ({double latitude, double longitude})? position;
   bool permanentlyDenied;
   int currentPositionCalls = 0;
+
+  /// FRAUD-F.1 — the fake result [captureLocationEvidence] returns.
+  /// Defaults to "unavailable" so existing tests (written before FRAUD-F.1
+  /// existed) keep exercising the "no candidate" path, matching this
+  /// gateway's own real "never fabricate coordinates" default posture.
+  DeviceLocationCaptureResult captureResult;
+  int captureLocationEvidenceCalls = 0;
 
   @override
   Future<({double latitude, double longitude})?> currentPosition() async {
@@ -89,10 +104,18 @@ class _FakeAddressLocationGateway implements AddressLocationGateway {
 
   @override
   Future<bool> isPermissionPermanentlyDenied() async => permanentlyDenied;
+
+  @override
+  Future<DeviceLocationCaptureResult> captureLocationEvidence() async {
+    captureLocationEvidenceCalls++;
+    return captureResult;
+  }
 }
 
 class _SpySavedAddressRepository implements SavedAddressRepository {
   final List<String> savedPlaceIds = [];
+  ClientLocationEvidence? lastDeviceLocation;
+  String? lastDeviceLocationUnavailableReason;
 
   @override
   Future<SavedAddress> save({
@@ -104,8 +127,12 @@ class _SpySavedAddressRepository implements SavedAddressRepository {
     String? floor,
     String? addressDescription,
     String? buildingNoOverride,
+    ClientLocationEvidence? deviceLocation,
+    String? deviceLocationUnavailableReason,
   }) async {
     savedPlaceIds.add(providerPlaceId);
+    lastDeviceLocation = deviceLocation;
+    lastDeviceLocationUnavailableReason = deviceLocationUnavailableReason;
     return SavedAddress(
       id: 'saved-1',
       customerId: 'uid-1',
@@ -482,6 +509,100 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(AddressSearchScreen), findsOneWidget);
+    });
+  });
+
+  group('MapFirstAddressScreen — FRAUD-F.1 address-save evidence capture', () {
+    testWidgets(
+        'address save still proceeds when device-location evidence is '
+        'unavailable (permission denied)', (tester) async {
+      final fake = _FakeAddressSearchProvider();
+      final gateway = _FakeAddressLocationGateway(
+        captureResult: const DeviceLocationCaptureResult.unavailable(
+          DeviceLocationUnavailableReason.permissionDenied,
+        ),
+      );
+      final spy = _SpySavedAddressRepository();
+      await tester.pumpWidget(_wrap(
+        child: MapFirstAddressScreen(
+          initialLatitude: _besiktas.latitude,
+          initialLongitude: _besiktas.longitude,
+        ),
+        searchProvider: fake,
+        locationGateway: gateway,
+        savedAddressRepository: spy,
+      ));
+      await tester.pump();
+
+      await tester.enterText(find.widgetWithText(TextField, 'Daire No *'), '4');
+      await tester.ensureVisible(find.text('Bu Konumu Kullan'));
+      await tester.tap(find.text('Bu Konumu Kullan'));
+      await tester.pumpAndSettle();
+
+      expect(spy.savedPlaceIds, hasLength(1),
+          reason: 'the address save itself must succeed unaffected');
+      expect(gateway.captureLocationEvidenceCalls, 1);
+      expect(spy.lastDeviceLocation, isNull);
+      expect(spy.lastDeviceLocationUnavailableReason, 'permissionDenied');
+    });
+
+    testWidgets(
+        'selected map pin/place is never overwritten by the captured '
+        'device location — the two remain fully independent', (tester) async {
+      final fake = _FakeAddressSearchProvider();
+      // A device location deliberately far from the selected _besiktas
+      // pin — proves the save still targets _besiktas's own
+      // server-resolved place, never the captured evidence coordinates.
+      final gateway = _FakeAddressLocationGateway(
+        captureResult: DeviceLocationCaptureResult.available(
+          ClientLocationEvidence(
+            latitude: _sisli.latitude,
+            longitude: _sisli.longitude,
+            accuracyMeters: 20,
+            clientCapturedAt: DateTime(2026, 8, 15, 9, 0),
+            mockLocationStatus: MockLocationStatus.notDetected,
+            permissionState: 'granted',
+            precisionState: 'precise',
+          ),
+        ),
+      );
+      final spy = _SpySavedAddressRepository();
+      await tester.pumpWidget(_wrap(
+        child: MapFirstAddressScreen(
+          initialLatitude: _besiktas.latitude,
+          initialLongitude: _besiktas.longitude,
+        ),
+        searchProvider: fake,
+        locationGateway: gateway,
+        savedAddressRepository: spy,
+      ));
+      await tester.pump();
+
+      // Checked BEFORE tapping save — the screen pops (navigates away)
+      // on a successful save, so GoogleMap is no longer in the tree
+      // afterward. Capturing device-location evidence never happens
+      // until `_save()` itself runs, so the map/pin state at this point
+      // already proves nothing before it has moved the camera — and
+      // nothing in the capture/save code path ever calls setState on
+      // `_cameraTarget` at all.
+      final mapBeforeSave = tester.widget<GoogleMap>(find.byType(GoogleMap));
+      expect(mapBeforeSave.initialCameraPosition.target, _besiktas);
+
+      await tester.enterText(find.widgetWithText(TextField, 'Daire No *'), '4');
+      await tester.ensureVisible(find.text('Bu Konumu Kullan'));
+      await tester.tap(find.text('Bu Konumu Kullan'));
+      await tester.pumpAndSettle();
+
+      // The saved place is still the selected (_besiktas) one — the
+      // captured evidence never redirected what gets saved.
+      expect(
+        spy.savedPlaceIds.single,
+        'place-${_besiktas.latitude}-${_besiktas.longitude}',
+      );
+      // The evidence WAS captured and forwarded — just never used to
+      // influence the selected location.
+      expect(spy.lastDeviceLocation?.latitude, _sisli.latitude);
+      expect(spy.lastDeviceLocation?.longitude, _sisli.longitude);
     });
   });
 }

@@ -1,12 +1,12 @@
 # Delivery Fraud Location Evidence — Architecture Foundation
 
-> Status: shared security foundation only (FRAUD-F.0). No production code captures evidence yet —
-> address-save capture (FRAUD-F.1) and order-submit capture (FRAUD-F.2) are both explicitly deferred,
-> and FRAUD-F.2 is additionally blocked on a real `submitDeliveryOrder` callable that does not exist.
-> This document describes the domain model, storage boundary, and access-control guarantees FRAUD-F.0
-> establishes, and the rules any future capture/consumption work must follow. See `docs/decisions.md`
-> FRAUD-F.0 for the full architecture-review record (three rounds of Architect Decision Review) this
-> implementation follows exactly.
+> Status: shared foundation (FRAUD-F.0) plus its first real producer, address-save capture
+> (FRAUD-F.1). Order-submit capture (FRAUD-F.2) remains not started, hard-blocked on a real
+> `submitDeliveryOrder` callable that does not exist anywhere in this codebase (re-confirmed absent as
+> of FRAUD-F.1). This document describes the domain model, storage boundary, access-control
+> guarantees, and — as of FRAUD-F.1 — the real address-save capture/evidence-creation flow. See
+> `docs/decisions.md` FRAUD-F.0/FRAUD-F.1 for the full architecture-review record this implementation
+> follows exactly.
 
 ## 1. Purpose
 
@@ -144,14 +144,72 @@ primary deletion mechanism, per explicit instruction not to build a sweep unless
 actual TTL policy has **not** been configured in Firestore infrastructure by this phase — that is a
 deployment step, not a code change, and is called out as residual work in `docs/decisions.md`.
 
-## 11. Deferred: FRAUD-F.1 and FRAUD-F.2
+## 11. FRAUD-F.1 — Address-Save Evidence Capture
 
-- **FRAUD-F.1** — fold an optional, non-blocking foreground location candidate into the existing
-  `saveDeliveryAddress` callable (`functions/src/deliveryPlaces.ts`), never a standalone client-callable
-  capture endpoint. Not started.
-- **FRAUD-F.2** — fold order-submit evidence into a future real `submitDeliveryOrder` callable, which
-  does not exist in this codebase (confirmed absent again during this phase). Not started; hard-blocked
-  on that callable's own, separate implementation.
+Implemented: an optional, non-blocking foreground location candidate folded directly into the
+existing `saveDeliveryAddress` callable (`functions/src/deliveryPlaces.ts`) — no standalone
+client-callable capture endpoint exists.
 
-Neither `MapFirstAddressScreen` nor `saveDeliveryAddress`'s capture behavior was touched this phase.
-`CourierFraudSignal` was not migrated. No fraud admin/review UI was built.
+**Client**: `AddressLocationGateway.captureLocationEvidence()` (`lib/features/address_search/data/
+address_location_gateway.dart`) — a single, foreground, one-shot geolocator read, deliberately
+separate from the pre-existing `currentPosition()` (which only ever centers the map camera and is
+never sent to the server). Never background, never continuous, never repeated, never a route/history
+collection. Every failure mode (permission denied, permanently denied, service disabled, GPS timeout,
+any platform error) resolves to an `unavailable` result with a reason — never throws, never fabricates
+coordinates. `MapFirstAddressScreen._save()` calls it once, immediately before the existing
+`SavedAddressRepository.save()` call, and forwards whatever it got — available or not — without ever
+using the result to move the selected pin (`_cameraTarget`/`_resolved` are untouched by this call).
+
+**Server**: `saveDeliveryAddress` parses the raw, fully client-controlled `deviceLocationCandidate`
+via `parseDeviceLocationCandidate` (`functions/src/fraud/deviceLocationCandidate.ts`) — a pure
+function that never throws and degrades any malformed input to `incomplete` rather than rejecting the
+address save. When a usable candidate exists, the callable independently reverse-geocodes the
+*device* point (never the selected address's own already-resolved fields) via the same
+`defaultReverseGeocodeFn`/`defaultPlaceDetailsFn` pipeline `reverseGeocodeAddressPoint` already uses,
+and computes `distanceMeters` (`functions/src/fraud/geoDistance.ts`, haversine) against the selected
+address's own server-resolved coordinates — never a client-supplied value for either. `phoneVerified`
+comes from `request.auth.token.phone_number`; `appCheckState` from `request.app` only. A new
+`fraudEvidence` document (`kind: "addressSave"`, tenant anchor fully null) is created **inside the
+same Firestore transaction** as the address write itself — see "Failure/atomicity" below for why that
+is safe and deliberate, not the after-commit best-effort sketch this document's FRAUD-F.0 revision
+originally described.
+
+**Availability is a first-class, three-state concept** (`FraudEvidenceAvailability`, added this
+phase to both `lib/core/fraud/domain/fraud_evidence.dart` and
+`functions/src/fraud/fraudEvidenceTypes.ts`): `available` (a usable candidate was captured — evidence
+carries real coordinates), `unavailable` (nothing was ever offered — permission denied, service
+disabled, timeout, or simply omitted), `incomplete` (something was offered but didn't hold up
+validation). `FraudEvidence.clientLocation` is non-null if and only if `availability == available` —
+enforced in the Dart constructor via a new `InconsistentFraudEvidenceAvailabilityViolation`
+(`lib/core/errors/business_rule_violation.dart`), mirroring the tenant-anchor invariant's own
+fail-fast discipline.
+
+### Failure/atomicity — the decision, and why
+
+The FraudEvidence write happens **inside the same transaction** as the `customerAddresses` write —
+not the best-effort/after-commit approach this document originally sketched at FRAUD-F.0 time. This
+is safe specifically because every fallible step (device reverse-geocode, distance computation) runs
+**before** the transaction starts and is fully reduced to a plain, already-validated data object by
+the time the transaction opens; the `tx.set()` call for the evidence document itself is therefore no
+more likely to fail than the address's own `tx.set()` immediately above it, which this app already
+accepts as `saveDeliveryAddress`'s availability bar. The result: a `SavedAddress` and its `FraudEvidence`
+record always exist together, or neither does — no address can ever be saved with zero evidence trace
+(even an `unavailable` one) due to an unlucky ordering. Reverse-geocode failures specifically are
+caught and logged (`logger.warn`) without affecting availability at all — a failed device-geocode
+still yields `available` evidence with valid coordinates/accuracy, just null derived-address fields.
+
+### Server authority
+
+Client may only ever submit the raw candidate shape (`status`, `latitude`, `longitude`,
+`accuracyMeters`, `clientCapturedAt`, `mockLocationStatus`, `permissionState`, `precisionState`).
+`distanceMeters`, every geocoded field, `phoneVerified`, `appCheckState`, and `policyVersion`
+(currently the constant `FRAUD_F1_POLICY_VERSION = "fraud-f1-signals-only-no-risk-policy"` — FRAUD-F.1
+still defines no real risk policy) are computed exclusively server-side and are never read from
+`request.data`, proven by dedicated forged-field tests.
+
+## 12. Deferred: FRAUD-F.2
+
+Fold order-submit evidence into a future real `submitDeliveryOrder` callable, which does not exist in
+this codebase (confirmed absent again this phase). Not started; hard-blocked on that callable's own,
+separate implementation. `CourierFraudSignal` was not migrated. No fraud admin/review UI was built.
+No permanent risk thresholds or production KVKK retention duration were introduced this phase either.

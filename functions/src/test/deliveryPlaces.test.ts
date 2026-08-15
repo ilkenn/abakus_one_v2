@@ -275,3 +275,301 @@ test("saveDeliveryAddress: isDefault is mutually exclusive across a "
   assert.strictEqual(secondDoc.data()?.isDefault, true);
   assert.strictEqual(firstDoc.data()?.uid, uid);
 });
+
+// ---------------------------------------------------------------------
+// saveDeliveryAddress — FRAUD-F.1 address-save evidence integration
+// ---------------------------------------------------------------------
+
+async function fraudEvidenceForSavedAddress(savedAddressId: string) {
+  const snapshot = await getFirestore()
+    .collection("fraudEvidence")
+    .where("savedAddressId", "==", savedAddressId)
+    .get();
+  assert.strictEqual(snapshot.docs.length, 1, "exactly one FraudEvidence must exist for this saved address");
+  return snapshot.docs[0].data();
+}
+
+test("saveDeliveryAddress: a device location candidate produces an addressSave FraudEvidence with an all-null pre-order tenant anchor", async () => {
+  const { idToken, uid } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    {
+      placeId: "emulator-fixture-besiktas",
+      label: "Ev",
+      apartmentNo: "4",
+      deviceLocationCandidate: {
+        status: "available",
+        latitude: 41.05,
+        longitude: 29.01,
+        accuracyMeters: 15,
+        clientCapturedAt: "2026-08-15T09:00:00.000Z",
+        mockLocationStatus: "notDetected",
+        permissionState: "granted",
+        precisionState: "precise",
+      },
+    },
+    idToken,
+  );
+  const addressId = body.result?.addressId as string;
+
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+  assert.strictEqual(evidence.kind, "addressSave");
+  assert.strictEqual(evidence.subjectUid, uid);
+  assert.strictEqual(evidence.savedAddressId, addressId);
+  assert.strictEqual(evidence.organizationId, null);
+  assert.strictEqual(evidence.branchId, null);
+  assert.strictEqual(evidence.orderId, null);
+  assert.strictEqual(evidence.availability, "available");
+});
+
+test("saveDeliveryAddress: the authenticated caller's real uid is authoritative — a spoofed subjectUid in the payload is ignored", async () => {
+  const { idToken, uid } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    {
+      placeId: "emulator-fixture-besiktas",
+      label: "Ev",
+      apartmentNo: "4",
+      subjectUid: "someone-else",
+      uid: "someone-else",
+      deviceLocationCandidate: {
+        status: "available",
+        latitude: 41.05,
+        longitude: 29.01,
+        accuracyMeters: 15,
+        clientCapturedAt: "2026-08-15T09:00:00.000Z",
+        mockLocationStatus: "unsupported",
+        permissionState: "granted",
+        precisionState: "unknown",
+      },
+    },
+    idToken,
+  );
+  const addressId = body.result?.addressId as string;
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+  assert.strictEqual(evidence.subjectUid, uid);
+});
+
+test("saveDeliveryAddress: distanceMeters is derived server-side; a client-supplied distanceMeters/riskScore is ignored entirely", async () => {
+  const { idToken } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    {
+      placeId: "emulator-fixture-besiktas", // resolves to 41.0449616, 29.0076831
+      label: "Ev",
+      apartmentNo: "4",
+      // Forged fields at every level a malicious client might try —
+      // none of these are ever read anywhere in this call.
+      distanceMeters: 0,
+      riskScore: 0,
+      riskLevel: "none",
+      deviceLocationCandidate: {
+        status: "available",
+        latitude: 41.0449616,
+        longitude: 29.1076831, // ~8km east of the selected address
+        accuracyMeters: 15,
+        clientCapturedAt: "2026-08-15T09:00:00.000Z",
+        mockLocationStatus: "notDetected",
+        permissionState: "granted",
+        precisionState: "precise",
+        distanceMeters: 999999, // forged inside the candidate itself too
+        riskScore: 0,
+      },
+    },
+    idToken,
+  );
+  const addressId = body.result?.addressId as string;
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+  const distance = evidence.interpretation?.distanceMeters as number;
+  assert.ok(distance > 5000 && distance < 12000, `expected a real computed distance around 8km, got ${distance}`);
+});
+
+test("saveDeliveryAddress: App Check state is sourced only from request context, never from a client-supplied field", async () => {
+  const { idToken } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    {
+      placeId: "emulator-fixture-besiktas",
+      label: "Ev",
+      apartmentNo: "4",
+      appCheckState: "VERIFIED",
+      attestationState: "PASSED",
+      trustedDevice: true,
+      deviceLocationCandidate: {
+        status: "available",
+        latitude: 41.05,
+        longitude: 29.01,
+        accuracyMeters: 15,
+        clientCapturedAt: "2026-08-15T09:00:00.000Z",
+        mockLocationStatus: "notDetected",
+        permissionState: "granted",
+        precisionState: "precise",
+      },
+    },
+    idToken,
+  );
+  const addressId = body.result?.addressId as string;
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+  // No real App Check token is ever sent by this raw-HTTP test harness —
+  // this proves the value reflects the real (absent) request context,
+  // never the forged "VERIFIED" the payload tried to assert.
+  assert.strictEqual(evidence.interpretation?.appCheckState, "MISSING");
+});
+
+test("saveDeliveryAddress: server timestamps (serverReceivedAt/createdAt) are present and authoritative; clientCapturedAt remains explicitly separate client provenance", async () => {
+  const { idToken } = await signUpAnonymously();
+  const skewedClientTimestamp = "2020-01-01T00:00:00.000Z"; // deliberately absurd
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    {
+      placeId: "emulator-fixture-besiktas",
+      label: "Ev",
+      apartmentNo: "4",
+      deviceLocationCandidate: {
+        status: "available",
+        latitude: 41.05,
+        longitude: 29.01,
+        accuracyMeters: 15,
+        clientCapturedAt: skewedClientTimestamp,
+        mockLocationStatus: "notDetected",
+        permissionState: "granted",
+        precisionState: "precise",
+      },
+    },
+    idToken,
+  );
+  const addressId = body.result?.addressId as string;
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+
+  assert.ok(typeof evidence.serverReceivedAt === "string" && evidence.serverReceivedAt.length > 0);
+  assert.ok(typeof evidence.createdAt === "string" && evidence.createdAt.length > 0);
+  assert.notStrictEqual(evidence.serverReceivedAt, skewedClientTimestamp);
+  // The skewed value is preserved exactly as reported, never silently
+  // reconciled against the real server time.
+  assert.strictEqual(evidence.clientLocation?.clientCapturedAt, skewedClientTimestamp);
+});
+
+test("saveDeliveryAddress: the device location is reverse-geocoded server-side, independently of the selected address's own resolution", async () => {
+  const { idToken } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    {
+      placeId: "emulator-fixture-incomplete", // selected address has NO district
+      label: "Ev",
+      apartmentNo: "4",
+      deviceLocationCandidate: {
+        status: "available",
+        latitude: 41.05, // resolves via the emulator-safe fixture to emulator-fixture-besiktas
+        longitude: 29.01,
+        accuracyMeters: 15,
+        clientCapturedAt: "2026-08-15T09:00:00.000Z",
+        mockLocationStatus: "notDetected",
+        permissionState: "granted",
+        precisionState: "precise",
+      },
+    },
+    idToken,
+  );
+  const addressId = body.result?.addressId as string;
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+
+  // The DEVICE point resolves to the Beşiktaş fixture even though the
+  // SELECTED address (emulator-fixture-incomplete) has no district at
+  // all — proves these are two fully independent resolutions.
+  assert.strictEqual(evidence.interpretation?.district, "Beşiktaş");
+  assert.strictEqual(evidence.interpretation?.buildingNumber, "74");
+});
+
+test("saveDeliveryAddress: reverse-geocode failure for the device point never fabricates fields — coordinates/accuracy evidence remains valid, derived fields stay null", async () => {
+  const { idToken } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    {
+      placeId: "emulator-fixture-besiktas",
+      label: "Ev",
+      apartmentNo: "4",
+      deviceLocationCandidate: {
+        status: "available",
+        latitude: 0,
+        longitude: 0, // the emulator-safe reverse-geocode sentinel for "unresolvable"
+        accuracyMeters: 999,
+        clientCapturedAt: "2026-08-15T09:00:00.000Z",
+        mockLocationStatus: "unavailable",
+        permissionState: "granted",
+        precisionState: "reduced",
+      },
+    },
+    idToken,
+  );
+  const addressId = body.result?.addressId as string;
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+
+  assert.strictEqual(evidence.availability, "available");
+  assert.strictEqual(evidence.clientLocation?.latitude, 0);
+  assert.strictEqual(evidence.clientLocation?.longitude, 0);
+  assert.strictEqual(evidence.clientLocation?.accuracyMeters, 999);
+  assert.strictEqual(evidence.interpretation?.buildingNumber ?? null, null);
+  assert.strictEqual(evidence.interpretation?.district ?? null, null);
+});
+
+test("saveDeliveryAddress: no device location candidate at all still saves the address, and records unavailable evidence — coordinates are never fabricated", async () => {
+  const { idToken } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    { placeId: "emulator-fixture-besiktas", label: "Ev", apartmentNo: "4" },
+    idToken,
+  );
+  assert.strictEqual(body.error, undefined, "address save must succeed even with no candidate at all");
+  const addressId = body.result?.addressId as string;
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+
+  assert.strictEqual(evidence.availability, "unavailable");
+  assert.strictEqual(evidence.clientLocation, null);
+});
+
+test("saveDeliveryAddress: an explicit unavailable candidate (permission denied) still saves the address and records the reason", async () => {
+  const { idToken } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    {
+      placeId: "emulator-fixture-besiktas",
+      label: "Ev",
+      apartmentNo: "4",
+      deviceLocationCandidate: { status: "unavailable", unavailableReason: "permission_denied" },
+    },
+    idToken,
+  );
+  assert.strictEqual(body.result?.verificationStatus, "verified", "address save proceeds unaffected");
+  const addressId = body.result?.addressId as string;
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+
+  assert.strictEqual(evidence.availability, "unavailable");
+  assert.strictEqual(evidence.unavailableReason, "permission_denied");
+  assert.strictEqual(evidence.clientLocation, null);
+});
+
+test("saveDeliveryAddress: a malformed device location candidate (missing accuracyMeters) is recorded as incomplete, address save unaffected", async () => {
+  const { idToken } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("saveDeliveryAddress"),
+    {
+      placeId: "emulator-fixture-besiktas",
+      label: "Ev",
+      apartmentNo: "4",
+      deviceLocationCandidate: {
+        status: "available",
+        latitude: 41.05,
+        longitude: 29.01,
+        // accuracyMeters deliberately omitted
+        clientCapturedAt: "2026-08-15T09:00:00.000Z",
+      },
+    },
+    idToken,
+  );
+  assert.strictEqual(body.result?.verificationStatus, "verified");
+  const addressId = body.result?.addressId as string;
+  const evidence = await fraudEvidenceForSavedAddress(addressId);
+
+  assert.strictEqual(evidence.availability, "incomplete");
+  assert.strictEqual(evidence.clientLocation, null);
+});

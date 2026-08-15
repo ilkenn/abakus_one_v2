@@ -8751,3 +8751,108 @@ retention duration relative to the evidence it logs is unresolved (D7.1); iOS ha
 mock-location signal, permanently (a platform ceiling this phase cannot close, only represent honestly
 via `MockLocationStatus.unsupported`); and App Check enforcement remains off by default in production
 pending the pre-existing, unrelated Web reCAPTCHA blocker. FRAUD-F.0 CLOSED: YES.
+
+## FRAUD-F.1 — Address-Save Foreground Evidence Capture
+
+**Decision**: Fold an optional, non-blocking foreground device-location candidate into the existing
+authoritative `saveDeliveryAddress` callable — no standalone `captureAddressSaveFraudEvidence`
+callable, so a malicious client cannot bypass evidence generation by simply skipping a second API
+call. This entry implements FRAUD-F.1 only; F.2 remains not started.
+
+### D1 — Capture is client-side one-shot, deliberately separate from the pre-existing `currentPosition()`
+
+`AddressLocationGateway` already had a one-shot `currentPosition()` used only to center the map
+camera. Rather than repurpose it (which would have entangled two genuinely different concerns — "where
+should the map start" vs. "security evidence of where the device was"), a new
+`captureLocationEvidence()` method was added to the same interface, inspected first per the ticket's
+own instruction. Both remain one-shot, foreground-only, never repeated — no background/continuous
+tracking exists anywhere in this change, confirmed by construction: `captureLocationEvidence()` has no
+timer, no stream subscription, no loop.
+
+### D2 — Availability as a first-class three-state concept (extends FRAUD-F.0's own domain types)
+
+FRAUD-F.0 defined `FraudEvidence.clientLocation` as required/non-null, since F.0 had no real producer
+yet to reveal the "what if nothing was captured" case concretely. FRAUD-F.1's actual requirement — the
+server deciding available/unavailable/incomplete — made this insufficient. Extended (not replaced):
+`clientLocation` is now nullable, `FraudEvidenceAvailability` was added (Dart + TS, kept in sync by
+hand as before), and a new `InconsistentFraudEvidenceAvailabilityViolation` enforces the
+non-null-iff-available invariant in the constructor — the same fail-fast discipline as the tenant-
+anchor check FRAUD-F.0 already established. Every existing FRAUD-F.0 test that constructs a
+`FraudEvidence` was updated to supply `availability` explicitly (churn disclosed, not hidden — 4 Dart
+domain test files touched).
+
+### D3 — Server authority: distance, geocode, App Check, phone-verification, all reproved by test
+
+`distanceMeters` (haversine, `functions/src/fraud/geoDistance.ts`, a fresh TypeScript
+reimplementation of the same formula `CourierFraudSignalDetector._distanceMeters` already uses in
+Dart — no shared Dart/TS code path exists in this repo) is computed only from the selected address's
+own server-resolved coordinates and the device candidate's coordinates, both already server-held by
+the time it runs. `appCheckState` reads only `request.app`. `phoneVerified` reads only
+`request.auth.token.phone_number`. `policyVersion` is the named constant
+`FRAUD_F1_POLICY_VERSION = "fraud-f1-signals-only-no-risk-policy"` (honest about "no real policy
+exists," not `null`, so a future real policy version is unambiguously distinguishable from "none was
+ever active" in historical records). Every one of these was proven, not just implemented: dedicated
+tests forge each value (`distanceMeters`, `riskScore`, `appCheckState`, `subjectUid` itself) in the
+request payload and confirm zero effect.
+
+### D4 — Reverse geocode reuses the existing pipeline exactly, resolves the DEVICE point only
+
+`saveDeliveryAddress` already imports `defaultPlaceDetailsFn`; this phase additionally imports
+`defaultReverseGeocodeFn` (already used by the existing `reverseGeocodeAddressPoint` callable in the
+same file) and calls the identical two-step resolution (`reverseGeocode` → `PlaceDetailsFn`) against
+the device candidate's coordinates specifically — never the selected address's own already-resolved
+`normalized` fields. Proven independent by test: a selected address with **no** district
+(`emulator-fixture-incomplete`) still yields a fully-populated device-side district, proving the two
+resolutions never leak into each other.
+
+### D5 — Failure/atomicity: evidence write moved INSIDE the address-save transaction (a considered reversal of FRAUD-F.0's own original sketch)
+
+FRAUD-F.0's own architecture document originally sketched a best-effort, after-commit write for
+capture, reasoning that coupling fraud-evidence reliability to address-save availability would be
+worse than an occasional silently-missing evidence record. Re-examined for FRAUD-F.1's real
+implementation and reversed, disclosed here: every fallible step (reverse-geocode HTTP call, distance
+computation) was restructured to run **before** the transaction opens, wrapped in try/catch, and
+reduced to a plain, already-validated JS object by the time the transaction begins. Given that, the
+evidence `tx.set()` itself carries no meaningfully higher failure risk than the address's own
+`tx.set()` immediately preceding it in the same transaction — an availability bar this app already
+accepts for `saveDeliveryAddress` as a whole. Coupling them atomically therefore costs negligible
+address-save availability while gaining a real, structural guarantee: an address can never be saved
+with zero evidence trace (not even an `unavailable` marker) due to an unlucky mid-flight failure.
+Reverse-geocode failures specifically are caught and logged (`logger.warn`) without touching
+availability — `available` evidence with valid coordinates is still produced, only derived fields stay
+null.
+
+### D6 — No candidate at all is itself recorded, not silently omitted
+
+A request with no `deviceLocationCandidate` key at all (an old client, or a client that chose not to
+send one) parses to `availability: "unavailable", unavailableReason: "not_supplied"` — never silently
+skipped. This closes the literal gap the approved architecture named: "a malicious client must not be
+able to bypass fraud evidence simply by skipping a second callable" — there is no second callable, and
+omitting the candidate from the one real callable still produces an evidence record, just one that
+honestly says nothing was offered.
+
+### Test verification
+
+4 new/updated Dart test files (address_location_gateway_test.dart's pure-function tests, 2 new
+MapFirstAddressScreen integration tests, 4 existing FraudEvidence F.0 tests updated for the new
+required `availability` field) + 4 fake-repository/gateway test doubles updated across
+addresses_screen_test.dart/map_first_address_screen_test.dart/address_details_form_screen_test.dart
+for the extended interfaces. 3 new backend test files (geoDistance.test.ts, deviceLocationCandidate.test.ts)
+plus 10 new tests appended to the existing deliveryPlaces.test.ts (single-file-per-suite convention
+where applicable, new files where the concern was genuinely new). `flutter analyze`: **0 issues.**
+`flutter test`: **2860/2860 passing** (up from 2839). TypeScript build: clean. Functions: **623/623
+passing** (up from 596). Firestore Security Rules: **290/290 passing**, unchanged — no rules file
+touched this phase. One genuine test-authoring bug was caught and fixed before reporting green: an
+early version of the "selected pin never overwritten" test looked up `GoogleMap` in the widget tree
+*after* a successful save, by which point `MapFirstAddressScreen` had already popped off-screen
+(`Navigator.pop`) — fixed by checking the camera target before the save action, which is what the test
+actually needed to prove.
+
+### Confidence
+
+High for the implemented scope — every claim (server authority, atomic coupling, independent device
+geocode, never-fabricated coordinates) has a passing test proving it, not just a doc comment asserting
+it. Genuine, disclosed residual risk: iOS has no mock-location signal (unchanged from FRAUD-F.0, not
+this phase's to close); App Check enforcement remains off by default pending the pre-existing
+reCAPTCHA blocker; no permanent risk policy or production retention duration exists, by design, per
+this phase's own explicit scope boundary. FRAUD-F.1 CLOSED: YES.

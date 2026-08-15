@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { getFirestore } from "firebase-admin/firestore";
+import * as logger from "firebase-functions/logger";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import {
   defaultAutocompleteFn,
@@ -11,6 +12,13 @@ import {
 } from "./googlePlacesClient";
 import { defaultReverseGeocodeFn, type ReverseGeocodeFn } from "./googleGeocodingClient";
 import { normalizePlaceDetails, isSufficientlyResolved } from "./googlePlacesFieldMapping";
+import { parseDeviceLocationCandidate } from "./fraud/deviceLocationCandidate";
+import { distanceMeters } from "./fraud/geoDistance";
+import {
+  createFraudEvidenceInTransaction,
+  FRAUD_F1_POLICY_VERSION,
+} from "./fraud/fraudEvidenceRepository";
+import type { ServerFraudInterpretation } from "./fraud/fraudEvidenceTypes";
 
 /**
  * Faz P.2 — Google Places API (New) address foundation. Three callables:
@@ -128,6 +136,10 @@ interface SaveDeliveryAddressResult {
 export const saveDeliveryAddress = onCall(
   { secrets: [googlePlacesServerKey], enforceAppCheck: shouldEnforceAppCheck() },
   async (request): Promise<SaveDeliveryAddressResult> => {
+    // FRAUD-F.1 — captured before any other work, so it genuinely reflects
+    // when this authoritative request arrived (docs/fraud_evidence_architecture.md).
+    const serverReceivedAt = new Date().toISOString();
+
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Sign-in is required.");
     }
@@ -189,6 +201,80 @@ export const saveDeliveryAddress = onCall(
       buildingNoSource = null;
     }
 
+    // FRAUD-F.1 — process the optional, fully client-controlled foreground
+    // device-location candidate. Never blocks/fails the address save:
+    // every step below is defensive (parse never throws; reverse-geocode
+    // and distance are wrapped/guarded so a failure just leaves the
+    // corresponding interpretation field null), matching the approved
+    // architecture's §8 explicitly. See
+    // docs/fraud_evidence_architecture.md FRAUD-F.1 for the full design
+    // and the atomic-coupling justification (§ "Failure/atomicity").
+    const parsedCandidate = parseDeviceLocationCandidate(data.deviceLocationCandidate);
+
+    let interpretation: ServerFraudInterpretation = {
+      policyVersion: FRAUD_F1_POLICY_VERSION,
+      phoneVerified:
+        typeof request.auth.token?.phone_number === "string" &&
+        request.auth.token.phone_number.length > 0,
+      appCheckState: request.app ? "VERIFIED" : "MISSING",
+    };
+
+    if (parsedCandidate.availability === "available" && parsedCandidate.clientLocation) {
+      const deviceLat = parsedCandidate.clientLocation.latitude;
+      const deviceLon = parsedCandidate.clientLocation.longitude;
+
+      // distanceMeters only if the SELECTED address itself resolved
+      // coordinates — normalized.latitude/longitude can be null when the
+      // provider only partially resolved the place (§6/§5 of the
+      // approved architecture: never fabricate a distance from a missing
+      // reference point).
+      if (normalized.latitude !== null && normalized.longitude !== null) {
+        interpretation = {
+          ...interpretation,
+          distanceMeters: distanceMeters(
+            normalized.latitude,
+            normalized.longitude,
+            deviceLat,
+            deviceLon,
+          ),
+        };
+      }
+
+      // Independent reverse-geocode of the DEVICE point only — never the
+      // selected address's own already-resolved fields (§6). Never
+      // throws: a failure here means the derived fields simply stay
+      // null; the raw coordinates/accuracy remain valid evidence
+      // regardless (§8's explicit "reverse-geocode failure" case).
+      try {
+        const reverseGeocode: ReverseGeocodeFn = defaultReverseGeocodeFn();
+        const devicePlaceId = await reverseGeocode(resolveApiKey(), deviceLat, deviceLon);
+        if (devicePlaceId) {
+          const deviceRaw = await fn(resolveApiKey(), devicePlaceId, randomUUID());
+          if (deviceRaw) {
+            const deviceNormalized = normalizePlaceDetails(devicePlaceId, deviceRaw);
+            interpretation = {
+              ...interpretation,
+              province: deviceNormalized.provinceName,
+              district: deviceNormalized.districtName,
+              neighborhood: deviceNormalized.neighborhoodName,
+              street: deviceNormalized.routeName,
+              // Never fabricated — null stays null when the provider
+              // didn't resolve a building number (§6).
+              buildingNumber: deviceNormalized.streetNumber,
+              formattedAddress: deviceNormalized.formattedAddress,
+              providerPlaceId: deviceNormalized.providerPlaceId,
+            };
+          }
+        }
+      } catch (error) {
+        logger.warn(
+          "[saveDeliveryAddress] device-location reverse-geocode failed; " +
+            "address save proceeds, evidence keeps raw coordinates only.",
+          { message: error instanceof Error ? error.message : String(error) },
+        );
+      }
+    }
+
     const db = getFirestore();
     const collection = db.collection("customerAddresses");
     const now = new Date().toISOString();
@@ -245,6 +331,35 @@ export const saveDeliveryAddress = onCall(
         formattedAddress: normalized.formattedAddress,
         createdAt,
         updatedAt: now,
+      });
+
+      // FRAUD-F.1 — created inside the SAME transaction as the address
+      // write itself, a deliberate, disclosed atomic-coupling choice (not
+      // the best-effort/after-commit approach FRAUD-F.0's own doc
+      // originally sketched — see docs/fraud_evidence_architecture.md
+      // FRAUD-F.1 "Failure/atomicity" for the full reasoning). Safe
+      // because every fallible step (reverse-geocode, distance) already
+      // happened above, outside the transaction, and was reduced to a
+      // plain, already-validated data object — this `tx.set` itself is as
+      // unlikely to fail as the address write immediately above it, which
+      // this app already accepts as the availability bar for
+      // `saveDeliveryAddress`. Never references organizationId/branchId/
+      // orderId — this is pre-order evidence (FRAUD-F.0 §4).
+      createFraudEvidenceInTransaction(tx, db, {
+        kind: "addressSave",
+        subjectUid: uid,
+        savedAddressId: docRef.id,
+        priorEvidenceId: null,
+        clientLocation: parsedCandidate.clientLocation,
+        availability: parsedCandidate.availability,
+        unavailableReason: parsedCandidate.unavailableReason,
+        serverReceivedAt,
+        createdAt: now,
+        expiresAt: null, // no production retention duration defined yet (FRAUD-F.0 §10).
+        organizationId: null,
+        branchId: null,
+        orderId: null,
+        interpretation,
       });
 
       return docRef.id;

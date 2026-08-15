@@ -233,6 +233,16 @@ class _MapFirstAddressScreenState extends ConsumerState<MapFirstAddressScreen> {
       _saveError = null;
     });
     try {
+      // FRAUD-F.1 — a single, foreground, one-time capture attempt.
+      // Deliberately does NOT affect [_resolved]/[_cameraTarget]/the
+      // selected pin in any way — the selected delivery location and
+      // this device-location evidence candidate remain fully independent
+      // concepts (docs/fraud_evidence_architecture.md FRAUD-F.1 §2). Never
+      // throws, so it can never block the save that follows.
+      final captureResult = await ref
+          .read(addressLocationGatewayProvider)
+          .captureLocationEvidence();
+
       await ref.read(savedAddressRepositoryProvider).save(
             addressId: widget.existingAddressId,
             providerPlaceId: resolved.providerPlaceId,
@@ -248,6 +258,9 @@ class _MapFirstAddressScreenState extends ConsumerState<MapFirstAddressScreen> {
                 _buildingNoOverrideController.text.trim().isEmpty
                     ? null
                     : _buildingNoOverrideController.text.trim(),
+            deviceLocation: captureResult.evidence,
+            deviceLocationUnavailableReason:
+                captureResult.unavailableReason?.name,
           );
       await ref.read(savedAddressListProvider.notifier).refresh();
       if (!mounted) return;

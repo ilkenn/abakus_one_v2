@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart' as fs;
 import 'package:cloud_functions/cloud_functions.dart' as functions;
 
+import '../../../core/fraud/domain/fraud_evidence.dart';
 import '../domain/models/saved_address.dart';
 import 'saved_address_exception.dart';
 
@@ -25,6 +26,15 @@ abstract interface class SavedAddressRepository {
   /// and updates an existing one the caller owns (when [addressId] is
   /// given). [apartmentNo] is always required — Faz P.2 §6, always
   /// customer input, never provider-sourced.
+  ///
+  /// [deviceLocation]/[deviceLocationUnavailableReason] — FRAUD-F.1, both
+  /// optional and mutually exclusive (pass at most one). Forwarded
+  /// verbatim as a raw, untrusted candidate to the `saveDeliveryAddress`
+  /// Cloud Function, which independently decides whether resulting
+  /// evidence is available/unavailable/incomplete — never trusted or
+  /// interpreted client-side. Omitting both is equivalent to
+  /// [deviceLocationUnavailableReason] `'not_supplied'`; the address save
+  /// itself is completely unaffected either way.
   Future<SavedAddress> save({
     String? addressId,
     required String providerPlaceId,
@@ -34,6 +44,8 @@ abstract interface class SavedAddressRepository {
     String? floor,
     String? addressDescription,
     String? buildingNoOverride,
+    ClientLocationEvidence? deviceLocation,
+    String? deviceLocationUnavailableReason,
   });
 
   /// Every address belonging to the currently signed-in customer.
@@ -82,6 +94,8 @@ class FirestoreSavedAddressRepository implements SavedAddressRepository {
     String? floor,
     String? addressDescription,
     String? buildingNoOverride,
+    ClientLocationEvidence? deviceLocation,
+    String? deviceLocationUnavailableReason,
   }) async {
     final callable = _functions.httpsCallable('saveDeliveryAddress');
     final String savedAddressId;
@@ -97,6 +111,10 @@ class FirestoreSavedAddressRepository implements SavedAddressRepository {
           'addressDescription': addressDescription,
         if (buildingNoOverride != null)
           'buildingNoOverride': buildingNoOverride,
+        'deviceLocationCandidate': _serializeDeviceLocationCandidate(
+          deviceLocation,
+          deviceLocationUnavailableReason,
+        ),
       });
       savedAddressId = result.data['addressId'] as String;
     } on functions.FirebaseFunctionsException catch (error) {
@@ -149,6 +167,33 @@ class FirestoreSavedAddressRepository implements SavedAddressRepository {
   @override
   Future<void> delete(String addressId) async {
     await _collection.doc(addressId).delete();
+  }
+
+  /// Serializes the raw, untrusted foreground device-location candidate
+  /// for `saveDeliveryAddress` — FRAUD-F.1. This is the ONLY shape this
+  /// repository ever sends for it; the server independently decides
+  /// availability/incompleteness, never trusting this shape at face
+  /// value (`functions/src/fraud/deviceLocationCandidate.ts`).
+  Map<String, dynamic> _serializeDeviceLocationCandidate(
+    ClientLocationEvidence? deviceLocation,
+    String? unavailableReason,
+  ) {
+    if (deviceLocation == null) {
+      return {
+        'status': 'unavailable',
+        if (unavailableReason != null) 'unavailableReason': unavailableReason,
+      };
+    }
+    return {
+      'status': 'available',
+      'latitude': deviceLocation.latitude,
+      'longitude': deviceLocation.longitude,
+      'accuracyMeters': deviceLocation.accuracyMeters,
+      'clientCapturedAt': deviceLocation.clientCapturedAt.toIso8601String(),
+      'mockLocationStatus': deviceLocation.mockLocationStatus.name,
+      'permissionState': deviceLocation.permissionState,
+      'precisionState': deviceLocation.precisionState,
+    };
   }
 
   SavedAddress _map(String id, Map<String, dynamic> data) {

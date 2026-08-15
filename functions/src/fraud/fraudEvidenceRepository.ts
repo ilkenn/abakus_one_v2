@@ -5,16 +5,23 @@ import type {
 } from "./fraudEvidenceTypes";
 
 /**
- * Internal Firestore access for the fraud-evidence collections — FRAUD-F.0.
- * Not exported as a Cloud Function; only `getPreciseFraudEvidence` (and,
- * later, FRAUD-F.1/F.2's own capture logic) may call these. No
- * evidence-writing helper exists yet — nothing in FRAUD-F.0 creates a
- * FraudEvidence document; that begins at FRAUD-F.1, per the approved
- * architecture's own staged-implementation-boundary decision.
+ * Internal Firestore access for the fraud-evidence collections —
+ * FRAUD-F.0/F.1. Not exported as a Cloud Function; only
+ * `getPreciseFraudEvidence` and `saveDeliveryAddress` (and, later,
+ * FRAUD-F.2's own capture logic) may call these.
  */
 
 export const FRAUD_EVIDENCE_COLLECTION = "fraudEvidence";
 export const FRAUD_EVIDENCE_ACCESS_LOG_COLLECTION = "fraudEvidenceAccessLog";
+
+/**
+ * FRAUD-F.1 records raw signals only — no risk-scoring policy exists yet
+ * (approved architecture §9/§10: "no permanent thresholds in this phase").
+ * This constant names that honestly rather than leaving `policyVersion`
+ * `null`, so a future real policy version is unambiguously distinguishable
+ * from "no policy was ever active" in historical records.
+ */
+export const FRAUD_F1_POLICY_VERSION = "fraud-f1-signals-only-no-risk-policy";
 
 export async function getFraudEvidenceInTransaction(
   tx: Transaction,
@@ -41,4 +48,23 @@ export function writeAccessLogEntryInTransaction(
     .collection(FRAUD_EVIDENCE_ACCESS_LOG_COLLECTION)
     .doc(entry.id);
   tx.set(ref, entry);
+}
+
+/**
+ * Creates a new, immutable `fraudEvidence` document inside the caller's own
+ * transaction — FRAUD-F.1's first real writer. Returns the generated
+ * Firestore-auto-id doc reference so the caller can record it (e.g. as
+ * `SavedAddress`'s own audit trail) without a second round trip. The
+ * caller is responsible for having already fully resolved every field on
+ * `record` (this function performs no validation/derivation of its own —
+ * see `deviceLocationCandidate.ts`/`geoDistance.ts` for that).
+ */
+export function createFraudEvidenceInTransaction(
+  tx: Transaction,
+  db: Firestore,
+  record: Omit<FraudEvidenceRecord, "id">,
+): string {
+  const ref = db.collection(FRAUD_EVIDENCE_COLLECTION).doc();
+  tx.set(ref, { ...record, id: ref.id });
+  return ref.id;
 }

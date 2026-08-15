@@ -1,5 +1,6 @@
 import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/core/fraud/domain/fraud_evidence.dart';
+import 'package:abakus_one_v2/core/fraud/domain/fraud_evidence_availability.dart';
 import 'package:abakus_one_v2/core/fraud/domain/fraud_evidence_kind.dart';
 import 'package:abakus_one_v2/core/fraud/domain/mock_location_status.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,8 @@ ClientLocationEvidence _location({
     accuracyMeters: 12,
     clientCapturedAt: DateTime(2026, 8, 15, 10, 0),
     mockLocationStatus: status,
+    permissionState: 'granted',
+    precisionState: 'precise',
   );
 }
 
@@ -24,6 +27,7 @@ void main() {
         kind: FraudEvidenceKind.addressSave,
         subjectUid: 'customer-1',
         clientLocation: _location(),
+        availability: FraudEvidenceAvailability.available,
         serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
         createdAt: DateTime(2026, 8, 15, 10, 0, 2),
       );
@@ -40,6 +44,7 @@ void main() {
         kind: FraudEvidenceKind.orderSubmit,
         subjectUid: 'customer-1',
         clientLocation: _location(),
+        availability: FraudEvidenceAvailability.available,
         serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
         createdAt: DateTime(2026, 8, 15, 10, 0, 2),
         organizationId: 'org-1',
@@ -57,6 +62,7 @@ void main() {
           kind: FraudEvidenceKind.orderSubmit,
           subjectUid: 'customer-1',
           clientLocation: _location(),
+          availability: FraudEvidenceAvailability.available,
           serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
           createdAt: DateTime(2026, 8, 15, 10, 0, 2),
           organizationId: 'org-1',
@@ -72,6 +78,7 @@ void main() {
           kind: FraudEvidenceKind.orderSubmit,
           subjectUid: 'customer-1',
           clientLocation: _location(),
+          availability: FraudEvidenceAvailability.available,
           serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
           createdAt: DateTime(2026, 8, 15, 10, 0, 2),
           organizationId: 'org-1',
@@ -88,11 +95,86 @@ void main() {
           kind: FraudEvidenceKind.orderSubmit,
           subjectUid: 'customer-1',
           clientLocation: _location(),
+          availability: FraudEvidenceAvailability.available,
           serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
           createdAt: DateTime(2026, 8, 15, 10, 0, 2),
           orderId: 'order-1',
         ),
         throwsA(isA<PartialFraudEvidenceTenantAnchorViolation>()),
+      );
+    });
+  });
+
+  group('FraudEvidence availability/clientLocation invariant (FRAUD-F.1)', () {
+    test('available with a non-null clientLocation is valid', () {
+      final evidence = FraudEvidence(
+        id: 'e9',
+        kind: FraudEvidenceKind.addressSave,
+        subjectUid: 'customer-1',
+        clientLocation: _location(),
+        availability: FraudEvidenceAvailability.available,
+        serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
+        createdAt: DateTime(2026, 8, 15, 10, 0, 2),
+      );
+
+      expect(evidence.availability, FraudEvidenceAvailability.available);
+      expect(evidence.clientLocation, isNotNull);
+    });
+
+    test('unavailable with a null clientLocation and a reason is valid', () {
+      final evidence = FraudEvidence(
+        id: 'e10',
+        kind: FraudEvidenceKind.addressSave,
+        subjectUid: 'customer-1',
+        availability: FraudEvidenceAvailability.unavailable,
+        unavailableReason: 'permission_denied',
+        serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
+        createdAt: DateTime(2026, 8, 15, 10, 0, 2),
+      );
+
+      expect(evidence.clientLocation, isNull);
+      expect(evidence.unavailableReason, 'permission_denied');
+    });
+
+    test('incomplete with a null clientLocation is valid', () {
+      final evidence = FraudEvidence(
+        id: 'e11',
+        kind: FraudEvidenceKind.addressSave,
+        subjectUid: 'customer-1',
+        availability: FraudEvidenceAvailability.incomplete,
+        serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
+        createdAt: DateTime(2026, 8, 15, 10, 0, 2),
+      );
+
+      expect(evidence.clientLocation, isNull);
+    });
+
+    test('available with a null clientLocation throws', () {
+      expect(
+        () => FraudEvidence(
+          id: 'e12',
+          kind: FraudEvidenceKind.addressSave,
+          subjectUid: 'customer-1',
+          availability: FraudEvidenceAvailability.available,
+          serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
+          createdAt: DateTime(2026, 8, 15, 10, 0, 2),
+        ),
+        throwsA(isA<InconsistentFraudEvidenceAvailabilityViolation>()),
+      );
+    });
+
+    test('unavailable with a non-null clientLocation throws', () {
+      expect(
+        () => FraudEvidence(
+          id: 'e13',
+          kind: FraudEvidenceKind.addressSave,
+          subjectUid: 'customer-1',
+          clientLocation: _location(),
+          availability: FraudEvidenceAvailability.unavailable,
+          serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
+          createdAt: DateTime(2026, 8, 15, 10, 0, 2),
+        ),
+        throwsA(isA<InconsistentFraudEvidenceAvailabilityViolation>()),
       );
     });
   });
@@ -113,7 +195,10 @@ void main() {
           accuracyMeters: 12,
           clientCapturedAt: clientCapturedAt,
           mockLocationStatus: MockLocationStatus.notDetected,
+          permissionState: 'granted',
+          precisionState: 'precise',
         ),
+        availability: FraudEvidenceAvailability.available,
         serverReceivedAt: serverReceivedAt,
         createdAt: createdAt,
       );
@@ -122,10 +207,10 @@ void main() {
       // server ever saw the request) must be preserved as reported, never
       // silently reconciled against serverReceivedAt/createdAt — the
       // point of keeping the three fields separate.
-      expect(evidence.clientLocation.clientCapturedAt, clientCapturedAt);
+      expect(evidence.clientLocation!.clientCapturedAt, clientCapturedAt);
       expect(evidence.serverReceivedAt, serverReceivedAt);
       expect(evidence.createdAt, createdAt);
-      expect(evidence.clientLocation.clientCapturedAt,
+      expect(evidence.clientLocation!.clientCapturedAt,
           isNot(evidence.serverReceivedAt));
     });
   });
@@ -148,11 +233,12 @@ void main() {
         kind: FraudEvidenceKind.addressSave,
         subjectUid: 'customer-1',
         clientLocation: _location(status: MockLocationStatus.notDetected),
+        availability: FraudEvidenceAvailability.available,
         serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
         createdAt: DateTime(2026, 8, 15, 10, 0, 2),
       );
 
-      expect(evidence.clientLocation.mockLocationStatus,
+      expect(evidence.clientLocation!.mockLocationStatus,
           MockLocationStatus.notDetected);
     });
   });
@@ -164,6 +250,7 @@ void main() {
         kind: FraudEvidenceKind.addressSave,
         subjectUid: 'customer-1',
         clientLocation: _location(),
+        availability: FraudEvidenceAvailability.available,
         serverReceivedAt: DateTime(2026, 8, 15, 10, 0, 1),
         createdAt: DateTime(2026, 8, 15, 10, 0, 2),
       );

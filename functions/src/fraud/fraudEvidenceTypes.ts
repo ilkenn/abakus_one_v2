@@ -5,10 +5,10 @@
  * kept in sync by hand (this codebase has no shared IDL/codegen step — see
  * CLAUDE.md's "no code generation step").
  *
- * FRAUD-F.0 defines these types and the getPreciseFraudEvidence read path
- * only. No production code constructs a FraudEvidence document yet —
- * capture is FRAUD-F.1 (address save) and FRAUD-F.2 (order submit, blocked
- * on a real submitDeliveryOrder callable), neither started.
+ * FRAUD-F.0 defined these types and the getPreciseFraudEvidence read path.
+ * FRAUD-F.1 (this phase) adds the first real producer: `saveDeliveryAddress`
+ * (deliveryPlaces.ts) creates `addressSave`-kind records. FRAUD-F.2 (order
+ * submit, blocked on a real submitDeliveryOrder callable) is not started.
  */
 
 export type FraudEvidenceKind = "addressSave" | "orderSubmit";
@@ -39,7 +39,23 @@ export interface ClientLocationEvidence {
    *  used for risk-timing logic — see FraudEvidenceRecord.serverReceivedAt. */
   clientCapturedAt: string;
   mockLocationStatus: MockLocationStatus;
+  /** e.g. "granted" — FRAUD-F.1. Free-text, mirrors FraudSignal.type's own
+   *  "no fabricated taxonomy" discipline. */
+  permissionState: string;
+  /** e.g. "precise" | "reduced" | "unknown" — FRAUD-F.1. */
+  precisionState: string;
 }
+
+/**
+ * Whether usable device-location evidence was actually captured —
+ * FRAUD-F.1. Mirrors
+ * lib/core/fraud/domain/fraud_evidence_availability.dart. The server
+ * decides this, never the client.
+ */
+export type FraudEvidenceAvailability =
+  | "available"
+  | "unavailable"
+  | "incomplete";
 
 export interface ServerFraudInterpretation {
   distanceMeters?: number | null;
@@ -65,7 +81,12 @@ export interface FraudEvidenceRecord {
   subjectUid: string;
   savedAddressId?: string | null;
   priorEvidenceId?: string | null;
-  clientLocation: ClientLocationEvidence;
+  /** `null` unless `availability === "available"`. */
+  clientLocation: ClientLocationEvidence | null;
+  availability: FraudEvidenceAvailability;
+  /** Internal diagnostic only (e.g. "permission_denied") — never shown to
+   *  the customer. `null` when `availability === "available"`. */
+  unavailableReason?: string | null;
   serverReceivedAt: string;
   createdAt: string;
   expiresAt?: string | null;

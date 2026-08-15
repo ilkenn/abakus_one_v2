@@ -2189,3 +2189,18 @@ final class PartialFraudEvidenceTenantAnchorViolation
       'FraudEvidence tenant anchor must be fully null (pre-order) or fully '
       'populated (organizationId, branchId, orderId) — never partial';
 }
+
+/// A `FraudEvidence` was constructed with `availability` and
+/// `clientLocation` disagreeing — FRAUD-F.1 (`docs/decisions.md`,
+/// `docs/fraud_evidence_architecture.md`). `clientLocation` must be
+/// non-null if and only if `availability` is
+/// `FraudEvidenceAvailability.available`.
+final class InconsistentFraudEvidenceAvailabilityViolation
+    extends BusinessRuleViolation {
+  const InconsistentFraudEvidenceAvailabilityViolation();
+
+  @override
+  String get description =>
+      'FraudEvidence.clientLocation must be non-null if and only if '
+      'availability is FraudEvidenceAvailability.available';
+}

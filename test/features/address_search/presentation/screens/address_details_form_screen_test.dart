@@ -1,3 +1,4 @@
+import 'package:abakus_one_v2/core/fraud/domain/fraud_evidence.dart';
 import 'package:abakus_one_v2/features/address_search/data/address_search_exception.dart';
 import 'package:abakus_one_v2/features/address_search/domain/models/address_suggestion.dart';
 import 'package:abakus_one_v2/features/address_search/domain/models/resolved_address.dart';
@@ -81,6 +82,8 @@ class _SpySavedAddressRepository implements SavedAddressRepository {
     String? floor,
     String? addressDescription,
     String? buildingNoOverride,
+    ClientLocationEvidence? deviceLocation,
+    String? deviceLocationUnavailableReason,
   }) async {
     savedPlaceIds.add(providerPlaceId);
     return SavedAddress(

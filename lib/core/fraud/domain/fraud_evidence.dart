@@ -1,9 +1,10 @@
 import '../../errors/business_rule_violation.dart';
+import 'fraud_evidence_availability.dart';
 import 'fraud_evidence_kind.dart';
 import 'mock_location_status.dart';
 
 /// Client-originated location evidence, exactly as reported by the device
-/// — FRAUD-F.0. **A candidate evidence input, not an automatically-trusted
+/// — FRAUD-F.0/F.1. **A candidate evidence input, not an automatically-trusted
 /// fact** — see [FraudEvidence]'s own doc comment on provenance.
 /// [clientCapturedAt] in particular must never be treated as authoritative
 /// timing; risk/derivation logic keys off [FraudEvidence.serverReceivedAt]
@@ -15,6 +16,8 @@ class ClientLocationEvidence {
     required this.accuracyMeters,
     required this.clientCapturedAt,
     required this.mockLocationStatus,
+    required this.permissionState,
+    required this.precisionState,
   });
 
   final double latitude;
@@ -26,6 +29,19 @@ class ClientLocationEvidence {
   final DateTime clientCapturedAt;
 
   final MockLocationStatus mockLocationStatus;
+
+  /// The permission state at capture time (e.g. `'granted'`) — FRAUD-F.1.
+  /// Free-text, mirroring [FraudSignal.type]'s own "no fabricated taxonomy"
+  /// discipline: only one value (`'granted'`) is ever actually produced by
+  /// a real capture today, since a candidate only exists at all when
+  /// permission was granted (see
+  /// `lib/features/address_search/data/address_location_gateway.dart`).
+  final String permissionState;
+
+  /// The platform's location-precision state at capture time (e.g.
+  /// `'precise'` / `'reduced'` / `'unknown'`) — FRAUD-F.1, iOS 14+'s
+  /// reduced-accuracy toggle and its cross-platform equivalent.
+  final String precisionState;
 }
 
 /// Server-derived interpretation of a [FraudEvidence] record — FRAUD-F.0.
@@ -102,6 +118,13 @@ class ServerFraudInterpretation {
 /// For [FraudEvidenceKind.orderSubmit] evidence, all three must be
 /// non-null. A partial anchor throws
 /// [PartialFraudEvidenceTenantAnchorViolation].
+///
+/// **Availability/clientLocation consistency is a second structural
+/// invariant, added FRAUD-F.1**: [clientLocation] is non-null if and only
+/// if [availability] is [FraudEvidenceAvailability.available] — enforced
+/// in the constructor via [InconsistentFraudEvidenceAvailabilityViolation],
+/// the same "fail fast on a structurally invalid record" discipline as the
+/// tenant-anchor check.
 class FraudEvidence {
   FraudEvidence({
     required this.id,
@@ -109,7 +132,9 @@ class FraudEvidence {
     required this.subjectUid,
     this.savedAddressId,
     this.priorEvidenceId,
-    required this.clientLocation,
+    this.clientLocation,
+    required this.availability,
+    this.unavailableReason,
     required this.serverReceivedAt,
     required this.createdAt,
     this.expiresAt,
@@ -122,6 +147,10 @@ class FraudEvidence {
     final populatedCount = tenantFields.where((f) => f != null).length;
     if (populatedCount != 0 && populatedCount != tenantFields.length) {
       throw const PartialFraudEvidenceTenantAnchorViolation();
+    }
+    final isAvailable = availability == FraudEvidenceAvailability.available;
+    if (isAvailable != (clientLocation != null)) {
+      throw const InconsistentFraudEvidenceAvailabilityViolation();
     }
   }
 
@@ -142,7 +171,15 @@ class FraudEvidence {
   /// mutated when this reference is created.
   final String? priorEvidenceId;
 
-  final ClientLocationEvidence clientLocation;
+  /// `null` unless [availability] is [FraudEvidenceAvailability.available].
+  final ClientLocationEvidence? clientLocation;
+
+  final FraudEvidenceAvailability availability;
+
+  /// Internal diagnostic only (e.g. `'permission_denied'`) — never shown
+  /// to the customer, never treated as an error. `null` when
+  /// [availability] is [FraudEvidenceAvailability.available].
+  final String? unavailableReason;
 
   final DateTime serverReceivedAt;
   final DateTime createdAt;

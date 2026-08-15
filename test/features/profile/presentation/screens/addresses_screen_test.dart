@@ -1,3 +1,4 @@
+import 'package:abakus_one_v2/core/fraud/domain/fraud_evidence.dart';
 import 'package:abakus_one_v2/features/address_search/data/address_location_gateway.dart';
 import 'package:abakus_one_v2/features/address_search/domain/models/address_suggestion.dart';
 import 'package:abakus_one_v2/features/address_search/domain/models/resolved_address.dart';
@@ -61,6 +62,12 @@ class _FakeAddressLocationGateway implements AddressLocationGateway {
 
   @override
   Future<bool> isPermissionPermanentlyDenied() async => false;
+
+  @override
+  Future<DeviceLocationCaptureResult> captureLocationEvidence() async =>
+      const DeviceLocationCaptureResult.unavailable(
+        DeviceLocationUnavailableReason.permissionDenied,
+      );
 }
 
 class _FakeSavedAddressRepository implements SavedAddressRepository {
@@ -79,6 +86,8 @@ class _FakeSavedAddressRepository implements SavedAddressRepository {
     String? floor,
     String? addressDescription,
     String? buildingNoOverride,
+    ClientLocationEvidence? deviceLocation,
+    String? deviceLocationUnavailableReason,
   }) async {
     throw UnimplementedError();
   }
@@ -296,6 +305,8 @@ class _ThrowingSavedAddressRepository implements SavedAddressRepository {
     String? floor,
     String? addressDescription,
     String? buildingNoOverride,
+    ClientLocationEvidence? deviceLocation,
+    String? deviceLocationUnavailableReason,
   }) async =>
       throw UnimplementedError();
 
