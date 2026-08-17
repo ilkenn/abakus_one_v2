@@ -16,7 +16,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final sectionTitle = find.text('En Sevilen Bowl\'lar');
+      final sectionTitle = find.text('Abaküs\'ün Favorileri');
       await tester.dragUntilVisible(
         sectionTitle,
         find.byType(Scrollable).first,

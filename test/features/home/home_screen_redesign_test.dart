@@ -3,17 +3,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:abakus_one_v2/core/router/app_routes.dart';
+import 'package:abakus_one_v2/core/theme/app_spacing.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
 import 'package:abakus_one_v2/features/bowl_builder/presentation/screens/bowl_builder_screen.dart';
-import 'package:abakus_one_v2/features/campaigns/domain/models/campaign_model.dart';
-import 'package:abakus_one_v2/features/campaigns/presentation/providers/campaigns_provider.dart';
+import 'package:abakus_one_v2/features/campaigns/presentation/screens/campaigns_screen.dart';
+import 'package:abakus_one_v2/features/delivery/presentation/screens/delivery_address_selection_screen.dart';
 import 'package:abakus_one_v2/features/home/presentation/screens/home_screen.dart';
-import 'package:abakus_one_v2/features/home/presentation/widgets/build_bowl_banner.dart';
-import 'package:abakus_one_v2/features/home/presentation/widgets/home_hero_section.dart';
+import 'package:abakus_one_v2/features/home/presentation/widgets/community_preview_section.dart';
+import 'package:abakus_one_v2/features/home/presentation/widgets/compact_bowl_builder_card.dart';
+import 'package:abakus_one_v2/features/home/presentation/widgets/featured_content_section.dart';
+import 'package:abakus_one_v2/features/home/presentation/widgets/home_section_title.dart';
+import 'package:abakus_one_v2/features/home/presentation/widgets/home_top_bar.dart';
+import 'package:abakus_one_v2/features/home/presentation/widgets/popular_products_section.dart';
+import 'package:abakus_one_v2/features/home/presentation/widgets/weekly_editorial_section.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_filter_provider.dart';
+import 'package:abakus_one_v2/features/menu/presentation/screens/product_detail_screen.dart';
 import 'package:abakus_one_v2/features/navigation/presentation/providers/navigation_provider.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
@@ -25,6 +32,7 @@ import 'package:abakus_one_v2/features/orders/domain/models/order_timestamps.dar
 import 'package:abakus_one_v2/features/orders/domain/pricing/price_calculator.dart';
 import 'package:abakus_one_v2/features/orders/domain/pricing/tax_policy.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
+import 'package:abakus_one_v2/features/profile/presentation/screens/loyalty_screen.dart';
 import 'package:abakus_one_v2/features/qr/presentation/screens/qr_scanner_screen.dart';
 import 'package:abakus_one_v2/features/takeaway/presentation/screens/takeaway_branch_selection_screen.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
@@ -48,11 +56,6 @@ class _AuthenticatedNotifier extends AuthNotifier {
           expiresAt: DateTime(2026, 12, 31),
         ),
       );
-}
-
-class _EmptyCampaignsNotifier extends CampaignsNotifier {
-  @override
-  List<CampaignModel> build() => const [];
 }
 
 void main() {
@@ -110,56 +113,6 @@ void main() {
     await tester.tap(finder);
   }
 
-  /// The order-mode cards are wide (~75% of screen width) and live inside
-  /// their own horizontal `ListView`, which — like any lazily-built
-  /// `ListView` — only mounts cards within its viewport/cache extent. The
-  /// first card ("Masada Sipariş") is always reachable via the outer
-  /// vertical scroll; this then finds *that* horizontal `Scrollable`
-  /// specifically and drags it to reveal a later card, mirroring the same
-  /// two-step pattern the category tests already use for their own
-  /// horizontal list.
-  Future<void> scrollOrderModeCardAndTap(
-    WidgetTester tester,
-    String label,
-  ) async {
-    final firstCard = find.text('Masada Sipariş');
-    await tester.ensureVisible(firstCard);
-    await tester.pumpAndSettle();
-
-    if (label != 'Masada Sipariş') {
-      // Deriving the Scrollable from `firstCard`'s ancestor breaks once
-      // enough leftward drags scroll the first card itself out of the lazy
-      // list's cache extent (it unmounts). The list's own `Key` stays valid
-      // for the whole scroll regardless of which children are mounted.
-      final orderModeRow = find.byKey(const Key('orderModeListView'));
-      final target = find.text(label);
-      // The order-mode row (~415px tall in this test viewport) is taller
-      // than fits comfortably below the rest of the page content, so after
-      // the vertical `ensureVisible` above, the row's own *center* point
-      // (what `drag()`/`dragUntilVisible()` target by default) can fall
-      // above y=0 — off-screen — even though part of the row is genuinely
-      // visible. Dragging from an explicit point inside the row/viewport
-      // intersection sidesteps that instead of relying on the row's center.
-      var attempts = 0;
-      while (target.evaluate().isEmpty && attempts < 10) {
-        final rowRect = tester.getRect(orderModeRow);
-        final viewport =
-            tester.view.physicalSize / tester.view.devicePixelRatio;
-        final startY = ((rowRect.top.clamp(0.0, viewport.height) +
-                rowRect.bottom.clamp(0.0, viewport.height)) /
-            2);
-        await tester.dragFrom(Offset(400, startY), const Offset(-300, 0));
-        await tester.pumpAndSettle();
-        attempts++;
-      }
-    }
-
-    final target = find.text(label);
-    await tester.ensureVisible(target);
-    await tester.pumpAndSettle();
-    await tester.tap(target);
-  }
-
   group('1. compact top bar', () {
     testWidgets('sabit sube adini ve kompakt acik/kapali durumunu gosterir', (
       tester,
@@ -183,6 +136,28 @@ void main() {
       await pumpHome(tester);
 
       expect(find.byIcon(Icons.notifications_outlined), findsOneWidget);
+    });
+
+    testWidgets(
+        'basliktaki Boncuk eylemi uydurulmus sayi gostermez, LoyaltyScreen '
+        'acar (H.1.1 header mock-Boncuk duzeltmesi)', (tester) async {
+      container = ProviderContainer(
+        overrides: [authProvider.overrideWith(() => _AuthenticatedNotifier())],
+      );
+      addTearDown(container.dispose);
+
+      await pumpHome(tester);
+
+      // No numeric balance anywhere on Home at all now — neither the old
+      // BoncukBalancePill's "320" nor any other fabricated number.
+      expect(find.text('320'), findsNothing);
+      expect(find.text('320 Boncuk'), findsNothing);
+      expect(find.text('Boncuklarım'), findsOneWidget);
+
+      await tester.tap(find.text('Boncuklarım'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LoyaltyScreen), findsOneWidget);
     });
   });
 
@@ -236,75 +211,111 @@ void main() {
     });
   });
 
-  group('3. hero', () {
-    testWidgets('ana mesaj, alt mesaj ve CTA gosterir', (tester) async {
+  group('3. hero carousel (H.2)', () {
+    testWidgets('tam olarak 3 slayt yapilandirilmistir', (tester) async {
       await pumpHome(tester);
 
-      expect(
-        find.descendant(
-          of: find.byType(HomeHeroSection),
-          matching: find.text('Kendi Bowl\'unu Yarat'),
-        ),
-        findsOneWidget,
+      final indicator = find.descendant(
+        of: find.byKey(const Key('heroCarouselIndicator')),
+        matching: find.byType(AnimatedContainer),
       );
-      expect(
-        find.descendant(
-          of: find.byType(HomeHeroSection),
-          matching: find.text('Bowl\'unu Oluştur'),
-        ),
-        findsOneWidget,
-      );
+      expect(indicator, findsNWidgets(3));
     });
 
-    testWidgets('CTA BowlBuilderScreen\'i push eder', (tester) async {
+    testWidgets('banner_01 CTA hedefi CampaignsScreen\'i acar', (
+      tester,
+    ) async {
       await pumpHome(tester);
 
-      final cta = find.descendant(
-        of: find.byType(HomeHeroSection),
-        matching: find.text('Bowl\'unu Oluştur'),
-      );
-      await tester.dragUntilVisible(
-        cta,
-        find.byType(Scrollable).first,
-        const Offset(0, -300),
-      );
+      final cta = find.byKey(const Key('heroCta_banner_01.png'));
+      await tester.ensureVisible(cta);
       await tester.pumpAndSettle();
       await tester.tap(cta);
       await tester.pumpAndSettle();
 
-      expect(find.byType(BowlBuilderScreen), findsOneWidget);
+      expect(find.byType(CampaignsScreen), findsOneWidget);
+    });
+
+    testWidgets('banner_02 CTA hedefi LoyaltyScreen\'i acar', (tester) async {
+      await pumpHome(tester);
+
+      final pageView = find.byKey(const Key('homeHeroCarousel'));
+      await tester.ensureVisible(pageView);
+      await tester.pumpAndSettle();
+      await tester.fling(pageView, const Offset(-400, 0), 800);
+      await tester.pumpAndSettle();
+
+      final cta = find.byKey(const Key('heroCta_banner_02.png'));
+      expect(cta, findsOneWidget);
+      await tester.tap(cta);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LoyaltyScreen), findsOneWidget);
+    });
+
+    testWidgets('banner_04 CTA hedefi DeliveryAddressSelectionScreen\'i acar',
+        (tester) async {
+      await pumpHome(tester);
+
+      final pageView = find.byKey(const Key('homeHeroCarousel'));
+      await tester.ensureVisible(pageView);
+      await tester.pumpAndSettle();
+      await tester.fling(pageView, const Offset(-400, 0), 800);
+      await tester.pumpAndSettle();
+      await tester.fling(pageView, const Offset(-400, 0), 800);
+      await tester.pumpAndSettle();
+
+      final cta = find.byKey(const Key('heroCta_banner_04.png'));
+      expect(cta, findsOneWidget);
+      await tester.tap(cta);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DeliveryAddressSelectionScreen), findsOneWidget);
+    });
+
+    testWidgets(
+        'telefon genisliginde mobil kompozisyon kullanilir — gercek '
+        'Flutter baslik/CTA, tam boy sanat eseri yerine', (tester) async {
+      tester.view.physicalSize = const Size(375, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await pumpHome(tester);
+
+      // Real Flutter text — not baked into the artwork, so it can never
+      // render illegibly small or get clipped the way H.2's full-artwork
+      // scale-down did.
+      expect(find.text('İlk Siparişine 100 TL Bizden'), findsOneWidget);
+      expect(find.text('Fırsatı Kullan'), findsOneWidget);
+
+      final cta = find.byKey(const Key('heroCta_banner_01.png'));
+      await tester.tap(cta);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CampaignsScreen), findsOneWidget);
     });
   });
 
-  group('4. siparis modu bolumu', () {
+  group('4. siparis modu bolumu (H.2 — kompakt 2x2 grid)', () {
     testWidgets(
-      'tam olarak Masada Siparis/Gel Al/Paket Servis/Rezervasyon gosterir',
+      'tam olarak Masada Siparis/Gel Al/Paket Servis/Rezervasyon gosterir, '
+      'hepsi kaydirmadan ayni anda gorunur',
       (tester) async {
         await pumpHome(tester);
 
         expect(find.text('Nasıl sipariş vermek istersin?'), findsOneWidget);
 
-        final firstCard = find.text('Masada Sipariş');
-        await tester.ensureVisible(firstCard);
+        final grid = find.byKey(const Key('orderModeGrid'));
+        await tester.ensureVisible(grid);
         await tester.pumpAndSettle();
-        expect(firstCard, findsOneWidget);
 
-        final orderModeRow = find.byKey(const Key('orderModeListView'));
-        for (final label in ['Gel Al', 'Paket Servis', 'Rezervasyon']) {
-          final target = find.text(label);
-          var attempts = 0;
-          while (target.evaluate().isEmpty && attempts < 10) {
-            final rowRect = tester.getRect(orderModeRow);
-            final viewport =
-                tester.view.physicalSize / tester.view.devicePixelRatio;
-            final startY = ((rowRect.top.clamp(0.0, viewport.height) +
-                    rowRect.bottom.clamp(0.0, viewport.height)) /
-                2);
-            await tester.dragFrom(Offset(400, startY), const Offset(-300, 0));
-            await tester.pumpAndSettle();
-            attempts++;
-          }
-          expect(target, findsOneWidget, reason: label);
+        for (final label in [
+          'Masada Sipariş',
+          'Gel Al',
+          'Paket Servis',
+          'Rezervasyon',
+        ]) {
+          expect(find.text(label), findsOneWidget, reason: label);
         }
       },
     );
@@ -312,7 +323,7 @@ void main() {
     testWidgets('Masada Siparis QrScannerScreen acar', (tester) async {
       await pumpHome(tester);
 
-      await scrollOrderModeCardAndTap(tester, 'Masada Sipariş');
+      await scrollToAndTap(tester, find.text('Masada Sipariş'));
       await tester.pumpAndSettle();
 
       expect(find.byType(QrScannerScreen), findsOneWidget);
@@ -324,7 +335,7 @@ void main() {
         (tester) async {
       await pumpHome(tester);
 
-      await scrollOrderModeCardAndTap(tester, 'Gel Al');
+      await scrollToAndTap(tester, find.text('Gel Al'));
       await tester.pumpAndSettle();
 
       expect(find.byType(TakeawayBranchSelectionScreen), findsOneWidget);
@@ -333,7 +344,7 @@ void main() {
     testWidgets('Paket Servis Menu sekmesini acar', (tester) async {
       await pumpHome(tester);
 
-      await scrollOrderModeCardAndTap(tester, 'Paket Servis');
+      await scrollToAndTap(tester, find.text('Paket Servis'));
       await tester.pumpAndSettle();
 
       expect(container.read(navigationProvider), AppTab.menu);
@@ -344,7 +355,7 @@ void main() {
         (tester) async {
       await pumpHome(tester);
 
-      await scrollOrderModeCardAndTap(tester, 'Rezervasyon');
+      await scrollToAndTap(tester, find.text('Rezervasyon'));
       await tester.pumpAndSettle();
 
       expect(
@@ -353,19 +364,13 @@ void main() {
     });
   });
 
-  group('5. Bowl Builder banner', () {
-    testWidgets('baslik, alt baslik ve CTA gosterir', (tester) async {
+  group('5. Kendi Bowl\'unu Yarat (H.2 — tek konsolide promo)', () {
+    testWidgets('Home\'da tam olarak TEK Bowl Builder promosu bulunur', (
+      tester,
+    ) async {
       await pumpHome(tester);
 
-      expect(
-        find.descendant(
-          of: find.byType(BuildBowlBanner),
-          matching: find.text(
-            'Malzemeni seç, fiyatını anında gör. Tamamen sana özel hazırla.',
-          ),
-        ),
-        findsOneWidget,
-      );
+      expect(find.byType(CompactBowlBuilderCard), findsOneWidget);
     });
 
     testWidgets('kartina dokununca push ile BowlBuilderScreen acilir', (
@@ -374,7 +379,7 @@ void main() {
       await pumpHome(tester);
 
       final cta = find.descendant(
-        of: find.byType(BuildBowlBanner),
+        of: find.byType(CompactBowlBuilderCard),
         matching: find.text('Bowl\'unu Oluştur'),
       );
       await scrollToAndTap(tester, cta);
@@ -384,44 +389,32 @@ void main() {
     });
   });
 
-  group('6. one cikan icerik', () {
-    testWidgets('gercek aktif kampanyalari gosterir', (tester) async {
-      await pumpHome(tester);
-
-      final activeCampaigns =
-          container.read(campaignsProvider).where((c) => c.isActive);
-      expect(activeCampaigns, isNotEmpty);
-      for (final campaign in activeCampaigns) {
-        await tester.dragUntilVisible(
-          find.text(campaign.title),
-          find.byType(Scrollable).first,
-          const Offset(0, -300),
-        );
-        expect(find.text(campaign.title), findsOneWidget);
-      }
-    });
-
-    testWidgets('gercek kampanya yoksa bolum tamamen gizlenir', (
+  group('6. one cikan icerik (H.2 — bilincli olarak Home\'dan cikarildi)', () {
+    // H.2: the hero carousel now owns the primary-promotion role
+    // FeaturedContentSection used to play on Home; showing both would
+    // duplicate campaign messaging (locked instruction). The widget/
+    // provider itself is untouched (`featured_content_section.dart`,
+    // `campaignsProvider`) — only Home's own reference to it was removed,
+    // so this section's own dedicated behavior tests (active campaigns
+    // render, empty state hides the section) no longer apply to *Home*
+    // and were removed rather than left asserting now-false behavior; this
+    // single test documents/guards the deliberate omission instead.
+    testWidgets('FeaturedContentSection artik Home agacinda render edilmez', (
       tester,
     ) async {
-      container = ProviderContainer(
-        overrides: [
-          campaignsProvider.overrideWith(() => _EmptyCampaignsNotifier()),
-        ],
-      );
-      addTearDown(container.dispose);
-
       await pumpHome(tester);
 
-      expect(find.text('Öne Çıkanlar'), findsNothing);
+      expect(find.byType(FeaturedContentSection), findsNothing);
     });
   });
 
-  group('7. populer urunler', () {
-    testWidgets('En Sevilen Bowllar basligini gosterir', (tester) async {
+  group('7. Abaküs\'ün Favorileri (H.2 rename/reframe)', () {
+    testWidgets('Abakusun Favorileri basligini gosterir', (tester) async {
       await pumpHome(tester);
 
-      expect(find.text('En Sevilen Bowl\'lar'), findsOneWidget);
+      expect(find.text('Abaküs\'ün Favorileri'), findsOneWidget);
+      // Eski baslik artik hicbir yerde gorunmuyor.
+      expect(find.text('En Sevilen Bowl\'lar'), findsNothing);
     });
 
     testWidgets('gercek urun gorselleri kullanir', (tester) async {
@@ -446,7 +439,33 @@ void main() {
       await pumpHome(tester);
 
       expect(tester.takeException(), isNull);
-      expect(find.text('En Sevilen Bowl\'lar'), findsNothing);
+      expect(find.text('Abaküs\'ün Favorileri'), findsNothing);
+    });
+
+    testWidgets(
+        'kart yuksekligi kompakttir, altinda bosluk birakmaz (H.2.1 dead '
+        'space regresyon korumasi)', (tester) async {
+      await pumpHome(tester);
+
+      final card = find
+          .descendant(
+            of: find.byType(PopularProductsSection),
+            matching: find.byType(InkWell),
+          )
+          .first;
+      await tester.dragUntilVisible(
+        card,
+        find.byType(Scrollable).first,
+        const Offset(0, -300),
+      );
+      await tester.pumpAndSettle();
+
+      // H.2's first pass used 292 (with the image fixed at 136, leaving a
+      // large unused strip below the price) — this caps it well below
+      // that regression threshold. Not a pixel-exact assertion since the
+      // card's Expanded image absorbs any small future adjustment safely.
+      final cardHeight = tester.getSize(card).height;
+      expect(cardHeight, lessThanOrEqualTo(230));
     });
   });
 
@@ -521,19 +540,29 @@ void main() {
   });
 
   group('9. boncuk - guest', () {
-    testWidgets('kisisel boncuk bilgisi uydurulmaz, giris CTA gosterilir', (
+    testWidgets(
+        'kisisel boncuk bilgisi uydurulmaz, ayni premium karti gosterir '
+        '(H.2.3 — eski settings-row satiri artik yok)', (tester) async {
+      await pumpHome(tester);
+
+      expect(find.text('320 Boncuk'), findsNothing);
+      // Eski settings-row metni artik hicbir zaman gorunmuyor — misafir
+      // de authenticated ile ayni premium karti goruyor.
+      expect(find.text('Boncuk kazanmaya başla'), findsNothing);
+      expect(find.text('Boncuklarını Biriktirmeye Başla'), findsOneWidget);
+      expect(
+        find.text('Her uygun siparişinle Boncuk kazan, ödüllere yaklaş.'),
+        findsOneWidget,
+      );
+      expect(find.text('Boncukları Keşfet'), findsOneWidget);
+    });
+
+    testWidgets('CTA LoginScreen acar (misafir henuz giris yapmadi)', (
       tester,
     ) async {
       await pumpHome(tester);
 
-      expect(find.text('320 Boncuk'), findsNothing);
-      expect(find.text('Boncuk kazanmaya başla'), findsOneWidget);
-    });
-
-    testWidgets('giris yap CTA LoginScreen acar', (tester) async {
-      await pumpHome(tester);
-
-      final cta = find.text('Boncuk kazanmaya başla');
+      final cta = find.text('Boncukları Keşfet');
       await tester.dragUntilVisible(
         cta,
         find.byType(Scrollable).first,
@@ -556,12 +585,159 @@ void main() {
     });
 
     testWidgets(
-        'gercek boncuk bakiyesini gosterir, Bowl Builder\'dan '
-        'daha sade kalir', (tester) async {
+        'mock loyaltyProvider bakiyesi/ilerlemesi gercek musteri verisi '
+        'gibi gosterilmez — premium sifir/baslamamis durum gosterilir '
+        '(H.1.1 loyalty mock-data duzeltmesi)', (tester) async {
       await pumpHome(tester);
 
-      expect(find.text('320 Boncuk'), findsOneWidget);
+      // The exact strings this correction removed — proves the mock
+      // loyaltyProvider seed (balance 320, bronze->silver gap 680) can
+      // never leak onto Home as if it were real customer state, not just
+      // that *some* text changed.
+      expect(find.text('320 Boncuk'), findsNothing);
+      expect(find.textContaining('680 Boncuk sonra'), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+
+      expect(find.text('Boncuklarını Biriktirmeye Başla'), findsOneWidget);
+      expect(
+        find.text('Her uygun siparişinle Boncuk kazan, ödüllere yaklaş.'),
+        findsOneWidget,
+      );
       expect(find.text('Boncuk kazanmaya başla'), findsNothing);
+      // H.2.1: the section now shows a real compact CTA button instead of
+      // a bare chevron affordance.
+      expect(find.text('Boncukları Keşfet'), findsOneWidget);
+    });
+
+    testWidgets('CTA canonical LoyaltyScreen\'i acar', (tester) async {
+      await pumpHome(tester);
+
+      final cta = find.text('Boncukları Keşfet');
+      await tester.dragUntilVisible(
+        cta,
+        find.byType(Scrollable).first,
+        const Offset(0, -600),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(cta);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LoyaltyScreen), findsOneWidget);
+    });
+  });
+
+  group('10. Topluluk & Yorumlar (H.2 — henuz gercek veri yok)', () {
+    testWidgets('bolum basligi ve "Yakinda" ibaresi gorunur', (tester) async {
+      await pumpHome(tester);
+
+      final section = find.byType(CommunityPreviewSection);
+      await tester.dragUntilVisible(
+        section,
+        find.byType(Scrollable).first,
+        const Offset(0, -400),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Topluluk & Yorumlar'), findsOneWidget);
+      expect(
+        find.descendant(of: section, matching: find.text('Yakında')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+        'baslik tam metin olarak gorunur, kirpilmis banner paneli olarak '
+        'degil (H.2.1 — H.2\'nin kirpilmis versiyonunun duzeltmesi)',
+        (tester) async {
+      await pumpHome(tester);
+
+      final section = find.byType(CommunityPreviewSection);
+      await tester.dragUntilVisible(
+        section,
+        find.byType(Scrollable).first,
+        const Offset(0, -400),
+      );
+      await tester.pumpAndSettle();
+
+      // Real Flutter Text, so it renders in full or not at all — never
+      // visibly cut off the way the old cropped-artwork panel was.
+      expect(
+        find.descendant(
+          of: section,
+          matching: find.text('Gerçek Yorumlar, Gerçek Lezzetler'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'banner_05 icindeki uydurma yorumcu adlari/puanlari/CTA metni Home '
+        'agacinda gercek Text olarak yer almaz', (tester) async {
+      await pumpHome(tester);
+
+      final section = find.byType(CommunityPreviewSection);
+      await tester.dragUntilVisible(
+        section,
+        find.byType(Scrollable).first,
+        const Offset(0, -400),
+      );
+      await tester.pumpAndSettle();
+
+      for (final fabricated in [
+        'Ece K.',
+        'Mert A.',
+        'Selen Y.',
+        'Yorumları Keşfet',
+        'BİNLERCE MUTLU MÜŞTERİ',
+      ]) {
+        expect(find.text(fabricated), findsNothing, reason: fabricated);
+      }
+    });
+  });
+
+  group('11. Bu Hafta Abaküs\'te (H.2 — gercek urun verisi)', () {
+    testWidgets('gercek bir urunun adini/fiyatini gosterir', (tester) async {
+      await pumpHome(tester);
+
+      final section = find.byType(WeeklyEditorialSection);
+      await tester.dragUntilVisible(
+        section,
+        find.byType(Scrollable).first,
+        const Offset(0, -400),
+      );
+      await tester.pumpAndSettle();
+
+      final spotlightProduct =
+          container.read(featuredMenuProductsProvider).last;
+      expect(find.text(spotlightProduct.name), findsOneWidget);
+      expect(
+        find.text('${spotlightProduct.basePrice.toStringAsFixed(0)} TL'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('dokununca ProductDetailScreen acar', (tester) async {
+      await pumpHome(tester);
+
+      final spotlightProduct =
+          container.read(featuredMenuProductsProvider).last;
+      final card = find.ancestor(
+        of: find.text(spotlightProduct.name),
+        matching: find.byType(WeeklyEditorialSection),
+      );
+      await tester.dragUntilVisible(
+        card,
+        find.byType(Scrollable).first,
+        const Offset(0, -400),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(spotlightProduct.name));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProductDetailScreen), findsOneWidget);
     });
   });
 
@@ -584,5 +760,78 @@ void main() {
 
       expect(tester.takeException(), isNull);
     });
+  });
+
+  group('H.1 premium header + responsive shell', () {
+    testWidgets(
+        'bildirim zili gercek olmayan bir sayi/badge ile suslenmez '
+        '(unreadNotificationsCountProvider hala mock)', (tester) async {
+      await pumpHome(tester);
+
+      // Home never uses Badge anywhere else in its own tree (the cart
+      // count Badge lives in CustomerBottomNavigation, a sibling shell
+      // widget this harness doesn't pump) — so zero Badge instances here
+      // is a precise signal, not a coincidence.
+      expect(find.byType(Badge), findsNothing);
+      expect(find.byIcon(Icons.notifications_outlined), findsOneWidget);
+    });
+
+    testWidgets(
+        'telefon genisliginde tek sutunlu kalir, tasma/exception olusmaz',
+        (tester) async {
+      tester.view.physicalSize = const Size(375, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await pumpHome(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('Abaküs Ortaköy'), findsOneWidget);
+    });
+
+    testWidgets(
+        'genis (tablet/web) ekranda icerik tam genisliğe uzamaz, '
+        'okunabilir bir maksimum genislikte kalir', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await pumpHome(tester);
+
+      final headerWidth = tester.getSize(find.byType(HomeTopBar)).width;
+      // Constrained content max width (640) plus the screen's own
+      // horizontal padding (AppSpacing.xl = 24 on each side) — well short
+      // of the 1200-wide viewport, proving the cap is actually applied
+      // rather than merely present in source.
+      expect(headerWidth, lessThanOrEqualTo(640 + AppSpacing.xl * 2));
+    });
+  });
+
+  group('H.1.1 gorsel yeniden tasarim', () {
+    testWidgets(
+        'bolum basliklari ortak HomeSectionTitle bileseniyle tutarli '
+        'gosterilir (siparis modu, kategoriler, populer urunler)',
+        (tester) async {
+      await pumpHome(tester);
+
+      // At least the always-visible sections use the shared title widget
+      // — a structural guarantee of consistent title typography/spacing
+      // across sections, not just a visual convention every section
+      // happens to follow independently.
+      expect(find.byType(HomeSectionTitle), findsWidgets);
+      expect(
+        find.descendant(
+          of: find.byType(HomeSectionTitle),
+          matching: find.text('Nasıl sipariş vermek istersin?'),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    // Superseded by "9. boncuk - authenticated"'s own H.1.1 test above,
+    // which now asserts the opposite of what this test originally checked
+    // — [loyaltyProvider]'s mock balance/progress must never render on
+    // Home as real customer state (see `boncuk_section.dart`'s class doc
+    // comment for the full correction).
   });
 }

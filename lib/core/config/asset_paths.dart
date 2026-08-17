@@ -33,6 +33,12 @@ abstract final class AssetPaths {
   static const String homeCategoriesDirectory =
       'assets/images/home/categories/';
 
+  /// H.2 real promotional hero carousel — `banner_01.png`/`banner_02.png`/
+  /// `banner_04.png`, each a full editorial composition with its own
+  /// baked-in headline/CTA button (see `home_hero_carousel.dart`'s own doc
+  /// comment for how the CTA hit-target is aligned to it).
+  static const String homeBannerDirectory = 'assets/images/home/banner/';
+
   /// Approved static editorial banners (Bowl Builder static hero
   /// integration, 2026-08-08) — full-image compositions with their own
   /// baked-in typography, dropped in manually rather than generated. See

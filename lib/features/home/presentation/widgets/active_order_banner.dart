@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
+import '../../../../core/theme/app_shadows.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../orders/domain/models/order_model.dart';
 
-/// A compact, single-line conditional banner shown only when the customer
-/// has a real active order ([activeOrderProvider] non-null) — deliberately
-/// small so it doesn't compete with the Home hero for attention, unlike the
-/// old multi-line bordered card this replaces.
+/// A compact conditional contextual card shown only when the customer has
+/// a real active order ([activeOrderProvider] non-null). H.1.1 — restyled
+/// from a single-line pill into a two-line premium card (icon badge +
+/// status/summary stack + chevron) so it reads as clearly important
+/// without visually outweighing the promo-carousel slot above it — still
+/// deliberately quieter than a full hero.
 class ActiveOrderBanner extends StatelessWidget {
   final OrderModel order;
   final VoidCallback onTap;
@@ -30,37 +33,60 @@ class ActiveOrderBanner extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.sm,
-          ),
-          decoration: const BoxDecoration(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
             color: AppColors.primaryExtraLight,
-            borderRadius: AppRadius.kPill,
+            borderRadius: AppRadius.kLarge,
+            border: Border.all(color: AppColors.primaryLight),
+            boxShadow: AppShadows.card,
           ),
           child: Row(
             children: [
-              const Icon(
-                Icons.local_shipping_rounded,
-                size: 16,
-                color: AppColors.primary,
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.local_shipping_rounded,
+                  size: 20,
+                  color: Colors.white,
+                ),
               ),
-              const SizedBox(width: AppSpacing.xs),
+              const SizedBox(width: AppSpacing.md),
               Expanded(
-                child: Text(
-                  '${order.status} · $summary',
-                  style: AppTypography.bodySmall.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      order.status,
+                      style: AppTypography.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      summary,
+                      style: AppTypography.caption.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(width: AppSpacing.xs),
               const Icon(
                 Icons.arrow_forward_ios_rounded,
-                size: 12,
+                size: 14,
                 color: AppColors.primary,
               ),
             ],

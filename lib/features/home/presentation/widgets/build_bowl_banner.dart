@@ -54,41 +54,52 @@ class BuildBowlBanner extends StatelessWidget {
                     right: AppSpacing.lg,
                     top: AppSpacing.lg,
                     bottom: AppSpacing.lg,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Kendi Bowl\'unu Yarat',
-                          style: AppTypography.titleLarge.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.xs),
-                        Text(
-                          'Malzemeni seç, fiyatını anında gör. Tamamen sana '
-                          'özel hazırla.',
-                          style: AppTypography.bodySmall.copyWith(
-                            color: Colors.white.withValues(alpha: 0.92),
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: AppSpacing.md),
-                        ElevatedButton(
-                          onPressed: onTap,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: AppColors.primary,
-                            shape: const RoundedRectangleBorder(
-                              borderRadius: AppRadius.kExtraLarge,
+                    // H.1 responsive audit: at narrow (phone) widths this
+                    // banner's own height shrinks with it (fixed 16:9
+                    // AspectRatio), which previously threw a RenderFlex
+                    // overflow — title+subtitle+button no longer fit the
+                    // shrunk, top+bottom-pinned Positioned box.
+                    // SingleChildScrollView makes this a no-op everywhere
+                    // it already fit (content shorter than the box never
+                    // shows a scrollbar) and simply scrolls rather than
+                    // overflows on the narrowest phones or largest text-
+                    // scale settings, instead of throwing.
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Kendi Bowl\'unu Yarat',
+                            style: AppTypography.titleLarge.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
-                          child: const Text('Bowl\'unu Oluştur'),
-                        ),
-                      ],
+                          const SizedBox(height: AppSpacing.xs),
+                          Text(
+                            'Malzemeni seç, fiyatını anında gör. Tamamen '
+                            'sana özel hazırla.',
+                            style: AppTypography.bodySmall.copyWith(
+                              color: Colors.white.withValues(alpha: 0.92),
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          ElevatedButton(
+                            onPressed: onTap,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: AppColors.primary,
+                              shape: const RoundedRectangleBorder(
+                                borderRadius: AppRadius.kExtraLarge,
+                              ),
+                            ),
+                            child: const Text('Bowl\'unu Oluştur'),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
