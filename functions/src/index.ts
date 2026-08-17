@@ -52,3 +52,5 @@ export {
   reverseGeocodeAddressPoint,
 } from "./deliveryPlaces";
 export { getPreciseFraudEvidence } from "./getPreciseFraudEvidence";
+export { checkDeliveryEligibility } from "./checkDeliveryEligibility";
+export { submitDeliveryOrder } from "./submitDeliveryOrder";

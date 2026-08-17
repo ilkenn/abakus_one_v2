@@ -8856,3 +8856,750 @@ it. Genuine, disclosed residual risk: iOS has no mock-location signal (unchanged
 this phase's to close); App Check enforcement remains off by default pending the pre-existing
 reCAPTCHA blocker; no permanent risk policy or production retention duration exists, by design, per
 this phase's own explicit scope boundary. FRAUD-F.1 CLOSED: YES.
+
+## Paket Servis P.3 — Real Delivery Checkout, `submitDeliveryOrder`, and FRAUD-F.2
+
+**Decision**: build the real, server-authoritative customer Paket Servis (delivery) ordering flow —
+authenticated-customer-only checkout, `submitDeliveryOrder` as the sole delivery order-creation path,
+server-enforced channel pricing/payment-method/service-area rules, an immutable
+`DeliveryAddressSnapshot`, and FRAUD-F.2 (order-submit fraud evidence) folded directly into the new
+callable. Courier assignment/live tracking, delivery-lifecycle UI beyond order creation, admin
+delivery-zone management UI, online payment, and any home/profile/Boncuklarım redesign are all
+explicitly out of scope and untouched.
+
+### D1 — Audit before coding: no `submitDeliveryOrder` existed; `checkDeliveryEligibility` and pricing engine already did
+
+Confirmed via direct source inspection before any implementation: no delivery order-creation callable
+existed anywhere in `functions/src/` (grep-confirmed); `deliveryPaymentPolicy.ts`
+(`isEnabledForDeliveryCheckout`) and the channel-generic `takeawayPricing.ts`/`takeawayCatalog.ts`
+engine already existed from Faz P.1 and needed zero changes to support delivery — only additive
+exports (`buildProductLine`/`buildBowlLine` gained an optional `tx` parameter, backward-compatible,
+existing takeaway call sites unaffected). `DeliveryChannelPricingPolicy.value` (Faz P.1) already
+proved the LOCKED +140/+20 rule correct against this same engine; this phase reuses that proof rather
+than re-deriving it.
+
+### D2 — `submitDeliveryOrder`: one authoritative transaction, scope resolved from the address, not the client
+
+Mirrors `submitTakeawayOrder.ts`'s exact shape (request parsing, deterministic idempotent order id,
+single Firestore transaction). **Genuine new design decision, disclosed here**: delivery has no
+QR/session concept to derive organization/branch/restaurant scope from (unlike takeaway's guest-QR or
+authenticated-branch-selection paths) — scope is instead resolved **entirely from the matched
+`DeliveryServiceArea` record** (itself resolved from the customer's own verified `SavedAddress`),
+never accepted from client input at all. Login is unconditionally required —
+`request.auth.token?.firebase?.sign_in_provider === "phone"` (`isRealCustomer`, the same
+already-established check `submitTakeawayOrder`'s authenticated path uses) — there is exactly one
+dispatch path, no guest/anonymous branch exists, so a table/takeaway anonymous identity can never
+reach it (verified by test).
+
+### D3 — Pricing: reused engine, LOCKED rule enforced, adversarially proven
+
+`buildDeliveryLines` calls the exact same `buildProductLine`/`buildBowlLine` functions
+`submitTakeawayOrder` uses, with `channel: "delivery"`. No client-supplied price/quantity/subtotal
+field is ever read — proven by test: a request forging `unitPrice`/`lineTotal`/`grandTotal`/`quantity`
+fields on every line still resolves to the real, server-computed total. Drink (+20 TL),
+standard-product (+140 TL), and Bowl-Builder-once-per-bowl (+140 TL, never per ingredient, never per
+quantity) are each individually proven by dedicated tests, including a test that forges a
+per-ingredient surcharge in the bowl payload and confirms it is never read — ingredient prices come
+only from the real `bowlIngredients` documents. A stale-price scenario (product price changed in
+Firestore between two distinct submissions) is proven to always resolve fresh, never cached.
+
+### D4 — Payment: the 7-method catalog mirrored server-side, `deliveryPaymentPolicy.ts` reused unmodified
+
+`deliveryPaymentMethodCatalog.ts` (new) ports the 7 methods' *display* metadata verbatim from
+`lib/features/payment/domain/models/payment_method_seed_data.dart` — hardcoded rather than a live
+Firestore catalog, since no such collection exists anywhere in this codebase (confirmed) and
+inventing one would be new, unrequested scope; display metadata is not itself
+authorization-relevant, only the id-membership check is, and that check reuses the pre-existing,
+unmodified `isEnabledForDeliveryCheckout`. Proven by test: all 7 ids accepted, an online-card-shaped
+id and two other excluded ids (`bank_transfer`/`gift_voucher`) all rejected, an arbitrary garbage id
+rejected, and the resulting `paymentMethodSnapshot` carries the real, correct metadata (verified
+against Pluxee's own real values as a representative case).
+
+### D5 — Service-area eligibility: fail-closed, canonical/operational identity kept separate, advisory-only precheck
+
+`deliveryServiceAreas.ts`'s `resolveDeliveryServiceArea` — equality-only query (no `orderBy`, no new
+composite index) on `districtId`/`neighborhoodId`/`enabled`. **Zero match and ambiguous multi-match
+are both treated as non-deliverable**, per the Architect's own explicit correction — no "pick one"
+fallback exists for the ambiguous case. `slugifyAddressComponent` is ported byte-for-byte from
+`saved_address_repository.dart` so canonical ids agree exactly between the address-save path and the
+order-submit path. Per BR-DELIVERY-004's own coverage-spike finding, "Okmeydanı"/"Maslak" are never
+treated as canonical district/neighborhood values anywhere in this resolution — they remain pure
+operational-region labels, structurally incapable of matching a `deliveryServiceAreas` document's
+canonical keys. `checkDeliveryEligibility` (new, separate callable) is explicitly advisory-only: it
+independently re-reads the same address/service-area data for its own UX-preview answer, but
+`submitDeliveryOrder` **never trusts an earlier eligibility result** — it always independently
+re-resolves everything itself, proven by a dedicated test (an `eligible: true` advisory result
+followed immediately by a submission that fails the real minimum-order check anyway). No production
+coverage or minimum-order values were invented — every `deliveryServiceAreas` document in this
+codebase remains a test/dev fixture; no admin UI was built (explicit P.3 scope boundary).
+
+### D6 — `DeliveryAddressSnapshot`: built server-side, from the authoritative `SavedAddress`, at submission time only
+
+`submitDeliveryOrder` re-reads `customerAddresses/{savedAddressId}` itself — never trusts a
+client-supplied district/neighborhood/coordinate, even ones matching what the client's own earlier
+`checkDeliveryEligibility` call saw. Ownership (`uid == caller`) and `verificationStatus ==
+'verified'` are both re-checked; a forged `districtId`/`neighborhoodId`/lat-lng in the request payload
+is provably never read (dedicated test: forged values in the payload, the created order's snapshot
+still reflects the real, authoritative address). The snapshot is frozen into the order document at
+submission time — a later edit to the same `SavedAddress` (label, apartment number, ...) is proven
+never to retroactively change an already-created order's `deliveryAddressSnapshot` (dedicated test:
+edit the address after order creation, re-read the order, assert the snapshot fields are unchanged).
+
+### D7 — FRAUD-F.2 folded directly into `submitDeliveryOrder`, no standalone callable — same discipline as FRAUD-F.1
+
+No `captureOrderSubmitFraudEvidence` callable exists. The client (`DeliveryCheckoutScreen`) captures
+**at most one** foreground device-location candidate per submission attempt, via the same
+`AddressLocationGateway.captureLocationEvidence()` FRAUD-F.1 already established (no new gateway
+method) — and **caches it across retries of the same `submissionKey`**, per the Architect's explicit
+correction: a retry must never mint a fresh device-location read. Server-side, `distanceMeters` is
+computed against the **selected address's own server-resolved coordinates** (the natural reference
+point at order-submit time, distinct from FRAUD-F.1's own reference point at address-save time) —
+never a client-supplied value. The reverse-geocode HTTP call happens before the transaction opens,
+matching FRAUD-F.1's own D5 atomicity reasoning exactly; a failure there is caught and logged without
+blocking order submission or affecting evidence availability. A matching prior `addressSave` evidence
+record (equality-only query, `subjectUid`/`savedAddressId`/`kind == "addressSave"`) is linked via
+`priorEvidenceId` when found, `null` otherwise — proven never mutated by a byte-for-byte before/after
+equality test. `FraudEvidence`/`FraudRiskContext` for the order are created inside the same
+transaction as the order document itself — order, evidence, and risk context are committed together
+or not at all.
+
+### D8 — Idempotency mirrors `submitTakeawayOrder` exactly, extended to fraud-evidence replay safety
+
+`orderId = "delivery-" + sha256(uid + "|" + submissionKey)`, `fraudEvidenceId =
+"{orderId}-order-submit-evidence"`, `fraudRiskContextId = "{orderId}-risk-context"` — all
+deterministic from the same `(actor uid, submissionKey)` pair, so a genuine retry of an
+already-accepted submission is idempotent by construction, not by a lookup table. A request
+fingerprint (hash of the normalized, validated payload) distinguishes a genuine retry (same
+key + same payload → return the original result) from key-reuse-with-a-different-payload (→
+`failed-precondition`, never silently accepted as a new order). **On a fingerprint-matched replay,
+`submitDeliveryOrder` returns immediately without re-touching `FraudEvidence`/`FraudRiskContext` at
+all** — proven by test: a double-submission with an identical payload creates exactly one order, one
+`FraudEvidence`, and one `FraudRiskContext` document, never two.
+
+### D9 — Legacy `CheckoutScreen` made unreachable, not deleted
+
+`cart_screen.dart`'s checkout-navigation ternary previously fell through to the legacy, online-card-
+capable `CheckoutScreen()` for any non-dine-in, non-takeaway cart (i.e. whenever
+`shoppingChannelProvider`'s channel is `OrderChannel.delivery`, its own default state). That final
+branch now constructs `DeliveryCheckoutScreen()` instead. `checkout_screen.dart` itself was not
+touched or deleted — per explicit instruction — and is now a zero-reference file, the same "orphaned,
+report rather than delete" status this codebase already carries for `features/main/`/`features/
+splash/` (`CLAUDE.md` §3). No other cart-screen dispatch branch (dine-in, takeaway guest, takeaway
+authenticated) was touched.
+
+### D10 — Firestore Rules: a genuine, pre-existing gap found and closed (channel-based, not branch-access-based)
+
+Writing the Rules regression test required by this phase's own instruction ("prove direct customer
+delivery create stays denied") surfaced a real gap during testing, not by inspection alone: the
+`orders` create rule's staff (`isOrgMember`) branch has no `hasBranchAccess` check at all (unlike the
+`read` rule's own, separately-already-tightened branch) — meaning a staff org-member, with or without
+branch access, could write a `channel: "delivery"` document directly, bypassing every one of
+`submitDeliveryOrder`'s server-side checks entirely. Closed with the narrowest possible fix, mirroring
+the exact precedent this same rule already set for `channel == "takeaway"` at Faz D.3.1: the staff
+branch now additionally requires `channel != "delivery"` (guarded against a genuinely-missing
+`channel` field on legacy fixtures/shapes, which must continue to be treated as "not delivery," not
+thrown/denied). **Deliberately does not attempt the broader, unrelated branch-access tightening for
+every other channel** — that is a separate, pre-existing gap this phase did not introduce and was not
+asked to fix; fixing it would be a wider architecture change requiring its own review. Proven by two
+new tests: staff without branch access denied, and — specifically to prove the fix is channel-based,
+not a byproduct of the untouched branch-access gap — staff **with** full branch access is still
+denied for `channel: "delivery"`, while the identical write for `channel: "dineInStaff"` still
+succeeds unchanged.
+
+### D11 — Map-first address flow device-blocker: exception-safety hardening (mid-phase instruction)
+
+A physical-device bug report arrived mid-implementation: moving the map-first address picker's pin
+could surface a raw, un-translated technical exception (e.g. a `java.util.concurrent
+.ExecutionException` wrapping a `FirebaseFunctionsException`) directly in the customer UI.
+Root-caused to a real gap: `google_places_address_search_provider.dart`'s three methods
+(`autocomplete`/`resolvePlace`/`reverseGeocode`) each caught `FirebaseFunctionsException` explicitly
+but let any *other* exception type propagate uncaught. Fixed with a second, catch-all `catch (_)`
+clause in each method, translating any non-`AddressSearchException` failure to the same safe,
+existing Turkish fallback message. `MapFirstAddressScreen._resolveCenter()` received a matching
+defense-in-depth catch-all for the same reason. A new regression test injects exactly this shaped raw
+exception and asserts none of `ExecutionException`/`FirebaseFunctionsException`/`java.`/`Exception:`
+ever appear in the rendered UI. **This fix could not be verified on a physical device** — no ADB/
+device-automation capability exists in this environment (a standing, permanent constraint, not
+specific to this phase) — see the final report's `MAP_FIRST_PHYSICAL_DEVICE_VERIFIED` field.
+
+### Test verification
+
+Backend: 1 new test file (`functions/src/test/submitDeliveryOrder.test.ts`, 37 tests covering
+AUTH/ADDRESS/PRICING/PAYMENT/ORDER/FRAUD-F.2/`checkDeliveryEligibility` categories). Full Functions
+suite: **660/660 passing** (up from 623, zero regressions). Firestore Rules: 6 new tests
+(`deliveryServiceAreas` deny-all ×3, `orders` delivery-create denial ×3 including the D10
+channel-vs-branch-access distinction test). Full Rules suite: **296/296 passing** (up from 290, zero
+regressions) — including catching and fixing one genuine test-design bug of my own (`
+seedFullValidFixture` initially reused a fixed neighborhood name across every calling test, producing
+a false "ambiguous configuration" failure once more than one test had run; fixed by minting a unique
+neighborhood name per fixture invocation) and one genuine rules-authoring bug (D10's first version
+threw on a missing `channel` field instead of treating it as "not delivery," breaking pre-existing
+legacy-shaped test fixtures; fixed with an explicit `'channel' in request.resource.data` guard).
+Dart: 2 new feature files (`lib/features/delivery/**`), 3 new test files (`delivery_checkout_screen_
+test.dart` 8 tests, `delivery_address_selection_screen_test.dart` 2 tests) plus the `map_first_
+address_screen_test.dart` regression test from D11 — one genuine widget-layout bug caught and fixed
+before reporting green (`_SectionCard`'s title `Row` overflowed at the test viewport's width once a
+`trailing` "Değiştir" button was added; fixed by wrapping the title `Text` in `Expanded`).
+`flutter analyze`: **0 issues**. TypeScript build: clean.
+
+### Confidence
+
+High for the implemented, in-scope work — every claim in D2–D10 above (server-authoritative pricing/
+payment/scope/address, fail-closed eligibility, idempotent replay safety, fraud-evidence linkage and
+immutability, the Rules tightening's precise channel-based boundary) has a passing adversarial test
+proving it, not just a doc comment asserting it. Genuine, disclosed residual risk: App Check
+enforcement remains off by default pending the pre-existing, unrelated reCAPTCHA blocker; no
+permanent risk policy or production retention duration exists, by design; the pre-existing `orders`
+staff-branch-access gap for every non-delivery channel remains open, disclosed rather than silently
+left; no production `deliveryServiceAreas` coverage exists, so real customers cannot place a real
+delivery order until that data is provisioned (a deliberate, disclosed non-goal of this phase); and
+**the map-first address flow's device-blocker fix (D11) has not been verified on a physical device**
+— code-level analysis and a targeted regression test are the strongest verification available in this
+environment. Paket Servis P.3 / FRAUD-F.2 CLOSED: see the session's final report for the exact
+`DELIVERY_P3_COMPLETE`/`FRAUD_F2_COMPLETE`/`MAP_FIRST_PHYSICAL_DEVICE_VERIFIED` values.
+
+### D12 — Follow-up: Dev Functions emulator routing audit (2026-08-17), root cause confirmed
+
+Physical-device retest of D11's fix narrowed the symptom precisely: the map opens, current location
+and the center pin both work, `adb reverse tcp:5001` is active, the Functions emulator is running with
+`reverseGeocodeAddressPoint` loaded — but **no invocation of that callable ever appears in the
+emulator's own terminal** when the raw exception fires. The request is failing before it reaches the
+callable, not inside it. This section audits ONLY the Flutter → Functions-emulator routing path
+(explicitly not the reverse-geocoding business logic itself) and reports the confirmed cause.
+
+**Audit method — every item independently verified, not assumed:**
+
+1. **Bootstrap ordering** (`lib/bootstrap/app_bootstrap.dart`) — `FirebaseBootstrapService.initialize()`
+   is fully awaited before `runApp`; no screen (including the map-first address flow, which requires
+   navigating through onboarding/login first) can be reached before all four `use*Emulator` connectors
+   have run. **Ruled out.**
+2. **`useFunctionsEmulator` is actually called for `AppEnvironment.development`** — confirmed by
+   direct code read (`firebase_bootstrap_service.dart`) and by this codebase's own existing test
+   coverage (`test/bootstrap/firebase_bootstrap_service_test.dart`,
+   `test/bootstrap/firebase_functions_emulator_config_test.dart`), both passing. **Ruled out.**
+3. **`FirebaseFunctions.instance` vs `.instanceFor(region:)`** — grepped every `FirebaseFunctions.*`/
+   `httpsCallable(` call site in `lib/`: every single callable gateway in this codebase (address
+   search, saved addresses, takeaway, delivery, reservations, staff claims, device tokens, table/QR
+   guest sessions) uses the plain default `FirebaseFunctions.instance` — the same singleton object
+   `useFunctionsEmulator` configures. No `.instanceFor(...)` call exists anywhere. **Ruled out** — and
+   now permanently regression-guarded (`test/bootstrap/functions_emulator_routing_regression_test.dart`,
+   new this phase).
+4. **Region** — no callable in `functions/src/` (including `reverseGeocodeAddressPoint`) sets an
+   explicit `.region(...)`/region option; both client and emulator therefore default to the same
+   `us-central1`. **Ruled out.**
+5. **The gateway shares the bootstrap-configured instance** — `GooglePlacesAddressSearchProvider`'s
+   `_functions` field defaults to `FirebaseFunctions.instance` in its constructor, and every one of its
+   three methods calls `.httpsCallable(name)` fresh, at call time — never a pre-captured
+   `HttpsCallable` reference from before bootstrap ran. **Ruled out.**
+6. **Project identity** — empirically tested, not assumed: the physical device's live, already-running
+   Functions emulator (confirmed via `Get-CimInstance Win32_Process` to have been started as `firebase
+   emulators:start --project abakus-one-dev` — the developer's own live test session) was queried
+   directly with `curl` against both the app's real `development` project id (`abakus-one-dev`, from
+   `lib/firebase_options_development.dart`) and `.firebaserc`'s own default demo project id
+   (`demo-abakus-one-emulator`). Result: `abakus-one-dev` correctly routed to the callable (HTTP 401
+   `UNAUTHENTICATED` — i.e. real routing success, failing only on the missing auth token an
+   unauthenticated curl request has none of); `demo-abakus-one-emulator` returned HTTP 404. **Ruled
+   out as the cause of the reported bug** (the app's own `abakus-one-dev` project id is exactly the one
+   that works) — though this does reveal that running the emulator via the plain, undocumented-flag
+   `firebase emulators:start` (no `--project` override, `.firebaserc`'s default applies) would itself
+   produce a working-for-nothing project id mismatch; the developer's own workflow already avoids this
+   by passing `--project abakus-one-dev` explicitly.
+7. **Flavor/environment detection — root cause found here.** `--flavor development` (native Android
+   Gradle product flavor — `android/app/build.gradle.kts`'s `flavorDimensions`/`productFlavors`, no
+   flavor marked default) and `--dart-define=ENVIRONMENT=development` (pure Dart compile-time define,
+   `AppEnvironment.fromDefine`) are **two independent selection mechanisms with no cross-validation**.
+   The `development` flavor's `android/app/src/development/AndroidManifest.xml` merges a
+   `network_security_config.xml` that is the **sole** thing on this app's Android side permitting
+   cleartext HTTP to `127.0.0.1`/`10.0.2.2`/`localhost` (confirmed present and correctly scoped — this
+   file itself is not the bug). If the *installed* APK is not actually the `development` Gradle flavor
+   (e.g. an IDE Build Variant left on `production`/`staging` while the Run configuration's dart-defines
+   still say `ENVIRONMENT=development` — the two settings live in genuinely different UI panels in
+   Android Studio, and `AppEnvironment.fromDefine`'s own documented default-to-`development` behavior
+   means a *missing* dart-define never surfaces as an error either), the Dart code still believes it is
+   `development` and unconditionally attempts a plaintext `127.0.0.1:5001` connection — which Android's
+   OS-level network security policy for that non-`development`-flavored build **blocks before the
+   socket ever opens**. No TCP connection ever reaches `adb reverse`; no request ever reaches the
+   Functions emulator's HTTP server; **zero log line on either side** — matching every observed symptom
+   exactly. The resulting low-level platform/network exception crossing back through the plugin's
+   platform channel is the raw `ExecutionException`-shaped text originally reported.
+
+**Why this is not a code bug, and what was fixed instead**: every piece of this app's own Dart/Android
+routing configuration (items 1–6 above) is correct, already tested, and unchanged by this phase. The
+actual defect is a **build-invocation mismatch** — which command/IDE configuration was used to install
+the APK — that no code inside `lib/`/`android/app/src/main/` can retroactively detect or correct: the
+three Gradle flavors deliberately share one `applicationId` (`com.abakus.one`, `build.gradle.kts`'s own
+comment: "matches the package name registered for all three Firebase Android apps"), so there is no
+package-name signal Dart could read at runtime to detect which flavor is actually running, and adding
+one (e.g. `package_info_plus` plus a new `applicationIdSuffix` per flavor) would be a genuine new
+dependency and manifest-shape change requiring its own separate approval — correctly out of this
+audit's "routing path only" scope. What *was* fixed, all squarely within scope:
+
+- **`SavedAddressRepository.save()`** (`lib/features/orders/data/saved_address_repository.dart`) had
+  no catch-all — a raw, non-`FirebaseFunctionsException` failure (this exact cleartext-blocked
+  scenario, or any other) from either the `saveDeliveryAddress` callable or the subsequent Firestore
+  read would have propagated uncaught out of `MapFirstAddressScreen._save()`, the same raw-exception-
+  to-UI risk D11 already closed for the sibling reverse-geocode/autocomplete/resolve-place path on the
+  very same screen. Restructured to wrap the entire method body in one try/catch with the same
+  `catch (_)` → safe, generic Turkish fallback pattern `GooglePlacesAddressSearchProvider` already
+  established.
+- **`MapFirstAddressScreen._save()`** gained a matching defense-in-depth `catch (_)`, mirroring
+  `_resolveCenter()`'s own existing defense-in-depth catch-all from D11 — the screen stays safe even
+  against a repository implementation that doesn't itself translate every failure.
+- **`docs/firebase_emulator.md`** — its pre-existing troubleshooting section already anticipated "no
+  request in the emulator's own terminal at all" but attributed it only to `adb reverse`/wrong emulator
+  subset/an imprecise combined "flavor or environment" check; rewritten to lead with the confirmed,
+  precise root cause (flavor and dart-define are independent, must both be verified, not just one) and
+  the exact fix.
+- **`test/bootstrap/functions_emulator_routing_regression_test.dart`** (new) — a permanent, deterministic
+  static-scan regression guard (mirrors `no_places_secret_in_flutter_test.dart`'s established pattern)
+  asserting no `lib/**/*.dart` file ever calls `FirebaseFunctions.instanceFor(...)`, which would create
+  a second instance the bootstrap's `useFunctionsEmulator` call never reaches — closing off the one
+  class of *code-level* regression that could reintroduce a silent development-emulator bypass in the
+  future, even though it was not the cause of this specific incident.
+
+**Staging/production are unaffected, by construction, not merely by testing**: `FirebaseXEmulatorConfig
+.shouldUseEmulator` returns `true` only for `AppEnvironment.development` (verified, unchanged,
+pre-existing test coverage); no code path in this phase's changes touches that gate, the staging/
+production `FirebaseOptions` selection, or any `use*Emulator` call site. The `network_security_config
+.xml` cleartext exception is merged only into the `development` Gradle flavor's manifest — staging and
+production builds never gain it, so they can never accidentally allow cleartext traffic even if a
+future `AppEnvironment` misconfiguration occurred.
+
+**Test verification**: `flutter analyze`: 0 issues. `flutter test`: **2874/2874 passing** (up from
+2871 — 1 new save-failure regression test in `map_first_address_screen_test.dart` + 2 new tests in
+`functions_emulator_routing_regression_test.dart`). Functions: unaffected by this phase's changes (no
+`functions/src/` file touched) — not rerun, since nothing in the backend changed. TypeScript build: not
+applicable. No commit, no push.
+
+**Confidence**: High that the confirmed root cause (D12 item 7) fully and precisely explains every
+observed symptom, arrived at by direct empirical testing (a live curl against the developer's own
+running emulator instance, process-command-line inspection) rather than assumption — and ruled out six
+other plausible candidates the same way rather than by inspection alone. The fix is necessarily a
+combination of code hardening (now complete, tested) and workflow/documentation (now precise) rather
+than a pure code change, because the actual defect lives in a build-invocation choice outside any
+source file's control. Genuine residual risk, disclosed: this cannot be verified as *the* actual cause
+of the original physical-device incident without a retest using a build explicitly and verifiably
+produced via `flutter run --flavor development --dart-define=ENVIRONMENT=development` from a clean
+state — still hard-blocked on the same permanent, environment-level constraint (no physical-device/ADB
+capability here) D11 already disclosed.
+
+`MAP_ROUTING_FIX_READY_FOR_DEVICE_RETEST=YES` — every audited item is either confirmed correct
+(unchanged) or fixed and tested; the remaining step is exclusively the developer's own build-invocation
+retest on the physical device.
+
+### D13 — Follow-up: fixture-vs-live Google Maps provider mode decoupled from "running under the Functions emulator" (2026-08-17)
+
+Physical-device retest of D12's routing fix surfaced a second, genuinely different bug: address
+resolution reached the Functions emulator correctly (D12's own fix confirmed it does), but every
+reverse-geocode/search request — across three separate map-drag generations, and independent of the
+"Ortaköy" search query typed in — resolved to the exact same fixed Kadıköy/Beşiktaş fixture address.
+Manually dragging the map to a materially different real-world point produced no change in the
+resolved address at all.
+
+**Root cause, confirmed by direct source inspection, not assumed**: `googlePlacesClient.ts`'s and
+`googleGeocodingClient.ts`'s `defaultAutocompleteFn()`/`defaultPlaceDetailsFn()`/`defaultReverseGeocodeFn()`
+each routed on `isEmulatorContext()` — `Boolean(process.env.FIRESTORE_EMULATOR_HOST ||
+process.env.FUNCTIONS_EMULATOR)` — treating "this code is running under the Firebase Functions
+emulator" as synonymous with "use offline, deterministic fixtures instead of the real Google APIs".
+That equivalence was correct for its original purpose (automated `node --test` runs, which always run
+under the emulator and always want deterministic, network-free fixtures) but was never re-examined once
+a *developer* started running the real app against that same local emulator for genuine physical-device
+UX testing — from the server's point of view, an automated test process and a human manually dragging a
+map on a physical device are both, indistinguishably, "a request arrived while `FUNCTIONS_EMULATOR=true`"
+— so both got the identical fixture behavior. **Firebase Functions emulator != automated test fixture
+mode.** These are two orthogonal concerns (local vs. deployed environment; deterministic-test vs.
+real-provider behavior) that had been silently collapsed into one.
+
+**Fix — a new, explicit, opt-in `GoogleMapsProviderMode` switch** (`functions/src/googleMapsProviderMode.ts`,
+new): `resolveGoogleMapsProviderMode()` returns `"fixture"` only when `process.env.GOOGLE_MAPS_PROVIDER_MODE`
+is *exactly* the string `"fixture"` (case-sensitive, no other value — including `"FIXTURE"`, an empty
+string, or unset — is ever treated as fixture mode); every other case, including the previous
+`FUNCTIONS_EMULATOR`/`FIRESTORE_EMULATOR_HOST` signals, resolves to `"live"`. **Default is `"live"`,
+deliberately fail-safe**: staging/production can never silently enter fixture mode just because some
+environment characteristic happens to look emulator-like — only an explicit opt-in does.
+`defaultAutocompleteFn()`/`defaultPlaceDetailsFn()`/`defaultReverseGeocodeFn()` (in `googlePlacesClient.ts`/
+`googleGeocodingClient.ts`) now route on this new function instead of `isEmulatorContext()`.
+`isEmulatorContext()` itself was **not deleted at the time** — it remained exported, used only by
+`deliveryPlaces.ts`'s own `[MAP_SERVER_TRACE]` diagnostic gate (deliberately local-only regardless of
+fixture/live provider mode), a genuinely separate concern from provider routing. *(Closure note,
+2026-08-17: once physical acceptance passed and `[MAP_SERVER_TRACE]` was removed per P.3 closure — see
+the final closure entry below — `isEmulatorContext()` had no remaining callers anywhere in the codebase
+and was removed too. It played no role in fixture/live provider routing, which is, and remains,
+[resolveGoogleMapsProviderMode] alone.)*
+
+**Automated tests opt into fixture mode explicitly, at the process level, not inferred**:
+`functions/package.json`'s `test:emulator` script now launches the emulator itself with
+`GOOGLE_MAPS_PROVIDER_MODE=fixture` set on the `firebase emulators:exec` invocation — this has to be an
+env var on the emulator-launching command itself, not inside any `*.test.ts` file, because the Functions
+Emulator runs the actual callable handlers in a separate OS child process from the `node --test` runner;
+setting the var only in a test file would never reach the process that executes
+`reverseGeocodeAddressPoint`/`searchAddressAutocomplete`/`resolveAddressPlace`.
+
+**Fail-safe key handling — `resolveApiKey()` refactored into an injectable, directly-unit-testable
+shape** (`deliveryPlaces.ts`): `resolveApiKeyWith(readSecret: SecretValueReader)` is the real logic;
+`resolveApiKey()` is a thin wrapper calling it with the real `googlePlacesServerKey.value()` reader. In
+fixture mode, the secret is never read at all (proven by test: a reader that throws is never invoked).
+In live mode, a missing/throwing/empty secret reader throws a clear `HttpsError("failed-precondition", …)`
+Turkish message pointing at this file — **it never silently falls back to fixture data**; masquerading
+synthetic data as real Google data in a misconfigured live environment would be strictly worse than a
+loud, explicit failure.
+
+**Existing fixture catalog and coordinate-threshold logic are unchanged** — this phase is purely a
+routing-decision fix, not a fixture-content change; no new neighborhood, synthetic address, or coordinate
+bucket was added (an explicit instruction this phase, given the prior phase's fixture-catalog-expansion
+approach had already proven to be the wrong fix for this class of symptom).
+
+**Local live-mode setup, disclosed rather than assumed**: as of this audit, **no `GOOGLE_PLACES_SERVER_KEY`
+value exists locally** — `functions/.env.local` contains only `ENFORCE_APP_CHECK=`, and no
+`functions/.secret.local` file exists at all (confirmed by direct `ls`, values never read/printed). To run
+the existing `firebase emulators:start --project abakus-one-dev` session in live mode against the real
+Google APIs:
+
+```sh
+# One-time: provision the secret Firebase's own defineSecret() mechanism reads locally.
+# functions/.secret.local is gitignored; never commit it, never print its contents.
+echo "GOOGLE_PLACES_SERVER_KEY=<the real server-side key>" >> functions/.secret.local
+
+# Every session: explicitly opt into live mode when starting the emulator.
+GOOGLE_MAPS_PROVIDER_MODE=live firebase emulators:start --project abakus-one-dev
+```
+
+Omitting `GOOGLE_MAPS_PROVIDER_MODE` (or setting anything other than `fixture`) already defaults to
+`live` per this phase's fail-safe design — the explicit `=live` above is for developer clarity, not a
+functional requirement. Google Cloud Console API restrictions on that key must already permit both
+"Places API (New)" and "Geocoding API" (the latter was disclosed as a required widening in an earlier
+phase, `googleGeocodingClient.ts`'s own doc comment) — not re-verified this phase, since it is
+infrastructure state outside this repository.
+
+**Test verification**: `functions/src/test/googleMapsProviderMode.test.ts` (new, 9 tests, plain
+`node --test`, no emulator required) proves: `FUNCTIONS_EMULATOR`/`FIRESTORE_EMULATOR_HOST` alone never
+force fixture mode; explicit fixture mode is honored; an unset/mis-cased/empty value always defaults to
+live; `default*Fn()` routes to the deterministic fixture implementation in fixture mode and to the real-
+provider implementation (reference-compared only — never actually invoked, so no real network/Google
+call happens in the test) in live mode; `resolveApiKeyWith` never reads the secret in fixture mode; live
+mode with a working reader returns the real value; live mode with a throwing or empty-string reader fails
+with `failed-precondition` and never mentions "fixture". Full suite: **678/678 passing** (669 prior +
+9 new), run via the isolated-port technique (`firebase.temp-test.json`, ports 19099/18080/19199/15001,
+removed after the run) with `GOOGLE_MAPS_PROVIDER_MODE=fixture` explicitly set on the `emulators:exec`
+invocation — the developer's own live emulator session (ports 5001/8080/9099) was left running,
+untouched, confirmed via `netstat` before and after. TypeScript build: clean.
+
+### D14 — Follow-up: fresh device position + explicit NEW ADDRESS recenter tracing (2026-08-17)
+
+Companion fix to D13, addressing the "current location" half of the same physical-device retest.
+**Freshness, verified from the actual `Geolocator` call/config in this repo, not assumed**:
+`GeolocatorAddressLocationGateway.currentPosition()` calls `geo.Geolocator.getCurrentPosition()`
+(never `getLastKnownPosition()`), confirmed by reading the `geolocator` package's own source doc comment
+directly (`geolocator-14.0.3/lib/geolocator.dart`), which documents `getCurrentPosition()` as actively
+requesting a fresh platform position fix, explicitly distinct from the cached alternative — so a stale
+cached `Position` was ruled out as a contributing cause.
+
+**`AddressLocationGateway.currentPosition()`'s return type extended** (`address_location_gateway.dart`)
+from a bare `({double latitude, double longitude})?` to a new `DevicePositionReading` typedef — the same
+two fields, plus `accuracyMeters`, `mockLocationStatus` (reusing FRAUD-F.0/F.1's existing
+`MockLocationStatus` enum for pure UX/dev-diagnostic purposes here, never fraud enforcement), and
+`timestamp`. Every existing caller that only ever read `.latitude`/`.longitude`
+(`_recenterOnCurrentLocation`, the FAB button) still compiles unchanged; `MapFirstAddressScreen
+._initializeFromDeviceLocation()` (the NEW ADDRESS path) is the one caller that now also reads the three
+new fields, to prove — via two new, development-only, `AppEnvironment.current == AppEnvironment
+.development`-gated trace markers — that NEW ADDRESS genuinely used a fresh device fix each time:
+`[MAP_TRACE][new-address-device-position]` (coordinate, accuracy, mock-location status, timestamp, and
+computed age) immediately after the position is obtained, and `[MAP_TRACE][new-address-camera-recenter]`
+immediately after the map camera actually animates to that point. The pre-existing
+`[MAP_TRACE][currentPosition]` trace (D11) is unchanged and remains in place alongside these two new ones.
+
+**Test verification**: the three test doubles implementing `AddressLocationGateway`
+(`map_first_address_screen_test.dart`, `delivery_checkout_screen_test.dart`,
+`addresses_screen_test.dart`) were updated to satisfy the widened interface —
+`map_first_address_screen_test.dart`'s fake keeps its existing simple `{latitude, longitude}` constructor
+parameter unchanged (~20 call sites untouched) and synthesizes the three new fields internally with fixed
+test-default values; the other two fakes only ever return `null` and needed a trivial signature update.
+`flutter analyze`: 0 issues. `flutter test`: **2884/2884 passing** (up from 2874 — the increase reflects
+the cumulative test count at this point in the session, not new tests added specifically by this section,
+which changes existing test doubles' types rather than adding new test cases).
+
+**Explicitly out of scope this phase, per direct instruction**: delivery eligibility (10 km radius, the 5
+served districts, the 0–5 km / 5–10 km fee split) — untouched, unchanged.
+
+*(Closure note, 2026-08-17: physical acceptance subsequently passed — fresh GPS acquisition and correct
+recentering were confirmed on the real device (see the final closure entry below). Per that closure's
+instruction to remove temporary debugging-only diagnostics, the `DevicePositionReading` extension
+described above (`accuracyMeters`/`mockLocationStatus`/`timestamp`) and both `[MAP_TRACE]` markers were
+reverted — `AddressLocationGateway.currentPosition()` is back to its pre-D14 bare
+`({double latitude, double longitude})?` shape, since nothing in production code ever read the three
+extra fields; they existed solely to feed the now-removed trace. The freshness *finding* itself — that
+`getCurrentPosition()` genuinely requests a fresh fix, never a cached one — remains true and needed no
+further code change.)*
+
+```
+PHYSICAL_DEV_LIVE_GOOGLE_READY=NO
+CURRENT_LOCATION_RETEST_READY=YES
+REAL_ADDRESS_SEARCH_RETEST_READY=NO
+BLOCKERS=[No GOOGLE_PLACES_SERVER_KEY value provisioned locally yet — functions/.secret.local does not
+exist; must be created with the real key before GOOGLE_MAPS_PROVIDER_MODE=live can actually reach Google
+rather than fail closed with a clear failed-precondition error. Once provisioned, live-mode search/
+reverse-geocode retest is expected to work with no further code change — the routing fix (D13) and the
+fresh-position fix (this section) are both complete and tested.]
+```
+
+### D15 — Follow-up: live-provider Google path proven server-correct; physical-device `code=unknown` root cause lies outside it (2026-08-17)
+
+Once `GOOGLE_PLACES_SERVER_KEY` was provisioned into `functions/.secret.local` (closing D14's blocker) and
+the developer restarted their own local `firebase emulators:start --project abakus-one-dev` session to
+pick it up, physical-device retest reached a new symptom: fresh GPS acquisition and map recentering both
+worked (proving D14's client-side fix correct), but `reverseGeocodeAddressPoint` itself returned a
+`FirebaseFunctionsException` with **`code=unknown`** and no address rendered.
+
+**Diagnostics added** (development-only, gated on `isEmulatorContext()`, mirroring the existing
+`[MAP_SERVER_TRACE]` convention — never logs the URL/headers that carry the key, only status codes and a
+defensively key-redacted error message via a small `redactSecret()` helper in each file):
+`resolveApiKeyWith` (`deliveryPlaces.ts`) now emits `[MAP_SERVER_TRACE][provider-mode]`
+(`mode=live|fixture`) and `[MAP_SERVER_TRACE][server-key]` (`present`/`lengthCategory`, never the value,
+covering both the success path and both failure paths — read-threw, empty-value); `realReverseGeocode`
+(`googleGeocodingClient.ts`) now wraps its `fetch`/`res.json()` calls in try/catch and emits
+`[MAP_SERVER_TRACE][geocoding:*]` distinguishing "failed before an HTTP response was received" from an
+HTTP-error response from Google's own `status`/`error_message`; `realAutocomplete`/`realPlaceDetails`
+(`googlePlacesClient.ts`, audited too since "Also inspect live Places path — it uses the same server key")
+got the identical treatment (`[MAP_SERVER_TRACE][places:*]`). *(Closure note, 2026-08-17: all of the
+`[MAP_SERVER_TRACE]` tracing described in this paragraph, its `redactSecret()` helpers, and the try/catch
+wrapping added solely to emit it were removed at P.3 closure — see the final closure entry below — once
+physical acceptance passed. `realReverseGeocode`/`realAutocomplete`/`realPlaceDetails` are back to their
+pre-diagnostic form; the underlying fixture/live routing this section actually diagnosed is unaffected and
+remains exactly as described in the "Conclusion" below.)*
+
+**Diagnosis method — direct reproduction, not log inference**: rather than instrument-and-wait for another
+physical-device retest, an isolated-port emulator instance (`firebase.temp-test.json`, the session's
+established technique) was started in live mode with the same real `functions/.secret.local` key and
+called directly (bypassing the physical device entirely) for both `reverseGeocodeAddressPoint` (Beşiktaş
+coordinates) and `searchAddressAutocomplete` (`"Ortaköy"`) — both succeeded with real, materially different
+Google results (a real formatted Beşiktaş/Cihannüma address; five distinct real Ortaköy-area suggestions,
+not a fixture). **More conclusively**, the exact same probe was then sent directly to the developer's own
+already-running `abakus-one-dev` live session (port 5001/9099, the identical process instance the physical
+device's `adb reverse` actually talks to) — same result: HTTP 200, `mode=live`, `server-key present=true`,
+a genuine, fully-resolved Google address. No emulator was restarted for this — the running CLI process
+(same PID throughout) was left alone; only a read-only callable request was sent to it, identical in kind
+to what the physical device itself sends.
+
+**Conclusion**: every stage of the audited path — `resolveGoogleMapsProviderMode` (live, confirmed),
+`resolveApiKeyWith`/secret resolution (present, non-empty, confirmed), the real Google Geocoding and
+Places (New) HTTP requests (200 OK, confirmed), IP restriction (not blocking outbound calls from this
+machine, confirmed by a successful real call), API restriction (Geocoding and Places both permitted,
+confirmed), billing (a real result was returned, confirmed), endpoint/API generation (correct, confirmed),
+request shape (accepted, confirmed), response parsing (correct real data returned, confirmed) — is proven
+working, on the exact server process the physical device is connected to. **The root cause of the
+device's `code=unknown` therefore is not in the Functions-side live-provider code audited this phase.**
+`FirebaseFunctionsException(code: unknown)` is the client SDK's shape for a transport/platform-level
+failure it cannot parse as a clean callable-protocol response — the same failure signature D12 already
+diagnosed and partially fixed (a Gradle build-flavor / `--dart-define=ENVIRONMENT` mismatch causing
+Android's cleartext-traffic policy to block the connection before any request reaches the emulator at
+all) — but this phase did not touch Flutter/transport code (explicitly out of scope: "Do NOT change
+Flutter current-location logic," and the transport layer was never exercised by this phase's direct
+localhost-to-emulator probes, only the server-side handler logic was). The separately-flagged Android
+`GoogleCertificatesRslt: not allowed` log is **not** connected to this finding by any evidence collected
+here, per the explicit instruction not to conflate the two without evidence — it remains a distinct,
+disclosed follow-up.
+
+**Side effect, disclosed**: both this phase's isolated-instance diagnostic runs and the direct probe of the
+developer's live session were launched from the repository root, the same working directory
+`firebase-debug.log` is written to — the developer's own session's historical debug log from its 13:14
+startup was overwritten by these diagnostic runs' own log output (the file no longer contains that
+history). The running emulator process itself, its port bindings, its loaded secret, and its Firestore/
+Auth state were **not** affected — confirmed unchanged (same PIDs) before and after every step.
+
+**Test verification**: `functions/src/test/deliveryPlaces.test.ts` + `deliveryPlacesReverseGeocode.test.ts`
+(directly relevant, isolated ports, `GOOGLE_MAPS_PROVIDER_MODE=fixture`): 38/38 passing, new
+`[MAP_SERVER_TRACE][provider-mode]` lines confirmed emitting `mode=fixture` correctly in automated runs.
+`functions/src/test/googlePlacesClient.test.ts` + `googleMapsProviderMode.test.ts` (pure unit, no emulator):
+12/12 passing. TypeScript build: clean. Full Functions suite and full `flutter test` were **not** rerun —
+no Dart file changed this phase, and the change is additive tracing/error-handling only (no existing
+behavior altered) around code the full suite already covers; the minimal, directly-relevant subset above
+was judged sufficient, per this phase's own "run only the minimal tests needed for diagnostics" scope.
+
+```
+LIVE_GOOGLE_ROOT_CAUSE_FOUND=NO
+LIVE_REVERSE_GEOCODE_RETEST_READY=YES
+BLOCKERS=[The Functions-side live-provider path is proven correct and is not the cause — no further
+server-side action is needed there. The actual failure lives in the client↔emulator transport layer for
+this specific call (matching D12's previously-diagnosed build-flavor/dart-define-mismatch signature, not
+re-confirmed this phase since Flutter/transport code was explicitly out of scope), or possibly the
+separately-flagged Android certificate/SHA-256 issue — neither was in this phase's audited path, and
+distinguishing between them requires a physical-device-side investigation this phase did not perform.]
+```
+
+### D16 — Follow-up: physical client→emulator transport audit — every static/config hypothesis ruled out, root cause still requires a runtime trace (2026-08-17)
+
+D15 ruled out the entire Functions-side live-provider path. This phase re-audited D12's own flavor/dart-
+define-mismatch hypothesis directly (rather than assuming it still applies) because the developer reported
+launching with the exact command D12's fix targets: `flutter run -d zdp7beibzd9hnrdu --flavor development
+--dart-define=ENVIRONMENT=development`. Every audit item below was checked by direct evidence, not
+inferred:
+
+1. **`cloud_functions` package internals, read directly** (`cloud_functions-6.3.6/lib/src/firebase_
+   functions.dart`): `FirebaseFunctions.instance` internally delegates to `instanceFor(app: Firebase.app())`
+   with `region ??= 'us-central1'`, cached by `'${app.name}_$region'` — so every call site in this app that
+   reads `.instance` (with no call site anywhere passing an explicit region — `region` is a structural
+   constant here, `us-central1`, not a runtime guess) resolves to the exact same singleton object.
+   `useFunctionsEmulator(host, port)` does **not** touch the lazily-created `delegate` at all — it only sets
+   a private `_origin` field on that singleton, which `httpsCallable()` reads fresh on every single call.
+   Consequence: there is no possible "callable created from a pre-emulator-bound instance" hazard as long
+   as `useFunctionsEmulator` runs before the *first* `.httpsCallable()` call anywhere in the app, regardless
+   of which class makes that first call. **Ruled out.**
+2. **Bootstrap ordering, re-verified**: `main()` awaits `bootstrapApp()` before `runApp()`;
+   `bootstrapApp()` awaits `FirebaseBootstrapService(...).initialize()` (which awaits all four
+   `use*Emulator` connectors, including Functions) to completion *before* constructing the short-lived
+   `ProviderContainer` used for the rest of bootstrap, and before the app's real `ProviderScope` exists at
+   all. No code path can read `FirebaseFunctions.instance` earlier. **Ruled out.**
+3. **Address-search vs. other callables' client construction, compared directly**: `GooglePlacesAddress
+   SearchProvider` (`google_places_address_search_provider.dart`), `FirebaseFcmRegistrationService`
+   (`fcm_registration_service.dart`, the `registerDeviceToken` caller named as a comparison point),
+   `SavedAddressRepository` (`saveDeliveryAddress`), and every other `.httpsCallable(...)` call site in
+   `lib/` (grepped exhaustively) all construct their callable the identical way: `FirebaseFunctions
+   .instance` (or an injected default defaulting to it), no explicit region, no `.instanceFor(...)` anywhere
+   — permanently guarded by `test/bootstrap/functions_emulator_routing_regression_test.dart`, passing.
+   **No structural difference found between the failing call and any other callable in this codebase.**
+4. **`adb reverse --list`, run directly against the connected device** (`zdp7beibzd9hnrdu` — confirmed the
+   same device id from the developer's own `flutter run -d` command): `UsbFfs tcp:9099 tcp:9099`,
+   `tcp:8080 tcp:8080`, `tcp:5001 tcp:5001`, `tcp:9199 tcp:9199` — port 5001 (Functions) **is** forwarded,
+   correctly, right now. **Ruled out** as a currently-missing forward (this project's own
+   `docs/firebase_emulator.md` had flagged port 5001 as *historically* easy to forget — confirmed not the
+   case in this session).
+5. **Android network security config, read directly**
+   (`android/app/src/development/res/xml/network_security_config.xml`): a host-scoped (not port-scoped)
+   `cleartextTrafficPermitted="true"` domain-config for `127.0.0.1`/`localhost`/`10.0.2.2` — Android's
+   network security config schema has no port dimension, so this already covers `127.0.0.1:5001` exactly
+   as it covers `:8080`/`:9099`/`:9199`. **Ruled out** as a port-5001-specific gap.
+
+**No definitive root cause found by static/config audit** — every mechanism capable of causing this from
+config/ordering/instance-construction is confirmed correct. The remaining candidates all require a runtime
+observation this phase could not obtain without the physical device itself: response decoding/type-cast
+failure (this callable's response uniquely carries Turkish special characters —
+`İstanbul`/`Beşiktaş`/`ğşıüöç` — in `formattedAddress`/`districtName`/etc.; an encoding mismatch in the
+native Android HTTP/JSON stack is untested, not ruled out, not confirmed either), a genuinely transient
+platform-channel error, or something D12 already fixed at the code level but whose physical effect on
+*this specific* build was never independently re-confirmed (D12's own report disclosed this residual gap
+explicitly).
+
+**Diagnostics added** (`google_places_address_search_provider.dart`, development-only, gated on
+`AppEnvironment.current == AppEnvironment.development`, reusing the existing `_trace` mechanism): before
+every `reverseGeocodeAddressPoint` call, `[FUNCTIONS_TRACE][runtime-config]`
+(`environment`/`region`/`emulatorConfigured`/`host`/`port` — `region`/`emulatorConfigured` are reported
+from this app's own known-correct config, not a plugin-internal read, since `cloud_functions` exposes no
+public accessor for either) and `[FUNCTIONS_TRACE][reverse-geocode-call-start]`; on any failure,
+`[FUNCTIONS_TRACE][reverse-geocode-call-failure]` reporting the caught exception's `runtimeType`, the
+`FirebaseFunctionsException.code` when applicable, `details`' `runtimeType` only (never its value — this
+app's callables never set structured details today, so there is nothing known-safe to print), the first
+line of the stack trace only (never the full trace), and a `likelyReceivedResponse` boolean inferred from
+which `catch` branch fired (a genuine `FirebaseFunctionsException`, even with `code=unknown`, implies the
+native SDK parsed *something* callable-protocol-shaped; the raw-exception branch implies it did not) —
+disclosed explicitly as an inference, not a directly observed transport fact, since this plugin exposes no
+lower-level signal for that either. Never logs tokens, auth/App Check headers, the full stack trace, or
+precise location beyond the existing `MAP_TRACE` policy. *(Closure note, 2026-08-17: the physical-device
+retest this diagnostic was built for came back clean — see the final closure entry below — so the actual
+root cause was never pinned down by this mechanism specifically; it turned out to be the previously-
+resolved Firebase Auth emulator stale-session issue, fixed by re-login, not a `GooglePlacesAddressSearch
+Provider`/transport defect. All `[FUNCTIONS_TRACE]` tracing and its helper methods described in this
+paragraph were removed at closure as temporary, debugging-only code.)*
+
+**Test verification**: `flutter analyze`: 0 issues (scoped and full-project). `flutter test`: the directly
+relevant `test/features/address_search/**` suite (64 tests, all using existing fakes — this class's real
+network path is untestable under `flutter test`, matching this codebase's existing coverage gap for it)
+plus `test/bootstrap/functions_emulator_routing_regression_test.dart` — all passing. Full 2884-test suite
+not rerun (single file changed, additive tracing only, no existing behavior altered), per this phase's own
+"run only necessary tests" scope.
+
+```
+PHYSICAL_FUNCTIONS_TRANSPORT_ROOT_CAUSE_FOUND=NO
+PHYSICAL_REVERSE_GEOCODE_RETEST_READY=YES
+BLOCKERS=[Every statically-auditable hypothesis (instance/region binding, bootstrap ordering, address-
+search-specific construction, adb reverse port-5001 forwarding, Android cleartext network-security scope)
+is confirmed correct — none explains the symptom. The actual cause requires the new [FUNCTIONS_TRACE]
+diagnostics' output from one more physical-device retest to identify conclusively (in particular: does
+`likelyReceivedResponse` come back true or false, and what `exceptionType` is reported — that single
+retest should be close to conclusive). A secondary, untested hypothesis (Turkish-character response
+decoding on the native Android JSON/HTTP stack, unique to this callable among the ones compared) remains
+open and unconfirmed either way.]
+```
+
+### D17 — P.3 CLOSURE: physical acceptance passed, temporary diagnostics removed (2026-08-17)
+
+**Physical acceptance, verified on the real Android device**: fresh current-location acquisition works;
+the map recenters correctly; live `reverseGeocodeAddressPoint` returns the correct real address; the
+redesigned address card keeps the fixed pin visible in both its collapsed and expanded states; the address
+flow end-to-end is usable. The `code=unknown` symptom D15/D16 investigated turned out to be the Firebase
+Auth emulator's own stale-session behavior (resolved by the developer re-logging in) — not a defect in the
+Functions-side live-provider path (D15 already proved that path correct) or in the Flutter-side
+transport/instance-construction path (D16 already ruled out every statically-auditable hypothesis there).
+Both D15 and D16's audits were therefore correct as far as they went; the remaining variable was session
+state, outside either audit's scope.
+
+**Temporary diagnostics removed** — every `[MAP_TRACE]`, `[FUNCTIONS_TRACE]`, and `[MAP_SERVER_TRACE]`
+call site, and every helper/field that existed solely to support them, per this closure's own instruction
+("remove temporary troubleshooting traces; do not remove genuine production-safe observability"):
+
+- **`lib/features/address_search/presentation/screens/map_first_address_screen.dart`** — the `_trace()`
+  method and all `[MAP_TRACE]` call sites in `initState`/`_initializeFromDeviceLocation`/`_resolveCenter`/
+  `_onCameraMove`/`_onCameraIdle` removed; now-unused `app_environment.dart`/`log_level.dart`/
+  `logging_provider.dart` imports removed.
+- **`lib/features/address_search/data/google_places_address_search_provider.dart`** — `_trace()`,
+  `_traceFunctionsRuntimeConfig()`, `_traceFunctionsFailure()` (D16) removed, along with the now-unneeded
+  `LoggingService`/`FirebaseFunctionsEmulatorConfig`/`AppEnvironment` dependencies. The genuine, permanent
+  error-boundary logic those methods were interleaved with — translating every failure into a curated
+  `AddressSearchException`, across all three callables — is untouched.
+- **`lib/features/address_search/data/address_location_gateway.dart`** — the D16 `_trace()` method and its
+  `[MAP_TRACE][currentPosition]` call sites removed. The D14 `DevicePositionReading` extension
+  (`accuracyMeters`/`mockLocationStatus`/`timestamp`) is reverted — `AddressLocationGateway
+  .currentPosition()` is back to `Future<({double latitude, double longitude})?>`, since those three
+  fields were only ever consumed by the now-removed `[MAP_TRACE][new-address-device-position]` trace, per
+  their own doc comment ("purely for development diagnostics ... no production business logic reads
+  them"). `mockLocationStatusFor()` itself is unchanged and still backs the genuinely permanent FRAUD-F.1
+  `captureLocationEvidence()`/`ClientLocationEvidence` path.
+- **`functions/src/deliveryPlaces.ts`** — `traceMapServer()`, `_lastTracedCoordinates`,
+  `roundedCoordinateKey()`, and the `differsFromPriorRequest`/`requestId` diagnostic-only fields in
+  `reverseGeocodeAddressPoint` removed; `resolveApiKeyWith` reverted to its D13 form (mode check + fail-
+  closed secret resolution, no trace calls).
+- **`functions/src/googleGeocodingClient.ts`** — `traceGeocoding()`, `redactSecret()`, and the try/catch
+  wrapping added solely to feed them removed; `realReverseGeocode` reverted to its pre-D15 straight-line
+  form. `isEmulatorContext()` removed entirely — once its one remaining caller (this file's own trace
+  gate) was gone, grepping confirmed zero callers anywhere in `functions/src/` (the *separate*,
+  unexported `isEmulatorContext()` local to `reservationNotificationDelivery.ts` is a different function
+  and was never part of this — untouched).
+- **`functions/src/googlePlacesClient.ts`** — `tracePlaces()`, `redactSecret()`, and the equivalent
+  try/catch wrapping in `realAutocomplete`/`realPlaceDetails` removed, reverted to pre-D15 form; the
+  `isEmulatorContext` import removed.
+
+**What was deliberately kept** — genuine, permanent, production-safe logging, per this closure's own
+"do not remove useful production-safe structured logging" instruction: every plain `logger.warn`/
+`logger.info`/`logger.error` call that predates this investigation (HTTP-status warnings in
+`googlePlacesClient.ts`/`googleGeocodingClient.ts`, the `[resolveApiKey]` failure error, the
+`[saveDeliveryAddress]` device-location reverse-geocode-failure warning, the emulator-fixture "not calling
+real API" info lines) — none of these were ever `[MAP_TRACE]`/`[FUNCTIONS_TRACE]`/`[MAP_SERVER_TRACE]`-
+prefixed, and none were touched.
+
+**Final architecture preserved, unchanged by this closure**:
+
+- `GoogleMapsProviderMode` (D13) — `resolveGoogleMapsProviderMode()` is the sole fixture/live decision,
+  driven exclusively by `GOOGLE_MAPS_PROVIDER_MODE`, defaulting to `"live"`; automated tests opt into
+  `"fixture"` explicitly via `functions/package.json`'s `test:emulator` script; nothing infers fixture
+  mode from emulator presence.
+- `resolveApiKeyWith`/`resolveApiKey` (D13) — fail closed with `failed-precondition` on a missing/empty
+  live-mode key; never a silent fixture fallback.
+- `functions/.secret.local` remains gitignored (verified again this closure — see gate results below);
+  `GOOGLE_PLACES_SERVER_KEY` remains a server-side-only Secret Manager value, never referenced anywhere
+  under `lib/` (permanently guarded by `test/no_places_secret_in_flutter_test.dart`).
+- Every other P.3/FRAUD-F.2 callable/flow (`searchAddressAutocomplete`, `resolveAddressPlace`,
+  `saveDeliveryAddress`, `reverseGeocodeAddressPoint`, `checkDeliveryEligibility`, `submitDeliveryOrder`,
+  FRAUD-F.1/F.2 evidence capture, idempotency, Firestore Security Rules) — untouched by this closure; see
+  the Paket Servis P.3/FRAUD-F.2 section at the top of this document for their own decisions.
+- The pin-safe floating address card (this session's address-card redesign) — untouched by this closure;
+  its own height-safety math and expand/collapse behavior are unrelated to the diagnostic tracing removed
+  here.
+
+**Gate results**: `flutter analyze` (full project) — 0 issues. `flutter test` (full suite) — see this
+closure's own final report for the exact count. `functions`: `npm run build` clean, full `npm test` suite
+— see final report for count. Firestore rules: full `firestore-tests` suite — see final report for count.
+Git status inspected before commit: `functions/.secret.local` confirmed still gitignored; no secret value,
+log file, or emulator artifact staged.
+
+```
+DELIVERY_P3_CLOSED=YES
+```

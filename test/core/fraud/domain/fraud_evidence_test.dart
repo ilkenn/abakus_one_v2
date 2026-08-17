@@ -71,7 +71,9 @@ void main() {
       );
     });
 
-    test('a partial tenant anchor (organizationId + branchId, no orderId) throws', () {
+    test(
+        'a partial tenant anchor (organizationId + branchId, no orderId) throws',
+        () {
       expect(
         () => FraudEvidence(
           id: 'e4',
@@ -180,7 +182,9 @@ void main() {
   });
 
   group('FraudEvidence timestamp provenance', () {
-    test('clientCapturedAt, serverReceivedAt, and createdAt are distinct, independently-settable fields', () {
+    test(
+        'clientCapturedAt, serverReceivedAt, and createdAt are distinct, independently-settable fields',
+        () {
       final clientCapturedAt = DateTime(2026, 8, 15, 9, 0);
       final serverReceivedAt = DateTime(2026, 8, 15, 9, 5);
       final createdAt = DateTime(2026, 8, 15, 9, 6);
@@ -227,7 +231,9 @@ void main() {
           MockLocationStatus.values, contains(MockLocationStatus.unavailable));
     });
 
-    test('notDetected is stored and read back exactly as notDetected, never coerced to a boolean "genuine" concept', () {
+    test(
+        'notDetected is stored and read back exactly as notDetected, never coerced to a boolean "genuine" concept',
+        () {
       final evidence = FraudEvidence(
         id: 'e7',
         kind: FraudEvidenceKind.addressSave,

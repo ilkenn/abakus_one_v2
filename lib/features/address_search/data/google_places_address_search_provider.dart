@@ -16,9 +16,9 @@ import 'google_places_response_mapping.dart';
 /// this app that knows a provider named "Google" exists at all** — every
 /// caller of [AddressSearchProvider] (the interface) has no idea.
 class GooglePlacesAddressSearchProvider implements AddressSearchProvider {
-  GooglePlacesAddressSearchProvider(
-      {functions.FirebaseFunctions? functionsInstance})
-      : _functions = functionsInstance ?? functions.FirebaseFunctions.instance;
+  GooglePlacesAddressSearchProvider({
+    functions.FirebaseFunctions? functionsInstance,
+  }) : _functions = functionsInstance ?? functions.FirebaseFunctions.instance;
 
   final functions.FirebaseFunctions _functions;
 
@@ -41,6 +41,20 @@ class GooglePlacesAddressSearchProvider implements AddressSearchProvider {
         error.code,
         error.message ?? 'Adres önerileri alınamadı.',
       );
+    } on AddressSearchException {
+      rethrow;
+    } catch (_) {
+      // A physical-device report found a raw plugin-internal exception
+      // (not a FirebaseFunctionsException) reaching the UI from this
+      // class — this class is the ONE place that boundary is closed, so
+      // literally nothing this class's own callers see can ever be
+      // anything other than AddressSearchException. Never rethrows the
+      // original error/its toString() — that's exactly the leak this
+      // catch exists to prevent.
+      throw const AddressSearchException(
+        'unknown',
+        'Adres önerileri alınamadı. Lütfen tekrar deneyin.',
+      );
     }
   }
 
@@ -61,6 +75,13 @@ class GooglePlacesAddressSearchProvider implements AddressSearchProvider {
         error.code,
         error.message ?? 'Adres çözümlenemedi.',
       );
+    } on AddressSearchException {
+      rethrow;
+    } catch (_) {
+      throw const AddressSearchException(
+        'unknown',
+        'Adres çözümlenemedi. Lütfen tekrar deneyin.',
+      );
     }
   }
 
@@ -80,6 +101,20 @@ class GooglePlacesAddressSearchProvider implements AddressSearchProvider {
       throw AddressSearchException(
         error.code,
         error.message ?? 'Konum çözümlenemedi.',
+      );
+    } on AddressSearchException {
+      rethrow;
+    } catch (_) {
+      // A physical-device report found a raw plugin-internal exception
+      // (not a FirebaseFunctionsException) reaching the UI from this
+      // class — this class is the ONE place that boundary is closed, so
+      // literally nothing this class's own callers see can ever be
+      // anything other than AddressSearchException. Never rethrows the
+      // original error/its toString() — that's exactly the leak this
+      // catch exists to prevent.
+      throw const AddressSearchException(
+        'unknown',
+        'Konum çözümlenemedi. Lütfen tekrar deneyin.',
       );
     }
   }

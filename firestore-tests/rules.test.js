@@ -2784,3 +2784,143 @@ for (const collectionName of FRAUD_COLLECTIONS) {
     });
   }
 }
+
+// ---------------------------------------------------------------------
+// Delivery service areas (Paket Servis P.3) — same default-deny matrix,
+// abbreviated (unlike the fraud collections, this is a single, low-
+// sensitivity config collection with no admin UI yet — full 4-operation
+// coverage per role would be redundant given the identical `if false`
+// rule; a representative sample proves the boundary holds).
+// ---------------------------------------------------------------------
+
+test('deliveryServiceAreas: an unauthenticated caller cannot read a seeded area', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'deliveryServiceAreas/area-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      districtId: 'besiktas',
+      neighborhoodId: 'levent',
+      enabled: true,
+      minimumOrderMinorUnits: 0,
+    });
+  });
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  await assertFails(getDoc(doc(anon, 'deliveryServiceAreas/area-1')));
+});
+
+test('deliveryServiceAreas: platformOwner cannot read a seeded area directly (no admin UI exists yet — Cloud Function/ops tooling only)', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'deliveryServiceAreas/area-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      districtId: 'besiktas',
+      neighborhoodId: 'levent',
+      enabled: true,
+      minimumOrderMinorUnits: 0,
+    });
+  });
+  const owner = testEnv
+    .authenticatedContext('platform-owner-1', { platformRole: 'platformOwner' })
+    .firestore();
+
+  await assertFails(getDoc(doc(owner, 'deliveryServiceAreas/area-1')));
+});
+
+test('deliveryServiceAreas: a customer cannot create a service-area document directly', async () => {
+  const customer = testEnv.authenticatedContext('customer-1', {}).firestore();
+
+  await assertFails(
+    setDoc(doc(customer, 'deliveryServiceAreas/forged'), {
+      districtId: 'besiktas',
+      neighborhoodId: 'levent',
+      enabled: true,
+      minimumOrderMinorUnits: 0,
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------
+// Paket Servis P.3 — regression proof that direct customer creation of a
+// `channel: 'delivery'` order remains denied now that submitDeliveryOrder
+// exists as the sole authoritative creation path (Admin SDK, bypasses
+// these Rules entirely). Mirrors the exact precedent already established
+// for `channel: 'takeaway'` once submitTakeawayOrder became its sole
+// creator (the removed isValidAuthenticatedTakeawayOrder branch) — no new
+// `orders` create branch was added for delivery; this proves none is
+// needed and none was silently left open.
+// ---------------------------------------------------------------------
+
+test('orders: an ordinary authenticated customer cannot directly create a channel:"delivery" order in Firestore — submitDeliveryOrder (Admin SDK) remains the only creation path', async () => {
+  const customer = testEnv.authenticatedContext('customer-1', {}).firestore();
+
+  await assertFails(
+    setDoc(doc(customer, 'orders/forged-delivery-order'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'delivery',
+      status: 'pendingConfirmation',
+      customerId: 'customer-1',
+    }),
+  );
+});
+
+test('orders: staff (org member, no branch access) cannot create a channel:"delivery" order directly in Firestore', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['staff'] } })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/forged-delivery-order-2'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'delivery',
+      status: 'created',
+      customerId: null,
+    }),
+  );
+});
+
+// Paket Servis P.3 — confirms the exclusion added to the `orders` create
+// rule's staff branch is genuinely channel-based, not merely a side effect
+// of the pre-existing (separate, untouched-by-this-phase) branch-access
+// gap: even a staff actor WITH full branch access is still denied for
+// channel:"delivery" specifically, while the identical write for a
+// non-delivery channel (e.g. "dineInStaff") continues to succeed exactly
+// as before — proving this phase did not weaken staff order creation for
+// any other channel.
+test('orders: staff WITH branch access still cannot create a channel:"delivery" order directly in Firestore — the exclusion is channel-based, not branch-based', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-2', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['staff'] },
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/forged-delivery-order-3'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'delivery',
+      status: 'created',
+      customerId: null,
+    }),
+  );
+
+  await assertSucceeds(
+    setDoc(doc(staff, 'orders/forged-non-delivery-order-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'dineInStaff',
+      status: 'created',
+      customerId: null,
+    }),
+  );
+});

@@ -91,6 +91,120 @@ test("searchAddressAutocomplete: a real input returns the emulator-safe fixture 
   assert.strictEqual(suggestions[0].placeId, "emulator-fixture-besiktas");
 });
 
+// Paket Servis P.3 §D14 — the "Adres Ara" root cause: this fixture used to
+// return the identical Beşiktaş suggestion for every query, so no search
+// could ever surface (or select) a genuinely different result.
+test(
+  "searchAddressAutocomplete: two materially different queries return two different, " +
+    "independent suggestions — never collapsing onto the same placeId",
+  async () => {
+    const { idToken } = await signUpAnonymously();
+
+    const besiktasResponse = await callCallable(
+      fn("searchAddressAutocomplete"),
+      { input: "Barbaros Bulvarı", sessionToken: "session-1" },
+      idToken,
+    );
+    const kadikoyResponse = await callCallable(
+      fn("searchAddressAutocomplete"),
+      { input: "Kadıköy", sessionToken: "session-2" },
+      idToken,
+    );
+
+    const besiktasSuggestions = besiktasResponse.body.result?.suggestions as { placeId: string; text: string }[];
+    const kadikoySuggestions = kadikoyResponse.body.result?.suggestions as { placeId: string; text: string }[];
+
+    assert.strictEqual(besiktasSuggestions[0].placeId, "emulator-fixture-besiktas");
+    assert.strictEqual(kadikoySuggestions[0].placeId, "emulator-fixture-kadikoy");
+    assert.notStrictEqual(besiktasSuggestions[0].text, kadikoySuggestions[0].text);
+  },
+);
+
+test(
+  "searchAddressAutocomplete -> resolveAddressPlace: selecting the second query's result " +
+    "resolves to genuinely different coordinates than the first",
+  async () => {
+    const { idToken } = await signUpAnonymously();
+
+    const autocomplete = await callCallable(
+      fn("searchAddressAutocomplete"),
+      { input: "Kadıköy", sessionToken: "session-3" },
+      idToken,
+    );
+    const suggestions = autocomplete.body.result?.suggestions as { placeId: string; text: string }[];
+    const resolved = await callCallable(
+      fn("resolveAddressPlace"),
+      { placeId: suggestions[0].placeId, sessionToken: "session-3" },
+      idToken,
+    );
+    const place = resolved.body.result?.resolved as Record<string, unknown>;
+
+    assert.strictEqual(place.districtName, "Kadıköy");
+    assert.notStrictEqual(place.latitude, 41.0449616);
+    assert.notStrictEqual(place.longitude, 29.0076831);
+  },
+);
+
+// Paket Servis P.3 §D15 — the properly-fixed fixture: a full neighborhood
+// vocabulary, never silently defaulting an unmatched query to Balmumcu.
+async function autocompleteFirstPlaceId(idToken: string, input: string, sessionToken: string): Promise<string> {
+  const { body } = await callCallable(fn("searchAddressAutocomplete"), { input, sessionToken }, idToken);
+  const suggestions = body.result?.suggestions as { placeId: string; text: string }[];
+  return suggestions[0]?.placeId ?? "";
+}
+
+test('searchAddressAutocomplete: "Ortaköy" and "Nişantaşı" do not return the same Balmumcu result', async () => {
+  const { idToken } = await signUpAnonymously();
+  const ortakoy = await autocompleteFirstPlaceId(idToken, "Ortaköy", "s-ortakoy");
+  const nisantasi = await autocompleteFirstPlaceId(idToken, "Nişantaşı", "s-nisantasi");
+
+  assert.strictEqual(ortakoy, "emulator-fixture-ortakoy");
+  assert.strictEqual(nisantasi, "emulator-fixture-nisantasi");
+  assert.notStrictEqual(ortakoy, "emulator-fixture-besiktas");
+  assert.notStrictEqual(nisantasi, "emulator-fixture-besiktas");
+});
+
+test('searchAddressAutocomplete: "Levent" and "Maslak" produce independent results', async () => {
+  const { idToken } = await signUpAnonymously();
+  const levent = await autocompleteFirstPlaceId(idToken, "Levent", "s-levent");
+  const maslak = await autocompleteFirstPlaceId(idToken, "Maslak", "s-maslak");
+
+  assert.strictEqual(levent, "emulator-fixture-levent");
+  assert.strictEqual(maslak, "emulator-fixture-maslak");
+  assert.notStrictEqual(levent, maslak);
+});
+
+test("searchAddressAutocomplete: an unmatched, unknown query returns no suggestions — never a silent Balmumcu fallback", async () => {
+  const { idToken } = await signUpAnonymously();
+  const { body } = await callCallable(
+    fn("searchAddressAutocomplete"),
+    { input: "zzzqqqxyz not a real place", sessionToken: "s-unknown" },
+    idToken,
+  );
+  assert.deepStrictEqual(body.result?.suggestions, []);
+});
+
+test("searchAddressAutocomplete: every locked delivery-district neighborhood plus the deliberately out-of-service Kadıköy resolves independently", async () => {
+  const { idToken } = await signUpAnonymously();
+  const queries = [
+    "Beşiktaş",
+    "Şişli",
+    "Taksim",
+    "Beyoğlu",
+    "Kağıthane",
+    "Sarıyer",
+    "Etiler",
+    "Kadıköy",
+  ];
+  const placeIds = new Set<string>();
+  for (const query of queries) {
+    const placeId = await autocompleteFirstPlaceId(idToken, query, `s-${query}`);
+    assert.ok(placeId.length > 0, `expected a result for "${query}"`);
+    placeIds.add(placeId);
+  }
+  assert.strictEqual(placeIds.size, queries.length, "every neighborhood query must resolve to its own distinct placeId");
+});
+
 // ---------------------------------------------------------------------
 // resolveAddressPlace
 // ---------------------------------------------------------------------

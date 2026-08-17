@@ -79,3 +79,71 @@ test("reverseGeocodeAddressPoint: an unresolvable point (sentinel 0,0) returns s
   const resolved = body.result?.resolved as Record<string, unknown>;
   assert.strictEqual(resolved.providerPlaceId, "");
 });
+
+// Paket Servis P.3 §D13 — the physical-device "address stuck on one
+// location" root cause: the emulator-safe reverse-geocode fixture used to
+// collapse every non-(0,0) coordinate onto the identical placeId. These
+// tests prove two materially distant coordinates now produce genuinely
+// independent results, and that repeated alternating calls never leak a
+// stale/cached placeId across invocations.
+test("reverseGeocodeAddressPoint: two materially distant coordinates resolve to two different, independent results", async () => {
+  const { idToken } = await signUpAnonymously();
+
+  const besiktasResponse = await callCallable(
+    fn("reverseGeocodeAddressPoint"),
+    { latitude: 41.05, longitude: 29.01 },
+    idToken,
+  );
+  const kadikoyResponse = await callCallable(
+    fn("reverseGeocodeAddressPoint"),
+    { latitude: 40.99, longitude: 29.02 },
+    idToken,
+  );
+
+  const besiktasResolved = besiktasResponse.body.result?.resolved as Record<string, unknown>;
+  const kadikoyResolved = kadikoyResponse.body.result?.resolved as Record<string, unknown>;
+
+  assert.strictEqual(besiktasResolved.districtName, "Beşiktaş");
+  assert.strictEqual(kadikoyResolved.districtName, "Kadıköy");
+  assert.notStrictEqual(besiktasResolved.providerPlaceId, kadikoyResolved.providerPlaceId);
+  assert.notStrictEqual(besiktasResolved.formattedAddress, kadikoyResolved.formattedAddress);
+});
+
+test(
+  "reverseGeocodeAddressPoint: alternating calls between two distant points never leak a stale/cached " +
+    "placeId from the prior invocation — each call resolves independently",
+  async () => {
+    const { idToken } = await signUpAnonymously();
+    const besiktas = { latitude: 41.05, longitude: 29.01 };
+    const kadikoy = { latitude: 40.99, longitude: 29.02 };
+
+    const sequence = [besiktas, kadikoy, besiktas, kadikoy, besiktas];
+    const districts: unknown[] = [];
+    for (const point of sequence) {
+      const { body } = await callCallable(fn("reverseGeocodeAddressPoint"), point, idToken);
+      const resolved = body.result?.resolved as Record<string, unknown>;
+      districts.push(resolved.districtName);
+    }
+
+    assert.deepStrictEqual(districts, [
+      "Beşiktaş",
+      "Kadıköy",
+      "Beşiktaş",
+      "Kadıköy",
+      "Beşiktaş",
+    ]);
+  },
+);
+
+test("reverseGeocodeAddressPoint: the same coordinate always resolves to the same result (deterministic, not merely non-crossing)", async () => {
+  const { idToken } = await signUpAnonymously();
+  const point = { latitude: 41.05, longitude: 29.01 };
+
+  const first = await callCallable(fn("reverseGeocodeAddressPoint"), point, idToken);
+  const second = await callCallable(fn("reverseGeocodeAddressPoint"), point, idToken);
+
+  const firstResolved = first.body.result?.resolved as Record<string, unknown>;
+  const secondResolved = second.body.result?.resolved as Record<string, unknown>;
+  assert.strictEqual(firstResolved.providerPlaceId, secondResolved.providerPlaceId);
+  assert.strictEqual(firstResolved.formattedAddress, secondResolved.formattedAddress);
+});

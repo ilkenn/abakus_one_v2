@@ -1407,6 +1407,77 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Related Modules**: Orders (address foundation)
 - **Business Rule IDs**: see `docs/decisions.md` Faz P.2
 
+### BR-DELIVERY-007 — `submitDeliveryOrder` is the sole delivery order-creation path (Faz P.3, 2026-08-16)
+- **Status**: VERIFIED — server-authoritative callable live, proven by adversarial test
+- **Rule**: A customer delivery order can only ever be created via the `submitDeliveryOrder` Cloud
+  Function (Admin SDK, bypasses Firestore Rules entirely) — never a direct client `create` against
+  `orders`, by a customer OR by staff. `firestore.rules`' `orders` create rule now excludes
+  `channel == 'delivery'` from its `isOrgMember` staff branch (the same tightening already applied to
+  `channel == 'takeaway'` at Faz D.3.1, for the identical reason: server-authoritative
+  address/pricing/payment/fraud-evidence validation cannot be bypassed by a direct write). Verified by
+  4 dedicated Rules tests: an ordinary customer denied, a staff org-member with no branch access
+  denied, a staff org-member WITH full branch access still denied (proving the exclusion is
+  channel-based, not a side effect of the pre-existing, separate branch-access gap in that same staff
+  branch — see that branch's own comment for why that gap is untouched by this phase), and the
+  identical write for a non-delivery channel still succeeding (proving no other channel's staff
+  creation was weakened).
+- **Owner Agent**: security_engineer (decision) / restaurant_domain (order aggregate integration)
+- **Related Modules**: Orders, Delivery
+- **Business Rule IDs**: see `docs/decisions.md` Paket Servis P.3
+
+### BR-DELIVERY-008 — Delivery service-area resolution is fail-closed (Faz P.3, 2026-08-16)
+- **Status**: VERIFIED
+- **Rule**: `resolveDeliveryServiceArea` (`functions/src/deliveryServiceAreas.ts`) matches a
+  customer's verified address against `deliveryServiceAreas` by canonical `districtId`/
+  `neighborhoodId` only (equality query, no `orderBy` — avoids a new Firestore composite index).
+  **Zero matching, enabled area = not deliverable.** **More than one matching, enabled area for the
+  same district/neighborhood pair = ambiguous configuration, also rejected** — there is no "pick the
+  first/newest match" fallback. Neither result is ever silently treated as coverage. Canonical
+  district/neighborhood identity (`slugifyAddressComponent`, ported byte-for-byte from
+  `lib/features/orders/data/saved_address_repository.dart`) is kept structurally separate from
+  operational-region labels — "Okmeydanı"/"Maslak" (BR-DELIVERY-004's own finding: these are
+  colloquial labels spanning several real mahalles, not one Google-resolvable value) never
+  masquerade as a canonical `districtId`/`neighborhoodId` anywhere in this resolution path. No
+  production coverage or minimum-order values were invented this phase — every `deliveryServiceAreas`
+  document in this codebase is a test/dev fixture only; no admin UI to manage them exists yet
+  (explicitly out of P.3 scope).
+- **Owner Agent**: restaurant_domain (decision) / security_engineer (fail-closed verification)
+- **Related Modules**: Orders, Delivery
+- **Business Rule IDs**: see `docs/decisions.md` Paket Servis P.3
+
+### BR-DELIVERY-009 — Minimum order is enforced server-side against the real delivery subtotal (Faz P.3, 2026-08-16)
+- **Status**: VERIFIED
+- **Rule**: `checkDeliveryEligibility` is advisory-only UX — its `eligible`/`minimumOrderMinorUnits`
+  result is never treated as authorization by `submitDeliveryOrder`, which always independently
+  re-reads and re-validates the address/service-area/minimum-order rules for itself, even immediately
+  after an `eligible: true` advisory result (proven by a dedicated test: an eligible-but-then-
+  below-minimum submission is still rejected). The minimum is compared against the
+  **server-calculated delivery-channel product subtotal** — final per-line prices after BR-DELIVERY-
+  002's locked delivery adjustment are applied — never a client-supplied subtotal and never the
+  pre-adjustment base-price total.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, Delivery
+- **Business Rule IDs**: see `docs/decisions.md` Paket Servis P.3
+
+### BR-DELIVERY-010 — Order-submit device-location fraud evidence, FRAUD-F.2 (Faz P.3, 2026-08-16)
+- **Status**: VERIFIED
+- **Rule**: `submitDeliveryOrder` captures one, single, foreground device-location candidate per
+  submission attempt (never on retry of the same `submissionKey` — the client caches and reuses the
+  first attempt's candidate) and creates a `kind: "orderSubmit"` `FraudEvidence` record, in the same
+  Firestore transaction as the order document itself, anchored to the real, resolved
+  `organizationId`/`branchId`/`orderId`. A matching prior `addressSave` evidence record for the same
+  `(subjectUid, savedAddressId)` is linked via `priorEvidenceId` when one exists (`null` otherwise) —
+  and is never mutated, byte-for-byte, by this linkage. A replayed, already-accepted submission
+  (same `submissionKey` + same payload) never creates a duplicate order, `FraudEvidence`, or
+  `FraudRiskContext` — it returns the original result immediately, without re-touching fraud state.
+  Every server-derived interpretation field (`distanceMeters`, `appCheckState`, `phoneVerified`,
+  `policyVersion`, geocoded fields) is proven unforgeable by dedicated tests forging each one in the
+  request payload. A large device-to-address distance alone never rejects the order — it is recorded
+  as a signal only, per FRAUD-F.0/F.1's own "no permanent risk thresholds" architecture.
+- **Owner Agent**: security_engineer (decision) / restaurant_domain (order-submit integration)
+- **Related Modules**: Orders, Delivery, Fraud Evidence
+- **Business Rule IDs**: see `docs/decisions.md` Paket Servis P.3, `docs/fraud_evidence_architecture.md` §12
+
 # Cash Management
 
 ### BR-CASH-001 — Multiple cash drawers per branch, mutable registry (Phase 3 Sprint 3E)

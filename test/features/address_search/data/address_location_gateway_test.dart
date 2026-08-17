@@ -45,7 +45,9 @@ void main() {
       );
     });
 
-    test('permission granted and service enabled returns null (proceed to capture)', () {
+    test(
+        'permission granted and service enabled returns null (proceed to capture)',
+        () {
       expect(
         unavailableReasonFor(geo.LocationPermission.always,
             serviceEnabled: true),
@@ -96,7 +98,8 @@ void main() {
   });
 
   group('clientLocationEvidenceFrom (pure, FRAUD-F.1)', () {
-    test('captures latitude/longitude/accuracyMeters exactly from the position', () {
+    test('captures latitude/longitude/accuracyMeters exactly from the position',
+        () {
       final evidence = clientLocationEvidenceFrom(
         _position(),
         accuracyStatus: geo.LocationAccuracyStatus.precise,
@@ -108,7 +111,9 @@ void main() {
       expect(evidence.accuracyMeters, 12.5);
     });
 
-    test('clientCapturedAt provenance is the device position timestamp, exactly', () {
+    test(
+        'clientCapturedAt provenance is the device position timestamp, exactly',
+        () {
       final timestamp = DateTime(2026, 8, 15, 9, 0);
       final position = geo.Position(
         latitude: 41.0,
@@ -132,7 +137,9 @@ void main() {
       expect(evidence.clientCapturedAt, timestamp);
     });
 
-    test('permissionState is always "granted" — a candidate only ever exists when permission was granted', () {
+    test(
+        'permissionState is always "granted" — a candidate only ever exists when permission was granted',
+        () {
       final evidence = clientLocationEvidenceFrom(
         _position(),
         accuracyStatus: geo.LocationAccuracyStatus.precise,
@@ -142,7 +149,9 @@ void main() {
       expect(evidence.permissionState, 'granted');
     });
 
-    test('unsupported platform behavior: iOS never reports detected/notDetected, only unsupported', () {
+    test(
+        'unsupported platform behavior: iOS never reports detected/notDetected, only unsupported',
+        () {
       final evidence = clientLocationEvidenceFrom(
         _position(isMocked: true),
         accuracyStatus: geo.LocationAccuracyStatus.precise,

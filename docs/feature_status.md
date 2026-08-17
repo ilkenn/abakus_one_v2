@@ -3418,3 +3418,65 @@ and fixing one genuine test-authoring bug (a post-navigation widget lookup) befo
 **FRAUD-F.1 CLOSED: YES.** See `docs/decisions.md` FRAUD-F.1 for the full report. FRAUD-F.2 (order-
 submit evidence, folded into a future real `submitDeliveryOrder`, confirmed still absent from this
 codebase) remains explicitly deferred and hard-blocked.
+
+## Paket Servis (Delivery) — Faz P.3: Real Delivery Checkout + `submitDeliveryOrder` + FRAUD-F.2
+
+**Faz P.3 (2026-08-16) — Real Delivery Checkout, Server-Authoritative Order Submission, FRAUD-F.2,
+PARTIALLY CLOSED (physical-device verification outstanding).** The `submitDeliveryOrder` callable P.1
+disclosed as a future dependency now exists; FRAUD-F.2 (blocked on that callable) is implemented.
+Courier assignment/live tracking, delivery-lifecycle UI beyond order creation, admin delivery-zone
+management UI, online payment, and any home/profile/Boncuklarım redesign remain untouched, per
+explicit scope.
+
+- **`submitDeliveryOrder` — DONE.** `functions/src/submitDeliveryOrder.ts` — the sole delivery
+  order-creation path (customer AND staff direct-Firestore-create both now denied, see the Rules
+  finding below). Login-required, real-phone-customer-only; scope resolved entirely from the matched
+  `DeliveryServiceArea`, never client input. Reuses `submitTakeawayOrder.ts`'s pricing/catalog engine
+  unmodified (additive-only exports).
+- **`checkDeliveryEligibility` — DONE, advisory-only.** `functions/src/checkDeliveryEligibility.ts` —
+  never treated as authorization by `submitDeliveryOrder`, which always independently re-validates
+  (proven by test).
+- **Pricing enforcement — DONE, adversarially proven.** Server-authoritative; forged client
+  price/quantity/surcharge fields proven never read. LOCKED rule (+140 standard/+20 İçecekler/+140
+  once-per-bowl) individually proven.
+- **Payment enforcement — DONE.** Exactly the 7 LOCKED methods accepted; online-card/excluded/garbage
+  ids all denied; immutable `paymentMethodSnapshot` proven correct.
+- **Service-area eligibility — DONE, fail-closed.** `functions/src/deliveryServiceAreas.ts` — zero
+  match and ambiguous multi-match both denied; canonical district/neighborhood identity kept
+  structurally separate from "Okmeydanı"/"Maslak" operational labels (BR-DELIVERY-004). No production
+  coverage data invented — test/dev fixtures only.
+- **`DeliveryAddressSnapshot` — DONE.** Built server-side from the re-read, re-verified authoritative
+  `SavedAddress` at submission time; proven immutable against a later address edit.
+- **FRAUD-F.2 — DONE.** Folded into `submitDeliveryOrder`, no standalone callable. One foreground
+  device-location capture per submission attempt, cached across retries. Linked to prior `addressSave`
+  evidence when found (never mutating it, proven byte-for-byte). `FraudRiskContext` immutable/
+  versioned. Idempotent replay never duplicates evidence/risk-context. See
+  `docs/fraud_evidence_architecture.md` §12 for the full architecture.
+- **Legacy checkout cleanup — DONE.** `cart_screen.dart`'s delivery fallback now constructs
+  `DeliveryCheckoutScreen()`; legacy `CheckoutScreen` (online-card-capable) is now unreachable —
+  zero-reference, not deleted, per explicit instruction.
+- **Firestore Rules — DONE, one genuine gap found and closed.** `deliveryServiceAreas` deny-all; the
+  `orders` create rule's staff branch now excludes `channel == 'delivery'` (mirrors the existing
+  `takeaway` exclusion precedent) — closes a real gap where a staff org-member, regardless of branch
+  access, could otherwise write a delivery order directly, bypassing every server-side check.
+- **Map-first address flow device blocker — DONE at the code level, NOT physically verified.**
+  Exception-safety hardening in `google_places_address_search_provider.dart` (all 3 methods) and
+  `map_first_address_screen.dart` closes the exact gap matching the reported symptom (a raw
+  `ExecutionException`/`FirebaseFunctionsException` reaching customer UI) — proven by a new regression
+  test. **No physical-device verification was performed** — no ADB/device-automation capability exists
+  in this environment (a standing, permanent constraint). See `docs/decisions.md` Paket Servis P.3 §D11.
+
+**Test verification:** 1 new backend test file (37 tests). 2 new Dart feature files
+(`lib/features/delivery/**`), 3 new/updated Dart test files (10 new delivery tests + 1 new map-first
+regression test). Firestore Rules: 6 new tests. `flutter analyze`: **0 issues.** `flutter test`:
+**2871/2871 passing** (up from 2860). TypeScript build: clean. Functions: **660/660 passing** (up from
+623). Firestore Security Rules: **296/296 passing** (up from 290). Two genuine bugs caught and fixed
+before reporting green: a test-fixture design bug (`seedFullValidFixture` neighborhood-name collision
+producing false "ambiguous configuration" failures) and a Rules-authoring bug (the channel exclusion
+initially threw on a legacy-shaped order with no `channel` field instead of treating it as
+"not delivery"). One genuine widget-layout bug (`_SectionCard` title-row overflow) also caught and
+fixed.
+
+**P.3 CLOSED: NO — see `MAP_FIRST_PHYSICAL_DEVICE_VERIFIED=NO` in the session's final report; every
+other in-scope item is genuinely complete and gate-verified.** `FRAUD_F2_COMPLETE: YES`. See
+`docs/decisions.md` Paket Servis P.3 for the full report.

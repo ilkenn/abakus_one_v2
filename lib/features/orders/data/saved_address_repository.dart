@@ -98,7 +98,6 @@ class FirestoreSavedAddressRepository implements SavedAddressRepository {
     String? deviceLocationUnavailableReason,
   }) async {
     final callable = _functions.httpsCallable('saveDeliveryAddress');
-    final String savedAddressId;
     try {
       final result = await callable.call<Map<String, dynamic>>({
         if (addressId != null) 'addressId': addressId,
@@ -116,23 +115,40 @@ class FirestoreSavedAddressRepository implements SavedAddressRepository {
           deviceLocationUnavailableReason,
         ),
       });
-      savedAddressId = result.data['addressId'] as String;
+      final savedAddressId = result.data['addressId'] as String;
+
+      final doc = await _collection.doc(savedAddressId).get();
+      final data = doc.data();
+      if (data == null) {
+        throw const SavedAddressException(
+          'not-found',
+          'Adres kaydedildi ancak okunamadı.',
+        );
+      }
+      return _map(doc.id, data);
+    } on SavedAddressException {
+      rethrow;
     } on functions.FirebaseFunctionsException catch (error) {
       throw SavedAddressException(
         error.code,
         error.message ?? 'Adres kaydedilemedi.',
       );
-    }
-
-    final doc = await _collection.doc(savedAddressId).get();
-    final data = doc.data();
-    if (data == null) {
+    } catch (_) {
+      // Device-blocker hardening (Paket Servis P.3 map-routing audit): any
+      // other failure — a platform-channel exception from a blocked/failed
+      // network call (e.g. a raw ExecutionException when the underlying
+      // socket connection to an emulator host is rejected before the
+      // Functions/Firestore SDK's own exception mapping ever sees it), or
+      // any other unexpected error — must never surface raw technical text
+      // to the customer. Mirrors `GooglePlacesAddressSearchProvider`'s own
+      // identical catch-all, applied here since `MapFirstAddressScreen
+      // ._save()` calls this method immediately after a reverse-geocode on
+      // the same screen, under the same failure conditions.
       throw const SavedAddressException(
-        'not-found',
-        'Adres kaydedildi ancak okunamadı.',
+        'unknown',
+        'Adres kaydedilemedi. Lütfen tekrar deneyin.',
       );
     }
-    return _map(doc.id, data);
   }
 
   @override

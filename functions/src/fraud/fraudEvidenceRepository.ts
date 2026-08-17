@@ -23,6 +23,9 @@ export const FRAUD_EVIDENCE_ACCESS_LOG_COLLECTION = "fraudEvidenceAccessLog";
  */
 export const FRAUD_F1_POLICY_VERSION = "fraud-f1-signals-only-no-risk-policy";
 
+/** Same discipline as FRAUD_F1_POLICY_VERSION — FRAUD-F.2 also defines no real risk policy yet. */
+export const FRAUD_F2_POLICY_VERSION = "fraud-f2-signals-only-no-risk-policy";
+
 export async function getFraudEvidenceInTransaction(
   tx: Transaction,
   db: Firestore,

@@ -19,7 +19,9 @@ void main() {
       expect(context.priorEvidenceId, 'evidence-0');
     });
 
-    test('priorEvidenceId is optional — null when no address-save evidence exists for this order', () {
+    test(
+        'priorEvidenceId is optional — null when no address-save evidence exists for this order',
+        () {
       final context = FraudRiskContext(
         id: 'ctx-2',
         orderId: 'order-2',

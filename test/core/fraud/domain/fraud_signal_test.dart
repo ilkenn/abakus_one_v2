@@ -18,7 +18,9 @@ void main() {
       expect(signal.detectedAt, DateTime(2026, 8, 15, 10, 0));
     });
 
-    test('carries no enforcement-shaped field — the type has no member named block/reject/ban/cancel', () {
+    test(
+        'carries no enforcement-shaped field — the type has no member named block/reject/ban/cancel',
+        () {
       final signal = FraudSignal(
         id: 's2',
         evidenceId: 'e1',

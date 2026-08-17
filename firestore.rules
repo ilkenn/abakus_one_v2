@@ -554,9 +554,33 @@ service cloud.firestore {
       // created exclusively via `submitTakeawayOrder` (Admin SDK, bypasses
       // this rule entirely), never a direct client `create`. No takeaway
       // channel value can satisfy this rule anymore, from any actor.
-      // Every other branch below is unchanged.
+      //
+      // **Paket Servis P.3 — same tightening, extended to `channel ==
+      // 'delivery'`.** A delivery order is created exclusively via
+      // `submitDeliveryOrder` (Admin SDK, bypasses this rule entirely):
+      // server-authoritative address ownership/service-area eligibility/
+      // channel pricing/payment-method validation/FRAUD-F.2 evidence all
+      // happen inside that one callable. Without this exclusion, an
+      // org-member staff actor (the `isOrgMember` branch has no
+      // `hasBranchAccess` check — a separate, pre-existing gap this phase
+      // does not otherwise touch, see the read branch above for the
+      // narrower fix already applied there) could write a `channel:
+      // 'delivery'` document directly, skipping every one of those checks
+      // entirely. No other channel's staff/table-guest branches below are
+      // affected. `!('channel' in request.resource.data) || ... != 'delivery'`
+      // — not a bare `!= 'delivery'` — because several pre-existing legacy
+      // test fixtures (and, potentially, older client write shapes) create
+      // an order with no `channel` field at all; a bare `!=` throws
+      // ("Property channel is undefined on object") rather than evaluating
+      // true for those, which would have silently denied a write this rule
+      // allowed before this phase. A genuinely missing `channel` field is
+      // therefore treated as "not delivery" here, same fail-open-only-for-
+      // already-allowed-shapes discipline as `hasBranchAccess`'s own
+      // `'branchAccess' in request.auth.token` guard above.
       allow create: if
         (isOrgMember(request.resource.data.organizationId) &&
+          (!('channel' in request.resource.data) ||
+            request.resource.data.channel != 'delivery') &&
           (request.resource.data.status == 'created' ||
             request.resource.data.status == 'pendingConfirmation')) ||
         isValidGuestTableOrder(request.resource.data) ||
@@ -661,6 +685,20 @@ service cloud.firestore {
     match /mediaMetadata/{mediaId} {
       allow read: if isOrgMember(resource.data.organizationId);
       allow write: if false; // Cloud Function only.
+    }
+
+    // ---------------------------------------------------------------------
+    // Delivery service areas (Paket Servis P.3) — server-controlled
+    // coverage/minimum-order configuration `checkDeliveryEligibility`/
+    // `submitDeliveryOrder` resolve against. No client, including staff,
+    // reads or writes this collection directly today (no admin UI exists
+    // yet per P.3's own explicit scope boundary) — Cloud-Function/ops-
+    // tooling only, same default-deny discipline as every other server-
+    // controlled collection in this file.
+    // ---------------------------------------------------------------------
+
+    match /deliveryServiceAreas/{areaId} {
+      allow read, write: if false; // Cloud Function / ops tooling only.
     }
 
     // ---------------------------------------------------------------------

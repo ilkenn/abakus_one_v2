@@ -14,9 +14,9 @@ import '../../../qr/presentation/providers/active_table_context_provider.dart';
 import '../../../qr/presentation/widgets/table_context_badge.dart';
 import '../../../takeaway/presentation/providers/takeaway_guest_dependencies_provider.dart';
 import '../../domain/models/cart_item.dart';
+import '../../../delivery/presentation/screens/delivery_checkout_screen.dart';
 import '../providers/cart_provider.dart';
 import '../providers/shopping_channel_provider.dart';
-import 'checkout_screen.dart';
 import 'dine_in_checkout_screen.dart';
 import 'takeaway_checkout_screen.dart';
 import 'takeaway_guest_checkout_screen.dart';
@@ -435,7 +435,7 @@ class CartScreen extends ConsumerWidget {
                                                       ? const TakeawayGuestCheckoutScreen()
                                                       : isTakeawayAuthenticated
                                                           ? const TakeawayCheckoutScreen()
-                                                          : const CheckoutScreen(),
+                                                          : const DeliveryCheckoutScreen(),
                                             ),
                                           );
                                         },

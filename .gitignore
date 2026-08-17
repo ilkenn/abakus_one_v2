@@ -62,6 +62,13 @@ ui-debug.log
 .env.local
 .env.*.local
 
+# Firebase Functions `defineSecret()` local override (Paket Servis P.3
+# §D13, `functions/.secret.local` — holds GOOGLE_PLACES_SERVER_KEY's real
+# value for local live-mode emulator testing). Distinct pattern from
+# `.env.local` above — was NOT covered by it, a confirmed gap closed here
+# before this secret was ever provisioned locally. Never committed.
+.secret.local
+
 # Node.js (Firestore Security Rules test harness, firestore-tests/; Cloud
 # Functions source, functions/)
 node_modules/

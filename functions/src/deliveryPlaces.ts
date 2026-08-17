@@ -10,7 +10,11 @@ import {
   type AutocompleteFn,
   type PlaceDetailsFn,
 } from "./googlePlacesClient";
-import { defaultReverseGeocodeFn, type ReverseGeocodeFn } from "./googleGeocodingClient";
+import {
+  defaultReverseGeocodeFn,
+  type ReverseGeocodeFn,
+} from "./googleGeocodingClient";
+import { resolveGoogleMapsProviderMode } from "./googleMapsProviderMode";
 import { normalizePlaceDetails, isSufficientlyResolved } from "./googlePlacesFieldMapping";
 import { parseDeviceLocationCandidate } from "./fraud/deviceLocationCandidate";
 import { distanceMeters } from "./fraud/geoDistance";
@@ -46,20 +50,74 @@ import type { ServerFraudInterpretation } from "./fraud/fraudEvidenceTypes";
 
 export const googlePlacesServerKey = defineSecret("GOOGLE_PLACES_SERVER_KEY");
 
-function isEmulatorContext(): boolean {
-  return Boolean(process.env.FIRESTORE_EMULATOR_HOST || process.env.FUNCTIONS_EMULATOR);
+/**
+ * Paket Servis P.3 §D17 — driven by [resolveGoogleMapsProviderMode], never
+ * emulator presence: fixture mode (automated tests only, explicit opt-in)
+ * never reads the real Secret Manager value at all — the `default*Fn()`
+ * factories in `googlePlacesClient.ts`/`googleGeocodingClient.ts` already
+ * short-circuit to a fixture that ignores whatever this returns, but this
+ * guard means a fixture-mode run can never even attempt a real Secret
+ * Manager read as an extra layer, not the only one. Live mode (physical
+ * development, staging, production) always reads the real secret — and
+ * **fails closed, with a clear configuration error, never a silent
+ * fixture fallback**, if that secret isn't actually available (e.g. local
+ * physical-device testing with no `functions/.secret.local` yet
+ * provisioned — see `docs/firebase_emulator.md` for the exact setup step).
+ */
+/** Mirrors `ReverseGeocodeFn`/`PlaceDetailsFn`/`AutocompleteFn`'s own
+ * exported-handler-plus-explicit-fake DI shape (`googlePlacesClient.ts`'s
+ * own doc comment) — lets a plain unit test exercise [resolveApiKeyWith]'s
+ * live-mode-with-missing-key failure path without needing a real Cloud
+ * Functions/Secret Manager runtime context, which nothing in this test
+ * suite's existing convention ever assumes is available outside an actual
+ * callable HTTP invocation. */
+export type SecretValueReader = () => string;
+
+export function defaultSecretValueReader(): SecretValueReader {
+  return () => googlePlacesServerKey.value();
 }
 
 /**
- * Never reads the real Secret Manager value in emulator context — the
- * `default*Fn()` factories in `googlePlacesClient.ts` already short-circuit
- * to a fake that ignores whatever this returns, but this guard means an
- * emulator run can never even attempt a real Secret Manager read (which
- * would fail anyway against the demo emulator project) as an extra layer,
- * not the only one.
+ * Paket Servis P.3 §D17 — driven by [resolveGoogleMapsProviderMode], never
+ * emulator presence: fixture mode (automated tests only, explicit opt-in)
+ * never reads the real Secret Manager value at all — the `default*Fn()`
+ * factories in `googlePlacesClient.ts`/`googleGeocodingClient.ts` already
+ * short-circuit to a fixture that ignores whatever this returns, but this
+ * guard means a fixture-mode run can never even attempt a real Secret
+ * Manager read as an extra layer, not the only one. Live mode (physical
+ * development, staging, production) always reads the real secret — and
+ * **fails closed, with a clear configuration error, never a silent
+ * fixture fallback**, if that secret isn't actually available (e.g. local
+ * physical-device testing with no `functions/.secret.local` yet
+ * provisioned — see `docs/firebase_emulator.md` for the exact setup step).
  */
-function resolveApiKey(): string {
-  return isEmulatorContext() ? "emulator-unused" : googlePlacesServerKey.value();
+export function resolveApiKeyWith(readSecret: SecretValueReader): string {
+  if (resolveGoogleMapsProviderMode() === "fixture") return "fixture-unused";
+  let value: string;
+  try {
+    value = readSecret();
+  } catch (error) {
+    logger.error("[resolveApiKey] GOOGLE_PLACES_SERVER_KEY could not be read in live provider mode.", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw new HttpsError(
+      "failed-precondition",
+      "Google Maps sunucu anahtarı bu ortam için yapılandırılmamış (live provider mode, " +
+        "GOOGLE_PLACES_SERVER_KEY). Bkz. docs/firebase_emulator.md.",
+    );
+  }
+  if (!value) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Google Maps sunucu anahtarı bu ortam için yapılandırılmamış (live provider mode, " +
+        "GOOGLE_PLACES_SERVER_KEY). Bkz. docs/firebase_emulator.md.",
+    );
+  }
+  return value;
+}
+
+export function resolveApiKey(): string {
+  return resolveApiKeyWith(defaultSecretValueReader());
 }
 
 interface AutocompleteResult {
@@ -391,6 +449,7 @@ export const saveDeliveryAddress = onCall(
  * into `customerAddresses` — Faz P.2.1 §6's "no second address source of
  * truth."
  */
+
 export const reverseGeocodeAddressPoint = onCall(
   { secrets: [googlePlacesServerKey], enforceAppCheck: shouldEnforceAppCheck() },
   async (request): Promise<ResolveAddressResult> => {

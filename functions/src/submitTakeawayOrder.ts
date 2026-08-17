@@ -72,12 +72,12 @@ const DISALLOWED_CONTACT_CHARACTERS = /[<>]/;
 // Request shape
 // -----------------------------------------------------------------------
 
-interface RawModifierSelection {
+export interface RawModifierSelection {
   groupId: unknown;
   optionId: unknown;
 }
 
-interface RawProductItem {
+export interface RawProductItem {
   kind: "product";
   productId: unknown;
   quantity: unknown;
@@ -85,20 +85,20 @@ interface RawProductItem {
   note?: unknown;
 }
 
-interface RawBowlItem {
+export interface RawBowlItem {
   kind: "bowl";
   quantity: unknown;
   ingredientIds: unknown;
   note?: unknown;
 }
 
-type RawItem = RawProductItem | RawBowlItem;
+export type RawItem = RawProductItem | RawBowlItem;
 
 // -----------------------------------------------------------------------
 // Validation helpers
 // -----------------------------------------------------------------------
 
-function invalid(message: string): never {
+export function invalid(message: string): never {
   throw new HttpsError("invalid-argument", message);
 }
 
@@ -130,7 +130,7 @@ function sanitizeSubmissionKey(raw: unknown): string {
   return raw;
 }
 
-function parseItems(raw: unknown): RawItem[] {
+export function parseItems(raw: unknown): RawItem[] {
   if (!Array.isArray(raw) || raw.length === 0) invalid("items must be a non-empty array.");
   if (raw.length > MAX_ITEMS_PER_ORDER) invalid("too many items in one order.");
   return (raw as Record<string, unknown>[]).map((item) => {
@@ -155,7 +155,7 @@ function parseItems(raw: unknown): RawItem[] {
   });
 }
 
-function requireValidQuantity(raw: unknown, context: string): number {
+export function requireValidQuantity(raw: unknown, context: string): number {
   if (typeof raw !== "number" || !Number.isInteger(raw)) {
     invalid(`${context}: quantity must be an integer.`);
   }
@@ -169,7 +169,7 @@ function requireValidQuantity(raw: unknown, context: string): number {
 // Catalog-backed line building
 // -----------------------------------------------------------------------
 
-async function resolveProductModifiers(
+export async function resolveProductModifiers(
   product: CanonicalMenuProduct,
   raw: unknown,
 ): Promise<OrderLineModifierInput[]> {
@@ -208,12 +208,13 @@ async function resolveProductModifiers(
   return resolved;
 }
 
-async function buildProductLine(
+export async function buildProductLine(
   db: Firestore,
   item: RawProductItem,
   scope: { restaurantId: string },
   channel: string,
   policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy,
+  tx?: import("firebase-admin/firestore").Transaction,
 ): Promise<ComputedOrderLine> {
   if (typeof item.productId !== "string" || item.productId.length === 0) {
     invalid("each product item requires a productId.");
@@ -221,7 +222,7 @@ async function buildProductLine(
   const productId = item.productId;
   const quantity = requireValidQuantity(item.quantity, `product "${productId}"`);
 
-  const product = await loadCanonicalMenuProduct(db, productId);
+  const product = await loadCanonicalMenuProduct(db, productId, tx);
   if (!product) invalid(`product "${productId}" does not exist.`);
   if (product!.restaurantId !== scope.restaurantId) {
     invalid(`product "${productId}" does not belong to this restaurant.`);
@@ -247,12 +248,13 @@ async function buildProductLine(
   });
 }
 
-async function buildBowlLine(
+export async function buildBowlLine(
   db: Firestore,
   item: RawBowlItem,
   scope: { restaurantId: string },
   channel: string,
   policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy,
+  tx?: import("firebase-admin/firestore").Transaction,
 ): Promise<ComputedOrderLine> {
   const quantity = requireValidQuantity(item.quantity, "bowl item");
   if (!Array.isArray(item.ingredientIds) || item.ingredientIds.length === 0) {
@@ -264,7 +266,7 @@ async function buildBowlLine(
     if (typeof rawId !== "string" || rawId.length === 0) {
       invalid("bowl item: each ingredientId must be a non-empty string.");
     }
-    const ingredient = await loadCanonicalBowlIngredient(db, rawId);
+    const ingredient = await loadCanonicalBowlIngredient(db, rawId, tx);
     if (!ingredient) invalid(`bowl ingredient "${rawId}" does not exist.`);
     if (ingredient!.restaurantId !== scope.restaurantId) {
       invalid(`bowl ingredient "${rawId}" does not belong to this restaurant.`);
@@ -306,7 +308,7 @@ async function buildBowlLine(
 // Idempotency
 // -----------------------------------------------------------------------
 
-function sha256Hex(input: string): string {
+export function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
@@ -320,7 +322,7 @@ function deriveOrderNumber(orderId: string): string {
 }
 
 /** A hash of the exact validated/normalized request shape that determines the resulting order — used to distinguish a genuine retry (same key, same effective payload -> reuse) from a key-reuse-with-different-payload attempt (same key, different payload -> fail closed). */
-function computeRequestFingerprint(normalized: unknown): string {
+export function computeRequestFingerprint(normalized: unknown): string {
   return sha256Hex(JSON.stringify(normalized));
 }
 

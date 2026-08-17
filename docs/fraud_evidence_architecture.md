@@ -207,9 +207,62 @@ Client may only ever submit the raw candidate shape (`status`, `latitude`, `long
 still defines no real risk policy) are computed exclusively server-side and are never read from
 `request.data`, proven by dedicated forged-field tests.
 
-## 12. Deferred: FRAUD-F.2
+## 12. FRAUD-F.2 — Order-Submit Evidence Capture
 
-Fold order-submit evidence into a future real `submitDeliveryOrder` callable, which does not exist in
-this codebase (confirmed absent again this phase). Not started; hard-blocked on that callable's own,
-separate implementation. `CourierFraudSignal` was not migrated. No fraud admin/review UI was built.
-No permanent risk thresholds or production KVKK retention duration were introduced this phase either.
+Implemented, Paket Servis P.3 (2026-08-16), folded directly into the new `submitDeliveryOrder`
+callable (`functions/src/submitDeliveryOrder.ts`) — the same "no standalone capture callable" design
+FRAUD-F.1 established for address-save. `submitDeliveryOrder` did not exist before this phase; FRAUD-
+F.2 begins exactly because it now does.
+
+**Client**: `DeliveryCheckoutScreen` captures at most **one** foreground device-location candidate
+per submission attempt, via the same `AddressLocationGateway.captureLocationEvidence()` FRAUD-F.1
+already uses — never a new gateway method. The captured result is cached for the lifetime of the
+screen's `_submissionKey` and reused verbatim on any retry of that same key; a retry never triggers a
+fresh capture (Architect Correction — see `docs/decisions.md` Paket Servis P.3). Serialization onto
+the wire mirrors `FirestoreSavedAddressRepository._serializeDeviceLocationCandidate` exactly (same
+raw shape: `status`/`latitude`/`longitude`/`accuracyMeters`/`clientCapturedAt`/
+`mockLocationStatus`/`permissionState`/`precisionState`).
+
+**Server**: `submitDeliveryOrder` parses the candidate via the same, unmodified
+`parseDeviceLocationCandidate` FRAUD-F.1 uses. Before opening its Firestore transaction (external
+HTTP work must happen first, same discipline as FRAUD-F.1's own D5), it computes `distanceMeters`
+against the **selected delivery address's own server-resolved coordinates** (never a client-supplied
+reference point) and independently reverse-geocodes the device point through the same
+`defaultReverseGeocodeFn`/`defaultPlaceDetailsFn` pipeline. Inside the transaction, it creates one
+`kind: "orderSubmit"` `FraudEvidence` document, tenant-anchored to the real, resolved
+`organizationId`/`branchId`/`orderId` (never null, unlike `addressSave` evidence) — the order
+document, the `FraudEvidence` record, and a new `FraudRiskContext` record are all committed together,
+in the same transaction, or none are.
+
+**Prior-evidence linkage**: an equality-only query (`subjectUid == uid && savedAddressId ==
+savedAddressId && kind == "addressSave"`, `.limit(1)`, no `orderBy` — no new composite index) looks
+for a matching `addressSave` evidence record from this same address's save flow. When found, its id
+is recorded as `priorEvidenceId` on the new `orderSubmit` evidence — **that prior record is never
+mutated**, proven byte-for-byte by a dedicated test that captures its full content before the order
+submission and asserts deep-equality after. `priorEvidenceId` is `null`, not an error, when no
+matching prior evidence exists.
+
+**Idempotency**: `orderId`/`fraudEvidenceId`/`fraudRiskContextId` are all deterministically derived
+from `(actor uid, submissionKey)`, exactly like `submitTakeawayOrder`'s own pattern. A replay of an
+already-accepted submission (same key, same normalized payload) returns the original result
+immediately — **without re-touching `FraudEvidence` or `FraudRiskContext` at all** — proven by test:
+a double-submission creates exactly one order, one `FraudEvidence`, and one `FraudRiskContext`. A
+key reused with a *different* payload is rejected outright (`failed-precondition`), never silently
+accepted as a new order under the old key.
+
+**`FraudRiskContext`**: a new, immutable, versioned record (`fraudRiskContexts/{orderId}-risk-
+context`) — `evidenceIds: [fraudEvidenceId]`, `signalIds: []` (FRAUD-F.2 defines no real signal
+detection, matching FRAUD-F.0/F.1's own "no permanent risk policy" scope boundary),
+`priorEvidenceId`, and `policyVersion: FRAUD_F2_POLICY_VERSION` (`"fraud-f2-signals-only-no-risk-
+policy"` — same "honest about no real policy existing" naming discipline as FRAUD-F.1's own
+`FRAUD_F1_POLICY_VERSION`).
+
+**Server authority**: every interpretation field (`distanceMeters`, `appCheckState`, `phoneVerified`,
+`policyVersion`, every geocoded field) is computed exclusively server-side, proven by a dedicated
+test that forges all of them (plus `organizationId`/`branchId`/tenant ids) in the request payload and
+confirms zero effect — the real, server-derived values are used regardless. A large device-to-address
+distance is recorded honestly but never rejects the order by itself, matching FRAUD-F.0/F.1's own "no
+automatic ban/cancel, no permanent thresholds" rule (proven by a dedicated far-distance test).
+
+`CourierFraudSignal` was not migrated this phase either. No fraud admin/review UI was built. No
+permanent risk thresholds or production KVKK retention duration were introduced.

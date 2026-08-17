@@ -94,7 +94,9 @@ class GeolocatorAddressLocationGateway implements AddressLocationGateway {
         return null;
       }
       final serviceEnabled = await geo.Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return null;
+      if (!serviceEnabled) {
+        return null;
+      }
       final position = await geo.Geolocator.getCurrentPosition();
       return (latitude: position.latitude, longitude: position.longitude);
     } catch (_) {

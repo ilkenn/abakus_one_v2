@@ -121,17 +121,93 @@ since the Android Emulator already resolves `10.0.2.2` to the host).
 
 **If a callable/Firestore/Auth call from a physical device produces no
 request in the emulator's own terminal at all** (not even a rejected
-one), check, in order: (1) `adb reverse --list` still shows the binding
-for that exact port — bindings silently drop on device reconnect; (2) the
-Emulator UI (`http://127.0.0.1:4000`) lists that specific emulator as
-running — `--only auth,firestore` omits Functions/Storage entirely, and a
-missing emulator produces no logs, not an error; (3) the app was actually
-built for the `development` flavor/environment (a `production`-flavor
-build never calls any `use*Emulator` method at all, by design — see
-"Which environment connects" above). A configuration bug in this app's own
-`use*Emulator` wiring is comparatively unlikely to reach only *one*
-product's callable and not others, since all four share one code path in
-`FirebaseBootstrapService.initialize`.
+one), check, in order:
+
+1. **The Android Gradle product flavor actually installed on the device is
+   `development`, independently of `--dart-define=ENVIRONMENT`** — a
+   real, confirmed root cause (Paket Servis P.3 device-blocker follow-up,
+   2026-08-17; see `docs/decisions.md` Paket Servis P.3 §D12 for the full
+   investigation). `--flavor development` (a native Gradle build
+   selection, merges `android/app/src/development/AndroidManifest.xml` +
+   its `network_security_config.xml`, which is the **only** thing that
+   permits cleartext HTTP to `127.0.0.1`/`10.0.2.2`/`localhost` on this
+   app) and `--dart-define=ENVIRONMENT=development` (a Dart-only compile
+   define, controls `AppEnvironment.current` and therefore whether
+   `FirebaseBootstrapService` calls any `use*Emulator` method at all) are
+   **two structurally independent selection mechanisms** — Flutter/Gradle
+   never cross-validates them, and `AppEnvironment.fromDefine` silently
+   defaults to `development` when the dart-define is simply omitted (by
+   design, so a plain `flutter run` works). It is entirely possible — and
+   is exactly what produced this bug — to run/install a **non**-`development`
+   Gradle flavor (e.g. an IDE "Build Variant" left on `productionDebug`
+   while the Run/Debug configuration's dart-defines still say
+   `ENVIRONMENT=development`) while the compiled Dart code still believes
+   it is `development` and unconditionally attempts `useFunctionsEmulator`
+   (and the other three `use*Emulator` calls). The resulting plaintext
+   `127.0.0.1:5001` connection is then **blocked by Android's default
+   cleartext-traffic policy before it ever reaches `adb reverse` or the
+   emulator's own HTTP server** — zero request, zero log line, on either
+   side — and the low-level platform/network exception that results
+   surfaces to Dart as a raw, unhelpful `ExecutionException`/similar
+   (which this app's own callable gateways now catch and translate to a
+   safe, generic message — see `docs/decisions.md` Paket Servis P.3 §D11/
+   §D12 — but the underlying call still never reaches the emulator).
+   **Fix**: rebuild/reinstall making sure the Android build variant/flavor
+   actually selected is `development` (e.g. `flutter run --flavor
+   development --dart-define=ENVIRONMENT=development` from the CLI, or —
+   in an IDE — confirm the Build Variant dropdown and the Run
+   Configuration's additional args agree, not just one of the two).
+2. `adb reverse --list` still shows the binding for that exact port —
+   bindings silently drop on device reconnect.
+3. The Emulator UI (`http://127.0.0.1:4000`) lists that specific emulator
+   as running — `--only auth,firestore` omits Functions/Storage entirely,
+   and a missing emulator produces no logs, not an error.
+
+A configuration bug in this app's own `use*Emulator` wiring (`lib/
+bootstrap/firebase_bootstrap_service.dart`) is comparatively unlikely to
+reach only *one* product's callable and not others, since all four share
+one code path — confirmed unaffected by this investigation (bootstrap
+ordering, the single shared `FirebaseFunctions.instance` singleton every
+callable gateway reads, and the emulator's own project-id handling under
+`singleProjectMode` were each individually audited and ruled out; see
+`test/bootstrap/functions_emulator_routing_regression_test.dart` for the
+permanent regression guard against a *future* gateway silently bypassing
+this shared instance via `FirebaseFunctions.instanceFor(...)`).
+
+## Google Maps provider mode (fixture vs. live)
+
+`GOOGLE_MAPS_PROVIDER_MODE` (env var, `functions/src/googleMapsProviderMode.ts`) decides whether
+`searchAddressAutocomplete`/`resolveAddressPlace`/`reverseGeocodeAddressPoint` use deterministic,
+offline fixtures or the real Google Places/Geocoding APIs. **This is deliberately independent of
+whether the Functions emulator is running** (see `docs/decisions.md` Paket Servis P.3 §D13) — running
+under the emulator no longer implies fixtures.
+
+| Value | Behavior |
+|---|---|
+| `GOOGLE_MAPS_PROVIDER_MODE=fixture` | Deterministic, offline fixture data. Used by `functions/package.json`'s `test:emulator` script (set on the `emulators:exec` invocation itself) — automated tests opt in explicitly. |
+| anything else, or unset (**default**) | Real Google Places/Geocoding APIs, requiring a valid `GOOGLE_PLACES_SERVER_KEY`. This is the default specifically so staging/production/an unconfigured physical-dev session can never *silently* fall back to fixtures. |
+
+**To manually test the real search/map-recenter UX against the local emulator** (physical device or
+otherwise), start the emulator with the mode explicit for clarity:
+
+```sh
+GOOGLE_MAPS_PROVIDER_MODE=live firebase emulators:start --project abakus-one-dev
+```
+
+This requires a real `GOOGLE_PLACES_SERVER_KEY` to be resolvable locally. Firebase's `defineSecret()`
+mechanism (already used by this key in `deliveryPlaces.ts`) reads local secret overrides from a
+gitignored `functions/.secret.local` file — if it doesn't exist yet, create it:
+
+```sh
+echo "GOOGLE_PLACES_SERVER_KEY=<the real server-side key>" >> functions/.secret.local
+```
+
+Never commit this file, never paste its contents anywhere logged, and never put this key into Flutter
+`--dart-define` or any client-side code — it must remain server-side only, exactly as
+`GOOGLE_PLACES_SERVER_KEY` already is. The key's Google Cloud Console API restrictions must permit both
+"Places API (New)" and "Geocoding API". If live mode is selected but the key is missing/unreadable, the
+callable fails closed with a clear `failed-precondition` error — it never silently serves fixture data
+in place of a real answer.
 
 ## Test phone number strategy
 
@@ -150,5 +226,7 @@ emulator-backed auth test needs one.
 - Cloud Functions source/deployment — see `functions/` (Phase 9 Sprint 9F)
   once it exists.
 
-No secret, API key, or credential appears in this file or in
-`firebase.json`'s emulator configuration — the emulators need none to run.
+No secret, API key, or credential *value* appears in this file or in `firebase.json`'s emulator
+configuration — the emulators need none to run. The "Google Maps provider mode" section above documents
+the *mechanism* for supplying `GOOGLE_PLACES_SERVER_KEY` locally (`functions/.secret.local`, gitignored)
+for live-mode testing only — never its actual value.
