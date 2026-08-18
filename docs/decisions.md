@@ -9985,6 +9985,55 @@ Storage Rules **22/22** (unchanged). `flutter analyze` clean; the one touched Da
 **Remaining, explicitly out of scope this phase**: `image_picker`, any customer-facing upload/gallery
 UI, and `ProfileHeroCard` wiring to a real selected photo are still untouched — P.4.3.
 
+## Auth Dev Fix — Web-Compatible Quick Test Login (`package:http` promoted to a direct dependency)
+
+**Root cause**: `HttpEmulatorVerificationCodeClient` (`lib/features/auth/data/
+emulator_verification_code_client.dart`) — the piece that reads "Hızlı Test Girişi"'s emulator-generated
+SMS code back out of the Firebase Auth Emulator's debug REST endpoint — used raw `dart:io` `HttpClient`.
+`dart:io` compiles for Flutter Web (a stub exists) but has no working HTTP implementation there; calling
+it throws `Unsupported operation: Platform._version` at runtime the moment the flow is actually used in
+Chrome, which is why `flutter test` (Dart VM, where `dart:io` genuinely works) never caught it.
+
+**Fix — one new direct dependency, but not a new one to the resolved graph**: `package:http`'s `Client()`
+factory already dispatches to a real, working transport per platform internally (`BrowserClient`/`fetch`
+on web, an `IOClient` elsewhere) — no hand-rolled conditional-import/stub-file split was needed, the
+package already does that once, correctly, for every consumer. `http` was already present in this repo's
+*resolved* dependency graph (`pubspec.lock`) as a transitive dependency of existing Firebase plugins,
+pinned at `1.6.0` — adding `http: ^1.6.0` to `pubspec.yaml`'s direct `dependencies` only promotes an
+already-resolved package to be explicitly importable; `flutter pub get` confirmed zero version change
+("http 1.6.0 (from transitive dependency to direct dependency)"). This is the one thing this task
+disclosed as a dependency-adjacent decision rather than deciding silently.
+
+**`HttpEmulatorVerificationCodeClient` gained an optional `client` constructor parameter** (`http.Client?`,
+defaulting to `null` → a fresh `http.Client()` per call, closed after use — matching the previous per-
+call-client lifecycle exactly) purely so tests can inject `package:http/testing.dart`'s `MockClient` (no
+further dependency — it ships inside `http` itself). Real call sites (`quick_test_login_provider.dart`'s
+`emulatorVerificationCodeClientProvider`) are unchanged — still `const HttpEmulatorVerificationCodeClient()`.
+
+**Every existing guard is untouched**: `QuickTestLoginConfig.isAvailable` (development + emulator only),
+the button's own visibility gate, and `QuickTestLoginNotifier.run()`'s own defense-in-depth re-check are
+all unmodified — this was purely a transport-layer fix inside the one class that talks to the emulator's
+debug endpoint. The client still queries only the local Auth Emulator's own REST endpoint; nothing about
+which endpoint gets called, or when, changed.
+
+**Tests**: new `test/features/auth/data/emulator_verification_code_client_test.dart` (9 tests) —
+`MockClient`-backed coverage of the request/response/error-wrapping logic (the exact same Dart code every
+platform runs; only `http.Client()`'s own internal transport dispatch differs per platform, and that is
+`package:http`'s already-published, not re-tested, responsibility), plus one structural regression guard
+asserting the production file's own source never re-imports `dart:io` via an `import 'dart:io'` directive
+(checked precisely, not a substring match — the file's own doc comments legitimately mention "dart:io" by
+name to explain the fix). All pre-existing auth tests (`test/features/auth/` — 99 tests, including
+`quick_test_login_provider_test.dart`'s fake-client-based suite, `quick_test_login_config_test.dart`'s
+staging/production-hidden coverage) pass unchanged. Full suite: `flutter analyze` clean; `flutter test`
+**2998/2998** (2988 + 9 new + 1 unrelated carryover from the same session's Profile work). `flutter build
+web --dart-define=ENVIRONMENT=development` compiles cleanly.
+
+**Disclosed limitation, not silently glossed over**: an actual interactive Chrome click-through
+("Hızlı Test Girişi" → authenticated Profile) was **not** performed by the agent — this repository's own
+standing rule is that visual/interactive QA is the user's own manual step, never automated by the agent.
+The web build compiling and the unit-test suite passing are strong, but not complete, evidence; the final
+manual click-through in a real `flutter run -d chrome` session is still owed.
+
 ## Profile P.4.2B2.1 — Selected-Photo Public Read Bridge
 
 Closes the exact integration gap P.4.2B2 left open: `customerPublicProfiles.selectedProfilePhotoRef` was
@@ -10048,3 +10097,99 @@ locked product/security requirement for whichever future phase actually builds C
    "best available platform capture protection," never "guaranteed screenshot prevention" — in code
    comments, `docs/`, and anywhere else this behavior is described.
 
+## Auth Dev Tool — Temporary Developer Login (Phone + PIN)
+
+**Explicitly temporary, tagged for clean removal**: every file this feature touches carries the literal
+marker `TEMPORARY_DEVELOPER_LOGIN` (`grep -rl TEMPORARY_DEVELOPER_LOGIN lib/ test/` finds all six: `lib/
+features/auth/data/dev_login_config.dart`, `lib/features/auth/presentation/providers/
+dev_login_provider.dart`, `lib/features/auth/presentation/screens/login_screen.dart` (the
+`_DevLoginSection` block and its call site only — the rest of the screen is permanent),
+`test/features/auth/data/dev_login_config_test.dart`, `test/features/auth/presentation/providers/
+dev_login_provider_test.dart`, `test/features/auth/presentation/quick_test_login_button_test.dart`). This
+is a deliberately different lifecycle than "Hızlı Test Girişi"'s own underlying machinery
+(`QuickTestLoginConfig`/`QuickTestLoginNotifier`/`EmulatorVerificationCodeClient`), which stays permanent
+dev infrastructure — this new feature is a thin, removable UX layer *in front of* it, not a replacement
+of it.
+
+**Zero duplicated auth/business logic**: `DevLoginNotifier.run()` validates phone+PIN locally, then —
+only on success — delegates the actual sign-in entirely to the existing, unmodified
+`QuickTestLoginNotifier.run()` (`ref.read(quickTestLoginProvider.notifier).run()`). The resulting session
+is produced by the exact same `AuthNotifier.requestOtp`/`verifyOtp` -> `FirebaseAuthRepository` ->
+`verifyPhoneNumber`/`confirmSmsCode` path every sign-in already uses — genuinely `sign_in_provider ==
+'phone'`, never a fabricated state. No Email/Password provider is touched anywhere in this feature (no
+such call exists in any new file).
+
+**PIN is a convenience gate, never the security boundary**: `DevLoginConfig.pin` is read once via
+`const String.fromEnvironment('DEV_LOGIN_PIN')` — never hardcoded, never committed. `DevLoginNotifier
+.run()` independently re-checks `DevLoginConfig.isAvailable` (development + emulator + non-empty PIN)
+AND explicitly checks `DevLoginConfig.pin.isEmpty` before ever comparing the submitted PIN — this closes
+a real edge case an equality-only check (`pin == DevLoginConfig.pin`) would have missed: an unset PIN
+(`''`) must never be satisfiable by an equally-empty submitted PIN.
+
+**Web/native sign-in mechanism — confirmed already unified, nothing new built**: this codebase's
+`FirebaseAuthClient` (`firebase_auth_client.dart`) already calls the FlutterFire `firebase_auth` plugin's
+single `verifyPhoneNumber`/`signInWithCredential` API on every platform — there is no separate `dart:io`-
+only or native-only code path to branch around; the Flutter plugin itself already dispatches correctly to
+each platform's real transport (including the JS SDK's own `signInWithPhoneNumber`-equivalent handling
+under the hood on web). The previous session's "Auth Dev Fix" already proved this path works on Chrome
+(it fixed the emulator-code-*reading* transport, `dart:io` -> `package:http`, not this sign-in call,
+which was never `dart:io`-dependent). This feature required zero new platform-specific code as a result.
+
+**Old UX removed, not left overlapping**: `_QuickTestLoginButton` (previously a private class inside
+`login_screen.dart`) is deleted from that file and replaced by `_DevLoginSection` — the "Hızlı Test
+Girişi" text no longer renders anywhere, verified by an explicit always-run test. `QuickTestLoginConfig`/
+`QuickTestLoginNotifier`/`quickTestLoginProvider` themselves are untouched and still exported — reused as
+the engine, not removed.
+
+**Testing constraint, disclosed rather than routed around**: `DevLoginConfig.pin` resolves empty under
+the plain `flutter test` default (no `--dart-define` passed, matching this repo's CI). Because
+`DevLoginNotifier.run()` correctly fails closed whenever the PIN is unset, every positive-path/wrong-
+phone/wrong-PIN-comparison test genuinely requires `--dart-define=DEV_LOGIN_PIN=<value>` to mean
+anything — these are `skip`-guarded (with a printed reason, not silently green on the wrong premise)
+under the plain invocation, and were separately run with the define set to confirm they pass for real.
+The one test that specifically needs the PIN-absent case (`fails closed even with the exact correct
+phone`) runs unconditionally under the default instead. `docs/decisions.md`/CI itself is not changed to
+add this define permanently — that would defeat "unavailable without a real developer explicitly
+providing one."
+
+**Tests**: `dev_login_config_test.dart` (7, pure `isAvailableFor(environment, pin:)`, no compile
+dependency), `dev_login_provider_test.dart` (6 — 1 always-run PIN-absent-fails-closed, 5 skip-guarded
+positive/negative-comparison), `quick_test_login_button_test.dart` rewritten in place (6 — 4 always-run
+structural, 2 skip-guarded full-flow). Full project: `flutter analyze` clean; `flutter test`
+**3006/3006 passing, 7 skipped** (skips are the documented PIN-dependent cases, not failures); `flutter
+build web --dart-define=ENVIRONMENT=development --dart-define=DEV_LOGIN_PIN=1234` compiles cleanly.
+
+## Auth Dev Login Fix — Stop Delegating to QuickTestLoginNotifier
+
+**Bug**: `DevLoginNotifier.run()` validated the developer-entered phone locally, then discarded it —
+delegating entirely to `QuickTestLoginNotifier.run()`, which ignores whatever it's asked about and
+always calls `requestOtp` with its own internal `QuickTestLoginConfig.developmentPhoneLocalInput`. This
+happened to still produce a correct result under normal operation (both constants name the same locked
+number), but was structurally fragile: the developer-entered phone never actually flowed through the
+call, only an assumption that it matched. Investigated first, not assumed — `grep`'d `lib/` for any
+hardcoded stale test-fixture value (`+1555...`, `demo-abakus-one-emulator`); neither literal exists
+anywhere in the app source, and `QuickTestLoginConfig.emulatorProjectId` already derives from the exact
+same `FirebaseOptionsSelector.forEnvironment(...)` source `Firebase.initializeApp` itself uses.
+
+**Fix**: `DevLoginNotifier` no longer references `QuickTestLoginNotifier`/`quickTestLoginProvider` at
+all. It now calls `AuthNotifier.requestOtp`/`verifyOtp` directly with the actual validated developer-
+entered phone, and reads the emulator's verification code against a new `currentFirebaseProjectIdProvider`
+(`Firebase.app().options.projectId` — the one live, authoritative source, never a second derived/
+hardcoded value; mirrors `firebaseReadyProvider`'s own "a provider, overridable in tests, never a bare
+static call at each use site" shape). `EmulatorVerificationCodeClient`/
+`emulatorVerificationCodeClientProvider` — the lower-level HTTP client, not the higher-level notifier —
+is still reused as-is, per "reuse lower-level phone-auth/emulator components."
+
+**Manually verified in Chrome** (by the user, not the agent — per this repo's standing "no desktop/
+browser automation" rule): `+905337106414` authenticated successfully, the authenticated Profile
+rendered correctly, the resulting Firebase session remained `sign_in_provider == phone`, no password
+auth was ever involved.
+
+**Tests**: 6 new regression cases in `dev_login_provider_test.dart` (PIN-configured group) — the
+developer-entered phone is exactly what reaches phone-auth; the stale `+1555864447001` fixture value is
+never substituted; the verification-code query uses the live (overridable) project id, proven against
+two distinct fixture values; the stale `demo-abakus-one-emulator` id is never queried; and a structural
+source-text guard asserting `dev_login_provider.dart` never hardcodes either stale value again. Full
+suites: `flutter analyze` clean; `test/features/auth/` 108/108 (12 skipped, PIN-dependent); full project
+`flutter test` **3007/3007** (12 skipped); both re-run with `--dart-define=DEV_LOGIN_PIN=1234` to confirm
+real (non-skipped) execution. `flutter build web` with the same defines compiles cleanly.

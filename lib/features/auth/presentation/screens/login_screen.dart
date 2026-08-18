@@ -8,10 +8,10 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
-import '../../data/quick_test_login_config.dart';
+import '../../data/dev_login_config.dart';
 import '../../domain/phone_number.dart';
 import '../providers/auth_provider.dart';
-import '../providers/quick_test_login_provider.dart';
+import '../providers/dev_login_provider.dart';
 
 /// MVP customer authentication is phone number + OTP only — no email, no
 /// password. See `docs/master_spec_migration.md` for the Authentication
@@ -106,15 +106,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     context.go(AppRoutes.main);
   }
 
-  /// "Hızlı Test Girişi" — development-only, see `QuickTestLoginConfig`'s
-  /// own doc comment. Drives the real phone-verification flow end-to-end
-  /// (`QuickTestLoginNotifier.run`), then continues through the exact same
-  /// post-login navigation [OtpScreen]'s own successful `_submit` uses —
-  /// no separate "quick login" destination.
-  Future<void> _submitQuickTestLogin() async {
-    final success = await ref.read(quickTestLoginProvider.notifier).run();
-    if (!mounted || !success) return;
-
+  // TEMPORARY_DEVELOPER_LOGIN — see `DevLoginConfig`'s own doc comment for
+  // the full removal-marker file list. Continues through the exact same
+  // post-login navigation [OtpScreen]'s own successful `_submit` uses — no
+  // separate "dev login" destination.
+  void _onDevLoginSuccess() {
+    if (!mounted) return;
     final sanitizedReturnTo = AppRouteGuard.sanitizeReturnTo(widget.returnTo);
     context.go(sanitizedReturnTo ?? AppRoutes.main);
   }
@@ -122,7 +119,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
-    final quickTestLoginState = ref.watch(quickTestLoginProvider);
 
     return Scaffold(
       body: SafeArea(
@@ -259,14 +255,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                     ),
                     child: const Text('Misafir Olarak Devam Et'),
                   ),
-                  if (QuickTestLoginConfig.isAvailable) ...[
+                  if (DevLoginConfig.isAvailable) ...[
                     const SizedBox(height: AppSpacing.lg),
-                    _QuickTestLoginButton(
-                      isBusy: quickTestLoginState.isRunning,
-                      disabled: authState.isLoading,
-                      error: quickTestLoginState.error,
-                      onPressed: _submitQuickTestLogin,
-                    ),
+                    _DevLoginSection(onSuccess: _onDevLoginSuccess),
                   ],
                   const SizedBox(height: AppSpacing.xl),
                   Text(
@@ -286,61 +277,178 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   }
 }
 
+// TEMPORARY_DEVELOPER_LOGIN — see `DevLoginConfig`'s own doc comment for
+// the full removal-marker file list. Supersedes the old one-tap "Hızlı
+// Test Girişi" button (removed, not left rendering alongside this — "do
+// not leave two overlapping developer-auth mechanisms visible").
+//
 /// Deliberately styled to look nothing like the real "Devam Et"/"Misafir
-/// Olarak Devam Et" buttons above it — a dashed, warning-colored outline
+/// Olarak Devam Et" fields above it — a dashed, warning-colored outline
 /// and a science/dev icon, so it reads unmistakably as development
 /// tooling, never as a real product affordance a screenshot or a QA pass
 /// could mistake for one. Only ever built at all when
-/// [QuickTestLoginConfig.isAvailable] — see the call site.
-class _QuickTestLoginButton extends StatelessWidget {
-  const _QuickTestLoginButton({
-    required this.isBusy,
-    required this.disabled,
-    required this.error,
-    required this.onPressed,
-  });
+/// [DevLoginConfig.isAvailable] — see the call site. The PIN field is
+/// never read from anywhere but its own local [TextEditingController],
+/// and that controller is disposed (never written to any storage) —
+/// "PIN must not be persisted."
+class _DevLoginSection extends ConsumerStatefulWidget {
+  const _DevLoginSection({required this.onSuccess});
 
-  final bool isBusy;
-  final bool disabled;
-  final String? error;
-  final VoidCallback onPressed;
+  final VoidCallback onSuccess;
+
+  @override
+  ConsumerState<_DevLoginSection> createState() => _DevLoginSectionState();
+}
+
+class _DevLoginSectionState extends ConsumerState<_DevLoginSection> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _phoneController;
+  late final TextEditingController _pinController;
+
+  @override
+  void initState() {
+    super.initState();
+    _phoneController =
+        TextEditingController(text: DevLoginConfig.developerPhoneLocalInput);
+    _pinController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    _pinController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final success = await ref.read(devLoginProvider.notifier).run(
+          phoneInput: _phoneController.text,
+          pin: _pinController.text,
+        );
+    if (success) widget.onSuccess();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        OutlinedButton.icon(
-          onPressed: (disabled || isBusy) ? null : onPressed,
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size.fromHeight(56),
-            foregroundColor: AppColors.warning,
-            side: const BorderSide(color: AppColors.warning, width: 1.5),
-            shape: const RoundedRectangleBorder(
-              borderRadius: AppRadius.kExtraLarge,
-            ),
-          ),
-          icon: isBusy
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.science_outlined),
-          label: const Text(
-            'Hızlı Test Girişi (DEV: '
-            '+90 ${QuickTestLoginConfig.developmentPhoneLocalInput})',
-          ),
-        ),
-        if (error != null) ...[
-          const SizedBox(height: AppSpacing.xs),
+    final devLoginState = ref.watch(devLoginProvider);
+    final authState = ref.watch(authProvider);
+    final disabled = authState.isLoading || devLoginState.isRunning;
+
+    return Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
           Text(
-            error!,
-            style: AppTypography.bodySmall.copyWith(color: AppColors.error),
+            'Geliştirici Girişi',
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.warning,
+              fontWeight: FontWeight.w600,
+            ),
             textAlign: TextAlign.center,
           ),
+          const SizedBox(height: AppSpacing.sm),
+          TextFormField(
+            controller: _phoneController,
+            keyboardType: TextInputType.phone,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(10),
+            ],
+            style: AppTypography.bodyLarge,
+            decoration: const InputDecoration(
+              labelText: 'Telefon Numarası',
+              prefixText: '+90 ',
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: AppSpacing.xl,
+                vertical: AppSpacing.md,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: AppRadius.kExtraLarge,
+                borderSide: BorderSide(color: AppColors.warning),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: AppRadius.kExtraLarge,
+                borderSide: BorderSide(color: AppColors.warning),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: AppRadius.kExtraLarge,
+                borderSide: BorderSide(color: AppColors.warning, width: 1.5),
+              ),
+            ),
+            validator: (value) {
+              final digits = value ?? '';
+              if (!TurkishPhoneNumber.isValidLocalNumber(digits)) {
+                return 'Lütfen geçerli bir telefon numarası giriniz';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          TextFormField(
+            controller: _pinController,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            style: AppTypography.bodyLarge,
+            decoration: const InputDecoration(
+              labelText: 'Geliştirici PIN',
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: AppSpacing.xl,
+                vertical: AppSpacing.md,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: AppRadius.kExtraLarge,
+                borderSide: BorderSide(color: AppColors.warning),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: AppRadius.kExtraLarge,
+                borderSide: BorderSide(color: AppColors.warning),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: AppRadius.kExtraLarge,
+                borderSide: BorderSide(color: AppColors.warning, width: 1.5),
+              ),
+            ),
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'PIN gerekli';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          OutlinedButton.icon(
+            onPressed: disabled ? null : _submit,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(56),
+              foregroundColor: AppColors.warning,
+              side: const BorderSide(color: AppColors.warning, width: 1.5),
+              shape: const RoundedRectangleBorder(
+                borderRadius: AppRadius.kExtraLarge,
+              ),
+            ),
+            icon: devLoginState.isRunning
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.science_outlined),
+            label: const Text('Geliştirici Olarak Giriş Yap'),
+          ),
+          if (devLoginState.error != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              devLoginState.error!,
+              style: AppTypography.bodySmall.copyWith(color: AppColors.error),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

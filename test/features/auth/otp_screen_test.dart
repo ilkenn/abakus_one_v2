@@ -63,7 +63,10 @@ Future<void> _pumpOtpScreen(WidgetTester tester) async {
     ),
   );
   await tester.pumpAndSettle();
-  await tester.enterText(find.byType(TextFormField), '5321234567');
+  // .first — LoginScreen's phone field is first; "Geliştirici Girişi"
+  // (TEMPORARY_DEVELOPER_LOGIN) may render 2 more when DEV_LOGIN_PIN is
+  // configured at test time.
+  await tester.enterText(find.byType(TextFormField).first, '5321234567');
   await tester.tap(find.text('Devam Et'));
   await tester.pumpAndSettle();
 }

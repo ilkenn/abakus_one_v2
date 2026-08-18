@@ -3,15 +3,41 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:abakus_one_v2/core/router/app_routes.dart';
+import 'package:abakus_one_v2/features/auth/data/dev_login_config.dart';
 import 'package:abakus_one_v2/features/auth/data/emulator_verification_code_client.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/development_local_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
+import 'package:abakus_one_v2/features/auth/presentation/providers/dev_login_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/quick_test_login_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/otp_screen.dart';
 import 'package:abakus_one_v2/features/navigation/presentation/screens/main_navigation_screen.dart';
+
+/// TEMPORARY_DEVELOPER_LOGIN
+///
+/// Formerly `quick_test_login_button_test.dart`'s coverage of the old
+/// one-tap "Hızlı Test Girişi" button — that button no longer renders on
+/// `LoginScreen` (superseded by "Geliştirici Girişi", see `DevLoginConfig`'s
+/// own doc comment for the full removal-marker file list). This file now
+/// covers the replacement's own UI wiring. Kept as the same filename
+/// deliberately (not renamed) — CLAUDE.md requires explicit approval for
+/// file renames; the content changed because the feature it verifies did.
+///
+/// The full-flow test ("typing phone+PIN and tapping through to
+/// MainNavigationScreen") needs `DevLoginConfig.isAvailable` to actually
+/// be `true`, which requires the real `DEV_LOGIN_PIN` compile-time define
+/// — see `dev_login_provider_test.dart`'s own header comment for why this
+/// can't be faked at test time. Run:
+///
+///   flutter test --dart-define=DEV_LOGIN_PIN=1234 \
+///     test/features/auth/presentation/quick_test_login_button_test.dart
+///
+/// Under the plain `flutter test` default the section simply does not
+/// render (exactly as the locked "UI hidden" requirement demands) — the
+/// structural tests below (old button gone, normal flow unaffected) run
+/// unconditionally either way and don't depend on that define at all.
 
 class _FakeSessionStorage implements SessionStorage {
   AuthSession? stored;
@@ -73,6 +99,10 @@ Future<void> _pumpLogin(
         emulatorVerificationCodeClientProvider.overrideWithValue(
           _ScriptedEmulatorVerificationCodeClient(emulatorCode),
         ),
+        // TEMPORARY_DEVELOPER_LOGIN — no real Firebase app exists under
+        // `flutter test`; DevLoginNotifier.run() requires this override to
+        // reach the emulator-code lookup at all.
+        currentFirebaseProjectIdProvider.overrideWithValue('abakus-one-dev-test-fixture'),
       ],
       child: MaterialApp.router(routerConfig: _testRouter()),
     ),
@@ -81,34 +111,25 @@ Future<void> _pumpLogin(
 }
 
 void main() {
-  // Faz "Development Quick Phone Login" — `flutter test` always runs with
-  // no `ENVIRONMENT` dart-define, so `AppEnvironment.current` resolves to
-  // `development` in every test process (see `AppEnvironment.fromDefine`'s
-  // own documented default). `QuickTestLoginConfig.isAvailable` is
-  // therefore always `true` here — this is exactly why the *hidden-in-
-  // production/staging* proof lives in `quick_test_login_config_test.dart`
-  // against the explicit-environment `isAvailableFor`, not here: this file
-  // proves the screen correctly wires up the config and the flow, not the
-  // gating logic itself.
+  final pinConfigured = DevLoginConfig.pin.isNotEmpty;
 
   testWidgets(
-      'Hızlı Test Girişi button renders in the (test-default) development context',
+      'the old "Hızlı Test Girişi" button no longer renders anywhere on LoginScreen — replaced, not left alongside the new section',
       (tester) async {
     await _pumpLogin(tester);
 
-    expect(find.textContaining('Hızlı Test Girişi'), findsOneWidget);
+    expect(find.textContaining('Hızlı Test Girişi'), findsNothing);
   });
 
   testWidgets(
-      'the normal "Telefon ile Devam Et" flow remains available and unchanged '
-      '(req 6) — Quick Test Login button does not replace or hide it',
+      'the normal "Devam Et"/"Misafir Olarak Devam Et" flow remains available and unchanged, regardless of developer-login availability',
       (tester) async {
     await _pumpLogin(tester);
 
     expect(find.text('Devam Et'), findsOneWidget);
     expect(find.text('Misafir Olarak Devam Et'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextFormField), '5321234567');
+    await tester.enterText(find.byType(TextFormField).first, '5321234567');
     await tester.ensureVisible(find.text('Devam Et'));
     await tester.tap(find.text('Devam Et'));
     await tester.pumpAndSettle();
@@ -117,29 +138,59 @@ void main() {
   });
 
   testWidgets(
-      'tapping Hızlı Test Girişi signs the user in and continues to the main app, '
-      'with no manual OTP entry required', (tester) async {
+      '"Geliştirici Girişi" section only renders when DevLoginConfig.isAvailable — never two overlapping developer-auth mechanisms visible',
+      (tester) async {
     await _pumpLogin(tester);
 
-    await tester.ensureVisible(find.textContaining('Hızlı Test Girişi'));
-    await tester.tap(find.textContaining('Hızlı Test Girişi'));
+    expect(
+      find.text('Geliştirici Girişi'),
+      DevLoginConfig.isAvailable ? findsOneWidget : findsNothing,
+    );
+  });
+
+  testWidgets(
+      'the phone field is prefilled with the locked developer number, and the PIN field starts empty',
+      (tester) async {
+    await _pumpLogin(tester);
+    if (!DevLoginConfig.isAvailable) return; // nothing rendered to assert against.
+
+    expect(find.text(DevLoginConfig.developerPhoneLocalInput), findsOneWidget);
+    expect(find.text('Geliştirici PIN'), findsOneWidget);
+  });
+
+  testWidgets(
+      'entering the correct phone + correct PIN and tapping through signs the user in and continues to the main app, with no manual OTP entry required',
+      (tester) async {
+    await _pumpLogin(tester);
+
+    await tester.ensureVisible(find.text('Geliştirici Olarak Giriş Yap'));
+    await tester.enterText(find.widgetWithText(TextFormField, 'Geliştirici PIN'), DevLoginConfig.pin);
+    await tester.tap(find.text('Geliştirici Olarak Giriş Yap'));
     await tester.pumpAndSettle();
 
     expect(find.byType(MainNavigationScreen), findsOneWidget);
     expect(find.byType(OtpScreen), findsNothing);
-  });
+    // Requires --dart-define=DEV_LOGIN_PIN=<value> — see file header.
+  }, skip: !pinConfigured);
 
   testWidgets(
-      'a missing emulator code shows a safe development error, never a fake sign-in',
+      'a wrong PIN shows the locked dev-only error and never signs in',
       (tester) async {
-    await _pumpLogin(tester, emulatorCode: null);
+    await _pumpLogin(tester);
 
-    await tester.ensureVisible(find.textContaining('Hızlı Test Girişi'));
-    await tester.tap(find.textContaining('Hızlı Test Girişi'));
+    // The PIN field is digits-only (FilteringTextInputFormatter.digitsOnly)
+    // — a wrong PIN candidate must still be all-digits to actually reach
+    // the real comparison, rather than being stripped to empty and
+    // rejected by local form validation instead ("PIN gerekli").
+    const wrongButAllDigitsPin = DevLoginConfig.pin == '9999' ? '1234' : '9999';
+    await tester.ensureVisible(find.text('Geliştirici Olarak Giriş Yap'));
+    await tester.enterText(find.widgetWithText(TextFormField, 'Geliştirici PIN'), wrongButAllDigitsPin);
+    await tester.tap(find.text('Geliştirici Olarak Giriş Yap'));
     await tester.pumpAndSettle();
 
     expect(find.byType(MainNavigationScreen), findsNothing);
     expect(find.byType(LoginScreen), findsOneWidget);
-    expect(find.textContaining('bulunamadı'), findsOneWidget);
-  });
+    expect(find.text('Geliştirici girişi başarısız.'), findsOneWidget);
+    // Requires --dart-define=DEV_LOGIN_PIN=<value> — see file header.
+  }, skip: !pinConfigured);
 }

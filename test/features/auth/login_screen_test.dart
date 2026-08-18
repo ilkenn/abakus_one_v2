@@ -67,7 +67,10 @@ void main() {
   ) async {
     await _pumpLogin(tester);
 
-    await tester.enterText(find.byType(TextFormField), '123');
+    // .first — the phone field is the first TextFormField on screen;
+    // "Geliştirici Girişi" (TEMPORARY_DEVELOPER_LOGIN) may render 2 more
+    // when DEV_LOGIN_PIN is configured at test time.
+    await tester.enterText(find.byType(TextFormField).first, '123');
     await tester.ensureVisible(find.text('Devam Et'));
     await tester.tap(find.text('Devam Et'));
     await tester.pumpAndSettle();
@@ -80,7 +83,8 @@ void main() {
   ) async {
     await _pumpLogin(tester);
 
-    await tester.enterText(find.byType(TextFormField), '5321234567');
+    // .first — see the sibling test above for why.
+    await tester.enterText(find.byType(TextFormField).first, '5321234567');
     await tester.ensureVisible(find.text('Devam Et'));
     await tester.tap(find.text('Devam Et'));
     await tester.pumpAndSettle();
