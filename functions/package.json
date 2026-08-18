@@ -10,7 +10,7 @@
     "build": "tsc",
     "build:watch": "tsc --watch",
     "test": "npm run build && node --test --test-concurrency=1 lib/test/*.test.js",
-    "test:emulator": "cd .. && GOOGLE_MAPS_PROVIDER_MODE=fixture firebase emulators:exec --only firestore,functions,auth \"cd functions && npm test\"",
+    "test:emulator": "cd .. && GOOGLE_MAPS_PROVIDER_MODE=fixture firebase emulators:exec --only firestore,functions,auth,storage \"cd functions && npm test\"",
     "seed:dev-tenant": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs\"",
     "seed:dev-takeaway-qr": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_takeaway_qr.mjs\"",
     "seed:dev-table-qr": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_reservation.mjs && node scripts/seed_dev_table_qr.mjs\"",

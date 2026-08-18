@@ -35,7 +35,8 @@ export type StaffPermission =
   | "manageStaffAccounts"
   | "manageStaffAdminRole"
   | "manageStaffRoles"
-  | "manageStaffBranchAccess";
+  | "manageStaffBranchAccess"
+  | "moderateCustomerPhotos";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -56,13 +57,23 @@ export type StaffPermission =
  * - `manageStaffAdminRole` / `manageStaffAccounts`: `_adminOnly` — granting
  *   the admin role itself, and account registration/status changes
  *   (suspend/reinstate/archive), both admin-only in the Dart model.
+ * - `moderateCustomerPhotos`: `_managerTier` — Profile P.4.2B2, mirrors
+ *   the Dart `RolePermissionMap`'s own `PosAuthorizedAction
+ *   .moderateCustomerPhoto` placement exactly (same tier as
+ *   `manageBranch`, `role_permission_map.dart`'s `_managerTier` set).
  *
  * Role name strings match `StaffRole.name` / the custom-claims `roles` map
  * convention already established by `platformAuthorization.ts`/
  * `firestore.rules`'s own `hasRole`.
  */
 export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly StaffPermission[]>> = {
-  manager: ["manageReservations", "manageBranch", "manageStaffBranchAccess", "manageStaffRoles"],
+  manager: [
+    "manageReservations",
+    "manageBranch",
+    "manageStaffBranchAccess",
+    "manageStaffRoles",
+    "moderateCustomerPhotos",
+  ],
   admin: [
     "manageReservations",
     "manageBranch",
@@ -70,6 +81,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageStaffRoles",
     "manageStaffAdminRole",
     "manageStaffAccounts",
+    "moderateCustomerPhotos",
   ],
   tenantOwner: [
     "manageReservations",
@@ -78,6 +90,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageStaffRoles",
     "manageStaffAdminRole",
     "manageStaffAccounts",
+    "moderateCustomerPhotos",
   ],
 };
 

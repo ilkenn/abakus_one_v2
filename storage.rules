@@ -27,6 +27,19 @@ service firebase.storage {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    // P.4.2B2.1 — mirrors firestore.rules' own isTenantCustomer() helper
+    // exactly (same tenantCustomers/{organizationId}_{uid} composite-key
+    // existence check, same reasoning: ordinary customers carry no
+    // organizationAccess claim, so isOrgMember() alone can never express
+    // "authenticated customer of this tenant"). Requester-scoped —
+    // organizationId here is always the PATH's own segment, never
+    // client-suppliable independently of it, so this can never be used to
+    // assert membership in some other, unrelated organization.
+    function isTenantCustomer(organizationId) {
+      return isSignedIn() &&
+        firestore.exists(/databases/(default)/documents/tenantCustomers/$(organizationId + '_' + request.auth.uid));
+    }
+
     // "Size/MIME validation" — a customer-uploaded photo (profile photo,
     // feedback attachment) may never exceed 5 MB and must be an image.
     function isValidCustomerImageUpload() {
@@ -93,8 +106,31 @@ service firebase.storage {
     // `feedbackAttachments` already denies delete unconditionally, for
     // the same "future server logic owns this, not a raw client op"
     // reason.
+    // P.4.2B2.1 (2026-08-19) — closes the integration gap P.4.2B2 itself
+    // left open: `customerPublicProfiles.selectedProfilePhotoRef` is
+    // readable by any authenticated same-tenant customer, but nothing
+    // authorized them to actually load the Storage object it points at —
+    // an ordinary customer could read the public pointer and still get a
+    // permission-denied loading the image itself. `isSelectedPublicPhoto`
+    // is the ONE narrowly-scoped addition: it grants read access to
+    // exactly the one object a real tenant customer's public projection
+    // currently names, never anything else. Deliberately NOT keyed off
+    // photo status/approval alone ("do not grant access merely because
+    // photo status is approved... requester knows the path/photoId" —
+    // locked instruction) — the public projection document is the sole
+    // authorization pointer; every other private-gallery object (any
+    // other status, any other approved-but-unselected photo, a
+    // previously-selected photo after replacement) stays exactly as
+    // private as it already was, because nothing about THIS check ever
+    // becomes true for them. Selection changes and moderation-triggered
+    // clears need no second code path here — this rule always reads
+    // `customerPublicProfiles` live, at request-evaluation time, so the
+    // instant P.4.2B2's own transaction updates or nulls out
+    // `selectedProfilePhotoRef`, this check's answer changes with it.
     match /tenants/{organizationId}/customerPhotos/{uid}/{grantId} {
-      allow read: if isOrgMember(organizationId) || isOwner(uid);
+      allow read: if isOrgMember(organizationId) || isOwner(uid) ||
+        (isTenantCustomer(organizationId) &&
+          isSelectedPublicPhoto(organizationId, uid, grantId));
       allow write: if isOwner(uid) &&
         isValidCustomerImageUpload() &&
         resource == null &&
@@ -112,6 +148,20 @@ service firebase.storage {
     // even one the same customer/org), issued (not expired/cancelled/
     // consumed-status), and unexpired (`request.time`, evaluated at the
     // moment of THIS write, against the grant's own `expiresAt`).
+    // P.4.2B2.1 — the ONE public-read authorization pointer: an ordinary
+    // same-tenant customer may read this exact object if and only if the
+    // PHOTO OWNER's own public projection currently names it. `uid` here
+    // is the path's owner segment (whose photo this is), never the
+    // requester — `isTenantCustomer` above already established the
+    // requester's own tenant membership; this function only asks "is
+    // THIS object the one the owner has published."
+    function isSelectedPublicPhoto(organizationId, uid, grantId) {
+      let projectionPath = /databases/(default)/documents/customerPublicProfiles/$(organizationId + '_' + uid);
+      let objectPath = 'tenants/' + organizationId + '/customerPhotos/' + uid + '/' + grantId;
+      return firestore.exists(projectionPath) &&
+        firestore.get(projectionPath).data.selectedProfilePhotoRef == objectPath;
+    }
+
     function hasValidUploadGrant(organizationId, uid, grantId) {
       let grantPath = /databases/(default)/documents/customerPhotoUploadGrants/$(grantId);
       return firestore.exists(grantPath) &&

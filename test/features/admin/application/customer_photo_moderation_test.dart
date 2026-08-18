@@ -197,9 +197,32 @@ void main() {
       final useCase = SelectCustomerProfilePhoto(repository: repository);
 
       expect(
-        () => useCase(photoId: 'photo-1'),
+        () => useCase(photoId: 'photo-1', requestingCustomerId: 'customer-1'),
         throwsA(isA<CustomerPhotoNotApprovedViolation>()),
       );
+    });
+
+    test(
+        'P.4.2B2: a customer cannot select another customer\'s photo — '
+        'defense-in-depth ownership check', () async {
+      final repository = InMemoryCustomerPhotoRepository();
+      await repository.save(CustomerPhoto(
+        id: 'photo-1',
+        customerId: 'customer-1',
+        organizationId: 'org-1',
+        photoRef: 'ref-1',
+        status: CustomerPhotoStatus.approved,
+        uploadedAt: DateTime(2026, 1, 1),
+        revision: 1,
+      ));
+      final useCase = SelectCustomerProfilePhoto(repository: repository);
+
+      expect(
+        () => useCase(photoId: 'photo-1', requestingCustomerId: 'customer-2'),
+        throwsA(isA<AuthorizationDeniedViolation>()),
+      );
+      final photo = await repository.findById('photo-1');
+      expect(photo!.isSelectedAsProfilePhoto, isFalse);
     });
 
     test(
@@ -227,7 +250,7 @@ void main() {
       ));
       final useCase = SelectCustomerProfilePhoto(repository: repository);
 
-      await useCase(photoId: 'photo-2');
+      await useCase(photoId: 'photo-2', requestingCustomerId: 'customer-1');
 
       final photo1 = await repository.findById('photo-1');
       final photo2 = await repository.findById('photo-2');

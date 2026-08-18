@@ -9823,3 +9823,228 @@ finished. This pass closes the "can the same grant be reused to overwrite/tamper
 it does not close that separate, previously-disclosed quota-timing gap — both remain named as P.4.2B+
 work.
 this phase, confirmed by `git status` scope, not merely asserted.
+
+## Profile P.4.2B1 — Upload -> Pending-Review Finalize Pipeline
+
+Closes the gap P.4.2A/P.4.2A.1 both disclosed and left open on purpose: a successful, grant-authorized
+Storage upload never actually became a real `CustomerPhoto` — it just sat as bytes plus a `status:
+"issued"` grant whose only fate was to eventually expire. New Cloud Function
+`finalizeCustomerPhotoUpload` (`functions/src/finalizeCustomerPhotoUpload.ts`,
+`onObjectFinalized({ retry: true }, ...)`) is the missing conversion: it fires for every finalized
+object in the bucket, immediately ignores anything outside
+`tenants/{organizationId}/customerPhotos/{uid}/{grantId}`, and for a matching object independently
+re-verifies the grant (existence, uid, organizationId, exact objectPath, image content type matching
+what the grant itself declared) before ever writing anything — path segments are parsed to know WHERE
+to look, never trusted as authorization truth by themselves.
+
+**Expiry handling — the one subtle piece of this task**: this function can run arbitrarily later than
+the actual upload (event delivery lag, redelivery). Using "now" against the grant's `expiresAt` would
+wrongly reject a legitimate upload that completed while the grant was still valid. Instead, validity is
+judged against the Storage object's OWN immutable `timeCreated` against `[grant.createdAt,
+grant.expiresAt]` (± a 2-minute clock-skew allowance) — an object genuinely created inside that window
+is accepted no matter how late this function processes it; an object whose own creation time falls
+outside it could only exist via a Rules bypass (Admin SDK/console) and is rejected regardless of when
+this function runs.
+
+**Deterministic identity, single transaction**: `photoId = grantId` — `customerPhotos/{grantId}` is
+created with `status: "pendingReview"`, `isSelectedAsProfilePhoto: false`, `photoRef` set to the opaque
+object path (never a public URL, never raw bytes), and `revision: 1`, in the SAME Firestore transaction
+that flips the grant to `status: "consumed"` (plus `consumedAt`/`photoId`/`objectGeneration`) and writes
+one `auditEvents/{grantId}-photo-submitted` record (reusing the one existing generic audit collection
+`onOrderCreated.ts` already established — not a new mechanism). Because both the "stop counting as a
+reservation" and "start counting as a photo" state changes commit atomically together, there is never a
+window where a customer's quota usage silently drops.
+
+**Idempotency / duplicate delivery**: a duplicate event for an already-`consumed` grant matching the
+same `photoId`/`objectGeneration` safely no-ops (checked before any write). A duplicate event claiming a
+DIFFERENT generation than what actually consumed the grant is treated as an integrity conflict — logged
+at error severity, but no record is mutated, preserving state for manual investigation rather than
+guessing.
+
+**Invalid-object cleanup — a real, disclosed decision, not a default**: an object proven with certainty
+to have never been a valid grant-authorized upload (no grant / uid or org mismatch / path mismatch /
+unsupported or mismatched content type / created outside the grant's window) is deleted via the Admin
+SDK — it can never legitimately become a photo, and leaving unauthorized bytes in a tenant's folder
+serves no purpose. Deliberately NOT deleted: the consumed-grant-generation-conflict case (ambiguous
+enough to risk destroying evidence of a real problem) and anything reached only via a thrown,
+unexpected error (a genuinely transient failure must remain retryable, not have its object destroyed
+out from under it).
+
+**Retry is a deliberate departure from this codebase's other background triggers**:
+`onOrderCreated`/`onOrderCompleted` stay idempotent by design without ever asking the platform to
+retry. This function's own correctness depends on retry specifically — `retry: true` is set, and any
+error thrown before the validation branches settle (a transient Firestore failure, for instance)
+propagates rather than being caught, so Cloud Functions redelivers the event and the deterministic
+grantId-keyed writes guarantee the redelivery completes cleanly.
+
+**Explicitly not done here** (P.4.2B1's own stated scope): no photo is approved, `isSelectedAsProfilePhoto`
+stays `false` for every newly finalized photo, `customerPublicProfiles` is untouched,
+`customers.profilePicturePath` is untouched. Every finalized photo begins private and unreviewed —
+moderation/selection is P.4.2B2+.
+
+**Tests**: 21 new (`functions/src/test/finalizeCustomerPhotoUpload.test.ts`) — 20 exercise the exported
+`CloudFunction`'s own `.run(event)` unit-test hook against a real Firestore emulator (fast, deterministic,
+covering every validation/conflict/idempotency branch), plus one genuine end-to-end test that uploads a
+real object to the real Storage emulator and polls real Firestore for the resulting photo — not faked.
+A 17th named requirement (the max-10 cap surviving a REAL finalized photo, not just an outstanding
+grant) is covered by a cross-function integration test calling the real `requestCustomerPhotoUploadGrant`
+callable twice around a real `.run()` finalize. Full suites: Functions 717/717 (696 + 21), Firestore
+Rules 313/313 (unchanged — no rules file touched), Storage Rules 22/22 (unchanged — no rules file
+touched). `flutter analyze` clean; confirmed via `git status` that zero `lib/`/Dart `test/` files
+changed this phase (this was a Functions-only task, as scoped).
+
+`storage-tests`/`functions`' `test:emulator` scripts both now include `storage` in `--only` (functions'
+did not before — needed so the Storage emulator can actually fire the trigger against the Functions
+emulator during `npm test`).
+
+## Profile P.4.2B2 — Moderation, Approved-Only Selection, and the Public Projection
+
+Completes the server-authoritative lifecycle after `pendingReview`: staff moderation ->
+approved/rejected/removed/underReview -> customer selects an APPROVED photo -> the tenant-scoped public
+projection updates atomically. Two new callables; `firestore.rules`/`storage.rules` are unchanged this
+phase (both already satisfied the requirement — `customerPhotos`/`customerPublicProfiles` were already
+owner/staff-read, all-writes-denied since P.4.1).
+
+**Canonical selected-photo source — a locked correction, not a new decision**: the task explicitly
+overturned an earlier assumption. `customers/{uid}.profilePicturePath` is never written by either new
+callable, stays out of the client-writable allow-list (unchanged since P.4.1), and is never treated as
+canonical for anything — it is a single field *global* to the customer identity, unsafe as the source of
+a *tenant-scoped* selection (a customer belonging to two tenants could never have two different selected
+photos through it). `customerPublicProfiles/{organizationId}_{uid}.selectedProfilePhotoRef` is the one
+canonical, public-safe source, exactly as P.4.1 originally designed it — now actually written to for the
+first time.
+
+**`moderateCustomerPhoto`** (`functions/src/moderateCustomerPhoto.ts`): the server-authoritative twin of
+the Dart `ModerateCustomerPhoto` use case — same 4 actions (`approve`/`reject`/`remove`/
+`returnToReview`) mapping to the same `CustomerPhotoStatus` targets, not a different state machine.
+Authorization is a new `moderateCustomerPhotos` `StaffPermission` (`staffAuthorization.ts`), placed in
+the exact same manager/admin/tenantOwner tier as the Dart `RolePermissionMap`'s own
+`PosAuthorizedAction.moderateCustomerPhoto` — checked against the PHOTO's own `organizationId` (read
+from Firestore first), never a client-supplied one, so cross-tenant staff can never moderate a photo
+regardless of what they claim in the request.
+
+**One deliberate tightening beyond the Dart use case, disclosed rather than silently added**: `removed`
+is now a terminal state — no action can transition a removed photo to anything else. The in-memory Dart
+use case never needed this guard (nothing depended on it); a real server enforcing this lifecycle
+should not let a removed photo be resurrected.
+
+**Idempotent replay**: if the requested action would produce a status (and, for `reject`, a reason)
+identical to the photo's current state, the call is a no-op success — no write, no revision bump, no
+audit entry. A genuinely different follow-up (even to the same status with a different reason) still
+processes normally, so this never silently discards a real correction.
+
+**Clearing a public selection happens in the SAME transaction as the moderation write, never a follow-up
+step**: if the photo being moderated is currently selected and the new status isn't `approved`, the
+same transaction clears `isSelectedAsProfilePhoto` and (if the projection still points at this exact
+photo's `photoRef`) `customerPublicProfiles.selectedProfilePhotoRef`, bumping the projection's
+`updatedAt`. No automatic replacement is ever chosen — the customer selects a new one later. No separate
+fake `customerPhoto.selected` audit event is emitted for this — the one `customerPhoto.moderated` audit
+entry carries a `clearedPublicSelection: boolean` field instead.
+
+**`selectCustomerProfilePhoto`** (`functions/src/selectCustomerProfilePhoto.ts`): closes the ownership
+gap `select_customer_profile_photo.dart`'s own doc comment has named since P.4/P.4.1 ("No authorization
+gate — self-service, the customer's own choice"). Requires a real phone-verified customer, independently
+verifies tenant membership (`tenantCustomers`, same mechanism `requestCustomerPhotoUploadGrant` already
+uses), and re-verifies — server-side, never trusting the Dart use case's own check as the boundary —
+that the target photo belongs to the caller, belongs to the requested organization, and is `approved`.
+The Dart use case itself also gained a `requestingCustomerId` parameter and an `AuthorizationDeniedViolation`
+check for defense-in-depth, with an explicit doc-comment disclaimer that it is not the security boundary.
+
+**No internal-pointer field was added to the projection.** The previously-selected photo (if any) is
+found via an in-transaction query (`customerPhotos` where `customerId`/`organizationId`/
+`isSelectedAsProfilePhoto==true`) rather than a stored server-only pointer field — evaluated and
+deliberately not built: this codebase already establishes `tx.get(query)` as a safe pattern
+(`customerPhotoUploadGrants.ts`'s own quota query), and it avoids adding extra metadata to a document a
+fairly broad audience (same-org staff, same-tenant customers) can already read in full.
+
+**Concurrency serialization point, per the task's own instruction**: the `customerPublicProfiles`
+projection document itself — every selection transaction reads-then-writes it unconditionally, so two
+concurrent `selectCustomerProfilePhoto` calls for the same customer necessarily conflict on commit;
+Firestore retries the losing transaction's entire body (including its "find the currently selected
+photo" query) against the now-updated state, converging to exactly one final winner. Verified
+empirically: 2 concurrent selects for two different photos of the same customer -> exactly 1 ends up
+selected, and the projection's `selectedProfilePhotoRef` always matches that actual winner.
+
+**Public projection minimalism verified, not just claimed**: a test asserts the projection document's
+field set is *exactly* `{organizationId, selectedProfilePhotoRef, uid, updatedAt}` after a real
+selection — no rejection reason, reviewer identity, moderation history, or upload-grant data ever
+appears there.
+
+**Tests**: 2 new Functions test files — `moderateCustomerPhoto.test.ts` (15 tests: authorization
+including cross-tenant/unauthorized-customer/base-staff denial, all 4 transitions, the removed-is-
+terminal guard, idempotent replay, exactly-one-audit-entry, and the full selected-photo-clearing group)
+and `selectCustomerProfilePhoto.test.ts` (16 tests: happy path, all 4 non-approved statuses rejected,
+cross-customer and cross-tenant denial, projection creation/minimality, the exactly-one-selected
+invariant across 5 photos, idempotent replay, the concurrency test, and confirmation that
+`profilePicturePath` is never touched and a denied attempt never audits). Plus 5 new
+`staffAuthorization.test.ts` cases for the new `moderateCustomerPhotos` permission tier. Full suites:
+Functions **753/753** (717 + 36 new), Firestore Rules **313/313** (unchanged — no rules file touched),
+Storage Rules **22/22** (unchanged). `flutter analyze` clean; the one touched Dart file's own test file
+(`customer_photo_moderation_test.dart`) 10/10 passing (up from 9, one new ownership test added).
+
+**Remaining, explicitly out of scope this phase**: `image_picker`, any customer-facing upload/gallery
+UI, and `ProfileHeroCard` wiring to a real selected photo are still untouched — P.4.3.
+
+## Profile P.4.2B2.1 — Selected-Photo Public Read Bridge
+
+Closes the exact integration gap P.4.2B2 left open: `customerPublicProfiles.selectedProfilePhotoRef` was
+readable by any authenticated same-tenant customer (P.4.1's own rule), but nothing in `storage.rules`
+ever authorized them to actually load the Storage object that field points at — a same-tenant customer
+could read the public pointer and still get denied loading the image itself.
+
+**Fix — one narrowly-scoped read path added to `customerPhotos`'s existing `allow read`**, mirroring the
+already-proven Storage-Rules-reads-Firestore mechanism `hasValidUploadGrant` established in P.4.2A:
+`isTenantCustomer(organizationId)` (new helper, mirrors `firestore.rules`' own — `tenantCustomers/
+{organizationId}_{uid}` existence, requester-scoped) `&&` `isSelectedPublicPhoto(organizationId, uid,
+grantId)` (new helper — the PATH's own `organizationId`/`uid` are used to look up
+`customerPublicProfiles/{organizationId}_{uid}` and require its `selectedProfilePhotoRef` to exactly
+equal the requested object's own path). **Deliberately never keyed off photo status/approval alone, and
+never satisfied merely by knowing the path or photoId** (locked instruction) — the public projection
+document is the sole authorization pointer; every other private-gallery object (any other status, any
+other approved-but-unselected photo, a previously-selected photo after replacement) stays exactly as
+private as before, because nothing about this check ever becomes true for them.
+
+**No second public-state source was added.** Because the rule reads `customerPublicProfiles` live at
+request-evaluation time, P.4.2B2's own existing selection-change and moderation-clear transactions
+(already atomic, already the sole writer of `selectedProfilePhotoRef`) are the only things that ever need
+to change for this rule's answer to change — verified empirically (selection A -> B: A denied, B allowed
+in the same test; moderation clearing a selection: immediately denied, no second code path required).
+
+**Tests**: 13 new (`storage-tests/rules.test.js`, new `seedTenantCustomer`/`seedProjection` helpers) —
+owner/staff access unaffected, exact-selected-photo readable, every other status/unselected/previously-
+selected photo denied, guest denied, cross-tenant denied, path-knowledge-without-projection denied,
+selection-change and moderation-clear both verified live, and a dedicated "permission set not broadened"
+test exercising owner/staff/unrelated-user/same-tenant-customer all in one scenario. Full suite:
+**35/35 passing** (22 + 13 new). Firestore Rules **313/313** (unchanged — no `firestore.rules` file
+touched this pass). Functions — rerun to confirm no regression (see gate results below). No Flutter/Dart
+file touched.
+
+## Profile Photo — Community Privacy Rule (LOCKED, NOT IMPLEMENTED — future Community UI/security work)
+
+Recorded here per explicit instruction, deliberately **not implemented** in P.4.2B2.1 or any prior
+phase — no Community feature/UI exists yet in this codebase for any of this to attach to. This is a
+locked product/security requirement for whichever future phase actually builds Community:
+
+1. **Visibility scope**: in Community surfaces, another user may see ONLY the currently-selected,
+   APPROVED, tenant-scoped public profile photo — i.e., exactly what `customerPublicProfiles
+   .selectedProfilePhotoRef` + P.4.2B2.1's Storage read bridge already expose server-side. No new backend
+   authorization surface is implied by this rule; it constrains future UI/presentation only.
+2. **Presentation constraints**: small avatar only. Not tappable, not zoomable, no fullscreen viewer, no
+   profile-photo gallery, no original-resolution presentation. The private gallery remains completely
+   inaccessible to any other customer — Community must never become a second, laxer read path onto it.
+3. **Capture protection — "best available platform capture protection," never "guaranteed prevention"**:
+   - **Android**: Community routes rendering another customer's profile photo must enable native
+     `FLAG_SECURE` while the protected route is visible, and correctly disable/restore it on exit —
+     protecting the whole visible route, not merely the avatar widget.
+   - **iOS**: must NOT claim screenshots can be absolutely prevented. Supported capture-state APIs
+     (`UIScreen.capturedDidChangeNotification`/`isCaptured`, screenshot-taken notifications) may detect
+     active recording/mirroring and obscure protected content *while capture is active*, and/or react to
+     a screenshot having been taken for telemetry/UX purposes — but detection is inherently after-the-
+     fact for a screenshot, never a prevention mechanism. No unsupported/private screenshot-blocking API
+     usage.
+   - **Web**: no claim that browser/OS-level screenshots can be prevented at all. No-zoom/no-fullscreen/
+     private-media-authorization constraints (points 1-2) still apply regardless.
+4. **Documentation obligation carried forward**: whichever phase implements this must describe it as
+   "best available platform capture protection," never "guaranteed screenshot prevention" — in code
+   comments, `docs/`, and anywhere else this behavior is described.
+

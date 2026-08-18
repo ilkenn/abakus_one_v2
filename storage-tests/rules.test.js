@@ -110,6 +110,25 @@ async function seedGrant({
   return { grantId, objectPath };
 }
 
+/** Seeds a tenantCustomers/{organizationId}_{uid} record — real tenant membership, mirrors `requestCustomerPhotoUploadGrant`'s own check. */
+async function seedTenantCustomer(organizationId, uid) {
+  await seedFirestore(async (db) => {
+    await setDoc(doc(db, `tenantCustomers/${organizationId}_${uid}`), { organizationId, uid });
+  });
+}
+
+/** Seeds/overwrites customerPublicProfiles/{organizationId}_{uid}.selectedProfilePhotoRef — the ONE authorization pointer P.4.2B2.1 reads. `null` clears it, mirroring moderation/selection-change behavior. */
+async function seedProjection(organizationId, uid, selectedProfilePhotoRef) {
+  await seedFirestore(async (db) => {
+    await setDoc(doc(db, `customerPublicProfiles/${organizationId}_${uid}`), {
+      uid,
+      organizationId,
+      selectedProfilePhotoRef,
+      updatedAt: Timestamp.now(),
+    });
+  });
+}
+
 test('a valid, active grant lets the owning uid upload to the exact granted path', async () => {
   const { grantId, objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
   const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
@@ -296,6 +315,178 @@ test('staff from a different organization cannot read the customer photo', async
     .authenticatedContext('staff-2', { organizationAccess: ['org-2'] })
     .storage();
   await assertFails(getBytes(ref(otherOrgStaff, objectPath)));
+});
+
+// =========================================================================
+// P.4.2B2.1 — public-selected-photo read bridge
+// =========================================================================
+
+test('1. the owner can still read their own private photo, unaffected by the new public-read path', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+
+  await assertSucceeds(getBytes(ref(alice, objectPath)));
+});
+
+test('2. authorized same-org staff can still read according to existing rules, unaffected by the new public-read path', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+
+  const staff = testEnv.authenticatedContext('staff-1', { organizationAccess: ['org-1'] }).storage();
+  await assertSucceeds(getBytes(ref(staff, objectPath)));
+});
+
+test('3. an authenticated same-tenant customer can read the exact currently-selected photo', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+  await seedProjection('org-1', 'alice', objectPath);
+  await seedTenantCustomer('org-1', 'bob');
+  const bob = testEnv.authenticatedContext('bob', { organizationAccess: [] }).storage();
+
+  await assertSucceeds(getBytes(ref(bob, objectPath)));
+});
+
+test('4. a same-tenant customer cannot read another approved-but-unselected photo of the same owner', async () => {
+  const { objectPath: selectedPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const { objectPath: unselectedPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, selectedPath), smallImage, { contentType: 'image/png' });
+  await uploadBytes(ref(alice, unselectedPath), smallImage, { contentType: 'image/png' });
+  await seedProjection('org-1', 'alice', selectedPath);
+  await seedTenantCustomer('org-1', 'bob');
+  const bob = testEnv.authenticatedContext('bob', { organizationAccess: [] }).storage();
+
+  await assertSucceeds(getBytes(ref(bob, selectedPath)));
+  await assertFails(getBytes(ref(bob, unselectedPath)));
+});
+
+test('5. a same-tenant customer cannot read a pendingReview photo — status is irrelevant to this rule, only the projection matters, and it never points here', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+  await seedTenantCustomer('org-1', 'bob');
+  const bob = testEnv.authenticatedContext('bob', { organizationAccess: [] }).storage();
+
+  await assertFails(getBytes(ref(bob, objectPath)));
+});
+
+test('6. a same-tenant customer cannot read a rejected photo, even one that was previously selected before rejection', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+  // Moderation-triggered clear: the projection no longer names this photo.
+  await seedProjection('org-1', 'alice', null);
+  await seedTenantCustomer('org-1', 'bob');
+  const bob = testEnv.authenticatedContext('bob', { organizationAccess: [] }).storage();
+
+  await assertFails(getBytes(ref(bob, objectPath)));
+});
+
+test('7. a same-tenant customer cannot read a removed photo', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+  await seedProjection('org-1', 'alice', null);
+  await seedTenantCustomer('org-1', 'bob');
+  const bob = testEnv.authenticatedContext('bob', { organizationAccess: [] }).storage();
+
+  await assertFails(getBytes(ref(bob, objectPath)));
+});
+
+test('8. a guest (unauthenticated) cannot read the selected photo', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+  await seedProjection('org-1', 'alice', objectPath);
+  const guest = testEnv.unauthenticatedContext().storage();
+
+  await assertFails(getBytes(ref(guest, objectPath)));
+});
+
+test('9. a cross-tenant customer (member of a different organization) cannot read the selected photo', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+  await seedProjection('org-1', 'alice', objectPath);
+  // Eve belongs to org-2, not org-1.
+  await seedTenantCustomer('org-2', 'eve');
+  const eve = testEnv.authenticatedContext('eve', { organizationAccess: [] }).storage();
+
+  await assertFails(getBytes(ref(eve, objectPath)));
+});
+
+test('10. knowing the exact Storage path without a matching projection is denied — the projection is the sole authorization pointer, not path/photoId knowledge', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+  // No customerPublicProfiles document exists at all for alice in org-1.
+  await seedTenantCustomer('org-1', 'bob');
+  const bob = testEnv.authenticatedContext('bob', { organizationAccess: [] }).storage();
+
+  await assertFails(getBytes(ref(bob, objectPath)));
+});
+
+test('11. after selection changes from photo A to photo B, A becomes denied and B becomes allowed', async () => {
+  const { objectPath: pathA } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const { objectPath: pathB } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, pathA), smallImage, { contentType: 'image/png' });
+  await uploadBytes(ref(alice, pathB), smallImage, { contentType: 'image/png' });
+  await seedTenantCustomer('org-1', 'bob');
+  const bob = testEnv.authenticatedContext('bob', { organizationAccess: [] }).storage();
+
+  await seedProjection('org-1', 'alice', pathA);
+  await assertSucceeds(getBytes(ref(bob, pathA)));
+  await assertFails(getBytes(ref(bob, pathB)));
+
+  await seedProjection('org-1', 'alice', pathB);
+  await assertFails(getBytes(ref(bob, pathA)));
+  await assertSucceeds(getBytes(ref(bob, pathB)));
+});
+
+test('12. after the projection selection is cleared (moderation), the previously-selected photo is immediately denied', async () => {
+  const { objectPath } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, objectPath), smallImage, { contentType: 'image/png' });
+  await seedTenantCustomer('org-1', 'bob');
+  const bob = testEnv.authenticatedContext('bob', { organizationAccess: [] }).storage();
+
+  await seedProjection('org-1', 'alice', objectPath);
+  await assertSucceeds(getBytes(ref(bob, objectPath)));
+
+  // P.4.2B2's moderation transaction clearing a selection nulls this field
+  // — no second public-state source, this IS what that clear looks like.
+  await seedProjection('org-1', 'alice', null);
+  await assertFails(getBytes(ref(bob, objectPath)));
+});
+
+test('13. the private-gallery read permission set is not broadened — owner and staff read behave exactly as before, unrelated grantIds stay private to same-tenant customers', async () => {
+  const { objectPath: photo1 } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const { objectPath: photo2 } = await seedGrant({ uid: 'alice', organizationId: 'org-1' });
+  const alice = testEnv.authenticatedContext('alice', { organizationAccess: [] }).storage();
+  await uploadBytes(ref(alice, photo1), smallImage, { contentType: 'image/png' });
+  await uploadBytes(ref(alice, photo2), smallImage, { contentType: 'image/png' });
+  await seedProjection('org-1', 'alice', photo1);
+  await seedTenantCustomer('org-1', 'bob');
+  const bob = testEnv.authenticatedContext('bob', { organizationAccess: [] }).storage();
+  const eve = testEnv.authenticatedContext('eve', { organizationAccess: [] }).storage();
+
+  // Owner: still full private access to both, exactly as before.
+  await assertSucceeds(getBytes(ref(alice, photo1)));
+  await assertSucceeds(getBytes(ref(alice, photo2)));
+  // Staff: still full org access to both, exactly as before.
+  const staff = testEnv.authenticatedContext('staff-1', { organizationAccess: ['org-1'] }).storage();
+  await assertSucceeds(getBytes(ref(staff, photo1)));
+  await assertSucceeds(getBytes(ref(staff, photo2)));
+  // An unrelated authenticated user with no tenant membership at all: denied both.
+  await assertFails(getBytes(ref(eve, photo1)));
+  await assertFails(getBytes(ref(eve, photo2)));
+  // A genuine same-tenant customer: only the one selected photo, never the other.
+  await assertSucceeds(getBytes(ref(bob, photo1)));
+  await assertFails(getBytes(ref(bob, photo2)));
 });
 
 test('P.4.2A: direct owner delete is now denied — customer photo removal is server-authoritative only', async () => {

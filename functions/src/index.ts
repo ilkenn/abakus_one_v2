@@ -55,3 +55,6 @@ export { getPreciseFraudEvidence } from "./getPreciseFraudEvidence";
 export { checkDeliveryEligibility } from "./checkDeliveryEligibility";
 export { submitDeliveryOrder } from "./submitDeliveryOrder";
 export { requestCustomerPhotoUploadGrant } from "./customerPhotoUploadGrants";
+export { finalizeCustomerPhotoUpload } from "./finalizeCustomerPhotoUpload";
+export { moderateCustomerPhoto } from "./moderateCustomerPhoto";
+export { selectCustomerProfilePhoto } from "./selectCustomerProfilePhoto";

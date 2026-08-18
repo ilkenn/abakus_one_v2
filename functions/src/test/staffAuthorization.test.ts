@@ -88,3 +88,27 @@ test("roleHasPermission: manageBranch and manageReservations are genuinely indep
   assert.strictEqual(roleHasPermission("manager", "manageReservations", reservationsOnly), true);
   assert.strictEqual(roleHasPermission("manager", "manageBranch", reservationsOnly), false);
 });
+
+// Profile P.4.2B2 — moderateCustomerPhotos, mirroring Dart RolePermissionMap's
+// own _managerTier placement for PosAuthorizedAction.moderateCustomerPhoto
+// exactly: manager/admin/tenantOwner, never staff/courier.
+
+test("roleHasPermission: manager has moderateCustomerPhotos under the default mapping — mirrors Dart RolePermissionMap's manager tier", () => {
+  assert.strictEqual(roleHasPermission("manager", "moderateCustomerPhotos"), true);
+});
+
+test("roleHasPermission: admin has moderateCustomerPhotos under the default mapping", () => {
+  assert.strictEqual(roleHasPermission("admin", "moderateCustomerPhotos"), true);
+});
+
+test("roleHasPermission: tenantOwner has moderateCustomerPhotos under the default mapping", () => {
+  assert.strictEqual(roleHasPermission("tenantOwner", "moderateCustomerPhotos"), true);
+});
+
+test("roleHasPermission: base staff does NOT have moderateCustomerPhotos under the default mapping", () => {
+  assert.strictEqual(roleHasPermission("staff", "moderateCustomerPhotos"), false);
+});
+
+test("roleHasPermission: courier does NOT have moderateCustomerPhotos under the default mapping", () => {
+  assert.strictEqual(roleHasPermission("courier", "moderateCustomerPhotos"), false);
+});
