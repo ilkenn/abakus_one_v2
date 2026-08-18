@@ -81,6 +81,18 @@ class BowlBuilderNotifier extends Notifier<BowlBuilderState> {
   void reset() {
     state = const BowlBuilderState();
   }
+
+  /// Returns from `summary` to ingredient picking, preserving every
+  /// selection/quantity/note untouched (B.3.4, 2026-08-18) — used by both
+  /// the Summary screen's "Seçimleri Düzenle" button and the AppBar back
+  /// button while on `summary`. `currentStep` is overwritten (not pushed
+  /// onto a history stack) when moving to `summary`, so there is no
+  /// existing "last visited category" to restore; per the locked B.3.4
+  /// spec this deliberately doesn't add new navigation state to track one
+  /// and always lands on the first ingredient category instead.
+  void returnToPicking() {
+    state = state.copyWith(currentStep: BowlBuilderStep.values.first);
+  }
 }
 
 final bowlBuilderProvider =

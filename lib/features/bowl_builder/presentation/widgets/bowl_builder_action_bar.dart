@@ -11,8 +11,18 @@ import '../../../../core/theme/app_typography.dart';
 ///   plus "Bowlu İncele", which moves to the summary step.
 /// - Summary mode: "Sepete Ekle · N TL", which finalizes the order — the
 ///   only primary action on that step, matching today's behavior.
+///
+/// B.3.2 (2026-08-18): in summary mode, the CTA is only enabled once
+/// [hasSelection] is true — an empty bowl's price is still legitimately
+/// 0 TL (product decision, 2026-07-23, unchanged), but a customer should
+/// never be able to tap what reads as a live "Sepete Ekle" button while
+/// nothing is actually selected. Disabling `onPressed` uses this app's
+/// existing `ElevatedButton` disabled-state theme (`disabledBackgroundColor`/
+/// `disabledForegroundColor` in `AppTheme`) rather than a bespoke visual
+/// treatment.
 class BowlBuilderActionBar extends StatelessWidget {
   final bool isSummary;
+  final bool hasSelection;
   final double grandTotal;
   final double totalCalories;
   final double totalProtein;
@@ -21,6 +31,7 @@ class BowlBuilderActionBar extends StatelessWidget {
   const BowlBuilderActionBar({
     super.key,
     required this.isSummary,
+    required this.hasSelection,
     required this.grandTotal,
     required this.totalCalories,
     required this.totalProtein,
@@ -46,7 +57,7 @@ class BowlBuilderActionBar extends StatelessWidget {
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton(
-        onPressed: onPrimaryAction,
+        onPressed: hasSelection ? onPrimaryAction : null,
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
         ),
@@ -69,6 +80,7 @@ class BowlBuilderActionBar extends StatelessWidget {
               Flexible(
                 child: _StatChip(
                   value: '${grandTotal.toStringAsFixed(0)} TL',
+                  semanticLabel: 'Toplam fiyat',
                   emphasize: true,
                 ),
               ),
@@ -76,12 +88,14 @@ class BowlBuilderActionBar extends StatelessWidget {
               Flexible(
                 child: _StatChip(
                   value: '${totalCalories.toStringAsFixed(0)} kcal',
+                  semanticLabel: 'Toplam kalori',
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
               Flexible(
                 child: _StatChip(
                   value: '${totalProtein.toStringAsFixed(0)} g protein',
+                  semanticLabel: 'Toplam protein',
                 ),
               ),
             ],
@@ -116,20 +130,33 @@ class BowlBuilderActionBar extends StatelessWidget {
 
 class _StatChip extends StatelessWidget {
   final String value;
+  final String semanticLabel;
   final bool emphasize;
 
-  const _StatChip({required this.value, this.emphasize = false});
+  const _StatChip({
+    required this.value,
+    required this.semanticLabel,
+    this.emphasize = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      value,
-      style: AppTypography.bodySmall.copyWith(
-        fontWeight: FontWeight.bold,
-        color: emphasize ? AppColors.primary : AppColors.textSecondary,
+    // B.4: without this, a screen reader would just read the bare number
+    // ("120 TL", "450 kcal", ...) with no indication of which running
+    // total it is — the visual order is the only thing that currently
+    // conveys that.
+    return Semantics(
+      label: '$semanticLabel: $value',
+      excludeSemantics: true,
+      child: Text(
+        value,
+        style: AppTypography.bodySmall.copyWith(
+          fontWeight: FontWeight.bold,
+          color: emphasize ? AppColors.primary : AppColors.textSecondary,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:abakus_one_v2/core/theme/app_theme_constants.dart';
 import 'package:abakus_one_v2/features/bowl_builder/presentation/widgets/ingredient_card.dart';
 
 void main() {
@@ -309,5 +310,77 @@ void main() {
 
     expect(find.textContaining('165 kcal'), findsOneWidget);
     expect(find.textContaining('31 g protein'), findsOneWidget);
+  });
+
+  group('B.4 - stepper dokunma hedefi ve etiketleri', () {
+    testWidgets(
+        '+/- stepper butonlari en az uygulamanin minimum dokunma hedefi '
+        'kadar buyuktur', (tester) async {
+      await pumpCard(
+        tester,
+        IngredientCard(
+          name: 'Izgara Tavuk',
+          price: 40,
+          imageKey: 'protein_izgara_tavuk',
+          quantity: 1,
+          allowsQuantity: true,
+          caloriesKcal: 165,
+          proteinGrams: 31,
+          onIncrement: () {},
+          onDecrement: () {},
+        ),
+      );
+      await tester.pump();
+
+      final plusSize = tester.getSize(
+        find.widgetWithIcon(IconButton, Icons.add_rounded),
+      );
+      final minusSize = tester.getSize(
+        find.widgetWithIcon(IconButton, Icons.remove_rounded),
+      );
+      expect(
+          plusSize.width,
+          greaterThanOrEqualTo(
+            AppThemeConstants.minTapTargetSize,
+          ));
+      expect(
+          plusSize.height,
+          greaterThanOrEqualTo(
+            AppThemeConstants.minTapTargetSize,
+          ));
+      expect(
+          minusSize.width,
+          greaterThanOrEqualTo(
+            AppThemeConstants.minTapTargetSize,
+          ));
+      expect(
+          minusSize.height,
+          greaterThanOrEqualTo(
+            AppThemeConstants.minTapTargetSize,
+          ));
+    });
+
+    testWidgets('+/- stepper butonlari erisilebilir bir etikete sahiptir', (
+      tester,
+    ) async {
+      await pumpCard(
+        tester,
+        IngredientCard(
+          name: 'Izgara Tavuk',
+          price: 40,
+          imageKey: 'protein_izgara_tavuk',
+          quantity: 1,
+          allowsQuantity: true,
+          caloriesKcal: 165,
+          proteinGrams: 31,
+          onIncrement: () {},
+          onDecrement: () {},
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byTooltip('Azalt'), findsOneWidget);
+      expect(find.byTooltip('Arttır'), findsOneWidget);
+    });
   });
 }

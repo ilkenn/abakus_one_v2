@@ -3,12 +3,13 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_shadows.dart';
 import '../../../../core/theme/app_spacing.dart';
+import '../../../../core/theme/app_theme_constants.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/images/product_image.dart';
 
 /// A single, compact, photo-forward ingredient tile — sized for the v2
 /// horizontal ingredient carousel (`bowl_builder_screen.dart`'s ingredient
-/// section), where [width] cards fit ~2.2–2.6 to a phone-width viewport and
+/// section), where [width] cards fit ~2.4–2.8 to a phone-width viewport and
 /// simply more of them at once on a wider one, with no separate breakpoint
 /// layout needed. Deliberately its own widget, not a variant of
 /// `OptionSelectionCard` (Product Detail's shared modifier row) — that
@@ -27,18 +28,24 @@ import '../../../../shared/widgets/images/product_image.dart';
 ///
 /// [caloriesKcal]/[proteinGrams] show a one-line nutrition summary under the
 /// price — the compact card intentionally omits fat/carbs (those live in
-/// the screen-level `BowlBuilderLiveMetrics` dashboard) to stay legible at
+/// the Summary step's macro summary card) to stay legible at
 /// this width.
 ///
-/// Both modes share the same selected-state visuals (border, tint, shadow,
-/// checkmark) and the same brief "pulse" whenever [quantity] increases —
-/// the tactile confirmation that a tap actually did something. Per the v2
-/// brief's own guidance, this pulse plus `BowlCanvas`'s existing layer
-/// fade/scale-in animation are the entire "ingredient added to my bowl"
-/// feedback loop — a literal flight/transition from this card to the canvas
-/// was considered and deliberately not built (would need shared
-/// `GlobalKey`/coordinate plumbing across two independent widget subtrees
-/// for a cosmetic effect); see the final report for that call.
+/// B.2 (2026-08-17): the image is now `Expanded` inside a fixed-height card
+/// (set by the carousel row, see `_IngredientCarousel._rowHeight`) rather
+/// than a fixed 1:1 `AspectRatio` — the same "image absorbs whatever height
+/// the text block doesn't need" pattern used by Home's redesigned cards.
+/// This guarantees zero dead space below the text at any content length,
+/// and zero overflow at any accessibility text scale (the image simply
+/// shrinks instead), without needing to hand-tune a fixed height per case.
+///
+/// Both modes share the same selected-state visuals (border, tinted
+/// surface, shadow, checkmark) and the same brief "pulse" whenever
+/// [quantity] increases — the tactile confirmation that a tap actually did
+/// something. This pulse is this card's entire "ingredient added to my
+/// bowl" feedback — B.3 (2026-08-18) cancelled the live `BowlCanvas`
+/// preview this used to also animate into, product decision, not a
+/// deferral.
 class IngredientCard extends StatefulWidget {
   final String name;
   final double price;
@@ -51,7 +58,8 @@ class IngredientCard extends StatefulWidget {
   final VoidCallback? onIncrement;
   final VoidCallback? onDecrement;
 
-  static const double width = 168;
+  /// B.2: narrowed from 168 to sit in the locked 145–155px target.
+  static const double width = 150;
 
   const IngredientCard({
     super.key,
@@ -126,7 +134,9 @@ class _IngredientCardState extends State<IngredientCard>
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        // Subtle selected surface — a very light olive tint, never a loud
+        // fill — on top of the existing border/shadow escalation.
+        color: isSelected ? AppColors.primaryExtraLight : AppColors.surface,
         borderRadius: AppRadius.kLarge,
         border: Border.all(
           color: isSelected ? AppColors.primary : AppColors.border,
@@ -136,9 +146,11 @@ class _IngredientCardState extends State<IngredientCard>
       ),
       child: ClipRRect(
         borderRadius: AppRadius.kLarge,
+        // `stretch` (not `start`) — the `Expanded` image area needs to be
+        // told to fill the card's full width, not just shrink-wrap to its
+        // own intrinsic size under a loose cross-axis constraint.
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // The card's own top-level Semantics label (below) already
             // says everything a screen reader needs — the image and this
@@ -146,20 +158,19 @@ class _IngredientCardState extends State<IngredientCard>
             // separate, redundant semantics, so they're excluded here.
             // The stepper (quantity mode) is deliberately NOT excluded:
             // its +/- buttons must stay individually reachable.
-            ExcludeSemantics(
-              child: AspectRatio(
-                aspectRatio: 1,
+            Expanded(
+              child: ExcludeSemantics(
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
                     ProductImage(
                       imageKey: widget.imageKey ?? '',
                       borderRadius: BorderRadius.zero,
-                      placeholderIconSize: 36,
+                      placeholderIconSize: 30,
                     ),
                     Positioned(
-                      top: AppSpacing.sm,
-                      right: AppSpacing.sm,
+                      top: AppSpacing.xs,
+                      right: AppSpacing.xs,
                       child: AnimatedScale(
                         scale: isSelected ? 1.0 : 0.6,
                         duration: const Duration(milliseconds: 180),
@@ -177,7 +188,7 @@ class _IngredientCardState extends State<IngredientCard>
                             child: const Icon(
                               Icons.check_rounded,
                               color: AppColors.onPrimary,
-                              size: 14,
+                              size: 13,
                             ),
                           ),
                         ),
@@ -201,6 +212,7 @@ class _IngredientCardState extends State<IngredientCard>
                           widget.name,
                           style: AppTypography.bodyLarge.copyWith(
                             fontWeight: FontWeight.bold,
+                            height: 1.15,
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -211,6 +223,7 @@ class _IngredientCardState extends State<IngredientCard>
                           style: AppTypography.bodyMedium.copyWith(
                             color: AppColors.primary,
                             fontWeight: FontWeight.bold,
+                            height: 1.1,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -221,6 +234,7 @@ class _IngredientCardState extends State<IngredientCard>
                           '${widget.proteinGrams.toStringAsFixed(0)} g protein',
                           style: AppTypography.bodySmall.copyWith(
                             color: AppColors.textSecondary,
+                            height: 1.1,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -305,7 +319,7 @@ class _StatusPill extends StatelessWidget {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: isSelected ? AppColors.primary : Colors.transparent,
@@ -341,7 +355,7 @@ class _EklePill extends StatelessWidget {
         borderRadius: AppRadius.kPill,
         child: Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.symmetric(vertical: 5),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             border: Border.all(color: AppColors.border),
@@ -378,23 +392,36 @@ class _QuantityStepper extends StatelessWidget {
       children: [
         _StepperButton(
           icon: Icons.remove_rounded,
+          tooltip: 'Azalt',
           onPressed: quantity > 0 ? onDecrement : null,
           isPrimary: false,
         ),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 150),
-          transitionBuilder: (child, animation) => ScaleTransition(
-            scale: animation,
-            child: FadeTransition(opacity: animation, child: child),
-          ),
-          child: Text(
-            '$quantity',
-            key: ValueKey(quantity),
-            style: AppTypography.titleMedium,
+        // B.4: flexible, not a bare `Text` — with two 40x40 buttons (the
+        // house minimum tap target, bumped up from 32x32 this same task)
+        // taking most of the card's 150px width, a 2-digit quantity at
+        // large accessibility text scale needs this to be able to shrink/
+        // ellipsize instead of forcing a RenderFlex overflow. Caught by
+        // this task's own high-quantity + 1.6x-scale test.
+        Flexible(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 150),
+            transitionBuilder: (child, animation) => ScaleTransition(
+              scale: animation,
+              child: FadeTransition(opacity: animation, child: child),
+            ),
+            child: Text(
+              '$quantity',
+              key: ValueKey(quantity),
+              style: AppTypography.titleMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
           ),
         ),
         _StepperButton(
           icon: Icons.add_rounded,
+          tooltip: 'Arttır',
           onPressed: onIncrement,
           isPrimary: true,
         ),
@@ -405,11 +432,13 @@ class _QuantityStepper extends StatelessWidget {
 
 class _StepperButton extends StatelessWidget {
   final IconData icon;
+  final String tooltip;
   final VoidCallback? onPressed;
   final bool isPrimary;
 
   const _StepperButton({
     required this.icon,
+    required this.tooltip,
     required this.onPressed,
     required this.isPrimary,
   });
@@ -422,7 +451,17 @@ class _StepperButton extends StatelessWidget {
       child: IconButton(
         onPressed: onPressed,
         icon: Icon(icon, size: 16),
-        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        tooltip: tooltip,
+        // B.4 (2026-08-19): bumped from a 32x32 constraint to this app's
+        // own house minimum (`AppThemeConstants.minTapTargetSize`) — the
+        // visible circle stays compact, only the tappable/hit-test area
+        // grows, matching the same "small visible icon, real 40px+ tap
+        // target" pattern already used by the Summary step's Adet stepper
+        // and the ingredient carousel's scroll chevrons.
+        constraints: const BoxConstraints(
+          minWidth: AppThemeConstants.minTapTargetSize,
+          minHeight: AppThemeConstants.minTapTargetSize,
+        ),
         padding: EdgeInsets.zero,
         color: isPrimary ? AppColors.onPrimary : AppColors.textPrimary,
         disabledColor: AppColors.textDisabled,

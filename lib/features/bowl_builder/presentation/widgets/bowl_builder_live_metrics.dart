@@ -13,12 +13,15 @@ import '../providers/bowl_builder_provider.dart';
 ///
 /// Deliberately shows absolute values only — no personal daily-goal
 /// comparison (50g protein / 800 kcal targets etc.) since no product
-/// decision on customer nutrition goals exists yet; see this widget's
-/// call sites for that constraint.
+/// decision on customer nutrition goals exists yet.
 ///
-/// Reused verbatim in two places: directly under the live `BowlCanvas`
-/// while picking (`bowl_builder_screen.dart`), and inside `BuilderSummary`
-/// on the review step — one implementation, not two.
+/// Orphaned as of B.3 (2026-08-18) — not instantiated anywhere. B.1
+/// already removed its picking-step usage (the pinned
+/// `BowlBuilderActionBar` readout replaced it there); B.3 then replaced
+/// its Summary-step usage inside `BuilderSummary` with a purpose-built,
+/// 5-field `_MacroSummaryCard` (no ingredient count — "Seçilen
+/// Malzemeler" lists every selection individually instead). Left in
+/// place, not deleted, per this project's no-silent-deletion rule.
 class BowlBuilderLiveMetrics extends ConsumerWidget {
   const BowlBuilderLiveMetrics({super.key});
 
