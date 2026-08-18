@@ -30,13 +30,15 @@ class _SignedOutNotifier extends AuthNotifier {
 
 void main() {
   group('profileProvider canonical identity bridge (Sprint 9C)', () {
-    test('signed out keeps the existing mock profile id unchanged', () {
+    test(
+        'signed out returns null — no fabricated guest identity (P.1, '
+        '2026-08-19)', () {
       final container = ProviderContainer(
         overrides: [authProvider.overrideWith(() => _SignedOutNotifier())],
       );
       addTearDown(container.dispose);
 
-      expect(container.read(profileProvider).id, 'user_123');
+      expect(container.read(profileProvider), isNull);
     });
 
     test(
@@ -56,7 +58,8 @@ void main() {
       final profile = container.read(profileProvider);
       final customer = await container.read(currentCustomerProvider.future);
 
-      expect(profile.id, uid);
+      expect(profile, isNotNull);
+      expect(profile!.id, uid);
       expect(customer!.id, uid);
       expect(profile.id, customer.id);
       expect(profile.name, phoneNumber);
@@ -82,8 +85,8 @@ void main() {
       addTearDown(containerB.dispose);
 
       expect(
-        containerA.read(profileProvider).id,
-        isNot(containerB.read(profileProvider).id),
+        containerA.read(profileProvider)!.id,
+        isNot(containerB.read(profileProvider)!.id),
       );
     });
   });

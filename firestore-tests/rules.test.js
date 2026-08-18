@@ -2924,3 +2924,352 @@ test('orders: staff WITH branch access still cannot create a channel:"delivery" 
     }),
   );
 });
+
+// ---------------------------------------------------------------------
+// P.4.1 — Profile photo architecture prep: customerPhotos,
+// customerPublicProfiles, and customers/{uid}.profilePicturePath
+// client-write tightening.
+// ---------------------------------------------------------------------
+
+test('customers: a client can no longer directly set profilePicturePath — selection must be server-authoritative (P.4.1)', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customers/photo-owner-1'), {
+      displayName: 'Photo Owner',
+      email: 'owner@example.com',
+    });
+  });
+  const owner = testEnv.authenticatedContext('photo-owner-1', {}).firestore();
+
+  await assertFails(
+    updateDoc(doc(owner, 'customers/photo-owner-1'), {
+      profilePicturePath: 'tenants/org-1/customerPhotos/photo-owner-1/spoofed.jpg',
+    }),
+  );
+  // displayName/email remain client-updatable — the tightening is scoped
+  // to profilePicturePath only, not a regression of the whole allow-list.
+  await assertSucceeds(
+    updateDoc(doc(owner, 'customers/photo-owner-1'), {
+      displayName: 'Photo Owner Updated',
+    }),
+  );
+});
+
+test('customerPhotos: the owning customer can read their own private gallery entry', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotos/photo-1'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/a.jpg',
+      status: 'pendingReview',
+    });
+  });
+  const owner = testEnv.authenticatedContext('photo-owner-1', {}).firestore();
+
+  await assertSucceeds(getDoc(doc(owner, 'customerPhotos/photo-1')));
+});
+
+test('customerPhotos: a different customer cannot read another customer\'s gallery entry', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotos/photo-1'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/a.jpg',
+      status: 'pendingReview',
+    });
+  });
+  const otherCustomer = testEnv.authenticatedContext('photo-intruder-1', {}).firestore();
+
+  await assertFails(getDoc(doc(otherCustomer, 'customerPhotos/photo-1')));
+});
+
+test('customerPhotos: a customer belonging to a different tenant cannot read the gallery entry', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotos/photo-1'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/a.jpg',
+      status: 'pendingReview',
+    });
+    // A real tenantCustomers record for a DIFFERENT org — proves this
+    // isn't denied merely for lacking any tenantCustomers doc at all, but
+    // specifically for belonging to the wrong tenant.
+    await setDoc(doc(db, 'tenantCustomers/org-2_photo-intruder-1'), {
+      organizationId: 'org-2',
+    });
+  });
+  const crossTenantCustomer = testEnv.authenticatedContext('photo-intruder-1', {}).firestore();
+
+  await assertFails(getDoc(doc(crossTenantCustomer, 'customerPhotos/photo-1')));
+});
+
+test('customerPhotos: authorized same-org staff can read a customer\'s gallery entry', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotos/photo-1'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/a.jpg',
+      status: 'pendingReview',
+    });
+  });
+  const staff = testEnv
+    .authenticatedContext('staff-photo-1', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(staff, 'customerPhotos/photo-1')));
+});
+
+test('customerPhotos: staff from a different organization cannot read the gallery entry', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotos/photo-1'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/a.jpg',
+      status: 'pendingReview',
+    });
+  });
+  const otherOrgStaff = testEnv
+    .authenticatedContext('staff-photo-other-org', { organizationAccess: ['org-2'] })
+    .firestore();
+
+  await assertFails(getDoc(doc(otherOrgStaff, 'customerPhotos/photo-1')));
+});
+
+test('customerPhotos: an unauthenticated caller cannot read a gallery entry', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotos/photo-1'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/a.jpg',
+      status: 'pendingReview',
+    });
+  });
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  await assertFails(getDoc(doc(anon, 'customerPhotos/photo-1')));
+});
+
+test('customerPhotos: every direct client write is denied — create, update, and delete, even by the owner or same-org staff', async () => {
+  const owner = testEnv.authenticatedContext('photo-owner-1', {}).firestore();
+  const staff = testEnv
+    .authenticatedContext('staff-photo-1', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(owner, 'customerPhotos/photo-spoof-1'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/spoof.jpg',
+      status: 'approved',
+      isSelectedAsProfilePhoto: true,
+    }),
+  );
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotos/photo-2'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/b.jpg',
+      status: 'pendingReview',
+    });
+  });
+
+  // Neither the owner nor staff can forge/self-approve a status change —
+  // "status/selected/reviewer fields cannot be forged by client" holds
+  // because there is no client write path at all, not a restricted one.
+  await assertFails(
+    updateDoc(doc(owner, 'customerPhotos/photo-2'), { status: 'approved' }),
+  );
+  await assertFails(
+    updateDoc(doc(staff, 'customerPhotos/photo-2'), {
+      status: 'approved',
+      isSelectedAsProfilePhoto: true,
+    }),
+  );
+  await assertFails(deleteDoc(doc(owner, 'customerPhotos/photo-2')));
+  await assertFails(deleteDoc(doc(staff, 'customerPhotos/photo-2')));
+});
+
+test('customerPublicProfiles: same-org staff can read the public projection', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPublicProfiles/org-1_photo-owner-1'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      selectedProfilePhotoRef: null,
+    });
+  });
+  const staff = testEnv
+    .authenticatedContext('staff-photo-1', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertSucceeds(
+    getDoc(doc(staff, 'customerPublicProfiles/org-1_photo-owner-1')),
+  );
+});
+
+test('customerPublicProfiles: an authenticated same-tenant customer can read the public projection', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPublicProfiles/org-1_photo-owner-1'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      selectedProfilePhotoRef: null,
+    });
+    await setDoc(doc(db, 'tenantCustomers/org-1_photo-viewer-1'), {
+      organizationId: 'org-1',
+    });
+  });
+  const sameTenantCustomer = testEnv.authenticatedContext('photo-viewer-1', {}).firestore();
+
+  await assertSucceeds(
+    getDoc(doc(sameTenantCustomer, 'customerPublicProfiles/org-1_photo-owner-1')),
+  );
+});
+
+test('customerPublicProfiles: a guest/unauthenticated caller cannot read the public projection', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPublicProfiles/org-1_photo-owner-1'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      selectedProfilePhotoRef: null,
+    });
+  });
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  await assertFails(
+    getDoc(doc(anon, 'customerPublicProfiles/org-1_photo-owner-1')),
+  );
+});
+
+test('customerPublicProfiles: a cross-tenant customer (no tenantCustomers record for this org) cannot read the public projection', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPublicProfiles/org-1_photo-owner-1'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      selectedProfilePhotoRef: null,
+    });
+    await setDoc(doc(db, 'tenantCustomers/org-2_photo-viewer-2'), {
+      organizationId: 'org-2',
+    });
+  });
+  const crossTenantCustomer = testEnv.authenticatedContext('photo-viewer-2', {}).firestore();
+
+  await assertFails(
+    getDoc(doc(crossTenantCustomer, 'customerPublicProfiles/org-1_photo-owner-1')),
+  );
+});
+
+test('customerPublicProfiles: staff from a different organization cannot read the public projection', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPublicProfiles/org-1_photo-owner-1'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      selectedProfilePhotoRef: null,
+    });
+  });
+  const otherOrgStaff = testEnv
+    .authenticatedContext('staff-photo-other-org', { organizationAccess: ['org-2'] })
+    .firestore();
+
+  await assertFails(
+    getDoc(doc(otherOrgStaff, 'customerPublicProfiles/org-1_photo-owner-1')),
+  );
+});
+
+test('customerPublicProfiles: no client — not the owner, not staff — can write the public projection directly', async () => {
+  const owner = testEnv.authenticatedContext('photo-owner-1', {}).firestore();
+  const staff = testEnv
+    .authenticatedContext('staff-photo-1', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(owner, 'customerPublicProfiles/org-1_photo-owner-1'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      selectedProfilePhotoRef: 'tenants/org-1/customerPhotos/photo-owner-1/spoof.jpg',
+    }),
+  );
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPublicProfiles/org-1_photo-owner-2'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      selectedProfilePhotoRef: null,
+    });
+  });
+  await assertFails(
+    updateDoc(doc(owner, 'customerPublicProfiles/org-1_photo-owner-2'), {
+      selectedProfilePhotoRef: 'tenants/org-1/customerPhotos/photo-owner-1/spoof.jpg',
+    }),
+  );
+  await assertFails(
+    updateDoc(doc(staff, 'customerPublicProfiles/org-1_photo-owner-2'), {
+      selectedProfilePhotoRef: 'tenants/org-1/customerPhotos/photo-owner-1/spoof.jpg',
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------
+// P.4.2A — customerPhotoUploadGrants: deny-all from the client SDK.
+// (storage.rules' own cross-service firestore.get() read of this
+// collection is exercised by storage-tests/rules.test.js, not here —
+// this suite only proves no ordinary Firestore client can read/write it.)
+// ---------------------------------------------------------------------
+
+test('customerPhotoUploadGrants: the owning customer cannot read their own grant directly — the callable already returns everything the client needs', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotoUploadGrants/grant-1'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      objectPath: 'tenants/org-1/customerPhotos/photo-owner-1/grant-1',
+      contentType: 'image/png',
+      status: 'issued',
+    });
+  });
+  const owner = testEnv.authenticatedContext('photo-owner-1', {}).firestore();
+
+  await assertFails(getDoc(doc(owner, 'customerPhotoUploadGrants/grant-1')));
+});
+
+test('customerPhotoUploadGrants: same-org staff cannot read a grant directly either', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotoUploadGrants/grant-2'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      objectPath: 'tenants/org-1/customerPhotos/photo-owner-1/grant-2',
+      contentType: 'image/png',
+      status: 'issued',
+    });
+  });
+  const staff = testEnv
+    .authenticatedContext('staff-photo-1', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(getDoc(doc(staff, 'customerPhotoUploadGrants/grant-2')));
+});
+
+test('customerPhotoUploadGrants: no client — not even the intended owner — can write a grant directly (create, update, or delete)', async () => {
+  const owner = testEnv.authenticatedContext('photo-owner-1', {}).firestore();
+
+  await assertFails(
+    setDoc(doc(owner, 'customerPhotoUploadGrants/grant-spoof'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      objectPath: 'tenants/org-1/customerPhotos/photo-owner-1/grant-spoof',
+      contentType: 'image/png',
+      status: 'issued',
+    }),
+  );
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotoUploadGrants/grant-3'), {
+      uid: 'photo-owner-1',
+      organizationId: 'org-1',
+      objectPath: 'tenants/org-1/customerPhotos/photo-owner-1/grant-3',
+      contentType: 'image/png',
+      status: 'issued',
+    });
+  });
+  await assertFails(
+    updateDoc(doc(owner, 'customerPhotoUploadGrants/grant-3'), { status: 'consumed' }),
+  );
+  await assertFails(deleteDoc(doc(owner, 'customerPhotoUploadGrants/grant-3')));
+});

@@ -13,15 +13,39 @@ import '../test_support/admin_test_fixtures.dart';
 
 void main() {
   group('SubmitCustomerPhoto', () {
-    test('the 6th eligible photo is rejected — maximum 5', () async {
+    test(
+        'the first 10 eligible photos are accepted — CustomerPhoto.'
+        'maxEligiblePhotos', () async {
       final repository = InMemoryCustomerPhotoRepository();
       final useCase = SubmitCustomerPhoto(
         idGenerator: SequentialCustomerPhotoIdGenerator(),
         repository: repository,
       );
-      for (var i = 0; i < 5; i++) {
+
+      for (var i = 0; i < CustomerPhoto.maxEligiblePhotos; i++) {
+        final photo = await useCase(
+          customerId: 'customer-1',
+          organizationId: 'org-1',
+          photoRef: 'ref-$i',
+          uploadedAt: DateTime(2026, 1, 1),
+        );
+        expect(photo.status, CustomerPhotoStatus.pendingReview);
+      }
+
+      final stored = await repository.findByCustomerId('customer-1');
+      expect(stored.length, CustomerPhoto.maxEligiblePhotos);
+    });
+
+    test('the 11th eligible photo is rejected — maximum 10', () async {
+      final repository = InMemoryCustomerPhotoRepository();
+      final useCase = SubmitCustomerPhoto(
+        idGenerator: SequentialCustomerPhotoIdGenerator(),
+        repository: repository,
+      );
+      for (var i = 0; i < CustomerPhoto.maxEligiblePhotos; i++) {
         await useCase(
           customerId: 'customer-1',
+          organizationId: 'org-1',
           photoRef: 'ref-$i',
           uploadedAt: DateTime(2026, 1, 1),
         );
@@ -30,7 +54,8 @@ void main() {
       expect(
         () => useCase(
           customerId: 'customer-1',
-          photoRef: 'ref-6',
+          organizationId: 'org-1',
+          photoRef: 'ref-11',
           uploadedAt: DateTime(2026, 1, 1),
         ),
         throwsA(isA<CustomerPhotoLimitReachedViolation>()),
@@ -42,6 +67,7 @@ void main() {
       await repository.save(CustomerPhoto(
         id: 'photo-1',
         customerId: 'customer-1',
+        organizationId: 'org-1',
         photoRef: 'ref-1',
         status: CustomerPhotoStatus.rejected,
         uploadedAt: DateTime(2026, 1, 1),
@@ -54,11 +80,45 @@ void main() {
 
       final photo = await useCase(
         customerId: 'customer-1',
+        organizationId: 'org-1',
         photoRef: 'ref-2',
         uploadedAt: DateTime(2026, 1, 1),
       );
 
       expect(photo.status, CustomerPhotoStatus.pendingReview);
+    });
+
+    test(
+        'a full allowance of rejected/removed photos still leaves 10 '
+        'eligible slots free', () async {
+      final repository = InMemoryCustomerPhotoRepository();
+      for (var i = 0; i < 12; i++) {
+        await repository.save(CustomerPhoto(
+          id: 'stale-photo-$i',
+          customerId: 'customer-1',
+          organizationId: 'org-1',
+          photoRef: 'stale-ref-$i',
+          status: i.isEven
+              ? CustomerPhotoStatus.rejected
+              : CustomerPhotoStatus.removed,
+          uploadedAt: DateTime(2026, 1, 1),
+          revision: 1,
+        ));
+      }
+      final useCase = SubmitCustomerPhoto(
+        idGenerator: SequentialCustomerPhotoIdGenerator(),
+        repository: repository,
+      );
+
+      for (var i = 0; i < CustomerPhoto.maxEligiblePhotos; i++) {
+        final photo = await useCase(
+          customerId: 'customer-1',
+          organizationId: 'org-1',
+          photoRef: 'fresh-ref-$i',
+          uploadedAt: DateTime(2026, 1, 1),
+        );
+        expect(photo.status, CustomerPhotoStatus.pendingReview);
+      }
     });
   });
 
@@ -68,6 +128,7 @@ void main() {
       await repository.save(CustomerPhoto(
         id: 'photo-1',
         customerId: 'customer-1',
+        organizationId: 'org-1',
         photoRef: 'ref-1',
         status: CustomerPhotoStatus.approved,
         isSelectedAsProfilePhoto: true,
@@ -98,6 +159,7 @@ void main() {
       await repository.save(CustomerPhoto(
         id: 'photo-1',
         customerId: 'customer-1',
+        organizationId: 'org-1',
         photoRef: 'ref-1',
         uploadedAt: DateTime(2026, 1, 1),
         revision: 1,
@@ -126,6 +188,7 @@ void main() {
       await repository.save(CustomerPhoto(
         id: 'photo-1',
         customerId: 'customer-1',
+        organizationId: 'org-1',
         photoRef: 'ref-1',
         status: CustomerPhotoStatus.pendingReview,
         uploadedAt: DateTime(2026, 1, 1),
@@ -146,6 +209,7 @@ void main() {
       await repository.save(CustomerPhoto(
         id: 'photo-1',
         customerId: 'customer-1',
+        organizationId: 'org-1',
         photoRef: 'ref-1',
         status: CustomerPhotoStatus.approved,
         isSelectedAsProfilePhoto: true,
@@ -155,6 +219,7 @@ void main() {
       await repository.save(CustomerPhoto(
         id: 'photo-2',
         customerId: 'customer-1',
+        organizationId: 'org-1',
         photoRef: 'ref-2',
         status: CustomerPhotoStatus.approved,
         uploadedAt: DateTime(2026, 1, 1),

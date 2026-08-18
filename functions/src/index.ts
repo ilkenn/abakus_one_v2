@@ -54,3 +54,4 @@ export {
 export { getPreciseFraudEvidence } from "./getPreciseFraudEvidence";
 export { checkDeliveryEligibility } from "./checkDeliveryEligibility";
 export { submitDeliveryOrder } from "./submitDeliveryOrder";
+export { requestCustomerPhotoUploadGrant } from "./customerPhotoUploadGrants";

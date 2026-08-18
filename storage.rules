@@ -40,10 +40,87 @@ service firebase.storage {
     // owning uid may upload here, and only an org member (staff) may
     // ever read it back (a photo is for internal moderation, not public
     // by default).
-    match /tenants/{organizationId}/customerPhotos/{uid}/{fileName} {
+    //
+    // P.4.2A (2026-08-19) — hardened against the cross-tenant/uid-
+    // substitution gap P.4.1 disclosed and deliberately left open
+    // (`docs/decisions.md`): `isOwner(uid)` alone only proves the caller
+    // IS `uid` — it never proved `uid` actually belongs to
+    // `organizationId`, so an authenticated customer of org A could
+    // previously write under org B's path segment. The fix is a server-
+    // issued, short-lived upload grant (`customerPhotoUploadGrants/
+    // {grantId}`, `functions/src/customerPhotoUploadGrants.ts`) that
+    // independently verifies real tenant membership before ever existing
+    // — `hasValidUploadGrant` below reads that Firestore record back
+    // (cross-service `firestore.get`) and requires it to name this exact
+    // (organizationId, uid, objectPath) triple, be `issued`, and be
+    // unexpired. The object's name is the opaque `grantId` itself, never
+    // a client-supplied filename — "do not depend on a user-supplied
+    // filename for authorization" (locked instruction). `resource == null`
+    // additionally makes each grant single-use for its own path: once the
+    // object exists, this same rule can never `write` to that exact path
+    // again (a genuinely new upload always requests a fresh grant/path),
+    // so there is no separate "consumed" flag to maintain here — Storage's
+    // own create-vs-overwrite distinction enforces it structurally.
+    //
+    // P.4.2A.1 (2026-08-18) verification note: an issued-but-unconsumed
+    // grant stays valid (by design — nothing marks it "consumed" until a
+    // future onObjectFinalized workflow exists, see P.4.2A's own disclosed
+    // gap). The concern raised was whether that window lets the SAME
+    // client upload to the SAME grant-bound path more than once before
+    // that workflow lands. It does not: `resource == null` above is
+    // Storage's own create-vs-overwrite distinction, and it applies
+    // identically whether the second attempt is a fresh byte upload
+    // (`update`, since the object already exists) or a metadata-only
+    // change (also `update`) — both fail this same condition regardless
+    // of the grant's own continued validity. No rule change was needed
+    // here; this pass added explicit test coverage for the metadata-
+    // update case specifically (byte-overwrite was already covered) so
+    // the invariant is verified, not just incidentally true.
+    //
+    // `allow delete: if false` (was `isOwner(uid)`) — P.4.2A also audited
+    // direct owner-delete here per the explicit instruction to do so.
+    // A raw client delete bypassed the `customerPhotos` Firestore record
+    // and any audit trail entirely (no status change, no
+    // `AdminAuditEntry`, no clearing of `isSelectedAsProfilePhoto`/a
+    // future public projection) — exactly the kind of integrity hole the
+    // task warned against silently preserving. "Future product rules
+    // require profile-photo removal to be server-authoritative and
+    // auditable" already applies today, before that removal Function
+    // exists, not only once it does: closing the gap now costs nothing
+    // (no customer-facing delete flow is built yet), whereas leaving it
+    // open would need a second, separate tightening pass later. Removal
+    // is deferred to a P.4.2B+ Cloud Function, mirroring how
+    // `feedbackAttachments` already denies delete unconditionally, for
+    // the same "future server logic owns this, not a raw client op"
+    // reason.
+    match /tenants/{organizationId}/customerPhotos/{uid}/{grantId} {
       allow read: if isOrgMember(organizationId) || isOwner(uid);
-      allow write: if isOwner(uid) && isValidCustomerImageUpload();
-      allow delete: if isOwner(uid);
+      allow write: if isOwner(uid) &&
+        isValidCustomerImageUpload() &&
+        resource == null &&
+        hasValidUploadGrant(organizationId, uid, grantId);
+      allow delete: if false; // Server-authoritative removal only (P.4.2B+).
+    }
+
+    // The Firestore-side authorization record `requestCustomerPhotoUpload
+    // Grant` writes (Admin SDK — Firestore Rules deny every direct client
+    // write to `customerPhotoUploadGrants`, see `firestore.rules`). Every
+    // field checked here is exactly what `docs/decisions.md`'s locked
+    // requirements name: bound uid, bound organizationId, bound exact
+    // object path (not just a bound uid+org — a grant issued for one
+    // object can never authorize a write to a *different* object path,
+    // even one the same customer/org), issued (not expired/cancelled/
+    // consumed-status), and unexpired (`request.time`, evaluated at the
+    // moment of THIS write, against the grant's own `expiresAt`).
+    function hasValidUploadGrant(organizationId, uid, grantId) {
+      let grantPath = /databases/(default)/documents/customerPhotoUploadGrants/$(grantId);
+      return firestore.exists(grantPath) &&
+        firestore.get(grantPath).data.uid == uid &&
+        firestore.get(grantPath).data.organizationId == organizationId &&
+        firestore.get(grantPath).data.objectPath ==
+          'tenants/' + organizationId + '/customerPhotos/' + uid + '/' + grantId &&
+        firestore.get(grantPath).data.status == 'issued' &&
+        firestore.get(grantPath).data.expiresAt > request.time;
     }
 
     // Customer feedback attachments — same ownership/size/MIME shape as

@@ -2711,12 +2711,14 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Owner Agent**: security_engineer
 - **Related Modules**: Staff/Admin
 
-### BR-ADMIN-003 — A customer photo counts toward the 5-photo limit unless rejected/removed; at most
-  one photo may be selected as the profile photo, and it must be approved (Phase 6)
+### BR-ADMIN-003 — A customer photo counts toward the 10-photo limit unless rejected/removed; at most
+  one photo may be selected as the profile photo, and it must be approved (Phase 6; limit raised
+  5 -> 10, P.4.1, 2026-08-19)
 - **Status**: VERIFIED
 - **Rule**: `CustomerPhoto.countsTowardEligibleLimit` is `true` for `pendingReview`/`underReview`/
   `approved`, `false` for `rejected`/`removed` — `SubmitCustomerPhoto` throws
-  `CustomerPhotoLimitReachedViolation` once 5 counting photos exist. `SelectCustomerProfilePhoto`
+  `CustomerPhotoLimitReachedViolation` once `CustomerPhoto.maxEligiblePhotos` (10) counting photos
+  exist. `SelectCustomerProfilePhoto`
   throws `CustomerPhotoNotApprovedViolation` for a non-approved target, and deselects every other
   photo of the same customer before selecting the new one — 0-or-1 selected is enforced by the write
   path, never a separately-checked invariant. `ModerateCustomerPhoto`'s `reject`/`remove` actions
@@ -4865,6 +4867,44 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.19 — 2026-08-19
+- **Version**: 3.19
+- **Date**: 2026-08-19
+- **Summary**: Profile P.4.2A — server-authoritative photo upload grant, hardening BR-ADMIN-003's
+  10-photo limit with real enforcement. New `requestCustomerPhotoUploadGrant` Cloud Function issues a
+  short-lived, tenant-membership-verified (`tenantCustomers`) grant before any upload is possible;
+  `storage.rules`' `customerPhotos` write rule now cross-service-verifies that grant via
+  `firestore.get()` before allowing the actual byte upload — closing the cross-tenant/uid-substitution
+  gap P.4.1 disclosed (`isOwner(uid)` alone never proved tenant membership). Quota counting now
+  includes outstanding unexpired grants, not just existing `CustomerPhoto` records, transaction-safe
+  against concurrent requests. `customerPhotos`' direct client delete is now denied unconditionally
+  (was owner-only) — a real, previously-unaudited integrity gap (raw delete bypassed the Firestore
+  record/audit trail entirely), closed per explicit instruction rather than left open. No upload UI,
+  no `image_picker`, no photo approval/selection/publication work this phase.
+- **Author**: Claude, at the user's direction (Profile P.4.2A approval).
+
+### v3.18 — 2026-08-19
+- **Version**: 3.18
+- **Date**: 2026-08-19
+- **Summary**: Profile P.4.1 — Customer profile photo server-authoritative data model + security
+  rules prep. BR-ADMIN-003's photo-count limit raised 5 -> 10 (`CustomerPhoto.maxEligiblePhotos`,
+  now the single source of truth `SubmitCustomerPhoto` reads instead of a bare literal); `CustomerPhoto`
+  gained a required, immutable-after-creation `organizationId` field for tenant isolation. New
+  `customerPhotos` Firestore collection/rules (owner-or-same-org-staff read, all direct client writes
+  denied — Cloud Function/Admin SDK only) and a new minimal `customerPublicProfiles/{organizationId}
+  _{uid}` projection (mirrors `tenantCustomers`'s composite-key per-tenant shape; readable by same-org
+  staff and same-tenant customers via a new `isTenantCustomer` rule helper, never guests, never
+  cross-tenant). `customers/{uid}`'s client-updatable field allow-list no longer includes
+  `profilePicturePath` — closing a real, previously-unused write path ahead of any real photo-selection
+  feature, since "the selected profile photo must be server-authoritative" is now a locked rule. No
+  UI/upload/`image_picker` work — data model and rules only, per explicit scope. A separate,
+  pre-existing gap was found (not fixed, flagged for a future decision): `storage.rules`'s
+  `customerPhotos/{organizationId}/{uid}/...` path validates the uploading `uid` against the caller but
+  never validates that the caller actually belongs to `organizationId` — fixing this safely needs
+  either cross-service Storage-to-Firestore rules or an upload-broker Cloud Function, both bigger than
+  this phase's scope.
+- **Author**: Claude, at the user's direction (Profile P.4.1 approval).
 
 ### v3.17 — 2026-08-13
 - **Version**: 3.17

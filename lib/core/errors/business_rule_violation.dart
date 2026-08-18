@@ -1589,10 +1589,15 @@ final class IntegrationCredentialStorageFailedViolation
       'the secure storage write did not succeed';
 }
 
-/// A customer already has 5 active/eligible `CustomerPhoto`s (`pending
-/// Review`/`underReview`/`approved` — `rejected`/`removed` never count)
-/// and attempted to submit another — "maximum 5 active/eligible photos"
-/// (Phase 6G, `docs/decisions.md` ADR-023).
+/// A customer already has `CustomerPhoto.maxEligiblePhotos` (10) active/
+/// eligible `CustomerPhoto`s (`pendingReview`/`underReview`/`approved` —
+/// `rejected`/`removed` never count) and attempted to submit another
+/// (Phase 6G, `docs/decisions.md` ADR-023; limit raised 5 -> 10, P.4.1,
+/// 2026-08-19). This class lives in `core/errors`, which cannot import
+/// `features/admin`'s `CustomerPhoto` (forbidden `core -> feature`
+/// dependency direction) — the "10" below is intentionally a plain
+/// literal kept in sync with `CustomerPhoto.maxEligiblePhotos` by hand,
+/// not a shared constant reference.
 final class CustomerPhotoLimitReachedViolation extends BusinessRuleViolation {
   const CustomerPhotoLimitReachedViolation({required this.customerId});
 
@@ -1600,7 +1605,7 @@ final class CustomerPhotoLimitReachedViolation extends BusinessRuleViolation {
 
   @override
   String get description =>
-      'Customer "$customerId" already has 5 active photos';
+      'Customer "$customerId" already has 10 active photos';
 }
 
 /// A `CustomerPhoto` was selected as the profile photo while not

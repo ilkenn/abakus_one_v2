@@ -9603,3 +9603,223 @@ log file, or emulator artifact staged.
 ```
 DELIVERY_P3_CLOSED=YES
 ```
+
+## Profile P.4.1 — Customer Photo Server-Authoritative Data Model + Security Rules
+
+Audit-and-prep phase (P.4) accepted a proposed implementation order; this is the first slice —
+Firestore data model and security rules only, no picker/upload UI, no `image_picker` dependency
+(explicitly deferred to a later, separately-approved phase).
+
+**Locked product update**: the customer photo limit is raised from 5 to 10, superseding every prior
+"max-5"/"maximum 5" reference (Phase 6G, Decision 5 above). `CustomerPhoto.maxEligiblePhotos = 10` is
+now the single source of truth — previously the limit was a bare `5` literal duplicated across
+`submit_customer_photo.dart`, its own doc comments, and `CustomerPhotoLimitReachedViolation`'s
+description, with no named constant anywhere in the codebase.
+
+**Domain model**: `CustomerPhoto` gained a required, immutable-after-creation `organizationId` field
+(not a `copyWith` parameter, mirroring how `id`/`customerId`/`photoRef`/`uploadedAt` are already
+excluded from that method) — needed for the real `customerPhotos` Firestore collection's tenant-
+isolation rule. `SubmitCustomerPhoto.call()` now requires `organizationId` too. A new, minimal
+`CustomerPublicProfile` domain class was added (`uid`, `organizationId`, `selectedProfilePhotoRef`,
+`updatedAt`) — modeling only, no repository/use case/provider built yet.
+
+**Firestore rules** (`firestore.rules`, still emulator-verified only, not deployed):
+- New `isOwner(uid)` helper, mirroring `storage.rules`'s existing helper of the same name exactly.
+- New `isTenantCustomer(organizationId)` helper — an ordinary customer carries no `organizationAccess`
+  custom claim (that's staff-only), so "this customer belongs to this tenant" is instead checked via
+  `exists()` against `tenantCustomers/{organizationId}_{uid}`, the already-existing per-tenant CRM
+  record, mirroring `hasActiveSupportGrant`'s own `exists()`-based lookup shape.
+- New `customerPhotos/{photoId}` collection: read = owner (`customerId == request.auth.uid`) or
+  same-org staff (`isOrgMember`); write = `false` unconditionally (Cloud Function/Admin SDK only,
+  mirrors `mediaMetadata`'s identical shape) — status/selected/reviewer fields "cannot be forged by
+  client" because there is no client write path at all, not a restricted one.
+- New `customerPublicProfiles/{organizationId}_{uid}` collection — deliberately per-tenant (mirrors
+  `tenantCustomers`'s composite-key pattern) rather than a single global document per customer, per
+  the explicit "do not invent a cross-tenant global-public read model" instruction. Read = same-org
+  staff or same-tenant customer (`isTenantCustomer`); write = `false` unconditionally. This is the
+  *only* mechanism by which a customer's selected photo could ever become visible to anyone besides
+  the owner/staff — the full `customers/{uid}` document is never opened up, since Firestore has no
+  field-level read rules.
+- `customers/{uid}`'s client-updatable field allow-list no longer includes `profilePicturePath` —
+  "the selected profile photo must be server-authoritative" (locked rule). This field was already
+  present in the allow-list before this phase but nothing in the app ever actually wrote it (Profile's
+  avatar-edit UI only mutated local Riverpod state); closing the rule now, before any real write path
+  exists, rather than after one does.
+
+**Storage rules audit** (`storage.rules`) — **not changed**. The specific protections this phase was
+asked to preserve (owner-only upload/delete, 5 MB/`image/*` MIME validation, owner-or-org-member read)
+are all intact and correctly scoped. A separate, real gap was found during the audit and is
+deliberately **not** fixed here: `customerPhotos/{organizationId}/{uid}/{fileName}`'s `isOwner(uid)`
+check verifies the uploading `uid` matches the caller, but never verifies the caller actually belongs
+to `organizationId` — so an authenticated customer of org A could technically write a file under org
+B's path segment (never read another tenant's real data, but could pollute/misattribute storage under
+a tenant they have no relationship with). Fixing this safely needs either cross-service Storage-to-
+Firestore rules (a new capability this codebase's rules don't use anywhere yet, and the existing
+`storage-tests/` emulator harness only runs the Storage emulator alone) or moving uploads behind a
+Cloud Function that checks tenant membership before issuing a path — both bigger than this phase's
+explicit "Firestore data model + rules" scope. Flagged for an explicit decision, not silently patched
+or silently ignored.
+
+**Audit logging**: `AdminAuditEventType` already has `customerPhotoModerated`, real and wired into
+`ModerateCustomerPhoto` since Phase 6G. No new enum values were added this phase — the type's own doc
+comment states "one value per event this codebase **actually writes**," and wiring
+`customerPhotoSubmitted`/a selection-changed event into `SubmitCustomerPhoto`/`SelectCustomerProfile
+Photo` now would either violate that invariant (unused values) or duplicate work that should happen
+server-side once the real Cloud Functions exist (P.4.2+) — noted as required future shapes rather than
+built speculatively.
+
+**Tests**: domain (`test/features/admin/application/customer_photo_moderation_test.dart`) — max-10
+acceptance/rejection, rejected/removed-frees-capacity, all existing moderation/selection tests updated
+for the new required `organizationId` field. Firestore rules (`firestore-tests/rules.test.js`) — 16 new
+tests covering `customerPhotos` owner/staff/cross-customer/cross-tenant/guest read and all-writes-
+denied, `customerPublicProfiles` same-org-staff/same-tenant-customer/guest/cross-tenant read and
+all-writes-denied, and `customers/{uid}`'s `profilePicturePath` tightening. Storage rules suite re-run
+unchanged (confirming the audit's "not changed" claim, not merely asserting it) — see this session's
+final report for exact pass counts.
+
+**Scope, stated honestly**: this is the data-model/rules foundation only. No Cloud Function exists yet
+for submit/moderate/select (all three remain pure client-side Dart use cases against an in-memory
+repository); no `customerPhotos`/`customerPublicProfiles` Firestore-backed Dart repository was built;
+no upload UI, no `image_picker`; `ProfileHeroCard` still assumes a local `FileImage` path, unchanged.
+These are the named, bounded next steps (P.4.2+), not silently claimed as done here.
+
+## Profile P.4.2A — Secure Photo Upload Grant + Storage Hardening
+
+Closes the exact gap P.4.1 disclosed and deliberately left open: `storage.rules`'
+`customerPhotos/{organizationId}/{uid}/{fileName}` validated the uploading `uid` against the caller
+but never validated that `uid` actually belonged to `organizationId` — an authenticated customer of
+one tenant could write under a different tenant's path segment. Per the locked architecture decision,
+the fix is **not** a stronger `request.auth.uid == uid` check alone and **not** proxying image bytes
+through a Cloud Function — it's a server-issued, short-lived upload grant the client still uploads
+directly to Storage against, but only at one exact path the server has already authorized.
+
+**New Cloud Function**: `requestCustomerPhotoUploadGrant` (`functions/src/customerPhotoUploadGrants.ts`,
+Cloud Functions v2, `enforceAppCheck: shouldEnforceAppCheck()` matching every other customer-facing
+callable). Requires a real, phone-verified customer (`sign_in_provider === "phone"`, same inline check
+`submitDeliveryOrder`/`checkDeliveryEligibility`/etc. already use — no shared helper exists in this
+codebase for that check, so none was introduced here either). **Never trusts the client's
+`organizationId`** — independently verifies real tenant membership via
+`tenantCustomers/{organizationId}_{uid}`'s existence, the same composite-key record
+`firestore.rules`' own `isTenantCustomer()` helper already used (P.4.1) — this is the first Cloud
+Function to actually query that collection; it existed only in rules and documentation before this.
+
+**Upload grant Firestore model**: `customerPhotoUploadGrants/{grantId}` — `uid`, `organizationId`,
+`objectPath` (`tenants/{organizationId}/customerPhotos/{uid}/{grantId}` — the object's Storage
+filename is the opaque `grantId` itself, never a client-supplied filename), `contentType`, `status`
+(`issued` today; `expired`/`cancelled`/`consumed` modeled but never explicitly set by any code this
+phase — see the "no onObjectFinalized" note below), `createdAt`, `expiresAt` (15-minute TTL). Firestore
+Rules deny every direct client read and write unconditionally — the callable's own response already
+returns everything the client needs (`grantId`/`objectPath`/`expiresAtMillis`), so there is no reason
+for the client to read this collection at all, and "prefer DENIED unless genuinely required" (locked
+instruction) settled it as denied.
+
+**Quota/reservation strategy**: capacity counted is `customerPhotos` in an eligible status
+(`pendingReview`/`underReview`/`approved`, unchanged from P.4.1) **plus** outstanding
+`customerPhotoUploadGrants` that are still `status == "issued"` and unexpired — "a user must NOT be
+able to request 10 parallel grants while already having 10 eligible photos" holds because both counts
+are read inside the same Firestore transaction before any write, mirroring this codebase's existing
+"reads before writes" transaction discipline (`reservationHoldOps.ts`/`assignReservationTable.ts`).
+Concurrency safety relies on genuine Firestore transaction semantics already proven elsewhere in this
+codebase (`submitReservation.ts`'s own concurrent-holds test) — two simultaneous requests reading the
+same near-full count will have one retried/rejected by Firestore itself when the other's write changes
+the query's result set, not by any application-level locking this Function invents. A stale grant
+whose `expiresAt` has passed is excluded from the count the moment `now` passes it — capacity releases
+itself without needing a sweep job.
+
+**Expiry/recovery strategy**: `expiresAt` is checked both by the callable's own quota counting and, at
+the moment of the actual Storage write, by `storage.rules` itself (`grant.expiresAt > request.time`).
+An idempotent retry (matching `submitDeliveryOrder`/`submitTakeawayOrder`'s exact `sha256Hex`-derived-
+id shape, reusing `sha256Hex` from `submitTakeawayOrder.ts` rather than duplicating it) with an optional
+client-supplied `requestKey` maps to a deterministic grant id/object path — replaying the same request
+with the same parameters reuses the existing still-valid grant at no quota cost; replaying after the
+original expired reissues a fresh grant over the *same* id/path rather than creating an orphaned
+second reservation; replaying with different parameters under the same key is rejected
+(`failed-precondition`, mirroring the existing fingerprint-mismatch idempotency pattern). **Disclosed
+gap, not built this phase**: there is no `onObjectFinalized` Storage-triggered Function marking a
+grant `consumed` once the real upload completes, and no Function yet creates the resulting
+`pendingReview` `CustomerPhoto` record — a grant that's genuinely used stays counted as a "reservation"
+(not a real photo) until its `expiresAt` naturally passes. If P.4.2B (the real moderation-pipeline
+entry point) ships well before any `expiresAt` window, this is invisible; if it doesn't, a completed
+upload's reservation could expire before being converted into a real `CustomerPhoto`, an accepted,
+disclosed limitation of building the grant seam ahead of the consumption workflow, not a silent gap.
+
+**Storage Rules hardening** (`storage.rules`): `customerPhotos/{organizationId}/{uid}/{grantId}`'s
+`write` rule now additionally requires `hasValidUploadGrant(organizationId, uid, grantId)` — a new
+function performing the first-ever **cross-service Storage-Rules-reads-Firestore** call in this
+codebase (`firestore.get(/databases/(default)/documents/customerPhotoUploadGrants/$(grantId))`),
+checking the grant's `uid`, `organizationId`, exact `objectPath`, `status == "issued"`, and
+`expiresAt > request.time` all together. `resource == null` makes each grant single-use for its own
+path structurally (Storage's own create-vs-overwrite distinction) — no separate "consumed" flag or
+Function is needed to enforce that a grant can't authorize a second write to the same path. **A real
+implementation pitfall found and fixed during this task**: the cross-service `firestore.get()` call is
+issued by the *running Storage Emulator process* against whatever project id `firebase emulators:exec`
+itself uses (`demo-abakus-one-emulator`), not whatever project id a test's own SDK client happens to
+pick — `storage-tests/rules.test.js` originally used a different, arbitrary `projectId`
+(`abakus-one-storage-rules-test`), so every seeded grant was silently invisible to `storage.rules`
+(`firestore-debug.log` showed "Document ... not found" for the correct grant id, in the correct
+collection, just the wrong project namespace) until the test's `projectId` was corrected to match.
+
+**Direct delete/overwrite audit — decision made, not deferred**: `allow delete: if isOwner(uid);` on
+`customerPhotos` is now `allow delete: if false;`. A raw client delete bypassed the `customerPhotos`
+Firestore record and any audit trail entirely (no status change, no `AdminAuditEntry`, no clearing of
+`isSelectedAsProfilePhoto`) — exactly the integrity hole the task warned against silently preserving.
+Closing it costs nothing today (no customer-facing delete flow exists yet) and mirrors
+`feedbackAttachments`'s own existing unconditional delete-deny for the identical "future server logic
+owns this" reason. Removal is deferred to a P.4.2B+ Cloud Function.
+
+**No publication work performed** — confirmed by scope, not merely by omission: no photo is approved,
+no `customerPublicProfiles` document is touched, `customers/{uid}.profilePicturePath` remains untouched
+since P.4.1's tightening. `image_picker` was not added; no upload UI was built.
+
+**Tests**: Functions — 17 new (`functions/src/test/customerPhotoUploadGrants.test.ts`), full suite
+696/696 passing via `firebase emulators:exec --only firestore,functions,auth`. Firestore Rules — 3 new
+(`customerPhotoUploadGrants` deny-read/deny-write), full suite 313/313 passing. Storage Rules — the
+entire `customerPhotos` section of `storage-tests/rules.test.js` was rewritten around the grant
+requirement (every previously-passing positive-path test now seeds a real grant first), plus new tests
+for every required denial case (no grant, wrong uid, wrong org, cross-tenant uid-substitution
+specifically named, another customer's grant, expired, non-issued status, consumed/single-use, path
+mismatch, non-image, oversized, both delete-policy cases); full suite 21/21 passing, now run via
+`--only firestore,storage` (was `--only storage` alone — changed because cross-service rules require
+both emulators present). `flutter analyze`/`flutter test` — unaffected; no Dart/Flutter file changed
+this phase.
+
+## Profile P.4.2A.1 — Upload Grant Create-Only Verification
+
+Follow-up to P.4.2A, raised as a possible open blocker: an issued-but-unconsumed upload grant stays
+valid for its full 15-minute TTL (by design — nothing marks a grant `consumed` until a future
+`onObjectFinalized` workflow exists, P.4.2A's own disclosed gap). The concern was whether that window
+lets the same client upload to the same grant-bound Storage path more than once before that workflow
+lands.
+
+**Finding: the protection already existed.** `storage.rules`' `customerPhotos` write rule already
+required `resource == null` as of P.4.2A (added as part of the original single-use design, not this
+follow-up) — Storage's own create-vs-overwrite distinction, which applies identically to a second byte
+upload, a metadata-only update, and (independently, via its own unconditional `allow delete: if false`)
+a delete, regardless of the grant's own continued validity. No rule logic changed in this pass. What
+was missing was explicit test coverage proving the metadata-update case specifically — the byte-
+overwrite case was already tested (`'a consumed grant ... cannot be used again — single-use'`), but a
+metadata-only `updateMetadata()` call (no byte change) had never been exercised, and Cloud Storage
+Rules classifies `create` vs. `update` independently of whether bytes actually changed, so this was a
+real coverage gap worth closing even though the underlying rule was already correct.
+
+**Change made**: one new Storage rules test — `'P.4.2A.1: a metadata-only update on the existing
+object is denied — the grant is create-only, never update, even without a byte change'`
+(`storage-tests/rules.test.js`) — using `updateMetadata()` from the Firebase JS SDK against an object
+uploaded moments earlier with a still-`issued`, still-unexpired grant. A short verification comment was
+added to `storage.rules` at the `customerPhotos` block explaining why no rule change was needed and
+that this exact invariant (create-only survives concurrent update/delete/metadata-write attempts) is
+now explicitly tested rather than merely incidentally true.
+
+**Tests**: Storage Rules — 22/22 passing (21 from P.4.2A + 1 new), full suite via
+`--only firestore,storage`. Functions — 696/696 passing, re-run unchanged to confirm no regression.
+Firestore Rules — 313/313 passing, re-run unchanged to confirm no regression. `flutter analyze` —
+unaffected; confirmed via `git status` that zero `lib/`/Dart `test/` files changed this phase (all
+Dart files shown modified in working tree are unchanged carryover from P.1–P.4.1).
+
+**Still open, unchanged by this pass**: no `onObjectFinalized` Function exists to mark a grant
+`consumed` or create the resulting `pendingReview` `CustomerPhoto` record — a completed upload's quota
+reservation still only clears via the 15-minute TTL expiry, not via any signal that the upload actually
+finished. This pass closes the "can the same grant be reused to overwrite/tamper" question specifically;
+it does not close that separate, previously-disclosed quota-timing gap — both remain named as P.4.2B+
+work.
+this phase, confirmed by `git status` scope, not merely asserted.

@@ -1,14 +1,18 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
-import '../../../../core/theme/app_radius.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../providers/profile_provider.dart';
+import '../widgets/profile_hero_card.dart';
+import '../widgets/profile_quick_actions.dart';
+import '../widgets/profile_loyalty_card.dart';
+import '../widgets/profile_account_preferences_section.dart';
+import '../widgets/profile_visit_pass_card.dart';
+import '../widgets/profile_support_section.dart';
+import '../widgets/profile_business_mode_card.dart';
 import '../screens/addresses_screen.dart';
 import '../../../orders/presentation/screens/orders_screen.dart';
 import '../../../notifications/presentation/screens/notification_settings_screen.dart';
@@ -18,59 +22,12 @@ import '../screens/loyalty_screen.dart';
 import '../screens/help_screen.dart';
 import '../../../favorites/presentation/screens/favorites_screen.dart';
 import '../../../crm/presentation/providers/current_customer_provider.dart';
-import '../../../crm/presentation/screens/customer_visit_passport_screen.dart';
 import '../../../feedback/presentation/screens/customer_feedback_screen.dart';
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
-import '../../../admin/presentation/screens/admin_shell_screen.dart';
-import '../../../admin/presentation/screens/staff_sign_in_screen.dart';
 import '../../../pos/presentation/providers/actor_session_provider.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
-
-  void _showImagePickerDialog(BuildContext context, WidgetRef ref) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Wrap(
-            children: [
-              ListTile(
-                leading: const Icon(
-                  Icons.photo_library_rounded,
-                  color: AppColors.primary,
-                ),
-                title: const Text('Galeriden Fotoğraf Seç'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _pickImageFromGallery(context, ref);
-                },
-              ),
-              ListTile(
-                leading: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: Colors.redAccent,
-                ),
-                title: const Text('Fotoğrafı Kaldır ve Varsayılana Dön'),
-                onTap: () {
-                  Navigator.pop(context);
-                  ref.read(profileProvider.notifier).removeProfilePicture();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Profil fotoğrafı kaldırıldı.'),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 
   void _showLogoutDialog(BuildContext context, WidgetRef ref) {
     showDialog(
@@ -104,19 +61,20 @@ class ProfileScreen extends ConsumerWidget {
     );
   }
 
-  void _pickImageFromGallery(BuildContext context, WidgetRef ref) {
-    const String mockSelectedPath =
-        '/data/user/0/com.abakus.bowl/cache/profile_mock.png';
-    ref.read(profileProvider.notifier).updateProfilePicture(mockSelectedPath);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Profil fotoğrafı başarıyla güncellendi!')),
-    );
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final profile = ref.watch(profileProvider);
-    final bool hasCustomImage = profile.profilePicturePath != null && !kIsWeb;
+    final isAuthenticated = ref.watch(
+      profileProvider.select((profile) => profile != null),
+    );
+    // Deny-by-default, unchanged from before P.3 — `actorSessionProvider`
+    // itself still defaults to `null`/empty roles for every ordinary
+    // customer and guest; this screen only decides whether to *render*
+    // the business-mode card, never grants access itself.
+    final isAuthorizedActor = ref.watch(
+      actorSessionProvider.select(
+        (session) => session?.roles.isNotEmpty ?? false,
+      ),
+    );
 
     return Scaffold(
       body: SafeArea(
@@ -132,313 +90,135 @@ class ProfileScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: AppSpacing.xl),
-              Center(
-                child: Column(
-                  children: [
-                    Stack(
-                      children: [
-                        CircleAvatar(
-                          radius: 48,
-                          backgroundColor: AppColors.primary.withValues(
-                            alpha: 0.1,
-                          ),
-                          backgroundImage: hasCustomImage
-                              ? FileImage(File(profile.profilePicturePath!))
-                              : null,
-                          child: !hasCustomImage
-                              ? const Icon(
-                                  Icons.person_rounded,
-                                  size: 48,
-                                  color: AppColors.primary,
-                                )
-                              : null,
-                        ),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: GestureDetector(
-                            onTap: () => _showImagePickerDialog(context, ref),
-                            child: const CircleAvatar(
-                              radius: 16,
-                              backgroundColor: AppColors.primary,
-                              child: Icon(
-                                Icons.edit_rounded,
-                                size: 14,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    Text(
-                      profile.name,
-                      style: AppTypography.titleLarge.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      profile.email,
-                      style: AppTypography.bodyMedium.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
+              const ProfileHeroCard(),
+              const SizedBox(height: AppSpacing.lg),
+              ProfileQuickActions(
+                onBoncuklarim: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const LoyaltyScreen(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: AppSpacing.xxl),
-              Text(
-                'Hesap Ayarları',
-                style: AppTypography.titleMedium.copyWith(
-                  fontWeight: FontWeight.bold,
+                onSiparislerim: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const OrdersScreen(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: AppRadius.kMedium,
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Material(
-                  color: AppColors.surface,
-                  borderRadius: AppRadius.kMedium,
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: const Icon(
-                          Icons.location_on_outlined,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Adreslerim'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const AddressesScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.credit_card_rounded,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Ödeme Yöntemlerim'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const SavedCardsScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.shopping_bag_outlined,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Siparişlerim'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const OrdersScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.favorite_border_rounded,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Favorilerim'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const FavoritesScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.stars_rounded,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Sadakat Boncuklarım'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const LoyaltyScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.qr_code_2_rounded,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Ziyaret Pasosu'),
-                        subtitle: const Text(
-                          'Sadakat Boncuklarımdan ayrı, ziyaret sayısına dayalı '
-                          'ayrı bir ödül programı',
-                        ),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          final customer =
-                              ref.read(currentCustomerProvider).valueOrNull;
-                          if (customer == null) return;
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => CustomerVisitPassportScreen(
-                                customerId: customer.id,
-                                branchId: ref.read(currentBranchIdProvider),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.chat_bubble_outline_rounded,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Geri Bildirim Gönder'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          final customer =
-                              ref.read(currentCustomerProvider).valueOrNull;
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => CustomerFeedbackScreen(
-                                branchId: ref.read(currentBranchIdProvider),
-                                customerId: customer?.id,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.admin_panel_settings_outlined,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Yönetici Paneli'),
-                        subtitle: Text(
-                          (ref.watch(actorSessionProvider)?.roles.isNotEmpty ??
-                                  false)
-                              ? 'Personel, şube, CRM ve operasyon yönetimi'
-                              : 'Personel/yönetici girişi',
-                        ),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          final hasSession = ref
-                                  .read(actorSessionProvider)
-                                  ?.roles
-                                  .isNotEmpty ??
-                              false;
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => hasSession
-                                  ? const AdminShellScreen()
-                                  : const StaffSignInScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.notifications_none_rounded,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Bildirim Ayarları'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  const NotificationSettingsScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.shield_outlined,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Hesap ve Verilerim'),
-                        subtitle:
-                            const Text('Veri indirme, Hesap kalıcı silme'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const AccountDataScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.help_outline_rounded,
-                          color: AppColors.primary,
-                        ),
-                        title: const Text('Yardım ve Destek'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const HelpScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.logout_rounded,
-                          color: AppColors.error,
-                        ),
-                        title: const Text(
-                          'Çıkış Yap',
-                          style: TextStyle(color: AppColors.error),
-                        ),
-                        onTap: () => _showLogoutDialog(context, ref),
-                      ),
-                    ],
+                onFavorilerim: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const FavoritesScreen(),
                   ),
                 ),
               ),
+              const SizedBox(height: AppSpacing.lg),
+              const ProfileLoyaltyCard(),
+              const SizedBox(height: AppSpacing.xxl),
+              ProfileAccountPreferencesSection(
+                onAddresses: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const AddressesScreen(),
+                    ),
+                  );
+                },
+                onPaymentMethods: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const SavedCardsScreen(),
+                    ),
+                  );
+                },
+                onNotificationSettings: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const NotificationSettingsScreen(),
+                    ),
+                  );
+                },
+                onAccountData: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const AccountDataScreen(),
+                    ),
+                  );
+                },
+              ),
+              // P.3.1: a guest has no `currentCustomerProvider` customer to
+              // resolve at all — Visit Pass has nothing to show them, so
+              // it's not just tap-guarded anymore, it's not rendered.
+              if (isAuthenticated) ...[
+                const SizedBox(height: AppSpacing.xxl),
+                const ProfileVisitPassCard(),
+              ],
+              const SizedBox(height: AppSpacing.xxl),
+              ProfileSupportSection(
+                onFeedback: () {
+                  final customer =
+                      ref.read(currentCustomerProvider).valueOrNull;
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => CustomerFeedbackScreen(
+                        branchId: ref.read(currentBranchIdProvider),
+                        customerId: customer?.id,
+                      ),
+                    ),
+                  );
+                },
+                onHelp: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const HelpScreen(),
+                    ),
+                  );
+                },
+              ),
+              if (isAuthorizedActor) ...[
+                const SizedBox(height: AppSpacing.xxl),
+                const ProfileBusinessModeCard(),
+              ],
+              if (isAuthenticated) ...[
+                const SizedBox(height: AppSpacing.xxxl),
+                Center(
+                  child: InkWell(
+                    key: const Key('profileLogoutButton'),
+                    onTap: () => _showLogoutDialog(context, ref),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.lg,
+                        vertical: AppSpacing.sm,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.logout_rounded,
+                            color: AppColors.error,
+                            size: 18,
+                          ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Text(
+                            'Çıkış Yap',
+                            style: AppTypography.bodyMedium.copyWith(
+                              color: AppColors.error,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: AppSpacing.xl),
             ],
           ),
         ),

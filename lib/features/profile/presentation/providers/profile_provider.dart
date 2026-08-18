@@ -18,36 +18,39 @@ import '../../domain/models/profile_model.dart';
 /// `currentCustomerProvider` doc comment already documents auth↔crm as the
 /// **one** allowed cross-feature exception (`CLAUDE.md` §3); adding a
 /// second one (profile↔crm) is an architecture change out of this
-/// sprint's identity-linking scope, not a silent shortcut. Signed-out/
-/// guest sessions keep the existing mock seed — unrelated to this
-/// sprint's "authenticated production path" scope.
-class ProfileNotifier extends Notifier<ProfileModel> {
+/// sprint's identity-linking scope, not a silent shortcut.
+///
+/// P.1 (2026-08-19): the guest/signed-out branch no longer returns a
+/// hardcoded mock person ("Ahmet Yılmaz" et al) — [build] returns `null`
+/// instead. There is no real "guest profile" to show; presenting one as
+/// if real was exactly the mock-data risk this redesign was asked to
+/// remove. Every consumer must treat `null` as "show a sign-in state,"
+/// not paper over it with fabricated identity.
+class ProfileNotifier extends Notifier<ProfileModel?> {
   @override
-  ProfileModel build() {
+  ProfileModel? build() {
     final session = ref.watch(authProvider).session;
-    if (session != null) {
-      return ProfileModel(
-        id: session.uid,
-        name: session.phoneNumber,
-        email: '',
-      );
-    }
-    return const ProfileModel(
-      id: 'user_123',
-      name: 'Ahmet Yılmaz',
-      email: 'ahmet.yilmaz@abakusbowl.com',
+    if (session == null) return null;
+    return ProfileModel(
+      id: session.uid,
+      name: session.phoneNumber,
+      email: '',
     );
   }
 
   void updateProfilePicture(String path) {
-    state = state.copyWith(profilePicturePath: path);
+    final current = state;
+    if (current == null) return;
+    state = current.copyWith(profilePicturePath: path);
   }
 
   void removeProfilePicture() {
-    state = state.copyWith(removeProfilePicture: true);
+    final current = state;
+    if (current == null) return;
+    state = current.copyWith(removeProfilePicture: true);
   }
 }
 
-final profileProvider = NotifierProvider<ProfileNotifier, ProfileModel>(() {
+final profileProvider = NotifierProvider<ProfileNotifier, ProfileModel?>(() {
   return ProfileNotifier();
 });

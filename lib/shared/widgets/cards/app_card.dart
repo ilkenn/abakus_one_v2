@@ -18,12 +18,21 @@ class AppCard extends StatelessWidget {
   final Color? borderColor;
   final BorderRadius borderRadius;
 
+  /// Optional soft shadow (e.g. `AppShadows.card`/`.floating`) — P.1
+  /// (2026-08-19): added for premium-treatment surfaces (Profile hero/
+  /// quick-action cards) that want this app's existing shadow tokens
+  /// without every other `AppCard` call site picking up a visual change.
+  /// `null` (the default) preserves the exact border-only look every
+  /// existing call site already has.
+  final List<BoxShadow>? boxShadow;
+
   const AppCard({
     super.key,
     required this.child,
     this.padding,
     this.borderColor,
     this.borderRadius = AppRadius.kMedium,
+    this.boxShadow,
   });
 
   @override
@@ -35,6 +44,7 @@ class AppCard extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: borderRadius,
         border: Border.all(color: borderColor ?? AppColors.border),
+        boxShadow: boxShadow,
       ),
       child: Material(
         color: AppColors.surface,

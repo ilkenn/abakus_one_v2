@@ -98,6 +98,31 @@ service cloud.firestore {
       return isOrgMember(organizationId) || hasActiveSupportGrant(organizationId);
     }
 
+    // P.4.1 (Profile photo architecture prep) — mirrors storage.rules'
+    // own isOwner(uid) helper exactly. Introduced here (no prior
+    // firestore.rules collection needed an "owner OR org-member" combined
+    // check; customerAddresses/deviceTokens are owner-only, tenantCustomers/
+    // mediaMetadata are org-member-only) — customerPhotos below is the
+    // first collection needing both.
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // P.4.1 — "authenticated customers within the SAME organization/
+    // tenant" for the customerPublicProfiles projection below.
+    // tenantCustomers/{organizationId}_{uid} is the existing per-tenant
+    // CRM record (docs/firestore_data_model.md) — its mere existence for
+    // this uid/organizationId pair is exactly "this customer belongs to
+    // this tenant," so this reuses it rather than inventing a new claim.
+    // Ordinary customers never carry an organizationAccess custom claim
+    // (that's a staff-only claim, isOrgMember's own doc comment) — this
+    // is the customer-side equivalent, existence-based instead of claim-
+    // based, mirroring hasActiveSupportGrant's exists()-lookup shape.
+    function isTenantCustomer(organizationId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/tenantCustomers/$(organizationId + '_' + request.auth.uid));
+    }
+
     // organizationId must never change after creation — the denormalized
     // tenant-boundary field is verified once at create time (see each
     // collection's own create rule) and trusted, never re-derived, on
@@ -183,9 +208,20 @@ service cloud.firestore {
       // role/status/verification fields — enforced by an explicit
       // allow-list rather than a deny-list, so a new sensitive field added
       // later defaults to NOT client-writable.
+      //
+      // P.4.1 (2026-08-19): `profilePicturePath` removed from this
+      // allow-list — "the selected profile photo must be server-
+      // authoritative" (locked product rule). It was previously client-
+      // writable here even though nothing in the app ever actually wrote
+      // it (Profile's own avatar-edit UI only ever mutated local Riverpod
+      // state, never Firestore) — closing the rule now, before any real
+      // write path exists, rather than after. Once a real
+      // `selectCustomerProfilePhoto` Cloud Function exists, it will set
+      // this field via the Admin SDK, which bypasses these rules entirely
+      // — no allow-list entry is ever needed for a server-only writer.
       allow update: if isSignedIn() && request.auth.uid == uid &&
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['displayName', 'email', 'profilePicturePath']);
+          .hasOnly(['displayName', 'email']);
       allow create: if false; // Cloud Function only — a customer profile
                                // document is provisioned by the same
                                // trusted process that verifies the OTP,
@@ -197,6 +233,92 @@ service cloud.firestore {
       allow read: if isOrgMember(resource.data.organizationId);
       allow write: if false; // Cloud Function only — loyalty/visit data is
                               // server-computed, never client-writable.
+    }
+
+    // ---------------------------------------------------------------------
+    // Customer photos (P.4.1, Profile photo architecture prep) — private
+    // moderation records mirroring `CustomerPhoto` (`lib/features/admin/
+    // domain/customer/customer_photo.dart`). Read-only for the owning
+    // customer and same-org staff/admin — "another customer," "another
+    // tenant," and "guest/anonymous" must never read this collection, and
+    // none of the three can: a different customer's `customerId` won't
+    // match `request.auth.uid`, a different tenant's staff/customer won't
+    // satisfy `isOrgMember`/`isTenantCustomer` for THIS document's
+    // `organizationId`, and an unauthenticated caller fails `isSignedIn()`
+    // inside every helper.
+    //
+    // ALL direct client writes are denied, full stop — status/selected/
+    // reviewer fields "cannot be forged by client" only if the client has
+    // no write path at all, not merely a restricted one (mirrors
+    // `mediaMetadata`'s identical "Cloud Function only" shape exactly).
+    // `customerId`/`organizationId` are therefore also implicitly
+    // immutable after creation — there is no client update path through
+    // which they (or anything else) could change; only a trusted Cloud
+    // Function/Admin SDK process (which bypasses these rules entirely)
+    // ever mutates a document here, and is responsible for preserving
+    // that immutability itself.
+    // ---------------------------------------------------------------------
+
+    match /customerPhotos/{photoId} {
+      allow read: if isOwner(resource.data.customerId) ||
+        isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function / Admin SDK only.
+    }
+
+    // ---------------------------------------------------------------------
+    // Customer public profiles (P.4.1) — the ONE minimal, explicitly
+    // public-safe projection of a customer's identity within one tenant
+    // (see `CustomerPublicProfile`'s own doc comment for the full
+    // reasoning). Per-tenant document id `{organizationId}_{uid}`,
+    // mirroring `tenantCustomers`' composite-key shape exactly — a
+    // customer active in more than one tenant gets one projection per
+    // tenant, never one global document.
+    //
+    // Readable by: same-org staff/admin (`isOrgMember`) and same-tenant
+    // authenticated customers (`isTenantCustomer`) — never a guest
+    // (`isSignedIn()` fails inside both helpers) and never a cross-tenant
+    // caller (neither helper is satisfied for an organizationId the
+    // caller has no membership/tenantCustomers record for). This is
+    // deliberately NOT a global public-read collection — "do not invent a
+    // cross-tenant global-public read model" (locked instruction).
+    //
+    // Write is Cloud-Function-only, full stop — no client, including the
+    // customer the projection is about, may ever write here directly.
+    // This is what makes "a pending/rejected/removed photo must never be
+    // written to the public projection" true structurally: only the
+    // (not-yet-built) `selectCustomerProfilePhoto` Function writes this
+    // document, and it only ever runs after re-verifying the source
+    // `CustomerPhoto.status == approved` server-side — there is no
+    // client-reachable path that could write an unapproved ref here.
+    // ---------------------------------------------------------------------
+
+    match /customerPublicProfiles/{publicProfileId} {
+      allow read: if isOrgMember(resource.data.organizationId) ||
+        isTenantCustomer(resource.data.organizationId);
+      allow write: if false; // Cloud Function / Admin SDK only.
+    }
+
+    // ---------------------------------------------------------------------
+    // Customer photo upload grants (P.4.2A) — short-lived, server-issued
+    // authorization for exactly one Storage object path
+    // (`requestCustomerPhotoUploadGrant`, `functions/src/
+    // customerPhotoUploadGrants.ts`). `storage.rules`' own `customerPhotos`
+    // write rule reads this collection cross-service (`firestore.get(...)`)
+    // to verify a genuine grant exists before allowing the actual byte
+    // upload — this collection is the authorization record, never the
+    // photo data itself.
+    //
+    // Client reads are denied — "prefer DENIED unless genuinely required"
+    // (locked instruction), and nothing requires it: the callable already
+    // returns every field the client needs (grantId/objectPath/expiresAt)
+    // directly in its response. Client writes are denied unconditionally —
+    // the whole point of this collection is that a client cannot forge its
+    // own authorization to upload.
+    // ---------------------------------------------------------------------
+
+    match /customerPhotoUploadGrants/{grantId} {
+      allow read: if false;
+      allow write: if false; // Cloud Function / Admin SDK only.
     }
 
     // ---------------------------------------------------------------------
