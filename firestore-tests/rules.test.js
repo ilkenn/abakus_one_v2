@@ -3413,3 +3413,317 @@ test('customerPhotoUploadGrants: no client — not even the intended owner — c
   );
   await assertFails(deleteDoc(doc(owner, 'customerPhotoUploadGrants/grant-3')));
 });
+
+// =========================================================================
+// Boncuk Loyalty Program (P1, 2026-08-20) — loyaltyAccounts / loyaltyLedgerEntries
+//
+// **Tenant isolation security fix (same day)**: `customerId ==
+// request.auth.uid` alone is NOT sufficient tenant authorization — a
+// Firebase Auth uid is global, so the same uid could (once real
+// multi-tenant customer membership exists) legitimately have a loyalty
+// record in more than one organization. Every test below that seeds a
+// document the caller is expected to successfully read now ALSO seeds a
+// genuine `tenantCustomers/{organizationId}_{uid}` membership document for
+// that exact organizationId — omitting it (or seeding one for the wrong
+// org) is now the mandatory failure mode this suite proves.
+// =========================================================================
+
+function loyaltyAccountFixture(overrides = {}) {
+  return {
+    organizationId: 'org-1',
+    customerId: 'loyalty-owner-1',
+    spendableBalance: 0,
+    earningRemainderMinorUnits: 0,
+    lifetimeEarned: 0,
+    lifetimeRedeemed: 0,
+    revision: 1,
+    ...overrides,
+  };
+}
+
+function loyaltyLedgerEntryFixture(overrides = {}) {
+  return {
+    organizationId: 'org-1',
+    customerId: 'loyalty-owner-1',
+    entryType: 'orderEarn',
+    deltaBoncuk: 5,
+    createdAt: Timestamp.now(),
+    ...overrides,
+  };
+}
+
+async function seedMembership(db, uid, organizationId) {
+  await setDoc(doc(db, `tenantCustomers/${organizationId}_${uid}`), { organizationId, uid });
+}
+
+test('loyaltyAccounts: same uid + valid membership in org-A -> reading the org-A account succeeds', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyAccounts/org-1_loyalty-owner-1'), loyaltyAccountFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+  });
+  const owner = customerContext('loyalty-owner-1');
+
+  await assertSucceeds(getDoc(doc(owner, 'loyaltyAccounts/org-1_loyalty-owner-1')));
+});
+
+test('loyaltyAccounts: same uid but NO membership at all for org-B -> reading the org-B account is denied', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'loyaltyAccounts/org-2_loyalty-owner-2'),
+      loyaltyAccountFixture({ organizationId: 'org-2', customerId: 'loyalty-owner-2' }),
+    );
+    // Deliberately no tenantCustomers/org-2_loyalty-owner-2 seeded at all.
+  });
+  const owner = customerContext('loyalty-owner-2');
+
+  await assertFails(getDoc(doc(owner, 'loyaltyAccounts/org-2_loyalty-owner-2')));
+});
+
+test('loyaltyAccounts: same uid with genuine membership in org-A cannot exploit customerId equality to read an org-B account under that same uid — the mandatory same-uid/wrong-tenant case', async () => {
+  const uid = 'loyalty-owner-3';
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'loyaltyAccounts/org-2_loyalty-owner-3'),
+      loyaltyAccountFixture({ organizationId: 'org-2', customerId: uid }),
+    );
+    // Real membership exists, but only for org-1 — never for org-2, the
+    // organization the target document actually belongs to.
+    await seedMembership(db, uid, 'org-1');
+  });
+  const caller = customerContext(uid);
+
+  await assertFails(getDoc(doc(caller, 'loyaltyAccounts/org-2_loyalty-owner-3')));
+});
+
+test('loyaltyAccounts: a different customer (different uid) is denied even with their own valid membership', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyAccounts/org-1_loyalty-owner-1'), loyaltyAccountFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+    await seedMembership(db, 'loyalty-intruder-1', 'org-1');
+  });
+  const otherCustomer = customerContext('loyalty-intruder-1');
+
+  await assertFails(getDoc(doc(otherCustomer, 'loyaltyAccounts/org-1_loyalty-owner-1')));
+});
+
+test('loyaltyAccounts: a guest/anonymous technical identity cannot read an account, even their own uid\'s with a real membership doc present', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'loyaltyAccounts/org-1_guest-uid-1'),
+      loyaltyAccountFixture({ customerId: 'guest-uid-1' }),
+    );
+    await seedMembership(db, 'guest-uid-1', 'org-1');
+  });
+  // A real anonymous Firebase Auth session (isSignedIn() true, but
+  // isRealCustomerAuth() false) — distinct from testEnv.unauthenticatedContext(),
+  // which has no request.auth at all. Mirrors this file's own established
+  // sign_in_provider simulation convention (see customerContext above).
+  const guest = testEnv
+    .authenticatedContext('guest-uid-1', { firebase: { sign_in_provider: 'anonymous' } })
+    .firestore();
+
+  await assertFails(getDoc(doc(guest, 'loyaltyAccounts/org-1_guest-uid-1')));
+});
+
+test('loyaltyAccounts: an unauthenticated caller cannot read an account', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyAccounts/org-1_loyalty-owner-1'), loyaltyAccountFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+  });
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  await assertFails(getDoc(doc(anon, 'loyaltyAccounts/org-1_loyalty-owner-1')));
+});
+
+test('loyaltyAccounts: no client — not even the owner with valid membership — can create, update, or delete an account directly', async () => {
+  const owner = customerContext('loyalty-owner-1');
+
+  await assertFails(setDoc(doc(owner, 'loyaltyAccounts/org-1_loyalty-owner-1'), loyaltyAccountFixture({ spendableBalance: 999999 })));
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyAccounts/org-1_loyalty-owner-1'), loyaltyAccountFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+  });
+  await assertFails(
+    updateDoc(doc(owner, 'loyaltyAccounts/org-1_loyalty-owner-1'), { spendableBalance: 999999 }),
+  );
+  await assertFails(deleteDoc(doc(owner, 'loyaltyAccounts/org-1_loyalty-owner-1')));
+});
+
+test('loyaltyLedgerEntries: same uid + org-A membership -> reading the own org-A entry succeeds', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyLedgerEntries/entry-1'), loyaltyLedgerEntryFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+  });
+  const owner = customerContext('loyalty-owner-1');
+
+  await assertSucceeds(getDoc(doc(owner, 'loyaltyLedgerEntries/entry-1')));
+});
+
+test('loyaltyLedgerEntries: same uid but no membership for org-B -> reading the org-B entry is denied', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'loyaltyLedgerEntries/entry-org-b-1'),
+      loyaltyLedgerEntryFixture({ organizationId: 'org-2', customerId: 'loyalty-owner-2' }),
+    );
+    // Deliberately no tenantCustomers/org-2_loyalty-owner-2 seeded.
+  });
+  const owner = customerContext('loyalty-owner-2');
+
+  await assertFails(getDoc(doc(owner, 'loyaltyLedgerEntries/entry-org-b-1')));
+});
+
+test('loyaltyLedgerEntries: same uid with genuine membership in org-A cannot read an org-B entry under that same uid', async () => {
+  const uid = 'loyalty-owner-3';
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'loyaltyLedgerEntries/entry-org-b-2'),
+      loyaltyLedgerEntryFixture({ organizationId: 'org-2', customerId: uid }),
+    );
+    await seedMembership(db, uid, 'org-1');
+  });
+  const caller = customerContext(uid);
+
+  await assertFails(getDoc(doc(caller, 'loyaltyLedgerEntries/entry-org-b-2')));
+});
+
+test('loyaltyLedgerEntries: a different customer cannot read another customer\'s entry, even with their own valid membership', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyLedgerEntries/entry-1'), loyaltyLedgerEntryFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+    await seedMembership(db, 'loyalty-intruder-1', 'org-1');
+  });
+  const otherCustomer = customerContext('loyalty-intruder-1');
+
+  await assertFails(getDoc(doc(otherCustomer, 'loyaltyLedgerEntries/entry-1')));
+});
+
+test('loyaltyLedgerEntries: a guest/anonymous technical identity cannot read an entry, even one seeded under their own uid with a real membership doc present', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'loyaltyLedgerEntries/entry-guest-1'),
+      loyaltyLedgerEntryFixture({ customerId: 'guest-uid-2' }),
+    );
+    await seedMembership(db, 'guest-uid-2', 'org-1');
+  });
+  const guest = testEnv
+    .authenticatedContext('guest-uid-2', { firebase: { sign_in_provider: 'anonymous' } })
+    .firestore();
+
+  await assertFails(getDoc(doc(guest, 'loyaltyLedgerEntries/entry-guest-1')));
+});
+
+test('loyaltyLedgerEntries: no client can create, update, or delete an entry directly', async () => {
+  const owner = customerContext('loyalty-owner-1');
+
+  await assertFails(
+    setDoc(doc(owner, 'loyaltyLedgerEntries/entry-spoof'), loyaltyLedgerEntryFixture({ deltaBoncuk: 999999 })),
+  );
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyLedgerEntries/entry-1'), loyaltyLedgerEntryFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+  });
+  await assertFails(
+    updateDoc(doc(owner, 'loyaltyLedgerEntries/entry-1'), { deltaBoncuk: 999999 }),
+  );
+  await assertFails(deleteDoc(doc(owner, 'loyaltyLedgerEntries/entry-1')));
+});
+
+test('loyaltyLedgerEntries: history query for org-A + own uid + own valid org-A membership succeeds and returns only the owner\'s own entries', async () => {
+  const uid = 'loyalty-history-owner-1';
+  await seed(async (db) => {
+    await setDoc(doc(db, `loyaltyLedgerEntries/${uid}-entry-1`), loyaltyLedgerEntryFixture({ customerId: uid }));
+    await setDoc(
+      doc(db, `loyaltyLedgerEntries/${uid}-entry-2`),
+      loyaltyLedgerEntryFixture({ customerId: uid, deltaBoncuk: 3 }),
+    );
+    await setDoc(
+      doc(db, 'loyaltyLedgerEntries/unrelated-entry-1'),
+      loyaltyLedgerEntryFixture({ customerId: 'someone-else', deltaBoncuk: 10 }),
+    );
+    await seedMembership(db, uid, 'org-1');
+  });
+  const owner = customerContext(uid);
+
+  const snapshot = await getDocs(
+    query(
+      collection(owner, 'loyaltyLedgerEntries'),
+      where('customerId', '==', uid),
+      where('organizationId', '==', 'org-1'),
+    ),
+  );
+  assert.strictEqual(snapshot.size, 2);
+});
+
+test('loyaltyLedgerEntries: a history query scoped to org-B with the caller\'s own uid is denied when the caller has no org-B membership — the mandatory same-uid/wrong-tenant query case', async () => {
+  const uid = 'loyalty-history-owner-2';
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, `loyaltyLedgerEntries/${uid}-org-b-entry-1`),
+      loyaltyLedgerEntryFixture({ organizationId: 'org-2', customerId: uid }),
+    );
+    // Membership only for org-1 — the query below targets org-2.
+    await seedMembership(db, uid, 'org-1');
+  });
+  const caller = customerContext(uid);
+
+  await assertFails(
+    getDocs(
+      query(
+        collection(caller, 'loyaltyLedgerEntries'),
+        where('customerId', '==', uid),
+        where('organizationId', '==', 'org-2'),
+      ),
+    ),
+  );
+});
+
+test('loyaltyLedgerEntries: a query that omits the required organizationId scope is denied outright, not silently filtered', async () => {
+  const uid = 'loyalty-scope-owner-1';
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyLedgerEntries/scope-test-entry-1'), loyaltyLedgerEntryFixture({ customerId: uid }));
+    await seedMembership(db, uid, 'org-1');
+  });
+  const caller = customerContext(uid);
+
+  await assertFails(
+    getDocs(query(collection(caller, 'loyaltyLedgerEntries'), where('customerId', '==', uid))),
+  );
+});
+
+test('loyaltyLedgerEntries: a query that omits the required customerId scope is denied outright, not silently filtered', async () => {
+  const uid = 'loyalty-scope-owner-3';
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyLedgerEntries/scope-test-entry-3'), loyaltyLedgerEntryFixture({ customerId: uid }));
+    await seedMembership(db, uid, 'org-1');
+  });
+  const caller = customerContext(uid);
+
+  await assertFails(
+    getDocs(query(collection(caller, 'loyaltyLedgerEntries'), where('organizationId', '==', 'org-1'))),
+  );
+});
+
+test('loyaltyLedgerEntries: a query targeting another customer\'s uid is denied, even when the caller only ever asks for their own valid tenant', async () => {
+  const targetUid = 'loyalty-scope-owner-2';
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'loyaltyLedgerEntries/other-uid-entry-1'),
+      loyaltyLedgerEntryFixture({ customerId: targetUid }),
+    );
+    await seedMembership(db, targetUid, 'org-1');
+    await seedMembership(db, 'loyalty-intruder-2', 'org-1');
+  });
+  const caller = customerContext('loyalty-intruder-2');
+
+  await assertFails(
+    getDocs(
+      query(
+        collection(caller, 'loyaltyLedgerEntries'),
+        where('customerId', '==', targetUid),
+        where('organizationId', '==', 'org-1'),
+      ),
+    ),
+  );
+});

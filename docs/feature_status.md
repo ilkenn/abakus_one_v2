@@ -3625,3 +3625,46 @@ document states all render neutrally, never a fabricated name. Guest state, the 
 Admin/POS, and backend photo moderation/security are all unchanged. See `docs/decisions.md`'s P.4.3B
 entry for the full report and exact test/gate counts (`flutter test` 3236/12-skipped/0-failed; no
 Functions/Rules/Storage suites rerun — Flutter-only change).
+
+**Boncuk Loyalty Program P0-A (2026-08-20) — Business Rule Freeze & Server Ledger Architecture,
+CLOSED (design + docs only).** A preceding read-only audit confirmed the entire Boncuk points program
+(`LoyaltyScreen`/`LoyaltyNotifier`) is 100% client-side mock state with zero backend counterpart. This
+closure locks the production business rules (`docs/business_rules.md`'s new `BR-LOYALTY-001`–`011`:
+50 TL = 1 Boncuk with a persistent server-authoritative TL remainder, completion-only idempotent
+earning, post-discount net-spend earning basis, Boncuk-paid-amount-earns-nothing, 1-Boncuk=2-TL
+cash-like redemption capped at 50% of the order, the locked 50/100/200/200 reward catalog, locked task
+point values pending a verification-mechanism decision, locked wheel caps pending a
+distribution/expiry decision, and a server-authoritative security model) and resolves `BR-PROMO-003`
+(coupon + Boncuk stacking: **not allowed**, exactly one benefit per order, customer-selected). It also
+designs — but does **not implement** — the two-collection server ledger architecture
+(`loyaltyLedgerEntries` append-only + `loyaltyAccounts` atomically-co-written materialized view; see
+`docs/firestore_data_model.md`'s new rows and `docs/decisions.md`'s P0-A entry for the full design,
+including the idempotency/reversal/tenant-isolation strategy). No Cloud Function, no `firestore.rules`
+change, no Flutter code, nothing committed this entry — `git status --short` confirmed clean before and
+after except the two pre-existing intentionally-untracked banner assets. Several sub-decisions remain
+explicitly open (bowl-over-500-TL behavior, task verification mechanism, Instagram unfollow reversal,
+exact wheel probabilities/expiry, tier system fate) — not invented, tracked in `docs/business_rules.md`'s
+Open Questions table. Next: P1 (server-authoritative ledger/balance implementation) is not started.
+
+**Boncuk Loyalty Program P1 (2026-08-20) — Server-Authoritative Loyalty Ledger Foundation, CLOSED
+(foundation only).** Implements the two P0-A-designed collections for real: `loyaltyAccounts`
+(server-maintained materialized balance view) and `loyaltyLedgerEntries` (append-only audit truth,
+rules/index live, zero real writers yet — by design, P2+ scope). New `getCustomerLoyaltySnapshot`
+Cloud Function is the sole, minimal, trusted account-provisioning/read path: real-phone-customer only,
+`organizationId` resolved exclusively server-side (never client-supplied — a dedicated test proves an
+attempted override is silently ignored), tenant membership independently re-verified via the Admin SDK,
+idempotent zero-account creation that never resets an existing account's balance/remainder/lifetime
+counters or bumps `revision` on a plain read. Ledger entry ids are now tenant + customer + entryType +
+source-scoped via a canonical `sha256Hex`-based helper (`deriveLoyaltyLedgerEntryId`), never a naked
+`{orderId}-earn` string, per the user's own two locked architectural corrections for this phase.
+Firestore rules for both collections: no client writes, real-customer-only + owner-uid-match +
+**genuine `tenantCustomers` membership for the record's own `organizationId`** — a same-day security
+review correctly found owner-uid-match alone insufficient for tenant isolation (a Firebase Auth uid is
+global, not tenant-scoped) and the rule was corrected before P1 closed; no staff/admin branch (deferred).
+Explicitly **not implemented** this phase: order earning, refund/cancellation reversal, checkout
+redemption, catalog rewards, wheel, tasks, admin UI, or any Flutter change — `lib/features/loyalty/`,
+the admin loyalty placeholder, and the orphaned `loyalty_summary_card.dart` remain untouched. See
+`docs/decisions.md`'s P1 entry for the full report, including the corrected rule, the exact schema/
+idempotency/reversal-readiness design, and gate counts (`flutter test` 3236/12-skipped/0-failed
+unchanged; Functions 835/835, up from 814; Firestore Rules 337/337, up from 319 — 18 net new tenant-
+isolation-aware tests; Storage Rules not rerun — nothing storage-related touched).

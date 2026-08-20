@@ -331,6 +331,71 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // Boncuk Loyalty Program (P1, 2026-08-20) — `loyaltyAccounts` is the
+    // server-maintained materialized balance view; `loyaltyLedgerEntries`
+    // is the append-only audit/provenance truth. Neither is ever
+    // client-writable — `getCustomerLoyaltySnapshot.ts` (Admin SDK) is the
+    // sole writer of `loyaltyAccounts` this phase; nothing writes
+    // `loyaltyLedgerEntries` yet (P2+).
+    //
+    // **Tenant isolation security fix (P1, same day)**: `customerId ==
+    // request.auth.uid` alone is NOT sufficient tenant authorization — a
+    // Firebase Auth uid is global, so the same uid could (once real
+    // multi-tenant customer membership exists) legitimately have a loyalty
+    // record in more than one organization. Owner identity proves "this
+    // record is mine"; it does NOT prove "I actually belong to this
+    // record's own `organizationId`." Read therefore requires ALL of:
+    // (1) `isRealCustomerAuth()` — real phone-verified customer, never a
+    //     guest/anonymous technical identity;
+    // (2) `isOwner(resource.data.customerId)` — the record's `customerId`
+    //     is this caller's own uid;
+    // (3)+(4) `isTenantCustomer(resource.data.organizationId)` — a genuine
+    //     `tenantCustomers/{organizationId}_{uid}` membership document
+    //     exists for EXACTLY the record's own `organizationId`, proving
+    //     both that the org is one this specific customer actually
+    //     belongs to and that it isn't an arbitrary/forged value. Reused
+    //     verbatim from its existing definition (`customerPublicProfiles`'
+    //     own rule already relies on it) — no new rule pattern invented,
+    //     and `tenantCustomers` itself is not made more broadly readable:
+    //     `exists()` inside a rule evaluation is not a client read of that
+    //     collection, exactly as `isTenantCustomer`'s own doc comment
+    //     already establishes for its existing caller.
+    //
+    // Deliberately narrower than `customerPhotos`' `isOwner || isOrgMember`
+    // shape: no staff/org-member branch exists yet (locked instruction —
+    // staff/admin access is a future, separately-designed permission
+    // model, not added here).
+    //
+    // The intended client query for `loyaltyLedgerEntries`
+    // (`where('customerId','==',ownUid).where('organizationId','==',orgId)`)
+    // stays safe under this stricter rule for the same reason
+    // `customerPhotos`' own `where`-filtered gallery query is: Firestore
+    // statically substitutes the query's own equality-filter values for
+    // `resource.data.customerId`/`resource.data.organizationId` before
+    // evaluating the rule (so `isTenantCustomer`'s `exists()` check
+    // resolves against one fixed, query-pinned organizationId for the
+    // whole request, not a per-document one) — a query omitting either
+    // filter, or pinning `organizationId` to a tenant this customer
+    // doesn't belong to (even with a correct `customerId == request.auth
+    // .uid`), can never be proven true for its whole result set and is
+    // denied outright, not silently filtered.
+    // ---------------------------------------------------------------------
+
+    match /loyaltyAccounts/{accountId} {
+      allow read: if isRealCustomerAuth() &&
+        isOwner(resource.data.customerId) &&
+        isTenantCustomer(resource.data.organizationId);
+      allow write: if false; // Cloud Function / Admin SDK only.
+    }
+
+    match /loyaltyLedgerEntries/{entryId} {
+      allow read: if isRealCustomerAuth() &&
+        isOwner(resource.data.customerId) &&
+        isTenantCustomer(resource.data.organizationId);
+      allow write: if false; // Cloud Function / Admin SDK only.
+    }
+
+    // ---------------------------------------------------------------------
     // Entitlements — "clients cannot write arbitrary entitlement grants."
     // ---------------------------------------------------------------------
 

@@ -60,3 +60,4 @@ export { moderateCustomerPhoto } from "./moderateCustomerPhoto";
 export { selectCustomerProfilePhoto } from "./selectCustomerProfilePhoto";
 export { completeCustomerProfile } from "./completeCustomerProfile";
 export { getCustomerProfileCompletionState } from "./getCustomerProfileCompletionState";
+export { getCustomerLoyaltySnapshot } from "./getCustomerLoyaltySnapshot";

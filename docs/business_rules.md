@@ -34,7 +34,7 @@ assigned sequentially within a category and are **never reused** — if a rule i
 removed, its ID is retired, not reassigned to a different rule. Category prefixes used in this
 document: `ROLE`, `CHANNEL`, `ORDER`, `STATE`, `TABLE`, `MENU`, `MOD`, `BOWL`, `PRICE`, `MKTPRICE`,
 `TAX`, `PROMO`, `PAY`, `CASH`, `REFUND`, `KITCHEN`, `COURIER`, `STAFF`, `STOCK`, `BRANCH`, `MKT`,
-`AUDIT`, `PROFIT`, `EDGE`.
+`AUDIT`, `PROFIT`, `EDGE`, `LOYALTY`.
 
 Each rule entry states an **Owner Agent** (who to consult/update when the rule changes — usually
 `restaurant_domain`, occasionally a specialist agent for cross-cutting concerns like payment-data
@@ -642,8 +642,11 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Related Modules**: Campaigns, Orders, POS
 
 ### BR-PROMO-003 — Coupon + Boncuk stacking
-- **Status**: UNRESOLVED
-- **Rule**: Whether a coupon and a Boncuk redemption can apply to the same order is undecided.
+- **Status**: DECIDED — RESOLVED 2026-08-20, was UNRESOLVED
+- **Rule**: A coupon/campaign and a Boncuk redemption (cash-like or catalog) may never apply to the
+  same order. See BR-LOYALTY-006 for the full single-benefit-per-order rule and the customer-choice
+  requirement. **This resolves BR-PROMO-003 specifically — it does not resolve BR-PROMO-004** (general
+  multi-discount/campaign stacking outside the Boncuk case), which remains separately UNRESOLVED.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Loyalty, Campaigns, Orders
 
@@ -676,6 +679,141 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   target, so future order-level discount UI needs no new model.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Campaigns, Orders, POS
+
+# Boncuk Loyalty Program — Locked Production Rules (P0-A, 2026-08-20)
+
+These rules are the formally locked production specification for the Boncuk points program,
+superseding the mock UI's own ad hoc numbers (`BR-PROMO-001`'s "in-memory mock data" — that entry
+describes the existing prototype's UI shell, not these production numbers). None of these rules are
+implemented yet — Status `DECIDED` means locked/approved, not built. See `docs/decisions.md`'s P0-A
+entry for the accompanying server ledger/schema design these rules feed into, and
+`docs/firestore_data_model.md` for the two new collections (`loyaltyAccounts`, `loyaltyLedgerEntries`)
+this design introduces.
+
+### BR-LOYALTY-001 — Earning rate and persistent remainder
+- **Status**: DECIDED
+- **Rule**: Boncuk earning rate is **50 TL eligible net spend = 1 Boncuk**. The result is floored — no
+  fractional Boncuk is ever granted. Any unused spend remainder (the portion of eligible net spend
+  below the next 50 TL threshold) never disappears — it is carried forward as customer-owned,
+  server-authoritative loyalty state and applied against the customer's next eligible order. All
+  monetary amounts are handled in minor currency units (kuruş) server-side; a floating-point money
+  representation is never used, mirroring this codebase's existing `Money`/minor-units discipline.
+  **Example**: Order 1 = 549 TL eligible net spend → 10 Boncuk + 49 TL remainder carried forward.
+  Order 2 = 151 TL eligible net spend → combined with the 49 TL remainder = 200 TL → 4 Boncuk,
+  remainder resets to 0 TL.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty, Orders
+
+### BR-LOYALTY-002 — Earning is granted only on order completion, and is idempotent
+- **Status**: DECIDED
+- **Rule**: Boncuk is granted only when an order reaches the canonical `completed` status
+  (`OrderStatus.completed`). No earlier status (`created`, `pendingConfirmation`, `confirmed`,
+  `preparing`, `ready`, `outForDelivery`, `served`) ever grants Boncuk. The earning operation is
+  idempotent — the same completed order can never grant Boncuk more than once, regardless of how many
+  times the completion event is delivered/retried.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty, Orders
+
+### BR-LOYALTY-003 — Earning basis is post-discount net eligible spend
+- **Status**: DECIDED
+- **Rule**: Boncuk earning is calculated from the customer's actual eligible net spend **after** any
+  campaign/coupon discount is applied — never from the pre-discount gross amount. **Example**: gross
+  eligible amount 500 TL, coupon 100 TL, net eligible paid amount 400 TL → earning basis is 400 TL
+  (8 Boncuk).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty, Orders, Campaigns
+
+### BR-LOYALTY-004 — Boncuk-paid amount never earns new Boncuk
+- **Status**: DECIDED
+- **Rule**: If a customer redeems Boncuk (cash-like redemption) against an order, the portion of the
+  order paid with Boncuk is excluded from that order's earning basis. Only the remaining
+  cash/normal-payment-eligible amount (plus any prior earning remainder) is used to calculate newly
+  earned Boncuk — Boncuk can never generate new Boncuk from its own redeemed value. **Example**:
+  eligible total 500 TL, 100 TL paid with Boncuk → earning basis is the remaining 400 TL, combined
+  with any prior remainder.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty, Orders, Payments
+
+### BR-LOYALTY-005 — Cash-like redemption: rate, customer choice, and caps
+- **Status**: DECIDED
+- **Rule**: 1 Boncuk = 2 TL for ordinary cash-like redemption. The customer explicitly chooses how many
+  whole Boncuk to use — the system never automatically applies the maximum. Minimum redemption is 1
+  Boncuk. Maximum redemption is the **lower of**: (A) the customer's current spendable Boncuk balance,
+  and (B) the Boncuk amount equivalent to 50% of the eligible order amount. Fractional Boncuk
+  redemption is never permitted.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty, Orders, Payments
+
+### BR-LOYALTY-006 — Single-benefit-per-order rule (resolves BR-PROMO-003)
+- **Status**: DECIDED
+- **Rule**: Boncuk (in either form — cash-like redemption or a catalog reward redemption) is itself
+  treated as a campaign/benefit for stacking purposes. A customer may apply only **one** benefit to a
+  given order. The following combinations therefore never stack: coupon/campaign + Boncuk cash-like
+  redemption; coupon/campaign + Boncuk catalog reward; Boncuk cash-like redemption + Boncuk catalog
+  reward. When more than one benefit is available/eligible, the customer explicitly chooses which one
+  to apply — the system never auto-selects or auto-combines on the customer's behalf. This resolves
+  `BR-PROMO-003` but does **not** resolve `BR-PROMO-004` (general multi-discount/campaign stacking
+  outside the Boncuk case), which remains separately UNRESOLVED.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty, Campaigns, Orders, Payments
+
+### BR-LOYALTY-007 — Reward catalog
+- **Status**: DECIDED (catalog values) / UNRESOLVED (bowl-over-500-TL behavior)
+- **Rule**: The redeemable reward catalog is: 50 Boncuk → a drink; 100 Boncuk → a snack; 200 Boncuk →
+  a pasta item; 200 Boncuk → one bowl, up to 500 TL menu value. Every catalog redemption selects
+  exactly one eligible item — extras/add-ons are never automatically included free. A redeemed catalog
+  reward earns no Boncuk. Cancelling the order the reward was attached to restores the redemption (the
+  spent Boncuk is returned to the customer's balance). **Explicitly UNRESOLVED, not invented here**:
+  behavior when the chosen bowl's menu value exceeds 500 TL (customer pays the difference? a
+  lower-value bowl is enforced? the reward is simply unavailable for that bowl?).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty, Orders, Menu
+
+### BR-LOYALTY-008 — Task-based earning
+- **Status**: DECIDED (task list and point values) / UNRESOLVED (verification mechanism, unfollow
+  reversal)
+- **Rule**: Locked tasks and point values: Google review = +2 Boncuk; photo review = +3 Boncuk; video +
+  photo review = +4 Boncuk; Instagram follow = +2 Boncuk. Every task **must** be backed by a
+  server-verifiable anti-fraud mechanism before it can grant Boncuk — no task earning may ship on
+  client self-report alone; the current codebase's implementation (none exists) must never be assumed
+  acceptable as a starting point. **Explicitly UNRESOLVED, not invented here**: the exact verification
+  mechanism per task type, and whether an Instagram unfollow reverses the earned Boncuk.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty
+
+### BR-LOYALTY-009 — Wheel
+- **Status**: DECIDED (caps) / UNRESOLVED (exact probability distribution, exact expiry mechanics)
+- **Rule**: Normal wheel prizes fall in the 1–5 Boncuk range. A 5-Boncuk prize is capped at once per
+  calendar month per customer. Total wheel-sourced Boncuk is capped at 20 per calendar month per
+  customer. Every wheel outcome must be determined by server-side RNG with abuse prevention — a
+  client-determined or client-predictable outcome is never acceptable. Wheel-earned Boncuk is expected
+  to expire monthly. **Explicitly UNRESOLVED, not invented here**: the exact prize probability
+  distribution, and the exact expiry mechanics (calendar-month boundary vs. rolling window, any grace
+  period).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty
+
+### BR-LOYALTY-010 — Server-authoritative security model
+- **Status**: DECIDED
+- **Rule**: The client is never authoritative for: Boncuk balance, earning remainder, earning amount,
+  redemption-amount authorization, reward fulfillment, reversal, or expiry. Every write to loyalty
+  state happens exclusively through trusted Cloud Functions/Admin SDK. A customer may only read their
+  own tenant-scoped loyalty data. Staff/admin access is future, explicitly permission-controlled —
+  deliberately **not** granted by default org-membership the way `customerPhotos` currently is, given
+  loyalty balance is money-equivalent value. Cross-tenant access is denied unconditionally.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty, Security
+
+### BR-LOYALTY-011 — Boncuk and CRM Visit Passport remain permanently separate (reaffirms BR-CRM-008)
+- **Status**: DECIDED
+- **Rule**: The Boncuk points program and the CRM Visit Passport program never share balances,
+  ledgers, reward catalogs, business rules, or UI concepts — `BR-CRM-008` remains fully binding.
+  `tenantCustomers`' aspirational "reward history" fields belong exclusively to the Visit Passport
+  program; no Boncuk-related field is ever added to `tenantCustomers`. Boncuk's server-authoritative
+  state lives exclusively in dedicated `loyaltyAccounts`/`loyaltyLedgerEntries` collections (see
+  `docs/firestore_data_model.md`).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Loyalty, CRM
 
 # Customer CRM & Loyalty Platform
 
@@ -3360,8 +3498,7 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 | BR-TAX-005 | Should an order-level discount proportionally reduce the reported VAT figure? |
 | BR-TAX-006 | Are service/delivery/packaging fees VAT-inclusive, VAT-exempt, or taxed at a different rate? |
 | BR-TAX-007 | Is a tip subject to VAT? |
-| BR-PROMO-003 | Can coupons and Boncuk be used together? |
-| BR-PROMO-004 | Can multiple discounts or campaigns stack? |
+| BR-PROMO-004 | Can multiple discounts or campaigns stack (outside the now-resolved Boncuk case)? |
 | BR-PROMO-005 | What is a campaign's channel/branch/product eligibility scope? |
 | BR-PAY-005 | What is the app's actual PCI DSS compliance scope? |
 | BR-REFUND-005 | Are refunds full-order only or item-level? |
@@ -3372,6 +3509,9 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 | BR-BRANCH-004 | Are coupons/campaigns branch-scoped or restaurant-wide? |
 | BR-MKT-004 | How are marketplace orders handled when branch stock is unavailable? |
 | BR-EDGE-002 | Are the current mock delivery-zone fees/minimums real business values? |
+| BR-LOYALTY-007 | What happens when a reward-eligible bowl's menu value exceeds 500 TL? |
+| BR-LOYALTY-008 | What is the server-verifiable anti-fraud mechanism per task type? Does an Instagram unfollow reverse earned Boncuk? |
+| BR-LOYALTY-009 | What is the exact wheel prize probability distribution? What are the exact wheel-Boncuk expiry mechanics? |
 
 # Decision Log
 
@@ -4867,6 +5007,26 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.20 — 2026-08-20
+- **Version**: 3.20
+- **Date**: 2026-08-20
+- **Summary**: Boncuk Loyalty Program P0-A — business rule freeze. New `LOYALTY` category and
+  `BR-LOYALTY-001` through `BR-LOYALTY-011`: locked earning rate (50 TL = 1 Boncuk, floored, with a
+  persistent server-authoritative TL remainder that carries forward across orders), completion-only
+  idempotent earning, post-discount net-spend earning basis, Boncuk-paid-amount-earns-nothing,
+  cash-like redemption (1 Boncuk = 2 TL, customer-chosen quantity, 50%-of-order cap), the locked
+  50/100/200/200 reward catalog, the locked task point values (Google review/photo review/video+photo/
+  Instagram follow), the locked wheel caps (1–5 normal, 5-max-once/month, 20/month total), the
+  server-authoritative security model, and the reaffirmed permanent separation from CRM Visit Passport
+  (`BR-CRM-008`). Resolved `BR-PROMO-003` (coupon + Boncuk stacking) as **not allowed** — Boncuk is
+  itself a benefit for stacking purposes, exactly one benefit per order, customer-selected. Several
+  sub-decisions remain explicitly UNRESOLVED within the new rules themselves (bowl-over-500-TL
+  behavior, task verification mechanism, Instagram unfollow reversal, exact wheel probabilities/expiry
+  mechanics) — added to the Open Questions table, not invented. No code implemented this entry —
+  business-rule freeze and server ledger/schema design only; see `docs/decisions.md`'s P0-A entry for
+  the accompanying architecture.
+- **Author**: Claude, at the user's direction (Boncuklarım P0-A).
 
 ### v3.19 — 2026-08-19
 - **Version**: 3.19

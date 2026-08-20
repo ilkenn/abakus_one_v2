@@ -11172,3 +11172,304 @@ changed** — both new reads were already rules-permitted for the owner.
 **Gates**: `flutter analyze` clean (0 issues, full app); full `flutter test` **3236 passed / 12 skipped
 (pre-existing, unrelated) / 0 failed** (up from the 3198 pre-P.4.3B baseline). No Functions/Rules/Storage
 suites rerun — this task touched Flutter files only.
+
+
+## Boncuk Loyalty Program P0-A — Business Rule Freeze & Server Ledger Architecture (2026-08-20)
+
+**Status**: Accepted (business rules locked; ledger/schema design accepted). **No code, no
+`firestore.rules`, no Cloud Function, no Flutter UI implemented this entry** — a preceding read-only
+audit (this same date) confirmed the entire Boncuk points program is 100% client-side mock state
+(`lib/features/profile/presentation/providers/loyalty_provider.dart`'s `LoyaltyNotifier`, seeded
+balance `320`, zero persistence) with no backend counterpart anywhere. This entry formalizes the
+production business rules (`docs/business_rules.md`'s new `BR-LOYALTY-001`–`011`) and designs the
+server-authoritative ledger/materialized-account schema those rules require — implementation is P1+,
+not this entry.
+
+### Business rules locked
+
+See `docs/business_rules.md`'s new "Boncuk Loyalty Program — Locked Production Rules" section in full
+for exact wording; summarized here for architectural context: 50 TL eligible net spend = 1 Boncuk,
+floored, with a **persistent, server-authoritative TL remainder** that carries forward indefinitely
+across orders (never discarded); earning only on canonical order `completed` status, idempotently;
+earning basis is net spend **after** campaign/coupon discount and **excluding** any Boncuk-paid
+portion; cash-like redemption at 1 Boncuk = 2 TL, customer-chosen quantity (never auto-maxed), capped
+at the lower of spendable balance and 50% of the eligible order amount; a locked reward catalog
+(50/100/200/200 Boncuk → drink/snack/pasta/bowl-up-to-500TL); locked task point values (Google
+review +2, photo review +3, video+photo +4, Instagram follow +2) gated on a not-yet-designed
+server-verifiable anti-fraud mechanism; locked wheel caps (1–5 normal, 5-max-once/month, 20/month
+total) via server RNG. **`BR-PROMO-003` (coupon + Boncuk stacking) is now resolved: not allowed** —
+Boncuk itself counts as a benefit for stacking purposes, exactly one benefit per order, and the
+customer (never the system) chooses which benefit to apply when more than one is available.
+
+**Deliberately left open, not invented**: bowl-reward-over-500-TL behavior, the exact task
+verification mechanism per type, Instagram-unfollow reversal, exact wheel probability distribution,
+exact wheel-expiry mechanics, partial-refund Boncuk-reversal semantics, mixed-payment partial-refund
+semantics, the bronze/silver/gold tier system's fate, and admin manual-adjustment permission/approval
+thresholds. The schema below is explicitly designed so that none of these, once decided, requires a
+ledger redesign — only a new entry-type behavior or an additive field.
+
+### Schema design
+
+**Two new collections, both explicitly designed but not yet implemented** (no `firestore.rules` entry,
+no Cloud Function writer, no composite index exists for either yet — see
+`docs/firestore_data_model.md`'s new rows for the full field-by-field spec):
+
+- **`loyaltyLedgerEntries/{entryId}`** — append-only, immutable, the sole source of truth. One document
+  per economic event, of a closed `entryType` enum (`orderEarn`, `orderEarnReversal`,
+  `boncukRedemption`, `boncukRedemptionRestore`, `catalogRedemption`, `catalogRedemptionRestore`,
+  `wheelEarn`, `wheelExpiry`, `taskEarn`, `taskReversal`, `adminAdjustment` — camelCase, matching this
+  codebase's existing stored-enum convention, e.g. `CustomerPhotoStatus.pendingReview`/`OrderStatus`'s
+  own values, rather than the upper-snake-case the task brief used as prose notation only).
+- **`loyaltyAccounts/{organizationId}_{uid}`** — a server-maintained **materialized view**, not an
+  independent source of truth, for O(1) balance reads. Composite id mirrors `tenantCustomers`/
+  `customerPublicProfiles`'s existing convention exactly.
+
+**Ledger vs. materialized-account responsibility — the professional answer is neither pure option the
+brief posed.** The brief asked to choose between (A) the remainder living directly on `loyaltyAccounts`
+as a server-maintained aggregate, or (B) deriving it purely from ledger entries on every read. Neither
+alone is correct: (B) alone means every balance read requires scanning a customer's entire ledger
+history — unacceptable for a value shown on nearly every screen; (A) alone, if the account were ever
+writable independently of the ledger, would let the two drift and destroy auditability. **The
+production answer is a transactionally-coupled projection**: every single write path (earn, redeem,
+reverse, restore, wheel, task, admin) does all of the following inside **one Firestore transaction**:
+read the current account doc, compute the new ledger entry (snapshotting `remainderBeforeMinorUnits`/
+`remainderAfterMinorUnits` on it), `tx.create()` that immutable entry, then update the account's
+`spendableBalance`/`earningRemainderMinorUnits`/`lifetimeEarned`/`lifetimeRedeemed`/`revision`/
+`updatedAt` in the same transaction. The account can therefore never diverge from the ledger by
+construction — this exact pattern (an immutable append-only record plus an atomically-co-written
+materialized projection, in one transaction) is not new to this codebase: it is precisely what
+`moderateCustomerPhoto.ts`'s auto-selection branch already does for `customerPublicProfiles`, and what
+`reservationSlotOccupancy`'s bucketed counters already do for capacity accounting. A periodic
+reconciliation job (recompute the account from a full ledger scan, compare, alert on drift) is a
+recommended future operational safeguard — structurally unnecessary given the transactional coupling,
+but cheap defense-in-depth, not built this entry.
+
+**Idempotency strategy**: every ledger entry uses a **deterministic Firestore document id**, written
+via `tx.create()` (never `.set()`) so a retried trigger/request throws `ALREADY_EXISTS` and is treated
+as an already-applied no-op — the exact pattern already proven in this codebase by
+`onOrderCompleted.ts`'s `orderEvents/{orderId}-completed` outbox record and
+`customerPhotoUploadGrants.ts`'s `requestKey`-replay handling. Order-linked entries derive their id
+from the order (e.g. `{orderId}-earn`, `{orderId}-earn-reversal`); customer-initiated entries
+(redemption, wheel spin, task submission) derive theirs from a server-validated request/submission id.
+No new idempotency mechanism needed — this is a direct reuse of an already-proven pattern, not an
+invention.
+
+**Reversal architecture**: every reversal (`orderEarnReversal`, `boncukRedemptionRestore`,
+`catalogRedemptionRestore`, `taskReversal`) is its own new ledger entry, never an edit to the original
+— `reversalOf` points at the original entry's id. A reversal's `deltaBoncuk` is computed **from the
+original entry's own stored delta**, never recomputed from current rates, which is exactly why each
+earn/redemption entry snapshots the rate that produced it (see field list below) — a rate change
+between the original event and a much-later reversal can never silently change what gets reversed.
+`deltaBoncuk` is an arbitrary signed integer, not hardcoded to always equal the original in full, so a
+future partial-refund-proportional-reversal rule (currently unresolved) fits this schema with zero
+redesign. The actual *trigger* for order-linked reversal — a Firestore trigger on an order transitioning
+to `cancelled`/`refunded` — cannot be wired until order cancellation/refund itself becomes
+server-executable (confirmed by the prior audit: `lib/features/orders/domain/refunds/`'s
+`RefundIntent`/`RefundCalculator`/`OrderCancellationInfo` are real, tested Dart **domain** objects with
+zero Cloud Function counterpart today) — this is a hard P2b prerequisite, not solved by this schema
+alone.
+
+**Tenant isolation**: both collections carry `organizationId` as a required top-level field, never
+inferred. Composite-id scoping means a customer active in more than one organization gets one account/
+ledger per organization, consistent with `tenantCustomers`.
+
+**Rules-access model (designed, not yet written to `firestore.rules`)**: owner-only read for both
+collections (`request.auth.uid == uid` / `request.auth.uid == resource.data.customerId`) — **deliberately
+narrower than `customerPhotos`'s blanket `isOrgMember` staff-read**, since loyalty balance is
+money-equivalent value, not a profile photo; staff/admin read is intentionally not scaffolded at all
+yet, pending the still-open admin-permission-threshold decision. `allow write: if false` unconditionally
+on both — Cloud-Function/Admin-SDK only, matching every other server-authoritative collection in this
+schema (`customers`, `customerPhotos`, `customerPhotoUploadGrants`).
+
+**`tenantCustomers` is deliberately NOT extended.** The brief asked whether a narrow loyalty summary
+belongs there — rejected: `tenantCustomers`'s existing "reward history" aspiration belongs exclusively
+to the CRM Visit Passport program (`BR-CRM-008`), overloading a membership/identity document with
+money-equivalent ledger data would blur that already-locked separation and the security boundary
+around it, and the flat-dedicated-collection shape already matches this codebase's own precedent
+(`customerPhotos`/`customerPublicProfiles` over extending `customers`).
+
+### Field lists (challenged and refined from the brief's own starting list)
+
+**`loyaltyLedgerEntries/{entryId}`**: `organizationId`, `customerId`, `entryType` (closed camelCase
+enum, 11 values above), `deltaBoncuk` (signed int — positive for earn/restore, negative for
+redemption/reversal/expiry), `sourceId` (generic, `entryType`-dependent pointer — orderId/wheelSpinId/
+taskSubmissionId/staffActionId), `orderId` (nullable, denormalized **separately** from `sourceId`
+specifically because "every ledger entry for order X" is the single most common future query —
+refund reconciliation, support tooling, audit — and a dedicated indexed field serves that far better
+than a generic polymorphic pointer would), `amountBasisMinorUnits` (nullable, only meaningful for
+spend-derived earn types), `remainderBeforeMinorUnits`/`remainderAfterMinorUnits` (nullable, only
+meaningful for `orderEarn`/`orderEarnReversal` — this pair is what makes the remainder independently
+reconstructable from the ledger alone, satisfying "deterministic, auditable/reconcilable" without
+trusting the materialized account), `earningRateMinorUnitsPerBoncuk`/`redemptionRateMinorUnitsPerBoncuk`
+(nullable, entryType-dependent — **new fields, not in the brief's list**: snapshotting the applicable
+rate on every entry means a ledger entry stays self-describing even if the 50-TL or 2-TL rate ever
+changes later; without this, historical entries would become ambiguous the moment a rate changes),
+`createdAt` (server timestamp), `idempotencyKey` (a queryable, human/audit-readable value distinct
+from the deterministic doc id itself), `reversalOf` (nullable, the reversed/restored entry's id),
+`expiresAt` (nullable, `wheelEarn` only, unused until wheel-expiry mechanics are decided), `metadata`
+(a small object with a **closed, per-entryType-documented set of optional keys** — e.g. `rewardId` for
+catalog redemption, `taskType` for task earn, `staffActorId`+`reason` for admin adjustment — never a
+truly arbitrary blob; the brief's own "strict bounded schema" instruction is honored by enumerating the
+allowed keys per type rather than accepting anything).
+
+**Dropped from the brief's list**: a separate `sourceType` field — redundant with `entryType`, which
+already fully determines what kind of thing `sourceId` points at; keeping both would be duplicate,
+driftable information carrying no query benefit `entryType` doesn't already provide.
+
+**`loyaltyAccounts/{organizationId}_{uid}`**: `organizationId`, `customerId`, `spendableBalance` (int,
+whole Boncuk), `earningRemainderMinorUnits` (int, kuruş), `lifetimeEarned`/`lifetimeRedeemed` (int,
+monotonic, never decremented — analytics/future-tier-consideration only), `updatedAt`, `revision` (int,
+optimistic-concurrency version — mirrors this codebase's own established `revision` convention on
+frequently-mutated documents, e.g. `StaffMember`/`CustomerPhoto`/`ReservationPolicy`). Fields explicitly
+**deferred, not added now** (additive-safe — Firestore documents accept new fields with zero migration,
+so there is no cost to waiting): `lastEarnedAt`/`lastRedeemedAt` (future abuse-detection signal),
+monthly wheel-earning counters (needed only once P6 actually builds the monthly-cap enforcement — a
+ledger range-query on `entryType == wheelEarn` within the current month is also viable without any new
+field at all).
+
+### Dead scaffolding
+
+`lib/features/loyalty/` (5 empty files, zero references — confirmed by the prior audit) remains
+untouched this entry, exactly as instructed. It is dead scaffolding and will be replaced/cleaned when
+the real Loyalty feature migration (P3+) actually rewires `features/profile`'s Loyalty UI onto this new
+backend — not deleted speculatively now. The Admin loyalty console placeholder
+(`lib/features/admin/presentation/screens/loyalty_management_screen.dart`) is likewise untouched — a
+genuine future need (ledger/moderation console), not dead code to clean up.
+
+### No data migration
+
+Confirmed again: `LoyaltyNotifier`'s mock state (seeded balance `320`, hardcoded history/dates, mock
+wheel/reward data) is never migrated into the new schema in any form. Production Boncuk starts from
+empty/zero server state for every customer — this is a fresh build, not a data migration, since no
+loyalty value has ever been persisted anywhere.
+
+**Files changed**: `docs/business_rules.md` (new `LOYALTY` category, `BR-LOYALTY-001`–`011`, resolved
+`BR-PROMO-003`, updated Open Questions table, changelog v3.20), `docs/decisions.md` (this entry),
+`docs/firestore_data_model.md` (new `loyaltyAccounts`/`loyaltyLedgerEntries` rows, both marked designed-
+not-implemented), `docs/feature_status.md` (P0-A closure entry). **No `firestore.rules`, no Cloud
+Function, no Flutter file, nothing committed** — confirmed via `git status --short` before and after.
+
+
+## Boncuk Loyalty Program P1 — Server-Authoritative Loyalty Ledger Foundation (2026-08-20)
+
+**Status**: Accepted, implemented. Builds the two P0-A-designed collections for real — rules, one
+minimal account-provisioning callable, and the shared ledger domain contracts — with **zero earning,
+redemption, reversal, wheel, task, admin-UI, or Flutter work**, exactly matching P1's own locked scope.
+Two architectural corrections the user required from the start (not retrofitted):
+
+**Correction A — `organizationId` is never client-trusted.** `getCustomerLoyaltySnapshot`
+(`functions/src/getCustomerLoyaltySnapshot.ts`) accepts no `organizationId` field at all —
+`request.data` is never even read for it. Organization is resolved exclusively via
+`SINGLE_TENANT_ORGANIZATION_ID`, imported (not re-declared) from `completeCustomerProfile.ts` — the
+same constant every other customer-facing callable already resolves canonical org from. There is
+structurally no field a client could set to request another tenant's account; a dedicated regression
+test (`organizationId always resolves to the canonical single-tenant constant, regardless of any
+client-sent data`) proves an attempted `{ organizationId: "org-evil" }` payload is silently ignored and
+never creates a document under that org. Tenant membership is independently re-verified server-side via
+the Admin SDK against `tenantCustomers/{organizationId}_{uid}` (that collection's own rule is
+staff-only — an ordinary customer could never perform this read themselves even if they tried),
+mirroring `requestCustomerPhotoUploadGrant.ts`'s own inline membership check exactly (no shared helper
+for this exists anywhere in `functions/src/`, confirmed before writing this code, not assumed).
+
+**Correction B — ledger entry ids are tenant + entryType + source-scoped, not a naked
+`{orderId}-earn` string.** `deriveLoyaltyLedgerEntryId` (`functions/src/loyaltyLedger.ts`) hashes
+`` `${organizationId}|${customerId}|${entryType}|${sourceId}` `` via `sha256Hex` — imported from its
+real, already-exported home (`submitTakeawayOrder.ts`), reused by `customerPhotoUploadGrants.ts` too,
+rather than duplicated a third time the way `submitReservation.ts` unfortunately did. Output is
+`loyalty-` + a 64-char hex digest — 72 chars total, well under Firestore's document-id limit, containing
+only hex digits and a hyphen (never `/`, `.`, or whitespace), and accepting no phone/email input at all
+(so no raw PII can ever reach it). Not implemented this phase: any function that actually calls this
+helper to write a ledger entry — P1 only establishes the contract P2+ imports.
+
+**Callable design.** `getCustomerLoyaltySnapshot` mirrors `getCustomerProfileCompletionState.ts`'s own
+shape (narrow read-only response, no client-trusted identity/tenant input) plus
+`completeCustomerProfile.ts`'s "reads first, always" transaction discipline for the one write it can
+perform. The common case — an already-provisioned account — is a plain, non-transactional read (no
+write, no `revision` bump, no `updatedAt` touch); only a genuine first-time call falls through to a
+transaction that re-reads before writing, so a concurrent first call for the same uid can never create
+two documents or double-initialize (the loser of the race simply returns the winner's data, untouched).
+No `loyaltyLedgerEntries` document is ever fabricated merely to create a zero account, per the locked
+instruction — a brand-new zero account legitimately has zero ledger entries.
+
+**Firestore rules — CORRECTED same-day (tenant read isolation security fix).** The rule as originally
+shipped earlier this same day was `isRealCustomerAuth() && isOwner(resource.data.customerId)` —
+described below at the time as sufficient. **A security review correctly identified this as
+insufficient**: `customerId == request.auth.uid` proves record ownership, but a Firebase Auth uid is
+global, not tenant-scoped — the same uid could (once real multi-tenant customer membership exists)
+legitimately own a `loyaltyAccounts`/`loyaltyLedgerEntries` record in more than one organization, and
+owner-uid-match alone would let a customer read a record of theirs in a tenant they don't (or no longer)
+belong to. **Owner identity and tenant membership are both independently required — the corrected rule**
+for both collections is:
+
+```
+allow read: if isRealCustomerAuth() &&
+  isOwner(resource.data.customerId) &&
+  isTenantCustomer(resource.data.organizationId);
+allow write: if false;
+```
+
+`isTenantCustomer(organizationId)` already existed (P.4.1, `customerPublicProfiles`'s own rule already
+relies on it) — `exists()`-checks a genuine `tenantCustomers/{organizationId}_{uid}` membership document
+for exactly the record's own `organizationId`, reused verbatim rather than a new pattern invented.
+`isRealCustomerAuth()` (Phase 3.1, previously used only by the Table Guest Session boundary) still
+excludes a guest/anonymous Firebase Auth session, which `isOwner()`/`isTenantCustomer()` alone would not.
+No staff/org-member branch (staff/admin access remains a future, separately-designed permission model,
+not scaffolded this phase); `tenantCustomers` itself is not made any more broadly client-readable —
+`exists()` inside a rule evaluation is a server-side rules-engine lookup, not a client read of that
+collection.
+
+The intended `loyaltyLedgerEntries` history query
+(`where('customerId','==',ownUid).where('organizationId','==',orgId)`) stays safe under the corrected,
+stricter rule for the same static-filter-substitution reasoning already governing `customerPhotos`' own
+query — both equality filters get pinned to one fixed value for the whole query, so `isTenantCustomer`'s
+`exists()` check resolves once, not per-document. The **mandatory same-uid/wrong-tenant case** — a real,
+authenticated customer whose own uid matches a record's `customerId`, querying/reading an
+`organizationId` they hold no genuine `tenantCustomers` membership for — is now explicitly regression-
+tested for both a single-document `get` and the history `list` query, closing exactly the gap the
+security review named. Since no existing rules test in this codebase had ever proved the *negative* half
+of the query-safety reasoning (a query omitting a required scope filter being denied outright, not
+silently filtered), this phase establishes that test pattern fresh, alongside the now-mandatory wrong-
+tenant case.
+
+**Index.** One composite index, `loyaltyLedgerEntries(organizationId ASC, customerId ASC, createdAt
+DESC)` — exactly the shape the intended future customer-history query needs, added because that query
+already exists in design intent (not speculative, per `docs/firestore_data_model.md`'s own stated
+indexing policy).
+
+**Tests.** `functions/src/test/loyaltyLedger.test.ts` (new, 12 tests, no emulator dependency — pure
+functions): `sanitizeEntryType` accepts all 11 types/rejects invalid input, both rate constants exact,
+`deriveLoyaltyLedgerEntryId` determinism/differs-per-input(org/entryType/sourceId/customerId)/bounded-
+Firestore-safe/no-PII-possible. `functions/src/test/getCustomerLoyaltySnapshot.test.ts` (new, 9 tests,
+emulator-backed): guest/anonymous denied, no-membership denied, zero-account provisioning with exact
+field assertions, canonical account id, `organizationId` override attempt ignored, membership-in-a-
+different-org still denied for the canonical org, idempotent repeat calls, an existing non-zero
+account's counters never reset and `revision` never bumped by a read. `firestore-tests/rules.test.js`
+(+18, rewritten same-day for the tenant isolation fix): for both collections — same-uid+valid-membership
+read succeeds; same-uid+no-membership-at-all read denied; **same-uid+membership-in-a-different-org still
+denied for the record's actual org** (the mandatory same-uid/wrong-tenant case); different-uid denied;
+guest/anonymous denied; all writes denied. For `loyaltyLedgerEntries` additionally: the intended
+`customerId`+`organizationId`-filtered history query succeeds and returns only the owner's own entries;
+**the same history query re-scoped to a wrong-but-same-uid organization is denied** (the mandatory
+same-uid/wrong-tenant *query* case); a query omitting `organizationId` is denied; a query omitting
+`customerId` is denied; a query targeting another customer's uid is denied — establishing, for the first
+time in this codebase, the negative half of the list-query-denial pattern (a query missing a required
+scope filter, or scoped to an unauthorized value, being denied outright rather than silently filtered).
+
+**Files changed.** New: `functions/src/loyaltyLedger.ts`, `functions/src/getCustomerLoyaltySnapshot.ts`,
+`functions/src/test/loyaltyLedger.test.ts`, `functions/src/test/getCustomerLoyaltySnapshot.test.ts`.
+Modified: `functions/src/index.ts` (+1 export), `firestore.rules` (+2 match blocks),
+`firestore.indexes.json` (+1 composite index), `docs/firestore_data_model.md` (the two P0-A rows updated
+to reflect real implementation), `docs/feature_status.md` (P1 closure entry). **No Flutter file touched**
+— nothing in `lib/` consumes this callable yet, per the locked "no half-wired customer UI" instruction.
+`lib/features/loyalty/`, the admin loyalty placeholder, and the orphaned `loyalty_summary_card.dart`
+remain untouched, exactly as before.
+
+**Gates (post tenant-isolation security fix, same day)**: Functions build/typecheck clean, re-confirmed
+unchanged (no Functions code touched by the fix — `getCustomerLoyaltySnapshot` uses the Admin SDK, which
+bypasses `firestore.rules` entirely). Functions emulator suite (JDK 21,
+`GOOGLE_MAPS_PROVIDER_MODE=fixture`) **835/835 passed**, unchanged. Firestore Rules emulator suite
+**337/337 passed** (up from 333 — the loyalty test block was rewritten in place for the tenant-isolation
+fix: 4 net new tests, since several prior tests were extended/replaced with the seeded-membership variant
+rather than simply added alongside). `flutter analyze`/`flutter test` not rerun this fix — no Flutter
+file touched (already confirmed clean/unchanged at 3236/12-skipped/0-failed by the original P1 gate run
+above). Storage Rules **not rerun** — nothing storage-related touched.
