@@ -60,7 +60,8 @@ abstract final class DevLoginConfig {
   /// which cannot be swapped at test time — mirrors
   /// `QuickTestLoginConfig.isAvailableFor`'s exact same reasoning, extended
   /// with the one extra condition this feature adds).
-  static bool isAvailableFor(AppEnvironment environment, {required String pin}) {
+  static bool isAvailableFor(AppEnvironment environment,
+      {required String pin}) {
     return environment == AppEnvironment.development &&
         FirebaseAuthEmulatorConfig.shouldUseEmulator(environment) &&
         pin.isNotEmpty;

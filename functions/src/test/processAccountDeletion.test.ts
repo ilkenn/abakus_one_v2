@@ -310,6 +310,66 @@ test("Faz D.3.2.1: a real phone customer cannot process another customer's delet
   assert.strictEqual(request?.status, "coolingOff", "the real owner's request must remain unprocessed");
 });
 
+// =====================================================================
+// Customer Registration CR.1 (2026-08-19) — deleted accounts must not
+// retain the new registration-form PII fields either. `tenantCustomers`
+// is deliberately left alone (see processAccountDeletion.ts's own
+// updated doc comment) — it carries no PII to redact.
+// =====================================================================
+
+test("CR.1/CR.1.1: account deletion redacts firstName/lastName/email/workplaceName/educationalInstitutionName/gender/occupationStatus/birthDate, and leaves tenantCustomers untouched", async () => {
+  const db = admin.firestore();
+  const { idToken, uid } = await createRealPhoneUser();
+  const requestId = "test-deletion-cr1-pii";
+
+  const membershipRef = db.collection("tenantCustomers").doc(`org-1_${uid}`);
+  await db.collection("customers").doc(uid).set({
+    uid,
+    firstName: "Ayşe",
+    lastName: "Yılmaz",
+    displayName: "Ayşe Yılmaz",
+    email: "ayse@example.com",
+    phoneNumber: "+905551110000",
+    accountStatus: "active",
+    occupationStatus: "working",
+    workplaceName: "Abaküs Kahve",
+    educationalInstitutionName: null,
+    gender: "female",
+    birthDate: "1990-08-20",
+    profileCompletedAt: admin.firestore.Timestamp.now(),
+    createdAt: admin.firestore.Timestamp.now(),
+    updatedAt: admin.firestore.Timestamp.now(),
+  });
+  await membershipRef.set({
+    organizationId: "org-1",
+    uid,
+    createdAt: admin.firestore.Timestamp.now(),
+  });
+  await seedDeletionRequest(requestId, uid);
+
+  const { httpStatus } = await callProcessAccountDeletion({ requestId }, idToken);
+  assert.strictEqual(httpStatus, 200);
+
+  const customer = (await db.collection("customers").doc(uid).get()).data();
+  assert.strictEqual(customer?.displayName, "Silinmiş Kullanıcı");
+  assert.strictEqual(customer?.phoneNumber, "");
+  assert.strictEqual(customer?.accountStatus, "restricted");
+  assert.strictEqual(customer?.firstName, "");
+  assert.strictEqual(customer?.lastName, "");
+  assert.strictEqual(customer?.email, "");
+  assert.strictEqual(customer?.workplaceName, null);
+  assert.strictEqual(customer?.educationalInstitutionName, null);
+  assert.strictEqual(customer?.gender, null);
+  assert.strictEqual(customer?.occupationStatus, null);
+  assert.strictEqual(customer?.birthDate, null, "CR.1.1: birthDate is PII and must be redacted on deletion");
+
+  // tenantCustomers carries no PII — deliberately untouched, not
+  // deleted, not anonymized (see the audit reasoning above).
+  const membership = (await membershipRef.get()).data();
+  assert.strictEqual(membership?.organizationId, "org-1");
+  assert.strictEqual(membership?.uid, uid);
+});
+
 test("Faz D.3.2.1: a client-supplied uid field on the payload is never read — the affected account always comes from the deletionRequests document's own server-written uid, never from the request body", async () => {
   const db = admin.firestore();
   const { idToken, uid } = await createRealPhoneUser();

@@ -1431,6 +1431,113 @@ test('a customer cannot self-provision their own customer document (server-only 
   );
 });
 
+// =====================================================================
+// Customer Registration CR.1 (2026-08-19) — tenantCustomers is Cloud-
+// Function-only (`allow write: if false`), and the new registration-form
+// PII fields on customers/{uid} must stay off the client update
+// allow-list. Neither was previously covered by a dedicated test — the
+// audit's own report named this exact gap.
+// =====================================================================
+
+test('CR.1: a customer cannot directly create their own tenantCustomers membership document', async () => {
+  const dave = testEnv.authenticatedContext('dave', {}).firestore();
+
+  await assertFails(
+    setDoc(doc(dave, 'tenantCustomers/org-1_dave'), {
+      organizationId: 'org-1',
+      uid: 'dave',
+    }),
+  );
+});
+
+test('CR.1: a customer cannot update an existing tenantCustomers membership document either — write is unconditionally denied, not just create', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'tenantCustomers/org-1_erin'), {
+      organizationId: 'org-1',
+      uid: 'erin',
+    });
+  });
+  const erin = testEnv.authenticatedContext('erin', {}).firestore();
+
+  await assertFails(
+    updateDoc(doc(erin, 'tenantCustomers/org-1_erin'), { visitCount: 999 }),
+  );
+});
+
+test('CR.1: a customer cannot delete their own tenantCustomers membership document', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'tenantCustomers/org-1_frank'), {
+      organizationId: 'org-1',
+      uid: 'frank',
+    });
+  });
+  const frank = testEnv.authenticatedContext('frank', {}).firestore();
+
+  await assertFails(deleteDoc(doc(frank, 'tenantCustomers/org-1_frank')));
+});
+
+test('CR.1: a customer cannot forge the new registration fields (gender/occupationStatus/etc.) via the client update path — only displayName/email stay allow-listed', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customers/grace'), {
+      displayName: 'Grace',
+      email: 'grace@example.com',
+      firstName: 'Grace',
+      lastName: 'Hopper',
+      occupationStatus: 'other',
+      gender: 'female',
+    });
+  });
+  const grace = testEnv.authenticatedContext('grace', {}).firestore();
+
+  // Even alongside an otherwise-allowed field, ANY additional key outside
+  // the allow-list fails the whole update — an allow-list, not a partial
+  // best-effort filter.
+  await assertFails(
+    updateDoc(doc(grace, 'customers/grace'), {
+      displayName: 'Grace Updated',
+      gender: 'male',
+    }),
+  );
+  await assertFails(
+    updateDoc(doc(grace, 'customers/grace'), { occupationStatus: 'working' }),
+  );
+  await assertFails(
+    updateDoc(doc(grace, 'customers/grace'), { firstName: 'Forged' }),
+  );
+  // The pre-existing allow-listed fields remain genuinely updatable —
+  // proves the fix didn't accidentally tighten the rule beyond what CR.1
+  // asked for.
+  await assertSucceeds(
+    updateDoc(doc(grace, 'customers/grace'), { displayName: 'Grace Updated' }),
+  );
+});
+
+test('CR.1.1: a customer cannot directly set or change birthDate via the client update path — it stays off the allow-list, first-write or otherwise', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customers/hank'), {
+      displayName: 'Hank',
+      email: 'hank@example.com',
+      birthDate: '1990-08-20',
+    });
+  });
+  const hank = testEnv.authenticatedContext('hank', {}).firestore();
+
+  await assertFails(
+    updateDoc(doc(hank, 'customers/hank'), { birthDate: '2001-01-01' }),
+  );
+  await assertFails(
+    updateDoc(doc(hank, 'customers/hank'), {
+      displayName: 'Hank Updated',
+      birthDate: '2001-01-01',
+    }),
+  );
+  // Existing allow-listed fields remain genuinely updatable — the
+  // birthDate exclusion doesn't regress the rest of the allow-list.
+  await assertSucceeds(
+    updateDoc(doc(hank, 'customers/hank'), { displayName: 'Hank Updated' }),
+  );
+});
+
 test('a platform member without an active support grant cannot read tenant data outside their own scope', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'organizations/org-1'), { name: 'Abaküs' });
@@ -3087,6 +3194,39 @@ test('customerPhotos: every direct client write is denied — create, update, an
   );
   await assertFails(deleteDoc(doc(owner, 'customerPhotos/photo-2')));
   await assertFails(deleteDoc(doc(staff, 'customerPhotos/photo-2')));
+});
+
+test('CR.1.2: the onboarding-intent (purpose) field introduces no new client-write bypass — a client cannot create or forge it either', async () => {
+  const owner = testEnv.authenticatedContext('photo-owner-1', {}).firestore();
+
+  // Cannot create a fresh doc carrying a purpose field — same
+  // Cloud-Function-only rule as every other field on this collection.
+  await assertFails(
+    setDoc(doc(owner, 'customerPhotos/photo-onboarding-spoof'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/spoof.jpg',
+      status: 'pendingReview',
+      purpose: 'profileOnboarding',
+    }),
+  );
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerPhotos/photo-3'), {
+      customerId: 'photo-owner-1',
+      organizationId: 'org-1',
+      photoRef: 'tenants/org-1/customerPhotos/photo-owner-1/c.jpg',
+      status: 'pendingReview',
+      purpose: null,
+    });
+  });
+
+  // Cannot retroactively claim onboarding intent on an existing photo the
+  // client never declared it for — the field stays Cloud-Function-only,
+  // never a client-writable one, matching every other CR.1.2 field.
+  await assertFails(
+    updateDoc(doc(owner, 'customerPhotos/photo-3'), { purpose: 'profileOnboarding' }),
+  );
 });
 
 test('customerPublicProfiles: same-org staff can read the public projection', async () => {

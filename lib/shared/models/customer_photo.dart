@@ -18,6 +18,13 @@ import 'customer_photo_status.dart';
 /// a `copyWith` parameter — see that method) and is the field the real
 /// `customerPhotos` Firestore collection's tenant-isolation rule reads
 /// (`firestore.rules`).
+///
+/// P.4.3A (2026-08-19): moved from `features/admin/domain/customer/` to
+/// `shared/models/` — genuinely used by two features now (`admin`'s
+/// moderation surface, `profile`'s own customer-facing gallery), the
+/// exact "shared/models — used by 2+ features" criterion `CLAUDE.md`
+/// names. No behavior changed by the move; every field/method is
+/// byte-for-byte identical to the pre-move version.
 class CustomerPhoto {
   const CustomerPhoto({
     required this.id,
@@ -31,13 +38,15 @@ class CustomerPhoto {
     this.reviewedAt,
     this.rejectionReason,
     required this.revision,
+    this.purpose,
   });
 
   /// The customer's own maximum number of active/eligible photos at once
   /// — P.4.1 (2026-08-19): raised from 5 to 10, superseding every prior
   /// "max-5"/"maximum 5" reference in this codebase's docs/tests/comments.
-  /// The single source of truth `SubmitCustomerPhoto` enforces against —
-  /// no other file should hardcode this number again.
+  /// The single source of truth `SubmitCustomerPhoto`/the real
+  /// `requestCustomerPhotoUploadGrant` Cloud Function both enforce against
+  /// — no other file should hardcode this number again.
   static const int maxEligiblePhotos = 10;
 
   final String id;
@@ -47,8 +56,10 @@ class CustomerPhoto {
   final CustomerPhotoStatus status;
 
   /// At most one of a customer's photos may have this `true`, and only
-  /// if [status] is `approved` — enforced by `SelectCustomerProfilePhoto`,
-  /// not by this constructor.
+  /// if [status] is `approved` — enforced by `selectCustomerProfilePhoto`
+  /// (Cloud Function, server-authoritative) and, for defense-in-depth
+  /// only, `SelectCustomerProfilePhoto` (Dart use case), not by this
+  /// constructor.
   final bool isSelectedAsProfilePhoto;
 
   final DateTime uploadedAt;
@@ -56,6 +67,16 @@ class CustomerPhoto {
   final DateTime? reviewedAt;
   final String? rejectionReason;
   final int revision;
+
+  /// CR.1.2 (2026-08-20) — server-authoritative upload intent, copied by
+  /// `finalizeCustomerPhotoUpload` from the upload grant that authorized
+  /// this photo; `null` for every photo uploaded outside a declared
+  /// intent (e.g. the ordinary "Profil Fotoğraflarım" flow). The only
+  /// value in use today is `'profileOnboarding'`. Read-only from the
+  /// client's own perspective — never settable via [copyWith], since
+  /// nothing in this app ever legitimately changes a photo's own upload
+  /// intent after the fact.
+  final String? purpose;
 
   /// Whether this photo counts toward [maxEligiblePhotos] active/eligible
   /// photos — `rejected`/`removed` photos never consume the allowance.
@@ -87,6 +108,7 @@ class CustomerPhoto {
           ? null
           : (rejectionReason ?? this.rejectionReason),
       revision: revision,
+      purpose: purpose,
     );
   }
 }

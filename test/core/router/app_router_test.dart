@@ -8,6 +8,8 @@ import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/otp_screen.dart';
+import 'package:abakus_one_v2/features/customer_registration/domain/models/customer_profile_completion_state.dart';
+import 'package:abakus_one_v2/features/customer_registration/presentation/providers/customer_registration_providers.dart';
 import 'package:abakus_one_v2/features/navigation/presentation/screens/main_navigation_screen.dart';
 import 'package:abakus_one_v2/features/onboarding/presentation/provider/onboarding_provider.dart';
 import 'package:abakus_one_v2/features/onboarding/presentation/screens/onboarding_screen.dart';
@@ -212,6 +214,16 @@ void main() {
                   session: resolvedSession,
                 ),
               ),
+            ),
+            // Customer Registration CR.1 — a real customer session now
+            // also routes through the profile-completion gate, which
+            // otherwise reaches a live Firestore-backed provider
+            // unavailable under `flutter test` (mirrors the identical
+            // fix `customerPhotoGatewayProvider` needed for the same
+            // reason). This test is about startup routing, not profile
+            // completion — treated as already complete.
+            customerProfileCompletionStateProvider.overrideWithValue(
+              const CustomerProfileCompletionState.complete(),
             ),
           ],
         );

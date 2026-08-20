@@ -1,5 +1,5 @@
-import '../domain/customer/customer_photo.dart';
-import '../domain/customer/customer_photo_status.dart';
+import '../../../shared/models/customer_photo.dart';
+import '../../../shared/models/customer_photo_status.dart';
 
 abstract interface class CustomerPhotoRepository {
   Future<void> save(CustomerPhoto photo);

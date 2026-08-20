@@ -10193,3 +10193,982 @@ source-text guard asserting `dev_login_provider.dart` never hardcodes either sta
 suites: `flutter analyze` clean; `test/features/auth/` 108/108 (12 skipped, PIN-dependent); full project
 `flutter test` **3007/3007** (12 skipped); both re-run with `--dart-define=DEV_LOGIN_PIN=1234` to confirm
 real (non-skipped) execution. `flutter build web` with the same defines compiles cleanly.
+
+## Profile P.4.3A — Customer Photo Upload Client + Private Gallery State
+
+Connects the Flutter customer app to the real photo backend (`bea00b0`, P.4.2B1/B2/B2.1): pick photo ->
+request secure upload grant -> upload to the exact granted Storage object -> the backend finalize
+trigger creates the real `pendingReview` `CustomerPhoto` -> the customer's private gallery reflects it,
+live. Does not touch `ProfileHeroCard` or build Community UI, per the locked scope.
+
+**`image_picker: ^1.2.3` added** — architect approval already granted per the task. Only ever imported
+behind `lib/features/profile/data/customer_photo_picker.dart`'s `CustomerPhotoPicker` interface (mirrors
+`FirebaseAuthClient`'s "wrap the vendor SDK, never call it directly" discipline) — no other file in the
+app imports `image_picker` directly. Platform config added: Android `CAMERA` permission (gallery needs
+none — `image_picker_android`'s own manifest already wires the modern Photo Picker); iOS
+`NSPhotoLibraryUsageDescription` added, `NSCameraUsageDescription`'s existing text (previously QR-
+scanning-only) broadened to also cover profile-photo capture, since iOS shows one description per
+permission regardless of which feature triggers it.
+
+**Model ownership correction — the exact "smallest safe refactor" the task's own instruction
+anticipated**: `CustomerPhoto`/`CustomerPhotoStatus` moved from `features/admin/domain/customer/` to
+`shared/models/` — genuinely consumed by two features now (`admin`'s moderation surface, `profile`'s own
+gallery), the textbook `shared/models` criterion. Zero behavior change; every admin call site (5 `lib/`
+files, 1 test file) updated to the new import path, nothing duplicated. `CustomerPublicProfile` was
+deliberately left in place — Profile doesn't consume it yet (selection UI is P.4.3B).
+
+**Client architecture** — `features/profile/data/`: `CustomerPhotoGateway` (Firestore `.snapshots()` read
+for the live gallery + `requestCustomerPhotoUploadGrant`/`selectCustomerProfilePhoto` callables — never a
+direct `customerPhotos`/`customerPublicProfiles`/`profilePicturePath` write, verified by a structural
+source-scan test, not just claimed), `CustomerPhotoStorageClient` (`putData`/`getData` bytes, never
+`getDownloadURL()` — no public token URL ever becomes the canonical `photoRef`), `CustomerPhotoPicker`
+(wraps `image_picker`, returns already-read bytes + filename + platform-reported mimeType, never an
+`XFile`/`dart:io.File` past this one file). `features/profile/domain/customer_photo_client_rules.dart`:
+pure validation/presentation functions (content-type resolution, size cap, Turkish status labels) — zero
+I/O, fully unit-tested without any fake.
+
+**Web/mobile MIME handling, confirmed by reading both plugins' source, not assumed**: `XFile.mimeType` is
+reliably populated on Web (`image_picker_for_web` passes the browser File's own `.type`) and always
+`null` on Android/iOS (neither `image_picker_android` nor `image_picker_ios` ever constructs an `XFile`
+with a `mimeType`). `resolveCustomerPhotoContentType` prefers `mimeType` when present, falls back to the
+file extension otherwise — "the smallest reliable existing solution," disclosed as such, not claimed to
+be generally trustworthy; `storage.rules`' own `contentType.matches('image/.*')` remains the actual
+authority regardless of what this function guesses.
+
+**Gallery state** — `customerPhotoGalleryProvider` (`StreamProvider.autoDispose`) reads directly off
+`CustomerPhoto.countsTowardEligibleLimit` (already existed, single source of truth, not reimplemented)
+for the active-vs-10 split; loading/empty/error/data are Riverpod's own `AsyncValue` states, not a custom
+sealed class — sufficient and idiomatic here. Signed-out resolves to a static empty stream rather than
+ever touching the backend with a null identity.
+
+**Upload sequence** — exactly the 9 locked steps: authenticated (gated at the entry point) -> pick ->
+client-side MIME/size validation -> `requestCustomerPhotoUploadGrant` -> receive
+`grantId`/`objectPath`/`contentType` -> `uploadBytes` to that EXACT path only -> `waitingForFinalize` (not
+a failure) -> `ref.listen(customerPhotoGalleryProvider)` auto-clears back to idle the moment a photo with
+`id == grantId` appears (the deterministic photoId `finalizeCustomerPhotoUpload.ts` already guarantees) ->
+UI shows the real `pendingReview` state via the live gallery stream. Never creates a `customerPhotos`
+document, never sets `status`/`isSelectedAsProfilePhoto`/`customerPublicProfiles`/`profilePicturePath` —
+verified by the same structural source-scan tests as the gateway.
+
+**A real double-tap race was found and closed during implementation, not merely assumed safe**: the
+original design guarded against a duplicate upload with `if (state.isBusy) return false` checked only
+after `await`-ing the picker — two near-simultaneous calls could both pass that check before either
+set a busy phase. Added `CustomerPhotoUploadPhase.picking`, set **synchronously** before the first
+`await`, closing the race for real (proven by a test issuing two concurrent `pickAndUpload` calls via
+`Future.wait` and asserting exactly one proceeds), not just relying on a real picker UI happening to
+block the second tap in practice.
+
+**Max-10 UX**: the add button disables at `activeCount >= CustomerPhoto.maxEligiblePhotos`, with the
+locked copy shown inline. Backend remains authoritative — a `resource-exhausted` grant rejection (the
+race case: stale client count, backend genuinely full) maps to the identical locked message via a
+distinct `limitReached` flag, not a generic failure string, and refreshes the real gallery naturally
+(the stream is already live).
+
+**A second real bug was found and fixed while wiring the entry point into `ProfileScreen`**:
+`ProfileCustomerPhotosCard` initially read `galleryAsync.value` — `AsyncValue.value` **rethrows** the
+underlying error when the state is `AsyncError` with no previously-cached value (confirmed by reading
+`package:riverpod`'s own source), unlike `.valueOrNull`, which is the actually-safe accessor. Because
+`ProfileScreen` renders inside `MainNavigationScreen`'s `IndexedStack` (every tab built and kept alive
+regardless of which is visible), this crashed `otp_screen_test.dart` — a file that has nothing to do with
+Profile — the moment a real authenticated `MainNavigationScreen` was pumped without an explicit override,
+which is most of this app's post-login test suite. Fixed at both call sites (`ProfileCustomerPhotosCard`
+and the upload notifier's own `ref.listen`), with a regression test that reproduces the exact "fresh
+`AsyncError`, no cached value" state that caused it — not just a happy-path re-check. `profile_screen_test
+.dart`'s own `pumpProfileScreen` helper also now overrides `customerPhotoGatewayProvider` with a trivial
+fake by default (belt-and-suspenders, mirrors how `authRepositoryProvider` is already always overridden
+there).
+
+**Photo rendering**: `customerPhotoBytesProvider` (`FutureProvider.autoDispose.family`) calls
+`Reference.getData()` — never `getDownloadURL()` — so no public token URL is ever generated, cached, or
+treated as canonical; `photoRef` stays the opaque Storage path end-to-end, exactly as the domain model's
+own doc comment requires.
+
+**Moderation-state customer copy**: `pendingReview` -> "Onay Bekliyor", `underReview` -> "İnceleniyor",
+`approved` -> "Onaylandı", `rejected` -> "Onaylanmadı" (+ `rejectionReason` shown inline — the owner-
+readable `customerPhotos` document already exposes that field to its own owner today, per
+`firestore.rules`), `removed` -> "Kaldırıldı". Reviewer staff id/audit/grant data never rendered anywhere
+in this feature.
+
+**Entry point**: `ProfileCustomerPhotosCard`, added to `ProfileScreen`'s existing `isAuthenticated` block
+(same gate `ProfileVisitPassCard` already uses) — a guest never sees it, verified by a dedicated test.
+`CustomerPhotoManagementScreen` ("Profil Fotoğraflarım") is the first functional (not yet visually
+polished, per the locked instruction) version: real count, real grid, real add-photo flow via a gallery-
+or-camera bottom sheet, real loading/empty/error/upload-in-progress/upload-failure/limit-reached states.
+
+**Tests**: `customer_photo_client_rules_test.dart` (15, pure functions), `customer_photo_upload_provider_test
+.dart` (21 — gallery states, the full upload sequence including the double-tap race, structural no-direct-
+write/no-dart:io guards), `customer_photo_management_screen_test.dart` (6, widget-level), `profile_customer_photos_card_test
+.dart` (4, including the AsyncError regression), plus 2 new `profile_screen_test.dart` cases (guest/
+authenticated gating). Full suites: `flutter analyze` clean; full `flutter test` **3051/3051** (12
+skipped, unchanged PIN-dependent cases — nothing new skipped); `flutter build web --dart-define=ENVIRONMENT=development
+--dart-define=DEV_LOGIN_PIN=1234` compiles cleanly.
+
+**Remaining for P.4.3B**: approved-photo selection UI (the gateway's `selectProfilePhoto` method is
+already proven end-to-end at the data layer, per this task's own scope note — just not wired to any
+button yet), `ProfileHeroCard` consuming the real selected photo, Community UI, and any visual polish
+pass over `CustomerPhotoManagementScreen`.
+
+## Profile P.4.3A — Physical Storage Upload Failure Diagnostic (2026-08-19)
+
+A real physical Android device test of P.4.3A's upload flow surfaced a genuine gap, not a UI bug:
+`image_picker` opened correctly, JPEG bytes were produced, `requestCustomerPhotoUploadGrant` succeeded
+(`app=VALID auth=VALID`), but `finalizeCustomerPhotoUpload` (the Storage-triggered backend function) never
+fired, the app only showed the generic locked "Fotoğraf yüklenemedi." message, and the Flutter terminal
+carried no `FirebaseException` detail — meaning the failure happened somewhere between a successful grant
+and a successful Storage write, with nothing observable to diagnose it by. This entry documents a static-
+analysis audit plus a permanent diagnostic-logging addition; it does **not** claim the physical-device root
+cause was directly reproduced (no device access from this environment) — see "Honest disclosure" below.
+
+**Ruled out by static audit, each independently confirmed against source, not assumed**:
+- **Bootstrap wiring**: `FirebaseBootstrapService.initialize` calls `useStorageEmulator` on
+  `FirebaseStorage.instance` exactly the same way it calls `useFirestoreEmulator`/`useAuthEmulator`/
+  `useFunctionsEmulator` on their own `.instance` singletons — no asymmetry between Storage and the three
+  working products.
+- **Bucket configuration**: `firebase_options_development.dart`'s `storageBucket:
+  'abakus-one-dev.firebasestorage.app'` is correct — a real-looking bucket name is expected, since
+  `useStorageEmulator` intercepts and redirects calls for that exact bucket to the local emulator rather
+  than requiring a fake bucket name.
+- **Instance bypass**: `CustomerPhotoStorageClient` used (and still uses) `storage.FirebaseStorage.instance`
+  only — no `FirebaseStorage.instanceFor(...)` call anywhere in `lib/`, which would have constructed a
+  second, non-emulator-configured instance for Storage alone. Now a **permanent structural regression
+  guard**, mirroring the existing Functions one: `test/bootstrap/storage_emulator_routing_regression_test
+  .dart`.
+- **`objectPath`/`contentType` consistency**: the upload notifier (`customer_photo_upload_provider.dart`)
+  passes `grant.objectPath`/`grant.contentType` — the server-returned grant values — directly into
+  `uploadBytes`, never a client-reconstructed path, already proven by an existing passing test.
+- **Storage Rules compatibility**: re-read `storage.rules`' `customerPhotos/{organizationId}/{uid}/{grantId}`
+  rule and `hasValidUploadGrant` against the actual upload metadata (`objectPath`, `request.auth.uid`,
+  `organizationId`, `grantId`, `contentType`, size, the `customerPhotoUploadGrants` Firestore lookup) — the
+  rule checks `uid`/`organizationId`/`objectPath`/`status == 'issued'`/`expiresAt > request.time`; it does
+  **not** cross-check `contentType` against the grant's stored value, so no metadata-mismatch class of
+  rejection is possible there. No incompatibility found.
+
+**Fix applied — development-only diagnostic logging, not a behavior change**: `uploadBytes`' catch clause
+broadened from `on storage.FirebaseException catch` to a general `catch (error, stackTrace)`, so a non-
+`FirebaseException` failure (e.g. a raw platform/connection-level failure from a missing `adb reverse
+tcp:9199 tcp:9199` binding — the same failure shape already documented for the other three products in
+`docs/firebase_emulator.md`) is also caught, logged, and safely wrapped into a `CustomerPhotoStorageException`
+instead of potentially propagating as an unhandled exception type. Before wrapping, `_logUploadFailure` logs
+— through the existing `LoggingService`/`LogRedactor` boundary, gated explicitly on
+`AppEnvironment.current == AppEnvironment.development` (silent in every other build) — the exception's
+runtime type, `FirebaseException.plugin`/`.code`/`.message` when applicable, the opaque `objectPath`,
+`contentType`, byte length, and whether Storage emulator mode was active. The exact field set is a pure,
+independently unit-tested function (`buildUploadFailureLogContext`, 4 new tests) specifically so what gets
+logged is verifiable without a real device. **Never logs**: auth/App Check tokens, upload-grant secrets
+beyond the already-opaque `objectPath`, or raw image bytes (only a byte count) — production UI is unchanged,
+still showing only the safe locked message.
+
+**Honest disclosure**: this audit could not directly reproduce or definitively confirm the physical-device
+root cause — no device access from this environment, and the failure mode described (grant succeeds, upload
+never reaches finalize, no client-side exception detail) is consistent with several different causes that
+look identical from the Dart side alone. Leading hypothesis, not confirmed: `adb reverse tcp:9199 tcp:9199`
+was never run or was silently dropped on device reconnect for Storage specifically, while Auth/Firestore/
+Functions' forwards happened to still be active — `docs/firebase_emulator.md` already documented this
+exact "bindings drop independently per port" behavior before this task, and per-port drop would produce
+precisely this "three products work, one silently doesn't" symptom without any log line on either side, which
+matches what was reported. Also possible: the Storage emulator was simply not started for that run
+(`--only auth,firestore,functions` omitting `storage`). Both hypotheses, plus how to distinguish them, are
+now documented in `docs/firebase_emulator.md`'s new troubleshooting entry. The diagnostic logging added here
+is what will convert "no useful exception" into an exact `FirebaseException.code`/`.message` — or reveal a
+non-`FirebaseException` failure shape entirely — on the next physical-device run, closing the actual
+diagnostic gap this task was raised to fix.
+
+**Files changed**: `lib/features/profile/data/customer_photo_storage_client.dart` (diagnostic logging,
+broadened catch, new `buildUploadFailureLogContext`), `lib/features/profile/presentation/providers/
+customer_photo_providers.dart` (`customerPhotoStorageClientProvider` now injects `loggingServiceProvider`),
+`test/bootstrap/storage_emulator_routing_regression_test.dart` (new, 2 tests),
+`test/features/profile/data/customer_photo_storage_client_test.dart` (new, 4 tests), `docs/firebase_emulator
+.md` (new troubleshooting entry), this section. No UI file changed — the task explicitly excluded a
+redesign.
+
+**Tests**: `flutter analyze` clean; `flutter test test/features/profile/` and `test/bootstrap/` green;
+full `flutter test` green (see this task's own closing report for exact totals).
+
+## Profile P.4.3A — Storage Upload Control-Flow Diagnostic (2026-08-19)
+
+Follow-up to the entry above. New physical-device facts ruled emulator routing out entirely: `adb reverse`
+includes `tcp:9199`, and a raw port probe (`toybox nc -z -w 2 127.0.0.1 9199`) from the device itself
+returns success — the device demonstrably can reach the Storage Emulator. Yet `finalizeCustomerPhotoUpload`
+still never fires, and even the diagnostic logging added in the entry above produced no output. This entry
+covers a second pass: a full control-flow trace of `pickAndUpload` plus much finer-grained milestone
+logging, on the theory that the stall is somewhere in the Flutter control flow itself, not in emulator
+connectivity.
+
+**Control-flow audit — no defect found**, each point checked directly against source:
+- Every `await` in `pickAndUpload` is awaited; no fire-and-forget `Future`.
+- No early return skips `uploadBytes` after a successful grant — the path from grant to upload is linear.
+- `CustomerPhotoManagementScreen.build` calls `ref.watch(customerPhotoUploadProvider)` unconditionally on
+  every build, which is what keeps the `autoDispose` notifier alive across the `pickImage`/grant/upload
+  awaits — the screen is a normal `Navigator.push`ed route, not rebuilt/removed during this flow, so the
+  classic "unwatched autoDispose provider torn down mid-async" Riverpod gotcha does not apply here today.
+  (Still hardened defensively: the new finalize-wait timer is cancelled via `ref.onDispose`, so it cannot
+  outlive the notifier regardless.)
+- No exception is swallowed above `CustomerPhotoStorageClient` — `CustomerPhotoGatewayException` and
+  `CustomerPhotoStorageException` are the only two caught types, both explicit and both already mapped to a
+  visible state transition; anything else propagates, it is not silently absorbed.
+- `CustomerPhotoStorageClient.uploadBytes` passes `grant.objectPath`/`grant.contentType` — the server-
+  returned grant values — straight into `putData`, matching `storage.rules`' `hasValidUploadGrant` exactly
+  (re-confirmed, see the entry above).
+- `image_picker`'s wrapper (`customer_photo_picker.dart`) has no swallowed-exception path either — a
+  picker-level throw propagates uncaught, which would surface differently (an unhandled Future error, not
+  the locked failure banner) from what was originally reported, and is unrelated to the current symptom
+  regardless since the grant already succeeds (proving the picker step completed).
+
+**No control-flow bug was found to fix** — the "fix" this pass delivers is exclusively finer-grained,
+DEVELOPMENT-ONLY milestone logging, so the exact stage a future physical-device run stalls at becomes
+directly observable instead of inferred from silence. New shared helper `lib/features/profile/data/
+customer_photo_upload_diagnostics.dart`:
+- `logUploadMilestone(loggingService, milestone, [context])` — a thin, dev-gated breadcrumb through the
+  same `LoggingService`/`LogRedactor` boundary every other diagnostic in this app already uses.
+- `withUploadHangDiagnostic(loggingService, label, future, {threshold})` — races `future` against a timer
+  purely to log a "still pending" breadcrumb if it outlives `threshold`; it never cancels, truncates, or
+  otherwise changes `future`'s own outcome (`Future.whenComplete`), so it cannot alter production behavior,
+  only what gets logged about it. Wrapped around the `uploadBytes` call specifically, to distinguish "never
+  invoked" from "invoked but still pending" from "completed/threw quickly."
+
+Milestones now logged, in order, across the real control flow: upload action entered -> image picker
+completed (or cancelled) -> client validation passed -> upload grant request started -> upload grant
+received -> immediately before `CustomerPhotoStorageClient.uploadBytes` -> immediately before
+`FirebaseStorage.ref(objectPath).putData` (inside the storage client) -> putData completed successfully /
+putData threw (the prior entry's failure log, renamed to this exact label, same rich `FirebaseException`
+context retained) -> waiting-for-finalize phase entered -> customerPhotos document observed (the gallery
+listener actually clearing `waitingForFinalize`). A DEVELOPMENT-ONLY, non-authoritative timer (30s) also
+logs "finalize wait timed out / failed" if the wait phase outlives that threshold without the real
+gallery-stream signal arriving — it never marks the upload failed itself; the real signal stays exactly
+what it already was, `ref.listen(customerPhotoGalleryProvider, ...)`. Same redaction discipline as before:
+never logs image bytes, auth/App Check tokens, or grant secrets beyond the already-opaque
+`objectPath`/`grantId`.
+
+**Honest disclosure, unchanged in kind from the prior entry**: this pass still could not reproduce or
+pinpoint the physical-device root cause — no device access from this environment, and every control-flow
+path was already structurally sound on inspection. Two possibilities remain open and are now
+distinguishable by the new milestone trail on the next physical-device run: (1) `uploadBytes` is invoked
+and `putData` itself hangs on the physical device specifically (a network-stack/plugin behavior difference
+between the emulator's own Android setup and a physical device, despite raw TCP reachability — bare port
+reachability does not prove the Storage SDK's actual upload protocol negotiates correctly over that
+connection), or (2) `putData` throws quickly and is caught, but for some reason distinct from the previous
+entry's fix the failure log line still did not reach the tester's terminal — worth also checking, separate
+from any code change here, whether the physical-device test was run from a build that actually included the
+diagnostic logging added in the prior entry (a fresh `flutter run --flavor development
+--dart-define=ENVIRONMENT=development` from this exact working tree), since neither entry's diagnostic
+code has been committed and a stale installed build would not contain it.
+
+**Files changed**: `lib/features/profile/data/customer_photo_upload_diagnostics.dart` (new),
+`lib/features/profile/data/customer_photo_storage_client.dart` (milestone logs around `putData`, failure
+log renamed to `putData threw`), `lib/features/profile/presentation/providers/customer_photo_upload_provider
+.dart` (milestone logs across `pickAndUpload`, hang diagnostic around `uploadBytes`, bounded finalize-wait
+diagnostic timer), `test/features/profile/data/customer_photo_upload_diagnostics_test.dart` (new, 6 tests),
+`test/features/profile/presentation/providers/customer_photo_upload_provider_test.dart` (4 new milestone-
+trail tests plus a `loggingService` override hook in `buildContainer`), this section. No UI file changed —
+the task explicitly excluded a redesign; no production business behavior changed — every addition is
+development-only logging.
+
+**Tests**: `flutter analyze` clean; `flutter test test/features/profile/` green; full `flutter test` green
+(see this task's own closing report for exact totals).
+
+## Profile P.4.3A — Upload Grant Callable Response Diagnostic (2026-08-19)
+
+Follow-up to the two entries above. A physical Android run isolated the stall precisely: the milestone
+trail from the prior entry stopped right after "upload grant request started" — "upload grant received" and
+everything after it never logged — while the Functions Emulator's own log confirmed
+`requestCustomerPhotoUploadGrant` executed and returned successfully server-side in ~59ms. The gap is
+therefore between the callable Function completing and `CustomerPhotoGateway.requestUploadGrant` returning
+the decoded grant — not Storage, not `putData`, not `image_picker`, not emulator routing.
+
+**Function's actual return shape** (`functions/src/customerPhotoUploadGrants.ts`'s `RequestUploadGrantResult`,
+both return branches): `{ grantId: string, objectPath: string, contentType: string, expiresAtMillis: number
+(Timestamp.toMillis()), reused: boolean }` — re-confirmed callable-safe: no `Timestamp`, `DocumentReference`,
+`undefined`, class instance, `BigInt`, or `Buffer` anywhere in the returned object, only plain
+strings/number/boolean via `return result;` directly. No fix needed server-side.
+
+**Flutter's actual parsing — the real bug, found and fixed**: `CustomerPhotoGateway.requestUploadGrant`
+read `data['expiresAtMillis'] as int` — a direct, unguarded cast. `expiresAtMillis` is a whole-number JS
+value with no decimal point, but the native Android callable SDK's generic JSON-to-`Map<String, dynamic>`
+decoding does not guarantee that survives as a Dart `int` — it can arrive as a `double` (the same class of
+"every JSON number decodes to a floating-point type when the target is generic `Object`" behavior this
+codebase has already hit once before and already has an established fix for:
+`check_delivery_eligibility_gateway.dart`'s `minimumOrderMinorUnits` field is read via `(data['x'] as
+num?)?.toInt()`, not `as int?`, for exactly this reason). A direct `as int` on a `double` throws a Dart
+`TypeError` — **not** a `FirebaseFunctionsException`, so `requestUploadGrant`'s own `on
+FirebaseFunctionsException catch` never caught it, and (before this fix) nothing else did either — the
+exception propagated fully uncaught out of `pickAndUpload`, silently stopping the flow with no error shown,
+no further milestone, and no prior diagnostic log, while the callable itself had already completed
+successfully server-side. This is a completely sufficient, mechanically verified explanation for every
+symptom reported across all three diagnostic passes in this section.
+
+**Fix**: extracted the parsing into a new pure, top-level `parseCustomerPhotoUploadGrant(Map<String,
+dynamic> data)` (`customer_photo_gateway.dart`) — `expiresAtMillis` is now read as `num` and converted via
+`.toInt()`, mirroring the established precedent above rather than inventing a new approach. A missing or
+genuinely wrong-typed `expiresAtMillis` now throws a descriptive `FormatException` instead of an opaque
+`TypeError`, and `requestUploadGrant` wraps any parse-stage exception into the same
+`CustomerPhotoGatewayException` the UI already knows how to show — so a *future* still-unknown shape
+mismatch surfaces the existing generic failure message and stays recoverable, instead of silently hanging
+the notifier forever. `grantId`/`objectPath`/`contentType` keep their direct `as String` casts — strings
+don't have the same numeric-widening ambiguity.
+
+**Diagnostics added around the callable boundary** (`FirebaseCustomerPhotoGateway.requestUploadGrant`, all
+DEVELOPMENT-ONLY through the existing `LoggingService`): `grant callable invoke` (before the call) ->
+`grant callable raw response received` (immediately after the raw Future resolves — logs ONLY safe
+structural information via the new `buildGrantCallableResponseLogContext`: the payload's runtime type, its
+map keys, and each expected field's runtime type — e.g. `expiresAtMillisType: "double"` — never a field
+value) -> `grant response parse started` -> `grant response parse succeeded`. A callable
+`FirebaseFunctionsException`, a parse-stage exception, and any other exception each log through one shared
+`_logGrantCallableFailure` (runtime type, `FirebaseFunctionsException.plugin`/`.code`/`.message` when
+applicable, stack trace, and a `stage` tag distinguishing `callable` from `parse`). The same bounded hang
+diagnostic from the prior entry (`withUploadHangDiagnostic`) now also wraps ONLY the raw callable `Future` —
+never the parsing step — so a future run can tell apart "the callable itself never resolved" from "it
+resolved but parsing failed," per this task's own request.
+
+**Regression tests**: `test/features/profile/data/customer_photo_gateway_test.dart` (new, 8 tests) —
+`parseCustomerPhotoUploadGrant` against `expiresAtMillis` as `int`, as `double` (the reproduced bug shape),
+as `null`/`String` (asserts a `FormatException`, never an uncaught `TypeError`), and against the Function's
+exact full field set including the unused `reused` field; `buildGrantCallableResponseLogContext` against a
+well-formed map, a map with a missing/null field, a non-Map payload, and a check that no field VALUE ever
+appears in the logged context, only type/key names.
+
+**Files changed**: `lib/features/profile/data/customer_photo_gateway.dart` (`parseCustomerPhotoUploadGrant`,
+`buildGrantCallableResponseLogContext`, callable-boundary diagnostics, hang diagnostic, `LoggingService`
+injection), `lib/features/profile/presentation/providers/customer_photo_providers.dart`
+(`customerPhotoGatewayProvider` now injects `loggingServiceProvider`), `test/features/profile/data/
+customer_photo_gateway_test.dart` (new, 8 tests). No UI file changed; the notifier's own milestone logging
+(prior entry) is unchanged — it still logs "upload grant received" itself, now reachable because the
+gateway no longer throws uncaught.
+
+**Tests**: `flutter analyze` clean; `flutter test test/features/profile/` green; full `flutter test` green
+(see this task's own closing report for exact totals).
+
+## Customer Registration CR.1 — First-Login Profile Completion + Server-Authoritative Bootstrap (2026-08-19)
+
+Closes the exact gap the "Customer Identity — First Login Registration" audit (same date, this same section
+of `docs/decisions.md`, immediately preceding entries) found: phone OTP authentication alone never created
+either canonical record a real customer needs (`customers/{uid}`, `tenantCustomers/{organizationId}_{uid}`),
+so every first-time customer's own `requestCustomerPhotoUploadGrant` call failed with "You are not a
+customer of this organization." — not a Storage/routing bug, a missing bootstrap step.
+
+**Architecture decisions, locked before implementation**:
+- New dedicated feature `lib/features/customer_registration/` — an authentication/customer-bootstrap
+  boundary, deliberately not folded into `features/profile/` (profile editing is a different concern).
+  CRM's `InMemoryCustomerRepository` is untouched — explicitly out of this task's scope.
+- `organizationId` is never client-supplied — resolved server-side from a literal constant
+  (`SINGLE_TENANT_ORGANIZATION_ID = "org-1"` in `completeCustomerProfile.ts`, kept in sync by hand with
+  `kSingleTenantOrganizationId`, the same disclosed cross-language limitation already accepted for
+  `MAX_ELIGIBLE_PHOTOS`/`customerPhotoUploadGrants.ts`). Explicitly temporary — a real multi-tenant
+  onboarding flow (invite/QR-code-driven, independently re-verified server-side) is future work, not
+  designed here.
+- `phoneNumber` is always read from `request.auth.token.phone_number` (the verified OTP claim) — never
+  accepted from `request.data`.
+- `customers/{uid}` gained `firstName`/`lastName` as first-class fields (kept alongside the pre-existing
+  `displayName`, now server-derived from `firstName` + `lastName`, never client-supplied directly) rather
+  than trying to parse a single combined name.
+
+**Server function — `completeCustomerProfile`** (`functions/src/completeCustomerProfile.ts`): App-Check-
+enforced (`shouldEnforceAppCheck()`), phone-verified-customer-only
+(`request.auth.token?.firebase?.sign_in_provider === "phone"`, mirrors `customerPhotoUploadGrants.ts`
+exactly). Accepts only `firstName`/`lastName`/`email`/`occupationStatus`/`workplaceName`/
+`educationalInstitutionName`/`gender` from the client — never `organizationId`/`phoneNumber`/
+`accountStatus`/roles/claims. Server-side validation: names trimmed/non-blank/max 80 chars; email
+trimmed+lowercased/format-checked/max 254 chars (RFC 5321); `occupationStatus`/`gender` restricted to their
+exact enum sets; `workplaceName` required iff `working`, `educationalInstitutionName` required iff
+`student` (both forced null for `other`, regardless of what the client sends for either).
+
+**Idempotency — one general algorithm, not four special cases, and no requestKey needed at all**: unlike
+`customerPhotoUploadGrants.ts` (which mints a new document per call and needs a requestKey-derived
+deterministic id), both this function's targets are already naturally addressed by a fixed, uid-derived
+path — no generated id, no duplication possible by construction. One transaction, reads-before-writes
+(mirrors the established codebase discipline): if the customer record is already complete and membership
+exists, zero writes, returns alreadyCompleted: true — this function can never become a general profile-edit
+endpoint, since the customer-record write branch is only ever reached when the record is not yet complete.
+Otherwise, the customer record (create or repair-in-place) and the missing membership (if any) are each
+independently created/left-alone based on their own current state — covering the audit's four named
+scenarios (neither exists / customer complete, membership missing / membership exists, customer incomplete
+/ both already complete) without branching on each one explicitly. Concurrent/double-tap safety comes from
+Firestore's own transaction retry semantics, not new code.
+
+**Completeness definition — shared, field-for-field, across three languages**: server (`isProfileComplete`
+in `completeCustomerProfile.ts`), Dart pure function (`isCustomerProfileComplete` in
+`customer_registration_validation.dart`), and the client-side reactive provider all agree: `customers/{uid}`
+exists with non-empty `firstName`/`lastName`/`email`, valid `occupationStatus`/`gender` enum values, the
+occupation-conditional field present when required, `profileCompletedAt` set, and
+`tenantCustomers/{organizationId}_{uid}` exists — never decided by tenant-membership presence alone (the
+audit's own locked instruction).
+
+**Routing gate**: `AppRoutes.completeProfile` (`/complete-profile`) added. `AppRouteGuard.resolve()` gained
+one new parameter, `bool needsProfileCompletion` (default false — every pre-existing call site/test in this
+codebase is unaffected without modification), computed by the caller as `isRealCustomer && completionPhase
+!= complete` — the guard itself stays a pure function of plain booleans, never importing the new feature's
+`CustomerProfileCompletionPhase` type (mirrors how `isRealCustomer` is already passed in as a bool, not an
+`AuthState`). A real customer needing completion is redirected to completeProfile from every other
+signed-in route (not just main), closing "an incomplete customer must not be able to manually deep-link
+around the gate"; a not-signed-in visitor hitting completeProfile directly gets the identical treatment
+main already had. `customerProfileCompletionStateProvider` (`customer_registration_providers.dart`) is the
+single reactive source of truth: a guest/unauthenticated session never even queries Firestore (bypasses the
+gate entirely, treated as complete); a real customer derives loading/complete/incomplete/error from two
+live StreamProviders (`customers/{uid}`, `tenantCustomers/{organizationId}_{uid}` existence) — errors are
+checked before loading, a real bug found and fixed during this task's own test-writing: the original
+ordering waited on the sibling stream to also settle before surfacing a genuine failure on the other one,
+which could hang indefinitely if the sibling never resolves. `_RouterRefreshListenable` listens to this
+provider exactly like `authProvider`/`onboardingCompleteProvider`, so a successful "Profilini Tamamla"
+submit's Firestore write is picked up by the live listener and the router redirects to /main automatically
+— the submit notifier deliberately never navigates itself, avoiding a race against that same listener.
+
+**A second real regression was found and fixed while wiring this in, mirroring the exact "wide blast
+radius" class of bug this codebase has now hit twice** (see the Profile P.4.3A AsyncValue.value entry
+above): `test/core/router/app_router_test.dart`'s existing "pre-resolved authenticated session lands on
+MainNavigationScreen" test seeds a real (isRealCustomer == true) AuthState and pumps the actual
+appRouterProvider — the ONE test file in the whole suite that does. Once the redirect callback started
+reading `customerProfileCompletionStateProvider` unconditionally, this test started reaching
+`FirestoreCustomerBootstrapRepository`'s default `FirebaseFirestore.instance`, unavailable under
+`flutter test`, redirecting to completeProfile instead of main. Fixed with the same pattern already
+established for `customerPhotoGatewayProvider`: an explicit
+`customerProfileCompletionStateProvider.overrideWithValue(const CustomerProfileCompletionState.complete())`
+in that one test. Confirmed via a full-suite run (3141 tests) that this was the only test file in the
+entire repository constructing/pumping the real `appRouterProvider` — every other router-adjacent test
+either calls `AppRouteGuard.resolve()` directly (pure, no Firestore) or builds its own minimal test-local
+`GoRouter` with no `redirect` callback at all (e.g. `otp_screen_test.dart`), neither of which is affected.
+
+**UI — "Profilini Tamamla"** (`complete_profile_screen.dart`): `PopScope(canPop: false)` — back navigation
+cannot bypass mandatory completion. Ad/Soyad/E-posta (`TextFormField` + design tokens, mirroring
+`LoginScreen`'s own established pattern — `AppTextField`/`PrimaryButton` are confirmed-empty stub files,
+not real components, so no new dependency on them was introduced), read-only phone sourced from
+`AuthSession.phoneNumber` (never a form field), a `ChoiceChip`-based 3-option selector (local to this
+screen, not a new shared abstraction) for `occupationStatus` and `gender` — the latter always shows
+Kadin/Erkek/Belirtmek istemiyorum as three equally first-class options, no default preselection.
+Conditional Is Yeri/Okul-Egitim-Kurumu field per `occupationStatus`. A small logout action remains reachable
+from the AppBar (reuses `authProvider.notifier.logout()`; no manual navigation needed — the router's own
+`authProvider` listener already handles it reactively). Double-submit guarded synchronously, mirroring
+`CustomerPhotoUploadNotifier`'s own established fix for the identical race.
+
+**Localization — re-verified, not assumed**: confirmed directly against the current working tree (not the
+prior audit's memory of it) — no `l10n.yaml`, no `flutter_localizations`/`intl` in `pubspec.yaml`, no
+`generate: true`, `lib/l10n/app_tr.arb` is still an empty stub, zero `AppLocalizations`/`S.of(context)`
+usage anywhere in `lib/`, and `MaterialApp.router` (`app.dart`) declares no `localizationsDelegates`/
+`supportedLocales`. Localization is genuinely inactive — every new string in this feature is a hardcoded
+Turkish literal, matching 100% of existing UI code; no second i18n system was introduced.
+
+**Privacy / account deletion — extended, not deferred**: `processAccountDeletion.ts`'s existing redaction
+(`displayName`/`phoneNumber`/`accountStatus`) now also clears `firstName`/`lastName`/`email`/
+`workplaceName`/`educationalInstitutionName`/`gender`/`occupationStatus` (all to empty-string/null,
+matching the existing convention per field type) on a completed deletion. `tenantCustomers/{organizationId}
+_{uid}` is deliberately left untouched — audited, not overlooked: it carries no name/email/contact PII,
+only `organizationId`/`uid`/`createdAt`, the same "stable, non-PII opaque reference" this function's own
+doc comment already treats `Order.customerId` as.
+
+**Security**: `firestore.rules` `customers/{uid}` `create: if false` and narrow `update` allow-list
+(`displayName`/`email` only) and `tenantCustomers` `write: if false` were not weakened — the new CR.1
+fields are deliberately NOT added to the client update allow-list (Cloud-Function-only, matching
+"personalization data must never become an authorization input"). Two rules-test gaps the audit itself
+named are now closed: a `tenantCustomers` direct-client-write-denial test (create/update/delete, previously
+entirely untested) and a test proving the new fields cannot be forged via the existing `customers/{uid}`
+update path.
+
+**Files changed** — Backend: `functions/src/completeCustomerProfile.ts` (new), `functions/src/index.ts`,
+`functions/src/processAccountDeletion.ts`, `functions/src/test/completeCustomerProfile.test.ts` (new, 27
+tests), `functions/src/test/processAccountDeletion.test.ts` (+1 test), `firestore-tests/rules.test.js` (+4
+tests). Dart: `lib/core/router/app_routes.dart`, `lib/core/router/app_route_guard.dart`,
+`lib/core/router/app_router.dart`, `lib/features/customer_registration/**` (new feature — domain models/
+validation, data gateway/repository, presentation providers/submit-notifier/screen),
+`test/core/router/app_route_guard_test.dart`, `test/core/router/app_router_test.dart`,
+`test/features/customer_registration/**` (new, ~55 tests across domain/data/providers/screen).
+`docs/firestore_data_model.md`, this section, `docs/feature_status.md`.
+
+**Honest scope boundary, not an oversight**: reservation routes' own `isRealCustomer`-only gate is
+unchanged — profile completion is NOT additionally required there, a deliberate, conservative choice to
+avoid touching an already-tested, unrelated feature beyond this task's approved boundary. CRM `Customer`
+remains fully in-memory. No profile-edit flow exists yet for the new fields post-registration (out of
+scope — this is a bootstrap, not a general profile editor).
+
+**Tests**: `flutter analyze` clean (full app, "No issues found!"); full `flutter test` **3142/3142 passed**;
+Functions emulator suite **781/781 passed** (JDK 21, `firebase emulators:exec --only
+firestore,functions,auth,storage`); Firestore Rules emulator suite **317/317 passed**.
+
+
+## Customer Registration CR.1 — Profile Completion Resolver Security Fix (2026-08-19)
+
+A physical Android run found a real architecture bug in the profile-completion gate this same section's
+CR.1 entry above shipped: `customerProfileCompletionStateProvider` watched `tenantCustomers/{organizationId}
+_{uid}` directly via `.snapshots()`, and the emulator/device log showed `PERMISSION_DENIED` on that read for
+a genuinely authenticated, real phone customer — happening BEFORE registration, making it impossible to
+distinguish "membership doesn't exist yet (a legitimate first-time customer)" from "a genuine backend/rules
+failure."
+
+**Root cause — not a first-time-only edge case, a universal one.** `tenantCustomers`'s own `firestore.rules`
+rule is `allow read: if isOrgMember(resource.data.organizationId)` — `isOrgMember` checks
+`request.auth.token.organizationAccess`, a **staff-only** custom claim (confirmed via that same rule file's
+own doc comment: "Ordinary customers never carry an `organizationAccess` custom claim"). An ordinary
+phone-verified customer can **never** read this collection — not for a missing document, not for an
+existing one, not for their own record or anyone else's. The client-side membership probe the prior CR.1
+entry built was therefore guaranteed to fail with `permission-denied` for every real customer, always,
+regardless of registration state — the "first-time customer" framing in the bug report was simply the first
+scenario a physical run happened to exercise it in.
+
+**Fix — server-authoritative, not a rules relaxation.** New callable
+`getCustomerProfileCompletionState` (`functions/src/getCustomerProfileCompletionState.ts`): App-Check-
+enforced, phone-verified-customer-only, `uid` always `request.auth.uid`, `organizationId` always the
+server-side `SINGLE_TENANT_ORGANIZATION_ID` constant (never client-supplied) — mirrors
+`completeCustomerProfile.ts`'s own identity discipline exactly. Reads both `customers/{uid}` and
+`tenantCustomers/{organizationId}_{uid}` via the Admin SDK (bypasses Security Rules entirely, same mechanism
+`completeCustomerProfile` already uses for its writes) and returns only `{ state: "complete"|"incomplete",
+reason?: "customerMissing"|"profileFieldsIncomplete"|"membershipMissing" }` — never the underlying document
+contents, never anything cross-tenant. Reuses `isProfileComplete` (already exported from
+`completeCustomerProfile.ts`) as the single shared completeness definition, rather than a second, drifting
+copy. Read-only, no transaction — a momentary inconsistency window between the two independent reads is
+harmless, since this callable is a routing hint, never itself a security boundary (every callable that
+actually needs proof of tenant membership, e.g. `requestCustomerPhotoUploadGrant`, independently re-verifies
+it).
+
+**`firestore.rules` is entirely unchanged.** `tenantCustomers`' `allow read: if isOrgMember(...)` / `allow
+write: if false` stay exactly as they were — still staff-only, still deny every client write. No new client
+read permission was ever granted; the ambiguity is closed by the Flutter client no longer attempting that
+read at all, not by widening who may perform it. `customers/{uid}`'s own rules are similarly untouched.
+
+**Dart — the client-side Firestore probe is gone, not patched.**
+`lib/features/customer_registration/data/customer_bootstrap_repository.dart` (the `FirestoreCustomerBootstrapRepository`
+that performed the now-understood-to-be-impossible `tenantCustomers` read) is deleted outright — it had no
+other consumer and could never have worked for its intended purpose. `CustomerRegistrationGateway` gained
+`getCompletionState()`, backed by the new callable, with its own pure, unit-tested response parser
+(`parseCustomerProfileCompletionResult`), mirroring `parseCompleteCustomerProfileResult`'s established
+discipline. `customerProfileCompletionResultProvider` (`FutureProvider.autoDispose`) replaces the old
+Firestore-stream pair; `customerProfileCompletionStateProvider` reduces its `AsyncValue` into the same
+4-state (`loading`/`complete`/`incomplete`/`error`) model `AppRouteGuard`-adjacent routing already
+consumed — that consuming side (`app_router.dart`, `AppRouteGuard.resolve()`) needed **zero** changes, since
+the public shape of `customerProfileCompletionStateProvider` never changed, only its internal data source.
+
+**Refresh, not polling.** After a successful `completeCustomerProfile` submit,
+`CustomerRegistrationSubmitNotifier` now calls `ref.invalidate(customerProfileCompletionResultProvider)`
+explicitly — a single, deliberate re-fetch, never a timer/polling loop, and no longer any reliance on a live
+Firestore listener eventually catching up (there is none any more). The completion screen's own retry action
+was updated to invalidate the same provider (previously invalidated the plain derived `Provider`, which has
+no async state of its own to refresh — a latent no-op bug in the prior entry's own retry action, caught and
+fixed here too).
+
+**Tests.** Functions: `functions/src/test/getCustomerProfileCompletionState.test.ts` (new, 11 tests) —
+neither doc exists / customer complete+membership missing / membership exists+customer missing / required
+field missing / `profileCompletedAt` missing / both complete / unauthenticated / anonymous / client-supplied
+`organizationId` has zero effect / response never exposes more than `{state, reason}` or any field value /
+App-Check-off-under-emulator parity. Dart: gateway parser tests (+5), completion-state provider tests fully
+rewritten against a fake gateway instead of a fake Firestore repository (guest/unauthenticated bypass the
+gateway entirely, incomplete-not-error, complete, error-fails-closed, loading, invalidate-triggers-refetch),
+submit-provider test (+1, invalidation-after-success), completion screen tests updated to the gateway-only
+fake (12 tests, +1 new: a resolver-level backend failure shows the retry view, never silently treated as
+complete/incomplete or rendering the form).
+
+**Files changed**: `functions/src/getCustomerProfileCompletionState.ts` (new),
+`functions/src/completeCustomerProfile.ts` (exports `CUSTOMERS_COLLECTION`/`TENANT_CUSTOMERS_COLLECTION`,
+no behavior change), `functions/src/index.ts`,
+`functions/src/test/getCustomerProfileCompletionState.test.ts` (new, 11 tests). Dart:
+`lib/features/customer_registration/data/customer_registration_gateway.dart` (new
+`CustomerProfileCompletionResult`/`getCompletionState`/`parseCustomerProfileCompletionResult`),
+`lib/features/customer_registration/data/customer_bootstrap_repository.dart` (deleted),
+`lib/features/customer_registration/presentation/providers/customer_registration_providers.dart` (rewritten
+completion-state providers), `customer_registration_submit_provider.dart` (invalidation on success),
+`complete_profile_screen.dart` (retry action targets the correct provider). Test files: `customer_registration_gateway_test.dart`
+(+5), `customer_profile_completion_provider_test.dart` (fully rewritten, 7 tests),
+`customer_registration_submit_provider_test.dart` (+1), `complete_profile_screen_test.dart` (rewritten fake,
++1 test). `firestore.rules` — **unchanged**, zero lines touched.
+
+**Tests**: `flutter analyze` clean (full app); full `flutter test` **green** (see this task's own closing
+report for the exact final count); Functions emulator suite **792/792 passed** (JDK 21, up from 781 by
+exactly the 11 new tests); Firestore Rules emulator suite **317/317 passed**, confirmed unchanged and still
+green (this task touched zero lines of `firestore.rules`).
+
+
+## Customer Registration CR.1.1 — Date of Birth: Required, Immutable, Server-Validated (2026-08-20)
+
+Extends CR.1's "Profilini Tamamla" registration with a mandatory `birthDate` field, locked as a
+one-time, customer-set value: once written, a customer can never directly change it again — only a
+future admin-approval flow (documented below, not built in this task) may correct it.
+
+**Canonical representation — a plain `"YYYY-MM-DD"` string, never a Firestore `Timestamp`.** Every
+other CR.1 field that uses `Timestamp` (`profileCompletedAt`, `createdAt`, `updatedAt`) represents an
+*instant*; a birth date is a calendar date with no meaningful time-of-day, and forcing it through
+`Timestamp` would mean inventing one — explicitly forbidden by the locked product decision, and exactly
+the class of bug ("what time, what timezone?") a date-only string sidesteps entirely. Zero-padded
+`YYYY-MM-DD` also sorts/compares correctly as a plain string, so the "not in the future" check needs no
+`Date` object and therefore no timezone semantics at all (`functions/src/completeCustomerProfile.ts`'s
+`sanitizeBirthDate`). A calendar-sanity bound (`MIN_BIRTH_YEAR = 1900`, mirrored client-side as
+`kMinBirthYear`) rejects obviously-garbage years — this is explicitly **not** a minimum-age/business
+rule, which the locked decision forbade inventing.
+
+**Immutability — enforced at two independent layers, not by convention.** (1) *Callable-level*:
+`completeCustomerProfile` still requires a valid `birthDate` on every call (like every other required
+field), but only merges it into the Firestore write patch when the existing `customers/{uid}` document
+doesn't already carry a valid one — the patch omits the `birthDate` key entirely otherwise, so
+`tx.update()` (which only ever touches keys present in the patch) leaves the existing value completely
+untouched. This closes a subtler case than "repeat call is a no-op": a legitimate repair call triggered
+by some *other* missing field (e.g. `gender`) can no longer smuggle a different `birthDate` through
+alongside the real repair. (2) *Rules-level*: `birthDate` was never added to `customers/{uid}`'s
+`hasOnly(['displayName', 'email'])` client-update allow-list — it follows the exact precedent every
+other CR.1 field already set. `completeCustomerProfile` (Admin SDK) is the only writer, ever, first
+write or otherwise.
+
+**Legacy customers.** `isProfileComplete` (server) and its Dart mirror `isCustomerProfileComplete` both
+now require `birthDate`, so a pre-CR.1.1 record with everything else valid but no `birthDate` becomes
+`incomplete` and is routed to `/complete-profile` through the existing, entirely unmodified
+`getCustomerProfileCompletionState` resolver (it imports `isProfileComplete` directly and needed zero
+code changes). On resubmission, the existing repair path re-persists the other already-valid fields from
+the freshly submitted form — pre-existing CR.1 behavior, not new, and not expanded in this task; the form
+has no server-side prefill of already-known values, a known UX gap flagged for a future task rather than
+silently absorbed into this one's scope.
+
+**Admin-approval correction flow — documented now, not built.** The immutability invariant above is
+already fully and independently enforced with zero additional schema; adding a
+`birthDateCorrectionRequests` collection/callable now, with no consumer or approving UI, would be
+speculative scaffolding this project's own rules forbid. The intended future flow, to be built only when
+actually approved as its own task:
+
+1. Customer submits a birth-date correction request (new document, customer-writable only as a
+   `pending`-status create — never a direct update to `customers/{uid}`).
+2. Request sits `pending`, visible to authorized admins.
+3. An authorized admin approves or rejects the request.
+4. Only a privileged server-side operation (Cloud Function, Admin SDK) ever updates the canonical
+   `customers/{uid}.birthDate` as a result — never a client write, matching every other privileged
+   mutation in this codebase.
+5. An immutable audit event is recorded for every decision, capturing: `uid`, `previousBirthDate`,
+   `newBirthDate`, `requestedAt`, `approvedAt`/`rejectedAt`, the authorized actor, and the decision.
+
+**Account deletion.** `processAccountDeletion` now redacts `birthDate: null` on `customers/{uid}`
+alongside the other CR.1 enum/optional fields (`gender`, `occupationStatus`, `workplaceName`,
+`educationalInstitutionName`) — birth date is PII and no existing legal retention rule requires keeping
+it attached to a deleted account.
+
+**Flutter UI — date input.** New `BirthDateField`
+(`lib/features/customer_registration/presentation/widgets/birth_date_field.dart`) reuses the existing
+`SignatureCalendar` (this repo's documented, tested replacement for a raw Material date picker)
+**entirely unmodified** — zero regression risk to its 3 existing reservation-flow consumers — wrapped in
+a year-jump step via a bottom sheet: a scrollable year grid (1900 → current year, matching the server's
+own sanity bound), then `SignatureCalendar` itself bounded to the chosen year (the current year is
+bounded at *today*, not December 31st, so a future date is structurally never selectable). Lives
+feature-local, not under `shared/widgets/`, since it has exactly one consumer today — this repo's own
+"2nd consumer promotes to `shared/`" convention. Placed in "Profilini Tamamla" directly after E-posta
+and before the read-only Telefon field, per the locked field order. The selected value renders
+permanently visible on the field (`gg.aa.yyyy` display formatting only — never what's persisted) before
+submission. Item 10 of this task ("birth date is private account info, never in the Profile hero") is
+satisfied by making zero changes to `lib/features/profile/` in this task — deferred to the already-
+planned Profile P.4.3B.
+
+**Tests.** Functions: `completeCustomerProfile.test.ts` (+7: missing/malformed/impossible-calendar/
+future/before-earliest-year birthDate rejected, valid accepted and stored canonically, a repair call
+triggered by an unrelated missing field can never overwrite an already-set birthDate, a legacy customer
+missing only birthDate is repaired with the freshly submitted value) plus `birthDate` added to every
+existing "already complete" seed so those tests still represent genuinely complete records.
+`getCustomerProfileCompletionState.test.ts` (+1: a legacy customer missing only birthDate resolves
+incomplete). `processAccountDeletion.test.ts` (extended the existing CR.1 redaction test to also seed and
+assert `birthDate` redaction). Rules: `firestore-tests/rules.test.js` (+1: direct client `birthDate`
+update denied, alone and alongside an allow-listed field; existing allow-listed fields remain updatable).
+Dart: `customer_registration_validation_test.dart` (+new `formatCanonicalBirthDate`/`validateBirthDate`
+groups, +2 `isCustomerProfileComplete` cases), `customer_registration_submit_provider_test.dart` (+1:
+canonical normalization before the gateway call), `complete_profile_screen_test.dart` (birth-date
+selection added to every submission-flow test that now requires it, +2 new: submit blocked with no
+birth date selected, selected value stays visible before submission), new
+`birth_date_field_test.dart` (7 tests: placeholder, visible selected value, error text, year-then-day
+selection reports the right date and closes the sheet, back-arrow returns to the year grid, a past year
+is bounded Jan 1–Dec 31, the current year is bounded at today).
+
+**Files changed**: `functions/src/completeCustomerProfile.ts`, `functions/src/processAccountDeletion.ts`,
+`firestore.rules` (comment only, zero rule semantics changed),
+`functions/src/test/completeCustomerProfile.test.ts`,
+`functions/src/test/getCustomerProfileCompletionState.test.ts`,
+`functions/src/test/processAccountDeletion.test.ts`, `firestore-tests/rules.test.js`. Dart:
+`lib/features/customer_registration/domain/customer_registration_validation.dart`,
+`lib/features/customer_registration/data/customer_registration_gateway.dart`,
+`lib/features/customer_registration/presentation/providers/customer_registration_submit_provider.dart`,
+`lib/features/customer_registration/presentation/screens/complete_profile_screen.dart`,
+`lib/features/customer_registration/presentation/widgets/birth_date_field.dart` (new). Test files:
+`customer_registration_validation_test.dart`, `customer_registration_submit_provider_test.dart`,
+`customer_profile_completion_provider_test.dart` (fake-gateway signature only),
+`complete_profile_screen_test.dart`, `birth_date_field_test.dart` (new).
+`customer_registration_gateway_test.dart` — confirmed no change needed (it only tests response parsers,
+unaffected by a request-side field addition).
+
+**Gates**: see this task's own closing report for the exact final counts across `flutter analyze`,
+`flutter test`, the Functions emulator suite, and the Firestore Rules emulator suite.
+
+
+## Customer Registration CR.1.2 — Optional Profile Photo During First Registration (2026-08-20)
+
+Extends "Profilini Tamamla" with a second, fully **optional** step offering a profile photo, reusing
+the existing secure photo-upload/moderation pipeline (P.4.2A/P.4.3A) rather than building a parallel
+one. The photo never gates registration: Step 1 (the CR.1/CR.1.1 form) remains the sole thing that
+makes a customer "complete" server-side; Step 2 is a pure UX layer on top.
+
+**Two-step flow.** `complete_profile_screen.dart`'s `_CompleteProfileWizard` renders an
+`OnboardingStepIndicator` ("1 Bilgilerin / 2 Profil Fotoğrafın") plus either `Step1InfoForm` (the
+existing CR.1/CR.1.1 field set, byte-identical validators/keys, "Devam Et" as its CTA) or
+`Step2PhotoStep` — a local `OnboardingStep` enum on plain `State`, **no new Riverpod provider and no
+second registration-completion flag**. Step 1's success calls `completeCustomerProfile` exactly as
+before (creating/repairing the canonical `customers`/`tenantCustomers` records) and advances `_step`
+locally; Step 2 is reached only after that server call has already succeeded.
+
+**Completion-state invalidation is now deferred, not removed.** The router's reactive redirect away
+from `/complete-profile` is driven entirely by one call:
+`ref.invalidate(customerProfileCompletionResultProvider)` inside
+`CustomerRegistrationSubmitNotifier`. Previously fired unconditionally inside `submit()`; CR.1.2 moves
+it out into a new `finishOnboarding()` method, called only when Step 2 finishes — via a successful
+upload's own "Devam Et", "Şimdilik Geç", or a failed upload's "Daha Sonra Ekle". `submit()`'s own
+return contract (`true`/`false`) is unchanged. This is the entire mechanism that keeps the screen alive
+through Step 2 — no `AppRouteGuard`/router change was needed. **Restart-mid-flow is intentionally
+accepted, not specially handled**: `birthDate`/etc. are already all satisfied by Step 1 alone, and photo
+was never part of `isProfileComplete`'s definition — so a cold start between Step 1 and Step 2 correctly
+resolves `complete` and routes straight to `/main`, exactly matching "the photo stays optional."
+
+**Onboarding photo intent — `purpose: 'profileOnboarding'`, server-authoritative throughout.** A new,
+closed, single-value enum (`PHOTO_UPLOAD_PURPOSES = ["profileOnboarding"]`) is accepted as an optional
+field on `requestCustomerPhotoUploadGrant`, validated server-side (`sanitizePurpose` — anything outside
+the enum is `invalid-argument`), stored on the grant, and folded into the grant's existing
+`requestKey`-replay comparison (a replay attempting to change `purpose` on a still-live grant now fails
+`failed-precondition`, same as any other replayed-with-different-params case). `finalizeCustomerPhotoUpload`
+copies `grant.purpose ?? null` verbatim into the new `customerPhotos.purpose` field — the client never
+sets this value at the point it is actually consumed (moderation). `Step2PhotoStep` is the only caller
+in the whole app that ever passes a non-null `purpose`; the ordinary "Profil Fotoğraflarım" management
+flow (`CustomerPhotoManagementScreen`) continues to omit it entirely, so its uploads are indistinguishable
+from before this task.
+
+**Auto-selection on moderation approval — narrow, transaction-safe, never overwrites an existing
+selection.** Inside `moderateCustomerPhoto`'s existing transaction, when an action resolves to
+`approved` **and** the photo's own `purpose == 'profileOnboarding'`, the transaction reads
+`customerPublicProfiles/{organizationId}_{uid}` — if it has no `selectedProfilePhotoRef`, the photo is
+marked `isSelectedAsProfilePhoto: true` and the projection is set to point at it, in the same write
+batch as the moderation decision itself; if a selection already exists, nothing about selection state
+changes. A deterministic `auditEvents/{photoId}-auto-selected` record
+(`actorId: 'system'`, `type: 'customerPhoto.selected'`, `autoSelectedViaModeration: true`) is written
+alongside it, so an idempotent replay of the same moderation call can never double-write it.
+Concurrency safety against a real, simultaneous manual `selectCustomerProfilePhoto` call is not
+special-cased — both operations read-then-write the same `customerPublicProfiles` document inside their
+own transactions, so Firestore's own optimistic-concurrency retry serializes them, exactly the same
+reasoning this document's own CR.1 entry already established for `completeCustomerProfile`'s
+idempotency. Proven with a real `Promise.all` concurrency test, not just sequential-call assertions.
+
+**Owner-private vs. public visibility — already-existing architecture, extended with only a new field,
+never new enforcement.** No `firestore.rules`/`storage.rules` change was needed or made:
+- **Owner private read**: `customerPhotos`'s existing rule (`isOwner(resource.data.customerId)`) has
+  never been conditioned on `status` — the owner already sees their own photo at `pendingReview`,
+  `underReview`, `approved`, `rejected`, or `removed`. `Step2PhotoStep` shows the locally-picked bytes
+  (already in memory from the picker — no extra fetch, no `getDownloadURL`) with the label "Onay
+  Bekliyor" and the required explanatory text ("Fotoğrafını sen görebilirsin. Diğer kullanıcılar
+  yalnızca onaylandıktan sonra görebilir.") the moment the Storage upload itself completes — approval is
+  never claimed to be instantaneous.
+- **Public read**: gated purely by `customerPublicProfiles.selectedProfilePhotoRef` matching the
+  object path (`storage.rules`), never by `CustomerPhotos.status` alone — a photo that is
+  `pendingReview`/`rejected`/`removed` is structurally unreachable by any non-owner, non-staff caller
+  regardless of `purpose`, with or without auto-selection.
+- **Rejection**: a rejected onboarding photo is never auto-selected (the auto-selection branch only
+  runs on `approved`) and stays owner-visible-only, same as any other rejected photo.
+- **Future P.4.3B invariant, documented here, not built in this task**: the eventual Profile Hero
+  redesign must distinguish PRIVATE OWNER PRESENTATION (may show *any* status as the owner's own hero,
+  including pending) from PUBLIC CUSTOMER PRESENTATION (approved+selected only, small avatar, never
+  tappable/zoomable/fullscreen to another viewer) — `profile_hero_card.dart`/`ProfileModel` receive zero
+  changes in CR.1.2, per this task's own explicit scope limit.
+
+**Upload failure never rolls back registration.** `Step2PhotoStep`'s failed phase (`phase == failed`)
+shows "Tekrar Dene" (re-invokes the same `uploadPicked` call against the already-picked bytes, no
+re-prompt) and "Daha Sonra Ekle" (calls `finishOnboarding()` and routes to `/main`, identical to
+"Şimdilik Geç") — neither path touches `customers`/`tenantCustomers`, membership, or completion state
+in any way; Step 1's server-side success already stands on its own.
+
+**Quota preserved, no separate onboarding allowance.** `isCustomerPhotoQuotaFull` (new, narrow addition
+to `customer_photos`' domain layer, adopted by all three call sites — `Step2PhotoStep`,
+`CustomerPhotoManagementScreen`, `ProfileCustomerPhotosCard`) reuses the existing
+`countsTowardEligibleLimit`/`CustomerPhoto.maxEligiblePhotos` predicate unchanged. At 10/10, "Fotoğraf
+Ekle" is hidden/disabled and "Şimdilik Geç" remains available — the onboarding photo counts toward the
+same limit, never a separate one.
+
+**Architecture: `lib/features/customer_photos/` — a user-directed exception, not a default choice.**
+CR.1.2 needed `customer_registration` to consume the same photo-upload state machine
+(`CustomerPhotoUploadNotifier`, `CustomerPhotoGateway`, `CustomerPhotoStorageClient`,
+`CustomerPhotoPicker`, `customerPhotoGalleryProvider`, `customer_photo_client_rules.dart`) that
+`profile` already had — a straight cross-feature-presentation import would violate this project's own
+layering rule (§3). Rather than deciding this unilaterally, the choice was surfaced explicitly; the
+user's answer, verbatim, was to extract a **dedicated neutral feature module**,
+`lib/features/customer_photos/`, consumed by both `profile` and `customer_registration` — explicitly
+**not** `lib/core/services/` (which would have mixed feature-specific business logic into `core/`,
+against §3's own boundary) and explicitly **not** a duplicated upload state machine inside
+`customer_registration`. This mirrors the precedent already set when `CustomerPhoto`/
+`CustomerPhotoStatus` moved to `lib/shared/models/` on gaining a second consumer. The extraction was
+executed as a **mechanical move first** — one forced (not discretionary) fix,
+`CustomerPhotoUploadNotifier.pickAndUpload()`'s `ref.read(profileProvider)?.id` becoming
+`ref.read(authProvider).session?.uid` (same value, since `profileProvider` itself sourced it from
+`authProvider`'s session uid — a same-value swap, not a functional change; `profileProvider` becomes an
+illegal cross-feature reach once this notifier lives outside `profile`) — verified green
+(`flutter analyze` clean, full `flutter test` at an identical pass count to pre-move) before any CR.1.2
+feature logic was layered on top. `customer_photo_source_picker_sheet.dart` was extracted alongside it
+(previously inlined in `CustomerPhotoManagementScreen`) so `Step2PhotoStep` reuses the exact same
+gallery/camera picker sheet rather than a second copy.
+
+**Tests.** Functions: `customerPhotoUploadGrants.test.ts` (+4 — normal request stores `purpose: null`;
+`'profileOnboarding'` accepted and stored; an arbitrary purpose is `invalid-argument`; a `requestKey`
+replay with a different `purpose` is `failed-precondition`), `finalizeCustomerPhotoUpload.test.ts`
+(+2 — purpose copied through; no purpose on the grant yields `null` on the photo),
+`moderateCustomerPhoto.test.ts` (+7 — auto-select on approval when unselected; an existing selection is
+never overwritten; a rejected onboarding photo is never auto-selected; cross-uid/cross-org isolation;
+idempotent replay never double-selects or double-audits; a genuine concurrent
+approve-vs-manual-select race, via `Promise.all` against two independent transactions, resolves to
+exactly one canonical selection — self-consistency asserted, never a specific "winner"). Rules:
+`firestore-tests/rules.test.js` (+1 — `purpose` introduces no new client create/update path on
+`customerPhotos`). Storage: `storage-tests/rules.test.js` — **unchanged**, confirmed via its own 35
+existing test names that every visibility invariant this task requires (owner-pending-read, public
+approved+selected-only, cross-tenant denial, upload-authorization gating) is already regression-covered.
+Flutter: `complete_profile_screen_test.dart` (fully rewritten — Step 1 unchanged/required, Step 1
+success advances to Step 2 without invalidating completion state, "Şimdilik Geç" is the sole trigger
+that invalidates it, Step 2's required title/copy render, plus every pre-existing Step-1 field/
+validation/double-submit/backend-error/resolver-failure/back-navigation test kept and re-passing — 18
+tests total); new `step2_photo_step_test.dart` (13 tests — idle state, skip, successful
+pick-and-upload shows local preview + "Onay Bekliyor" + explanation + "Devam Et", the grant request
+carries `purpose: 'profileOnboarding'`, "Devam Et" calls `onFinished`, a Storage-level upload failure
+— not just a grant failure — shows retry/later, "Tekrar Dene" retries the same picked bytes without
+re-prompting the picker, "Daha Sonra Ekle" calls `onFinished`, quota-full hides "Fotoğraf Ekle" but
+keeps "Şimdilik Geç", double-tap protection on "Fotoğraf Ekle" during an in-flight upload);
+`customer_registration_submit_provider_test.dart` (the prior single invalidation-timing test replaced
+with two: `submit()` alone never invalidates; `finishOnboarding()` is the one re-fetch trigger);
+`customer_photo_upload_provider_test.dart` (+3 — new `uploadPicked` group: uploads without invoking the
+picker, forwards `purpose` to the gateway, respects the same duplicate-call guard as `pickAndUpload`).
+Regression: `customer_photo_management_screen_test.dart`/`profile_customer_photos_card_test.dart`/
+`profile_screen_test.dart` re-verified green post-extraction (fake gateway signatures updated for the
+new `purpose` parameter only — zero behavior change).
+
+**Files changed.** Backend: `functions/src/customerPhotoUploadGrants.ts`,
+`functions/src/finalizeCustomerPhotoUpload.ts`, `functions/src/moderateCustomerPhoto.ts`,
+`functions/src/test/{customerPhotoUploadGrants,finalizeCustomerPhotoUpload,moderateCustomerPhoto}.test.ts`,
+`firestore-tests/rules.test.js`. Dart model: `lib/shared/models/customer_photo.dart` (+`purpose` field).
+Moved (mechanical, Phase A) from `features/profile/` to `features/customer_photos/`:
+`data/customer_photo_gateway.dart`, `data/customer_photo_storage_client.dart`,
+`data/customer_photo_picker.dart`, `data/customer_photo_upload_diagnostics.dart`,
+`domain/customer_photo_client_rules.dart`, `presentation/providers/customer_photo_upload_provider.dart`,
+`presentation/providers/customer_photo_providers.dart` (+ their test-file counterparts). New:
+`features/customer_photos/presentation/widgets/customer_photo_source_picker_sheet.dart`,
+`features/customer_registration/presentation/widgets/{onboarding_step_indicator,step1_info_form,
+step2_photo_step}.dart` (+ `step2_photo_step_test.dart`). Modified:
+`customer_registration_submit_provider.dart` (`finishOnboarding()`), `complete_profile_screen.dart`
+(rewritten as a two-step orchestrator), `customer_photo_gateway.dart`/`customer_photo_upload_provider.dart`
+(`purpose` threading), `customer_photo_client_rules.dart` (`isCustomerPhotoQuotaFull`),
+`customer_photo_management_screen.dart`/`profile_customer_photos_card.dart` (import paths + shared
+source-picker reuse). Docs: this entry, `docs/feature_status.md`, `docs/firestore_data_model.md`
+(`purpose` field on `customerPhotos`/`customerPhotoUploadGrants`, auto-selection note on
+`customerPublicProfiles`).
+
+**Gates**: `flutter analyze` clean (0 issues, full app); full `flutter test` **3191 passed / 12 skipped
+(pre-existing, unrelated dev-login conditional skips) / 0 failed** (up from the 3170 pre-CR.1.2
+baseline by the net new CR.1.2 test additions); Functions build/typecheck clean; Functions emulator
+suite (JDK 21, `GOOGLE_MAPS_PROVIDER_MODE=fixture`) **814/814 passed** (up from 801 by exactly the 13
+new tests); Firestore Rules emulator suite **319/319 passed** (up from 318 by exactly the 1 new test);
+Storage Rules emulator suite **35/35 passed**, unchanged — `storage.rules` itself was not touched by
+this task.
+
+
+## P.4.3B — Premium Customer Profile Identity Hero (2026-08-20)
+
+Replaces Profile's top identity section — previously the phone number as the primary hero line, backed
+entirely by the in-memory `profileProvider`/`ProfileModel` (derived only from `authProvider`'s session,
+never Firestore) — with the customer's real canonical identity and a correctly-prioritized owner photo.
+Scope was deliberately narrow: only `ProfileHeroCard`'s authenticated-state rendering changed; guest
+state, the rest of `ProfileScreen` (loyalty, quick actions, account preferences, visit pass, support,
+business mode, logout), Admin/POS, and backend photo moderation/security are all untouched.
+
+**Canonical identity source — a new, parallel read path, `ProfileModel`/`profileProvider` untouched.**
+`customerIdentityProvider` (`lib/features/profile/presentation/providers/customer_identity_provider.dart`)
+is a `StreamProvider.autoDispose<CustomerIdentity?>` backed by a new `CustomerIdentityGateway`
+(`lib/features/profile/data/customer_identity_gateway.dart`), which reads `customers/{uid}` directly via
+the client Firestore SDK — mirroring `FirebaseCustomerPhotoGateway.watchGallery`'s already-established
+"direct client `.snapshots()` read against an owner-scoped collection" shape. **No `firestore.rules`
+change was needed**: `customers/{uid}`'s rule (`allow read: if isSignedIn() && request.auth.uid == uid`)
+already permitted this; nothing had ever exercised it from Flutter before. No callable exposes these
+fields either (confirmed by reading `completeCustomerProfile.ts`'s/`getCustomerProfileCompletionState.ts`'s
+exact response shapes), so a direct client read was the only path without adding new backend surface.
+`ProfileModel`/`profileProvider`/`ProfileNotifier` are **deliberately left completely untouched** — they
+still exist, still back `ProfileScreen`'s `isAuthenticated` gate and `ProfileHeroCard`'s guest/
+authenticated switch, exactly as before. The old `profilePicturePath`/`updateProfilePicture`/
+`removeProfilePicture` local-file avatar mechanism simply stops being read by the hero (superseded by the
+real photo pipeline below) — it was not deleted, matching this project's "no orphan cleanup without
+separate approval" rule.
+
+**Owner hero photo priority — `resolveCustomerHeroPhoto`, a new pure function in the neutral
+`customer_photos` feature.** Added to `lib/features/customer_photos/domain/customer_photo_client_rules.dart`
+(alongside the existing `isCustomerPhotoQuotaFull`) rather than duplicated into `profile`, since it
+operates purely on `CustomerPhoto`/the public-selection ref — no `profile`-specific concept involved.
+Locked priority order: (1) the newest (`uploadedAt`) active `pendingReview`/`underReview` photo — owner-
+private, always wins, including over an already-approved-and-selected photo; (2) otherwise the gallery
+photo whose `photoRef` matches the canonical public selection; (3) otherwise `null` (caller renders
+initials). `rejected`/`removed` photos can never be returned — structurally excluded by both branches.
+
+**Public canonical selection stays authoritative — never re-derived from `isSelectedAsProfilePhoto`.**
+`CustomerPhotoGateway` gained one new read-only method, `watchSelectedProfilePhotoRef` (organizationId/
+customerId -> a live `String?` from `customerPublicProfiles/{organizationId}_{uid}.selectedProfilePhotoRef`),
+backing a new `customerSelectedProfilePhotoRefProvider`. `resolveCustomerHeroPhoto`'s "approved + selected"
+branch matches ONLY against this projection ref — `CustomerPhoto.isSelectedAsProfilePhoto` (a per-photo
+mirror field) is never read by this function at all, closing the exact risk the locked instruction named:
+a stale/mirrored flag substituting for the real public source of truth. **No `firestore.rules` change**:
+`customerPublicProfiles`'s existing rule (`isOrgMember || isTenantCustomer`) already permits the owning
+customer's own read (`completeCustomerProfile` already creates their `tenantCustomers` record at Step 1).
+A pre-existing structural-guard test (`customer_photo_upload_provider_test.dart`) that asserted zero
+`customerPublicProfiles` references anywhere in the customer-photo client code was updated, not removed
+— it still forbids the reference in every file except `customer_photo_gateway.dart`, and within that file
+asserts exactly one occurrence (the new method's own read) plus reuses that file's own separate, still-
+unmodified "no `.set(`/`.update(`/`.delete(`/`.add(` anywhere in this file" guard to independently prove
+the new reference can never become a write.
+
+**Performance**: the hero downloads bytes ONLY for the single resolved photo
+(`customerPhotoBytesProvider(resolvedPhoto.photo.photoRef)`) — the private gallery itself
+(`customerPhotoGalleryProvider`) is metadata-only and was already being fetched for the pre-existing
+`ProfileCustomerPhotosCard`; no new eager full-gallery byte download was introduced. No `getDownloadURL`
+call exists anywhere in this feature — unchanged.
+
+**Restart-safe by construction.** Every piece of hero state (identity, gallery, selection ref, resolved
+photo, bytes) is re-derived from Riverpod providers on every fresh build — nothing depends on transient
+widget state accumulated during a prior screen/session. A pending photo uploaded during onboarding and
+still `pendingReview` the next day renders identically whether the app was ever backgrounded/restarted or
+not.
+
+**Visual design**: `_AuthenticatedHero` is now a vertical, centered layout (avatar → optional pending/
+under-review badge → full name → email → workplace-or-school) replacing the old horizontal row, using only
+existing `AppColors`/`AppTypography`/`AppSpacing`/`AppRadius`/`AppShadows` tokens — no new design-system
+tokens added. "Sage/olive" maps to the existing `AppColors.primary`/`primaryLight`/`primaryExtraLight`
+(no literal sage/olive token names exist in this codebase). No new tap-to-manage-photo affordance was
+added to the avatar itself — the existing `ProfileCustomerPhotosCard` lower on the screen remains the
+sole entry point into "Profil Fotoğraflarım," per the locked "do not build a second photo-management
+flow" instruction.
+
+**Loading/error/empty states.** `customerIdentityProvider`'s `loading` state renders a stable gray-block
+skeleton (no shimmer package, no fabricated name ever shown); `error` or a `data(null)` (document not
+created yet) both render the same neutral "Bilgiler şu anda görüntülenemiyor." presentation — never a
+fabricated identity. No photo resolved -> an initials avatar (`CustomerIdentity.initials`, first letter of
+`firstName` + first letter of `lastName`), falling back further to a generic person icon only if both
+names are empty.
+
+**Tests.** New `test/features/profile/domain/models/customer_identity_test.dart` (10 tests —
+`parseCustomerOccupationStatus` including unknown-value/null safety, `fullName`/`initials` including
+empty-name edge cases). Extended `test/features/customer_photos/domain/customer_photo_client_rules_test.dart`
+(+11 — `resolveCustomerHeroPhoto`: no photos, approved+selected via the projection ref, an approved photo
+NOT matching the ref is never chosen, `isSelectedAsProfilePhoto` alone is never consulted, pendingReview/
+underReview owner-private, rejected/removed excluded individually and among other photos, pending
+overrides an existing approved+selected, newest-of-several-pending wins). Rewritten
+`test/features/profile/presentation/widgets/profile_hero_card_test.dart` (21 tests — canonical identity
+rendering including phone-absent/no-fake-data checks, the full photo-priority matrix including a
+performance assertion that ONLY the resolved photo's bytes are ever downloaded, loading/error/document-
+missing states, guest state unchanged). `test/features/profile/profile_screen_test.dart`'s hero test
+updated to assert real identity instead of phone number; every other group (loyalty, quick actions,
+account preferences, visit pass, support, business mode, logout) re-verified unchanged — required adding
+a default `customerIdentityGatewayProvider` override to `pumpProfileScreen` (mechanical, mirrors the
+existing `customerPhotoGatewayProvider` override already there for the identical "real Firebase instance
+crashes under `flutter test`" reason). `customer_photo_upload_provider_test.dart`'s structural guard test
+updated as described above. Every existing fake implementing `CustomerPhotoGateway` across the suite
+gained a `watchSelectedProfilePhotoRef` override (mechanical ripple, same pattern as CR.1.2's `purpose`
+addition).
+
+**Files changed.** New: `lib/features/profile/domain/models/customer_identity.dart`,
+`lib/features/profile/data/customer_identity_gateway.dart`,
+`lib/features/profile/presentation/providers/customer_identity_provider.dart`,
+`test/features/profile/domain/models/customer_identity_test.dart`. Modified:
+`lib/features/customer_photos/data/customer_photo_gateway.dart` (+`watchSelectedProfilePhotoRef`),
+`lib/features/customer_photos/presentation/providers/customer_photo_providers.dart`
+(+`customerSelectedProfilePhotoRefProvider`), `lib/features/customer_photos/domain/customer_photo_client_rules.dart`
+(+`resolveCustomerHeroPhoto`/`ResolvedCustomerHeroPhoto`/`CustomerHeroPhotoPresentation`),
+`lib/features/profile/presentation/widgets/profile_hero_card.dart` (rewritten `_AuthenticatedHero`,
+`_GuestHero` unchanged). Tests: `customer_photo_client_rules_test.dart`, `profile_hero_card_test.dart`
+(rewritten), `profile_screen_test.dart`, `customer_photo_upload_provider_test.dart`, plus the mechanical
+`watchSelectedProfilePhotoRef` ripple across `step2_photo_step_test.dart`,
+`complete_profile_screen_test.dart`, `customer_photo_management_screen_test.dart`,
+`profile_customer_photos_card_test.dart`. **No backend/Functions/`firestore.rules`/`storage.rules` files
+changed** — both new reads were already rules-permitted for the owner.
+
+**Gates**: `flutter analyze` clean (0 issues, full app); full `flutter test` **3236 passed / 12 skipped
+(pre-existing, unrelated) / 0 failed** (up from the 3198 pre-P.4.3B baseline). No Functions/Rules/Storage
+suites rerun — this task touched Flutter files only.

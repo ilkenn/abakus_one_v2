@@ -1,7 +1,7 @@
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../data/customer_photo_repository.dart';
-import '../../domain/customer/customer_photo.dart';
-import '../../domain/customer/customer_photo_status.dart';
+import '../../../../shared/models/customer_photo.dart';
+import '../../../../shared/models/customer_photo_status.dart';
 
 /// Selects [photoId] as the customer's profile photo — "one approved
 /// photo may be selected," "0 or 1 selected profile photo," "a selected

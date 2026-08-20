@@ -453,3 +453,73 @@ test("a retry after the original grant EXPIRED reissues a fresh grant over the s
   const reissued = await db().collection("customerPhotoUploadGrants").doc(grantId).get();
   assert.ok((reissued.data()!.expiresAt as admin.firestore.Timestamp).toMillis() > Date.now());
 });
+
+// =========================================================================
+// F. CR.1.2 — upload-intent (purpose)
+// =========================================================================
+
+test("a normal request with no purpose stores purpose: null on the grant — existing flow unaffected", async () => {
+  const organizationId = nextId("org");
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedTenantCustomer(organizationId, uid);
+
+  const { httpStatus, body } = await callCallable(GRANT_URL, validRequest({ organizationId }), idToken);
+  assert.strictEqual(httpStatus, 200);
+
+  const grantId = body.result?.grantId as string;
+  const grantDoc = await db().collection("customerPhotoUploadGrants").doc(grantId).get();
+  assert.strictEqual(grantDoc.data()!.purpose, null);
+});
+
+test('purpose: "profileOnboarding" is accepted and stored server-authoritatively on the grant', async () => {
+  const organizationId = nextId("org");
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedTenantCustomer(organizationId, uid);
+
+  const { httpStatus, body } = await callCallable(
+    GRANT_URL,
+    validRequest({ organizationId, purpose: "profileOnboarding" }),
+    idToken,
+  );
+  assert.strictEqual(httpStatus, 200);
+
+  const grantId = body.result?.grantId as string;
+  const grantDoc = await db().collection("customerPhotoUploadGrants").doc(grantId).get();
+  assert.strictEqual(grantDoc.data()!.purpose, "profileOnboarding");
+});
+
+test("an arbitrary/invalid purpose is rejected as invalid-argument — no open-ended purposes accepted", async () => {
+  const organizationId = nextId("org");
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedTenantCustomer(organizationId, uid);
+
+  const { httpStatus, body } = await callCallable(
+    GRANT_URL,
+    validRequest({ organizationId, purpose: "somethingElse" }),
+    idToken,
+  );
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+});
+
+test("reusing the same requestKey with a DIFFERENT purpose than the still-active grant is rejected — failed-precondition", async () => {
+  const organizationId = nextId("org");
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedTenantCustomer(organizationId, uid);
+  const requestKey = nextId("key");
+
+  const first = await callCallable(
+    GRANT_URL,
+    validRequest({ organizationId, requestKey, purpose: "profileOnboarding" }),
+    idToken,
+  );
+  assert.strictEqual(first.httpStatus, 200);
+
+  const second = await callCallable(
+    GRANT_URL,
+    validRequest({ organizationId, requestKey }),
+    idToken,
+  );
+  assert.strictEqual(second.httpStatus, 400);
+  assert.strictEqual(second.body.error?.status, "FAILED_PRECONDITION");
+});

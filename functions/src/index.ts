@@ -58,3 +58,5 @@ export { requestCustomerPhotoUploadGrant } from "./customerPhotoUploadGrants";
 export { finalizeCustomerPhotoUpload } from "./finalizeCustomerPhotoUpload";
 export { moderateCustomerPhoto } from "./moderateCustomerPhoto";
 export { selectCustomerProfilePhoto } from "./selectCustomerProfilePhoto";
+export { completeCustomerProfile } from "./completeCustomerProfile";
+export { getCustomerProfileCompletionState } from "./getCustomerProfileCompletionState";

@@ -5,8 +5,8 @@ import '../../data/admin_audit_entry_repository.dart';
 import '../../data/customer_photo_repository.dart';
 import '../../domain/audit/admin_audit_entry.dart';
 import '../../domain/audit/admin_audit_event_type.dart';
-import '../../domain/customer/customer_photo.dart';
-import '../../domain/customer/customer_photo_status.dart';
+import '../../../../shared/models/customer_photo.dart';
+import '../../../../shared/models/customer_photo_status.dart';
 
 /// The 4 core moderation actions from one use case — approve, reject,
 /// remove, return-to-review — manager-authorized

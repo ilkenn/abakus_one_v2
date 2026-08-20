@@ -12,6 +12,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Profile P.4.3A — image_picker's camera source (profile photo
+         capture) requires this declared explicitly; gallery selection
+         needs no permission entry here (image_picker_android's own
+         manifest already wires the modern Photo Picker / legacy
+         document-picker Intent, neither of which needs a runtime
+         permission for a one-off pick). -->
+    <uses-permission android:name="android.permission.CAMERA"/>
     <application
         android:label="abakus_one_v2"
         android:name="${applicationName}"

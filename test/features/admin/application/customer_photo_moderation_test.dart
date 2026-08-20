@@ -5,8 +5,8 @@ import 'package:abakus_one_v2/features/admin/application/use_cases/select_custom
 import 'package:abakus_one_v2/features/admin/application/use_cases/submit_customer_photo.dart';
 import 'package:abakus_one_v2/features/admin/data/admin_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/admin/data/customer_photo_repository.dart';
-import 'package:abakus_one_v2/features/admin/domain/customer/customer_photo.dart';
-import 'package:abakus_one_v2/features/admin/domain/customer/customer_photo_status.dart';
+import 'package:abakus_one_v2/shared/models/customer_photo.dart';
+import 'package:abakus_one_v2/shared/models/customer_photo_status.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../test_support/admin_test_fixtures.dart';

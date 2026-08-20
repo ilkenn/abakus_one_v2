@@ -102,7 +102,8 @@ Future<void> _pumpLogin(
         // TEMPORARY_DEVELOPER_LOGIN — no real Firebase app exists under
         // `flutter test`; DevLoginNotifier.run() requires this override to
         // reach the emulator-code lookup at all.
-        currentFirebaseProjectIdProvider.overrideWithValue('abakus-one-dev-test-fixture'),
+        currentFirebaseProjectIdProvider
+            .overrideWithValue('abakus-one-dev-test-fixture'),
       ],
       child: MaterialApp.router(routerConfig: _testRouter()),
     ),
@@ -152,7 +153,9 @@ void main() {
       'the phone field is prefilled with the locked developer number, and the PIN field starts empty',
       (tester) async {
     await _pumpLogin(tester);
-    if (!DevLoginConfig.isAvailable) return; // nothing rendered to assert against.
+    if (!DevLoginConfig.isAvailable) {
+      return; // nothing rendered to assert against.
+    }
 
     expect(find.text(DevLoginConfig.developerPhoneLocalInput), findsOneWidget);
     expect(find.text('Geliştirici PIN'), findsOneWidget);
@@ -164,7 +167,9 @@ void main() {
     await _pumpLogin(tester);
 
     await tester.ensureVisible(find.text('Geliştirici Olarak Giriş Yap'));
-    await tester.enterText(find.widgetWithText(TextFormField, 'Geliştirici PIN'), DevLoginConfig.pin);
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'Geliştirici PIN'),
+        DevLoginConfig.pin);
     await tester.tap(find.text('Geliştirici Olarak Giriş Yap'));
     await tester.pumpAndSettle();
 
@@ -173,8 +178,7 @@ void main() {
     // Requires --dart-define=DEV_LOGIN_PIN=<value> — see file header.
   }, skip: !pinConfigured);
 
-  testWidgets(
-      'a wrong PIN shows the locked dev-only error and never signs in',
+  testWidgets('a wrong PIN shows the locked dev-only error and never signs in',
       (tester) async {
     await _pumpLogin(tester);
 
@@ -184,7 +188,9 @@ void main() {
     // rejected by local form validation instead ("PIN gerekli").
     const wrongButAllDigitsPin = DevLoginConfig.pin == '9999' ? '1234' : '9999';
     await tester.ensureVisible(find.text('Geliştirici Olarak Giriş Yap'));
-    await tester.enterText(find.widgetWithText(TextFormField, 'Geliştirici PIN'), wrongButAllDigitsPin);
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'Geliştirici PIN'),
+        wrongButAllDigitsPin);
     await tester.tap(find.text('Geliştirici Olarak Giriş Yap'));
     await tester.pumpAndSettle();
 

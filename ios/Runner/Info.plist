@@ -37,10 +37,18 @@
 	<!-- Sprint 5B: real courier GPS tracking. "When in use" covers active-
 	     delivery foreground tracking; "Always" is requested at runtime only
 	     while a courier has an active shift, never implicitly. -->
-	<!-- Masada Sipariş: scanning the table's QR code to open a real dine-in
-	     table session (lib/features/qr/presentation/screens/qr_scanner_screen.dart). -->
+	<!-- Masada Sipariş (QR scanning) and Profile P.4.3A (profile photo
+	     capture) share this one system permission — iOS shows a single
+	     description regardless of which feature triggers the prompt, so
+	     the text covers both rather than naming only the first feature
+	     that needed it. -->
 	<key>NSCameraUsageDescription</key>
-	<string>Abaküs, masandaki QR kodu okutarak sipariş verebilmen için kamera erişimi ister.</string>
+	<string>Abaküs; masandaki QR kodu okutabilmen ve profil fotoğrafı çekebilmen için kamera erişimi ister.</string>
+	<!-- Profile P.4.3A — choosing an existing photo for the customer's
+	     profile-photo gallery (lib/features/profile/... customer photo
+	     upload flow). -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Abaküs, profil fotoğrafı seçebilmen için fotoğraf kitaplığına erişim ister.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Abaküs, teslimat sırasında konumunuzu görebilmek için kurye uygulamasında konum erişimi ister.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

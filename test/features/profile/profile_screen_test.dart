@@ -18,7 +18,75 @@ import 'package:abakus_one_v2/features/crm/presentation/screens/customer_visit_p
 import 'package:abakus_one_v2/features/profile/presentation/screens/addresses_screen.dart';
 import 'package:abakus_one_v2/features/profile/presentation/screens/help_screen.dart';
 import 'package:abakus_one_v2/features/profile/presentation/screens/loyalty_screen.dart';
+import 'package:abakus_one_v2/features/customer_photos/data/customer_photo_gateway.dart';
+import 'package:abakus_one_v2/features/customer_photos/presentation/providers/customer_photo_providers.dart';
+import 'package:abakus_one_v2/features/profile/data/customer_identity_gateway.dart';
+import 'package:abakus_one_v2/features/profile/domain/models/customer_identity.dart';
+import 'package:abakus_one_v2/features/profile/presentation/providers/customer_identity_provider.dart';
 import 'package:abakus_one_v2/features/profile/presentation/screens/profile_screen.dart';
+import 'package:abakus_one_v2/shared/models/customer_photo.dart';
+
+/// Profile P.4.3A — `ProfileCustomerPhotosCard` (rendered whenever this
+/// screen's own `isAuthenticated` gate is true) watches
+/// `customerPhotoGalleryProvider`, whose default `customerPhotoGatewayProvider`
+/// implementation is `FirebaseCustomerPhotoGateway()` — its constructor
+/// eagerly resolves `FirebaseFirestore.instance`, which throws under
+/// `flutter test` (no real Firebase app exists here). Every
+/// `pumpProfileScreen` call therefore overrides it with this trivial fake
+/// by default — mirrors how `authRepositoryProvider` is already always
+/// overridden in this same helper, for the identical reason.
+class _EmptyCustomerPhotoGateway implements CustomerPhotoGateway {
+  const _EmptyCustomerPhotoGateway();
+
+  @override
+  Stream<List<CustomerPhoto>> watchGallery({
+    required String organizationId,
+    required String customerId,
+  }) =>
+      Stream.value(const []);
+
+  @override
+  Future<CustomerPhotoUploadGrant> requestUploadGrant({
+    required String organizationId,
+    required String contentType,
+    String? purpose,
+  }) =>
+      throw UnimplementedError(
+          'not exercised via ProfileScreen navigation tests');
+
+  @override
+  Future<void> selectProfilePhoto({
+    required String organizationId,
+    required String photoId,
+  }) =>
+      throw UnimplementedError(
+          'not exercised via ProfileScreen navigation tests');
+
+  @override
+  Stream<String?> watchSelectedProfilePhotoRef({
+    required String organizationId,
+    required String customerId,
+  }) =>
+      Stream.value(null);
+}
+
+/// P.4.3B — `ProfileHeroCard`'s authenticated state now also watches
+/// `customerIdentityProvider`, whose default `customerIdentityGatewayProvider`
+/// implementation (`FirebaseCustomerIdentityGateway`) eagerly resolves
+/// `FirebaseFirestore.instance` — the same crash-under-`flutter-test`
+/// reasoning `_EmptyCustomerPhotoGateway` above already documents. Every
+/// `pumpProfileScreen` call overrides it with this fixed fake by default;
+/// tests that care about the exact hero content pass their own via
+/// `identityGateway`.
+class _FixedCustomerIdentityGateway implements CustomerIdentityGateway {
+  const _FixedCustomerIdentityGateway([this.identity]);
+
+  final CustomerIdentity? identity;
+
+  @override
+  Stream<CustomerIdentity?> watchOwnIdentity({required String uid}) =>
+      Stream.value(identity);
+}
 
 class _FakeSessionStorage implements SessionStorage {
   AuthSession? stored;
@@ -55,6 +123,7 @@ void main() {
     _FakeSessionStorage? sessionStorage,
     ActorSession? actorSession,
     AuthNotifier Function()? authNotifierBuilder,
+    CustomerIdentityGateway? identityGateway,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -63,6 +132,20 @@ void main() {
             DevelopmentLocalAuthRepository(
               sessionStorage: sessionStorage ?? _FakeSessionStorage(),
             ),
+          ),
+          customerPhotoGatewayProvider.overrideWithValue(
+            const _EmptyCustomerPhotoGateway(),
+          ),
+          customerIdentityGatewayProvider.overrideWithValue(
+            identityGateway ??
+                const _FixedCustomerIdentityGateway(
+                  CustomerIdentity(
+                    firstName: 'Test',
+                    lastName: 'Müşteri',
+                    email: '',
+                    occupationStatus: CustomerOccupationStatus.other,
+                  ),
+                ),
           ),
           if (actorSession != null)
             actorSessionProvider.overrideWith((ref) => actorSession),
@@ -235,14 +318,28 @@ void main() {
 
   group('P.1 — premium hero + hizli erisim', () {
     testWidgets(
-        'kimlik dogrulanmis oturumda hero gercek telefon numarasini '
-        'gosterir, sahte veri hicbir yerde gorunmez', (tester) async {
+        'P.4.3B — kimlik dogrulanmis oturumda hero gercek musteri adini/'
+        'emailini gosterir, telefon numarasi ARTIK birincil kimlik degil, '
+        'sahte veri hicbir yerde gorunmez', (tester) async {
       await pumpProfileScreen(
         tester,
         authNotifierBuilder: () => _SignedInNotifier('uid-1', '+905559998877'),
+        identityGateway: const _FixedCustomerIdentityGateway(
+          CustomerIdentity(
+            firstName: 'İlken',
+            lastName: 'Parlakbudak',
+            email: 'ilken@example.com',
+            occupationStatus: CustomerOccupationStatus.working,
+            workplaceName: 'Abaküs Bowl',
+          ),
+        ),
       );
 
-      expect(find.text('+905559998877'), findsOneWidget);
+      expect(find.text('İlken Parlakbudak'), findsOneWidget);
+      expect(find.text('ilken@example.com'), findsOneWidget);
+      expect(find.text('+905559998877'), findsNothing,
+          reason: 'the phone number must no longer be the primary hero '
+              'identity');
       expect(find.text('Ahmet Yılmaz'), findsNothing);
       expect(find.text('ahmet.yilmaz@abakusbowl.com'), findsNothing);
     });
@@ -341,6 +438,19 @@ void main() {
             ),
             authProvider.overrideWith(
               () => _SignedInNotifier('uid-1', '+905559998877'),
+            ),
+            customerPhotoGatewayProvider.overrideWithValue(
+              const _EmptyCustomerPhotoGateway(),
+            ),
+            customerIdentityGatewayProvider.overrideWithValue(
+              const _FixedCustomerIdentityGateway(
+                CustomerIdentity(
+                  firstName: 'Test',
+                  lastName: 'Müşteri',
+                  email: '',
+                  occupationStatus: CustomerOccupationStatus.other,
+                ),
+              ),
             ),
           ],
           child: MaterialApp(
@@ -469,6 +579,33 @@ void main() {
         findsNothing,
       );
       expect(find.text('Ziyaret Pasosu'), findsNothing);
+    });
+
+    testWidgets(
+        'Profile P.4.3A — authenticated user can see "Profil Fotoğraflarım"',
+        (tester) async {
+      await pumpProfileScreen(
+        tester,
+        authNotifierBuilder: () => _SignedInNotifier('uid-1', '+905559998877'),
+      );
+
+      expect(
+        find.byKey(const Key('profileCustomerPhotosCard')),
+        findsOneWidget,
+      );
+      expect(find.text('Profil Fotoğraflarım'), findsOneWidget);
+    });
+
+    testWidgets(
+        'Profile P.4.3A — guest must not see "Profil Fotoğraflarım" at all',
+        (tester) async {
+      await pumpProfileScreen(tester);
+
+      expect(
+        find.byKey(const Key('profileCustomerPhotosCard')),
+        findsNothing,
+      );
+      expect(find.text('Profil Fotoğraflarım'), findsNothing);
     });
 
     testWidgets('Ziyaret Pasosu kartina dokununca gercek ekrani acar', (

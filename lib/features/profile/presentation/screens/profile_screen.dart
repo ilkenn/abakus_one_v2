@@ -11,6 +11,7 @@ import '../widgets/profile_quick_actions.dart';
 import '../widgets/profile_loyalty_card.dart';
 import '../widgets/profile_account_preferences_section.dart';
 import '../widgets/profile_visit_pass_card.dart';
+import '../widgets/profile_customer_photos_card.dart';
 import '../widgets/profile_support_section.dart';
 import '../widgets/profile_business_mode_card.dart';
 import '../screens/addresses_screen.dart';
@@ -155,6 +156,14 @@ class ProfileScreen extends ConsumerWidget {
               if (isAuthenticated) ...[
                 const SizedBox(height: AppSpacing.xxl),
                 const ProfileVisitPassCard(),
+              ],
+              // Profile P.4.3A: real photo gallery/upload backend now
+              // exists — same "guest has nothing to resolve" reasoning as
+              // Visit Pass above, so this is gated the same way (not
+              // rendered at all for a guest, not just tap-guarded).
+              if (isAuthenticated) ...[
+                const SizedBox(height: AppSpacing.lg),
+                const ProfileCustomerPhotosCard(),
               ],
               const SizedBox(height: AppSpacing.xxl),
               ProfileSupportSection(

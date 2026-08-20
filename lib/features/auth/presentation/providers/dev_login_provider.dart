@@ -7,7 +7,8 @@ import '../../data/emulator_verification_code_client.dart';
 import '../../domain/models/otp_challenge.dart';
 import '../../domain/phone_number.dart';
 import 'auth_provider.dart';
-import 'quick_test_login_provider.dart' show emulatorVerificationCodeClientProvider;
+import 'quick_test_login_provider.dart'
+    show emulatorVerificationCodeClientProvider;
 
 /// TEMPORARY_DEVELOPER_LOGIN — see `DevLoginConfig`'s own doc comment for
 /// the full removal-marker list.

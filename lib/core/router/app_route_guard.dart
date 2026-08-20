@@ -55,6 +55,7 @@ abstract final class AppRouteGuard {
     required bool isGuest,
     required bool isOnboardingComplete,
     required bool isRealCustomer,
+    bool needsProfileCompletion = false,
   }) {
     // Faz D.4 — the Gel Al QR guest flow is public by design: a customer
     // scanning a kasadaki QR has not signed in to anything yet, and must
@@ -91,6 +92,25 @@ abstract final class AppRouteGuard {
     final signedIn = isAuthenticated || isGuest;
 
     if (signedIn) {
+      // Customer Registration CR.1 — a real, phone-authenticated customer
+      // whose canonical registration is not yet complete is redirected to
+      // [AppRoutes.completeProfile] from EVERY other signed-in route,
+      // never just `main` — this is what closes "an incomplete customer
+      // must not be able to manually deep-link around the gate," the
+      // audit's own locked requirement. [needsProfileCompletion] is
+      // already the caller's precomputed `isRealCustomer && phase !=
+      // complete` (see `app_router.dart`) — this function never itself
+      // reads Firestore or knows what "complete" means beyond that one
+      // bool, keeping it exactly as pure as every other parameter here.
+      if (location == AppRoutes.completeProfile) {
+        // Already complete (or never needed the gate at all, e.g. a
+        // guest) — nothing to do here, redirected onward like any other
+        // signed-in route below. Never a redirect back to itself.
+        if (!needsProfileCompletion) return AppRoutes.main;
+        return null;
+      }
+      if (needsProfileCompletion) return AppRoutes.completeProfile;
+
       if (location == AppRoutes.main) return null;
       return AppRoutes.main;
     }
@@ -101,11 +121,13 @@ abstract final class AppRouteGuard {
     // session, and this is where someone lands instead if they don't have
     // one, whether they arrived by direct navigation, a stale deep link,
     // or a browser refresh; there's no separate "not yet checked" state
-    // to route through first.
+    // to route through first. `completeProfile` needs the identical
+    // protection — without it, a stale/bookmarked link would render the
+    // registration form for a signed-out visitor.
     final notSignedInLanding =
         isOnboardingComplete ? AppRoutes.login : AppRoutes.onboarding;
 
-    if (location == AppRoutes.main) {
+    if (location == AppRoutes.main || location == AppRoutes.completeProfile) {
       return notSignedInLanding;
     }
 

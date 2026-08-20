@@ -5,6 +5,9 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/providers/auth_provider.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/otp_screen.dart';
+import '../../features/customer_registration/domain/models/customer_profile_completion_state.dart';
+import '../../features/customer_registration/presentation/providers/customer_registration_providers.dart';
+import '../../features/customer_registration/presentation/screens/complete_profile_screen.dart';
 import '../../features/navigation/presentation/screens/main_navigation_screen.dart';
 import '../../features/onboarding/presentation/provider/onboarding_provider.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
@@ -26,6 +29,18 @@ class _RouterRefreshListenable extends ChangeNotifier {
     ref.listen(authProvider, (previous, next) => notifyListeners());
     ref.listen(
       onboardingCompleteProvider,
+      (previous, next) => notifyListeners(),
+    );
+    // Customer Registration CR.1 — a live Firestore-derived value (see
+    // `customerProfileCompletionStateProvider`'s own doc comment): once a
+    // real customer's `customers`/`tenantCustomers` documents actually
+    // resolve or change (loading -> complete, incomplete -> complete
+    // after a successful "Profilini Tamamla" submit), this re-runs the
+    // guard against the current location instead of leaving a stale
+    // redirect decision in place — the same reason `authProvider`/
+    // `onboardingCompleteProvider` are listened to here.
+    ref.listen(
+      customerProfileCompletionStateProvider,
       (previous, next) => notifyListeners(),
     );
   }
@@ -75,12 +90,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final authState = ref.read(authProvider);
       final isOnboardingComplete = ref.read(onboardingCompleteProvider);
+      final realCustomer = isRealCustomer(authState);
+      // Customer Registration CR.1 — reduced to a single, feature-
+      // agnostic bool before ever reaching `AppRouteGuard.resolve`, which
+      // stays a pure function of plain booleans, never a
+      // `CustomerProfileCompletionPhase` or any other feature type (see
+      // that function's own doc comment).
+      final completionState = ref.read(customerProfileCompletionStateProvider);
+      final needsProfileCompletion = realCustomer &&
+          completionState.phase != CustomerProfileCompletionPhase.complete;
       return AppRouteGuard.resolve(
         location: state.matchedLocation,
         isAuthenticated: authState.isAuthenticated,
         isGuest: authState.isGuest,
         isOnboardingComplete: isOnboardingComplete,
-        isRealCustomer: isRealCustomer(authState),
+        isRealCustomer: realCustomer,
+        needsProfileCompletion: needsProfileCompletion,
       );
     },
     routes: [
@@ -115,6 +140,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.main,
         pageBuilder: (context, state) {
           return _fadeTransitionPage(const MainNavigationScreen());
+        },
+      ),
+      // Customer Registration CR.1 — a first-time real customer lands
+      // here (via `AppRouteGuard.resolve`'s `needsProfileCompletion`
+      // branch) between a successful OTP and `main` ever becoming
+      // reachable.
+      GoRoute(
+        path: AppRoutes.completeProfile,
+        pageBuilder: (context, state) {
+          return _fadeTransitionPage(const CompleteProfileScreen());
         },
       ),
       // Faz D.4 — public, login-free Gel Al QR guest entry. Never behind

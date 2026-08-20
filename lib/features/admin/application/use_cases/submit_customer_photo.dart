@@ -1,6 +1,6 @@
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../data/customer_photo_repository.dart';
-import '../../domain/customer/customer_photo.dart';
+import '../../../../shared/models/customer_photo.dart';
 import '../identity/customer_photo_id_generator.dart';
 
 /// A customer submits a new photo for moderation — always starts

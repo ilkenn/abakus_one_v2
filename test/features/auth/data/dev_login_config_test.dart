@@ -12,14 +12,17 @@ import 'package:abakus_one_v2/features/auth/data/quick_test_login_config.dart';
 /// compile-time define (neither can be swapped at test time).
 void main() {
   group('DevLoginConfig.isAvailableFor', () {
-    test('development + emulator + a configured (non-empty) PIN => available', () {
+    test('development + emulator + a configured (non-empty) PIN => available',
+        () {
       expect(
         DevLoginConfig.isAvailableFor(AppEnvironment.development, pin: '1234'),
         isTrue,
       );
     });
 
-    test('development + emulator, but DEV_LOGIN_PIN missing (empty) => unavailable (fails closed)', () {
+    test(
+        'development + emulator, but DEV_LOGIN_PIN missing (empty) => unavailable (fails closed)',
+        () {
       expect(
         DevLoginConfig.isAvailableFor(AppEnvironment.development, pin: ''),
         isFalse,
@@ -48,7 +51,9 @@ void main() {
       );
     });
 
-    test('exactly one of the three environments is ever available, and only with a configured PIN', () {
+    test(
+        'exactly one of the three environments is ever available, and only with a configured PIN',
+        () {
       final available = AppEnvironment.values
           .where((env) => DevLoginConfig.isAvailableFor(env, pin: '1234'))
           .toList();
@@ -62,7 +67,9 @@ void main() {
   });
 
   group('DevLoginConfig.developerPhoneLocalInput', () {
-    test('reuses QuickTestLoginConfig.developmentPhoneLocalInput — the same locked account, never a second literal', () {
+    test(
+        'reuses QuickTestLoginConfig.developmentPhoneLocalInput — the same locked account, never a second literal',
+        () {
       expect(
         DevLoginConfig.developerPhoneLocalInput,
         QuickTestLoginConfig.developmentPhoneLocalInput,
@@ -71,7 +78,9 @@ void main() {
   });
 
   group('DevLoginConfig.pin', () {
-    test('resolves to the real DEV_LOGIN_PIN compile-time define (empty under the plain `flutter test` default)', () {
+    test(
+        'resolves to the real DEV_LOGIN_PIN compile-time define (empty under the plain `flutter test` default)',
+        () {
       // Not asserting a specific literal — the point is this reads
       // `String.fromEnvironment('DEV_LOGIN_PIN')` and nothing is
       // hardcoded here. Under the default `flutter test` invocation (no

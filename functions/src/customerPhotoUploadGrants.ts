@@ -42,6 +42,17 @@ import { sha256Hex } from "./submitTakeawayOrder";
  * (still-unwritten, or already-written-and-thus-harmlessly-re-returned)
  * Storage path, instead of minting a fresh grant/quota reservation on every
  * network retry. No `requestKey` -> always a fresh, non-idempotent grant.
+ *
+ * **`purpose` — Customer Registration CR.1.2 (2026-08-20).** An optional,
+ * narrow, closed intent enum (`PHOTO_UPLOAD_PURPOSES`) — today only
+ * `"profileOnboarding"`, for the photo offered during first-time
+ * registration. Never trusted as authorization; stored on the grant purely
+ * so `finalizeCustomerPhotoUpload.ts` can copy it, server-authoritatively,
+ * into the resulting `customerPhotos` doc, which `moderateCustomerPhoto.ts`
+ * later reads to decide auto-selection-on-approval. A `requestKey` replay
+ * with a different `purpose` than the still-active grant it matches fails
+ * closed exactly like a replay with a different `organizationId`/
+ * `contentType` already did.
  */
 
 // Mirrors `CustomerPhoto.maxEligiblePhotos`
@@ -67,6 +78,22 @@ const TENANT_CUSTOMERS_COLLECTION = "tenantCustomers";
 // `CustomerPhoto.countsTowardEligibleLimit`
 // (pendingReview/underReview/approved count; rejected/removed never do).
 const ELIGIBLE_PHOTO_STATUSES = ["pendingReview", "underReview", "approved"];
+
+// CR.1.2 — a narrow, closed intent enum for the ONE onboarding scenario
+// that needs server-authoritative provenance (auto-selection-on-approval,
+// `moderateCustomerPhoto.ts`). Deliberately not a generic/open "purpose"
+// field — the locked instruction is explicit that no arbitrary purposes
+// are introduced.
+const PHOTO_UPLOAD_PURPOSES = ["profileOnboarding"] as const;
+type PhotoUploadPurpose = (typeof PHOTO_UPLOAD_PURPOSES)[number];
+
+function sanitizePurpose(raw: unknown): PhotoUploadPurpose | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string" || !(PHOTO_UPLOAD_PURPOSES as readonly string[]).includes(raw)) {
+    throw new HttpsError("invalid-argument", 'purpose must be one of: "profileOnboarding".');
+  }
+  return raw as PhotoUploadPurpose;
+}
 
 interface RequestUploadGrantResult {
   grantId: string;
@@ -148,6 +175,7 @@ export const requestCustomerPhotoUploadGrant = onCall(
     }
     const requestKeyRaw = request.data?.requestKey;
     const requestKey = typeof requestKeyRaw === "string" && requestKeyRaw.length > 0 ? requestKeyRaw : null;
+    const purpose = sanitizePurpose(request.data?.purpose);
 
     // Never trust the client's organizationId as authorization truth —
     // independently verify real tenant membership via the existing
@@ -182,7 +210,12 @@ export const requestCustomerPhotoUploadGrant = onCall(
         const existing = existingGrantSnap.data()!;
         const stillActive = existing.status === "issued" && (existing.expiresAt as Timestamp).toMillis() > now.toMillis();
         if (stillActive) {
-          if (existing.organizationId !== organizationId || existing.contentType !== contentType) {
+          const existingPurpose = (existing.purpose as PhotoUploadPurpose | undefined) ?? null;
+          if (
+            existing.organizationId !== organizationId ||
+            existing.contentType !== contentType ||
+            existingPurpose !== purpose
+          ) {
             throw new HttpsError(
               "failed-precondition",
               "requestKey was already used to request an upload grant with different parameters.",
@@ -217,6 +250,7 @@ export const requestCustomerPhotoUploadGrant = onCall(
         organizationId,
         objectPath,
         contentType,
+        purpose,
         status: "issued",
         createdAt: now,
         expiresAt,
@@ -242,4 +276,5 @@ export const requestCustomerPhotoUploadGrant = onCall(
   },
 );
 
-export { MAX_ELIGIBLE_PHOTOS, GRANT_TTL_MS, ELIGIBLE_PHOTO_STATUSES };
+export { MAX_ELIGIBLE_PHOTOS, GRANT_TTL_MS, ELIGIBLE_PHOTO_STATUSES, PHOTO_UPLOAD_PURPOSES };
+export type { PhotoUploadPurpose };

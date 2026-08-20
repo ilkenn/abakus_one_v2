@@ -22,6 +22,11 @@ import * as logger from "firebase-functions/logger";
  * not touch `isSelectedAsProfilePhoto`, `customerPublicProfiles`, or
  * `customers.profilePicturePath`. Every photo it creates starts private and
  * unreviewed — moderation/selection is P.4.2B2+.
+ *
+ * **CR.1.2 (2026-08-20)**: copies the grant's `purpose` straight into the
+ * new `customerPhotos` doc — the one and only place that provenance is
+ * ever written, server-side, from the server-issued grant, never from
+ * anything the client controls at this boundary.
  */
 
 const OBJECT_PATH_PATTERN = /^tenants\/([^/]+)\/customerPhotos\/([^/]+)\/([^/]+)$/;
@@ -233,6 +238,11 @@ export const finalizeCustomerPhotoUpload = onObjectFinalized(
         reviewedAt: null,
         rejectionReason: null,
         revision: 1,
+        // CR.1.2 — copied straight from the grant this object was
+        // authorized against, never trusted from the client at this
+        // boundary (there is no client input to this trigger at all).
+        // `moderateCustomerPhoto.ts` reads this to decide auto-selection.
+        purpose: grant.purpose ?? null,
       });
       tx.update(grantRef, {
         status: "consumed",

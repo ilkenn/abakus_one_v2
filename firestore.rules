@@ -219,6 +219,15 @@ service cloud.firestore {
       // `selectCustomerProfilePhoto` Cloud Function exists, it will set
       // this field via the Admin SDK, which bypasses these rules entirely
       // — no allow-list entry is ever needed for a server-only writer.
+      //
+      // CR.1.1 (2026-08-20): `birthDate` is deliberately excluded from
+      // this allow-list too, and always will be — it is PII, required
+      // once, and immutable after its first write (only
+      // `completeCustomerProfile`, via the Admin SDK, ever sets it, and
+      // only when the document doesn't already carry one). A customer-
+      // requested correction is intended to go through a future admin-
+      // approval flow (documented, not yet built — see `docs/decisions.md`'s
+      // CR.1.1 entry), never a direct client write here.
       allow update: if isSignedIn() && request.auth.uid == uid &&
         request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(['displayName', 'email']);

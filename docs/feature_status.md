@@ -888,7 +888,7 @@ architecture and every judgment call, including the one real security gap found 
 | 6C — Staff, role & permission management | DONE | `RegisterStaffMember`/`AssignStaffRole`/`RevokeStaffRole`/`SetStaffMemberStatus`/`GrantStaffBranchAccess`/`RevokeStaffBranchAccess`/`RevokeStaffSession`. Self-promotion/self-revocation structurally blocked (`SelfRoleGrantNotAllowedViolation`, checked before authorization). Admin-role grants require `manageStaffAdminRole` (admin-only); other roles require `manageStaffRoles` (manager+) — action selection enforces "no manager granting admin unless authorized," not a separate check. `active <-> suspended` reversible, `archived` terminal. `PosAuthorizedAction` extended 17 values (17→84 total from ADR-022's 67), flagged as "approaching" the ~150 split-trigger threshold, not split. |
 | 6D — Organization/branch administration | DONE | Resurrected dead `shared/models/{restaurant,branch}.dart` into real, repository-backed entities (`Organization -> Restaurant -> Branch`), seeded to match `currentBranchIdProvider`'s pre-existing `'branch-1'`. No per-organization data isolation is actually enforced anywhere data is stored — documented honestly as the identity/boundary *shape*, not isolation itself. `SetBranchEmergencyStop` (admin-only, distinct from `emergencyChannelClosure`). |
 | 6E — Admin overview dashboard | DONE | `BuildAdminOverviewSnapshot` — a pure, computed-fresh read-model reusing `BuildCourierOperationHealth` directly rather than recomputing. Explicitly omits open-orders/delayed-kitchen-work/open-cash-session counts — no query exists for any of them — "honestly absent, not approximated with a fake zero." |
-| 6F/6G — Customer 360 & photo moderation | DONE | `CustomerManagementScreen`/`CustomerDetailScreen` (search, notes, account status). `CustomerPhoto.photoRef` is a fully opaque string end-to-end — no `image_picker`/media dependency exists in this codebase, confirmed during the pre-implementation survey; the moderation screen never renders an `Image` widget. Max-10-eligible-photo limit (`CustomerPhoto.maxEligiblePhotos`, raised from 5 in Profile P.4.1; `rejected`/`removed` never count), 0-or-1 selected profile photo enforced by deselecting siblings before selecting. No hard deletion — `removed` is a status, not a delete. Every `CustomerPhoto` now also carries an immutable `organizationId` (P.4.1) for the real `customerPhotos` Firestore collection's tenant-isolation rule. P.4.2A added the real upload-authorization seam: `requestCustomerPhotoUploadGrant` (Cloud Function) issues a short-lived, server-verified `customerPhotoUploadGrants/{grantId}` record after independently confirming tenant membership (`tenantCustomers`) and enforcing the quota (including outstanding grants, transaction-safe against concurrent requests); `storage.rules` now verifies that grant cross-service (`firestore.get`) before allowing the actual byte upload, closing the cross-tenant/uid-substitution gap P.4.1 had disclosed. Direct customer/staff delete of a Storage photo is now denied unconditionally (was owner-only) — removal is deferred to server logic, not yet built. P.4.2A.1 verified (with a new explicit test, no rule change needed) that the grant's create-only `resource == null` check already blocks a second upload, a metadata-only update, and a delete to the same granted path for the grant's whole unexpired lifetime — a still-`issued` grant cannot be reused to tamper with the object it already authorized once. P.4.2B1 closed the last gap: a new `finalizeCustomerPhotoUpload` Storage-finalize trigger converts a successfully uploaded object into a real `customerPhotos/{grantId}` record (`status: "pendingReview"`) and marks its grant `consumed`, atomically, in one Firestore transaction — a completed upload is now a real photo, not just an eventually-expiring reservation. Every newly finalized photo starts private, unselected, and unreviewed. P.4.2B2 completed the rest of the server-authoritative lifecycle: `moderateCustomerPhoto` (Cloud Function, real staff-role authorization via a new `moderateCustomerPhotos` permission tier — manager/admin/tenantOwner) approves/rejects/removes/returns-to-review, with `removed` now terminal and moderation replay idempotent; `selectCustomerProfilePhoto` (Cloud Function) lets a customer select only their own approved photo, re-enforcing the ownership check the Dart `SelectCustomerProfilePhoto` use case's own doc comment had disclosed as missing — that Dart use case now also takes a `requestingCustomerId` for defense-in-depth, explicitly documented as not the security boundary. The canonical selected/public photo source is `customerPublicProfiles/{organizationId}_{uid}.selectedProfilePhotoRef`, written for the first time here — `customers/{uid}.profilePicturePath` is deliberately never used (a locked correction: that field is global to the customer identity, unsafe as a tenant-scoped source). Rejecting/removing a currently-selected photo clears both the selection flag and the public projection in the same transaction, with no automatic fallback photo chosen. No upload UI/`image_picker` yet — `ProfileHeroCard` still does not consume a real selected photo. |
+| 6F/6G — Customer 360 & photo moderation | DONE | `CustomerManagementScreen`/`CustomerDetailScreen` (search, notes, account status). `CustomerPhoto.photoRef` is a fully opaque string end-to-end — no `image_picker`/media dependency exists in this codebase, confirmed during the pre-implementation survey; the moderation screen never renders an `Image` widget. Max-10-eligible-photo limit (`CustomerPhoto.maxEligiblePhotos`, raised from 5 in Profile P.4.1; `rejected`/`removed` never count), 0-or-1 selected profile photo enforced by deselecting siblings before selecting. No hard deletion — `removed` is a status, not a delete. Every `CustomerPhoto` now also carries an immutable `organizationId` (P.4.1) for the real `customerPhotos` Firestore collection's tenant-isolation rule. P.4.2A added the real upload-authorization seam: `requestCustomerPhotoUploadGrant` (Cloud Function) issues a short-lived, server-verified `customerPhotoUploadGrants/{grantId}` record after independently confirming tenant membership (`tenantCustomers`) and enforcing the quota (including outstanding grants, transaction-safe against concurrent requests); `storage.rules` now verifies that grant cross-service (`firestore.get`) before allowing the actual byte upload, closing the cross-tenant/uid-substitution gap P.4.1 had disclosed. Direct customer/staff delete of a Storage photo is now denied unconditionally (was owner-only) — removal is deferred to server logic, not yet built. P.4.2A.1 verified (with a new explicit test, no rule change needed) that the grant's create-only `resource == null` check already blocks a second upload, a metadata-only update, and a delete to the same granted path for the grant's whole unexpired lifetime — a still-`issued` grant cannot be reused to tamper with the object it already authorized once. P.4.2B1 closed the last gap: a new `finalizeCustomerPhotoUpload` Storage-finalize trigger converts a successfully uploaded object into a real `customerPhotos/{grantId}` record (`status: "pendingReview"`) and marks its grant `consumed`, atomically, in one Firestore transaction — a completed upload is now a real photo, not just an eventually-expiring reservation. Every newly finalized photo starts private, unselected, and unreviewed. P.4.2B2 completed the rest of the server-authoritative lifecycle: `moderateCustomerPhoto` (Cloud Function, real staff-role authorization via a new `moderateCustomerPhotos` permission tier — manager/admin/tenantOwner) approves/rejects/removes/returns-to-review, with `removed` now terminal and moderation replay idempotent; `selectCustomerProfilePhoto` (Cloud Function) lets a customer select only their own approved photo, re-enforcing the ownership check the Dart `SelectCustomerProfilePhoto` use case's own doc comment had disclosed as missing — that Dart use case now also takes a `requestingCustomerId` for defense-in-depth, explicitly documented as not the security boundary. The canonical selected/public photo source is `customerPublicProfiles/{organizationId}_{uid}.selectedProfilePhotoRef`, written for the first time here — `customers/{uid}.profilePicturePath` is deliberately never used (a locked correction: that field is global to the customer identity, unsafe as a tenant-scoped source). Rejecting/removing a currently-selected photo clears both the selection flag and the public projection in the same transaction, with no automatic fallback photo chosen. P.4.3A connected the real Flutter client: `image_picker` added (behind one interface, `CustomerPhotoPicker`); `CustomerPhoto`/`CustomerPhotoStatus` moved from `features/admin/domain/` to `shared/models/` (now genuinely used by 2 features); a real `customerPhotoGalleryProvider` (live Firestore stream) and upload notifier drive pick → request grant → upload to the exact granted Storage path → wait for the real backend-created `pendingReview` photo, with a functional (not yet visually polished) "Profil Fotoğraflarım" screen and a `ProfileScreen` entry point, both authenticated-only. Photo bytes render via `Reference.getData()`, never `getDownloadURL()` — no public token URL ever becomes `photoRef`. `ProfileHeroCard` still does not consume a real selected photo — that and the selection UI (the callable itself is already wired end-to-end) are P.4.3B. |
 | 6H/6I/6J/6K — CRM/loyalty/survey/feedback/menu admin entry points | DONE (satisfied by 6A) | Pre-existing Sprint-5D screens (`CustomerSegmentationAdminScreen`, `VisitRewardRulesAdminScreen`, `SurveyAdminScreen`, `CustomerNotificationCampaignsAdminScreen`, `FeedbackAdminScreen`) wired directly into the shell rather than rebuilt — see ADR-023 Decision 8. Menu/Orders/POS/Cash entry points are honest `AdminComingSoonView` placeholders, each naming what's missing. |
 | 6L — Device & integration registry foundation | DONE | `BuildDeviceRegistryProjection` merges `KitchenDisplayDevice`/`CourierDevice` (read/toggle-only, writes back through their own repositories via `SetSourceDeviceActive`) with the new `AdminDeviceRegistration` (the only record for `posTerminal`/`printer`/`paymentTerminal`, which have no other owning aggregate). No remote restart/reconnect — only active/inactive/archive. |
 | 6M — Unified Audit Center projection | DONE | `BuildAuditCenterProjection` covers 4 of 8 audit trails (courier/kitchen/restaurant-operations/admin) — the only 4 with a branch-scoped or unscoped query; cash/closure/courier-settlement/CRM audit trails are excluded and named as such, not silently dropped. Client-side filtering/pagination only — an explicit "future backend query seam." |
@@ -3480,3 +3480,148 @@ fixed.
 **P.3 CLOSED: NO — see `MAP_FIRST_PHYSICAL_DEVICE_VERIFIED=NO` in the session's final report; every
 other in-scope item is genuinely complete and gate-verified.** `FRAUD_F2_COMPLETE: YES`. See
 `docs/decisions.md` Paket Servis P.3 for the full report.
+
+## Customer Registration — CR.1: First-Login Profile Completion + Server-Authoritative Bootstrap
+
+**CR.1 (2026-08-19) — First-Login Mandatory Profile Completion, Server-Authoritative Customer/Tenant-
+Membership Bootstrap, CLOSED.** A physical-device test of Profile Photo upload (P.4.3A) surfaced the real
+gap: phone OTP authentication alone never created `customers/{uid}` or `tenantCustomers/{organizationId}
+_{uid}`, so a first-time customer's own `requestCustomerPhotoUploadGrant` call failed with "You are not a
+customer of this organization." CR.1 closes it at the source, not with a workaround.
+
+- **`completeCustomerProfile` callable — DONE.** `functions/src/completeCustomerProfile.ts` — the one
+  server-authoritative bootstrap path for both canonical records. App-Check-enforced, phone-verified-
+  customer-only. Accepts only `firstName`/`lastName`/`email`/`occupationStatus`/`workplaceName`/
+  `educationalInstitutionName`/`gender` — `organizationId` always server-resolved (single-tenant constant,
+  documented as temporary), `phoneNumber` always the verified auth-token claim, never client input for
+  either.
+- **Idempotent bootstrap, no `requestKey` needed — DONE.** Both target documents are already uid-derived,
+  fixed-path — no duplication possible by construction. One reads-before-writes transaction; an
+  already-complete customer with existing membership is a zero-write no-op — this endpoint structurally
+  cannot become a general profile-edit path.
+- **Shared completeness definition — DONE.** Server (`isProfileComplete`), Dart
+  (`isCustomerProfileComplete`), and the reactive client provider all agree field-for-field — never decided
+  by tenant-membership presence alone.
+- **Routing gate — DONE.** New `AppRoutes.completeProfile` (`/complete-profile`).
+  `AppRouteGuard.resolve()` gained one new (backward-compatible, defaulted) `needsProfileCompletion` bool,
+  still a pure function of plain booleans. A real customer needing completion is redirected there from
+  every signed-in route, not just `/main` — closes the "deep-link around the gate" risk. Reactive via
+  `customerProfileCompletionStateProvider` — a guest/unauthenticated session never queries Firestore at
+  all; a real customer's live `customers`/`tenantCustomers` streams drive `loading`/`complete`/
+  `incomplete`/`error`. A successful "Profilini Tamamla" submit is picked up automatically by the live
+  listener; the submit notifier never navigates itself.
+- **New feature `lib/features/customer_registration/` — DONE.** Deliberately separate from
+  `features/profile/` (an auth/bootstrap boundary, not profile editing). CRM's `InMemoryCustomerRepository`
+  untouched, explicitly out of scope.
+- **"Profilini Tamamla" screen — DONE, functional, on this app's existing design tokens.** Ad/Soyad/
+  E-posta, read-only verified phone, a 3-option `occupationStatus` selector with conditional İş Yeri/Okul-
+  Eğitim-Kurumu field (never labeled university-only), a 3-option gender selector (`Kadın`/`Erkek`/
+  `Belirtmek istemiyorum`, no default preselection), `PopScope(canPop: false)` against back-navigation
+  bypass, double-submit guarded.
+- **Localization — re-verified against the current tree, not assumed.** Confirmed still inactive (no
+  `l10n.yaml`/`flutter_localizations`, `lib/l10n/app_tr.arb` still empty) — new strings stay hardcoded
+  Turkish literals, matching 100% of existing UI.
+- **Account deletion redaction — extended, not deferred.** `processAccountDeletion.ts` now also clears
+  `firstName`/`lastName`/`email`/`workplaceName`/`educationalInstitutionName`/`gender`/`occupationStatus`
+  on deletion. `tenantCustomers` deliberately left untouched — it carries no PII to redact.
+- **Firestore Rules — DONE, not weakened.** `customers/{uid}` `create: if false` and the `displayName`/
+  `email`-only update allow-list, and `tenantCustomers` `write: if false`, all unchanged — the new
+  personalization fields were deliberately never added to any client-writable path. Two real test gaps the
+  audit itself found (no `tenantCustomers` write-denial test, no forged-field test) are now closed.
+- **A real routing-gate ordering bug — found and fixed during this task's own test-writing, not shipped.**
+  The completion-state provider originally checked "is either stream still loading" before "did either
+  stream error," which could mask a genuine failure behind a sibling stream that never resolves. Fixed:
+  errors are now checked first.
+- **A real, wide-blast-radius test regression — found and fixed, mirroring a bug class this codebase has
+  now hit twice.** The one test file in the whole suite that pumps the actual `appRouterProvider`
+  (`app_router_test.dart`) started reaching a live, Firestore-backed provider unavailable under
+  `flutter test` once the redirect callback began reading the new completion state unconditionally. Fixed
+  with the same override pattern already established for `customerPhotoGatewayProvider`.
+
+**Test verification:** Backend: 1 new Cloud Function + test file (27 tests), `processAccountDeletion.ts`
++1 test, `firestore-tests/rules.test.js` +4 tests. Dart: new feature `lib/features/customer_registration/**`
+(domain/data/providers/screen), router files updated, ~55 new tests across domain/data/providers/screen,
+2 router test files updated (1 new test group, 1 regression fix). `flutter analyze`: **0 issues** (full
+app). `flutter test`: **3142/3142 passing**. Functions (JDK 21, full emulator suite): **781/781 passing**.
+Firestore Security Rules: **317/317 passing**. No partial-green gate accepted.
+
+**CR.1 CLOSED: YES** — every locked requirement implemented and gate-verified; no physical-device
+verification was requested or claimed for this task (a code-level, emulator-verified close). See
+`docs/decisions.md`'s Customer Registration CR.1 entry for the full report.
+
+**Known doc gap, not fixed by CR.1.1 below**: a follow-up security-fix task (2026-08-19) replaced the
+routing gate's data source — `customerProfileCompletionStateProvider` is now backed by the
+server-authoritative `getCustomerProfileCompletionState` callable, not the live `customers`/
+`tenantCustomers` Firestore streams this section's own write-up above still describes — and raised the
+test counts to 3149/792/317. That correction was captured in `docs/decisions.md`'s own CR.1 security-fix
+entry but never mirrored back into this section. Flagged here rather than silently rewritten, since
+correcting the write-up above is a documentation task in its own right, not part of CR.1.1's scope.
+
+**CR.1.1 (2026-08-20) — Date of Birth: required, immutable after first write, CLOSED.** `birthDate`
+added as a required field on "Profilini Tamamla" — canonical `"YYYY-MM-DD"` string on
+`customers/{uid}.birthDate`, validated and written only by `completeCustomerProfile` (Admin SDK), never
+addable to the client update allow-list, and structurally incapable of being overwritten by a repeat
+call once set (a repair triggered by some other missing field can no longer smuggle a new birthDate
+through). Legacy pre-CR.1.1 records missing only `birthDate` are classified incomplete by the same,
+unmodified `getCustomerProfileCompletionState` resolver and routed to complete it. New premium picker
+(`BirthDateField`) reuses the existing `SignatureCalendar` unmodified, wrapped in a year-jump step —
+no raw Material date picker introduced. `processAccountDeletion` redacts `birthDate` on deletion. A
+future customer-requested correction flow (pending request → admin approval → privileged server write →
+immutable audit event) is documented in `docs/decisions.md`'s CR.1.1 entry, deliberately not built in
+this task — the immutability invariant is already fully enforced without it. See `docs/decisions.md`'s
+Customer Registration CR.1.1 entry for the full report and exact test/gate counts.
+
+**CR.1.2 (2026-08-20) — Optional Profile Photo During First Registration, CLOSED.** "Profilini
+Tamamla" is now a two-step wizard: Step 1 (unchanged CR.1/CR.1.1 form, "Devam Et") and Step 2 ("Profil
+Fotoğrafın", fully optional — "Fotoğraf Ekle" or "Şimdilik Geç"). Step 1's `completeCustomerProfile`
+success advances locally to Step 2 **without** invalidating completion state; the one existing
+`ref.invalidate(customerProfileCompletionResultProvider)` call moved into a new
+`finishOnboarding()`, fired only when Step 2 finishes/is skipped/fails-and-defers — no second
+completion flag, no router change. A restart between steps correctly resolves `complete` (photo was
+never part of `isProfileComplete`), routing straight to `/main`, matching the photo's optional status.
+Reuses the existing secure upload/moderation pipeline end-to-end
+(`completeCustomerProfile` → membership exists → `requestCustomerPhotoUploadGrant` → Storage upload →
+`finalizeCustomerPhotoUpload` → `pendingReview customerPhotos`) — zero new upload path, zero weakened
+authorization. A new optional, closed-enum `purpose: 'profileOnboarding'` is validated server-side on
+the grant request, stored on the grant, and copied server-side into the finalized `customerPhotos`
+document — never client-set at the point it's consumed. On moderator approval of a
+`purpose == 'profileOnboarding'` photo, `moderateCustomerPhoto` auto-selects it as the customer's
+canonical public photo **only if no selection already exists**, atomically, inside the same
+transaction, proven safe under real concurrency (a `Promise.all` race against a manual selection call)
+via Firestore's own transaction-retry semantics — never overwrites an existing selection. Owner-private
+(`isOwner`, any status) vs. public (`customerPublicProfiles.selectedProfilePhotoRef`, approved+selected
+only) visibility required **zero rule changes** — both invariants already existed; only the new
+`purpose` field and auto-selection logic are net-new. Upload failure (Storage-level, not just grant)
+never rolls back registration — "Tekrar Dene"/"Daha Sonra Ekle" both leave `customers`/
+`tenantCustomers`/membership untouched. Existing max-10-photo quota reused unchanged (a new shared
+`isCustomerPhotoQuotaFull` predicate), no separate onboarding allowance. Per explicit user direction
+(an exception to this codebase's default cross-feature-import rule, not a unilateral choice), the
+shared photo-upload application/data layer was mechanically extracted from `features/profile/` into a
+new neutral `lib/features/customer_photos/` feature module, now consumed by both `profile` and
+`customer_registration` — verified zero-regression (identical pass count) before any CR.1.2 logic was
+layered on top. `lib/features/profile/presentation/widgets/profile_hero_card.dart`/`ProfileModel`
+received **zero** changes — the owner-private-vs-public Profile Hero presentation split is documented
+as a future P.4.3B invariant, not built here. See `docs/decisions.md`'s Customer Registration CR.1.2
+entry for the full report, including the complete owner/public/auto-selection visibility invariants and
+exact test/gate counts (`flutter test` 3191/12-skipped/0-failed, Functions 814/814, Firestore Rules
+319/319, Storage Rules 35/35 unchanged).
+
+**P.4.3B (2026-08-20) — Premium Customer Profile Identity Hero, CLOSED.** Profile's top identity
+section no longer shows the phone number as the primary identity — it now reads the customer's real
+canonical `customers/{uid}` data (a new `customerIdentityProvider`/`CustomerIdentityGateway`, a direct
+owner-scoped client Firestore read, zero rule changes needed) and renders full name, email, and
+workplace-or-school (per `occupationStatus`, omitted entirely for `other`). `ProfileModel`/
+`profileProvider` were deliberately left untouched — a new, parallel identity read path was added
+instead, per explicit task direction. Owner photo priority is now correct and restart-safe: the newest
+active `pendingReview`/`underReview` photo (owner-private, with a small "Onay Bekliyor"/"İnceleniyor"
+badge) always wins, even over an already-approved-and-selected photo; otherwise the canonical
+`approved` + publicly-selected photo (matched against `customerPublicProfiles.selectedProfilePhotoRef`
+via a new `watchSelectedProfilePhotoRef` read — never `CustomerPhoto.isSelectedAsProfilePhoto` alone);
+otherwise an initials avatar. Rejected/removed photos can never become the hero. Only the single
+resolved photo's bytes are ever downloaded — the private gallery is never eagerly fetched in full. No
+new tap-to-manage-photo affordance was added to the hero avatar — the existing
+`ProfileCustomerPhotosCard` remains the sole "Profil Fotoğraflarım" entry point. Loading/error/missing-
+document states all render neutrally, never a fabricated name. Guest state, the rest of `ProfileScreen`,
+Admin/POS, and backend photo moderation/security are all unchanged. See `docs/decisions.md`'s P.4.3B
+entry for the full report and exact test/gate counts (`flutter test` 3236/12-skipped/0-failed; no
+Functions/Rules/Storage suites rerun — Flutter-only change).

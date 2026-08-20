@@ -38,7 +38,8 @@ void main() {
     // string "dart:io" — this file's own doc comments legitimately
     // reference it by name to explain the fix.
     expect(
-      RegExp('''^import\\s+['"]dart:io['"]''', multiLine: true).hasMatch(source),
+      RegExp('''^import\\s+['"]dart:io['"]''', multiLine: true)
+          .hasMatch(source),
       isFalse,
       reason: 'dart:io has no working HTTP implementation on Flutter Web — '
           'this file must stay on package:http (or another genuinely '
@@ -47,7 +48,9 @@ void main() {
     );
   });
 
-  test('a successful response returns the latest matching code for the phone number', () async {
+  test(
+      'a successful response returns the latest matching code for the phone number',
+      () async {
     final mockClient = MockClient((request) async {
       expect(request.url, expectedUri);
       expect(request.method, 'GET');
@@ -69,10 +72,14 @@ void main() {
       phoneNumber: phoneNumber,
     );
 
-    expect(code, '222222', reason: 'the LAST matching entry wins, never the first or a random pick');
+    expect(code, '222222',
+        reason:
+            'the LAST matching entry wins, never the first or a random pick');
   });
 
-  test('no matching phone number in the response returns null, never a fabricated code', () async {
+  test(
+      'no matching phone number in the response returns null, never a fabricated code',
+      () async {
     final mockClient = MockClient((request) async {
       return http.Response(
         '{"verificationCodes":[{"phoneNumber":"+905000000000","code":"999999"}]}',
@@ -107,7 +114,9 @@ void main() {
     expect(code, isNull);
   });
 
-  test('a non-200 status throws EmulatorVerificationCodeException, never silently returns null', () async {
+  test(
+      'a non-200 status throws EmulatorVerificationCodeException, never silently returns null',
+      () async {
     final mockClient = MockClient((request) async {
       return http.Response('Not Found', 404);
     });
@@ -124,7 +133,9 @@ void main() {
     );
   });
 
-  test('an unexpected response shape (not a JSON object) throws EmulatorVerificationCodeException', () async {
+  test(
+      'an unexpected response shape (not a JSON object) throws EmulatorVerificationCodeException',
+      () async {
     final mockClient = MockClient((request) async {
       return http.Response('[]', 200);
     });
@@ -141,7 +152,9 @@ void main() {
     );
   });
 
-  test('a transport-level failure (e.g. connection refused — emulator not running) is wrapped, not left raw', () async {
+  test(
+      'a transport-level failure (e.g. connection refused — emulator not running) is wrapped, not left raw',
+      () async {
     final mockClient = MockClient((request) async {
       throw const io.OSError('Connection refused', 111);
     });
@@ -158,7 +171,9 @@ void main() {
     );
   });
 
-  test('queries the exact emulator debug endpoint for the given host/port/projectId — never a different path', () async {
+  test(
+      'queries the exact emulator debug endpoint for the given host/port/projectId — never a different path',
+      () async {
     Uri? capturedUri;
     final mockClient = MockClient((request) async {
       capturedUri = request.url;
@@ -173,10 +188,15 @@ void main() {
       phoneNumber: phoneNumber,
     );
 
-    expect(capturedUri, Uri.http('localhost:9199', '/emulator/v1/projects/my-project/verificationCodes'));
+    expect(
+        capturedUri,
+        Uri.http('localhost:9199',
+            '/emulator/v1/projects/my-project/verificationCodes'));
   });
 
-  test('the default constructor (no injected client) still works end-to-end against a mock transport, matching real call-site wiring', () async {
+  test(
+      'the default constructor (no injected client) still works end-to-end against a mock transport, matching real call-site wiring',
+      () async {
     // Cannot inject into the zero-arg `const HttpEmulatorVerificationCodeClient()`
     // real call sites use without a live emulator; this proves the
     // *optional* client parameter defaults correctly rather than requiring

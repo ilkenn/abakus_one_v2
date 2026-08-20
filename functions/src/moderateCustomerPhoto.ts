@@ -48,6 +48,29 @@ import { requireStaffPermission } from "./staffAuthorization";
  * rejected/removed photo publicly selected. No automatic replacement is
  * chosen; the customer selects a new one later via
  * `selectCustomerProfilePhoto`.
+ *
+ * **Auto-selection on approval — Customer Registration CR.1.2
+ * (2026-08-20).** When an `approve` action targets a photo whose
+ * server-authoritative `purpose` (set once, at finalize, from the upload
+ * grant — never client-supplied here) is `"profileOnboarding"`, AND the
+ * customer currently has no `selectedProfilePhotoRef` at all
+ * (`customerPublicProfiles/{organizationId}_{customerId}` missing, or
+ * present with no pointer), this SAME transaction also sets
+ * `isSelectedAsProfilePhoto: true` on the photo and writes the projection
+ * — the customer's very first onboarding photo becomes their canonical
+ * profile photo the moment it clears review, with no extra customer
+ * action. If a selection already exists, this branch never runs — an
+ * older onboarding photo's approval can never displace an already-chosen
+ * newer selection. Transaction-safety and "exactly one canonical winner"
+ * under a concurrent manual `selectCustomerProfilePhoto` call fall out of
+ * Firestore's own optimistic-concurrency retry semantics for free (both
+ * paths read-then-write the same projection doc inside their own
+ * transaction), the same reasoning already established for this
+ * codebase's other transactional invariants. Audited via a dedicated,
+ * deterministic `auditEvents/{photoId}-auto-selected` entry
+ * (`actorId: "system"`, mirroring `finalizeCustomerPhotoUpload`'s own
+ * system-actor convention) — never silently folded into the moderation
+ * audit entry alone.
  */
 
 export type CustomerPhotoModerationAction = "approve" | "reject" | "remove" | "returnToReview";
@@ -67,6 +90,7 @@ interface ModerateCustomerPhotoResult {
   revision: number;
   idempotent: boolean;
   clearedPublicSelection: boolean;
+  autoSelected: boolean;
 }
 
 function db() {
@@ -131,6 +155,7 @@ export const moderateCustomerPhoto = onCall(
           revision: photo.revision as number,
           idempotent: true,
           clearedPublicSelection: false,
+          autoSelected: false,
         };
       }
 
@@ -157,12 +182,35 @@ export const moderateCustomerPhoto = onCall(
         }
       }
 
+      // CR.1.2 — auto-selection on approval. Only ever considered for a
+      // genuine approve transition (never reachable for the idempotent-
+      // replay case above, which already short-circuited) whose photo
+      // carries the server-authoritative onboarding intent, and only when
+      // the customer has no existing public selection to protect.
+      const isApproving = newStatus === "approved";
+      const hasOnboardingIntent = photo.purpose === "profileOnboarding";
+      let autoSelected = false;
+      let autoSelectProjectionRef: DocumentReference | null = null;
+      if (isApproving && hasOnboardingIntent) {
+        autoSelectProjectionRef = db()
+          .collection("customerPublicProfiles")
+          .doc(`${organizationId}_${photo.customerId}`);
+        const projectionSnap = await tx.get(autoSelectProjectionRef);
+        const hasExistingSelection =
+          projectionSnap.exists && !!projectionSnap.data()!.selectedProfilePhotoRef;
+        autoSelected = !hasExistingSelection;
+      }
+
       const now = Timestamp.now();
       const newRevision = (photo.revision as number) + 1;
 
       tx.update(photoRef, {
         status: newStatus,
-        isSelectedAsProfilePhoto: clearsSelection ? false : photo.isSelectedAsProfilePhoto,
+        isSelectedAsProfilePhoto: clearsSelection
+          ? false
+          : autoSelected
+              ? true
+              : photo.isSelectedAsProfilePhoto,
         reviewedByStaffId: staffUid,
         reviewedAt: now,
         rejectionReason: moderationAction === "reject" ? rejectionReason : null,
@@ -175,6 +223,33 @@ export const moderateCustomerPhoto = onCall(
           { selectedProfilePhotoRef: null, updatedAt: now },
           { merge: true },
         );
+      }
+
+      if (autoSelected && autoSelectProjectionRef) {
+        tx.set(
+          autoSelectProjectionRef,
+          {
+            uid: photo.customerId,
+            organizationId,
+            selectedProfilePhotoRef: photo.photoRef,
+            updatedAt: now,
+          },
+          { merge: true },
+        );
+        // Deterministic per-photo id — a redelivered/retried transaction
+        // attempt recomputes the identical id, so only the one attempt
+        // that actually commits ever persists this entry.
+        const autoSelectAuditRef = db().collection("auditEvents").doc(`${photoId}-auto-selected`);
+        tx.set(autoSelectAuditRef, {
+          organizationId,
+          uid: photo.customerId,
+          actorId: "system",
+          photoId,
+          previousSelectedPhotoId: null,
+          type: "customerPhoto.selected",
+          autoSelectedViaModeration: true,
+          timestamp: now,
+        });
       }
 
       // Deterministic per-transition id (photoId + the NEW revision it
@@ -193,6 +268,7 @@ export const moderateCustomerPhoto = onCall(
         beforeStatus: currentStatus,
         afterStatus: newStatus,
         clearedPublicSelection,
+        autoSelected,
         revision: newRevision,
         type: "customerPhoto.moderated",
         timestamp: now,
@@ -204,6 +280,7 @@ export const moderateCustomerPhoto = onCall(
         revision: newRevision,
         idempotent: false,
         clearedPublicSelection,
+        autoSelected,
       };
     });
 
@@ -213,6 +290,7 @@ export const moderateCustomerPhoto = onCall(
       staffUid,
       idempotent: result.idempotent,
       clearedPublicSelection: result.clearedPublicSelection,
+      autoSelected: result.autoSelected,
     });
 
     return result;

@@ -1,5 +1,5 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 
 /**
@@ -143,8 +143,37 @@ export const processAccountDeletion = onCall(
           displayName: "Silinmiş Kullanıcı",
           phoneNumber: "",
           accountStatus: "restricted",
+          // Customer Registration CR.1 (2026-08-19) — redact every
+          // registration-form PII field the same way displayName/
+          // phoneNumber already were, so a deleted account never retains
+          // a real name/email/workplace/institution/gender indefinitely
+          // just because CR.1 shipped after this function was written.
+          firstName: "",
+          lastName: "",
+          email: "",
+          workplaceName: null,
+          educationalInstitutionName: null,
+          gender: null,
+          occupationStatus: null,
+          // CR.1.1 (2026-08-20) — birthDate is PII and must not remain
+          // attached to a deleted customer; no existing legal retention
+          // rule requires keeping it, so it's redacted the same way as
+          // every other CR.1 enum/optional field above.
+          birthDate: null,
+          updatedAt: Timestamp.now(),
         });
       }
+
+      // tenantCustomers/{organizationId}_{uid} (Customer Registration
+      // CR.1) is deliberately left untouched here — audited, not
+      // overlooked. Unlike customers/{uid}, it carries no name/email/
+      // contact PII at all — only organizationId/uid/createdAt, the same
+      // "stable, non-PII opaque reference" this function's own doc
+      // comment already treats Order.customerId as. If a future field
+      // genuinely holding PII is ever added there (the data model docs
+      // already flag "visit counts, reward history" as a possible future
+      // addition), this decision must be revisited then, not assumed to
+      // still hold.
     }
 
     const now = new Date().toISOString();

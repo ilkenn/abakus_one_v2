@@ -9,7 +9,7 @@ import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../application/use_cases/moderate_customer_photo.dart';
-import '../../domain/customer/customer_photo.dart';
+import '../../../../shared/models/customer_photo.dart';
 import '../providers/admin_dependencies_provider.dart';
 
 /// Customer photo moderation queue — Phase 6G (`docs/decisions.md`

@@ -174,6 +174,47 @@ callable gateway reads, and the emulator's own project-id handling under
 permanent regression guard against a *future* gateway silently bypassing
 this shared instance via `FirebaseFunctions.instanceFor(...)`).
 
+**If Auth/Firestore/Functions all succeed from a physical device but one
+specific product (e.g. Storage) never even reaches `finalize`/its own
+emulator log line** — this is a *different* symptom shape from the
+all-four-blocked Gradle-flavor case above (§1 there would block all four
+uniformly, not just one), so work through these instead, in order:
+
+1. **`adb reverse --list` still shows the binding for that one port
+   specifically** — bindings drop independently per port on device
+   reconnect/reboot; it is entirely possible for Auth/Firestore/Functions'
+   forwards to still be active while Storage's alone was never re-run
+   after the last USB disconnect (confirmed the leading hypothesis for a
+   Profile P.4.3A physical-device Storage-upload investigation, 2026-08-19
+   — see `docs/decisions.md`). Re-run `adb reverse tcp:9199 tcp:9199` and
+   retry.
+2. **The Storage emulator is actually running** — `firebase emulators:start
+   --only auth,firestore,functions` (omitting `storage`) produces exactly
+   this shape: three products work, the fourth silently has nothing
+   listening on its port at all. Check the Emulator UI
+   (`http://127.0.0.1:4000`) lists Storage as running, or the terminal that
+   started the emulator suite for a `storage: Storage Emulator ...` line.
+3. **The calling code uses the same `FirebaseStorage.instance` singleton
+   `FirebaseBootstrapService.initialize` calls `useStorageEmulator` on** —
+   a `FirebaseStorage.instanceFor(...)` call anywhere in `lib/` would
+   silently construct a second, non-emulator-configured instance for that
+   one product only. Ruled out structurally by
+   `test/bootstrap/storage_emulator_routing_regression_test.dart` (mirrors
+   the equivalent Functions guard referenced above) — if that test is
+   ever red, this is the cause.
+4. **Development-only diagnostic logging**:
+   `FirebaseCustomerPhotoStorageClient` (`lib/features/profile/data/
+   customer_photo_storage_client.dart`) logs, on any `uploadBytes` failure
+   and only when `AppEnvironment.current == AppEnvironment.development`,
+   the exception's runtime type, `FirebaseException.plugin/code/message`
+   (when it is one), the opaque `objectPath`, `contentType`, byte count,
+   and whether Storage emulator mode was active — routed through the
+   existing `LoggingService` (redacting, console-only in debug, silent in
+   release). Never logs tokens, grant secrets, or image bytes. The next
+   physical-device reproduction should surface the exact code/message
+   directly in the Flutter run terminal instead of the generic
+   `CustomerPhotoStorageException` message the UI shows.
+
 ## Google Maps provider mode (fixture vs. live)
 
 `GOOGLE_MAPS_PROVIDER_MODE` (env var, `functions/src/googleMapsProviderMode.ts`) decides whether

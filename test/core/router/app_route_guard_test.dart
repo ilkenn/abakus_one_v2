@@ -316,6 +316,159 @@ void main() {
   });
 
   group(
+      'AppRouteGuard.resolve — Customer Registration CR.1 profile completion gate',
+      () {
+    test(
+        'a real customer needing completion, at main, is redirected to completeProfile',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.main,
+          isAuthenticated: true,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: true,
+          needsProfileCompletion: true,
+        ),
+        AppRoutes.completeProfile,
+      );
+    });
+
+    test(
+        'a real customer needing completion cannot deep-link around the gate '
+        'into ANY other signed-in route — not just main', () {
+      for (final location in [
+        AppRoutes.main,
+        AppRoutes.login,
+        AppRoutes.otp,
+        AppRoutes.onboarding,
+      ]) {
+        expect(
+          AppRouteGuard.resolve(
+            location: location,
+            isAuthenticated: true,
+            isGuest: false,
+            isOnboardingComplete: true,
+            isRealCustomer: true,
+            needsProfileCompletion: true,
+          ),
+          AppRoutes.completeProfile,
+          reason: 'location=$location must still redirect to completeProfile',
+        );
+      }
+    });
+
+    test(
+        'a real customer needing completion, already at completeProfile, is not redirected',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.completeProfile,
+          isAuthenticated: true,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: true,
+          needsProfileCompletion: true,
+        ),
+        isNull,
+      );
+    });
+
+    test(
+        'a real customer who is already complete, at completeProfile, is redirected to main — no re-showing the form',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.completeProfile,
+          isAuthenticated: true,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: true,
+          needsProfileCompletion: false,
+        ),
+        AppRoutes.main,
+      );
+    });
+
+    test(
+        'a real customer who is already complete is treated exactly as before this feature — reaches main freely',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.main,
+          isAuthenticated: true,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: true,
+          needsProfileCompletion: false,
+        ),
+        isNull,
+      );
+    });
+
+    test(
+        'a guest never needs profile completion — completeProfile redirects them straight to main, never shown the form',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.completeProfile,
+          isAuthenticated: false,
+          isGuest: true,
+          isOnboardingComplete: true,
+          isRealCustomer: false,
+          needsProfileCompletion: false,
+        ),
+        AppRoutes.main,
+      );
+    });
+
+    test(
+        'a not-signed-in visitor hitting completeProfile directly (stale/bookmarked link) is redirected to login, never shown the form',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.completeProfile,
+          isAuthenticated: false,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: false,
+        ),
+        AppRoutes.login,
+      );
+    });
+
+    test(
+        'a not-signed-in visitor hitting completeProfile before onboarding is complete lands on onboarding',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.completeProfile,
+          isAuthenticated: false,
+          isGuest: false,
+          isOnboardingComplete: false,
+          isRealCustomer: false,
+        ),
+        AppRoutes.onboarding,
+      );
+    });
+
+    test(
+        'omitting needsProfileCompletion defaults to false — every pre-existing call site/test in this file is unaffected',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.main,
+          isAuthenticated: true,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: true,
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group(
       'AppRouteGuard.sanitizeReturnTo — strict allowlist, open redirect impossible',
       () {
     test('the bare reservation flow entry is accepted', () {

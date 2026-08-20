@@ -79,6 +79,7 @@ interface SeedPhotoOptions {
   isSelectedAsProfilePhoto?: boolean;
   rejectionReason?: string | null;
   revision?: number;
+  purpose?: string | null;
 }
 
 async function seedPhoto(opts: SeedPhotoOptions): Promise<string> {
@@ -94,6 +95,7 @@ async function seedPhoto(opts: SeedPhotoOptions): Promise<string> {
     reviewedAt: null,
     rejectionReason: opts.rejectionReason ?? null,
     revision: opts.revision ?? 1,
+    purpose: opts.purpose ?? null,
   });
   return photoId;
 }
@@ -105,6 +107,44 @@ async function seedProjection(organizationId: string, uid: string, selectedProfi
     selectedProfilePhotoRef,
     updatedAt: admin.firestore.Timestamp.now(),
   });
+}
+
+// CR.1.2's concurrency test (section 30-36 below) needs a real
+// phone-verified customer identity to call `selectCustomerProfilePhoto`
+// alongside a staff `moderateCustomerPhoto` call — mirrors
+// `completeCustomerProfile.test.ts`'s exact createRealPhoneUser shape.
+const PHONE_NAMESPACE = String(Math.floor(Math.random() * 900_000) + 100_000);
+let phoneCounter = 0;
+
+async function createRealPhoneUser(): Promise<{ idToken: string; uid: string }> {
+  phoneCounter += 1;
+  const phoneNumber = `+1555${PHONE_NAMESPACE}${String(phoneCounter).padStart(3, "0")}`;
+  const sendRes = await fetch(
+    `${AUTH_HOST}/identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key=fake-api-key`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber, recaptchaToken: "ignored-by-emulator" }),
+    },
+  );
+  const sendBody = (await sendRes.json()) as { sessionInfo: string };
+  const codesRes = await fetch(`${AUTH_HOST}/emulator/v1/projects/${EMULATOR_PROJECT_ID}/verificationCodes`);
+  const codesBody = (await codesRes.json()) as { verificationCodes: { sessionInfo: string; code: string }[] };
+  const match = codesBody.verificationCodes.find((c) => c.sessionInfo === sendBody.sessionInfo)!;
+  const signInRes = await fetch(
+    `${AUTH_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPhoneNumber?key=fake-api-key`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionInfo: sendBody.sessionInfo, code: match.code }),
+    },
+  );
+  const signInBody = (await signInRes.json()) as { idToken: string; localId: string };
+  return { idToken: signInBody.idToken, uid: signInBody.localId };
+}
+
+async function seedTenantCustomer(organizationId: string, uid: string) {
+  await db().collection("tenantCustomers").doc(`${organizationId}_${uid}`).set({ organizationId, uid });
 }
 
 // =========================================================================
@@ -399,4 +439,229 @@ test("29a. a pending (never approved) photo can never populate the public projec
 
   const projection = await db().collection("customerPublicProfiles").doc(`${organizationId}_alice`).get();
   assert.strictEqual(projection.exists, false, "moderation alone never creates a public projection for a never-selected photo");
+});
+
+// =========================================================================
+// 30-36. CR.1.2 — Auto-selection on approval of an onboarding-intent photo
+// =========================================================================
+
+test("30. approving an onboarding-intent photo with no existing selection auto-selects it — response, flag, and projection all agree", async () => {
+  const organizationId = nextId("org");
+  const { idToken } = await mintStaffIdToken(organizationId, ["admin"]);
+  const photoId = await seedPhoto({
+    organizationId,
+    customerId: "alice",
+    purpose: "profileOnboarding",
+  });
+  const photoRef = (await db().collection("customerPhotos").doc(photoId).get()).data()!.photoRef as string;
+
+  const { httpStatus, body } = await callCallable(MODERATE_URL, { photoId, action: "approve" }, idToken);
+  assert.strictEqual(httpStatus, 200);
+  assert.strictEqual(body.result?.autoSelected, true);
+
+  const photo = await db().collection("customerPhotos").doc(photoId).get();
+  assert.strictEqual(photo.data()!.isSelectedAsProfilePhoto, true);
+
+  const projection = await db().collection("customerPublicProfiles").doc(`${organizationId}_alice`).get();
+  assert.ok(projection.exists);
+  assert.strictEqual(projection.data()!.selectedProfilePhotoRef, photoRef);
+  assert.strictEqual(projection.data()!.uid, "alice");
+  assert.strictEqual(projection.data()!.organizationId, organizationId);
+});
+
+test("31. auto-selection is audited via a dedicated, system-actor customerPhoto.selected entry", async () => {
+  const organizationId = nextId("org");
+  const { idToken } = await mintStaffIdToken(organizationId, ["admin"]);
+  const photoId = await seedPhoto({
+    organizationId,
+    customerId: "alice",
+    purpose: "profileOnboarding",
+  });
+
+  await callCallable(MODERATE_URL, { photoId, action: "approve" }, idToken);
+
+  const auditSnap = await db()
+    .collection("auditEvents")
+    .where("type", "==", "customerPhoto.selected")
+    .where("photoId", "==", photoId)
+    .get();
+  assert.strictEqual(auditSnap.size, 1);
+  assert.strictEqual(auditSnap.docs[0].data().actorId, "system");
+  assert.strictEqual(auditSnap.docs[0].data().autoSelectedViaModeration, true);
+});
+
+test("32. approving an onboarding-intent photo does NOT overwrite an existing customer selection", async () => {
+  const organizationId = nextId("org");
+  const { idToken } = await mintStaffIdToken(organizationId, ["admin"]);
+  const alreadySelectedId = await seedPhoto({
+    organizationId,
+    customerId: "alice",
+    status: "approved",
+    isSelectedAsProfilePhoto: true,
+  });
+  const alreadySelectedRef = (await db().collection("customerPhotos").doc(alreadySelectedId).get()).data()!
+    .photoRef as string;
+  await seedProjection(organizationId, "alice", alreadySelectedRef);
+
+  const onboardingPhotoId = await seedPhoto({
+    organizationId,
+    customerId: "alice",
+    purpose: "profileOnboarding",
+  });
+
+  const { httpStatus, body } = await callCallable(
+    MODERATE_URL,
+    { photoId: onboardingPhotoId, action: "approve" },
+    idToken,
+  );
+  assert.strictEqual(httpStatus, 200);
+  assert.strictEqual(body.result?.autoSelected, false, "an existing selection is never displaced");
+
+  const onboardingPhoto = await db().collection("customerPhotos").doc(onboardingPhotoId).get();
+  assert.strictEqual(onboardingPhoto.data()!.isSelectedAsProfilePhoto, false);
+
+  const projection = await db().collection("customerPublicProfiles").doc(`${organizationId}_alice`).get();
+  assert.strictEqual(
+    projection.data()!.selectedProfilePhotoRef,
+    alreadySelectedRef,
+    "the older, already-chosen selection remains canonical",
+  );
+});
+
+test("33. a rejected onboarding-intent photo is never selected — no auto-selection branch runs for a non-approve action", async () => {
+  const organizationId = nextId("org");
+  const { idToken } = await mintStaffIdToken(organizationId, ["admin"]);
+  const photoId = await seedPhoto({
+    organizationId,
+    customerId: "alice",
+    purpose: "profileOnboarding",
+  });
+
+  const { body } = await callCallable(
+    MODERATE_URL,
+    { photoId, action: "reject", rejectionReason: "blurry" },
+    idToken,
+  );
+  assert.strictEqual(body.result?.autoSelected, false);
+
+  const photo = await db().collection("customerPhotos").doc(photoId).get();
+  assert.strictEqual(photo.data()!.isSelectedAsProfilePhoto, false);
+  const projection = await db().collection("customerPublicProfiles").doc(`${organizationId}_alice`).get();
+  assert.strictEqual(projection.exists, false);
+});
+
+test("34. auto-selection is scoped to the photo's own customer — a different customer's existing selection is untouched", async () => {
+  const organizationId = nextId("org");
+  const { idToken } = await mintStaffIdToken(organizationId, ["admin"]);
+
+  const customerAPhotoId = await seedPhoto({
+    organizationId,
+    customerId: "customer-a",
+    status: "approved",
+    isSelectedAsProfilePhoto: true,
+  });
+  const customerARef = (await db().collection("customerPhotos").doc(customerAPhotoId).get()).data()!
+    .photoRef as string;
+  await seedProjection(organizationId, "customer-a", customerARef);
+
+  const customerBPhotoId = await seedPhoto({
+    organizationId,
+    customerId: "customer-b",
+    purpose: "profileOnboarding",
+  });
+  const customerBRef = (await db().collection("customerPhotos").doc(customerBPhotoId).get()).data()!
+    .photoRef as string;
+
+  const { body } = await callCallable(MODERATE_URL, { photoId: customerBPhotoId, action: "approve" }, idToken);
+  assert.strictEqual(body.result?.autoSelected, true);
+
+  const customerAProjection = await db()
+    .collection("customerPublicProfiles")
+    .doc(`${organizationId}_customer-a`)
+    .get();
+  assert.strictEqual(
+    customerAProjection.data()!.selectedProfilePhotoRef,
+    customerARef,
+    "customer A's own selection is untouched by customer B's auto-selection",
+  );
+
+  const customerBProjection = await db()
+    .collection("customerPublicProfiles")
+    .doc(`${organizationId}_customer-b`)
+    .get();
+  assert.strictEqual(customerBProjection.data()!.selectedProfilePhotoRef, customerBRef);
+});
+
+test("35. idempotent replay of an already-approved, already-auto-selected photo never re-selects or duplicates the audit", async () => {
+  const organizationId = nextId("org");
+  const { idToken } = await mintStaffIdToken(organizationId, ["admin"]);
+  const photoId = await seedPhoto({
+    organizationId,
+    customerId: "alice",
+    purpose: "profileOnboarding",
+  });
+
+  const first = await callCallable(MODERATE_URL, { photoId, action: "approve" }, idToken);
+  assert.strictEqual(first.body.result?.autoSelected, true);
+
+  const second = await callCallable(MODERATE_URL, { photoId, action: "approve" }, idToken);
+  assert.strictEqual(second.body.result?.idempotent, true);
+  assert.strictEqual(second.body.result?.autoSelected, false, "the idempotent replay branch never re-runs selection logic");
+
+  const auditSnap = await db()
+    .collection("auditEvents")
+    .where("type", "==", "customerPhoto.selected")
+    .where("photoId", "==", photoId)
+    .get();
+  assert.strictEqual(auditSnap.size, 1, "the replay produced no second auto-select audit entry");
+});
+
+test("36. a concurrent approve-with-auto-select and a manual select of a DIFFERENT already-approved photo resolve to exactly one canonical winner", async () => {
+  const organizationId = nextId("org");
+  const { idToken: staffIdToken } = await mintStaffIdToken(organizationId, ["admin"]);
+  const { idToken: customerIdToken, uid: customerUid } = await createRealPhoneUser();
+  await seedTenantCustomer(organizationId, customerUid);
+
+  const manuallySelectablePhotoId = await seedPhoto({
+    organizationId,
+    customerId: customerUid,
+    status: "approved",
+    isSelectedAsProfilePhoto: false,
+  });
+  const onboardingPhotoId = await seedPhoto({
+    organizationId,
+    customerId: customerUid,
+    purpose: "profileOnboarding",
+  });
+
+  const [moderateResult, selectResult] = await Promise.all([
+    callCallable(MODERATE_URL, { photoId: onboardingPhotoId, action: "approve" }, staffIdToken),
+    callCallable(
+      fn("selectCustomerProfilePhoto"),
+      { photoId: manuallySelectablePhotoId, organizationId },
+      customerIdToken,
+    ),
+  ]);
+
+  assert.strictEqual(moderateResult.httpStatus, 200, JSON.stringify(moderateResult.body));
+  assert.strictEqual(selectResult.httpStatus, 200, JSON.stringify(selectResult.body));
+
+  // Self-consistency: never zero winners, never two — Firestore's own
+  // transaction retry semantics (both paths read-then-write the same
+  // projection doc) guarantee exactly one canonical selection survives
+  // the race, whichever call's transaction happened to commit last.
+  const selectedSnap = await db()
+    .collection("customerPhotos")
+    .where("customerId", "==", customerUid)
+    .where("isSelectedAsProfilePhoto", "==", true)
+    .get();
+  assert.strictEqual(selectedSnap.size, 1, "exactly one photo ends up selected, never zero or two");
+
+  const winnerRef = selectedSnap.docs[0].data().photoRef as string;
+  const projection = await db().collection("customerPublicProfiles").doc(`${organizationId}_${customerUid}`).get();
+  assert.strictEqual(
+    projection.data()!.selectedProfilePhotoRef,
+    winnerRef,
+    "the projection always agrees with whichever photo is actually flagged selected",
+  );
 });

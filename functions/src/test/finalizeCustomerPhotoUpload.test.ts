@@ -66,6 +66,7 @@ interface SeedGrantOptions {
   createdAtMs?: number;
   expiresAtMs?: number;
   objectPathOverride?: string;
+  purpose?: string | null;
 }
 
 async function seedGrant(opts: SeedGrantOptions = {}): Promise<{ grantId: string; objectPath: string }> {
@@ -88,6 +89,7 @@ async function seedGrant(opts: SeedGrantOptions = {}): Promise<{ grantId: string
       status: opts.status ?? "issued",
       createdAt: admin.firestore.Timestamp.fromMillis(createdAtMs),
       expiresAt: admin.firestore.Timestamp.fromMillis(expiresAtMs),
+      purpose: opts.purpose ?? null,
     });
   return { grantId, objectPath };
 }
@@ -203,6 +205,22 @@ test("4. the created photo's document id is deterministically the grantId", asyn
 
   const photo = await getPhoto(grantId);
   assert.strictEqual(photo.id, grantId);
+});
+
+test("18. CR.1.2 — a grant's purpose is copied server-authoritatively into the resulting photo's purpose field", async () => {
+  const { grantId, objectPath } = await seedGrant({ purpose: "profileOnboarding" });
+  await finalizeCustomerPhotoUpload.run(buildStorageEvent({ name: objectPath }));
+
+  const photo = await getPhoto(grantId);
+  assert.strictEqual(photo.data()!.purpose, "profileOnboarding");
+});
+
+test("19. CR.1.2 — a grant with no purpose produces a photo with purpose: null", async () => {
+  const { grantId, objectPath } = await seedGrant();
+  await finalizeCustomerPhotoUpload.run(buildStorageEvent({ name: objectPath }));
+
+  const photo = await getPhoto(grantId);
+  assert.strictEqual(photo.data()!.purpose, null);
 });
 
 test("16. a completed upload no longer counts only as an outstanding reservation — the grant drops out of the issued-grants quota query", async () => {

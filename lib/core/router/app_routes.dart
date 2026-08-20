@@ -8,6 +8,14 @@ abstract final class AppRoutes {
   static const String otp = '/otp';
   static const String main = '/main';
 
+  /// Customer Registration CR.1 — the mandatory "Profilini Tamamla"
+  /// screen a first-time, real phone-authenticated customer is routed to
+  /// before `main` ever becomes reachable. See [AppRouteGuard.resolve]'s
+  /// own `needsProfileCompletion` branch — this route is never entered by
+  /// a guest or an unauthenticated visitor (there is nothing for either
+  /// to complete).
+  static const String completeProfile = '/complete-profile';
+
   /// Faz D.4 — the public, login-free Gel Al QR guest entry point. A
   /// customer scanning a kasadaki QR lands here directly, with no
   /// onboarding/login/OTP gate — see [AppRouteGuard.resolve]'s explicit

@@ -52,14 +52,16 @@ void main() {
   final pinConfigured = DevLoginConfig.pin.isNotEmpty;
   const wrongPin = 'not-the-real-pin';
   const wrongPhoneInput = '5551234567';
-  const correctPhoneInput = '5337106414'; // == DevLoginConfig.developerPhoneLocalInput
+  const correctPhoneInput =
+      '5337106414'; // == DevLoginConfig.developerPhoneLocalInput
 
   ProviderContainer buildContainer({
     String? codeToReturn = DevelopmentLocalAuthRepository.developmentOtpCode,
     String liveProjectId = _fakeLiveProjectId,
   }) {
     sessionStorage = _FakeSessionStorage();
-    fakeClient = _FakeEmulatorVerificationCodeClient(codeToReturn: codeToReturn);
+    fakeClient =
+        _FakeEmulatorVerificationCodeClient(codeToReturn: codeToReturn);
     return ProviderContainer(
       overrides: [
         authRepositoryProvider.overrideWithValue(
@@ -90,7 +92,8 @@ void main() {
 
     expect(success, isFalse);
     expect(container.read(authProvider).isAuthenticated, isFalse);
-    expect(container.read(devLoginProvider).error, 'Geliştirici girişi başarısız.');
+    expect(container.read(devLoginProvider).error,
+        'Geliştirici girişi başarısız.');
   },
       skip: pinConfigured
           ? 'covers the absent-PIN case specifically; a real PIN is configured in this run — see the configured-PIN group below instead'
@@ -119,9 +122,14 @@ void main() {
     // way quick_test_login_provider_test.dart already proves it for the
     // underlying flow this delegates to.
     expect(isRealCustomer(authState), isTrue);
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
-  test('a wrong phone number is rejected with the generic dev-only error — no session created', () async {
+  test(
+      'a wrong phone number is rejected with the generic dev-only error — no session created',
+      () async {
     final container = buildContainer();
     addTearDown(container.dispose);
     container.listen(devLoginProvider, (_, __) {});
@@ -133,10 +141,16 @@ void main() {
 
     expect(success, isFalse);
     expect(container.read(authProvider).isAuthenticated, isFalse);
-    expect(container.read(devLoginProvider).error, 'Geliştirici girişi başarısız.');
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+    expect(container.read(devLoginProvider).error,
+        'Geliştirici girişi başarısız.');
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
-  test('a wrong PIN is rejected with the generic dev-only error — no session created', () async {
+  test(
+      'a wrong PIN is rejected with the generic dev-only error — no session created',
+      () async {
     final container = buildContainer();
     addTearDown(container.dispose);
     container.listen(devLoginProvider, (_, __) {});
@@ -148,8 +162,12 @@ void main() {
 
     expect(success, isFalse);
     expect(container.read(authProvider).isAuthenticated, isFalse);
-    expect(container.read(devLoginProvider).error, 'Geliştirici girişi başarısız.');
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+    expect(container.read(devLoginProvider).error,
+        'Geliştirici girişi başarısız.');
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
   test(
       'the error text never distinguishes wrong-phone from wrong-PIN — never exposing which part was correct',
@@ -158,20 +176,31 @@ void main() {
     addTearDown(container.dispose);
     container.listen(devLoginProvider, (_, __) {});
 
-    await container.read(devLoginProvider.notifier).run(phoneInput: wrongPhoneInput, pin: DevLoginConfig.pin);
+    await container
+        .read(devLoginProvider.notifier)
+        .run(phoneInput: wrongPhoneInput, pin: DevLoginConfig.pin);
     final wrongPhoneError = container.read(devLoginProvider).error;
 
     final container2 = buildContainer();
     addTearDown(container2.dispose);
     container2.listen(devLoginProvider, (_, __) {});
-    await container2.read(devLoginProvider.notifier).run(phoneInput: correctPhoneInput, pin: wrongPin);
+    await container2
+        .read(devLoginProvider.notifier)
+        .run(phoneInput: correctPhoneInput, pin: wrongPin);
     final wrongPinError = container2.read(devLoginProvider).error;
 
     expect(wrongPhoneError, wrongPinError);
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
-  test('does not delegate the underlying emulator flow\'s own (more specific) error text — surfaces only the locked generic message', () async {
-    final container = buildContainer(codeToReturn: null); // would-be-successful phone/PIN, but the emulator has no code
+  test(
+      'does not delegate the underlying emulator flow\'s own (more specific) error text — surfaces only the locked generic message',
+      () async {
+    final container = buildContainer(
+        codeToReturn:
+            null); // would-be-successful phone/PIN, but the emulator has no code
     addTearDown(container.dispose);
     container.listen(devLoginProvider, (_, __) {});
 
@@ -181,9 +210,14 @@ void main() {
         );
 
     expect(success, isFalse);
-    expect(container.read(devLoginProvider).error, 'Geliştirici girişi başarısız.');
-    expect(container.read(devLoginProvider).error, isNot(contains('bulunamadı')));
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+    expect(container.read(devLoginProvider).error,
+        'Geliştirici girişi başarısız.');
+    expect(
+        container.read(devLoginProvider).error, isNot(contains('bulunamadı')));
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
   // =========================================================================
   // Regression coverage — stale QuickTestLogin substitution bug
@@ -203,7 +237,10 @@ void main() {
 
     expect(container.read(authProvider).session!.phoneNumber, '+905337106414');
     expect(fakeClient.lastQueriedPhoneNumber, '+905337106414');
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
   test(
       'the stale QuickTestLogin test-fixture phone (+1555864447001) is never substituted for the developer-entered number',
@@ -218,8 +255,12 @@ void main() {
         );
 
     expect(fakeClient.lastQueriedPhoneNumber, isNot(_staleTestFixturePhone));
-    expect(container.read(authProvider).session!.phoneNumber, isNot(_staleTestFixturePhone));
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+    expect(container.read(authProvider).session!.phoneNumber,
+        isNot(_staleTestFixturePhone));
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
   test(
       'the emulator verification-code REST query uses the CURRENT live Firebase app projectId, not a hardcoded one',
@@ -235,7 +276,10 @@ void main() {
         );
 
     expect(fakeClient.lastQueriedProjectId, distinctiveProjectId);
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
   test(
       'the stale demo-abakus-one-emulator test-fixture project id is never queried by developer login',
@@ -250,13 +294,20 @@ void main() {
         );
 
     expect(fakeClient.lastQueriedProjectId, isNot(_staleTestFixtureProjectId));
-    expect(fakeClient.queriedProjectIds, isNot(contains(_staleTestFixtureProjectId)));
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+    expect(fakeClient.queriedProjectIds,
+        isNot(contains(_staleTestFixtureProjectId)));
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
   test(
       'a project-id mismatch cannot occur — the SAME projectId this provider resolves is what the verification-code query receives, for two different live-project fixtures',
       () async {
-    for (final projectId in ['abakus-one-dev-fixture-a', 'abakus-one-dev-fixture-b']) {
+    for (final projectId in [
+      'abakus-one-dev-fixture-a',
+      'abakus-one-dev-fixture-b'
+    ]) {
       final container = buildContainer(liveProjectId: projectId);
       addTearDown(container.dispose);
       container.listen(devLoginProvider, (_, __) {});
@@ -268,7 +319,10 @@ void main() {
 
       expect(fakeClient.lastQueriedProjectId, projectId);
     }
-  }, skip: pinConfigured ? false : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
+  },
+      skip: pinConfigured
+          ? false
+          : 'requires --dart-define=DEV_LOGIN_PIN=<value>');
 
   test(
       'dev_login_provider.dart never hardcodes the stale test-fixture phone or project id in its own source',
