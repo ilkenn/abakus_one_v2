@@ -3,6 +3,16 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { SINGLE_TENANT_ORGANIZATION_ID, TENANT_CUSTOMERS_COLLECTION } from "./completeCustomerProfile";
 import { LOYALTY_ACCOUNTS_COLLECTION } from "./loyaltyLedger";
+import {
+  resolveActiveLoyaltyPolicy,
+  sanitizeLoyaltyPolicyForCustomer,
+  projectCarryToPolicyProgress,
+  parseCarryComponent,
+  formatCarryComponent,
+  ZERO_BONCUK_CARRY,
+  type SanitizedLoyaltyPolicy,
+  type BoncukFraction,
+} from "./loyaltyPolicy";
 
 /**
  * `getCustomerLoyaltySnapshot` — Boncuk Loyalty Program P1 (2026-08-20),
@@ -59,14 +69,15 @@ import { LOYALTY_ACCOUNTS_COLLECTION } from "./loyaltyLedger";
  * created with zero `loyaltyLedgerEntries` documents — per the locked
  * instruction, provisioning itself is not a loyalty *event*.
  *
- * **P2B-B (2026-08-22) — `boncukDebt`/`orderEligibleNetSpendMinorUnits`
- * added.** A new zero account now provisions both at `0`. The RESPONSE
- * gains `boncukDebt` (architectural preference: a customer-facing UX will
- * eventually need to explain why new earning is temporarily paying down
- * debt rather than becoming spendable) but deliberately NOT
- * `orderEligibleNetSpendMinorUnits` — that field is internal accounting
- * provenance (the raw eligible-spend aggregate), not something any current
- * or foreseeable UI needs to render directly.
+ * **P2B-B (2026-08-22) — `boncukDebt` added.** A new zero account now
+ * provisions it at `0`. The RESPONSE gains `boncukDebt` (architectural
+ * preference: a customer-facing UX will eventually need to explain why
+ * new earning is temporarily paying down debt rather than becoming
+ * spendable) but deliberately NOT the raw `earningCarryNumerator`/
+ * `earningCarryDenominator` — those are internal accounting provenance
+ * (an exact fraction, not something any current or foreseeable UI needs
+ * to render directly), always projected into `earningRemainderMinorUnits`/
+ * `minorUnitsUntilNextBoncuk` before leaving this callable.
  *
  * **Legacy-account read tolerance, distinct from the earning transaction's
  * strict fail-closed behavior.** This callable performs no financial
@@ -81,9 +92,38 @@ import { LOYALTY_ACCOUNTS_COLLECTION } from "./loyaltyLedger";
  * specifically (nothing is computed or persisted from this value).
  *
  * **Returns only the customer's own narrow snapshot** — never
- * `organizationId`/`customerId`/`revision`/timestamps/
- * `orderEligibleNetSpendMinorUnits`, none of which any client needs yet (no
- * Flutter UI consumes this callable this phase).
+ * `organizationId`/`customerId`/`revision`/timestamps/the raw
+ * `earningCarryNumerator`/`earningCarryDenominator` fraction.
+ *
+ * **Configurable Loyalty Economics (2026-08-24) — the response now also
+ * carries the organization's sanitized current policy.** Boncuk economics
+ * are no longer a Flutter-side compile-time constant; the customer app
+ * renders "X TL → Y Boncuk"/"1 Boncuk → Z TL"/the earning-progress
+ * denominator from these real, server-resolved fields. Resolved via
+ * `loyaltyPolicy.ts`'s `resolveActiveLoyaltyPolicy` for the same
+ * server-derived `organizationId` this callable already uses for the
+ * account — never a second, independently-trusted organization id, and
+ * never anything client-supplied. A corrupt policy document, or one that
+ * was previously bootstrapped but is now unexpectedly missing (see
+ * `loyaltyPolicy.ts`'s own missing-vs-first-time-provisioning boundary),
+ * fails the whole call closed (`HttpsError("failed-precondition", ...)`)
+ * rather than silently falling back to a fabricated rate.
+ *
+ * **Fractional Entitlement Carry correction (this pass) — exact,
+ * policy-independent progress, never read verbatim off storage.**
+ * `earningRemainderMinorUnits`/`minorUnitsUntilNextBoncuk` are computed
+ * fresh at read time via `loyaltyPolicy.ts`'s `projectCarryToPolicyProgress`
+ * — a customer-safe minor-unit PROJECTION of the account's real, exact
+ * `earningCarryNumerator`/`earningCarryDenominator` fraction (never a
+ * currency remainder in storage at all) against whatever policy is
+ * CURRENTLY active. The stored carry itself is never mutated by this
+ * read, and — unlike the rejected per-policy-version "earning epoch"
+ * design this correction replaces — is never discounted, reset, or
+ * treated as stale merely because the organization's policy has changed
+ * since it last grew: a policy change can never destroy or reinterpret
+ * already-earned fractional progress, it only ever supplies the rate for
+ * whatever spend happens next. See `loyaltyOrderEarning.ts`'s own doc
+ * comment for the full model.
  */
 
 export interface LoyaltyAccountData {
@@ -91,8 +131,21 @@ export interface LoyaltyAccountData {
   customerId: string;
   spendableBalance: number;
   boncukDebt: number;
-  orderEligibleNetSpendMinorUnits: number;
-  earningRemainderMinorUnits: number;
+  /**
+   * The currently valid WHOLE Boncuk entitlement generated by non-reversed
+   * eligible order spend — an O(1) account projection, NOT `lifetimeEarned`
+   * (monotonic, never decremented by a reversal), NOT `spendableBalance`
+   * (net of debt-first repayment), NOT `boncukDebt`. Combined with the
+   * exact fractional `earningCarry`, `validOrderEntitlementBoncuk +
+   * earningCarry` is the customer's total exact order-earning entitlement
+   * at this instant — the sole input, alongside one immutable historical
+   * ledger entry, a full reversal needs. See `loyaltyReversalMath.ts`'s
+   * own doc comment for the O(1) reversal formula and its proof.
+   */
+  validOrderEntitlementBoncuk: number;
+  /** Canonical non-negative-integer decimal strings — an exact fraction of one Boncuk, never a currency amount and never a `Number` (see `loyaltyPolicy.ts`'s own doc comment for why). */
+  earningCarryNumerator: string;
+  earningCarryDenominator: string;
   lifetimeEarned: number;
   lifetimeRedeemed: number;
   createdAt: Timestamp;
@@ -104,8 +157,10 @@ interface GetCustomerLoyaltySnapshotResult {
   spendableBalance: number;
   boncukDebt: number;
   earningRemainderMinorUnits: number;
+  minorUnitsUntilNextBoncuk: number;
   lifetimeEarned: number;
   lifetimeRedeemed: number;
+  policy: SanitizedLoyaltyPolicy;
 }
 
 export const getCustomerLoyaltySnapshot = onCall(
@@ -156,8 +211,9 @@ export const getCustomerLoyaltySnapshot = onCall(
             customerId: uid,
             spendableBalance: 0,
             boncukDebt: 0,
-            orderEligibleNetSpendMinorUnits: 0,
-            earningRemainderMinorUnits: 0,
+            validOrderEntitlementBoncuk: 0,
+            earningCarryNumerator: formatCarryComponent(ZERO_BONCUK_CARRY.numerator),
+            earningCarryDenominator: formatCarryComponent(ZERO_BONCUK_CARRY.denominator),
             lifetimeEarned: 0,
             lifetimeRedeemed: 0,
             createdAt: now,
@@ -168,14 +224,44 @@ export const getCustomerLoyaltySnapshot = onCall(
           return initial;
         });
 
+    const policyResult = await resolveActiveLoyaltyPolicy(db, organizationId);
+    if (policyResult.status === "corrupt-policy-state" || policyResult.status === "missing-live-policy") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Loyalty economics are temporarily unavailable for this organization.",
+      );
+    }
+    const policy = policyResult.policy;
+
+    // Fractional Entitlement Carry — see this file's own doc comment. The
+    // stored carry is ALWAYS trusted and ALWAYS combines fully into the
+    // projection below, regardless of how many times the organization's
+    // policy has changed since it last grew — legacy-account read
+    // tolerance (see this file's own doc comment) substitutes the
+    // canonical zero carry ONLY when the fields are genuinely absent
+    // (a pre-this-correction document), never as a policy-driven discount.
+    const carry: BoncukFraction = {
+      numerator:
+        typeof account.earningCarryNumerator === "string"
+          ? parseCarryComponent(account.earningCarryNumerator, "loyaltyAccounts.earningCarryNumerator")
+          : ZERO_BONCUK_CARRY.numerator,
+      denominator:
+        typeof account.earningCarryDenominator === "string"
+          ? parseCarryComponent(account.earningCarryDenominator, "loyaltyAccounts.earningCarryDenominator")
+          : ZERO_BONCUK_CARRY.denominator,
+    };
+    const progress = projectCarryToPolicyProgress(carry, policy);
+
     return {
       spendableBalance: account.spendableBalance,
       // Legacy-account read tolerance (see this file's own doc comment) —
       // never thrown here, never persisted, display-only default.
       boncukDebt: account.boncukDebt ?? 0,
-      earningRemainderMinorUnits: account.earningRemainderMinorUnits,
+      earningRemainderMinorUnits: progress.remainderMinorUnits,
+      minorUnitsUntilNextBoncuk: progress.minorUnitsUntilNextBoncuk,
       lifetimeEarned: account.lifetimeEarned,
       lifetimeRedeemed: account.lifetimeRedeemed,
+      policy: sanitizeLoyaltyPolicyForCustomer(policy),
     };
   },
 );

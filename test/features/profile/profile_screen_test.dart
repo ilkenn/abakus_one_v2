@@ -17,7 +17,11 @@ import 'package:abakus_one_v2/features/orders/presentation/screens/orders_screen
 import 'package:abakus_one_v2/features/crm/presentation/screens/customer_visit_passport_screen.dart';
 import 'package:abakus_one_v2/features/profile/presentation/screens/addresses_screen.dart';
 import 'package:abakus_one_v2/features/profile/presentation/screens/help_screen.dart';
-import 'package:abakus_one_v2/features/profile/presentation/screens/loyalty_screen.dart';
+import 'package:abakus_one_v2/features/loyalty/data/loyalty_gateway.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_account_snapshot.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_history_entry.dart';
+import 'package:abakus_one_v2/features/loyalty/presentation/providers/loyalty_providers.dart';
+import 'package:abakus_one_v2/features/loyalty/presentation/screens/loyalty_screen.dart';
 import 'package:abakus_one_v2/features/customer_photos/data/customer_photo_gateway.dart';
 import 'package:abakus_one_v2/features/customer_photos/presentation/providers/customer_photo_providers.dart';
 import 'package:abakus_one_v2/features/profile/data/customer_identity_gateway.dart';
@@ -88,6 +92,27 @@ class _FixedCustomerIdentityGateway implements CustomerIdentityGateway {
       Stream.value(identity);
 }
 
+/// P3A — the canonical `LoyaltyScreen` (now `lib/features/loyalty/`) is
+/// real/server-authoritative; its default `loyaltyGatewayProvider`
+/// implementation eagerly resolves `FirebaseFunctions.instance`, which
+/// throws under `flutter test` (no real Firebase app exists here) — the
+/// identical reasoning `_EmptyCustomerPhotoGateway`/
+/// `_FixedCustomerIdentityGateway` above already document. Every
+/// `pumpProfileScreen` call overrides it with this trivial zero-state fake
+/// by default.
+class _FakeLoyaltyGateway implements LoyaltyGateway {
+  const _FakeLoyaltyGateway();
+
+  @override
+  Future<LoyaltyAccountSnapshot> getSnapshot() async =>
+      LoyaltyAccountSnapshot.zero;
+
+  @override
+  Future<LoyaltyHistoryPage> getHistory(
+          {int? pageSize, String? cursor}) async =>
+      LoyaltyHistoryPage.empty;
+}
+
 class _FakeSessionStorage implements SessionStorage {
   AuthSession? stored;
   _FakeSessionStorage({this.stored});
@@ -147,6 +172,7 @@ void main() {
                   ),
                 ),
           ),
+          loyaltyGatewayProvider.overrideWithValue(const _FakeLoyaltyGateway()),
           if (actorSession != null)
             actorSessionProvider.overrideWith((ref) => actorSession),
           // P.1: `AuthNotifier.build()` always starts signed-out regardless
@@ -177,32 +203,23 @@ void main() {
   });
 
   testWidgets(
-    'Boncuklarim hizli erisim karti LoyaltyScreen acar ve boncuk gecmisini '
-    'gosterir (P.1 — artik uzun listede degil, quick action olarak)',
+    'Boncuklarim hizli erisim karti LoyaltyScreen acar ve gercek (bos) '
+    'boncuk gecmisi durumunu gosterir (P.1 quick action; P3A gercek veri — '
+    'artik sahte "Protein Bowl Siparişi" gecmisi yok)',
     (WidgetTester tester) async {
-      await pumpProfileScreen(tester);
+      await pumpProfileScreen(
+        tester,
+        authNotifierBuilder: () => _SignedInNotifier('uid-1', '+905559998877'),
+      );
 
       await tester.tap(find.byKey(const Key('quickAction_boncuklarim')));
       await tester.pumpAndSettle();
 
       expect(find.byType(LoyaltyScreen), findsOneWidget);
-
-      // Boncuk Geçmişi listesini gorunur hale getirip ListTile'larin
-      // Material ink-splash assertion'i tetiklemeden render edildigini dogrula.
-      final loyaltyScroll = find
-          .descendant(
-            of: find.byType(LoyaltyScreen),
-            matching: find.byType(Scrollable),
-          )
-          .first;
-      await tester.dragUntilVisible(
-        find.text('Protein Bowl Siparişi'),
-        loyaltyScroll,
-        const Offset(0, -300),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('Protein Bowl Siparişi'), findsOneWidget);
+      // The fake, zero-state LoyaltyGateway `pumpProfileScreen` always
+      // installs means there is genuinely no history — the honest empty
+      // state, never a fabricated order title.
+      expect(find.text('Henüz Boncuk hareketin yok.'), findsOneWidget);
     },
   );
 

@@ -18,16 +18,56 @@ import { HttpsError } from "firebase-functions/v2/https";
  * `BR-LOYALTY-016`. Every entry now carries three first-class, always-
  * populated (never null) signed accounting effects instead:
  * `entitlementDeltaBoncuk`/`spendableDeltaBoncuk`/`debtDeltaBoncuk`.
+ *
+ * **Configurable Loyalty Economics correction (2026-08-24)** — the fixed
+ * `BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK`/
+ * `BONCUK_REDEMPTION_VALUE_MINOR_UNITS_PER_BONCUK` constants that used to
+ * live here are REMOVED entirely, not deprecated-and-kept. Boncuk economics
+ * are no longer a compile-time constant for any organization — every
+ * earning/reversal computation now resolves the organization's real,
+ * server-authoritative `loyaltyPolicies/{organizationId}` document via
+ * `functions/src/loyaltyPolicy.ts`. The locked initial economics (50 TL = 5
+ * Boncuk, 1 Boncuk = 1 TL, 50% max redemption) now live in
+ * `loyaltyPolicy.ts`'s `DEFAULT_LOYALTY_POLICY_ECONOMICS`, auto-provisioned
+ * per organization on a genuine first use, not hardcoded here.
+ *
+ * **Same-day correction (2026-08-24) — exact-ratio economics, no derived
+ * unit rate.** A single reduced "minor units per 1 Boncuk" rate
+ * (`earningSpendMinorUnits / earningBoncukAmount`) cannot represent every
+ * Admin-configurable ratio — `5000 minor units → 3 Boncuk` has no
+ * whole-number unit rate at all. `earningRateMinorUnitsPerBoncuk` is
+ * REMOVED from `LoyaltyLedgerEntry`; every `orderEarn`/`orderEarnReversal`
+ * entry now snapshots the raw ratio directly
+ * (`earningSpendMinorUnits`/`earningBoncukAmount`), and every entitlement
+ * computation uses exact `BigInt` integer arithmetic — never floating
+ * point, never rounding drift, for any ratio.
+ *
+ * **Fractional Entitlement Carry correction (this pass)** — the currency-
+ * denominated, per-policy-EPOCH remainder fields
+ * (`orderEligibleNetSpendBeforeMinorUnits`/`orderEligibleNetSpendAfterMinorUnits`/
+ * `orderEntitlementBeforeBoncuk`/`orderEntitlementAfterBoncuk`/
+ * `remainderBeforeMinorUnits`/`remainderAfterMinorUnits`/`earningEpochReset`)
+ * are REMOVED. That design was reviewed and rejected: resetting the
+ * customer's in-progress remainder to `0` whenever the organization's
+ * policy version changed FORFEITED real, economically-earned partial
+ * progress — unacceptable even though the reset itself never re-rated old
+ * spend. They are replaced by four fields expressing the customer's
+ * partial progress as an EXACT, POLICY-INDEPENDENT FRACTION of one whole
+ * Boncuk — `earningCarryNumeratorBefore`/`earningCarryDenominatorBefore`/
+ * `earningCarryNumeratorAfter`/`earningCarryDenominatorAfter` (canonical
+ * non-negative-integer DECIMAL STRINGS, never `Number` — see
+ * `loyaltyPolicy.ts`'s `parseCarryComponent`/`formatCarryComponent` for
+ * why). A policy change can only ever affect the RATE at which BRAND-NEW
+ * spend converts into fractional Boncuk from this point forward — the
+ * carry itself is never reinterpreted, migrated onto a new ratio, or
+ * reset; it simply keeps accumulating, combined exactly with whatever
+ * ratio is active at the moment each new order's spend is rated. See
+ * `loyaltyOrderEarning.ts`'s own doc comment for the full model and
+ * `loyaltyPolicy.ts`'s `combineCarryWithEarning` for the actual math.
  */
 
 export const LOYALTY_ACCOUNTS_COLLECTION = "loyaltyAccounts";
 export const LOYALTY_LEDGER_ENTRIES_COLLECTION = "loyaltyLedgerEntries";
-
-// BR-LOYALTY-001/005 — integer minor units (kuruş) only, never a
-// floating-point representation, mirroring this codebase's established
-// `Money`/minor-units discipline (`functions/src/takeawayMoney.ts`).
-export const BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK = 5000; // 50 TL = 1 Boncuk
-export const BONCUK_REDEMPTION_VALUE_MINOR_UNITS_PER_BONCUK = 200; // 1 Boncuk = 2 TL
 
 // Closed entry-type enum — mirrors `customerPhotoUploadGrants.ts`'s
 // `PHOTO_UPLOAD_PURPOSES` pattern exactly (`as const` array -> derived
@@ -133,20 +173,34 @@ export interface LoyaltyLedgerEntry {
 
   /** The net eligible spend this specific event contributed/removed (this order's own amount, or the refunded amount for a reversal). */
   amountBasisMinorUnits: number | null;
-  /** `loyaltyAccounts.orderEligibleNetSpendMinorUnits` immediately before this event. */
-  orderEligibleNetSpendBeforeMinorUnits: number | null;
-  /** `loyaltyAccounts.orderEligibleNetSpendMinorUnits` immediately after this event. */
-  orderEligibleNetSpendAfterMinorUnits: number | null;
-  /** `floor(orderEligibleNetSpendBeforeMinorUnits / 5000)`. */
-  orderEntitlementBeforeBoncuk: number | null;
-  /** `floor(orderEligibleNetSpendAfterMinorUnits / 5000)`. */
-  orderEntitlementAfterBoncuk: number | null;
-  /** `orderEligibleNetSpendBeforeMinorUnits % 5000`. */
-  remainderBeforeMinorUnits: number | null;
-  /** `orderEligibleNetSpendAfterMinorUnits % 5000`. */
-  remainderAfterMinorUnits: number | null;
-  /** Rate-at-time-of-entry snapshot — so a historical entry stays self-describing if the 50 TL rate ever changes. */
-  earningRateMinorUnitsPerBoncuk: number | null;
+  /**
+   * The customer's exact, policy-independent Boncuk-fraction carry
+   * immediately BEFORE this event — canonical non-negative-integer decimal
+   * strings (`loyaltyPolicy.ts`'s `formatCarryComponent`/
+   * `parseCarryComponent` — never `Number`, since a carry denominator can
+   * exceed `Number.MAX_SAFE_INTEGER` after a handful of policy changes).
+   * **Never reinterpreted by a later policy change** — this is precisely
+   * the value a future reversal replay reads verbatim to restore the
+   * account to its pre-this-event state (`loyaltyReversalMath.ts`).
+   */
+  earningCarryNumeratorBefore: string | null;
+  earningCarryDenominatorBefore: string | null;
+  /** The carry immediately AFTER this event — same shape/discipline as the "Before" pair. */
+  earningCarryNumeratorAfter: string | null;
+  earningCarryDenominatorAfter: string | null;
+  /**
+   * The RAW ratio that applied when this entry was written — the
+   * organization's `loyaltyPolicies.earningSpendMinorUnits`/
+   * `earningBoncukAmount` at write time, never the current policy. A
+   * historical entry therefore stays self-describing and exactly
+   * reconstructable (including for a future reversal, which MUST use these
+   * original values, never today's policy) no matter how the
+   * organization's policy changes afterward.
+   */
+  earningSpendMinorUnits: number | null;
+  earningBoncukAmount: number | null;
+  /** The `loyaltyPolicies/{organizationId}.version` that was active when this entry was written — the direct link from a ledger entry back to its exact policy-history record in `loyaltyPolicyVersions`. Audit provenance only — does NOT drive any reset/re-rating behavior (there is none); `null` only for an entry written before this field existed. */
+  loyaltyPolicyVersion: number | null;
 
   // ---------------------------------------------------------------------
   // Debt provenance — populated whenever debt participates in this event
@@ -158,8 +212,18 @@ export interface LoyaltyLedgerEntry {
   debtBeforeBoncuk: number | null;
   debtAfterBoncuk: number | null;
 
-  /** Rate-at-time-of-entry snapshot — redemption-family only. */
-  redemptionRateMinorUnitsPerBoncuk: number | null;
+  /**
+   * Value-at-time-of-entry snapshot — redemption-family only (no writer
+   * exists yet). Unlike the earning side, this is never a ratio requiring
+   * reduction — `redemptionValueMinorUnitsPerBoncuk` is always the direct
+   * minor-units value of 1 Boncuk, so no exact-ratio math is needed here.
+   * Renamed from the original `redemptionRateMinorUnitsPerBoncuk`
+   * (2026-08-24) purely for naming consistency with `loyaltyPolicy.ts`'s
+   * own field name — no behavior change, since no writer exists yet.
+   */
+  redemptionValueMinorUnitsPerBoncuk: number | null;
+  /** Value-at-time-of-entry snapshot — redemption-family only (no writer exists yet). New field (2026-08-24), reserved so a future redemption entry is self-contained without reading today's policy for its own cap. */
+  maxRedemptionBasisPoints: number | null;
 
   /** Queryable/audit-readable idempotency value — distinct from the deterministic document id itself. */
   idempotencyKey: string;

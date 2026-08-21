@@ -32,7 +32,11 @@ import 'package:abakus_one_v2/features/orders/domain/models/order_timestamps.dar
 import 'package:abakus_one_v2/features/orders/domain/pricing/price_calculator.dart';
 import 'package:abakus_one_v2/features/orders/domain/pricing/tax_policy.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
-import 'package:abakus_one_v2/features/profile/presentation/screens/loyalty_screen.dart';
+import 'package:abakus_one_v2/features/loyalty/data/loyalty_gateway.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_account_snapshot.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_history_entry.dart';
+import 'package:abakus_one_v2/features/loyalty/presentation/providers/loyalty_providers.dart';
+import 'package:abakus_one_v2/features/loyalty/presentation/screens/loyalty_screen.dart';
 import 'package:abakus_one_v2/features/qr/presentation/screens/qr_scanner_screen.dart';
 import 'package:abakus_one_v2/features/takeaway/presentation/screens/takeaway_branch_selection_screen.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
@@ -62,7 +66,14 @@ void main() {
   late ProviderContainer container;
 
   setUp(() {
-    container = ProviderContainer();
+    container = ProviderContainer(
+      overrides: [
+        // The canonical LoyaltyScreen (P3A) is real/server-authoritative —
+        // a fake gateway keeps this navigation-focused suite from ever
+        // touching the real (uninitialized-in-test) Firebase SDK.
+        loyaltyGatewayProvider.overrideWithValue(const _FakeLoyaltyGateway()),
+      ],
+    );
   });
 
   tearDown(() => container.dispose());
@@ -834,4 +845,17 @@ void main() {
     // Home as real customer state (see `boncuk_section.dart`'s class doc
     // comment for the full correction).
   });
+}
+
+class _FakeLoyaltyGateway implements LoyaltyGateway {
+  const _FakeLoyaltyGateway();
+
+  @override
+  Future<LoyaltyAccountSnapshot> getSnapshot() async =>
+      LoyaltyAccountSnapshot.zero;
+
+  @override
+  Future<LoyaltyHistoryPage> getHistory(
+          {int? pageSize, String? cursor}) async =>
+      LoyaltyHistoryPage.empty;
 }

@@ -4,8 +4,6 @@ import {
   LEDGER_ENTRY_TYPES,
   sanitizeEntryType,
   deriveLoyaltyLedgerEntryId,
-  BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK,
-  BONCUK_REDEMPTION_VALUE_MINOR_UNITS_PER_BONCUK,
 } from "../loyaltyLedger";
 
 /**
@@ -31,15 +29,11 @@ test("sanitizeEntryType rejects a non-string value", () => {
   assert.throws(() => sanitizeEntryType(undefined), /entryType must be one of/);
 });
 
-test("BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK is exactly 5000 (50 TL = 1 Boncuk)", () => {
-  assert.strictEqual(BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK, 5000);
-  assert.strictEqual(Number.isInteger(BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK), true);
-});
-
-test("BONCUK_REDEMPTION_VALUE_MINOR_UNITS_PER_BONCUK is exactly 200 (1 Boncuk = 2 TL)", () => {
-  assert.strictEqual(BONCUK_REDEMPTION_VALUE_MINOR_UNITS_PER_BONCUK, 200);
-  assert.strictEqual(Number.isInteger(BONCUK_REDEMPTION_VALUE_MINOR_UNITS_PER_BONCUK), true);
-});
+// BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK/BONCUK_REDEMPTION_VALUE_MINOR_UNITS_PER_BONCUK
+// were removed from `loyaltyLedger.ts` by Configurable Loyalty Economics
+// (2026-08-24) — Boncuk economics are no longer a fixed constant for any
+// organization. See `functions/src/test/loyaltyPolicy.test.ts` for the
+// locked-default-economics tests that replace these two.
 
 test("deriveLoyaltyLedgerEntryId is deterministic for identical trusted inputs", () => {
   const params = {

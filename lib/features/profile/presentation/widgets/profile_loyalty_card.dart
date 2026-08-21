@@ -7,7 +7,7 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../providers/profile_provider.dart';
-import '../screens/loyalty_screen.dart';
+import '../../../loyalty/presentation/screens/loyalty_screen.dart';
 
 /// Compact premium Boncuk/loyalty promo card — P.2 (2026-08-19). Deliberately
 /// mirrors `features/home/presentation/widgets/boncuk_section.dart`'s

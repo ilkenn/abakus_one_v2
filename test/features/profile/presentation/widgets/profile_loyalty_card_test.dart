@@ -4,7 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
-import 'package:abakus_one_v2/features/profile/presentation/screens/loyalty_screen.dart';
+import 'package:abakus_one_v2/features/loyalty/data/loyalty_gateway.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_account_snapshot.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_history_entry.dart';
+import 'package:abakus_one_v2/features/loyalty/presentation/providers/loyalty_providers.dart';
+import 'package:abakus_one_v2/features/loyalty/presentation/screens/loyalty_screen.dart';
 import 'package:abakus_one_v2/features/profile/presentation/widgets/profile_loyalty_card.dart';
 
 class _SignedInNotifier extends AuthNotifier {
@@ -37,7 +41,13 @@ void main() {
   }) async {
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [authProvider.overrideWith(authNotifierBuilder)],
+        overrides: [
+          authProvider.overrideWith(authNotifierBuilder),
+          // The canonical LoyaltyScreen (P3A) is real/server-authoritative
+          // now — a fake gateway keeps this navigation-focused test from
+          // ever touching the real (uninitialized-in-test) Firebase SDK.
+          loyaltyGatewayProvider.overrideWithValue(const _FakeLoyaltyGateway()),
+        ],
         child: const MaterialApp(home: Scaffold(body: ProfileLoyaltyCard())),
       ),
     );
@@ -98,4 +108,17 @@ void main() {
     expect(find.text('Boncukları Keşfet'), findsOneWidget);
     expect(find.textContaining(RegExp(r'\d')), findsNothing);
   });
+}
+
+class _FakeLoyaltyGateway implements LoyaltyGateway {
+  const _FakeLoyaltyGateway();
+
+  @override
+  Future<LoyaltyAccountSnapshot> getSnapshot() async =>
+      LoyaltyAccountSnapshot.zero;
+
+  @override
+  Future<LoyaltyHistoryPage> getHistory(
+          {int? pageSize, String? cursor}) async =>
+      LoyaltyHistoryPage.empty;
 }

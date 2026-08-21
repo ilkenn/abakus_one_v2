@@ -19,7 +19,7 @@ import '../../../orders/presentation/screens/orders_screen.dart';
 import '../../../notifications/presentation/screens/notification_settings_screen.dart';
 import '../screens/account_data_screen.dart';
 import '../screens/saved_cards_screen.dart';
-import '../screens/loyalty_screen.dart';
+import '../../../loyalty/presentation/screens/loyalty_screen.dart';
 import '../screens/help_screen.dart';
 import '../../../favorites/presentation/screens/favorites_screen.dart';
 import '../../../crm/presentation/providers/current_customer_provider.dart';

@@ -10,17 +10,22 @@ import {
   processOrderCompletionEventForLoyaltyEarning,
 } from "../loyaltyOrderEarning";
 import { deriveLoyaltyLedgerEntryId, LOYALTY_LEDGER_ENTRIES_COLLECTION } from "../loyaltyLedger";
+import { LOYALTY_POLICIES_COLLECTION, ZERO_BONCUK_CARRY, combineCarryWithEarning } from "../loyaltyPolicy";
 import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "../orderPricingAuthority";
 
 /**
  * Emulator-backed + pure-function tests for Boncuk Loyalty Program P2A
  * (2026-08-20) — completed-order earning, rewritten P2B-B (2026-08-22) for
- * aggregate/debt-based accounting. Mirrors
+ * aggregate/debt-based accounting, Configurable Loyalty Economics
+ * (2026-08-24), corrected same-day for exact-ratio math, and corrected
+ * AGAIN for the Fractional Entitlement Carry model (the per-policy-version
+ * "earning epoch" design that preceded it was rejected for forfeiting
+ * economically-earned partial progress on a policy change). Mirrors
  * `reservationNotificationDelivery.test.ts`'s exact split: pure-function
  * unit tests for the algorithm, emulator-backed integration tests calling
- * `processOrderCompletionEventForLoyaltyEarning` directly (the same shape
- * `processReservationEventForDelivery` is tested with) rather than through
- * a real Firestore trigger, which the local suite cannot invoke directly.
+ * `processOrderCompletionEventForLoyaltyEarning` directly rather than
+ * through a real Firestore trigger, which the local suite cannot invoke
+ * directly.
  */
 
 const EMULATOR_PROJECT_ID = "demo-abakus-one-emulator";
@@ -124,7 +129,7 @@ async function seedAccount(uid: string, fields: Record<string, unknown>, organiz
   await db().collection("loyaltyAccounts").doc(`${organizationId}_${uid}`).set(fields);
 }
 
-/** A fully-shaped, well-formed P2B account — the "normal existing account" baseline every debt/aggregate test starts from. */
+/** A fully-shaped, well-formed account — the "normal existing account" baseline every debt/carry test starts from. Zero carry by default. */
 function wellFormedAccount(overrides: Record<string, unknown> = {}) {
   const now = Timestamp.now();
   return {
@@ -132,8 +137,9 @@ function wellFormedAccount(overrides: Record<string, unknown> = {}) {
     customerId: "placeholder",
     spendableBalance: 0,
     boncukDebt: 0,
-    orderEligibleNetSpendMinorUnits: 0,
-    earningRemainderMinorUnits: 0,
+    validOrderEntitlementBoncuk: 0,
+    earningCarryNumerator: "0",
+    earningCarryDenominator: "1",
     lifetimeEarned: 0,
     lifetimeRedeemed: 0,
     createdAt: now,
@@ -141,6 +147,27 @@ function wellFormedAccount(overrides: Record<string, unknown> = {}) {
     revision: 1,
     ...overrides,
   };
+}
+
+async function seedPolicy(
+  organizationId: string,
+  economics: {
+    earningSpendMinorUnits: number;
+    earningBoncukAmount: number;
+    redemptionValueMinorUnitsPerBoncuk: number;
+    maxRedemptionBasisPoints: number;
+  },
+  version = 1,
+) {
+  const now = Timestamp.now();
+  await db().collection(LOYALTY_POLICIES_COLLECTION).doc(organizationId).set({
+    organizationId,
+    ...economics,
+    version,
+    effectiveAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 async function ledgerDoc(orderId: string, uid: string, organizationId: string = ORG) {
@@ -159,63 +186,161 @@ async function eventFlag(eventId: string) {
 }
 
 // =========================================================================
-// A. Pure algorithm — BR-LOYALTY §2/§7/§15 locked worked examples,
-// aggregate-based (P2B-B).
+// A. Pure algorithm — BR-LOYALTY §2/§7/§15 locked worked examples, now
+// carry-based (Fractional Entitlement Carry correction).
 // =========================================================================
 
-test("algorithm: aggregate 0 + 54900 eligible -> aggregate 54900, entitlement 10, gross 10, remainder 4900", () => {
-  const result = calculateOrderEarning({ previousAggregateMinorUnits: 0, eligibleNetSpendMinorUnits: 54900 });
-  assert.deepStrictEqual(result, {
-    newAggregateMinorUnits: 54900,
-    newRemainderMinorUnits: 4900,
-    oldEntitlementBoncuk: 0,
-    newEntitlementBoncuk: 10,
-    grossBoncukEarned: 10,
+// Every pure-algorithm test below passes the current default policy's own
+// raw ratio (5000 earningSpendMinorUnits / 5 earningBoncukAmount, which
+// reduces to a whole 1000-minor-unit rate) explicitly — see the dedicated
+// 5000->3 (non-integer-reducible) tests further down for proof this is
+// genuinely exact-ratio math, not a re-hidden reduced constant.
+const DEFAULT_RATIO = { earningSpendMinorUnits: 5000, earningBoncukAmount: 5 };
+
+test("algorithm: zero carry + 54900 eligible spend at 5000/5 -> 54 whole Boncuk, carry 9/10", () => {
+  const result = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: 54900,
+    ...DEFAULT_RATIO,
   });
+  assert.strictEqual(result.wholeBoncukEarned, 54);
+  assert.deepStrictEqual(result.newCarry, { numerator: 9n, denominator: 10n });
 });
 
-test("algorithm: aggregate 54900 + 15100 eligible -> aggregate 70000, entitlement 14, gross 4, remainder 0 (carry consumed)", () => {
-  const result = calculateOrderEarning({ previousAggregateMinorUnits: 54900, eligibleNetSpendMinorUnits: 15100 });
-  assert.deepStrictEqual(result, {
-    newAggregateMinorUnits: 70000,
-    newRemainderMinorUnits: 0,
-    oldEntitlementBoncuk: 10,
-    newEntitlementBoncuk: 14,
-    grossBoncukEarned: 4,
+test("algorithm: carry 9/10 + 15100 eligible spend at 5000/5 -> 16 whole Boncuk, carry exactly consumed to 0", () => {
+  const result = calculateOrderEarning({
+    carry: { numerator: 9n, denominator: 10n },
+    eligibleNetSpendMinorUnits: 15100,
+    ...DEFAULT_RATIO,
   });
+  assert.strictEqual(result.wholeBoncukEarned, 16);
+  assert.deepStrictEqual(result.newCarry, ZERO_BONCUK_CARRY);
 });
 
-test("algorithm: aggregate 0 + 5000 eligible -> aggregate 5000, entitlement +1, remainder 0", () => {
-  const result = calculateOrderEarning({ previousAggregateMinorUnits: 0, eligibleNetSpendMinorUnits: 5000 });
-  assert.strictEqual(result.newAggregateMinorUnits, 5000);
-  assert.strictEqual(result.grossBoncukEarned, 1);
-  assert.strictEqual(result.newRemainderMinorUnits, 0);
+test("algorithm: zero carry + 5000 eligible spend -> 5 whole Boncuk, carry 0", () => {
+  const result = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: 5000,
+    ...DEFAULT_RATIO,
+  });
+  assert.strictEqual(result.wholeBoncukEarned, 5);
+  assert.deepStrictEqual(result.newCarry, ZERO_BONCUK_CARRY);
 });
 
-test("algorithm: aggregate 0 + 2000 eligible (20 TL) -> gross 0, aggregate 2000, remainder 2000 (zero-point event)", () => {
-  const result = calculateOrderEarning({ previousAggregateMinorUnits: 0, eligibleNetSpendMinorUnits: 2000 });
-  assert.strictEqual(result.grossBoncukEarned, 0);
-  assert.strictEqual(result.newAggregateMinorUnits, 2000);
-  assert.strictEqual(result.newRemainderMinorUnits, 2000);
+test("algorithm: zero carry + 400 eligible spend (4 TL) -> 0 whole Boncuk, carry 2/5 (zero-point event)", () => {
+  const result = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: 400,
+    ...DEFAULT_RATIO,
+  });
+  assert.strictEqual(result.wholeBoncukEarned, 0);
+  assert.deepStrictEqual(result.newCarry, { numerator: 2n, denominator: 5n });
 });
 
-test("algorithm: aggregate 4900 + 100 eligible -> exactly 1 Boncuk, remainder 0", () => {
-  const result = calculateOrderEarning({ previousAggregateMinorUnits: 4900, eligibleNetSpendMinorUnits: 100 });
-  assert.strictEqual(result.grossBoncukEarned, 1);
-  assert.strictEqual(result.newRemainderMinorUnits, 0);
+test("algorithm: carry 9/10 + 100 eligible spend -> exactly 1 whole Boncuk, carry 0", () => {
+  const result = calculateOrderEarning({
+    carry: { numerator: 9n, denominator: 10n },
+    eligibleNetSpendMinorUnits: 100,
+    ...DEFAULT_RATIO,
+  });
+  assert.strictEqual(result.wholeBoncukEarned, 1);
+  assert.deepStrictEqual(result.newCarry, ZERO_BONCUK_CARRY);
 });
 
-test("algorithm: aggregate 0 + 0 eligible -> 0 Boncuk, 0 remainder", () => {
-  const result = calculateOrderEarning({ previousAggregateMinorUnits: 0, eligibleNetSpendMinorUnits: 0 });
-  assert.strictEqual(result.grossBoncukEarned, 0);
-  assert.strictEqual(result.newAggregateMinorUnits, 0);
+test("algorithm: zero carry + 0 eligible spend -> 0 Boncuk, carry stays 0", () => {
+  const result = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: 0,
+    ...DEFAULT_RATIO,
+  });
+  assert.strictEqual(result.wholeBoncukEarned, 0);
+  assert.deepStrictEqual(result.newCarry, ZERO_BONCUK_CARRY);
 });
 
-test("algorithm: results are always integers, never floating point", () => {
-  const result = calculateOrderEarning({ previousAggregateMinorUnits: 3333, eligibleNetSpendMinorUnits: 7777 });
-  assert.ok(Number.isInteger(result.grossBoncukEarned));
-  assert.ok(Number.isInteger(result.newRemainderMinorUnits));
-  assert.ok(Number.isInteger(result.newAggregateMinorUnits));
+test("algorithm: wholeBoncukEarned is always an integer Number; carry components are always bigint, never floating point", () => {
+  const result = calculateOrderEarning({
+    carry: { numerator: 1n, denominator: 3n },
+    eligibleNetSpendMinorUnits: 7777,
+    ...DEFAULT_RATIO,
+  });
+  assert.ok(Number.isInteger(result.wholeBoncukEarned));
+  assert.strictEqual(typeof result.newCarry.numerator, "bigint");
+  assert.strictEqual(typeof result.newCarry.denominator, "bigint");
+});
+
+test("algorithm: the ratio is genuinely a parameter, not a re-hidden constant — a different ratio produces a different entitlement for the identical spend", () => {
+  const atDefaultRatio = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: 3000,
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 5,
+  });
+  const atDoubleRateRatio = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: 3000,
+    earningSpendMinorUnits: 10000,
+    earningBoncukAmount: 5,
+  });
+  assert.strictEqual(atDefaultRatio.wholeBoncukEarned, 3);
+  assert.strictEqual(atDoubleRateRatio.wholeBoncukEarned, 1);
+  assert.notStrictEqual(atDefaultRatio.wholeBoncukEarned, atDoubleRateRatio.wholeBoncukEarned);
+});
+
+// -------------------------------------------------------------------------
+// A1. Exact-ratio (non-integer-reducible) support — mandatory 5000 -> 3.
+// -------------------------------------------------------------------------
+
+test("algorithm: 5000 -> 3 ratio (non-integer-reducible) is supported exactly", () => {
+  const result = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: 5000,
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 3,
+  });
+  assert.strictEqual(result.wholeBoncukEarned, 3, "floor(5000*3/5000) = 3");
+  assert.deepStrictEqual(result.newCarry, ZERO_BONCUK_CARRY);
+});
+
+test("algorithm: 5000 -> 3 ratio earns the FIRST Boncuk at exactly 1667 minor units, not 1666 or 1668", () => {
+  const at1666 = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: 1666,
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 3,
+  });
+  const at1667 = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: 1667,
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 3,
+  });
+  assert.strictEqual(at1666.wholeBoncukEarned, 0);
+  assert.strictEqual(at1667.wholeBoncukEarned, 1);
+});
+
+test("algorithm: repeated small orders under 5000 -> 3 produce EXACTLY the same total entitlement/carry as one combined spend — no per-order flooring loss, no rounding drift", () => {
+  let carry = ZERO_BONCUK_CARRY;
+  let totalWhole = 0;
+  const spendPerOrder = 137; // arbitrary, deliberately not aligned to any "nice" boundary
+  const orderCount = 50;
+  for (let i = 0; i < orderCount; i++) {
+    const result = calculateOrderEarning({
+      carry,
+      eligibleNetSpendMinorUnits: spendPerOrder,
+      earningSpendMinorUnits: 5000,
+      earningBoncukAmount: 3,
+    });
+    carry = result.newCarry;
+    totalWhole += result.wholeBoncukEarned;
+  }
+  const oneShot = calculateOrderEarning({
+    carry: ZERO_BONCUK_CARRY,
+    eligibleNetSpendMinorUnits: orderCount * spendPerOrder,
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 3,
+  });
+  assert.strictEqual(totalWhole, oneShot.wholeBoncukEarned, "identical total whole Boncuk regardless of how spend was split into orders");
+  assert.deepStrictEqual(carry, oneShot.newCarry, "identical final carry regardless of how spend was split into orders");
 });
 
 // =========================================================================
@@ -289,14 +414,15 @@ test("eligibility: a completed, authenticated, eligible-channel order earns Bonc
   );
   assert.strictEqual(result.processed, true);
   assert.strictEqual(result.reason, "earned");
-  assert.strictEqual(result.boncukEarned, 10);
+  assert.strictEqual(result.boncukEarned, 54);
 
   const account = await accountDoc(uid);
-  assert.strictEqual(account?.spendableBalance, 10);
+  assert.strictEqual(account?.spendableBalance, 54);
   assert.strictEqual(account?.boncukDebt, 0);
-  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 54900);
-  assert.strictEqual(account?.earningRemainderMinorUnits, 4900);
-  assert.strictEqual(account?.lifetimeEarned, 10);
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, 54);
+  assert.strictEqual(account?.earningCarryNumerator, "9");
+  assert.strictEqual(account?.earningCarryDenominator, "10");
+  assert.strictEqual(account?.lifetimeEarned, 54);
   assert.strictEqual(await eventFlag(eventId), true);
 });
 
@@ -311,7 +437,7 @@ test("eligibility: delivery and reservationPreorder channels also earn", async (
       db(), eventId, completionEvent({ orderId, customerId: uid, channel }),
     );
     assert.strictEqual(result.reason, "earned", `channel ${channel} should earn`);
-    assert.strictEqual(result.boncukEarned, 1);
+    assert.strictEqual(result.boncukEarned, 5);
   }
 });
 
@@ -422,7 +548,7 @@ test("eligibility: post-discount grandTotal is the basis used, not grossSubtotal
   const result = await processOrderCompletionEventForLoyaltyEarning(
     db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
   );
-  assert.strictEqual(result.boncukEarned, 8, "8 Boncuk from the 40000 (post-discount) basis, not 10 from 50000 gross");
+  assert.strictEqual(result.boncukEarned, 40, "40 Boncuk from the 40000 (post-discount) basis, not 50 from 50000 gross");
 });
 
 test("eligibility: zero eligible net spend creates no artificial Boncuk", async () => {
@@ -601,10 +727,12 @@ test("idempotency: processing the same completed order twice earns points only o
   assert.strictEqual(second.reason, "already-applied");
 
   const account = await accountDoc(uid);
-  assert.strictEqual(account?.spendableBalance, 10);
-  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 54900, "aggregate must only be increased once");
+  assert.strictEqual(account?.spendableBalance, 54);
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, 54, "the O(1) reversal projection must only be advanced once");
+  assert.strictEqual(account?.earningCarryNumerator, "9", "carry must only be advanced once");
+  assert.strictEqual(account?.earningCarryDenominator, "10");
   assert.strictEqual(account?.boncukDebt, 0, "debt must only be touched once");
-  assert.strictEqual(account?.lifetimeEarned, 10);
+  assert.strictEqual(account?.lifetimeEarned, 54);
   assert.strictEqual(account?.revision, 1, "the account must only be mutated once");
 });
 
@@ -634,8 +762,7 @@ test("idempotency: two concurrent invocations for the same order earn points exa
   assert.strictEqual(earnedCount, 1, "exactly one of the two concurrent workers actually earns");
 
   const account = await accountDoc(uid);
-  assert.strictEqual(account?.spendableBalance, 4, "the account must reflect exactly one application of the earning, never zero or double");
-  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 20000);
+  assert.strictEqual(account?.spendableBalance, 20, "the account must reflect exactly one application of the earning, never zero or double");
   assert.strictEqual(account?.revision, 1, "the account must be mutated exactly once regardless of how the losing racer resolved");
 });
 
@@ -675,11 +802,14 @@ test("account state: an absent account is provisioned safely as part of the firs
   assert.strictEqual(account?.boncukDebt, 0);
   assert.strictEqual(account?.lifetimeRedeemed, 0);
   assert.strictEqual(account?.revision, 1);
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, 5);
+  assert.strictEqual(account?.earningCarryNumerator, "0", "5000 spend at 5000/5 divides exactly — zero carry left");
+  assert.strictEqual(account?.earningCarryDenominator, "1");
   assert.ok(account?.createdAt);
   assert.ok(account?.updatedAt);
 });
 
-test("account state: an existing well-formed P2B account's balance/remainder/aggregate is incremented, not reset — lifetimeRedeemed untouched, createdAt preserved", async () => {
+test("account state: an existing well-formed account's balance/carry is incremented, not reset — lifetimeRedeemed untouched, createdAt preserved", async () => {
   const orderId = nextId("order");
   const uid = nextId("uid");
   const eventId = `${orderId}-completed`;
@@ -688,8 +818,9 @@ test("account state: an existing well-formed P2B account's balance/remainder/agg
   await seedAccount(uid, wellFormedAccount({
     customerId: uid,
     spendableBalance: 5,
-    orderEligibleNetSpendMinorUnits: 1000,
-    earningRemainderMinorUnits: 1000,
+    validOrderEntitlementBoncuk: 20, // consistent with lifetimeEarned — nothing has ever been reversed for this account.
+    earningCarryNumerator: "1",
+    earningCarryDenominator: "10",
     lifetimeEarned: 20,
     lifetimeRedeemed: 3,
     createdAt,
@@ -703,11 +834,12 @@ test("account state: an existing well-formed P2B account's balance/remainder/agg
   );
 
   const account = await accountDoc(uid);
-  // aggregate = 1000 + 4200 = 5200 -> 1 Boncuk, 200 remainder.
-  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 5200);
-  assert.strictEqual(account?.spendableBalance, 6);
-  assert.strictEqual(account?.earningRemainderMinorUnits, 200);
-  assert.strictEqual(account?.lifetimeEarned, 21);
+  // carry 1/10 + (4200*5/5000 = 21/5) = 1/10 + 42/10 = 43/10 -> whole 4, carry 3/10.
+  assert.strictEqual(account?.spendableBalance, 9);
+  assert.strictEqual(account?.earningCarryNumerator, "3");
+  assert.strictEqual(account?.earningCarryDenominator, "10");
+  assert.strictEqual(account?.lifetimeEarned, 24);
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, 24, "the O(1) reversal projection: 20 + 4 whole Boncuk from this order");
   assert.strictEqual(account?.lifetimeRedeemed, 3, "redemption lifetime must never be touched by earning");
   assert.strictEqual(account?.boncukDebt, 0);
   assert.strictEqual(account?.revision, 5, "revision must be monotonic");
@@ -729,27 +861,32 @@ test("ledger entry: all required fields are populated with trusted, non-PII valu
   assert.strictEqual(ledger?.organizationId, ORG);
   assert.strictEqual(ledger?.customerId, uid);
   assert.strictEqual(ledger?.entryType, "orderEarn");
-  assert.strictEqual(ledger?.entitlementDeltaBoncuk, 3);
-  assert.strictEqual(ledger?.spendableDeltaBoncuk, 3);
+  assert.strictEqual(ledger?.entitlementDeltaBoncuk, 15);
+  assert.strictEqual(ledger?.spendableDeltaBoncuk, 15);
   assert.strictEqual(ledger?.debtDeltaBoncuk, 0);
   assert.strictEqual(ledger?.sourceId, orderId);
   assert.strictEqual(ledger?.orderId, orderId);
   assert.strictEqual(ledger?.amountBasisMinorUnits, 15100);
-  assert.strictEqual(ledger?.orderEligibleNetSpendBeforeMinorUnits, 0);
-  assert.strictEqual(ledger?.orderEligibleNetSpendAfterMinorUnits, 15100);
-  assert.strictEqual(ledger?.orderEntitlementBeforeBoncuk, 0);
-  assert.strictEqual(ledger?.orderEntitlementAfterBoncuk, 3);
-  assert.strictEqual(ledger?.remainderBeforeMinorUnits, 0);
-  assert.strictEqual(ledger?.remainderAfterMinorUnits, 100);
+  // 15100*5/5000 = 15.1 -> whole 15, remainder 100/1000 = 1/10.
+  assert.strictEqual(ledger?.earningCarryNumeratorBefore, "0");
+  assert.strictEqual(ledger?.earningCarryDenominatorBefore, "1");
+  assert.strictEqual(ledger?.earningCarryNumeratorAfter, "1");
+  assert.strictEqual(ledger?.earningCarryDenominatorAfter, "10");
   assert.strictEqual(ledger?.debtBeforeBoncuk, 0);
   assert.strictEqual(ledger?.debtAfterBoncuk, 0);
-  assert.strictEqual(ledger?.earningRateMinorUnitsPerBoncuk, 5000);
-  assert.strictEqual(ledger?.redemptionRateMinorUnitsPerBoncuk, null);
+  assert.strictEqual(ledger?.earningSpendMinorUnits, 5000);
+  assert.strictEqual(ledger?.earningBoncukAmount, 5);
+  assert.strictEqual(ledger?.loyaltyPolicyVersion, 1, "the resolved policy version must be snapshotted onto the entry");
+  assert.strictEqual(ledger?.redemptionValueMinorUnitsPerBoncuk, null);
+  assert.strictEqual(ledger?.maxRedemptionBasisPoints, null);
   assert.strictEqual(ledger?.idempotencyKey, orderId);
   assert.strictEqual(ledger?.reversalOf, null);
   assert.strictEqual(ledger?.metadata, null);
   assert.ok(ledger?.createdAt);
   assert.ok(!("deltaBoncuk" in (ledger ?? {})), "the old ambiguous deltaBoncuk field must not exist on any new entry");
+  assert.ok(!("earningRateMinorUnitsPerBoncuk" in (ledger ?? {})), "the removed single-rate field must never appear on a new entry");
+  assert.ok(!("earningEpochReset" in (ledger ?? {})), "the removed epoch-reset design must leave no trace on a new entry");
+  assert.ok(!("orderEligibleNetSpendBeforeMinorUnits" in (ledger ?? {})), "the removed currency-denominated aggregate fields must leave no trace");
   assert.ok(!JSON.stringify(ledger).match(/\+\d{7,}/), "ledger entry must never embed a raw phone number");
 });
 
@@ -763,8 +900,8 @@ test("debt: an order earning gross 5 Boncuk while debt is 7 pays debt first — 
   const eventId = `${orderId}-completed`;
   await seedMembership(uid);
   await seedAccount(uid, wellFormedAccount({ customerId: uid, boncukDebt: 7, spendableBalance: 0 }));
-  // 5 gross Boncuk from a zero aggregate: 5 * 5000 = 25000 minor units.
-  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 25000 });
+  // 5 gross Boncuk from a zero carry: 5 * 1000 = 5000 minor units.
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 5000 });
 
   const result = await processOrderCompletionEventForLoyaltyEarning(
     db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
@@ -775,6 +912,7 @@ test("debt: an order earning gross 5 Boncuk while debt is 7 pays debt first — 
   assert.strictEqual(account?.boncukDebt, 2);
   assert.strictEqual(account?.spendableBalance, 0);
   assert.strictEqual(account?.lifetimeEarned, 5, "lifetimeEarned uses gross earning, not spendable credit");
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, 5, "the O(1) reversal projection tracks GROSS entitlement, unaffected by debt-first routing");
 
   const ledger = await ledgerDoc(orderId, uid);
   assert.strictEqual(ledger?.entitlementDeltaBoncuk, 5);
@@ -790,8 +928,8 @@ test("debt: a subsequent order earning gross 4 Boncuk while debt is 2 fully repa
   const eventId = `${orderId}-completed`;
   await seedMembership(uid);
   await seedAccount(uid, wellFormedAccount({ customerId: uid, boncukDebt: 2, spendableBalance: 0 }));
-  // 4 gross Boncuk from a zero aggregate: 4 * 5000 = 20000 minor units.
-  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 20000 });
+  // 4 gross Boncuk from a zero carry: 4 * 1000 = 4000 minor units.
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 4000 });
 
   const result = await processOrderCompletionEventForLoyaltyEarning(
     db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
@@ -802,6 +940,7 @@ test("debt: a subsequent order earning gross 4 Boncuk while debt is 2 fully repa
   assert.strictEqual(account?.boncukDebt, 0);
   assert.strictEqual(account?.spendableBalance, 2);
   assert.strictEqual(account?.lifetimeEarned, 4);
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, 4);
 
   const ledger = await ledgerDoc(orderId, uid);
   assert.strictEqual(ledger?.entitlementDeltaBoncuk, 4);
@@ -811,13 +950,13 @@ test("debt: a subsequent order earning gross 4 Boncuk while debt is 2 fully repa
   assert.strictEqual(ledger?.debtAfterBoncuk, 0);
 });
 
-test("debt: a zero-Boncuk order still moves the aggregate/remainder even while debt is nonzero — debt untouched", async () => {
+test("debt: a zero-Boncuk order still moves the carry even while debt is nonzero — debt untouched", async () => {
   const orderId = nextId("order");
   const uid = nextId("uid");
   const eventId = `${orderId}-completed`;
   await seedMembership(uid);
   await seedAccount(uid, wellFormedAccount({ customerId: uid, boncukDebt: 3, spendableBalance: 0 }));
-  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 2000 });
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 400 });
 
   const result = await processOrderCompletionEventForLoyaltyEarning(
     db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
@@ -826,28 +965,27 @@ test("debt: a zero-Boncuk order still moves the aggregate/remainder even while d
 
   const account = await accountDoc(uid);
   assert.strictEqual(account?.boncukDebt, 3, "debt must be untouched when gross earning is zero");
-  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 2000);
-  assert.strictEqual(account?.earningRemainderMinorUnits, 2000);
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, 0, "no whole Boncuk was generated — only carry moved");
+  assert.strictEqual(account?.earningCarryNumerator, "2");
+  assert.strictEqual(account?.earningCarryDenominator, "5");
 });
 
 // =========================================================================
-// I. Legacy pre-P2B account compatibility (fail-safe, not silent guessing)
+// I. Legacy account compatibility (fail-safe, not silent guessing)
 // =========================================================================
 
-test("legacy account: a pre-P2B account that is genuinely untouched (all zero) safely normalizes to include the new fields", async () => {
+test("legacy account: an account that is genuinely untouched (all zero) safely normalizes to include every new field", async () => {
   const orderId = nextId("order");
   const uid = nextId("uid");
   const eventId = `${orderId}-completed`;
   await seedMembership(uid);
   const now = Timestamp.now();
-  // Deliberately the OLD (pre-P2B) shape — no boncukDebt, no
-  // orderEligibleNetSpendMinorUnits — but every other field already reads
-  // as an untouched zero account.
+  // Deliberately the OLD shape — no boncukDebt, no carry fields at all —
+  // but every other field already reads as an untouched zero account.
   await seedAccount(uid, {
     organizationId: ORG,
     customerId: uid,
     spendableBalance: 0,
-    earningRemainderMinorUnits: 0,
     lifetimeEarned: 0,
     lifetimeRedeemed: 0,
     createdAt: now,
@@ -860,27 +998,29 @@ test("legacy account: a pre-P2B account that is genuinely untouched (all zero) s
     db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
   );
   assert.strictEqual(result.reason, "earned");
-  assert.strictEqual(result.boncukEarned, 1);
+  assert.strictEqual(result.boncukEarned, 5);
 
   const account = await accountDoc(uid);
-  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 5000);
   assert.strictEqual(account?.boncukDebt, 0);
-  assert.strictEqual(account?.spendableBalance, 1);
+  assert.strictEqual(account?.spendableBalance, 5);
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, 5, "backfilled from 0 (genuinely untouched legacy account) then advanced by this order");
+  assert.strictEqual(account?.earningCarryNumerator, "0");
+  assert.strictEqual(account?.earningCarryDenominator, "1");
 });
 
-test("legacy account: a pre-P2B account with non-zero earned/balance/remainder state but no aggregate field fails closed — never guesses a reconstruction", async () => {
+test("legacy account: a pre-existing account with non-zero earned/balance state but a missing required field fails closed — never guesses a reconstruction", async () => {
   const orderId = nextId("order");
   const uid = nextId("uid");
   const eventId = `${orderId}-completed`;
   await seedMembership(uid);
   const now = Timestamp.now();
   // Old shape, non-zero state — genuinely inconsistent: we cannot safely
-  // know what orderEligibleNetSpendMinorUnits/boncukDebt should be.
+  // know what boncukDebt/validOrderEntitlementBoncuk/earningCarryNumerator/
+  // earningCarryDenominator should be.
   await seedAccount(uid, {
     organizationId: ORG,
     customerId: uid,
     spendableBalance: 5,
-    earningRemainderMinorUnits: 1000,
     lifetimeEarned: 20,
     lifetimeRedeemed: 3,
     createdAt: now,
@@ -902,4 +1042,330 @@ test("legacy account: a pre-P2B account with non-zero earned/balance/remainder s
   assert.strictEqual(account && "boncukDebt" in account, false);
   assert.strictEqual(await ledgerDoc(orderId, uid), undefined);
   assert.notStrictEqual(await eventFlag(eventId), true, "a genuine anomaly must remain retryable, not silently marked evaluated");
+});
+
+// =========================================================================
+// J. Configurable Loyalty Economics (2026-08-24), corrected for the
+// Fractional Entitlement Carry model — exact-ratio per-organization
+// policy, and a policy change NEVER re-rates, migrates, or forfeits a
+// customer's existing partial Boncuk progress.
+// =========================================================================
+
+test("earning uses the organization's own seeded custom policy, not the hardcoded default", async () => {
+  const org = nextId("org");
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid, org);
+  // 20 TL = 1 Boncuk (rate 2000) — double the default (10 TL = 1 Boncuk).
+  await seedPolicy(org, {
+    earningSpendMinorUnits: 2000,
+    earningBoncukAmount: 1,
+    redemptionValueMinorUnitsPerBoncuk: 100,
+    maxRedemptionBasisPoints: 5000,
+  });
+  await seedOrder({ orderId, organizationId: org, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 6000 });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, organizationId: org, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.reason, "earned");
+  // floor(6000 / 2000) = 3, NOT floor(6000 / 1000) = 6 — proves the seeded
+  // policy, not the default rate, actually drove this earning.
+  assert.strictEqual(result.boncukEarned, 3);
+
+  const ledger = await ledgerDoc(orderId, uid, org);
+  assert.strictEqual(ledger?.earningSpendMinorUnits, 2000);
+  assert.strictEqual(ledger?.earningBoncukAmount, 1);
+  assert.strictEqual(ledger?.loyaltyPolicyVersion, 1);
+});
+
+test("MANDATORY: 5000 -> 3 ratio earns exactly through the real trigger, integration-level", async () => {
+  const org = nextId("org");
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid, org);
+  await seedPolicy(org, {
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 3,
+    redemptionValueMinorUnitsPerBoncuk: 50,
+    maxRedemptionBasisPoints: 2500,
+  });
+  await seedOrder({ orderId, organizationId: org, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 5000 });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, organizationId: org, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.reason, "earned");
+  assert.strictEqual(result.boncukEarned, 3, "floor(5000*3/5000) = 3 exactly");
+
+  const account = await accountDoc(uid, org);
+  assert.strictEqual(account?.spendableBalance, 3);
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, 3);
+  assert.strictEqual(account?.earningCarryNumerator, "0");
+  assert.strictEqual(account?.earningCarryDenominator, "1");
+});
+
+test("MANDATORY: repeated orders under 5000 -> 3 through the real trigger produce EXACTLY the same total entitlement/carry as one combined spend — no rounding drift", async () => {
+  const org = nextId("org");
+  const uid = nextId("uid");
+  await seedMembership(uid, org);
+  await seedPolicy(org, {
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 3,
+    redemptionValueMinorUnitsPerBoncuk: 50,
+    maxRedemptionBasisPoints: 2500,
+  });
+
+  const orderCount = 12;
+  const spendPerOrder = 733; // arbitrary, not aligned to any "nice" boundary
+  for (let i = 0; i < orderCount; i++) {
+    const orderId = nextId("order");
+    await seedOrder({ orderId, organizationId: org, customerId: uid, channel: "takeaway", grandTotalMinorUnits: spendPerOrder });
+    const result = await processOrderCompletionEventForLoyaltyEarning(
+      db(), `${orderId}-completed`, completionEvent({ orderId, organizationId: org, customerId: uid, channel: "takeaway" }),
+    );
+    assert.strictEqual(result.reason, "earned");
+  }
+
+  const totalSpend = orderCount * spendPerOrder;
+  const oneShot = combineCarryWithEarning(ZERO_BONCUK_CARRY, totalSpend, {
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 3,
+  });
+  const account = await accountDoc(uid, org);
+  // The mathematically-proven equivalence (see loyaltyPolicy.ts's own doc
+  // comment): the cumulative result of 12 incremental earning transactions
+  // must exactly match a single direct computation from the combined total.
+  assert.strictEqual(account?.lifetimeEarned, oneShot.wholeBoncukEarned);
+  assert.strictEqual(account?.validOrderEntitlementBoncuk, oneShot.wholeBoncukEarned, "no reversal ever happened, so this equals lifetimeEarned exactly");
+  assert.strictEqual(account?.earningCarryNumerator, oneShot.newCarry.numerator.toString());
+  assert.strictEqual(account?.earningCarryDenominator, oneShot.newCarry.denominator.toString());
+});
+
+test("MANDATORY LOCKED EXAMPLE: a V1-earned partial Boncuk carry combines EXACTLY with V2 spend to complete a whole Boncuk — never re-rated, never forfeited, never migrated", async () => {
+  const org = nextId("org");
+  const uid = nextId("uid");
+  await seedMembership(uid, org);
+
+  // V1: 5000 -> 5.
+  await seedPolicy(org, {
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 5,
+    redemptionValueMinorUnitsPerBoncuk: 100,
+    maxRedemptionBasisPoints: 5000,
+  }, 1);
+
+  // Order 1 under V1: 400 minor units -> 400*5/5000 = 2/5 = 0.40 Boncuk exactly. Below one whole Boncuk.
+  const orderId1 = nextId("order");
+  await seedOrder({ orderId: orderId1, organizationId: org, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 400 });
+  const result1 = await processOrderCompletionEventForLoyaltyEarning(
+    db(), `${orderId1}-completed`, completionEvent({ orderId: orderId1, organizationId: org, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result1.boncukEarned, 0, "0.40 Boncuk alone is not yet a whole Boncuk");
+
+  const accountAfterOrder1 = await accountDoc(uid, org);
+  assert.strictEqual(accountAfterOrder1?.earningCarryNumerator, "2");
+  assert.strictEqual(accountAfterOrder1?.earningCarryDenominator, "5");
+  assert.strictEqual(accountAfterOrder1?.spendableBalance, 0);
+  assert.strictEqual(accountAfterOrder1?.validOrderEntitlementBoncuk, 0, "no whole Boncuk yet — only carry advanced");
+
+  const ledger1Snapshot = await ledgerDoc(orderId1, uid, org);
+  assert.strictEqual(ledger1Snapshot?.earningSpendMinorUnits, 5000);
+  assert.strictEqual(ledger1Snapshot?.earningBoncukAmount, 5);
+  assert.strictEqual(ledger1Snapshot?.loyaltyPolicyVersion, 1);
+  assert.strictEqual(ledger1Snapshot?.earningCarryNumeratorBefore, "0");
+  assert.strictEqual(ledger1Snapshot?.earningCarryDenominatorBefore, "1");
+  assert.strictEqual(ledger1Snapshot?.earningCarryNumeratorAfter, "2");
+  assert.strictEqual(ledger1Snapshot?.earningCarryDenominatorAfter, "5");
+
+  // Activate V2: 5000 -> 3 (non-integer-reducible), version 2. Simulates a
+  // future Admin policy change — no Admin write path exists yet this
+  // phase, so a direct Admin SDK write stands in for it, exactly as this
+  // suite already does for seeding any other server-only state.
+  await seedPolicy(org, {
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 3,
+    redemptionValueMinorUnitsPerBoncuk: 50,
+    maxRedemptionBasisPoints: 2500,
+  }, 2);
+
+  // Order 2 under V2: 1000 minor units -> 1000*3/5000 = 3/5 = 0.60 Boncuk
+  // exactly. Combined with the EXISTING 2/5 carry (used VERBATIM — never
+  // reset, never reinterpreted under V2): 2/5 + 3/5 = 1 exactly.
+  const orderId2 = nextId("order");
+  await seedOrder({ orderId: orderId2, organizationId: org, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 1000 });
+  const result2 = await processOrderCompletionEventForLoyaltyEarning(
+    db(), `${orderId2}-completed`, completionEvent({ orderId: orderId2, organizationId: org, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(
+    result2.boncukEarned,
+    1,
+    "0.40 (V1) + 0.60 (V2) = 1.00 exactly -> one whole Boncuk. OLD_PROGRESS_RERATED=NO, OLD_PROGRESS_FORFEITED=NO, OLD_PROGRESS_CAN_COMPLETE=YES",
+  );
+
+  const accountAfterOrder2 = await accountDoc(uid, org);
+  assert.strictEqual(accountAfterOrder2?.earningCarryNumerator, "0");
+  assert.strictEqual(accountAfterOrder2?.earningCarryDenominator, "1");
+  assert.strictEqual(
+    accountAfterOrder2?.spendableBalance,
+    1,
+    "the V1 carry combined exactly with V2 spend into 1 real, spendable Boncuk — nothing forfeited",
+  );
+  assert.strictEqual(accountAfterOrder2?.lifetimeEarned, 1);
+  assert.strictEqual(
+    accountAfterOrder2?.validOrderEntitlementBoncuk,
+    1,
+    "the O(1) reversal projection — combining V1's carry with V2's spend produced exactly 1 whole Boncuk",
+  );
+
+  const ledger2 = await ledgerDoc(orderId2, uid, org);
+  assert.strictEqual(ledger2?.earningSpendMinorUnits, 5000);
+  assert.strictEqual(ledger2?.earningBoncukAmount, 3);
+  assert.strictEqual(ledger2?.loyaltyPolicyVersion, 2);
+  assert.strictEqual(
+    ledger2?.earningCarryNumeratorBefore,
+    "2",
+    "OLD_PROGRESS_RERATED=NO: the V1 carry is used VERBATIM as this event's own starting point, never reset, never reinterpreted",
+  );
+  assert.strictEqual(ledger2?.earningCarryDenominatorBefore, "5");
+  assert.strictEqual(ledger2?.earningCarryNumeratorAfter, "0");
+  assert.strictEqual(ledger2?.earningCarryDenominatorAfter, "1");
+
+  // POLICY_CHANGE_RETROACTIVE=NO / V1 history unchanged: re-fetch the
+  // FIRST entry and assert it is byte-for-byte identical to the snapshot
+  // taken right after order 1 — the V2 activation and order 2 must never
+  // touch it.
+  const ledger1AfterTransition = await ledgerDoc(orderId1, uid, org);
+  assert.deepStrictEqual(
+    ledger1AfterTransition,
+    ledger1Snapshot,
+    "a historical ledger entry must never be rewritten by a later policy change — V1 history unchanged",
+  );
+});
+
+test("tenant isolation: organization A's custom policy never affects organization B's earning", async () => {
+  const orgA = nextId("orgA");
+  const orgB = nextId("orgB");
+  const uidA = nextId("uid");
+  const uidB = nextId("uid");
+  await seedMembership(uidA, orgA);
+  await seedMembership(uidB, orgB);
+  await seedPolicy(orgA, {
+    earningSpendMinorUnits: 2000,
+    earningBoncukAmount: 1, // rate 2000
+    redemptionValueMinorUnitsPerBoncuk: 100,
+    maxRedemptionBasisPoints: 5000,
+  });
+  // orgB is left unseeded — must auto-provision its own independent default (rate 1000).
+
+  const orderIdA = nextId("order");
+  const orderIdB = nextId("order");
+  await seedOrder({ orderId: orderIdA, organizationId: orgA, customerId: uidA, channel: "takeaway", grandTotalMinorUnits: 6000 });
+  await seedOrder({ orderId: orderIdB, organizationId: orgB, customerId: uidB, channel: "takeaway", grandTotalMinorUnits: 6000 });
+
+  const resultA = await processOrderCompletionEventForLoyaltyEarning(
+    db(), `${orderIdA}-completed`, completionEvent({ orderId: orderIdA, organizationId: orgA, customerId: uidA, channel: "takeaway" }),
+  );
+  const resultB = await processOrderCompletionEventForLoyaltyEarning(
+    db(), `${orderIdB}-completed`, completionEvent({ orderId: orderIdB, organizationId: orgB, customerId: uidB, channel: "takeaway" }),
+  );
+
+  assert.strictEqual(resultA.boncukEarned, 3, "org A's own custom rate (2000)");
+  assert.strictEqual(resultB.boncukEarned, 6, "org B's independently auto-provisioned default rate (1000), unaffected by org A");
+
+  const ledgerA = await ledgerDoc(orderIdA, uidA, orgA);
+  const ledgerB = await ledgerDoc(orderIdB, uidB, orgB);
+  assert.strictEqual(ledgerA?.earningSpendMinorUnits, 2000);
+  assert.strictEqual(ledgerA?.earningBoncukAmount, 1);
+  assert.strictEqual(ledgerB?.earningSpendMinorUnits, 5000);
+  assert.strictEqual(ledgerB?.earningBoncukAmount, 5);
+});
+
+test("CUSTOMER CANNOT OVERRIDE POLICY: the earning trigger's organizationId always comes from the server-written orderEvents record, never any client-influenced field — proven by orgA/orgB never cross-contaminating even when both customers earn concurrently", async () => {
+  const orgA = nextId("orgA");
+  const orgB = nextId("orgB");
+  const uid = nextId("uid"); // deliberately the SAME conceptual customer identity pattern in both orgs
+  await seedMembership(uid, orgA);
+  await seedMembership(uid, orgB);
+  await seedPolicy(orgA, {
+    earningSpendMinorUnits: 100,
+    earningBoncukAmount: 1,
+    redemptionValueMinorUnitsPerBoncuk: 100,
+    maxRedemptionBasisPoints: 5000,
+  });
+  // orgB left unseeded — auto-provisions the independent default.
+
+  const orderIdA = nextId("order");
+  const orderIdB = nextId("order");
+  await seedOrder({ orderId: orderIdA, organizationId: orgA, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 300 });
+  await seedOrder({ orderId: orderIdB, organizationId: orgB, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 300 });
+
+  await Promise.all([
+    processOrderCompletionEventForLoyaltyEarning(
+      db(), `${orderIdA}-completed`, completionEvent({ orderId: orderIdA, organizationId: orgA, customerId: uid, channel: "takeaway" }),
+    ),
+    processOrderCompletionEventForLoyaltyEarning(
+      db(), `${orderIdB}-completed`, completionEvent({ orderId: orderIdB, organizationId: orgB, customerId: uid, channel: "takeaway" }),
+    ),
+  ]);
+
+  const accountA = await accountDoc(uid, orgA);
+  const accountB = await accountDoc(uid, orgB);
+  assert.strictEqual(accountA?.spendableBalance, 3, "floor(300/100) under orgA's own custom policy");
+  assert.strictEqual(accountB?.spendableBalance, 0, "floor(300/1000) under orgB's independent default — never orgA's rate");
+});
+
+test("MISSING LIVE POLICY: an organization previously bootstrapped whose policy document then disappears fails earning closed — never silently recreates the default", async () => {
+  const org = nextId("org");
+  const uid = nextId("uid");
+  await seedMembership(uid, org);
+
+  // Genuine first-time bootstrap via a real earning event.
+  const orderId1 = nextId("order");
+  await seedOrder({ orderId: orderId1, organizationId: org, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 5000 });
+  const result1 = await processOrderCompletionEventForLoyaltyEarning(
+    db(), `${orderId1}-completed`, completionEvent({ orderId: orderId1, organizationId: org, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result1.reason, "earned");
+
+  // The policy document unexpectedly disappears (its bootstrap marker, by
+  // design, is never deleted alongside it).
+  await db().collection(LOYALTY_POLICIES_COLLECTION).doc(org).delete();
+
+  const orderId2 = nextId("order");
+  await seedOrder({ orderId: orderId2, organizationId: org, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 5000 });
+  const result2 = await processOrderCompletionEventForLoyaltyEarning(
+    db(), `${orderId2}-completed`, completionEvent({ orderId: orderId2, organizationId: org, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result2.processed, false);
+  assert.strictEqual(result2.reason, "missing-live-loyalty-policy");
+  assert.strictEqual(await ledgerDoc(orderId2, uid, org), undefined, "no ledger mutation from the failed attempt");
+
+  const accountUnchanged = await accountDoc(uid, org);
+  assert.strictEqual(accountUnchanged?.spendableBalance, 5, "the account must remain exactly as order 1 left it — no partial write from the failed attempt");
+});
+
+test("a corrupt organization policy fails earning closed — never fabricates a rate, no account/ledger mutation", async () => {
+  const org = nextId("org");
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid, org);
+  await seedPolicy(org, {
+    earningSpendMinorUnits: -1000, // corrupt — negative.
+    earningBoncukAmount: 3,
+    redemptionValueMinorUnitsPerBoncuk: 100,
+    maxRedemptionBasisPoints: 5000,
+  });
+  await seedOrder({ orderId, organizationId: org, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 6000 });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, organizationId: org, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.processed, false);
+  assert.strictEqual(result.reason, "inconsistent-loyalty-policy-state");
+  assert.strictEqual(await accountDoc(uid, org), undefined);
+  assert.strictEqual(await ledgerDoc(orderId, uid, org), undefined);
 });

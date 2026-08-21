@@ -13,7 +13,7 @@ import '../../../navigation/presentation/providers/navigation_provider.dart';
 import '../../../notifications/presentation/screens/notifications_screen.dart';
 import '../../../orders/presentation/providers/orders_provider.dart';
 import '../../../orders/presentation/screens/active_order_screen.dart';
-import '../../../profile/presentation/screens/loyalty_screen.dart';
+import '../../../loyalty/presentation/screens/loyalty_screen.dart';
 import '../../../qr/presentation/screens/qr_scanner_screen.dart';
 import '../../../takeaway/presentation/screens/takeaway_branch_selection_screen.dart';
 import '../widgets/active_order_banner.dart';

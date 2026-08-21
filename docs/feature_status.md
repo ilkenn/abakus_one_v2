@@ -3823,3 +3823,198 @@ implemented. REAL REFUND EXECUTION = not implemented. LOYALTY PRODUCTION READY =
 cannot yet be refunded Boncuk from a real order because no real order ever reaches a cancellation/
 refund state in the first place (the same pre-existing blocker P2B-A/P2B-A.1 already recorded, not
 resolved by this phase).
+
+**Boncuk Loyalty Program P3A (2026-08-23) — Real Customer Loyalty Data + Premium Boncuklarım Screen,
+IMPLEMENTED — pending physical device visual review before checkpoint commit (visually NOT yet
+closed).** Replaces the entirely mock customer-facing Boncuklarım screen with a real, server-
+authoritative one and makes `lib/features/loyalty/` the canonical owner of the feature. Old mock audit
+confirmed: hardcoded `320` balance, bronze/silver/gold tiers with fake 1000/3000 thresholds, a 4-item
+mock rewards catalog with a working fake redeem dialog, a client-side `Random()` spin wheel, 3 mock
+campaigns, and 3 hardcoded history rows — all removed from the customer-visible surface. The 5 previously
+-empty `lib/features/loyalty/` stub files are now populated with the real implementation; the old mock
+files (`features/profile/presentation/{screens/loyalty_screen.dart,providers/loyalty_provider.dart}`)
+were **not deleted**, per CLAUDE.md's standing no-unilateral-deletion rule — they are now fully
+unreferenced and are flagged here for the user's own follow-up deletion decision. A new callable,
+`getCustomerLoyaltyHistory` (`functions/src/getCustomerLoyaltyHistory.ts`), is the first customer-safe
+read path for `loyaltyLedgerEntries` — gated identically to `getCustomerLoyaltySnapshot`, bounded/
+paginated (default 15, max 30, single-field cursor), and returns a narrow sanitized projection
+(`eventId`/`type`/`displayBoncukDelta`/`debtAppliedBoncuk`/`occurredAt`/`orderId`) rather than the raw
+ledger document — see `BR-LOYALTY-017` for the full reasoning (Firestore rules control *access*, not
+*field exposure*; a raw scoped client query, while access-safe, would still leak internal accounting
+provenance fields with zero customer-facing meaning). The real, already-existing
+`getCustomerLoyaltySnapshot` response (`spendableBalance`/`boncukDebt`/`earningRemainderMinorUnits`) is
+rendered for the first time by an actual screen — no client-side balance calculation, no ledger
+aggregation on-device, no fallback/mock value. Final screen structure: hero balance card (`AbacusCard`,
+real balance + informational TL-equivalent), earning-progress card (`LoyaltyProgressCard`, computed from
+the real `earningRemainderMinorUnits` field — e.g. "34 TL / 50 TL", "Sonraki Boncuk için 16 TL kaldı"),
+a static how-it-works block, a real ledger-backed Boncuk Movements section (5-row preview + a full
+paginated `LoyaltyHistoryScreen`, infinite-scroll), and an honest empty state ("Henüz Boncuk hareketin
+yok.") — no fake transactions. Bronze/silver/gold tiers, campaigns, and the rewards/wheel benefits
+section are all absent this phase (tiers remain an open product decision; catalog/wheel/tasks remain
+unimplemented — nothing fake was left in their place). Debt UX: a nonzero `boncukDebt` renders a calm,
+non-alarming explainer ("İade nedeniyle `N` Boncuk sonraki kazanımlarından dengelenecek.") — never
+"borçlusun" or legalistic phrasing; spendable balance is never shown negative. Routes preserved: all 5
+original entry points (`home_screen.dart` ×3, `profile_loyalty_card.dart`, `profile_screen.dart`) still
+open the same `LoyaltyScreen` class, now at its canonical path — only the import statement changed at
+each site. A genuine, previously-undetected UI overflow bug was found and fixed during this phase: the
+loading skeleton was not wrapped in a scrollable, so its stacked placeholder content overflowed on a
+375px-class viewport — fixed by wrapping it in a `SingleChildScrollView`. No `firestore.rules` change
+(the new callable uses the Admin SDK). See `docs/decisions.md`'s P3A entry for the full files-changed
+list and exact gate totals (Functions 919/919, up from 902 — 17 new `getCustomerLoyaltyHistory` tests;
+Firestore Rules 345/345 unchanged; `flutter analyze` 0 issues; `flutter test` 3274/12-skipped/0-failed,
+up from 3236). **REAL LOYALTY BALANCE/HISTORY = connected. MOCK BALANCE/TIERS/REWARDS/WHEEL/CAMPAIGNS/
+HISTORY = removed from the customer-visible surface. CATALOG/WHEEL/TASKS = still not implemented. REAL
+REFUND EXECUTION = still not implemented (P2B). LOYALTY PRODUCTION READY = NO.** Physical device visual
+review is required before any checkpoint commit — not yet performed as of this entry.
+
+**Boncuk Loyalty Program P3A Visual Polish + Rate Change (2026-08-24) — IMPLEMENTED, pending a second
+physical device visual review before checkpoint commit.** Responds to P3A's first physical review
+having FAILED on visual grounds only (functionality was accepted). Visually redesigns
+`lib/features/loyalty/presentation/{widgets/abacus_card.dart,widgets/loyalty_progress.dart,
+screens/loyalty_screen.dart}` — compact sage-to-primary gradient hero with the real balance as the
+sole focal point and a purely decorative bead motif (mirroring `ProfileLoyaltyCard`'s established
+technique), a branded gradient progress bar with a percentage badge for "Sonraki Boncuğa", a 3-chip
+compact "Nasıl Çalışır?" replacing the old text-list card, and a compact single-row empty-movements
+card replacing the generic full-page `EmptyView`. No backend contract, data source, or business logic
+changed by the visual portion — every rendered number is still real, sourced from the unchanged P3A
+providers; no wheel/rewards/tiers/campaigns were reintroduced; no fake data anywhere. Also implements
+a separately locked Boncuk economics rate change in the same task: earning rate 50 TL = 1 Boncuk → **10
+TL = 1 Boncuk**, redemption rate 1 Boncuk = 2 TL → **1 Boncuk = 1 TL**
+(`BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK` 1000, `BONCUK_REDEMPTION_VALUE_MINOR_UNITS_PER_BONCUK`
+100, `functions/src/loyaltyLedger.ts`; mirrored in `LoyaltyAccountSnapshot`'s Flutter constants). The
+50%-of-order redemption cap and single-benefit-per-order stacking rule are unchanged. Every rate-
+dependent backend test assertion (`loyaltyLedger.test.ts`, `loyaltyOrderEarning.test.ts`,
+`loyaltyReversalMath.test.ts`) was individually re-derived against the new rate, including several
+tests whose own seeded input values had to change (not just their expected outputs) to still exercise
+the same intended scenario at the new rate — see `docs/decisions.md`'s P3A Visual Polish + Rate Change
+entry for the full before/after worked-example table and exact gate totals. Redemption itself remains
+**NOT YET IMPLEMENTED** (no checkout flow exists — the redemption rate is defined and displayed
+informationally only); refund execution remains not implemented (P2B), unchanged by this phase.
+**LOYALTY PRODUCTION READY = NO.** Physical device visual review of this second pass is required before
+any checkpoint commit — not yet performed as of this entry.
+
+**Boncuk Configurable Loyalty Economics (2026-08-24) — IMPLEMENTED (resolver/read path only; no Admin
+write callable or Admin UI, per explicit locked scope).** Responds to a new locked product requirement:
+Boncuk economics must not remain permanently hardcoded — a future Admin must be able to change the
+earning ratio, redemption value, and maximum redemption percentage per organization. Introduces two new
+Firestore collections mirroring the existing ledger/account materialized-view split:
+`loyaltyPolicies/{organizationId}` (the current active policy, auto-provisioned to the locked default —
+50 TL eligible net spend = 5 Boncuk, 1 Boncuk = 1 TL, maximum 50% of order — on an organization's first
+resolution, exactly like `loyaltyAccounts`' own zero-account provisioning) and
+`loyaltyPolicyVersions/{organizationId}_{version}` (append-only, immutable policy history). Every
+earning/reversal formula in `functions/src/{loyaltyOrderEarning,loyaltyReversalMath}.ts` changed from
+importing a fixed rate constant to accepting the resolved rate as a parameter — for the current default
+policy this is mathematically identical to the rate already in use, confirmed by the full test suite
+passing unchanged. Every `orderEarn` ledger entry now snapshots the exact rate AND policy version that
+produced it (`loyaltyPolicyVersion`, new field); a dedicated test proves that changing an organization's
+policy (via direct Admin SDK write, since no Admin callable exists yet) affects only new earning going
+forward — an already-written historical ledger entry is asserted byte-for-byte unchanged afterward,
+never rewritten, never recalculated. A reversal of an old order always uses that order's own
+snapshotted rate, never today's policy — locked in `loyaltyReversalMath.ts`'s own parameter doc comment.
+Tenant isolation (one organization's policy can never affect another's) and fail-safe corruption
+handling (a malformed policy document blocks the operation rather than falling back to a fabricated
+rate) are both proven by dedicated tests at the resolver, earning-transaction, and customer-snapshot-
+callable layers. `getCustomerLoyaltySnapshot`'s response gains a sanitized `policy` object; the
+customer Boncuklarım screen's "50 TL → 5 Boncuk"/"1 Boncuk → 1 TL"/"En fazla %50'si"
+(`_HowItWorksCard`) and the "Sonraki Boncuğa" progress denominator now render from these real,
+server-resolved fields — `LoyaltyAccountSnapshot`'s rate/redemption fields changed from Flutter
+`static const` values to real instance data, with a dedicated widget test proving a non-default policy
+renders genuinely different numbers on screen, not just at the model layer. Customer Flutter has no
+code path that could write a policy value even if it tried — `LoyaltyGateway`'s interface has no such
+method. **No Admin write callable, no Admin UI, no checkout Boncuk redemption were implemented** — all
+explicitly out of this task's own locked scope. See `docs/decisions.md`'s Configurable Loyalty Economics
+entry for the full architecture, files changed, and exact gate totals. No commit was made.
+
+**Same-day correction (2026-08-24) — the design above was rejected before merge and never reached
+`main`.** Four issues: (1) the "`earningSpendMinorUnits` must divide evenly by `earningBoncukAmount`"
+constraint above is **removed** — a genuinely non-integer-reducible ratio (locked example: `5000 minor
+units → 3 Boncuk`) is now exactly supported via `BigInt` integer math, never floating point, never a
+single derived per-Boncuk rate; (2) a **per-policy-version earning epoch model** was added
+(`loyaltyAccounts.earningPolicyVersion`) so a policy version change never re-rates a customer's
+existing in-progress accumulated spend — only new spend after the change uses the new ratio.
+**Semantic cleanup (2026-08-24, second pass)**: "preserved" is split into two distinct, independently-
+verified guarantees rather than one blended claim — `OLD_PROGRESS_AUDIT_PRESERVED = YES` (the retired
+version's aggregate/remainder/`earningPolicyVersion`, and every ledger entry that produced them, are
+never rewritten, deleted, or migrated onto the new version — permanently available for audit; already-
+earned Boncuk are unaffected) and `OLD_PROGRESS_CAN_COMPLETE = NO` (despite the above, the abandoned
+remainder can never itself convert into a Boncuk once its policy version is retired — no future event
+resumes it). The abandoned technical remainder is also confirmed **structurally excluded** from what
+the customer is ever shown: `getCustomerLoyaltySnapshot`'s response is always freshly recomputed from
+a `0` aggregate when the account's epoch doesn't match the live policy version, never sourced from the
+stale stored remainder. Proven by two tests — the existing `loyaltyOrderEarning.test.ts` integration
+test using the architect's own locked V1=5000→5 → V2=5000→3 example, plus a new dedicated
+`getCustomerLoyaltySnapshot.test.ts` read-path test covering the gap before the customer's next order:
+seeds real stale V1 progress against an already-live V2 policy and asserts the response shows a fresh
+V2 epoch (never the stale remainder, never a reinterpretation) while the stored account document is
+byte-for-byte untouched by the read; (3) every `orderEarn`
+ledger entry now snapshots the **raw ratio itself** (`earningSpendMinorUnits`/`earningBoncukAmount`,
+replacing the removed single-rate field), not just a version pointer, so history stays interpretable
+without reading today's live policy; (4) a new **`loyaltyPolicyBootstraps/{organizationId}`** marker
+collection distinguishes genuine first-time policy provisioning from a policy that should already
+exist but is missing/corrupted — the latter now fails closed
+(`missing-live-policy`/`missing-live-loyalty-policy`) instead of silently recreating the locked default
+(which could otherwise unexpectedly reset an already-configured organization's live economics).
+`LoyaltyAccountSnapshot`'s derived `earningRateMinorUnitsPerBoncuk` getter is removed (it would
+silently floor-truncate a non-reducible ratio); `minorUnitsUntilNextBoncuk` is now a real, required
+field populated verbatim from a new server response field. Two mandatory Flutter fixtures — A (50 TL →
+5 Boncuk, 1 Boncuk = 1 TL, 50%) and B (50 TL → 3 Boncuk, 1 Boncuk = 0.50 TL, 25%) — are proven correct
+end-to-end, including the progress card's non-fixed block-size denominator and sub-1-TL redemption-
+value formatting. See `docs/decisions.md`'s Configurable Loyalty Economics entry §11 for the full
+corrected architecture, worked examples, and files changed. No commit was made.
+
+**Fractional Entitlement Carry correction (2026-08-24, third pass) — the per-policy-version "earning
+epoch" model above (point 2) was itself rejected before merge and never reached `main`.** It never
+re-rated old spend, but it FORFEITED the customer's real, economically-earned partial progress by
+resetting the account's aggregate to `0` on the next earning event after a policy change —
+`OLD_PROGRESS_AUDIT_PRESERVED = YES` was true, but `OLD_PROGRESS_CAN_COMPLETE` was `NO`, which is not
+acceptable: both must be `YES`. The corrected design tracks partial progress as an EXACT,
+POLICY-INDEPENDENT FRACTION of one Boncuk (`loyaltyAccounts.earningCarryNumerator`/
+`earningCarryDenominator`, canonical decimal strings — never `Number`, since a carry denominator can
+exceed `Number.MAX_SAFE_INTEGER` after a few policy changes) instead of a currency-denominated,
+epoch-scoped aggregate. Every earning event, under whichever policy is active, combines the EXISTING
+carry with the new order's own exact fractional entitlement via exact `BigInt` fraction arithmetic
+(`functions/src/loyaltyPolicy.ts`'s `combineCarryWithEarning`) — there is no epoch, no reset, and a
+policy change never touches an existing account at all. Locked worked example, test-proven: a customer
+carries `2/5` (0.40 Boncuk) earned under V1 (`5000→5`); V2 activates (`5000→3`); new V2 spend
+contributes exactly `3/5` (0.60 Boncuk); `2/5 + 3/5 = 1` exactly → the customer receives 1 whole
+Boncuk, nothing lost, nothing re-rated. `loyaltyReversalMath.ts` was rewritten from a single-aggregate
+subtraction formula to a REPLAY-based one (restore the reversed order's own snapshotted carry, re-apply
+every later order's own snapshotted spend/ratio, compare against what was originally recorded) — proven
+against the exact scenario a naive "subtract the reversed order's own delta" would get wrong: an
+earlier order's fractional contribution that helped a LATER order complete a whole Boncuk. **The
+`getCustomerLoyaltySnapshot` response shape is byte-for-byte unchanged** (still
+`spendableBalance`/`boncukDebt`/`earningRemainderMinorUnits`/`minorUnitsUntilNextBoncuk`/
+`lifetimeEarned`/`lifetimeRedeemed`/`policy`) — the exact carry is now always projected fresh against
+whichever policy is current, so **zero Flutter changes were required**, confirmed by rerunning
+`flutter test` unchanged (3288 passed, 0 failed). Functions emulator suite: 963/963, 0 failed (up from
+959). See `docs/decisions.md`'s Configurable Loyalty Economics entry §12 for the full corrected
+architecture, the mathematical proof behind the replay-based reversal, and files changed. No commit was
+made.
+
+**O(1) reversal correction (2026-08-24, fourth pass) — the REPLAY-based reversal design directly
+above was itself rejected before merge.** It was mathematically correct, but operationally UNBOUNDED —
+a refund of an old order could require scanning and replaying hundreds or thousands of later ledger
+entries; production reversal must never scan the ledger. The corrected design adds a new account field,
+`validOrderEntitlementBoncuk` (int, `>= 0` — the currently valid whole Boncuk entitlement from
+non-reversed order spend, distinct from `lifetimeEarned`, which never decreases on reversal), maintained
+incrementally at zero extra cost (`+= wholeBoncukEarned` on every earning event, the same value already
+computed for the ledger/debt logic). A full reversal now reads exactly two things — the account's
+CURRENT `validOrderEntitlementBoncuk` + exact carry, and the reversed order's own immutable ledger
+entry, looked up directly by its deterministic id — and computes `newExact = (validOrderEntitlementBoncuk
++ carry) − originalContribution` (the original order's own exact fraction, reconstructed from its own
+snapshot, never today's policy), splitting the result back into a whole/fractional pair. **No later
+ledger entry is ever read.** This is proven, not merely claimed, mathematically identical to the
+rejected replay design — by the same telescoping property that already justified the carry model
+itself — verified by a dedicated test that computes an identical cross-policy scenario via both the O(1)
+formula and an independent reference replay implementation and asserts byte-for-byte identical results.
+`orderEligibleNetSpendMinorUnits`/`earningRemainderMinorUnits`/`earningPolicyVersion` (the rejected
+epoch design's own fields) remain confirmed absent from the shipped schema — the final account model is
+exactly `spendableBalance`/`boncukDebt`/`validOrderEntitlementBoncuk`/`earningCarryNumerator`/
+`earningCarryDenominator`/`lifetimeEarned`/`lifetimeRedeemed`/`revision`/`createdAt`/`updatedAt`, no
+other loyalty-accounting field. Denominator growth is proven bounded under both same-policy repetition
+and small-set policy cycling, with a defensive `10^30` fail-closed ceiling for the pathological case.
+**The `getCustomerLoyaltySnapshot` response shape is unaffected for the second correction pass in a
+row** — zero Flutter changes required, confirmed by rerunning `flutter test` unchanged (3288 passed, 0
+failed). Functions emulator suite: 977/977, 0 failed (up from 963). See `docs/decisions.md`'s
+Configurable Loyalty Economics entry §13 for the full corrected architecture, the mathematical proof,
+the cross-policy worked example, and files changed. No commit was made.

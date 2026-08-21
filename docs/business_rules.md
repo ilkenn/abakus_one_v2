@@ -691,19 +691,24 @@ entry for the accompanying server ledger/schema design these rules feed into, an
 this design introduces.
 
 ### BR-LOYALTY-001 — Earning rate and persistent remainder
-- **Status**: DECIDED — **IMPLEMENTED (P2A, 2026-08-20; provenance-corrected 2026-08-21)** for orders
-  that are both on an approved channel (`takeaway`/`delivery`/`reservationPreorder`) AND carry a valid
-  server pricing-authority marker (BR-LOYALTY-013) — see BR-LOYALTY-012 for the exact two-factor scope
-  and the disclosed dine-in/POS gap.
-- **Rule**: Boncuk earning rate is **50 TL eligible net spend = 1 Boncuk**. The result is floored — no
-  fractional Boncuk is ever granted. Any unused spend remainder (the portion of eligible net spend
-  below the next 50 TL threshold) never disappears — it is carried forward as customer-owned,
-  server-authoritative loyalty state and applied against the customer's next eligible order. All
-  monetary amounts are handled in minor currency units (kuruş) server-side; a floating-point money
-  representation is never used, mirroring this codebase's existing `Money`/minor-units discipline.
-  **Example**: Order 1 = 549 TL eligible net spend → 10 Boncuk + 49 TL remainder carried forward.
-  Order 2 = 151 TL eligible net spend → combined with the 49 TL remainder = 200 TL → 4 Boncuk,
-  remainder resets to 0 TL.
+- **Status**: DECIDED — **IMPLEMENTED (P2A, 2026-08-20; provenance-corrected 2026-08-21; rate changed
+  P3A Visual Polish, 2026-08-24)** for orders that are both on an approved channel (`takeaway`/
+  `delivery`/`reservationPreorder`) AND carry a valid server pricing-authority marker
+  (BR-LOYALTY-013) — see BR-LOYALTY-012 for the exact two-factor scope and the disclosed dine-in/POS
+  gap.
+- **Rule**: Boncuk earning rate is **10 TL eligible net spend = 1 Boncuk** (rate change, 2026-08-24 —
+  supersedes the original P0-A-locked 50 TL = 1 Boncuk; see `docs/decisions.md`'s P3A Visual Polish
+  entry for the full record). The result is floored — no fractional Boncuk is ever granted. Any unused
+  spend remainder (the portion of eligible net spend below the next 10 TL threshold) never disappears
+  — it is carried forward as customer-owned, server-authoritative loyalty state and applied against the
+  customer's next eligible order. All monetary amounts are handled in minor currency units (kuruş)
+  server-side; a floating-point money representation is never used, mirroring this codebase's existing
+  `Money`/minor-units discipline. **Example (current 10 TL rate)**: Order 1 = 549 TL eligible net spend
+  → 54 Boncuk + 9 TL remainder carried forward. Order 2 = 15 TL eligible net spend → combined with the
+  9 TL remainder = 24 TL → 2 Boncuk, remainder resets to 4 TL. *(The original 549 TL/151 TL worked
+  example under the superseded 50 TL rate — 10 Boncuk + 49 TL remainder, then +4 Boncuk to remainder 0
+  — remains historically accurate for 2026-08-20 through 2026-08-23 and is not rewritten; it no longer
+  reflects the current rate.)*
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Loyalty, Orders
 
@@ -749,12 +754,15 @@ this design introduces.
 - **Related Modules**: Loyalty, Orders, Payments
 
 ### BR-LOYALTY-005 — Cash-like redemption: rate, customer choice, and caps
-- **Status**: DECIDED
-- **Rule**: 1 Boncuk = 2 TL for ordinary cash-like redemption. The customer explicitly chooses how many
-  whole Boncuk to use — the system never automatically applies the maximum. Minimum redemption is 1
-  Boncuk. Maximum redemption is the **lower of**: (A) the customer's current spendable Boncuk balance,
-  and (B) the Boncuk amount equivalent to 50% of the eligible order amount. Fractional Boncuk
-  redemption is never permitted.
+- **Status**: DECIDED — rate changed P3A Visual Polish, 2026-08-24 (redemption itself remains
+  **NOT YET IMPLEMENTED** — no checkout redemption flow exists; the rate constant is defined and
+  displayed informationally in the Boncuklarım screen only).
+- **Rule**: 1 Boncuk = 1 TL for ordinary cash-like redemption (rate change, 2026-08-24 — supersedes the
+  original P0-A-locked 1 Boncuk = 2 TL; see `docs/decisions.md`'s P3A Visual Polish entry). The customer
+  explicitly chooses how many whole Boncuk to use — the system never automatically applies the maximum.
+  Minimum redemption is 1 Boncuk. Maximum redemption is the **lower of**: (A) the customer's current
+  spendable Boncuk balance, and (B) the Boncuk amount equivalent to 50% of the eligible order amount —
+  **unchanged by this rate change**. Fractional Boncuk redemption is never permitted.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Loyalty, Orders, Payments
 
@@ -895,16 +903,29 @@ this design introduces.
   (2) any remaining required clawback becomes `boncukDebt` (a new integer, `>= 0`, server-authoritative
   account field). Future Boncuk earning of any kind pays down existing debt **before** any of it
   becomes spendable: `debtPaid = min(grossBoncukEarned, boncukDebt)`,
-  `spendableCredit = grossBoncukEarned - debtPaid`, `newDebt = boncukDebt - debtPaid`. **Worked
-  example (locked)**: required clawback 11, spendable balance 4 → spendable becomes 0, debt becomes 7.
-  A later earning event generating 5 gross Boncuk → debt 7→2, spendable credit 0 (all 5 absorbed by
-  debt). A further earning event generating 4 gross Boncuk → debt 2→0, spendable credit 2 (only the
-  2 left over after debt is fully paid becomes spendable). `boncukDebt` is client-read-only,
-  server-write-only, tenant/customer-scoped, exactly like every other `loyaltyAccounts` field.
+  `spendableCredit = grossBoncukEarned - debtPaid`, `newDebt = boncukDebt - debtPaid`. **Worked example
+  (locked, debt-first repayment mechanism — rate-independent, works identically at any earning rate
+  since it operates on Boncuk counts, not minor units)**: starting from debt 7, spendable 0 (produced,
+  under the original 50 TL rate, by BR-LOYALTY-015's own required-clawback-11-against-spendable-4
+  example — under the current 10 TL rate that same reversal now produces clawback 55/debt 51 instead,
+  see BR-LOYALTY-015's rate-change note; the debt-first mechanics illustrated here are unaffected
+  either way, only the *starting* debt value would differ) — a later earning event generating 5 gross
+  Boncuk → debt 7→2, spendable credit 0 (all 5 absorbed by debt). A further earning event generating 4
+  gross Boncuk → debt 2→0, spendable credit 2 (only the 2 left over after debt is fully paid becomes
+  spendable). `boncukDebt` is client-read-only, server-write-only, tenant/customer-scoped, exactly like
+  every other `loyaltyAccounts` field.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-001, BR-LOYALTY-015
 
 ### BR-LOYALTY-015 — Aggregate eligible-spend reversal model (no historical ledger mutation)
+- **SUPERSEDED by `BR-LOYALTY-018`'s Fractional Entitlement Carry correction.** The
+  `orderEligibleNetSpendMinorUnits` currency-denominated account aggregate and
+  `BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK` rate constant this entry describes no longer exist —
+  `loyaltyAccounts` now stores an exact, policy-independent Boncuk-fraction carry
+  (`earningCarryNumerator`/`earningCarryDenominator`) instead, and `loyaltyReversalMath.ts` uses a
+  replay-based formula, not the aggregate-subtraction formula below. This entry is preserved verbatim
+  as the historical record of the design it locked at the time — see `BR-LOYALTY-018` for the current,
+  accepted model and reversal formula.
 - **Status**: DECIDED (2026-08-22, P2B-A design task) — **PARTIALLY IMPLEMENTED (P2B-B, 2026-08-22)**.
   The earning (forward) direction is real: `loyaltyAccounts.orderEligibleNetSpendMinorUnits` is now
   canonical, persisted, transactionally-maintained state (`functions/src/loyaltyOrderEarning.ts`'s
@@ -913,18 +934,20 @@ this design introduces.
   (`calculateFullOrderEarningReversal`, `functions/src/loyaltyReversalMath.ts`) — **not** wired to any
   Firestore writer, callable, or trigger, since no authoritative server refund event exists yet. See
   `docs/decisions.md`'s P2B-B entry for the full implementation report and exact test totals.
-- **Rule**: Because the 50 TL-per-Boncuk earning remainder persists and mixes across orders
-  (BR-LOYALTY-001), a refund/cancellation can **never** simply subtract the original order's own
-  `deltaBoncuk` — a later order's earning may have already consumed or extended the same remainder the
-  refunded order contributed. The correct model tracks one new server-maintained, transactionally-
-  co-written account aggregate, `orderEligibleNetSpendMinorUnits` — the cumulative, currently-valid
-  (non-reversed) eligible net spend across every order-earning event for that customer. At any point,
-  `entitlement = floor(orderEligibleNetSpendMinorUnits / 5000)` and
-  `earningRemainderMinorUnits = orderEligibleNetSpendMinorUnits % 5000` (the latter kept as a
-  co-maintained, always-in-sync cache of the former, not an independent value). A reversal computes:
-  `oldEntitlement = floor(oldAggregate / 5000)`,
+- **Rule**: Because the per-Boncuk earning remainder persists and mixes across orders (BR-LOYALTY-001),
+  a refund/cancellation can **never** simply subtract the original order's own `deltaBoncuk` — a later
+  order's earning may have already consumed or extended the same remainder the refunded order
+  contributed. The correct model tracks one new server-maintained, transactionally-co-written account
+  aggregate, `orderEligibleNetSpendMinorUnits` — the cumulative, currently-valid (non-reversed) eligible
+  net spend across every order-earning event for that customer. At any point,
+  `entitlement = floor(orderEligibleNetSpendMinorUnits / BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK)`
+  and `earningRemainderMinorUnits = orderEligibleNetSpendMinorUnits % BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK`
+  (the latter kept as a co-maintained, always-in-sync cache of the former, not an independent value;
+  the rate constant itself is BR-LOYALTY-001's — currently 1000 minor units / 10 TL, rate change
+  2026-08-24). A reversal computes:
+  `oldEntitlement = floor(oldAggregate / BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK)`,
   `newAggregate = oldAggregate - refundedEligibleMinorUnits`,
-  `newEntitlement = floor(newAggregate / 5000)`,
+  `newEntitlement = floor(newAggregate / BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK)`,
   `requiredClawback = oldEntitlement - newEntitlement` (always `>= 0`, since `floor` is
   non-decreasing in its input and the aggregate only ever shrinks on reversal). For a **full**
   reversal, `refundedEligibleMinorUnits` is read directly, verbatim, from the original (immutable)
@@ -934,14 +957,23 @@ this design introduces.
   accumulated. Removing one order's contribution and recomputing the floor on the new total already
   gives the exact correct answer; every other order's own historical `orderEarn` entry remains an
   accurate record of "what the aggregate state was when that order completed" and needs no correction.
-  **Worked example (locked)**: Order A (549 TL) earns 10 Boncuk, 49 TL remainder. Order B (151 TL)
-  combines with the remainder (49+151=200 TL) to earn 4 more Boncuk, 0 remainder — total entitlement
-  14. Order A is later fully refunded: `refundedEligibleMinorUnits` = Order A's own stored 54900
-  (549 TL). `newAggregate` = 70000 − 54900 = 15100 (151 TL) → `newEntitlement` = 3, remainder 1 TL.
-  `requiredClawback` = 14 − 3 = **11**, not Order A's own original 10. A reversal may legitimately
-  produce `requiredClawback = 0` while still changing the stored remainder (a refund that only removes
-  "remainder," never a whole Boncuk) — this MUST still be ledgered, mirroring BR-LOYALTY §7's
-  "zero-point earning events matter" principle applied to the reversal direction.
+  **Worked example (locked under the original 50 TL rate, 2026-08-20 through 2026-08-23 — see the
+  P3A Visual Polish rate-change note below for the current-rate figures)**: Order A (549 TL) earns 10
+  Boncuk, 49 TL remainder. Order B (151 TL) combines with the remainder (49+151=200 TL) to earn 4 more
+  Boncuk, 0 remainder — total entitlement 14. Order A is later fully refunded:
+  `refundedEligibleMinorUnits` = Order A's own stored 54900 (549 TL). `newAggregate` = 70000 − 54900 =
+  15100 (151 TL) → `newEntitlement` = 3, remainder 1 TL. `requiredClawback` = 14 − 3 = **11**, not
+  Order A's own original 10. A reversal may legitimately produce `requiredClawback = 0` while still
+  changing the stored remainder (a refund that only removes "remainder," never a whole Boncuk) — this
+  MUST still be ledgered, mirroring BR-LOYALTY §7's "zero-point earning events matter" principle applied
+  to the reversal direction.
+  **Rate-change note (P3A Visual Polish, 2026-08-24) — the same worked example under the current 10 TL
+  rate**: the *inputs* are unchanged (Order A 549 TL, Order B 151 TL — `newAggregate` is pure
+  subtraction and stays 70000 − 54900 = 15100 regardless of rate), but every entitlement/clawback output
+  scales with the new rate: `oldEntitlement = floor(70000/1000) = 70`,
+  `newEntitlement = floor(15100/1000) = 15`, `requiredClawback = 70 − 15 = 55` (not 11). See
+  `functions/src/test/loyaltyReversalMath.test.ts`'s locked-example suite for the exact, currently-
+  passing assertions, and `docs/decisions.md`'s P3A Visual Polish entry for the full before/after table.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-001, BR-LOYALTY-002, BR-LOYALTY-014
 
@@ -981,6 +1013,182 @@ this design introduces.
   because the customer spent points they had already validly earned.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-001, BR-LOYALTY-014, BR-LOYALTY-015
+
+### BR-LOYALTY-017 — Customer-safe history read contract; no raw ledger exposure to Flutter
+- **Status**: DECIDED (2026-08-23, P3A) — **IMPLEMENTED**
+- **Rule**: The customer-facing Boncuklarım screen never reads `loyaltyLedgerEntries` directly from
+  Flutter, and never renders internal accounting fields (`entitlementDeltaBoncuk`/
+  `spendableDeltaBoncuk`/`debtDeltaBoncuk`, aggregate/entitlement/remainder/debt before-after
+  snapshots, `idempotencyKey`, `reversalOf`, rate snapshots) as customer UI — even though
+  `firestore.rules`' owner+tenant read rule would technically permit a correctly-scoped client query.
+  Firestore rules control document *access*, not which *fields* of a returned document a query
+  exposes over the wire; a raw client query would still leak the account's full internal ledger
+  provenance to the device. A new callable, `getCustomerLoyaltyHistory`
+  (`functions/src/getCustomerLoyaltyHistory.ts`), is the sole customer-facing history read path:
+  real phone-verified customer only, `organizationId` resolved exclusively server-side, tenant
+  membership independently re-verified, bounded page size (default 15, max 30), single-field
+  deterministic cursor pagination (mirrors `listReservationsForBranch.ts`'s established shape).
+  Returns a sanitized row per entry — `eventId`, `type` (the closed `LedgerEntryType` enum value,
+  never localized text), `displayBoncukDelta`, `debtAppliedBoncuk`, `occurredAt`, `orderId` — nothing
+  else. `displayBoncukDelta` resolves to `entitlementDeltaBoncuk` for earning/reversal-direction entry
+  types and `spendableDeltaBoncuk` for redemption/restoration-direction types (never conflating the
+  two, per BR-LOYALTY-016); `debtAppliedBoncuk` is the portion of an earn event redirected to debt
+  repayment. Turkish display copy is generated client-side (`lib/features/loyalty/presentation/
+  widgets/loyalty_history_tile.dart`), not by the backend — localization stays a Flutter concern.
+- **Owner Agent**: security_engineer / flutter_architect
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-016
+
+### BR-LOYALTY-018 — Boncuk economics are a server-authoritative, per-organization, versioned policy — never a hardcoded constant
+- **Status**: DECIDED (2026-08-24), **CORRECTED three times same-week** — **IMPLEMENTED (resolver/read
+  path only — no Admin write callable or Admin UI exists yet; that is explicitly out of scope for this
+  entry, see below)**. Three successive designs were reviewed and rejected before merge: (1) a single
+  derived per-Boncuk rate requiring even divisibility; (2) a per-policy-version "earning epoch" that
+  reset a customer's in-progress remainder to zero on every policy change — rejected because, even
+  though it never *re-rated* old spend, it *forfeited* real, economically-earned partial progress; and
+  (3) reversing an order by restoring its own snapshotted carry and REPLAYING every later `orderEarn`
+  ledger entry the customer had since earned — mathematically correct, but operationally UNBOUNDED
+  (a refund of an old order could require scanning/replaying thousands of later entries). The rule as
+  stated here is the final, accepted design: **Fractional Entitlement Carry** for accumulation, plus an
+  **O(1) reversal formula** (`validOrderEntitlementBoncuk` — see below) for reversal. None of the three
+  rejected drafts reached `main`.
+- **Rule**: The earning ratio (eligible net spend → Boncuk), the cash-like redemption value of 1
+  Boncuk, and the maximum share of an order payable with Boncuk are never permanently fixed constants
+  in `functions/src/`. Each organization has exactly one current, server-maintained
+  `loyaltyPolicies/{organizationId}` document (`earningSpendMinorUnits`, `earningBoncukAmount`,
+  `redemptionValueMinorUnitsPerBoncuk`, `maxRedemptionBasisPoints`, `version`, `effectiveAt`,
+  `createdAt`, `updatedAt` — integers only, minor units/basis points, never floating point), resolved
+  via `functions/src/loyaltyPolicy.ts`'s `resolveActiveLoyaltyPolicy`, auto-provisioned to the locked
+  default (**50 TL eligible net spend = 5 Boncuk, 1 Boncuk = 1 TL, maximum 50% of order**, i.e.
+  `earningSpendMinorUnits: 5000, earningBoncukAmount: 5, redemptionValueMinorUnitsPerBoncuk: 100,
+  maxRedemptionBasisPoints: 5000`) — **this is INITIAL policy DATA seeded on first genuine
+  provisioning, not a permanent application constant**; a future Admin change replaces it entirely for
+  that organization.
+  **Exact-ratio math, no divisibility constraint.** `earningSpendMinorUnits`/`earningBoncukAmount` are
+  validated only as positive integers (bounded — see below) — an Admin is free to configure a
+  non-integer-reducible ratio such as `5000 minor units → 3 Boncuk`. A prior draft of this rule derived
+  a single reduced `earningRateMinorUnitsPerBoncuk` and required even divisibility — rejected before
+  merge as insufficient for arbitrary Admin-configured ratios and does not exist in the shipped code.
+  **Immutable, versioned policy history**: every change to an organization's policy (none implemented
+  yet — no Admin write path exists) creates a new, permanent `loyaltyPolicyVersions/
+  {organizationId}_{version}` record; `loyaltyPolicyVersions` documents are never mutated once written.
+
+  **Fractional Entitlement Carry — the final, accepted accumulation model.** A customer's unconverted
+  partial progress toward their next Boncuk is represented as an EXACT, POLICY-INDEPENDENT FRACTION of
+  one Boncuk — `loyaltyAccounts.earningCarryNumerator`/`earningCarryDenominator` (canonical
+  non-negative-integer DECIMAL STRINGS, never `Number` — a carry denominator can exceed
+  `Number.MAX_SAFE_INTEGER` after a handful of policy changes, so it is never serialized as an unsafe
+  integer) — never as a currency-denominated remainder scoped to one policy version (the rejected
+  "earning epoch" design's own mistake). Every earning event, regardless of which policy happens to be
+  active, does exactly one thing: combine the account's EXISTING carry with the EXACT fractional
+  entitlement this order's own eligible spend earns under the policy active RIGHT NOW
+  (`functions/src/loyaltyPolicy.ts`'s `combineCarryWithEarning` — exact `BigInt` fraction arithmetic:
+  `newFraction = eligibleSpendMinorUnits × earningBoncukAmount / earningSpendMinorUnits`; `combined =
+  carry + newFraction`; `wholeBoncukEarned = floor(combined)`; `newCarry = combined − wholeBoncukEarned`
+  — `floor` applied exactly once, to the combined exact rational total, never per-policy, never
+  per-epoch). There is no "epoch," no reset, and no branch that ever discards or reinterprets the
+  carry — a policy change can only ever affect the RATE at which BRAND-NEW spend converts into
+  fractional Boncuk from that point forward.
+
+  This directly satisfies all five required guarantees simultaneously, by construction — not as
+  separate mechanisms kept in sync by convention:
+  - `OLD_PROGRESS_RERATED = NO` — a policy change never touches the existing carry; it only supplies
+    the ratio for whatever spend happens AFTER the change. The carry combined into any given earning
+    event is used VERBATIM, exactly as it stood, never migrated onto the new ratio.
+  - `OLD_PROGRESS_FORFEITED = NO` / `OLD_PROGRESS_CAN_COMPLETE = YES` — the carry from before a policy
+    change combines EXACTLY with new spend after it; if together they reach a whole Boncuk, the
+    customer receives it. Locked worked example: a customer carries `2/5` (0.40 Boncuk, earned under
+    V1 = `5000→5`); V2 activates (`5000→3`, non-integer-reducible); new V2 spend contributes exactly
+    `3/5` (0.60 Boncuk); `2/5 + 3/5 = 1` exactly → the customer receives 1 whole Boncuk. No V1 spend
+    was re-rated with V2; no V2 spend was rated with V1; no progress was lost.
+  - `OLD_PROGRESS_AUDIT_PRESERVED = YES` — every `orderEarn` ledger entry snapshots the customer's exact
+    carry BEFORE and AFTER that specific event (`earningCarryNumeratorBefore`/`earningCarryDenominatorBefore`/
+    `earningCarryNumeratorAfter`/`earningCarryDenominatorAfter`, alongside the raw
+    `earningSpendMinorUnits`/`earningBoncukAmount`/`loyaltyPolicyVersion` ratio snapshot that already
+    existed) — a historical entry is fully self-contained and is never rewritten by a later policy
+    change; a future policy change never mutates any existing `loyaltyAccounts`/`loyaltyLedgerEntries`
+    document, it only changes what a NEW event will compute.
+  - `POLICY_CHANGE_RETROACTIVE = NO` — confirmed by the same mechanism: no code path triggered by a
+    policy change writes to any existing account or ledger entry at all: `resolveActiveLoyaltyPolicy`'s
+    write path only ever creates a brand-new organization's first-time default documents.
+
+  **Reversal is O(1) — never a replay of later ledger entries.** `loyaltyAccounts` carries a second
+  projection alongside the carry, `validOrderEntitlementBoncuk` (int, `>= 0`) — the currently valid
+  WHOLE Boncuk entitlement generated by non-reversed order spend, distinct from `lifetimeEarned`
+  (monotonic, never decremented by a reversal). Every earning event increments it by exactly the whole
+  Boncuk that event produced (no extra computation — the same value already computed for the ledger/
+  debt logic). A full reversal reads exactly two things — the account's CURRENT
+  `validOrderEntitlementBoncuk` + exact carry (one O(1) document read) and the reversed order's own
+  immutable `orderEarn` entry, looked up directly by its deterministic id (one more O(1) read) — and
+  computes: `currentExact = validOrderEntitlementBoncuk + carry`; `originalContribution` reconstructed
+  from that ONE entry's own `amountBasisMinorUnits`/`earningSpendMinorUnits`/`earningBoncukAmount`
+  (never today's policy); `newExact = currentExact − originalContribution` (asserted `>= 0`);
+  `newValidOrderEntitlementBoncuk`/`newCarry` = the floor/fractional split of `newExact`;
+  `requiredClawback = validOrderEntitlementBoncuk − newValidOrderEntitlementBoncuk`. **No later ledger
+  entry is ever read or iterated — structurally, not just by convention: `loyaltyReversalMath.ts`'s
+  input type has no field that could accept a list of later orders, and no field for "the current
+  policy" either.**
+  **Proven mathematically identical to a full historical replay** (the REJECTED prior design — see
+  status line above): by `combineCarryWithEarning`'s own telescoping property, `validOrderEntitlementBoncuk
+  + carry` at any instant always equals exactly what a full replay from account genesis would compute,
+  so subtracting one order's own exact contribution from that running total is exactly equivalent to
+  replaying every OTHER order without it — proven by a dedicated test that computes the same
+  cross-policy scenario via both the O(1) formula and an independent reference replay implementation
+  and asserts byte-for-byte identical results. `requiredClawback` is consequently mathematically
+  guaranteed never negative (removing a non-negative contribution can only decrease or maintain total
+  entitlement — proven, not merely assumed, and defensively asserted at runtime too). Still unwired —
+  no real refund trigger/callable exists yet, per this entry's own locked scope; a future writer must
+  additionally enforce its own reversal idempotency (e.g. via the same deterministic-ledger-id pattern
+  `loyaltyOrderEarning.ts`'s own earning transaction already uses) — not implemented here. Partial
+  refund remains a distinct, unimplemented future capability.
+
+  **The full carry always surfaces in the customer-facing snapshot/progress calculation — never
+  zeroed, never hidden, regardless of how many policy changes have happened since it last grew.**
+  `getCustomerLoyaltySnapshot` never reads a currency remainder off the stored account at all; it
+  always projects the exact stored carry fresh via `projectCarryToPolicyProgress` against whatever
+  policy is CURRENTLY active — a customer-safe minor-unit view (`remainderMinorUnits`/
+  `minorUnitsUntilNextBoncuk`, summing to the current policy's own single-Boncuk block size) computed
+  fresh on every read, never cached, never a reinterpretation of history (the stored carry itself is
+  untouched by a read). Proven by a dedicated test that seeds a real V1-earned carry (`2/5`) against an
+  already-live, non-integer-reducible V2 policy and asserts the response projects that EXACT carry
+  under V2's own block size — never zero, never forfeited — while the stored account is byte-for-byte
+  unchanged by the read.
+  **Tenant isolation**: one organization's policy can
+  never affect another's — `resolveActiveLoyaltyPolicy` is keyed strictly by the server-derived
+  `organizationId` already trusted at each call site (the earning trigger's own `orderEvents`-sourced
+  org, or `SINGLE_TENANT_ORGANIZATION_ID` for the customer snapshot callable), never a client-supplied
+  value.
+  **Missing-vs-first-time-provisioning boundary.** A permanent, never-deleted
+  `loyaltyPolicyBootstraps/{organizationId}` marker is written atomically alongside an organization's
+  very first policy. If `loyaltyPolicies/{organizationId}` is absent AND no bootstrap marker exists,
+  this is genuine first-time provisioning — the locked default is written. If the bootstrap marker
+  exists but the policy document is missing, this is corruption/data loss, not first use — resolution
+  fails closed (`missing-live-policy` / `missing-live-loyalty-policy`) and the missing default is
+  **never** silently recreated; a silent recreation could unexpectedly change live loyalty economics
+  back to the locked default for an organization that had since configured something else. **Fails
+  safely on corruption**: an existing policy document that fails validation (wrong type, non-positive
+  value, `maxRedemptionBasisPoints` outside `[0, 10000]`) is never silently repaired or substituted
+  with the default — earning fails closed (`inconsistent-loyalty-policy-state`) and the customer
+  snapshot callable throws `failed-precondition`, exactly mirroring `BR-LOYALTY-014`'s own "fail closed
+  rather than guess" precedent for a corrupt legacy account.
+  **Customer-facing display**: `getCustomerLoyaltySnapshot`'s response now includes a sanitized
+  `policy` object (the four economics fields only — never `version`/`effectiveAt`/`organizationId`/
+  timestamps) alongside the balance, plus `minorUnitsUntilNextBoncuk` (server-computed exact-ratio
+  progress, alongside the existing `earningRemainderMinorUnits`); the customer app renders "X TL → Y
+  Boncuk"/"1 Boncuk → Z TL"/the earning-progress bar from these real fields, never a Flutter constant
+  and never a client-side derived per-Boncuk rate
+  (`LoyaltyAccountSnapshot`'s policy fields are real instance data, and
+  `minorUnitsUntilNextBoncuk` is a real required field populated verbatim from the server).
+  **Explicitly NOT implemented, per this entry's own locked scope**: no Admin write callable, no
+  Admin UI, no permission model for changing a policy. The three collections
+  (`loyaltyPolicies`/`loyaltyPolicyVersions`/`loyaltyPolicyBootstraps`) currently have exactly one
+  writer each — the auto-provisioning transaction inside `resolveActiveLoyaltyPolicy`/
+  `resolveActiveLoyaltyPolicyInTransaction`, firing at most once per organization. No `firestore.rules`
+  entry exists for any of the three collections — no client, of any role, can read or write them
+  directly; the only customer-facing exposure is the sanitized projection folded into
+  `getCustomerLoyaltySnapshot`.
+- **Owner Agent**: restaurant_domain / security_engineer / flutter_architect
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-001, BR-LOYALTY-005, BR-LOYALTY-014, BR-LOYALTY-015,
+  BR-LOYALTY-016
 
 # Customer CRM & Loyalty Platform
 
@@ -5174,6 +5382,22 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.21 — 2026-08-24
+- **Version**: 3.21
+- **Date**: 2026-08-24
+- **Summary**: Boncuk Loyalty Program P3A Visual Polish + Rate Change. `BR-LOYALTY-001`'s earning rate
+  changes from 50 TL = 1 Boncuk to **10 TL = 1 Boncuk**; `BR-LOYALTY-005`'s cash-like redemption rate
+  changes from 1 Boncuk = 2 TL to **1 Boncuk = 1 TL** (`BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK`
+  1000, `BONCUK_REDEMPTION_VALUE_MINOR_UNITS_PER_BONCUK` 100, `functions/src/loyaltyLedger.ts`). The
+  50%-of-order redemption cap and single-benefit-per-order stacking rule are explicitly unchanged.
+  `BR-LOYALTY-015`'s reversal worked example is annotated (not rewritten) with the current-rate
+  figures alongside the original 50 TL-rate figures. This entry does not itself implement checkout
+  redemption or refund execution — both remain not-yet-implemented, unchanged by this rate change. Also
+  covers a visual-only redesign of the customer-facing Boncuklarım screen (hero/progress/how-it-works/
+  movements composition and spacing) — no business rule or data contract change from the visual portion
+  of this phase. See `docs/decisions.md`'s P3A Visual Polish + Rate Change entry for the full report.
+- **Author**: Claude, at the user's direction (Boncuklarım P3A Visual Polish + locked rate change).
 
 ### v3.20 — 2026-08-20
 - **Version**: 3.20
