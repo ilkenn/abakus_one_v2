@@ -131,6 +131,22 @@ service cloud.firestore {
       return request.resource.data.organizationId == resource.data.organizationId;
     }
 
+    // Boncuk Loyalty P2A security fix (2026-08-21) — `pricingAuthority` is
+    // a distinct concept from `channel` (see `functions/src/
+    // orderPricingAuthority.ts` for the full reasoning): `channel` alone
+    // never proves an order's persisted pricing came from a trusted SERVER
+    // pricing pipeline — a staff/POS client can (legitimately, for other
+    // reasons) create a direct-Firestore order with `channel: 'takeaway'`
+    // or `channel: 'reservationPreorder'` via the `isOrgMember` branch
+    // below, and a table-guest client can create one with `channel:
+    // 'dineInQr'`. No client create path may ever claim server pricing
+    // authority for itself, for ANY channel — only `submitTakeawayOrder`/
+    // `submitDeliveryOrder`/`reservationPreorder` (Admin SDK, bypasses
+    // these rules entirely) ever write this field.
+    function clientOrderCreateOmitsPricingAuthority() {
+      return !('pricingAuthority' in request.resource.data);
+    }
+
     // ---------------------------------------------------------------------
     // Platform-owned collections
     // ---------------------------------------------------------------------
@@ -773,14 +789,22 @@ service cloud.firestore {
       // therefore treated as "not delivery" here, same fail-open-only-for-
       // already-allowed-shapes discipline as `hasBranchAccess`'s own
       // `'branchAccess' in request.auth.token` guard above.
+      // Boncuk Loyalty P2A security fix (2026-08-21) —
+      // `clientOrderCreateOmitsPricingAuthority()` applies uniformly across
+      // every branch below: no client-authored order, on any channel, via
+      // any of the three creation paths, may ever supply the server
+      // pricing-authority marker. This is additive — it forbids one new
+      // field, it does not relax any existing branch's own checks.
       allow create: if
-        (isOrgMember(request.resource.data.organizationId) &&
-          (!('channel' in request.resource.data) ||
-            request.resource.data.channel != 'delivery') &&
-          (request.resource.data.status == 'created' ||
-            request.resource.data.status == 'pendingConfirmation')) ||
-        isValidGuestTableOrder(request.resource.data) ||
-        isValidAuthenticatedCustomerTableOrder(request.resource.data);
+        clientOrderCreateOmitsPricingAuthority() && (
+          (isOrgMember(request.resource.data.organizationId) &&
+            (!('channel' in request.resource.data) ||
+              request.resource.data.channel != 'delivery') &&
+            (request.resource.data.status == 'created' ||
+              request.resource.data.status == 'pendingConfirmation')) ||
+          isValidGuestTableOrder(request.resource.data) ||
+          isValidAuthenticatedCustomerTableOrder(request.resource.data)
+        );
       allow update: if false; // Cloud Function only — every status
                                // transition after creation is
                                // server-authoritative (Sprint 9F).

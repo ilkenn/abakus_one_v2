@@ -691,7 +691,10 @@ entry for the accompanying server ledger/schema design these rules feed into, an
 this design introduces.
 
 ### BR-LOYALTY-001 — Earning rate and persistent remainder
-- **Status**: DECIDED
+- **Status**: DECIDED — **IMPLEMENTED (P2A, 2026-08-20; provenance-corrected 2026-08-21)** for orders
+  that are both on an approved channel (`takeaway`/`delivery`/`reservationPreorder`) AND carry a valid
+  server pricing-authority marker (BR-LOYALTY-013) — see BR-LOYALTY-012 for the exact two-factor scope
+  and the disclosed dine-in/POS gap.
 - **Rule**: Boncuk earning rate is **50 TL eligible net spend = 1 Boncuk**. The result is floored — no
   fractional Boncuk is ever granted. Any unused spend remainder (the portion of eligible net spend
   below the next 50 TL threshold) never disappears — it is carried forward as customer-owned,
@@ -705,7 +708,11 @@ this design introduces.
 - **Related Modules**: Loyalty, Orders
 
 ### BR-LOYALTY-002 — Earning is granted only on order completion, and is idempotent
-- **Status**: DECIDED
+- **Status**: DECIDED — **IMPLEMENTED (P2A, 2026-08-20)**, see BR-LOYALTY-012. Implementation note:
+  no currently shipping Cloud Function or client path actually transitions a real order to
+  `completed` yet — the consumer is real and fully tested against the existing
+  `orderEvents`/`onOrderCompleted.ts` outbox contract, but production execution is unreachable until
+  a canonical server-side completion transition exists (out of P2A's scope; disclosed, not hidden).
 - **Rule**: Boncuk is granted only when an order reaches the canonical `completed` status
   (`OrderStatus.completed`). No earlier status (`created`, `pendingConfirmation`, `confirmed`,
   `preparing`, `ready`, `outForDelivery`, `served`) ever grants Boncuk. The earning operation is
@@ -715,7 +722,10 @@ this design introduces.
 - **Related Modules**: Loyalty, Orders
 
 ### BR-LOYALTY-003 — Earning basis is post-discount net eligible spend
-- **Status**: DECIDED
+- **Status**: DECIDED — **IMPLEMENTED (P2A, 2026-08-20)** for orders that pass BR-LOYALTY-012's
+  two-factor eligibility check; `pricing.discount` is server-hardcoded to `0` for the three approved
+  channels today, so `pricing.grandTotal` is currently the correct post-discount basis by construction
+  — see BR-LOYALTY-012/BR-LOYALTY-013.
 - **Rule**: Boncuk earning is calculated from the customer's actual eligible net spend **after** any
   campaign/coupon discount is applied — never from the pre-discount gross amount. **Example**: gross
   eligible amount 500 TL, coupon 100 TL, net eligible paid amount 400 TL → earning basis is 400 TL
@@ -724,7 +734,11 @@ this design introduces.
 - **Related Modules**: Loyalty, Orders, Campaigns
 
 ### BR-LOYALTY-004 — Boncuk-paid amount never earns new Boncuk
-- **Status**: DECIDED
+- **Status**: DECIDED — **NOT YET IMPLEMENTED** (no Boncuk redemption exists yet — out of P2A's scope).
+  P2A's earning-basis extraction (`resolveEligibleNetSpendMinorUnits`,
+  `functions/src/loyaltyOrderEarning.ts`) is deliberately isolated to one function specifically so a
+  future redemption phase can subtract a Boncuk-paid amount there without redesigning the earning
+  transaction — the seam exists, the exclusion itself does not yet.
 - **Rule**: If a customer redeems Boncuk (cash-like redemption) against an order, the portion of the
   order paid with Boncuk is excluded from that order's earning basis. Only the remaining
   cash/normal-payment-eligible amount (plus any prior earning remainder) is used to calculate newly
@@ -814,6 +828,58 @@ this design introduces.
   `docs/firestore_data_model.md`).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Loyalty, CRM
+
+### BR-LOYALTY-012 — P2A completed-order earning: eligibility scope and P2b dependency
+- **Status**: DECIDED (2026-08-20, P2A architect decision) — **IMPLEMENTED**. **CORRECTED (2026-08-21,
+  security review)**: this rule originally read "granted only for orders on a **server-trusted pricing
+  channel**," implying `channel` alone was proof of trusted pricing. A security review correctly found
+  this insufficient: `firestore.rules`' `isOrgMember` staff/POS create branch has no restriction on
+  `channel` other than excluding `delivery` — a staff/POS actor can (legitimately, for reasons
+  unrelated to loyalty) create a direct-Firestore order with `channel: 'takeaway'` or
+  `channel: 'reservationPreorder'` whose `pricing` block is entirely client-computed. `channel` proves
+  only which commercial/order flow an order belongs to — never how its pricing was produced. The rule
+  below is the corrected, two-factor version; see BR-LOYALTY-013 for the mechanism.
+- **Rule**: Boncuk earning from a completed order requires **both**: (A) `channel` is one of the
+  currently-approved values — `takeaway`, `delivery`, `reservationPreorder`
+  (`functions/src/loyaltyOrderEarning.ts`'s `LOYALTY_EARNING_ELIGIBLE_CHANNELS`, a closed allow-list,
+  never a blocklist) — **and** (B) the order document carries a valid, server-stamped
+  `pricingAuthority` marker (BR-LOYALTY-013). Neither alone is sufficient. `dineInQr` and any
+  staff/POS-originated channel are **deliberately excluded** today by (A) regardless of (B): their
+  `pricing` block is client-computed and `firestore.rules` validates none of it (the client-side
+  `PriceCalculator` is explicitly documented as "Not authoritative"), so awarding real-value Boncuk
+  from it would violate BR-LOYALTY-010's server-authoritative-security-model requirement. This is a
+  disclosed, tracked gap tied to BR-PRICE-002 (server-authoritative pricing), which already lists
+  dine-in/staff-POS pricing enforcement as ROADMAP for reasons independent of loyalty — closing
+  BR-PRICE-002 for those channels, and having their trusted server writer stamp the same
+  `pricingAuthority` marker, is the prerequisite for making them loyalty-eligible; that work is not
+  part of P2A and is not started here.
+- **P2b dependency, explicitly not solved here**: because the earning remainder persists across
+  orders (BR-LOYALTY-001), a future cancellation/refund reversal (P2b) cannot simply subtract the
+  original order's earned Boncuk from the account — the remainder that order's earning consumed or
+  produced has, in general, already been mixed with a later order's own earning by the time a
+  reversal would run. P2b must design its own reconciliation approach for this (e.g. reconstructing
+  the remainder timeline from the ledger, or a documented, disclosed approximation) — this is recorded
+  here as a required, not-yet-solved P2b problem, not something P2A attempts to casually resolve.
+  Overall loyalty production closure is not claimed until P2b ships.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-PRICE-002
+
+### BR-LOYALTY-013 — Unforgeable server pricing-authority provenance
+- **Status**: DECIDED (2026-08-21, P2A security fix) — **IMPLEMENTED**
+- **Rule**: An order's `pricing` block being trustworthy is proven by one canonical, server-owned
+  marker — `pricingAuthority: "serverV1"` (`functions/src/orderPricingAuthority.ts`) — never inferred
+  from `channel`, `status`, or any other field. Only `submitTakeawayOrder`, `submitDeliveryOrder`, and
+  `reservationPreorder` (all Admin SDK, all bypass `firestore.rules`) ever stamp this value, and only
+  with the server's own hardcoded constant — never from a request parameter. `firestore.rules`' `orders`
+  `create` rule denies any client-authored create (staff/POS, guest table order, authenticated customer
+  table order — every branch, unconditionally) that supplies this field at all, so a client can never
+  forge it regardless of what `channel`/`status`/other fields it also claims. A future trusted server
+  pricing pipeline for dine-in/POS (once BR-PRICE-002 closes those channels) stamps this same constant,
+  not a new one — that is what lets those channels join Boncuk earning (BR-LOYALTY-012) without
+  redesigning the loyalty engine. No migration back-stamps pre-2026-08-21 orders — an order without this
+  marker permanently does not earn, which is the correct, intended outcome, not a gap to fix.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-012, BR-PRICE-002
 
 # Customer CRM & Loyalty Platform
 

@@ -63,7 +63,7 @@ import { LOYALTY_ACCOUNTS_COLLECTION } from "./loyaltyLedger";
  * client needs yet (no Flutter UI consumes this callable this phase).
  */
 
-interface LoyaltyAccountData {
+export interface LoyaltyAccountData {
   organizationId: string;
   customerId: string;
   spendableBalance: number;

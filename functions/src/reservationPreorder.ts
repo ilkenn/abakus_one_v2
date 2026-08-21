@@ -17,6 +17,7 @@ import {
 } from "./takeawayPricing";
 import { canTransition } from "./orderStatus";
 import { PREORDER_KITCHEN_RELEASE_LEAD_MINUTES } from "./reservationConfig";
+import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "./orderPricingAuthority";
 
 /**
  * Optional reservation preorder — Faz R.1D.1 (`docs/decisions.md` ADR-027
@@ -390,6 +391,11 @@ export function buildPreorderOrderDocument(params: {
     orderNumber,
     status: "pendingConfirmation",
     channel: PREORDER_CHANNEL,
+    // Boncuk Loyalty P2A security fix (2026-08-21) — server-stamped only,
+    // never accepted from a request parameter. See
+    // `functions/src/orderPricingAuthority.ts` for why this is a distinct
+    // concept from `channel`.
+    pricingAuthority: ORDER_PRICING_AUTHORITY_SERVER_V1,
     branchId: params.branchId,
     restaurantId: params.restaurantId,
     customerId: params.customerId,

@@ -432,9 +432,39 @@ test("3/4/5. preorder creates a separate Order — channel reservationPreorder, 
   assert.ok(order, "the preorder order must exist");
   assert.strictEqual(order!.channel, "reservationPreorder");
   assert.strictEqual(order!.reservationContextId, reservationId);
+  // Boncuk Loyalty P2A security fix (2026-08-21) — the exact canonical
+  // server pricing-authority marker, stamped by this server pipeline.
+  assert.strictEqual(order!.pricingAuthority, "serverV1");
 
   const reservation = await getReservation(reservationId);
   assert.strictEqual(reservation.preorderOrderId, preorderOrderId);
+});
+
+test("pricingAuthority cannot originate from the request payload — a request-payload override attempt is ignored", async () => {
+  const fixture = await seedPreorderFixture();
+  const { idToken } = await createRealPhoneUser();
+
+  const { body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: fixture.restaurantId,
+      branchId: fixture.branchId,
+      areaId: fixture.areaId,
+      partySize: 2,
+      requestedTime: alignedFutureIso(90),
+      ...CONTACT,
+      preorder: {
+        items: [{ kind: "product", productId: fixture.productId, quantity: 1 }],
+        pricingAuthority: "client-forged-value",
+      },
+    },
+    idToken,
+  );
+
+  const preorderOrderId = body.result!.preorderOrderId as string;
+  const order = await getOrder(preorderOrderId);
+  assert.strictEqual(order!.pricingAuthority, "serverV1");
 });
 
 // =======================================================================

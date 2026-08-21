@@ -293,6 +293,22 @@ test("submitDeliveryOrder: a forged customerId/uid in the payload is ignored —
   assert.strictEqual(order.data()?.customerId, fixture.uid);
 });
 
+test("submitDeliveryOrder: the order carries the exact canonical server pricing-authority marker, and a request-payload override attempt is ignored (Boncuk Loyalty P2A security fix, 2026-08-21)", async () => {
+  const fixture = await seedFullValidFixture();
+  const { body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      pricingAuthority: "client-forged-value",
+    }),
+    fixture.idToken,
+  );
+  const orderId = body.result?.orderId as string;
+  const order = await db().collection("orders").doc(orderId).get();
+  assert.strictEqual(order.data()?.pricingAuthority, "serverV1");
+});
+
 // =======================================================================
 // ADDRESS
 // =======================================================================

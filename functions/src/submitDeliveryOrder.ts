@@ -7,6 +7,7 @@ import { googlePlacesServerKey, resolveApiKey } from "./deliveryPlaces";
 import { resolveDeliveryServiceArea, slugifyAddressComponent } from "./deliveryServiceAreas";
 import { isEnabledForDeliveryCheckout } from "./deliveryPaymentPolicy";
 import { DELIVERY_PAYMENT_METHOD_CATALOG } from "./deliveryPaymentMethodCatalog";
+import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "./orderPricingAuthority";
 import {
   loadCanonicalChannelPricingPolicy,
   type CanonicalChannelPricingPolicy,
@@ -193,6 +194,14 @@ function buildDeliveryOrderDocument(params: {
     orderNumber: params.orderNumber,
     status: "pendingConfirmation",
     channel: "delivery",
+    // Boncuk Loyalty P2A security fix (2026-08-21) — server-stamped only,
+    // never accepted from a request parameter. See
+    // `functions/src/orderPricingAuthority.ts` for why this is a distinct
+    // concept from `channel`. Stamped here for consistency even though
+    // delivery is already structurally blocked from direct client
+    // creation — one reusable pricing-authority contract for every
+    // trusted server channel, present and future.
+    pricingAuthority: ORDER_PRICING_AUTHORITY_SERVER_V1,
     branchId: params.branchId,
     restaurantId: params.restaurantId,
     customerId: params.customerId,

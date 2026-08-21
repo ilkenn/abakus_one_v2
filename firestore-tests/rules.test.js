@@ -3033,6 +3033,167 @@ test('orders: staff WITH branch access still cannot create a channel:"delivery" 
 });
 
 // ---------------------------------------------------------------------
+// Boncuk Loyalty P2A security fix (2026-08-21) — `pricingAuthority` is a
+// server-only marker of trusted pricing provenance, distinct from
+// `channel`. No client create path, on any channel, for any actor, may
+// ever supply this field — only `submitTakeawayOrder`/`submitDeliveryOrder`/
+// `reservationPreorder` (Admin SDK, bypasses these rules) ever write it.
+// ---------------------------------------------------------------------
+
+test('pricingAuthority: a legitimate existing staff/POS dine-in order WITHOUT the marker remains allowed exactly as before this fix', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-pa-1', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertSucceeds(
+    setDoc(doc(staff, 'orders/pa-legit-staff-order-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'dineInStaff',
+      status: 'created',
+      customerId: null,
+    }),
+  );
+});
+
+test('pricingAuthority: a legitimate existing guest table order WITHOUT the marker remains allowed exactly as before this fix', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'tableGuestSessions/tgs-pa-1'),
+      activeGuestSession({ guestAuthUid: 'guest-pa-1' }),
+    );
+  });
+  const guest = testEnv.authenticatedContext('guest-pa-1').firestore();
+
+  await assertSucceeds(
+    setDoc(
+      doc(guest, 'orders/pa-legit-guest-order-1'),
+      tableOrderPayload({ tableSessionId: 'tgs-pa-1', guestAuthUid: 'guest-pa-1' }),
+    ),
+  );
+});
+
+test('pricingAuthority: a malicious org-member client cannot forge channel:"takeaway" + pricingAuthority:"serverV1" — DENIED', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-pa-2', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/pa-forged-takeaway-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'takeaway',
+      status: 'created',
+      customerId: null,
+      pricingAuthority: 'serverV1',
+    }),
+  );
+});
+
+test('pricingAuthority: a malicious org-member client cannot forge channel:"reservationPreorder" + pricingAuthority:"serverV1" — DENIED', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-pa-3', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/pa-forged-preorder-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'reservationPreorder',
+      status: 'created',
+      customerId: null,
+      pricingAuthority: 'serverV1',
+    }),
+  );
+});
+
+test('pricingAuthority: an org-member client cannot forge it even on a channel that is not itself eligible for earning (defense in depth — the rule forbids the field unconditionally, not just on eligible channels)', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-pa-4', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/pa-forged-dineinstaff-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'dineInStaff',
+      status: 'created',
+      customerId: null,
+      pricingAuthority: 'serverV1',
+    }),
+  );
+});
+
+test('pricingAuthority: a guest/customer table order cannot inject the marker — DENIED even though the rest of the payload is otherwise a valid guest table order', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'tableGuestSessions/tgs-pa-2'),
+      activeGuestSession({ guestAuthUid: 'guest-pa-2' }),
+    );
+  });
+  const guest = testEnv.authenticatedContext('guest-pa-2').firestore();
+
+  await assertFails(
+    setDoc(
+      doc(guest, 'orders/pa-forged-guest-order-1'),
+      tableOrderPayload({
+        tableSessionId: 'tgs-pa-2',
+        guestAuthUid: 'guest-pa-2',
+        pricingAuthority: 'serverV1',
+      }),
+    ),
+  );
+});
+
+test('pricingAuthority: an authenticated customer table order cannot inject the marker — DENIED', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'tableGuestSessions/tgs-pa-3'),
+      activeGuestSession({ guestAuthUid: 'cust-pa-3' }),
+    );
+  });
+  const customer = customerContext('cust-pa-3');
+
+  await assertFails(
+    setDoc(
+      doc(customer, 'orders/pa-forged-customer-order-1'),
+      tableOrderPayload({
+        tableSessionId: 'tgs-pa-3',
+        guestAuthUid: 'cust-pa-3',
+        customerId: 'cust-pa-3',
+        pricingAuthority: 'serverV1',
+      }),
+    ),
+  );
+});
+
+test('pricingAuthority: client updates remain denied regardless of this fix — a staff actor cannot add the marker to an existing order via update either', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/pa-existing-order-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'takeaway',
+      status: 'pendingConfirmation',
+      customerId: null,
+    });
+  });
+  const staff = testEnv
+    .authenticatedContext('staff-pa-5', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    updateDoc(doc(staff, 'orders/pa-existing-order-1'), {
+      pricingAuthority: 'serverV1',
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------
 // P.4.1 — Profile photo architecture prep: customerPhotos,
 // customerPublicProfiles, and customers/{uid}.profilePicturePath
 // client-write tightening.

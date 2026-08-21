@@ -61,3 +61,4 @@ export { selectCustomerProfilePhoto } from "./selectCustomerProfilePhoto";
 export { completeCustomerProfile } from "./completeCustomerProfile";
 export { getCustomerProfileCompletionState } from "./getCustomerProfileCompletionState";
 export { getCustomerLoyaltySnapshot } from "./getCustomerLoyaltySnapshot";
+export { onOrderEventCreatedForLoyaltyEarning } from "./loyaltyOrderEarning";

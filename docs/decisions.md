@@ -11473,3 +11473,188 @@ fix: 4 net new tests, since several prior tests were extended/replaced with the 
 rather than simply added alongside). `flutter analyze`/`flutter test` not rerun this fix — no Flutter
 file touched (already confirmed clean/unchanged at 3236/12-skipped/0-failed by the original P1 gate run
 above). Storage Rules **not rerun** — nothing storage-related touched.
+
+## Boncuk Loyalty Program P2A — Completed-Order Earning + Persistent Spend Remainder (2026-08-20)
+
+**Status**: Accepted, implemented. Builds the first real loyalty *event* on top of P1's foundation —
+real Boncuk earning from a canonical completed order — with **zero cancellation/refund reversal
+(P2b), checkout redemption, catalog redemption, wheel, tasks, admin UI, or customer Loyalty UI
+changes**, exactly matching P2A's own locked scope.
+
+**Mandatory pre-implementation audit finding, surfaced before any code was written.** The task
+required inspecting the real, persisted order schema to determine whether a server-trusted earning
+basis exists, with an explicit instruction to stop and report rather than approximate if it does not.
+The audit found the basis is trustworthy for **some but not all** order-creation channels:
+`submitTakeawayOrder.ts`, `submitDeliveryOrder.ts`, and `reservationPreorder.ts` all unconditionally
+write `pricing.discount: moneyField(0)`, making `pricing.grandTotal` a genuinely server-computed,
+client-untrusted value for those three channels. Dine-in table-QR orders and staff/POS orders, by
+contrast, are written with a client-computed `pricing` block `firestore.rules` validates none of (the
+Dart `PriceCalculator` is explicitly documented in its own comment as "Not authoritative"). This is a
+partial, not a total, schema gap — the escape hatch as written ("STOP IMPLEMENTATION... do not
+silently approximate") did not cleanly apply to the whole feature, only to a subset of channels, so
+rather than unilaterally either blocking all of P2A or silently narrowing its scope, this was surfaced
+to the architect as an explicit decision via `AskUserQuestion`. **Decision: earn only from the three
+server-trusted channels** (Option A of three presented) — `dineInQr` and any staff/POS channel are
+excluded today as a disclosed, tracked gap tied to `BR-PRICE-002` (see
+`docs/business_rules.md`'s `BR-LOYALTY-012`), not a bug and not silently narrowed scope.
+
+**Security fix, same-day-plus-one (2026-08-21) — CORRECTED: channel eligibility is not proof of
+trusted pricing.** The original P2A implementation (documented in this entry as first written)
+enforced only [LOYALTY_EARNING_ELIGIBLE_CHANNELS] membership as the earning gate, on the reasoning
+that `submitTakeawayOrder`/`submitDeliveryOrder`/`reservationPreorder` are the channels' real writers.
+**A security review correctly found this insufficient**: `firestore.rules`' `orders` `create` rule's
+`isOrgMember` staff/POS branch has no restriction on `channel` beyond excluding `delivery` — a
+staff/POS actor can (legitimately, for reasons unrelated to loyalty; this is a pre-existing,
+intentional capability, confirmed by an existing passing regression test) create a direct-Firestore
+order with `channel: 'takeaway'` or `channel: 'reservationPreorder'` whose entire `pricing` block is
+client-computed and never server-verified. The channel string alone therefore proved nothing about
+provenance, and a compromised or malicious staff/POS client could have farmed real-value Boncuk by
+simply writing a large total on a client-authored order with an eligible-looking channel. **Fix —
+unforgeable server pricing-authority provenance, `functions/src/orderPricingAuthority.ts`.** One
+canonical constant, `ORDER_PRICING_AUTHORITY_SERVER_V1 = "serverV1"`, stamped as `pricingAuthority` on
+the order document by, and only by, the same three trusted server writers — never accepted from a
+request parameter (each writer's `buildOrderDocument`-equivalent hardcodes the constant; a dedicated
+regression test per writer proves an attempted request-payload override is silently ignored).
+`firestore.rules` gained one new helper,
+`clientOrderCreateOmitsPricingAuthority() { return !('pricingAuthority' in request.resource.data); }`,
+ANDed into the *entire* `orders` `create` rule (all three branches — `isOrgMember`,
+`isValidGuestTableOrder`, `isValidAuthenticatedCustomerTableOrder` — uniformly, not just the staff
+one) — no client create, for any actor, on any channel, may ever supply this field. This is additive
+only: it forbids one new field on write; every existing legitimate client-created order flow (staff/
+POS dine-in, guest/authenticated-customer table orders) continues working exactly as before, proven by
+dedicated regression tests. `loyaltyOrderEarning.ts` now requires **both** an eligible `channel` *and*
+`hasServerPricingAuthority(orderData)` before earning — an eligible-channel order missing the marker
+is classified `untrusted-pricing-provenance`: no ledger entry, no account mutation, `rewardsEvaluated`
+still marked `true` (a deterministic, permanent outcome — not a transient failure to retry; this also
+correctly, permanently excludes every pre-2026-08-21 order, which is the intended behavior, not a gap
+— no migration back-stamps old orders as trusted). `docs/business_rules.md`'s `BR-LOYALTY-012` was
+corrected in place (not silently rewritten) and a new `BR-LOYALTY-013` records the provenance mechanism
+itself; `docs/firestore_data_model.md`'s `orders` row gained the new field and an explicit
+`channel`-vs-`pricingAuthority` clarification.
+
+**Architecture — outbox consumer, not a second completion trigger.** `onOrderCompleted.ts` (Sprint
+9F/ADR-026) is completely untouched — it already writes the durable, idempotent
+`orderEvents/{orderId}-completed` outbox record with `rewardsEvaluated: false` and never itself flips
+that flag. P2A adds `functions/src/loyaltyOrderEarning.ts`'s `onOrderEventCreatedForLoyaltyEarning`, a
+new `onDocumentCreated("orderEvents/{eventId}", ...)` trigger that *consumes* that record — mirroring
+`reservationNotificationDelivery.ts`'s established outbox-consumer split exactly (thin trigger + an
+independently-testable `processOrderCompletionEventForLoyaltyEarning(db, eventId, eventData, now)`
+business function, tested directly rather than through the trigger itself, the same shape
+`processReservationEventForDelivery` is tested with). This is the same architecture the task's own
+§4 named as preferred, and explicitly not "a second competing completion trigger."
+
+**Earning algorithm — exact locked arithmetic, integer-only.**
+`calculateBoncukEarning({previousRemainderMinorUnits, eligibleNetSpendMinorUnits})` computes
+`available = previous + eligible`, `boncukEarned = floor(available / 5000)`,
+`remainderAfter = available % 5000` — `Math.floor`/`%` only, never floating point. Verified against
+every worked example in the locked spec, including the zero-point case (0 remainder + 2000 minor
+units eligible → 0 Boncuk, 2000 remainder — still a real, ledgered, idempotency-relevant event per
+BR-LOYALTY-001/§7, not a no-op). `resolveEligibleNetSpendMinorUnits(orderData)` is the single,
+isolated function that extracts `pricing.grandTotal.minorUnits` after validating it is a non-negative
+integer in `TRY` — returning `null` (never approximating) for any malformed shape, which the caller
+treats as a per-order anomaly (logged, `rewardsEvaluated` left `false` for a future retry), not a
+feature-wide block. This isolation is deliberate: a future Boncuk-redemption-paid-amount exclusion
+(BR-LOYALTY-004, not implemented — no such field exists yet) would subtract from this one function's
+return value without requiring the earning transaction itself to be redesigned.
+
+**Atomic transaction — exactly the locked 10-step design.** One `db.runTransaction`, reads-first-always
+(sequential `await tx.get(...)`, mirroring `completeCustomerProfile.ts`'s established transaction
+discipline, not `Promise.all`): (1) the deterministic `orderEarn` ledger entry
+(`deriveLoyaltyLedgerEntryId`, imported from P1's `loyaltyLedger.ts` — never a naked
+`${orderId}-earn` string) is checked first and is the **authoritative** idempotency signal, not the
+`rewardsEvaluated` flag; if it already exists, the transaction re-asserts the flag and stops. (2) tenant
+membership (`tenantCustomers/{organizationId}_{customerId}`) is checked — genuinely absent is a real,
+expected case (a customer can order before completing profile/registration), not a bug, and ends the
+attempt safely with no account/ledger writes. (3) the order document is read and its `status` and
+pricing basis validated. (4) the account is read, or a zero baseline used if genuinely absent — the
+existing `LoyaltyAccountData` type (now exported from `getCustomerLoyaltySnapshot.ts` rather than
+duplicated) is reused, not redefined. (5)-(7) the earning is calculated, an immutable `orderEarn`
+ledger entry is `tx.create()`-d (defense-in-depth on top of step (1)'s existence check — Firestore's
+own contention detection retries the whole transaction if a race is somehow missed), and the account
+is `tx.set()` with `spendableBalance`/`lifetimeEarned` incremented, `earningRemainderMinorUnits`
+replaced, `lifetimeRedeemed` and `createdAt` untouched, `revision` incremented. (8) the outbox flag is
+set `true` in the same transaction. All-or-nothing atomicity is structural, not a convention to
+remember — a crash before commit can never leave `rewardsEvaluated: true` without a recorded ledger
+entry, and the ledger/account can never diverge.
+
+**Guest and channel exclusion — cheap, pre-transaction checks.** `customerId == null` (guest order)
+and an ineligible `channel` are both checked directly against the outbox event's own denormalized
+fields, before any Firestore read — no account/ledger doc is ever touched for either case — and both
+terminate with a plain, non-transactional `rewardsEvaluated: true` write, mirroring
+`attemptDelivery`'s own non-transactional `status: 'skipped'` writes in
+`reservationNotificationDelivery.ts`.
+
+**Tests.** `functions/src/test/loyaltyOrderEarning.test.ts` (new, 28 tests): pure-algorithm tests for
+every locked worked example (0+54900→10/4900; 4900+15100→4/0; 0+2000→0/2000; 4900+100→1/0) plus a
+zero/zero case and an integer-only assertion; `resolveEligibleNetSpendMinorUnits` malformed/negative/
+non-integer/wrong-currency rejection; the closed eligible-channel list; completed+eligible-channel
+earns; delivery/reservationPreorder also earn; a non-`completed` order at read time is a safe,
+retryable anomaly; guest orders and a simulated technical-anonymous-guest order never earn; `dineInQr`
+and a staff/POS-shaped channel never earn (allow-list, not a blocklist); missing tenant membership
+fails safely; membership in a *different* tenant cannot earn into the event's own organization
+(wrong-tenant isolation); post-discount `grandTotal` is proven to be the basis used, not
+`grossSubtotal`; a zero-eligible-net-spend order creates no artificial Boncuk; duplicate processing of
+the same order earns once (ledger id idempotency); a safe retry after already-applied never re-touches
+the ledger entry; account-state correctness (absent-account provisioning, existing-balance
+preservation and correct increment, `lifetimeRedeemed` never touched by earning, `createdAt`
+preserved, `revision` monotonic); every required ledger-entry field populated with trusted,
+non-PII values. **Concurrency note**: the "two concurrent invocations" test initially hit a
+`Transaction is invalid or closed` gRPC error from the local Firestore emulator under a truly
+simultaneous double-fire of the same 4-read/3-write transaction — confirmed, by rerunning the same
+test in isolation (it passed cleanly there) and by the separately-passing sequential duplicate-
+processing test, to be local-emulator transaction-contention behavior under load rather than a logic
+defect; the deterministic ledger id is what actually enforces correctness. The test was adjusted to
+tolerate a losing racer's call rejecting outright (a legitimate real-Firestore outcome when a
+transaction exhausts its internal contention retries) while still asserting the real correctness
+property under test — the account ends up mutated exactly once, never zero or double, regardless of
+how the losing side resolved. No production code was changed for this.
+
+**Firestore rules — unchanged, full suite rerun anyway.** No broadening was needed or made: the new
+writer uses the Admin SDK, which bypasses `firestore.rules` entirely, and client read/write permissions
+for `loyaltyAccounts`/`loyaltyLedgerEntries` are exactly as P1 left them. Per the task's own
+instruction, the full Rules suite was still rerun to confirm no regression from the loyalty backend
+behavior change: unchanged at 337/337.
+
+**Files changed (original P2A implementation, 2026-08-20).** New: `functions/src/loyaltyOrderEarning.ts`,
+`functions/src/test/loyaltyOrderEarning.test.ts`. Modified: `functions/src/getCustomerLoyaltySnapshot.ts`
+(`LoyaltyAccountData` interface exported, no shape change), `functions/src/index.ts` (+1 export),
+`docs/business_rules.md` (BR-LOYALTY-001/002/003/004 status notes + new BR-LOYALTY-012),
+`docs/firestore_data_model.md`, `docs/feature_status.md` (P2A closure entry). `firestore.rules` and
+`firestore.indexes.json` were NOT touched by this original implementation.
+
+**Files changed (security fix, 2026-08-21) — CORRECTED, supersedes the "no `firestore.rules` touched"
+claim above.** New: `functions/src/orderPricingAuthority.ts`. Modified:
+`functions/src/submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`/`reservationPreorder.ts` (stamp the
+marker), `functions/src/loyaltyOrderEarning.ts` (require it), `firestore.rules` (+1 helper function,
++1 condition on the `orders` `create` rule), `functions/src/test/submitTakeawayOrder.test.ts`/
+`submitDeliveryOrder.test.ts`/`reservationPreorder.test.ts` (+1 provenance test each),
+`functions/src/test/loyaltyOrderEarning.test.ts` (+10 provenance tests),
+`firestore-tests/rules.test.js` (+9 regression tests), `docs/business_rules.md` (`BR-LOYALTY-012`
+corrected in place + new `BR-LOYALTY-013`), `docs/firestore_data_model.md` (`orders` row),
+`docs/feature_status.md`. `firestore.indexes.json` still not touched — no new query introduced.
+
+**Gates (original P2A, 2026-08-20)**: Functions build/typecheck clean. Functions emulator suite (JDK 21,
+`GOOGLE_MAPS_PROVIDER_MODE=fixture`) **863/863 passed** (up from 835 — 28 new P2A tests). Firestore
+Rules emulator suite **337/337 passed**, unchanged. `flutter analyze` — no issues found. `flutter test`
+— **3236 passed / 12 skipped / 0 failed**, unchanged (no Flutter file touched). Storage Rules not
+rerun — nothing storage-related touched.
+
+**Gates (security fix, 2026-08-21)**: Functions build/typecheck clean. Functions emulator suite
+(JDK 21, `GOOGLE_MAPS_PROVIDER_MODE=fixture`) **875/875 passed** (up from 863 — 12 new provenance
+tests: 10 in `loyaltyOrderEarning.test.ts`, 1 each in `submitTakeawayOrder.test.ts`/
+`reservationPreorder.test.ts`, +1 pre-existing count adjustment; `submitDeliveryOrder.test.ts`'s new
+test included in the same total). Firestore Rules emulator suite **345/345 passed** (up from 337 — 8
+net new pricing-authority regression tests, mirroring the P1 tenant-isolation fix's own "rewritten in
+place, net new count differs from raw added count" pattern where applicable). `flutter analyze` — no
+issues found. `flutter test` — **3236 passed / 12 skipped / 0 failed**, unchanged (no Flutter file
+touched). Storage Rules not rerun — nothing storage-related touched.
+
+**Known, disclosed limitation, not hidden.** No currently shipping Cloud Function or client write path
+transitions a real order to `status: "completed"` — only test-harness code does, mirroring
+`onOrderCompleted.ts`'s own already-accepted precedent. `onOrderEventCreatedForLoyaltyEarning` is real,
+fully tested against the existing outbox contract, and will work correctly the moment a real
+completion transition exists — but production execution is unreachable until that separate,
+not-yet-built workflow ships. Building it was explicitly out of P2A's scope and was not attempted here.
+**P2b (cancellation/refund reversal) remains required before overall loyalty production closure is
+claimed** — see `BR-LOYALTY-012` for why it is a genuinely harder problem than "subtract the original
+points," given the earning remainder persists across orders.

@@ -300,6 +300,38 @@ test("QR guest: a valid order succeeds — order created with server-derived sco
   assert.strictEqual(order.pickupTime, null);
   assert.strictEqual(order.status, "pendingConfirmation");
   assert.strictEqual(order.pricing.grandTotal.minorUnits, 45000);
+  // Boncuk Loyalty P2A security fix (2026-08-21) — the exact canonical
+  // server pricing-authority marker, stamped by this callable itself.
+  assert.strictEqual(order.pricingAuthority, "serverV1");
+});
+
+test("QR guest: pricingAuthority cannot originate from the request payload — the server always stamps its own canonical value regardless of what the client sends", async () => {
+  const session = await seedGuestSession();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, session.restaurantId, session.organizationId, {
+    categoryId: "cat_bowl",
+    basePriceMinorUnits: 43000,
+  });
+  await seedChannelPricingPolicy(session.restaurantId, { channelDefaultAdjustments: { takeaway: 2000 } });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      takeawaySessionId: session.sessionId,
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+      // An attempted client override — must be silently ignored, never
+      // read from request.data at all.
+      pricingAuthority: "client-forged-value",
+    },
+    session.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200);
+  const orderId = body.result?.orderId as string;
+  const order = (await admin.firestore().collection("orders").doc(orderId).get()).data()!;
+  assert.strictEqual(order.pricingAuthority, "serverV1");
 });
 
 test("QR guest: an expired session is rejected — no order created", async () => {

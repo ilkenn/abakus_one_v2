@@ -3668,3 +3668,50 @@ the admin loyalty placeholder, and the orphaned `loyalty_summary_card.dart` rema
 idempotency/reversal-readiness design, and gate counts (`flutter test` 3236/12-skipped/0-failed
 unchanged; Functions 835/835, up from 814; Firestore Rules 337/337, up from 319 — 18 net new tenant-
 isolation-aware tests; Storage Rules not rerun — nothing storage-related touched).
+
+**Boncuk Loyalty Program P2A (2026-08-20) — Completed-Order Earning + Persistent Spend Remainder,
+CLOSED (earning implemented; production execution still blocked on a separate, unbuilt workflow — see
+below).** Implements the first real Boncuk-earning *event*: a new `orderEvents` outbox-consumer trigger
+(`onOrderEventCreatedForLoyaltyEarning`, `functions/src/loyaltyOrderEarning.ts`) that awards Boncuk for
+a canonical completed order, atomically writing both an immutable `orderEarn` ledger entry and the
+matching `loyaltyAccounts` mutation in one Firestore transaction. **Scope decision, made explicit
+mid-task rather than silently applied**: the mandated pre-implementation audit found the persisted
+order pricing basis is server-trustworthy only for `takeaway`/`delivery`/`reservationPreorder`
+(all three hardcode `pricing.discount: 0`) — `dineInQr` and staff/POS orders are excluded from earning
+today, since their pricing is client-computed and unvalidated by `firestore.rules`. This was surfaced
+as an explicit architect decision (not decided unilaterally) and the confirmed answer — earn only from
+the three server-trusted channels — is now locked as `BR-LOYALTY-012` (`docs/business_rules.md`), tied
+to the pre-existing `BR-PRICE-002` ROADMAP gap for the excluded channels. **CORRECTED (2026-08-21,
+security review) — "server-trusted channel" alone was an insufficient gate.** A security review found
+`channel` proves only which order flow a document belongs to, not how its pricing was produced —
+`firestore.rules`' staff/POS `orders` create branch has no restriction on `channel` beyond excluding
+`delivery`, so a staff/POS actor could create a direct-Firestore order claiming `channel: 'takeaway'`
+or `channel: 'reservationPreorder'` with entirely client-computed pricing. Fixed same day: a new
+canonical `pricingAuthority: "serverV1"` marker (`functions/src/orderPricingAuthority.ts`), stamped
+only by `submitTakeawayOrder`/`submitDeliveryOrder`/`reservationPreorder`, never from a request
+parameter; `firestore.rules`' `orders` create rule now denies any client create (every branch) that
+supplies this field at all; `loyaltyOrderEarning.ts` requires both an eligible channel AND this marker
+— an eligible-channel order missing it is classified `untrusted-pricing-provenance` and permanently
+never earns. See `docs/decisions.md`'s P2A entry (security-fix section) for the full report and gate
+counts. Earning rate/remainder
+algorithm (50 TL = 1 Boncuk, floored, integer-only, persistent carried remainder, legitimate
+zero-Boncuk/nonzero-remainder events) exactly matches the P0-A-locked rule, verified against every
+worked example including the zero-point case. Idempotency is enforced by the deterministic
+`orderEarn` ledger entry id (P1's `deriveLoyaltyLedgerEntryId`, reused not reinvented) checked first,
+inside the transaction — not the outbox's own `rewardsEvaluated` flag, which is bookkeeping only.
+Guest orders (`customerId == null`) and orders without genuine tenant membership never earn, both
+failing safely with no account/ledger writes. `firestore.rules` was unchanged by the original P2A
+implementation (server writes via Admin SDK bypass rules entirely); the security fix above DID modify
+`firestore.rules` (the new pricing-authority-forgery denial) — see the correction paragraph above.
+Explicitly **not implemented** this phase: cancellation/refund reversal (P2b — a harder problem than
+"subtract the points," since the earning remainder persists across orders; recorded as a required,
+not-yet-solved P2b design problem in `BR-LOYALTY-012`), checkout Boncuk redemption, catalog rewards,
+wheel, tasks, admin UI, or any customer Loyalty UI change. **Known, disclosed limitation**: no
+currently shipping Cloud Function or client path actually transitions a real order to `completed` yet
+— this consumer is real and fully tested against the existing outbox contract, but production
+execution is unreachable until a canonical server-side completion-transition workflow is separately
+built (out of P2A's scope, not attempted here). Overall loyalty production closure is **not** claimed.
+See `docs/decisions.md`'s P2A entry for the full report, including the audit finding, the exact
+transaction design, and gate counts for the original implementation (`flutter test`
+3236/12-skipped/0-failed; Functions 863/863, up from 835; Firestore Rules 337/337) and for the
+2026-08-21 security fix (see that same entry's security-fix gate paragraph for the post-fix counts).
