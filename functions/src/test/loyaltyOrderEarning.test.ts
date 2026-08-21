@@ -4,7 +4,8 @@ import * as admin from "firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
 import {
   LOYALTY_EARNING_ELIGIBLE_CHANNELS,
-  calculateBoncukEarning,
+  calculateOrderEarning,
+  applyDebtFirst,
   resolveEligibleNetSpendMinorUnits,
   processOrderCompletionEventForLoyaltyEarning,
 } from "../loyaltyOrderEarning";
@@ -13,7 +14,8 @@ import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "../orderPricingAuthority";
 
 /**
  * Emulator-backed + pure-function tests for Boncuk Loyalty Program P2A
- * (2026-08-20) — completed-order earning. Mirrors
+ * (2026-08-20) — completed-order earning, rewritten P2B-B (2026-08-22) for
+ * aggregate/debt-based accounting. Mirrors
  * `reservationNotificationDelivery.test.ts`'s exact split: pure-function
  * unit tests for the algorithm, emulator-backed integration tests calling
  * `processOrderCompletionEventForLoyaltyEarning` directly (the same shape
@@ -118,6 +120,29 @@ async function accountDoc(uid: string, organizationId: string = ORG) {
   return (await db().collection("loyaltyAccounts").doc(`${organizationId}_${uid}`).get()).data();
 }
 
+async function seedAccount(uid: string, fields: Record<string, unknown>, organizationId: string = ORG) {
+  await db().collection("loyaltyAccounts").doc(`${organizationId}_${uid}`).set(fields);
+}
+
+/** A fully-shaped, well-formed P2B account — the "normal existing account" baseline every debt/aggregate test starts from. */
+function wellFormedAccount(overrides: Record<string, unknown> = {}) {
+  const now = Timestamp.now();
+  return {
+    organizationId: ORG,
+    customerId: "placeholder",
+    spendableBalance: 0,
+    boncukDebt: 0,
+    orderEligibleNetSpendMinorUnits: 0,
+    earningRemainderMinorUnits: 0,
+    lifetimeEarned: 0,
+    lifetimeRedeemed: 0,
+    createdAt: now,
+    updatedAt: now,
+    revision: 1,
+    ...overrides,
+  };
+}
+
 async function ledgerDoc(orderId: string, uid: string, organizationId: string = ORG) {
   const id = deriveLoyaltyLedgerEntryId({
     organizationId,
@@ -134,38 +159,87 @@ async function eventFlag(eventId: string) {
 }
 
 // =========================================================================
-// A. Pure algorithm — BR-LOYALTY §2/§7 locked worked examples
+// A. Pure algorithm — BR-LOYALTY §2/§7/§15 locked worked examples,
+// aggregate-based (P2B-B).
 // =========================================================================
 
-test("algorithm: 0 remainder + 54900 eligible -> 10 Boncuk, 4900 remainder", () => {
-  const result = calculateBoncukEarning({ previousRemainderMinorUnits: 0, eligibleNetSpendMinorUnits: 54900 });
-  assert.deepStrictEqual(result, { boncukEarned: 10, remainderAfterMinorUnits: 4900 });
+test("algorithm: aggregate 0 + 54900 eligible -> aggregate 54900, entitlement 10, gross 10, remainder 4900", () => {
+  const result = calculateOrderEarning({ previousAggregateMinorUnits: 0, eligibleNetSpendMinorUnits: 54900 });
+  assert.deepStrictEqual(result, {
+    newAggregateMinorUnits: 54900,
+    newRemainderMinorUnits: 4900,
+    oldEntitlementBoncuk: 0,
+    newEntitlementBoncuk: 10,
+    grossBoncukEarned: 10,
+  });
 });
 
-test("algorithm: 4900 remainder + 15100 eligible -> 4 Boncuk, 0 remainder (carry consumed)", () => {
-  const result = calculateBoncukEarning({ previousRemainderMinorUnits: 4900, eligibleNetSpendMinorUnits: 15100 });
-  assert.deepStrictEqual(result, { boncukEarned: 4, remainderAfterMinorUnits: 0 });
+test("algorithm: aggregate 54900 + 15100 eligible -> aggregate 70000, entitlement 14, gross 4, remainder 0 (carry consumed)", () => {
+  const result = calculateOrderEarning({ previousAggregateMinorUnits: 54900, eligibleNetSpendMinorUnits: 15100 });
+  assert.deepStrictEqual(result, {
+    newAggregateMinorUnits: 70000,
+    newRemainderMinorUnits: 0,
+    oldEntitlementBoncuk: 10,
+    newEntitlementBoncuk: 14,
+    grossBoncukEarned: 4,
+  });
 });
 
-test("algorithm: 0 remainder + 2000 eligible (20 TL) -> 0 Boncuk, 2000 remainder (zero-point event)", () => {
-  const result = calculateBoncukEarning({ previousRemainderMinorUnits: 0, eligibleNetSpendMinorUnits: 2000 });
-  assert.deepStrictEqual(result, { boncukEarned: 0, remainderAfterMinorUnits: 2000 });
+test("algorithm: aggregate 0 + 5000 eligible -> aggregate 5000, entitlement +1, remainder 0", () => {
+  const result = calculateOrderEarning({ previousAggregateMinorUnits: 0, eligibleNetSpendMinorUnits: 5000 });
+  assert.strictEqual(result.newAggregateMinorUnits, 5000);
+  assert.strictEqual(result.grossBoncukEarned, 1);
+  assert.strictEqual(result.newRemainderMinorUnits, 0);
 });
 
-test("algorithm: 4900 remainder + 100 eligible -> exactly 1 Boncuk, 0 remainder", () => {
-  const result = calculateBoncukEarning({ previousRemainderMinorUnits: 4900, eligibleNetSpendMinorUnits: 100 });
-  assert.deepStrictEqual(result, { boncukEarned: 1, remainderAfterMinorUnits: 0 });
+test("algorithm: aggregate 0 + 2000 eligible (20 TL) -> gross 0, aggregate 2000, remainder 2000 (zero-point event)", () => {
+  const result = calculateOrderEarning({ previousAggregateMinorUnits: 0, eligibleNetSpendMinorUnits: 2000 });
+  assert.strictEqual(result.grossBoncukEarned, 0);
+  assert.strictEqual(result.newAggregateMinorUnits, 2000);
+  assert.strictEqual(result.newRemainderMinorUnits, 2000);
 });
 
-test("algorithm: 0 remainder + 0 eligible -> 0 Boncuk, 0 remainder", () => {
-  const result = calculateBoncukEarning({ previousRemainderMinorUnits: 0, eligibleNetSpendMinorUnits: 0 });
-  assert.deepStrictEqual(result, { boncukEarned: 0, remainderAfterMinorUnits: 0 });
+test("algorithm: aggregate 4900 + 100 eligible -> exactly 1 Boncuk, remainder 0", () => {
+  const result = calculateOrderEarning({ previousAggregateMinorUnits: 4900, eligibleNetSpendMinorUnits: 100 });
+  assert.strictEqual(result.grossBoncukEarned, 1);
+  assert.strictEqual(result.newRemainderMinorUnits, 0);
+});
+
+test("algorithm: aggregate 0 + 0 eligible -> 0 Boncuk, 0 remainder", () => {
+  const result = calculateOrderEarning({ previousAggregateMinorUnits: 0, eligibleNetSpendMinorUnits: 0 });
+  assert.strictEqual(result.grossBoncukEarned, 0);
+  assert.strictEqual(result.newAggregateMinorUnits, 0);
 });
 
 test("algorithm: results are always integers, never floating point", () => {
-  const result = calculateBoncukEarning({ previousRemainderMinorUnits: 3333, eligibleNetSpendMinorUnits: 7777 });
-  assert.ok(Number.isInteger(result.boncukEarned));
-  assert.ok(Number.isInteger(result.remainderAfterMinorUnits));
+  const result = calculateOrderEarning({ previousAggregateMinorUnits: 3333, eligibleNetSpendMinorUnits: 7777 });
+  assert.ok(Number.isInteger(result.grossBoncukEarned));
+  assert.ok(Number.isInteger(result.newRemainderMinorUnits));
+  assert.ok(Number.isInteger(result.newAggregateMinorUnits));
+});
+
+// =========================================================================
+// A2. Pure algorithm — debt-first repayment (BR-LOYALTY-014)
+// =========================================================================
+
+test("debt-first: no debt -> full gross becomes spendable credit", () => {
+  const result = applyDebtFirst({ grossBoncukEarned: 10, boncukDebt: 0 });
+  assert.deepStrictEqual(result, { debtPaidBoncuk: 0, spendableCreditBoncuk: 10, newDebtBoncuk: 0 });
+});
+
+test("debt-first: gross earn 5, debt 7 before -> debt 2, spendable credit 0 (Case 1)", () => {
+  const result = applyDebtFirst({ grossBoncukEarned: 5, boncukDebt: 7 });
+  assert.deepStrictEqual(result, { debtPaidBoncuk: 5, spendableCreditBoncuk: 0, newDebtBoncuk: 2 });
+});
+
+test("debt-first: gross earn 4, debt 2 before -> debt 0, spendable credit 2 (Case 2)", () => {
+  const result = applyDebtFirst({ grossBoncukEarned: 4, boncukDebt: 2 });
+  assert.deepStrictEqual(result, { debtPaidBoncuk: 2, spendableCreditBoncuk: 2, newDebtBoncuk: 0 });
+});
+
+test("debt-first: gross earn 0 -> nothing moves regardless of debt", () => {
+  const result = applyDebtFirst({ grossBoncukEarned: 0, boncukDebt: 7 });
+  assert.deepStrictEqual(result, { debtPaidBoncuk: 0, spendableCreditBoncuk: 0, newDebtBoncuk: 7 });
 });
 
 // =========================================================================
@@ -219,6 +293,8 @@ test("eligibility: a completed, authenticated, eligible-channel order earns Bonc
 
   const account = await accountDoc(uid);
   assert.strictEqual(account?.spendableBalance, 10);
+  assert.strictEqual(account?.boncukDebt, 0);
+  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 54900);
   assert.strictEqual(account?.earningRemainderMinorUnits, 4900);
   assert.strictEqual(account?.lifetimeEarned, 10);
   assert.strictEqual(await eventFlag(eventId), true);
@@ -268,12 +344,6 @@ test("eligibility: a guest order (customerId null) never earns — no account, n
 });
 
 test("eligibility: a technical anonymous guest uid is never treated as a loyalty customer (customerId stays null upstream)", async () => {
-  // onOrderCompleted.ts always writes `customerId: after.customerId ?? null`
-  // — an anonymous Table/Takeaway Guest Session order's `customerId` is
-  // itself always `null` at the order-document level (never the guest's
-  // anonymous Firebase Auth uid), so this collapses to the same
-  // "guest-order-no-customer" path exercised above. No separate code path
-  // exists to accidentally treat an anonymous uid as a customer id.
   const orderId = nextId("order");
   const eventId = `${orderId}-completed`;
   await seedOrder({ orderId, customerId: null, channel: "delivery", grandTotalMinorUnits: 5000 });
@@ -368,7 +438,9 @@ test("eligibility: zero eligible net spend creates no artificial Boncuk", async 
   assert.strictEqual(result.reason, "earned");
   assert.strictEqual(result.boncukEarned, 0);
   const ledger = await ledgerDoc(orderId, uid);
-  assert.strictEqual(ledger?.deltaBoncuk, 0);
+  assert.strictEqual(ledger?.entitlementDeltaBoncuk, 0);
+  assert.strictEqual(ledger?.spendableDeltaBoncuk, 0);
+  assert.strictEqual(ledger?.debtDeltaBoncuk, 0);
   assert.strictEqual(ledger?.amountBasisMinorUnits, 0);
 });
 
@@ -472,9 +544,6 @@ test("provenance: a client-like order — arbitrary pricing, an eligible channel
   const uid = nextId("uid");
   const eventId = `${orderId}-completed`;
   await seedMembership(uid);
-  // Simulates exactly the attack the security review flagged: a staff/POS
-  // direct-Firestore write claiming an eligible channel with a large,
-  // entirely client-computed total.
   await seedOrder({
     orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 999_999_00,
     pricingAuthority: null,
@@ -533,6 +602,8 @@ test("idempotency: processing the same completed order twice earns points only o
 
   const account = await accountDoc(uid);
   assert.strictEqual(account?.spendableBalance, 10);
+  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 54900, "aggregate must only be increased once");
+  assert.strictEqual(account?.boncukDebt, 0, "debt must only be touched once");
   assert.strictEqual(account?.lifetimeEarned, 10);
   assert.strictEqual(account?.revision, 1, "the account must only be mutated once");
 });
@@ -564,6 +635,7 @@ test("idempotency: two concurrent invocations for the same order earn points exa
 
   const account = await accountDoc(uid);
   assert.strictEqual(account?.spendableBalance, 4, "the account must reflect exactly one application of the earning, never zero or double");
+  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 20000);
   assert.strictEqual(account?.revision, 1, "the account must be mutated exactly once regardless of how the losing racer resolved");
 });
 
@@ -600,29 +672,30 @@ test("account state: an absent account is provisioned safely as part of the firs
   const account = await accountDoc(uid);
   assert.strictEqual(account?.organizationId, ORG);
   assert.strictEqual(account?.customerId, uid);
+  assert.strictEqual(account?.boncukDebt, 0);
   assert.strictEqual(account?.lifetimeRedeemed, 0);
   assert.strictEqual(account?.revision, 1);
   assert.ok(account?.createdAt);
   assert.ok(account?.updatedAt);
 });
 
-test("account state: an existing account's balance/remainder is incremented, not reset — lifetimeRedeemed untouched, createdAt preserved", async () => {
+test("account state: an existing well-formed P2B account's balance/remainder/aggregate is incremented, not reset — lifetimeRedeemed untouched, createdAt preserved", async () => {
   const orderId = nextId("order");
   const uid = nextId("uid");
   const eventId = `${orderId}-completed`;
   await seedMembership(uid);
   const createdAt = Timestamp.fromMillis(Timestamp.now().toMillis() - 1_000_000);
-  await db().collection("loyaltyAccounts").doc(`${ORG}_${uid}`).set({
-    organizationId: ORG,
+  await seedAccount(uid, wellFormedAccount({
     customerId: uid,
     spendableBalance: 5,
+    orderEligibleNetSpendMinorUnits: 1000,
     earningRemainderMinorUnits: 1000,
     lifetimeEarned: 20,
     lifetimeRedeemed: 3,
     createdAt,
     updatedAt: createdAt,
     revision: 4,
-  });
+  }));
   await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 4200 });
 
   await processOrderCompletionEventForLoyaltyEarning(
@@ -630,11 +703,13 @@ test("account state: an existing account's balance/remainder is incremented, not
   );
 
   const account = await accountDoc(uid);
-  // available = 1000 + 4200 = 5200 -> 1 Boncuk, 200 remainder.
+  // aggregate = 1000 + 4200 = 5200 -> 1 Boncuk, 200 remainder.
+  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 5200);
   assert.strictEqual(account?.spendableBalance, 6);
   assert.strictEqual(account?.earningRemainderMinorUnits, 200);
   assert.strictEqual(account?.lifetimeEarned, 21);
   assert.strictEqual(account?.lifetimeRedeemed, 3, "redemption lifetime must never be touched by earning");
+  assert.strictEqual(account?.boncukDebt, 0);
   assert.strictEqual(account?.revision, 5, "revision must be monotonic");
   assert.strictEqual((account?.createdAt as Timestamp).isEqual(createdAt), true, "createdAt must be preserved, never reset");
 });
@@ -654,17 +729,177 @@ test("ledger entry: all required fields are populated with trusted, non-PII valu
   assert.strictEqual(ledger?.organizationId, ORG);
   assert.strictEqual(ledger?.customerId, uid);
   assert.strictEqual(ledger?.entryType, "orderEarn");
-  assert.strictEqual(ledger?.deltaBoncuk, 3);
+  assert.strictEqual(ledger?.entitlementDeltaBoncuk, 3);
+  assert.strictEqual(ledger?.spendableDeltaBoncuk, 3);
+  assert.strictEqual(ledger?.debtDeltaBoncuk, 0);
   assert.strictEqual(ledger?.sourceId, orderId);
   assert.strictEqual(ledger?.orderId, orderId);
   assert.strictEqual(ledger?.amountBasisMinorUnits, 15100);
+  assert.strictEqual(ledger?.orderEligibleNetSpendBeforeMinorUnits, 0);
+  assert.strictEqual(ledger?.orderEligibleNetSpendAfterMinorUnits, 15100);
+  assert.strictEqual(ledger?.orderEntitlementBeforeBoncuk, 0);
+  assert.strictEqual(ledger?.orderEntitlementAfterBoncuk, 3);
   assert.strictEqual(ledger?.remainderBeforeMinorUnits, 0);
   assert.strictEqual(ledger?.remainderAfterMinorUnits, 100);
+  assert.strictEqual(ledger?.debtBeforeBoncuk, 0);
+  assert.strictEqual(ledger?.debtAfterBoncuk, 0);
   assert.strictEqual(ledger?.earningRateMinorUnitsPerBoncuk, 5000);
   assert.strictEqual(ledger?.redemptionRateMinorUnitsPerBoncuk, null);
   assert.strictEqual(ledger?.idempotencyKey, orderId);
   assert.strictEqual(ledger?.reversalOf, null);
   assert.strictEqual(ledger?.metadata, null);
   assert.ok(ledger?.createdAt);
+  assert.ok(!("deltaBoncuk" in (ledger ?? {})), "the old ambiguous deltaBoncuk field must not exist on any new entry");
   assert.ok(!JSON.stringify(ledger).match(/\+\d{7,}/), "ledger entry must never embed a raw phone number");
+});
+
+// =========================================================================
+// H. Debt-first earning — integration (emulator), locked worked examples
+// =========================================================================
+
+test("debt: an order earning gross 5 Boncuk while debt is 7 pays debt first — debt 2, spendable credit 0 (Case 1)", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, boncukDebt: 7, spendableBalance: 0 }));
+  // 5 gross Boncuk from a zero aggregate: 5 * 5000 = 25000 minor units.
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 25000 });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.boncukEarned, 5);
+
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.boncukDebt, 2);
+  assert.strictEqual(account?.spendableBalance, 0);
+  assert.strictEqual(account?.lifetimeEarned, 5, "lifetimeEarned uses gross earning, not spendable credit");
+
+  const ledger = await ledgerDoc(orderId, uid);
+  assert.strictEqual(ledger?.entitlementDeltaBoncuk, 5);
+  assert.strictEqual(ledger?.spendableDeltaBoncuk, 0);
+  assert.strictEqual(ledger?.debtDeltaBoncuk, -5);
+  assert.strictEqual(ledger?.debtBeforeBoncuk, 7);
+  assert.strictEqual(ledger?.debtAfterBoncuk, 2);
+});
+
+test("debt: a subsequent order earning gross 4 Boncuk while debt is 2 fully repays debt and credits the remainder — debt 0, spendable +2 (Case 2)", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, boncukDebt: 2, spendableBalance: 0 }));
+  // 4 gross Boncuk from a zero aggregate: 4 * 5000 = 20000 minor units.
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 20000 });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.boncukEarned, 4);
+
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.boncukDebt, 0);
+  assert.strictEqual(account?.spendableBalance, 2);
+  assert.strictEqual(account?.lifetimeEarned, 4);
+
+  const ledger = await ledgerDoc(orderId, uid);
+  assert.strictEqual(ledger?.entitlementDeltaBoncuk, 4);
+  assert.strictEqual(ledger?.spendableDeltaBoncuk, 2);
+  assert.strictEqual(ledger?.debtDeltaBoncuk, -2);
+  assert.strictEqual(ledger?.debtBeforeBoncuk, 2);
+  assert.strictEqual(ledger?.debtAfterBoncuk, 0);
+});
+
+test("debt: a zero-Boncuk order still moves the aggregate/remainder even while debt is nonzero — debt untouched", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, boncukDebt: 3, spendableBalance: 0 }));
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 2000 });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.boncukEarned, 0);
+
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.boncukDebt, 3, "debt must be untouched when gross earning is zero");
+  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 2000);
+  assert.strictEqual(account?.earningRemainderMinorUnits, 2000);
+});
+
+// =========================================================================
+// I. Legacy pre-P2B account compatibility (fail-safe, not silent guessing)
+// =========================================================================
+
+test("legacy account: a pre-P2B account that is genuinely untouched (all zero) safely normalizes to include the new fields", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  const now = Timestamp.now();
+  // Deliberately the OLD (pre-P2B) shape — no boncukDebt, no
+  // orderEligibleNetSpendMinorUnits — but every other field already reads
+  // as an untouched zero account.
+  await seedAccount(uid, {
+    organizationId: ORG,
+    customerId: uid,
+    spendableBalance: 0,
+    earningRemainderMinorUnits: 0,
+    lifetimeEarned: 0,
+    lifetimeRedeemed: 0,
+    createdAt: now,
+    updatedAt: now,
+    revision: 1,
+  });
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 5000 });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.reason, "earned");
+  assert.strictEqual(result.boncukEarned, 1);
+
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.orderEligibleNetSpendMinorUnits, 5000);
+  assert.strictEqual(account?.boncukDebt, 0);
+  assert.strictEqual(account?.spendableBalance, 1);
+});
+
+test("legacy account: a pre-P2B account with non-zero earned/balance/remainder state but no aggregate field fails closed — never guesses a reconstruction", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  const now = Timestamp.now();
+  // Old shape, non-zero state — genuinely inconsistent: we cannot safely
+  // know what orderEligibleNetSpendMinorUnits/boncukDebt should be.
+  await seedAccount(uid, {
+    organizationId: ORG,
+    customerId: uid,
+    spendableBalance: 5,
+    earningRemainderMinorUnits: 1000,
+    lifetimeEarned: 20,
+    lifetimeRedeemed: 3,
+    createdAt: now,
+    updatedAt: now,
+    revision: 4,
+  });
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 4200 });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.processed, false);
+  assert.strictEqual(result.reason, "inconsistent-legacy-account-state");
+
+  const account = await accountDoc(uid);
+  // Untouched — never guessed at, never partially written.
+  assert.strictEqual(account?.spendableBalance, 5);
+  assert.strictEqual(account?.revision, 4);
+  assert.strictEqual(account && "boncukDebt" in account, false);
+  assert.strictEqual(await ledgerDoc(orderId, uid), undefined);
+  assert.notStrictEqual(await eventFlag(eventId), true, "a genuine anomaly must remain retryable, not silently marked evaluated");
 });

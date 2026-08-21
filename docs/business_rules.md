@@ -881,6 +881,107 @@ this design introduces.
 - **Owner Agent**: security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-012, BR-PRICE-002
 
+### BR-LOYALTY-014 — Spendable balance never negative; Boncuk debt absorbs excess clawback
+- **Status**: DECIDED (2026-08-22, P2B-A design task) — **ACCOUNTING FOUNDATION IMPLEMENTED (P2B-B,
+  2026-08-22)**: `boncukDebt` is real, persisted, transactionally maintained state, and future order
+  earning genuinely pays it down first (`applyDebtFirst`, `functions/src/loyaltyOrderEarning.ts`).
+  **The clawback-creating direction remains NOT implemented** — no reversal Cloud Function exists, so
+  debt can accumulate only in tests today, never from a real refund. See `docs/decisions.md`'s P2B-B
+  entry for the full implementation report.
+- **Rule**: A customer's visible/spendable Boncuk balance (`loyaltyAccounts.spendableBalance`) must
+  never become negative. When a refund/cancellation requires clawing back more Boncuk than the
+  customer currently holds spendable, the clawback is applied in two steps, both inside the same
+  transaction that writes the reversal: (1) consume `spendableBalance` down to `0` — never below;
+  (2) any remaining required clawback becomes `boncukDebt` (a new integer, `>= 0`, server-authoritative
+  account field). Future Boncuk earning of any kind pays down existing debt **before** any of it
+  becomes spendable: `debtPaid = min(grossBoncukEarned, boncukDebt)`,
+  `spendableCredit = grossBoncukEarned - debtPaid`, `newDebt = boncukDebt - debtPaid`. **Worked
+  example (locked)**: required clawback 11, spendable balance 4 → spendable becomes 0, debt becomes 7.
+  A later earning event generating 5 gross Boncuk → debt 7→2, spendable credit 0 (all 5 absorbed by
+  debt). A further earning event generating 4 gross Boncuk → debt 2→0, spendable credit 2 (only the
+  2 left over after debt is fully paid becomes spendable). `boncukDebt` is client-read-only,
+  server-write-only, tenant/customer-scoped, exactly like every other `loyaltyAccounts` field.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-001, BR-LOYALTY-015
+
+### BR-LOYALTY-015 — Aggregate eligible-spend reversal model (no historical ledger mutation)
+- **Status**: DECIDED (2026-08-22, P2B-A design task) — **PARTIALLY IMPLEMENTED (P2B-B, 2026-08-22)**.
+  The earning (forward) direction is real: `loyaltyAccounts.orderEligibleNetSpendMinorUnits` is now
+  canonical, persisted, transactionally-maintained state (`functions/src/loyaltyOrderEarning.ts`'s
+  `calculateOrderEarning`), proven mathematically equivalent to P2A's original remainder-only formula.
+  The reversal (refund) formula is implemented and tested as a **pure**, side-effect-free function
+  (`calculateFullOrderEarningReversal`, `functions/src/loyaltyReversalMath.ts`) — **not** wired to any
+  Firestore writer, callable, or trigger, since no authoritative server refund event exists yet. See
+  `docs/decisions.md`'s P2B-B entry for the full implementation report and exact test totals.
+- **Rule**: Because the 50 TL-per-Boncuk earning remainder persists and mixes across orders
+  (BR-LOYALTY-001), a refund/cancellation can **never** simply subtract the original order's own
+  `deltaBoncuk` — a later order's earning may have already consumed or extended the same remainder the
+  refunded order contributed. The correct model tracks one new server-maintained, transactionally-
+  co-written account aggregate, `orderEligibleNetSpendMinorUnits` — the cumulative, currently-valid
+  (non-reversed) eligible net spend across every order-earning event for that customer. At any point,
+  `entitlement = floor(orderEligibleNetSpendMinorUnits / 5000)` and
+  `earningRemainderMinorUnits = orderEligibleNetSpendMinorUnits % 5000` (the latter kept as a
+  co-maintained, always-in-sync cache of the former, not an independent value). A reversal computes:
+  `oldEntitlement = floor(oldAggregate / 5000)`,
+  `newAggregate = oldAggregate - refundedEligibleMinorUnits`,
+  `newEntitlement = floor(newAggregate / 5000)`,
+  `requiredClawback = oldEntitlement - newEntitlement` (always `>= 0`, since `floor` is
+  non-decreasing in its input and the aggregate only ever shrinks on reversal). For a **full**
+  reversal, `refundedEligibleMinorUnits` is read directly, verbatim, from the original (immutable)
+  `orderEarn` ledger entry's own `amountBasisMinorUnits` — no new authoritative "refunded amount"
+  source is needed. **Why no downstream `orderEarn` entry ever needs to be rewritten**: `floor(x / k)`
+  is a pure function of the current total `x` alone — it does not depend on the order in which `x`
+  accumulated. Removing one order's contribution and recomputing the floor on the new total already
+  gives the exact correct answer; every other order's own historical `orderEarn` entry remains an
+  accurate record of "what the aggregate state was when that order completed" and needs no correction.
+  **Worked example (locked)**: Order A (549 TL) earns 10 Boncuk, 49 TL remainder. Order B (151 TL)
+  combines with the remainder (49+151=200 TL) to earn 4 more Boncuk, 0 remainder — total entitlement
+  14. Order A is later fully refunded: `refundedEligibleMinorUnits` = Order A's own stored 54900
+  (549 TL). `newAggregate` = 70000 − 54900 = 15100 (151 TL) → `newEntitlement` = 3, remainder 1 TL.
+  `requiredClawback` = 14 − 3 = **11**, not Order A's own original 10. A reversal may legitimately
+  produce `requiredClawback = 0` while still changing the stored remainder (a refund that only removes
+  "remainder," never a whole Boncuk) — this MUST still be ledgered, mirroring BR-LOYALTY §7's
+  "zero-point earning events matter" principle applied to the reversal direction.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-001, BR-LOYALTY-002, BR-LOYALTY-014
+
+### BR-LOYALTY-016 — Three first-class ledger accounting effects (supersedes single `deltaBoncuk`)
+- **Status**: DECIDED (2026-08-22, P2B-A.1 correction) — **IMPLEMENTED (P2B-B, 2026-08-22)**.
+  `deltaBoncuk` has been removed entirely from `LoyaltyLedgerEntry`
+  (`functions/src/loyaltyLedger.ts`); every `orderEarn` entry now carries `entitlementDeltaBoncuk`/
+  `spendableDeltaBoncuk`/`debtDeltaBoncuk` plus the full order-accounting provenance snapshot. See
+  `docs/decisions.md`'s P2B-B entry for the exact final field list and test coverage.
+- **Rule**: A single signed `deltaBoncuk` field cannot represent every ledger entry's economic effect
+  without ambiguity — clawing back 11 Boncuk when only 4 are spendable is neither "-11" (hides that 4
+  came from real balance and 7 became debt) nor "-4" (silently drops the 7 of debt created). Every
+  `loyaltyLedgerEntries` entry therefore carries **three first-class, always-populated (never null)
+  signed integer fields**, replacing `deltaBoncuk`:
+  - `entitlementDeltaBoncuk` — the change in the customer's gross valid claim this event caused, before
+    any debt/redemption accounting. Nonzero only for earning/reversal-direction entries (`orderEarn`,
+    `orderEarnReversal`, and — once designed — `wheelEarn`/`wheelExpiry`/`taskEarn`/`taskReversal`).
+    **Always `0` for every redemption/restoration-direction entry** (`boncukRedemption`,
+    `boncukRedemptionRestore`, `catalogRedemption`, `catalogRedemptionRestore`) — spending or restoring
+    already-earned Boncuk never changes how much was earned, only how much remains spendable.
+  - `spendableDeltaBoncuk` — the actual change to `spendableBalance` this event caused. Summing this
+    field across a customer's entire ledger reconstructs `spendableBalance` exactly, for any entry type.
+  - `debtDeltaBoncuk` — the actual change to `boncukDebt` this event caused. Positive when debt grows
+    (a clawback exceeds available spendable), negative when debt shrinks (later earning pays it down).
+    Summing this field across the ledger reconstructs `boncukDebt` exactly. Always `0` for redemption/
+    restoration-direction entries — redemption can never create or repay debt, and a redemption restore
+    returns Boncuk to spendable directly, never intercepted by debt-first repayment (BR-LOYALTY-014's
+    "future earning pays debt first" applies to genuinely new earning, not to undoing a prior spend).
+  - **Invariant** for every earning/reversal-direction entry:
+    `entitlementDeltaBoncuk == spendableDeltaBoncuk - debtDeltaBoncuk`. This does **not** hold for
+    redemption/restoration entries (`entitlementDeltaBoncuk` is always `0` there regardless of
+    `spendableDeltaBoncuk`) — the invariant is scoped to entries where the entitlement pool itself is
+    changing, not to entries that merely move already-settled spendable balance.
+  **Worked examples (locked)**: order earn, no debt, gross 10 → `(+10, +10, 0)`. Order earn, gross 5,
+  debt 7 before → `(+5, 0, -5)`. Order reversal, clawback 11, spendable available 4 →
+  `(-11, -4, +7)`. Boncuk redemption of 20 → `(0, -20, 0)` — entitlement is never touched merely
+  because the customer spent points they had already validly earned.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-001, BR-LOYALTY-014, BR-LOYALTY-015
+
 # Customer CRM & Loyalty Platform
 
 **Relationship to BR-PROMO-001's existing Boncuk mock**: `features/crm` (Sprint 5D) is a new, real,

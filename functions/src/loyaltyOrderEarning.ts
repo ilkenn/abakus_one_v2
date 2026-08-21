@@ -14,7 +14,8 @@ import type { LoyaltyAccountData } from "./getCustomerLoyaltySnapshot";
 import { hasServerPricingAuthority } from "./orderPricingAuthority";
 
 /**
- * `loyaltyOrderEarning` — Boncuk Loyalty Program P2A (2026-08-20).
+ * `loyaltyOrderEarning` — Boncuk Loyalty Program P2A (2026-08-20), security
+ * fix 2026-08-21, aggregate/debt-based rewrite P2B-B (2026-08-22).
  *
  * Consumes the existing `orderEvents/{orderId}-completed` transactional
  * outbox record (`onOrderCompleted.ts`, Sprint 9F/ADR-026 — untouched by
@@ -28,46 +29,34 @@ import { hasServerPricingAuthority } from "./orderPricingAuthority";
  * outbox record `onOrderCompleted.ts` already writes.
  *
  * **Locked scope (P2A architect decision, 2026-08-20) — "earn only from
- * server-trusted channels."** The P2A pre-implementation audit found that
- * `submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`/`reservationPreorder.ts`
- * all hardcode `pricing.discount: moneyField(0)`, making `pricing.grandTotal`
- * a genuinely server-computed, client-untrusted value for those three
- * channels — but dine-in table-QR orders and staff/POS orders are written
- * with a client-computed `pricing` block `firestore.rules` never validates
- * (`PriceCalculator` is explicitly documented as "Not authoritative"). This
- * module therefore only ever earns for `channel` in
- * [LOYALTY_EARNING_ELIGIBLE_CHANNELS] — any other channel (today: `dineInQr`,
- * and any staff/POS-originated channel) is a deliberate, disclosed no-earn
- * outcome, not a bug. See `docs/business_rules.md` `BR-PRICE-002` (ROADMAP)
- * for the tracked follow-up that would make those channels eligible.
+ * server-trusted channels."** See [LOYALTY_EARNING_ELIGIBLE_CHANNELS] and
+ * `docs/business_rules.md` `BR-LOYALTY-012`.
  *
- * **Security fix (2026-08-21) — channel alone is never sufficient.** A
- * security review correctly found the eligible-channel check above is not,
- * by itself, proof of trusted pricing: `firestore.rules`' `isOrgMember`
- * branch lets a staff/POS client create a direct-Firestore order with
- * `channel: 'takeaway'` or `channel: 'reservationPreorder'` (a legitimate,
- * pre-existing capability, unrelated to loyalty, that this fix does not
- * remove) — its `pricing` block for that write is entirely client-computed
- * and never server-verified. Earning now additionally requires
- * [hasServerPricingAuthority] on the order document — a `pricingAuthority`
- * marker only `submitTakeawayOrder`/`submitDeliveryOrder`/
- * `reservationPreorder` ever stamp (Admin SDK, bypasses
- * `firestore.rules`), and that `firestore.rules` explicitly forbids any
- * client create from supplying at all. See
- * `functions/src/orderPricingAuthority.ts` for the full `channel`-vs-
- * `pricingAuthority` reasoning. An eligible-channel order missing this
- * marker (a client-authored order on an eligible-looking channel, or a
- * legacy pre-P2A-security-fix order) is classified `untrusted-pricing-
- * provenance` — never earns, permanently, not merely retried later; no
- * migration back-stamps old orders as trusted.
+ * **Security fix (2026-08-21) — channel alone is never sufficient.**
+ * Earning additionally requires [hasServerPricingAuthority] on the order
+ * document. See `functions/src/orderPricingAuthority.ts` and
+ * `BR-LOYALTY-013`.
+ *
+ * **P2B-B aggregate/debt rewrite (2026-08-22).** `loyaltyAccounts.
+ * orderEligibleNetSpendMinorUnits` is now canonical, persisted, cumulative
+ * state — not just its remainder. This is mathematically equivalent to
+ * P2A's original remainder-only formula for the earning direction
+ * (`floor((a+b)/n) = floor(a/n) + floor((a mod n + b)/n)` is a standard
+ * integer identity) — every P2A worked example is reproduced identically
+ * — but a reversal (not built this phase) needs the actual aggregate, not
+ * just its remainder, to recompute a new floor after subtracting a
+ * specific order's contribution. `boncukDebt` is now debt-first repaid by
+ * any positive `grossBoncukEarned` before any of it becomes spendable —
+ * `BR-LOYALTY-014`. See `docs/decisions.md`'s P2B-A/P2B-A.1/P2B-B entries
+ * for the full design and `BR-LOYALTY-016` for the three-first-class-delta
+ * ledger contract this file now writes.
  *
  * **Known, disclosed limitation**: no currently shipping Cloud Function or
  * client write path ever transitions a real order to `status: "completed"`
  * — only test-harness code does. This consumer is real, fully tested
  * against the existing `orderEvents`/`onOrderCompleted.ts` contract, but
  * production execution is unreachable until a canonical server-side
- * order-completion transition exists (out of scope for P2A — not built
- * here, per instruction).
+ * order-completion transition exists (out of scope here).
  */
 
 // -----------------------------------------------------------------------
@@ -92,23 +81,8 @@ function isEligibleChannel(channel: unknown): channel is LoyaltyEarningEligibleC
 
 /**
  * The single, isolated seam for computing the eligible net spend basis —
- * BR-LOYALTY §3: "eligible net spend after campaign/coupon discount." Today,
- * for the three eligible channels, `pricing.discount` is always
- * server-hardcoded to 0, so `grandTotal` already equals the correct basis;
- * if a future channel/phase adds a real server-computed discount,
- * `grandTotal` (gross minus discount plus fees) remains the correct basis
- * unchanged. A future Boncuk-*redemption*-paid-amount exclusion (no such
- * field exists yet — not invented here) would subtract from the value this
- * one function returns, without requiring any change to the transaction
- * that calls it — satisfying "architecture must not make future exclusion
- * impossible" without implementing that exclusion now.
- *
- * Returns `null` (never approximates) when the persisted order snapshot
- * cannot deterministically establish the basis — malformed shape, a
- * non-integer/negative amount, or a currency other than `TRY` (the only
- * currency this app uses today; a silent assumption otherwise would be
- * exactly the "silently approximate" failure mode this phase's own
- * instructions forbid).
+ * BR-LOYALTY §3: "eligible net spend after campaign/coupon discount." See
+ * the P2A doc comment history for the full reasoning — unchanged by P2B-B.
  */
 export function resolveEligibleNetSpendMinorUnits(
   orderData: FirebaseFirestore.DocumentData,
@@ -126,34 +100,61 @@ export function resolveEligibleNetSpendMinorUnits(
   return minorUnits;
 }
 
-export interface BoncukEarningResult {
-  boncukEarned: number;
-  remainderAfterMinorUnits: number;
+export interface OrderEarningCalculation {
+  newAggregateMinorUnits: number;
+  newRemainderMinorUnits: number;
+  oldEntitlementBoncuk: number;
+  newEntitlementBoncuk: number;
+  grossBoncukEarned: number;
 }
 
 /**
- * BR-LOYALTY §2 — the locked earning algorithm. Pure integer arithmetic
- * only (`Math.floor`/`%`), never floating point. A zero-eligible-spend or
- * small-eligible-spend order may legitimately earn `boncukEarned: 0` while
- * still moving the remainder forward — that is a correct, expected outcome
- * (§7), not an edge case to special-case away.
+ * BR-LOYALTY §2 / BR-LOYALTY-015 — the locked, aggregate-based earning
+ * algorithm (P2B-B). Pure integer arithmetic only (`Math.floor`/`%`),
+ * never floating point. A zero-eligible-spend or small-eligible-spend
+ * order may legitimately earn `grossBoncukEarned: 0` while still moving
+ * the aggregate/remainder forward — that is a correct, expected outcome
+ * (BR-LOYALTY §7), not an edge case to special-case away.
  *
  * Verified against every worked example in the locked spec:
- * (0, 54900) -> (10, 4900); (4900, 15100) -> (4, 0); (0, 2000) -> (0, 2000);
- * (4900, 100) -> (1, 0).
+ * (0, 54900) -> aggregate 54900, entitlement 10, remainder 4900;
+ * (54900, 15100) -> aggregate 70000, entitlement 14, gross 4, remainder 0;
+ * (0, 2000) -> aggregate 2000, entitlement 0, remainder 2000.
  */
-export function calculateBoncukEarning(params: {
-  previousRemainderMinorUnits: number;
+export function calculateOrderEarning(params: {
+  previousAggregateMinorUnits: number;
   eligibleNetSpendMinorUnits: number;
-}): BoncukEarningResult {
-  const availableMinorUnits =
-    params.previousRemainderMinorUnits + params.eligibleNetSpendMinorUnits;
-  const boncukEarned = Math.floor(
-    availableMinorUnits / BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK,
-  );
-  const remainderAfterMinorUnits =
-    availableMinorUnits % BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK;
-  return { boncukEarned, remainderAfterMinorUnits };
+}): OrderEarningCalculation {
+  const oldAggregate = params.previousAggregateMinorUnits;
+  const newAggregate = oldAggregate + params.eligibleNetSpendMinorUnits;
+  const oldEntitlementBoncuk = Math.floor(oldAggregate / BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK);
+  const newEntitlementBoncuk = Math.floor(newAggregate / BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK);
+  return {
+    newAggregateMinorUnits: newAggregate,
+    newRemainderMinorUnits: newAggregate % BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK,
+    oldEntitlementBoncuk,
+    newEntitlementBoncuk,
+    grossBoncukEarned: newEntitlementBoncuk - oldEntitlementBoncuk,
+  };
+}
+
+export interface DebtAwareEarningResult {
+  debtPaidBoncuk: number;
+  spendableCreditBoncuk: number;
+  newDebtBoncuk: number;
+}
+
+/** BR-LOYALTY-014 — future earning pays down existing debt before any of it becomes spendable. */
+export function applyDebtFirst(params: {
+  grossBoncukEarned: number;
+  boncukDebt: number;
+}): DebtAwareEarningResult {
+  const debtPaidBoncuk = Math.min(params.grossBoncukEarned, params.boncukDebt);
+  return {
+    debtPaidBoncuk,
+    spendableCreditBoncuk: params.grossBoncukEarned - debtPaidBoncuk,
+    newDebtBoncuk: params.boncukDebt - debtPaidBoncuk,
+  };
 }
 
 export interface ProcessOrderCompletionForLoyaltyEarningResult {
@@ -164,6 +165,75 @@ export interface ProcessOrderCompletionForLoyaltyEarningResult {
 
 function orderEventsCollection(db: Firestore) {
   return db.collection("orderEvents");
+}
+
+/**
+ * Reads the existing account (if any) for the earning transaction,
+ * tolerating a legacy pre-P2B document by safely backfilling the two new
+ * fields ONLY when every other field already reads as an untouched zero
+ * account — otherwise fails closed rather than guessing at a
+ * reconstruction of `orderEligibleNetSpendMinorUnits` (e.g. never assumes
+ * `aggregate = lifetimeEarned * 5000`, which would silently discard
+ * remainder/provenance). This codebase has no shipping order-completion
+ * trigger yet, so no real non-zero legacy account can exist in production
+ * today — this is defensive-in-depth for test/fixture data and any future
+ * migration, not a path expected to fire against real customers.
+ */
+type AccountForEarning =
+  | { status: "ok"; account: LoyaltyAccountData }
+  | { status: "inconsistent-legacy-account-state" };
+
+function resolveAccountForEarning(
+  accountSnap: FirebaseFirestore.DocumentSnapshot,
+  organizationId: string,
+  customerId: string,
+  now: Timestamp,
+): AccountForEarning {
+  if (!accountSnap.exists) {
+    return {
+      status: "ok",
+      account: {
+        organizationId,
+        customerId,
+        spendableBalance: 0,
+        boncukDebt: 0,
+        orderEligibleNetSpendMinorUnits: 0,
+        earningRemainderMinorUnits: 0,
+        lifetimeEarned: 0,
+        lifetimeRedeemed: 0,
+        createdAt: now,
+        updatedAt: now,
+        revision: 0,
+      },
+    };
+  }
+
+  const raw = accountSnap.data()!;
+  const hasAggregate = typeof raw.orderEligibleNetSpendMinorUnits === "number";
+  const hasDebt = typeof raw.boncukDebt === "number";
+  if (hasAggregate && hasDebt) {
+    return { status: "ok", account: raw as LoyaltyAccountData };
+  }
+
+  // Legacy (pre-P2B) account missing one or both new fields. Safe to
+  // backfill to zero ONLY if every other field already reads as an
+  // untouched, never-mutated zero account.
+  const looksUntouched =
+    raw.spendableBalance === 0 &&
+    raw.earningRemainderMinorUnits === 0 &&
+    raw.lifetimeEarned === 0 &&
+    raw.lifetimeRedeemed === 0;
+  if (!looksUntouched) {
+    return { status: "inconsistent-legacy-account-state" };
+  }
+  return {
+    status: "ok",
+    account: {
+      ...(raw as LoyaltyAccountData),
+      orderEligibleNetSpendMinorUnits: raw.orderEligibleNetSpendMinorUnits ?? 0,
+      boncukDebt: raw.boncukDebt ?? 0,
+    },
+  };
 }
 
 /**
@@ -273,10 +343,9 @@ export async function processOrderCompletionEventForLoyaltyEarning(
     if (!hasServerPricingAuthority(orderData)) {
       // Security fix (2026-08-21) — an eligible channel is necessary but
       // never sufficient. Either a client-authored order that happens to
-      // carry an eligible-looking channel (the exact attack this fix
-      // closes), or a legitimate legacy order that predates this field —
-      // either way, a deterministic, permanent no-earn outcome, not a
-      // transient failure to retry. No ledger entry, no account mutation.
+      // carry an eligible-looking channel, or a legitimate legacy order
+      // that predates this field — either way, a deterministic, permanent
+      // no-earn outcome, not a transient failure to retry.
       logger.warn(
         `[loyaltyOrderEarning] order ${orderId} (channel "${channel}") is on an eligible channel but has no valid server pricing-authority marker — treating as untrusted pricing provenance, never earning.`,
       );
@@ -296,36 +365,50 @@ export async function processOrderCompletionEventForLoyaltyEarning(
     }
 
     const accountSnap = await tx.get(accountRef);
-    const existingAccount: LoyaltyAccountData = accountSnap.exists
-      ? (accountSnap.data() as LoyaltyAccountData)
-      : {
-          organizationId,
-          customerId,
-          spendableBalance: 0,
-          earningRemainderMinorUnits: 0,
-          lifetimeEarned: 0,
-          lifetimeRedeemed: 0,
-          createdAt: now,
-          updatedAt: now,
-          revision: 0,
-        };
+    const resolvedAccount = resolveAccountForEarning(accountSnap, organizationId, customerId, now);
+    if (resolvedAccount.status === "inconsistent-legacy-account-state") {
+      logger.error(
+        `[loyaltyOrderEarning] account ${organizationId}_${customerId} has non-zero legacy loyalty state but is missing the P2B orderEligibleNetSpendMinorUnits/boncukDebt fields — failing closed rather than guessing at a reconstruction.`,
+      );
+      return { processed: false, reason: "inconsistent-legacy-account-state" };
+    }
+    const existingAccount = resolvedAccount.account;
 
-    const { boncukEarned, remainderAfterMinorUnits } = calculateBoncukEarning({
-      previousRemainderMinorUnits: existingAccount.earningRemainderMinorUnits,
+    const orderEligibleNetSpendBeforeMinorUnits = existingAccount.orderEligibleNetSpendMinorUnits;
+    const debtBeforeBoncuk = existingAccount.boncukDebt;
+
+    const calc = calculateOrderEarning({
+      previousAggregateMinorUnits: orderEligibleNetSpendBeforeMinorUnits,
       eligibleNetSpendMinorUnits,
+    });
+    const { debtPaidBoncuk, spendableCreditBoncuk, newDebtBoncuk } = applyDebtFirst({
+      grossBoncukEarned: calc.grossBoncukEarned,
+      boncukDebt: debtBeforeBoncuk,
     });
 
     const ledgerEntry: LoyaltyLedgerEntry = {
       organizationId,
       customerId,
       entryType: "orderEarn",
-      deltaBoncuk: boncukEarned,
+      entitlementDeltaBoncuk: calc.grossBoncukEarned,
+      spendableDeltaBoncuk: spendableCreditBoncuk,
+      // `0 - x` rather than unary `-x` — avoids IEEE-754 negative zero
+      // (`-0`) when debtPaidBoncuk is 0; `assert.strictEqual`/Firestore
+      // both distinguish -0 from 0, and a signed ledger field should never
+      // carry that distinction.
+      debtDeltaBoncuk: 0 - debtPaidBoncuk,
       sourceId: orderId,
       orderId,
       amountBasisMinorUnits: eligibleNetSpendMinorUnits,
-      remainderBeforeMinorUnits: existingAccount.earningRemainderMinorUnits,
-      remainderAfterMinorUnits,
+      orderEligibleNetSpendBeforeMinorUnits,
+      orderEligibleNetSpendAfterMinorUnits: calc.newAggregateMinorUnits,
+      orderEntitlementBeforeBoncuk: calc.oldEntitlementBoncuk,
+      orderEntitlementAfterBoncuk: calc.newEntitlementBoncuk,
+      remainderBeforeMinorUnits: orderEligibleNetSpendBeforeMinorUnits % BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK,
+      remainderAfterMinorUnits: calc.newRemainderMinorUnits,
       earningRateMinorUnitsPerBoncuk: BONCUK_EARNING_RATE_MINOR_UNITS_PER_BONCUK,
+      debtBeforeBoncuk,
+      debtAfterBoncuk: newDebtBoncuk,
       redemptionRateMinorUnitsPerBoncuk: null,
       idempotencyKey: orderId,
       reversalOf: null,
@@ -341,9 +424,11 @@ export async function processOrderCompletionEventForLoyaltyEarning(
     tx.set(accountRef, {
       organizationId: existingAccount.organizationId,
       customerId: existingAccount.customerId,
-      spendableBalance: existingAccount.spendableBalance + boncukEarned,
-      earningRemainderMinorUnits: remainderAfterMinorUnits,
-      lifetimeEarned: existingAccount.lifetimeEarned + boncukEarned,
+      spendableBalance: existingAccount.spendableBalance + spendableCreditBoncuk,
+      boncukDebt: newDebtBoncuk,
+      orderEligibleNetSpendMinorUnits: calc.newAggregateMinorUnits,
+      earningRemainderMinorUnits: calc.newRemainderMinorUnits,
+      lifetimeEarned: existingAccount.lifetimeEarned + calc.grossBoncukEarned,
       lifetimeRedeemed: existingAccount.lifetimeRedeemed,
       createdAt: existingAccount.createdAt,
       updatedAt: now,
@@ -352,7 +437,7 @@ export async function processOrderCompletionEventForLoyaltyEarning(
 
     tx.set(eventRef, { rewardsEvaluated: true }, { merge: true });
 
-    return { processed: true, reason: "earned", boncukEarned };
+    return { processed: true, reason: "earned", boncukEarned: calc.grossBoncukEarned };
   });
 }
 

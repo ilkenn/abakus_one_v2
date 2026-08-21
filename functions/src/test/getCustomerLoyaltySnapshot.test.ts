@@ -4,10 +4,10 @@ import * as admin from "firebase-admin";
 
 /**
  * Emulator-backed tests for `getCustomerLoyaltySnapshot` — Boncuk Loyalty
- * Program P1 (2026-08-20). Mirrors `completeCustomerProfile.test.ts`'s
- * exact pattern (raw HTTP against the callable-functions wire protocol,
- * real Firestore fixtures via the Admin SDK, real phone-auth via the Auth
- * emulator).
+ * Program P1 (2026-08-20), extended P2B-B (2026-08-22) for `boncukDebt`.
+ * Mirrors `completeCustomerProfile.test.ts`'s exact pattern (raw HTTP
+ * against the callable-functions wire protocol, real Firestore fixtures via
+ * the Admin SDK, real phone-auth via the Auth emulator).
  *
  * **Honest, disclosed scope limitation**, identical to
  * `completeCustomerProfile.test.ts`'s own: a genuinely different
@@ -134,6 +134,7 @@ test("a real phone customer with membership provisions a zero account", async ()
   assert.strictEqual(httpStatus, 200);
   assert.deepStrictEqual(body.result, {
     spendableBalance: 0,
+    boncukDebt: 0,
     earningRemainderMinorUnits: 0,
     lifetimeEarned: 0,
     lifetimeRedeemed: 0,
@@ -143,6 +144,8 @@ test("a real phone customer with membership provisions a zero account", async ()
   assert.strictEqual(data?.organizationId, SINGLE_TENANT_ORGANIZATION_ID);
   assert.strictEqual(data?.customerId, uid);
   assert.strictEqual(data?.spendableBalance, 0);
+  assert.strictEqual(data?.boncukDebt, 0);
+  assert.strictEqual(data?.orderEligibleNetSpendMinorUnits, 0);
   assert.strictEqual(data?.earningRemainderMinorUnits, 0);
   assert.strictEqual(data?.lifetimeEarned, 0);
   assert.strictEqual(data?.lifetimeRedeemed, 0);
@@ -204,7 +207,7 @@ test("repeated provisioning calls are idempotent — same values, no duplicate d
   assert.strictEqual(data?.revision, 1);
 });
 
-test("an existing non-zero account's balance/remainder/lifetime counters are NEVER reset by a snapshot call", async () => {
+test("an existing non-zero account's balance/debt/remainder/lifetime counters are NEVER reset by a snapshot call", async () => {
   const { idToken, uid } = await createRealPhoneUser();
   await seedTenantMembership(uid);
   const accountRef = db().collection("loyaltyAccounts").doc(`${SINGLE_TENANT_ORGANIZATION_ID}_${uid}`);
@@ -213,6 +216,8 @@ test("an existing non-zero account's balance/remainder/lifetime counters are NEV
     organizationId: SINGLE_TENANT_ORGANIZATION_ID,
     customerId: uid,
     spendableBalance: 42,
+    boncukDebt: 9,
+    orderEligibleNetSpendMinorUnits: 217300,
     earningRemainderMinorUnits: 3300,
     lifetimeEarned: 100,
     lifetimeRedeemed: 58,
@@ -225,6 +230,7 @@ test("an existing non-zero account's balance/remainder/lifetime counters are NEV
   assert.strictEqual(httpStatus, 200);
   assert.deepStrictEqual(body.result, {
     spendableBalance: 42,
+    boncukDebt: 9,
     earningRemainderMinorUnits: 3300,
     lifetimeEarned: 100,
     lifetimeRedeemed: 58,
@@ -232,8 +238,41 @@ test("an existing non-zero account's balance/remainder/lifetime counters are NEV
 
   const data = await accountDoc(uid);
   assert.strictEqual(data?.spendableBalance, 42);
+  assert.strictEqual(data?.boncukDebt, 9);
+  assert.strictEqual(data?.orderEligibleNetSpendMinorUnits, 217300, "internal aggregate must never be touched by a read");
   assert.strictEqual(data?.earningRemainderMinorUnits, 3300);
   assert.strictEqual(data?.lifetimeEarned, 100);
   assert.strictEqual(data?.lifetimeRedeemed, 58);
   assert.strictEqual(data?.revision, 7, "a pure read must never bump revision");
+});
+
+// =========================================================================
+// D. Legacy (pre-P2B) account read tolerance
+// =========================================================================
+
+test("a legacy account missing boncukDebt reads back as 0 in the response, without writing anything back to the stored document", async () => {
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedTenantMembership(uid);
+  const accountRef = db().collection("loyaltyAccounts").doc(`${SINGLE_TENANT_ORGANIZATION_ID}_${uid}`);
+  const now = admin.firestore.Timestamp.now();
+  // Deliberately the OLD (pre-P2B) shape — no boncukDebt field at all.
+  await accountRef.set({
+    organizationId: SINGLE_TENANT_ORGANIZATION_ID,
+    customerId: uid,
+    spendableBalance: 5,
+    earningRemainderMinorUnits: 500,
+    lifetimeEarned: 5,
+    lifetimeRedeemed: 0,
+    createdAt: now,
+    updatedAt: now,
+    revision: 1,
+  });
+
+  const { httpStatus, body } = await callCallable(SNAPSHOT_URL, {}, idToken);
+  assert.strictEqual(httpStatus, 200);
+  assert.strictEqual(body.result?.boncukDebt, 0, "a missing boncukDebt reads as 0 for display purposes only");
+  assert.strictEqual(body.result?.spendableBalance, 5);
+
+  const data = await accountDoc(uid);
+  assert.strictEqual(data && "boncukDebt" in data, false, "a pure read must never backfill/persist the missing field");
 });

@@ -5,7 +5,8 @@ import { SINGLE_TENANT_ORGANIZATION_ID, TENANT_CUSTOMERS_COLLECTION } from "./co
 import { LOYALTY_ACCOUNTS_COLLECTION } from "./loyaltyLedger";
 
 /**
- * `getCustomerLoyaltySnapshot` — Boncuk Loyalty Program P1 (2026-08-20).
+ * `getCustomerLoyaltySnapshot` — Boncuk Loyalty Program P1 (2026-08-20),
+ * extended P2B-B (2026-08-22).
  *
  * The one minimal, trusted account-provisioning/read path for the loyalty
  * ledger foundation. Mirrors `getCustomerProfileCompletionState.ts`'s own
@@ -58,15 +59,39 @@ import { LOYALTY_ACCOUNTS_COLLECTION } from "./loyaltyLedger";
  * created with zero `loyaltyLedgerEntries` documents — per the locked
  * instruction, provisioning itself is not a loyalty *event*.
  *
+ * **P2B-B (2026-08-22) — `boncukDebt`/`orderEligibleNetSpendMinorUnits`
+ * added.** A new zero account now provisions both at `0`. The RESPONSE
+ * gains `boncukDebt` (architectural preference: a customer-facing UX will
+ * eventually need to explain why new earning is temporarily paying down
+ * debt rather than becoming spendable) but deliberately NOT
+ * `orderEligibleNetSpendMinorUnits` — that field is internal accounting
+ * provenance (the raw eligible-spend aggregate), not something any current
+ * or foreseeable UI needs to render directly.
+ *
+ * **Legacy-account read tolerance, distinct from the earning transaction's
+ * strict fail-closed behavior.** This callable performs no financial
+ * computation and no write for an existing account — a pure read. If an
+ * existing (pre-P2B) account document is missing `boncukDebt`
+ * (`undefined`), the response substitutes `0` for display purposes only;
+ * the stored document itself is never backfilled here. This is
+ * deliberately more lenient than `loyaltyOrderEarning.ts`'s own legacy-
+ * account handling, which performs real financial math and therefore
+ * fails closed on an inconsistent legacy account rather than guessing —
+ * see that file's own doc comment for why a lenient default is safe here
+ * specifically (nothing is computed or persisted from this value).
+ *
  * **Returns only the customer's own narrow snapshot** — never
- * `organizationId`/`customerId`/`revision`/timestamps, none of which any
- * client needs yet (no Flutter UI consumes this callable this phase).
+ * `organizationId`/`customerId`/`revision`/timestamps/
+ * `orderEligibleNetSpendMinorUnits`, none of which any client needs yet (no
+ * Flutter UI consumes this callable this phase).
  */
 
 export interface LoyaltyAccountData {
   organizationId: string;
   customerId: string;
   spendableBalance: number;
+  boncukDebt: number;
+  orderEligibleNetSpendMinorUnits: number;
   earningRemainderMinorUnits: number;
   lifetimeEarned: number;
   lifetimeRedeemed: number;
@@ -77,6 +102,7 @@ export interface LoyaltyAccountData {
 
 interface GetCustomerLoyaltySnapshotResult {
   spendableBalance: number;
+  boncukDebt: number;
   earningRemainderMinorUnits: number;
   lifetimeEarned: number;
   lifetimeRedeemed: number;
@@ -129,6 +155,8 @@ export const getCustomerLoyaltySnapshot = onCall(
             organizationId,
             customerId: uid,
             spendableBalance: 0,
+            boncukDebt: 0,
+            orderEligibleNetSpendMinorUnits: 0,
             earningRemainderMinorUnits: 0,
             lifetimeEarned: 0,
             lifetimeRedeemed: 0,
@@ -142,6 +170,9 @@ export const getCustomerLoyaltySnapshot = onCall(
 
     return {
       spendableBalance: account.spendableBalance,
+      // Legacy-account read tolerance (see this file's own doc comment) —
+      // never thrown here, never persisted, display-only default.
+      boncukDebt: account.boncukDebt ?? 0,
       earningRemainderMinorUnits: account.earningRemainderMinorUnits,
       lifetimeEarned: account.lifetimeEarned,
       lifetimeRedeemed: account.lifetimeRedeemed,

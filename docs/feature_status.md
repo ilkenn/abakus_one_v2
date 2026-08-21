@@ -3715,3 +3715,111 @@ See `docs/decisions.md`'s P2A entry for the full report, including the audit fin
 transaction design, and gate counts for the original implementation (`flutter test`
 3236/12-skipped/0-failed; Functions 863/863, up from 835; Firestore Rules 337/337) and for the
 2026-08-21 security fix (see that same entry's security-fix gate paragraph for the post-fix counts).
+
+**Boncuk Loyalty Program P2B-A (2026-08-22) — Refund/Reversal Mathematics + Boncuk Debt Architecture,
+SUPERSEDED IN PART, see the P2B-A.1 entry immediately below (design only — no code, no schema
+migration, no gates to run).** Locks the mathematics P2b's
+eventual implementation must follow: a new `boncukDebt` account field (`BR-LOYALTY-014`) so
+`spendableBalance` can never go negative — any clawback exceeding current spendable balance becomes
+debt, repaid by future earning before any of it becomes spendable again — and a new
+`orderEligibleNetSpendMinorUnits` aggregate (`BR-LOYALTY-015`) replacing reliance on the remainder
+alone, since the persisted earning remainder mixes across orders and a reversal can never simply
+subtract the refunded order's own `deltaBoncuk` (proved with a worked example: a 549 TL order refunded
+after a 151 TL order followed it requires an 11-Boncuk clawback, not the 10 it itself earned). Proves
+mathematically why no downstream `orderEarn` ledger entry ever needs mutation or rewrite —
+`floor(x / 5000)` depends only on the current aggregate, not on the history of how it accumulated — so
+a reversal is always one new, self-contained `orderEarnReversal` entry, never a cascade of corrections.
+A same-day re-audit of the actual repository (not prior documentation) confirms: still zero shipped
+order cancellation/refund path anywhere (server or client-persisted), still zero real payment-gateway
+integration (every adapter's `refundPayment` is an unconfigured stub), still zero authoritative
+partial/item-level refund amount tracking — partial refund execution is explicitly marked
+BLOCKED/OPEN, though the proposed formula/schema already supports it without redesign once an
+authoritative refunded-amount source exists. Also locks: `lifetimeEarned`/`lifetimeRedeemed` remain
+historical monotonic metrics, never rewritten by reversal; Boncuk-earned-reversal (`orderEarnReversal`)
+and Boncuk-spent-restoration (`boncukRedemptionRestore`, unbuilt — checkout redemption doesn't exist
+yet) are locked as permanently separate ledger events, never conflated; idempotency reuses the existing
+`deriveLoyaltyLedgerEntryId` helper unchanged, keyed by order id for a full reversal. **Corrected in
+place, not silently**: `docs/decisions.md`'s P1 entry previously claimed a reversal's `deltaBoncuk` is
+computed "from the original entry's own stored delta" — this is exactly the naive model this entry's
+own audit found mathematically wrong and replaced; the paragraph now carries an explicit 2026-08-22
+correction rather than being rewritten silently. **Explicitly not implemented, not claimed complete**:
+no reversal Cloud Function, no `firestore.rules`/`firestore.indexes.json` change, no Flutter change, no
+new gate run (nothing executable changed). Overall loyalty production readiness is **not** claimed —
+see `docs/decisions.md`'s P2B-A entry for the full formula, all five required worked examples, the
+proposed `loyaltyAccounts`/`orderEarnReversal` schemas, and the exact five implementation blockers.
+
+**Boncuk Loyalty Program P2B-A.1 (2026-08-22) — Ledger Accounting Semantics Correction, CLOSED (design
+only — no code, no schema migration, no gates to run; P2B-A is still not closed until an actual
+reversal implementation exists).** Corrects two gaps a review found in P2B-A before implementation
+begins. **(1)** P2A's own already-committed earning transaction
+(`functions/src/loyaltyOrderEarning.ts`, commit `11be1c1`, not production-live) does not yet persist
+`orderEligibleNetSpendMinorUnits` at all — only `earningRemainderMinorUnits` — so it must change to
+maintain the aggregate before P2B's reversal formula has anything real to read; proven mathematically
+equivalent to the existing remainder-only math, so `grossBoncukEarned` for every existing worked
+example is unaffected. **(2)** A single ambiguous `deltaBoncuk` cannot represent an event (a reversal,
+or an earn that partially pays down debt) that changes gross entitlement, spendable balance, and debt
+by three different amounts at once — replaced entirely by three always-populated, never-null signed
+fields, locked as `BR-LOYALTY-016`: `entitlementDeltaBoncuk`, `spendableDeltaBoncuk`, `debtDeltaBoncuk`,
+with the invariant `entitlementDelta == spendableDelta - debtDelta` for earning/reversal-direction
+entries (deliberately not holding for redemption-direction entries, where `entitlementDelta` is always
+`0` — spending already-earned Boncuk never changes how much was earned). Evaluated against all 11
+current/future entry types; `orderEarnReversal`'s previously-proposed dedicated `metadata` variant is
+superseded by shared, nullable, top-level before/after fields on `LoyaltyLedgerEntry` itself
+(aggregate/entitlement/debt, each before and after) — simpler than what it replaces, not more complex.
+Confirms `validOrderEarnedBoncuk` should NOT be a stored account field (pure redundant state, always
+cheaply derivable as `floor(orderEligibleNetSpendMinorUnits / 5000)`). For partial-refund cumulative
+safety, recommends (but does not build) a dedicated per-order server-maintained projection — full
+refund needs no such state at all, since the existing order-id-keyed idempotency check already bounds
+it to at most one reversal per order. Provides a full six-step worked sequence reconciling all three
+delta sums (entitlement, spendable, debt) independently against the correct final account state,
+including an implied intermediate redemption event the task's own numbers required to make the "spendable
+balance = 4 before refund" starting condition consistent. **Corrected in place, not silently**: the
+P2B-A entry's own `orderEarnReversal`-schema section is marked superseded with an explicit
+2026-08-22 marker and its original text preserved (collapsed, not deleted) for history — never silently
+rewritten. Documents the exact production-code changes P2B will eventually require
+(`loyaltyLedger.ts`/`getCustomerLoyaltySnapshot.ts`/`loyaltyOrderEarning.ts` contract changes, plus a
+new not-yet-buildable reversal-writer module) without implementing any of them. All five P2B-A blockers
+remain unchanged and unresolved. See `docs/decisions.md`'s P2B-A.1 entry for the complete correction,
+every revised schema, and the full worked-sequence reconciliation table.
+
+**Boncuk Loyalty Program P2B-B (2026-08-22) — Accounting Model Implementation + Debt-Aware Order
+Earning, CLOSED (accounting foundation implemented; real refund execution NOT implemented — see
+below).** Implements the P2B-A/P2B-A.1 design for real. `deltaBoncuk` is removed from
+`LoyaltyLedgerEntry` entirely, replaced by three always-populated signed fields —
+`entitlementDeltaBoncuk`/`spendableDeltaBoncuk`/`debtDeltaBoncuk` (`BR-LOYALTY-016`) — plus explicit
+order-accounting provenance (`orderEligibleNetSpendBefore/AfterMinorUnits`,
+`orderEntitlementBefore/AfterBoncuk`, `debtBefore/AfterBoncuk`). `loyaltyAccounts` gains `boncukDebt`
+and `orderEligibleNetSpendMinorUnits` (`BR-LOYALTY-014`/`BR-LOYALTY-015`), both real, transactionally
+maintained fields — not merely designed. `functions/src/loyaltyOrderEarning.ts`'s earning transaction
+is rewritten to be aggregate-based (`calculateOrderEarning`, proven mathematically equivalent to P2A's
+original remainder-only formula — every P2A worked example reproduces identically) and debt-first
+(`applyDebtFirst` — future earning pays down existing debt before any of it becomes spendable). A
+genuine bug was caught and fixed during implementation: naive `-debtPaidBoncuk` (unary negation)
+produced IEEE-754 negative zero (`-0`) when debt-paid was `0`, caught by the emulator test suite
+(`assert.strictEqual` distinguishes `-0` from `0`) and fixed to `0 - debtPaidBoncuk`. Legacy pre-P2B
+account compatibility is handled exactly as the task specified: an account missing the new fields is
+safely normalized to zero only if every other field already reads as untouched, otherwise the earning
+transaction fails closed (`inconsistent-legacy-account-state`, left retryable) rather than guessing a
+reconstruction — `getCustomerLoyaltySnapshot`'s own pure-read path is deliberately more lenient (a
+missing `boncukDebt` reads as `0` for display only, never persisted), a documented, intentional
+asymmetry. `validOrderEarnedBoncuk` was confirmed NOT to be a stored field (always derived). A new
+`functions/src/loyaltyReversalMath.ts` implements and tests the full-refund reversal formula as a
+**pure, side-effect-free function — not exported from `functions/src/index.ts`, not a callable or
+trigger** — reproducing the locked worked example exactly (`70000 − 54900 → 15100`, entitlement
+`14 → 3`, clawback `11`, spendable `4 → 0`, debt `0 → 7`, remainder `100`) plus a zero-clawback-but-
+remainder-moves case, existing-debt-is-additive, refund-to-exactly-zero, and rejection of any refund
+exceeding the recorded aggregate or any negative/non-integer input. **Explicitly NOT implemented, per
+this phase's own locked scope**: no refund callable, no refund Firestore trigger, no order refund
+workflow, no payment-gateway refund execution, no cancellation/refund against real orders, no partial
+refunds, no checkout Boncuk redemption, no catalog/wheel/tasks, no customer Loyalty UI, no Admin/POS UI
+— no fake refund authority source was invented to wire this early. `firestore.rules` untouched (every
+write is Admin-SDK-internal to the existing earning transaction); the full Rules suite was still rerun
+per instruction and stayed green. See `docs/decisions.md`'s P2B-B entry for the full field-by-field
+ledger example, the complete legacy-compatibility strategy, and exact gate totals (`flutter test`
+3236/12-skipped/0-failed unchanged; Functions 902/902, up from 875 — 27 new tests across aggregate
+algorithm, debt-first, legacy-account, and the new pure reversal-math suite; Firestore Rules 345/345
+unchanged; Storage Rules not rerun — nothing storage-related touched). **P2B ACCOUNTING FOUNDATION =
+implemented. REAL REFUND EXECUTION = not implemented. LOYALTY PRODUCTION READY = NO** — a customer
+cannot yet be refunded Boncuk from a real order because no real order ever reaches a cancellation/
+refund state in the first place (the same pre-existing blocker P2B-A/P2B-A.1 already recorded, not
+resolved by this phase).

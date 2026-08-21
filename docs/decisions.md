@@ -11256,18 +11256,26 @@ invention.
 
 **Reversal architecture**: every reversal (`orderEarnReversal`, `boncukRedemptionRestore`,
 `catalogRedemptionRestore`, `taskReversal`) is its own new ledger entry, never an edit to the original
-— `reversalOf` points at the original entry's id. A reversal's `deltaBoncuk` is computed **from the
-original entry's own stored delta**, never recomputed from current rates, which is exactly why each
-earn/redemption entry snapshots the rate that produced it (see field list below) — a rate change
-between the original event and a much-later reversal can never silently change what gets reversed.
-`deltaBoncuk` is an arbitrary signed integer, not hardcoded to always equal the original in full, so a
-future partial-refund-proportional-reversal rule (currently unresolved) fits this schema with zero
-redesign. The actual *trigger* for order-linked reversal — a Firestore trigger on an order transitioning
-to `cancelled`/`refunded` — cannot be wired until order cancellation/refund itself becomes
-server-executable (confirmed by the prior audit: `lib/features/orders/domain/refunds/`'s
-`RefundIntent`/`RefundCalculator`/`OrderCancellationInfo` are real, tested Dart **domain** objects with
-zero Cloud Function counterpart today) — this is a hard P2b prerequisite, not solved by this schema
-alone.
+— `reversalOf` points at the original entry's id. **CORRECTED (2026-08-22, P2B-A design task)**: this
+paragraph originally claimed a reversal's `deltaBoncuk` is computed "from the original entry's own
+stored delta" — i.e., simply subtracting what that one order originally earned. **This is
+mathematically wrong for `orderEarnReversal` specifically**, and P2B-A's own audit caught it before any
+code was ever written against it (P2A never implemented reversal — no production impact): because the
+50 TL-per-Boncuk earning remainder persists and mixes across orders (BR-LOYALTY-001), the Boncuk a
+specific order "originally earned" is not, in general, the Boncuk that order is still responsible for
+once later orders have consumed/extended the same remainder — see `docs/decisions.md`'s P2B-A entry
+for the full worked counter-example (a 549 TL order refunded after a 151 TL order followed it requires
+clawing back 11 Boncuk, not the 10 the 549 TL order itself originally earned) and the corrected
+aggregate-eligible-spend reversal formula. The original entry's stored **rate** snapshot (not its
+delta) remains correctly reused, unchanged from this paragraph's original point. The still-valid
+takeaways from this paragraph: reversal is always a new entry, never an edit; `reversalOf` links back
+to the original; a future partial-refund-proportional model still fits without ledger redesign — see
+the P2B-A entry for exactly how. The actual *trigger* for order-linked reversal — a Firestore trigger
+on an order transitioning to `cancelled`/`refunded` — still cannot be wired until order cancellation/
+refund itself becomes server-executable; P2B-A's own re-audit (2026-08-22) reconfirms this is still
+true (`lib/features/orders/domain/refunds/`'s `RefundIntent`/`RefundCalculator`/`OrderCancellationInfo`
+remain real, tested Dart **domain** objects with zero Cloud Function counterpart) — this remains a hard
+P2b prerequisite, not solved by the schema alone.
 
 **Tenant isolation**: both collections carry `organizationId` as a required top-level field, never
 inferred. Composite-id scoping means a customer active in more than one organization gets one account/
@@ -11658,3 +11666,756 @@ not-yet-built workflow ships. Building it was explicitly out of P2A's scope and 
 **P2b (cancellation/refund reversal) remains required before overall loyalty production closure is
 claimed** — see `BR-LOYALTY-012` for why it is a genuinely harder problem than "subtract the original
 points," given the earning remainder persists across orders.
+
+## Boncuk Loyalty Program P2B-A — Refund/Reversal Mathematics + Boncuk Debt Architecture (2026-08-22)
+
+**Status**: Accepted — **design only, nothing implemented**. No reversal Cloud Function, no schema
+migration, no docs claim of P2b completion or loyalty production-readiness. This entry locks the
+mathematics and schema P2b's eventual implementation must follow, and re-audits current cancellation/
+refund reality directly against source (not against prior documentation) before designing anything.
+
+### Re-audit: cancellation/refund reality, verified against current source (2026-08-22)
+
+No shipped code performs an order cancellation or refund anywhere. Specifically, re-confirmed by direct
+inspection: **no Cloud Function transitions `orders/{orderId}.status` to `cancelled`, `rejected`, or
+`refunded`** — `functions/src/orderStatus.ts`'s `ALLOWED_TRANSITIONS` table (the state-machine
+definition, including `completed -> refunded`) is declared but invoked by no order-writing function.
+The only server-side `cancelled`/`rejected` transitions in the codebase are for **reservations**
+(`cancelReservation.ts`, `respondToReservation.ts`, `reservationSweep.ts`, `reservationPreorder.ts`'s
+own preorder-cancel-on-reservation-reject path) — none touch a canonical `orders/{orderId}` document.
+Client-side, `OrdersNotifier.cancelOrder` (`lib/features/orders/presentation/providers/orders_provider.dart`)
+only mutates in-memory Riverpod state — it never writes Firestore.
+
+`RefundIntent`/`RefundCalculator`/`OrderCancellationInfo` (`lib/features/orders/domain/refunds/`) remain
+real, tested, **pure Dart domain objects** with zero Cloud Function counterpart — confirmed unchanged
+since P1's own audit. `PaymentVoid`/`PaymentCorrection`/`VoidPayment` (`lib/features/pos/`) are real,
+authorized POS application code, but for any provider-routed split it resolves to
+`PaymentService.executeRefund` → an adapter, and **every payment adapter remains an unconfigured stub**
+(e.g. `StripePaymentAdapter.refundPayment` unconditionally returns `PaymentStatus.notConfigured`) — no
+real payment-gateway integration exists. No partial/item-level refund execution code exists anywhere
+(`RefundType.partial` is a bare enum value with zero consuming use case). No field on any order-document
+builder (`submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`/`reservationPreorder.ts`) preserves an
+authoritative refunded/cancelled amount — the Dart-only `cancellationReason`/`cancelledAt` fields on
+`OrderModel` are client-display-only, never written to or read from Firestore. No field on any order
+document represents a Boncuk-paid vs. cash-paid split, or any campaign/benefit selection — `pricing`'s
+shape is unchanged from P2A's own audit (`discount` hardcoded to `0` for all three earning-eligible
+channels), and `paymentMethodSnapshot` (delivery only) records which payment method was chosen, never
+an amount breakdown. **Conclusion: this entry's design work is entirely prerequisite-laying — the
+mathematics and schema below cannot be wired to anything real until a canonical, server-executable
+order cancellation/refund workflow exists, which remains unbuilt and out of this entry's scope.**
+
+### The core problem: why "subtract the original order's Boncuk" is wrong
+
+BR-LOYALTY-001's persistent earning remainder means Boncuk earned by order B may include TL that
+"belongs to" order A's leftover remainder. Reversing A by subtracting only A's own `deltaBoncuk` either
+under-claws-back (leaving Boncuk the customer was never entitled to, once A's contribution is removed)
+or is simply undefined once B has already consumed part of what A contributed. See BR-LOYALTY-015's
+locked worked example (549 TL + 151 TL = 14 Boncuk total; refunding the 549 TL order requires clawing
+back 11, not the 10 it originally earned) — reproduced in full below with every required case.
+
+### Recommended architecture: aggregate eligible-spend model (not per-order rewind)
+
+**`orderEligibleNetSpendMinorUnits`** — a new `loyaltyAccounts` field: the cumulative, currently-valid
+(non-reversed) eligible net spend across every order-earning event for that customer, transactionally
+co-written alongside every `orderEarn`/`orderEarnReversal` ledger entry, exactly like every other
+account field today (the established "transactionally-coupled projection" discipline from P0-A/P1 is
+unchanged, just extended to one more field). `entitlement = floor(aggregate / 5000)`;
+`earningRemainderMinorUnits = aggregate % 5000` is kept as an always-in-sync derived cache of the same
+aggregate, not maintained as an independent value that could drift from it.
+
+**Why this is mathematically equivalent to P2A's existing incremental math (forward/earning
+direction).** `floor((a+b)/n) = floor(a/n) + floor((a mod n) + b) / n)` is a standard integer identity.
+Since `earningRemainderMinorUnits` before an order always equals `aggregate mod 5000` by construction,
+`calculateBoncukEarning`'s existing `boncukEarned = floor((remainder + eligible) / 5000)` already
+equals `entitlement_new - entitlement_old` exactly — **P2A's existing earning transaction requires zero
+mathematical change**; it can keep computing incrementally from the remainder. What changes is only
+that the aggregate itself must now also be stored (not just its remainder), because a *reversal* needs
+the actual total to recompute a new floor after subtracting a specific order's contribution — the
+remainder alone has already discarded the "how many whole multiples of 5000" information a reversal
+needs.
+
+**Why no downstream `orderEarn` entry ever needs to be rewritten (the P2A/P0-A "no historical ledger
+mutation" requirement, now proven, not just asserted).** `floor(x / k)` is a pure function of the
+current value of `x` — it does not depend on the sequence of additions/subtractions that produced `x`.
+Removing order A's contribution from the aggregate and recomputing the floor on the new total already
+gives the exact, correct "as if A had never existed" entitlement, regardless of what orders B, C, ...
+contributed in between. Every other order's own `orderEarn` entry remains an accurate historical record
+of "what the aggregate was, and what this order contributed, at the moment it completed" — that
+statement stays true forever; it is not a claim about today's final state, so it never needs correction.
+This is why a reversal is a wholly new, self-contained ledger entry that adjusts the aggregate once,
+rather than a cascade of corrections to every order that came after.
+
+### Final reversal formula (full and partial — identical formula, different input source)
+
+```
+oldAggregate      = account.orderEligibleNetSpendMinorUnits        (before this reversal)
+oldEntitlement    = floor(oldAggregate / 5000)
+
+newAggregate      = oldAggregate - refundedEligibleMinorUnits
+newEntitlement    = floor(newAggregate / 5000)
+
+requiredClawback  = oldEntitlement - newEntitlement                 (always >= 0)
+
+spendableRemoved  = min(requiredClawback, account.spendableBalance)
+newSpendable      = account.spendableBalance - spendableRemoved
+debtIncrease      = requiredClawback - spendableRemoved
+newDebt           = account.boncukDebt + debtIncrease
+```
+
+For a **full** reversal, `refundedEligibleMinorUnits` is read verbatim from the original `orderEarn`
+entry's own immutable `amountBasisMinorUnits` — no new authoritative source needed; the formula is
+achievable in schema/math terms today, gated only by the missing upstream cancellation trigger (see
+Blockers). For a **partial** reversal, `refundedEligibleMinorUnits` must come from whatever authoritative
+refund-amount record a future partial-refund execution system establishes (see "Partial refund
+readiness" below) — the formula itself requires no change between the two cases.
+
+### `orderEarnReversal` ledger entry — refined P1 contract
+
+**CORRECTED (2026-08-22, P2B-A.1 review) — this section's original design is superseded, not deleted:
+see "P2B-A.1 — Ledger Accounting Semantics Correction" below for the corrected, final contract.** The
+original design below kept a single `deltaBoncuk = -spendableRemoved` field and buried entitlement/debt
+provenance inside a new `orderEarnReversal`-only `metadata` variant. A review correctly found this
+insufficient: a single signed delta cannot unambiguously represent an event that simultaneously changes
+gross entitlement, spendable balance, AND debt by three different amounts, and financially meaningful
+state transitions should never be buried in a loosely-typed `metadata` bag. The corrected contract
+promotes three first-class, always-populated accounting fields (`entitlementDeltaBoncuk`,
+`spendableDeltaBoncuk`, `debtDeltaBoncuk`) directly onto `LoyaltyLedgerEntry`, replacing `deltaBoncuk`
+entirely, and promotes the reversal-specific before/after snapshots to top-level nullable fields shared
+with `orderEarn` rather than a metadata variant. Original text, preserved for history, not deleted:
+
+<details><summary>Original P2B-A design (2026-08-20 draft, superseded above)</summary>
+
+Reuses `LoyaltyLedgerEntry`'s existing top-level fields with their existing meanings, extended by
+their natural generalization to the reversal direction:
+
+- `entryType: "orderEarnReversal"`
+- `deltaBoncuk` — **the actual spendable-balance change**, i.e. `-spendableRemoved` (negative; NOT the
+  full `requiredClawback` when part of it became debt instead) — preserves the invariant that summing
+  `deltaBoncuk` across the whole ledger reconstructs `spendableBalance`'s own history, for any entry
+  type, including this one.
+- `sourceId` — the refund/cancellation event's own canonical id (for a full reversal today: the
+  order's own id, see Idempotency below).
+- `orderId` — the original (refunded) order's id.
+- `amountBasisMinorUnits` — `refundedEligibleMinorUnits` (the eligible spend actually removed).
+- `remainderBeforeMinorUnits` / `remainderAfterMinorUnits` — `oldAggregate mod 5000` /
+  `newAggregate mod 5000`, reusing the existing fields' meaning exactly.
+- `earningRateMinorUnitsPerBoncuk` — rate snapshot at reversal time, reusing the existing field.
+- `reversalOf` — the id of the original `orderEarn` entry (the field this interface already reserves
+  for exactly this purpose).
+- **New `metadata` variant** (the closed union gains one member):
+  `{ entryType: "orderEarnReversal"; eligibleEntitlementBeforeBoncuk: number;
+  eligibleEntitlementAfterBoncuk: number; requiredClawbackBoncuk: number;
+  spendableRemovedBoncuk: number; debtBeforeBoncuk: number; debtAfterBoncuk: number }` — captures every
+  piece of provenance §4 of the task required that has no existing top-level home: entitlement
+  before/after, the clawback actually required (vs. what was actually removed from spendable), and the
+  debt state transition. `requiredClawbackBoncuk` is redundant with `entitlementBefore - After` but kept
+  explicit for audit legibility (never recomputed by a reader, always what the writer itself used).
+
+**`orderEarn`'s own contract also gains three new nullable top-level fields** (not `orderEarnReversal`-
+specific — any future earning entry type must apply the same "debt paid first" rule, per BR-LOYALTY-014,
+so these live at the top level, not buried in a metadata variant): `debtPaidBoncuk`,
+`debtBeforeBoncuk`, `debtAfterBoncuk`. Once debt exists, `orderEarn.deltaBoncuk` becomes
+`grossBoncukEarned - debtPaid` (the spendable credit only) rather than the full gross amount — `deltaBoncuk`'s
+meaning ("the actual spendable-balance change this entry caused") stays consistent across every entry
+type. Every `orderEarn` entry written before debt existed has `debtPaid = 0` trivially, so this is a
+non-breaking generalization, not a retroactive contradiction of P2A's already-written entries.
+
+</details>
+
+### Boncuk debt formula (future earning, debt-first)
+
+```
+grossBoncukEarned = newly generated Boncuk from valid eligible spend (unchanged from P2A)
+debtPaid          = min(grossBoncukEarned, account.boncukDebt)
+spendableCredit   = grossBoncukEarned - debtPaid
+newDebt           = account.boncukDebt - debtPaid
+newSpendable      = account.spendableBalance + spendableCredit
+```
+`lifetimeEarned` still increments by the full `grossBoncukEarned` (see Lifetime metrics below) even
+when some of it pays down debt — "historical gross Boncuk ever earned" is not reduced by what that
+earning was later applied to.
+
+### Lifetime metric semantics (challenged and confirmed)
+
+`lifetimeEarned` = historical **gross** Boncuk ever earned, monotonic, never decremented by a reversal
+or by debt repayment. `lifetimeRedeemed` = historical Boncuk ever spent via redemption, monotonic,
+untouched by reversal. This matches standard ledger/accounting practice (gross revenue is not reduced
+by a later refund; a separate metric would track refunds if one were ever needed) and matches the
+task's own preferred direction. Reversal and debt are accounted for entirely through
+`orderEligibleNetSpendMinorUnits`, `spendableBalance`, and `boncukDebt` — never by rewriting
+`lifetimeEarned`/`lifetimeRedeemed`. No new lifetime-reversed metric is added in this entry (not
+required for correctness); a future admin-reporting need could add one without touching this design.
+
+### Full cancellation architecture
+
+A fully cancelled/refunded completed order contributes **zero** eligible spend going forward. Its
+`refundedEligibleMinorUnits` equals its original `orderEarn` entry's own `amountBasisMinorUnits` in
+full — read verbatim, never recomputed, never requiring any new authoritative "refunded amount" field
+on the order itself. The resulting `requiredClawback` is `oldEntitlement - newEntitlement` (worked
+example: 14 → 3 = **11**), not the order's own original `deltaBoncuk` (10) — see Worked Examples.
+
+### Partial refund readiness
+
+**BLOCKED/OPEN — no authoritative partial/item-level refund amount exists anywhere in current source**
+(re-confirmed by this entry's own audit above). The proposed formula and ledger/account schema already
+support a future `refundedEligibleMinorUnits` input for a partial refund **without any redesign** — the
+formula is identical to the full-refund case, only the source of that one input value differs. Two
+concrete prerequisites a future partial-refund execution system must supply, not invented here: (1) an
+authoritative refunded-money-amount record on the order/payment side (does not exist today), from which
+`refundedEligibleMinorUnits` would be derived the same way `resolveEligibleNetSpendMinorUnits` derives
+the original earning basis; (2) a stable, canonical per-refund-event id (distinct from the order id,
+since one order could in principle have multiple partial refund events) for deterministic reversal
+ledger ids — see Idempotency.
+
+### Boncuk-spent-on-the-refunded-order restoration — a separate, un-conflated concern
+
+Checkout Boncuk redemption does not exist yet (BR-LOYALTY-004, confirmed still NOT IMPLEMENTED by this
+entry's audit — no order field records a Boncuk-paid amount). There is therefore nothing to restore
+today. The boundary is locked for when it does exist: **(A) reversal of Boncuk *earned* from the
+refunded order** is `orderEarnReversal` (this entry's design). **(B) restoration of Boncuk that had
+been *spent* to pay for that order** is a wholly separate ledger event — `boncukRedemptionRestore`,
+already present in P1's closed `LedgerEntryType` union with zero schema change needed. These are two
+independent entries, computed and applied independently, for one refunded order: an order that both
+earned some Boncuk (on its cash portion) and had Boncuk redeemed against it would, once both features
+exist, produce one `orderEarnReversal` and one `boncukRedemptionRestore` on the same refund event —
+never merged into a single number. `resolveEligibleNetSpendMinorUnits` (P2A) is the pre-established
+seam where a future Boncuk-paid exclusion would already remove the redeemed portion from
+`amountBasisMinorUnits` at earning time — meaning a correctly-implemented (A) automatically stays
+correct once (B) exists, with no additional change to the reversal formula itself.
+
+### Idempotency strategy
+
+Reuses the existing, already-proven `deriveLoyaltyLedgerEntryId({organizationId, customerId, entryType,
+sourceId})` helper unchanged — no new mechanism invented. For a **full** reversal (today's only
+achievable case once the missing cancellation trigger exists), `sourceId = orderId` directly: a full
+reversal of order X is inherently a one-time event 1:1 with X, so the order id alone is a sufficient,
+stable, deterministic identifier — `entryType: "orderEarnReversal"` alone already differentiates the id
+from that same order's original `orderEarn` entry (different hash input). The existing "check whether
+the deterministic ledger entry already exists, inside the transaction, before computing anything" idempotency
+pattern (proven by P2A's `orderEarn` writer) applies to `orderEarnReversal` unchanged: same refund
+processed twice → the second invocation finds the entry already exists and is a safe no-op — no
+duplicate clawback, no duplicate debt, no duplicate aggregate reduction. For a future **partial**
+refund, `sourceId` must instead be that specific refund event's own canonical id (never the bare order
+id, since multiple independent partial refunds against one order must never collide) — a concrete
+dependency on the not-yet-built partial-refund execution system minting such an id, flagged as a
+blocker below, not solved here.
+
+### Worked examples (all locked)
+
+**Case A — full refund after remainder-mixing.** Order A: 549 TL → 10 Boncuk, 49 TL remainder. Order B:
+151 TL, combined with the 49 TL remainder (200 TL total) → 4 Boncuk, 0 remainder. Aggregate before
+refund: 70000 minor units, entitlement 14. Order A fully refunded:
+`refundedEligibleMinorUnits` = 54900. `newAggregate` = 70000 − 54900 = 15100 → `newEntitlement` = 3,
+remainder 100 (1 TL). `requiredClawback` = 14 − 3 = **11** (not Order A's own original 10).
+
+**Case B — clawback exceeds spendable balance.** `requiredClawback` = 11, `spendableBalance` = 4.
+`spendableRemoved` = min(11, 4) = 4 → `newSpendable` = 0. `debtIncrease` = 11 − 4 = 7 → `newDebt` = 7.
+
+**Case C — debt partially repaid by a later earning event.** `boncukDebt` = 7, a later order generates
+`grossBoncukEarned` = 5. `debtPaid` = min(5, 7) = 5 → `newDebt` = 2. `spendableCredit` = 5 − 5 = 0 →
+spendable stays unchanged.
+
+**Case D — debt fully repaid, remainder becomes spendable.** `boncukDebt` = 2, a later order generates
+`grossBoncukEarned` = 4. `debtPaid` = min(4, 2) = 2 → `newDebt` = 0. `spendableCredit` = 4 − 2 = 2 →
+spendable increases by 2.
+
+**Case E — reversal changes only the remainder, zero Boncuk clawback.** Aggregate before: 24000 minor
+units (240 TL) → entitlement 4, remainder 4000 (40 TL). A refund removes `refundedEligibleMinorUnits` =
+3000 (30 TL) from a small order's own contribution. `newAggregate` = 24000 − 3000 = 21000 →
+`newEntitlement` = floor(21000/5000) = 4 (unchanged). `requiredClawback` = 4 − 4 = **0**. Remainder
+still moves: 4000 → 1000 (40 TL → 10 TL). `spendableBalance`/`boncukDebt` are both untouched
+(`requiredClawback = 0` ⇒ `spendableRemoved = 0`, `debtIncrease = 0`) — this reversal must still be
+ledgered (an `orderEarnReversal` entry with `deltaBoncuk: 0`) so the aggregate/remainder stay correct
+for the next order, exactly mirroring P2A's own "zero-point earning events matter" principle applied to
+the reversal direction (BR-LOYALTY §7 / BR-LOYALTY-015).
+
+### Proposed `loyaltyAccounts` schema after P2b (design only — not yet implemented)
+
+```ts
+interface LoyaltyAccountData {
+  organizationId: string;
+  customerId: string;
+  spendableBalance: number;                 // int, >= 0 — never negative
+  boncukDebt: number;                       // NEW — int, >= 0
+  orderEligibleNetSpendMinorUnits: number;  // NEW — int, >= 0, cumulative, order-earning-scoped only
+  earningRemainderMinorUnits: number;       // int, 0..4999 — derived/co-maintained cache of the aggregate above
+  lifetimeEarned: number;                   // int, monotonic — historical gross Boncuk (all entry types)
+  lifetimeRedeemed: number;                 // int, monotonic — historical Boncuk spent via redemption
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  revision: number;
+}
+```
+Invariants: `spendableBalance >= 0` always; `boncukDebt >= 0` always;
+`earningRemainderMinorUnits == orderEligibleNetSpendMinorUnits % 5000` always. All fields remain
+server-authoritative, integer-based, transactionally updated, never client-writable —
+`firestore.rules`' existing `allow write: if false` needs no change; the client-facing
+`getCustomerLoyaltySnapshot` response shape would need to add at least `boncukDebt` when P2b
+implements this (an implementation-time decision, not made here).
+
+### Exact P2B implementation blockers (nothing in this list is solved by this design entry)
+
+1. **No canonical server-executable order cancellation/refund workflow exists** — the actual trigger
+   this reversal logic would attach to. This is the primary blocker; everything else is secondary to it.
+2. **No real payment-gateway integration** — every `PaymentAdapter.refundPayment` is an unconfigured
+   stub; a real refund cannot be executed end-to-end even once the order-status transition exists.
+3. **No authoritative partial/item-level refund amount record** — partial refund execution is BLOCKED
+   until the order/payment system establishes one; this design's formula is ready for it, but cannot be
+   exercised without it.
+4. **Checkout Boncuk redemption does not exist** — `boncukRedemptionRestore` has no writer to pair with
+   `orderEarnReversal` yet; not a blocker for (A) earning-reversal alone, but required before (B)
+   redemption-restoration can ever be built.
+5. **No stable per-partial-refund-event id source** — required for partial-refund idempotency once (3)
+   exists.
+
+None of these blockers affect the mathematics or schema locked in this entry — they gate *when* P2b can
+be implemented and *what* it can execute against, not *how* the reversal math works.
+
+## Boncuk Loyalty Program P2B-A.1 — Ledger Accounting Semantics Correction (2026-08-22)
+
+**Status**: Accepted — **design only, nothing implemented, P2B-A still not closed.** Corrects two
+architecture gaps a review found in the P2B-A entry above before any implementation begins: (1) P2A's
+already-committed (not production-live) earning transaction does not yet maintain the aggregate P2B-A's
+reversal formula depends on, and (2) a single ambiguous `deltaBoncuk` cannot represent an event that
+changes gross entitlement, spendable balance, and debt by three different amounts at once. Nothing in
+P2B-A's mathematics (the aggregate model, the reversal formula, why no historical entry needs mutation)
+changes — this entry corrects *representation*, not the underlying math, which is reproduced identically
+by every worked example below.
+
+### 1. Corrected aggregate-state model
+
+`orderEligibleNetSpendMinorUnits` is confirmed as canonical, persisted `loyaltyAccounts` state (not a
+derived-on-read convenience) — which means **the writer that increments it must be transactionally
+consistent from the moment it exists**, not just P2B's reversal writer. `earningRemainderMinorUnits`
+is demoted to a strictly-derived, always-co-written cache: every transaction that changes the aggregate
+recomputes `earningRemainderMinorUnits = orderEligibleNetSpendMinorUnits % 5000` in the *same write* —
+it is never independently set. `entitlement` (`floor(aggregate / 5000)`) is likewise never independently
+stored on the account (see item 8) — always computed fresh from the aggregate.
+
+### 2. P2A earning MUST change — exactly how
+
+**Yes, P2A's already-committed `functions/src/loyaltyOrderEarning.ts` (commit `11be1c1`, not yet
+production-live — no shipped completion trigger exists, so this is a pre-launch correction, not a data
+migration) requires a code change before P2B can be built on top of it.** Today,
+`calculateBoncukEarning({previousRemainderMinorUnits, eligibleNetSpendMinorUnits})` computes
+`boncukEarned`/`remainderAfterMinorUnits` directly from the remainder alone and the account transaction
+writes only `earningRemainderMinorUnits` — no aggregate field exists or is persisted anywhere. The
+corrected transaction must instead:
+```
+oldAggregate   = account.orderEligibleNetSpendMinorUnits   (0 for a brand-new account)
+newAggregate   = oldAggregate + eligibleNetSpendMinorUnits
+oldEntitlement = floor(oldAggregate / 5000)
+newEntitlement = floor(newAggregate / 5000)
+grossBoncukEarned = newEntitlement - oldEntitlement
+```
+then atomically write `orderEligibleNetSpendMinorUnits = newAggregate` and
+`earningRemainderMinorUnits = newAggregate % 5000` together — never one without the other. **Confirmed
+mathematically equivalent** to the existing remainder-only formula (`floor((a+b)/n) = floor(a/n) +
+floor((a mod n + b)/n)` is a standard integer identity, and `a mod n` is exactly what
+`earningRemainderMinorUnits` already stores) — so `grossBoncukEarned` computed either way is identical;
+what changes is that the aggregate itself must now also be persisted, not just its remainder, because a
+future reversal needs the actual total to recompute a new floor after subtracting a specific order's
+contribution. **Verification**: 54900 (Order A) → aggregate 54900, entitlement `floor(54900/5000)=10`,
+remainder 4900. +15100 (Order B) → aggregate 70000, entitlement `floor(70000/5000)=14`, gross earned
+`14-10=4`, remainder `70000%5000=0` — exactly reproduces P2A's own original worked example.
+
+### 3. Canonical definition of every ledger delta field (replaces `deltaBoncuk`)
+
+Locked in full as `BR-LOYALTY-016` (`docs/business_rules.md`) — summarized here:
+
+| Field | Meaning | Always populated? |
+|---|---|---|
+| `entitlementDeltaBoncuk` | Change in gross valid claim this event caused, before debt/redemption accounting. `0` for every redemption/restoration-direction entry. | Yes, every entry, never null |
+| `spendableDeltaBoncuk` | Actual change to `spendableBalance`. Summed across the whole ledger, reconstructs `spendableBalance` exactly, for any entry type. | Yes, every entry, never null |
+| `debtDeltaBoncuk` | Actual change to `boncukDebt`. Positive = debt grows; negative = debt shrinks. `0` for redemption/restoration-direction entries (redemption/restore never touches debt). | Yes, every entry, never null |
+
+**Invariant** for earning/reversal-direction entries only:
+`entitlementDeltaBoncuk == spendableDeltaBoncuk - debtDeltaBoncuk`. Does not hold for redemption-
+direction entries by design — `entitlementDeltaBoncuk` is always `0` there regardless of how much
+`spendableDeltaBoncuk` moves, since spending already-earned Boncuk never changes how much was earned.
+`deltaBoncuk` is removed entirely from `LoyaltyLedgerEntry` — not deprecated-but-kept, removed, since a
+field two other unambiguous fields already fully subsume should not linger as a third, now-redundant
+and again-ambiguous option.
+
+**Evaluated against every entry type** (locked, `BR-LOYALTY-016`):
+- `orderEarn` — `(entitlementDelta, spendableDelta, debtDelta) = (grossBoncukEarned, grossBoncukEarned - debtPaid, -debtPaid)`.
+- `orderEarnReversal` — `(-requiredClawback, -spendableRemoved, +debtIncrease)`.
+- `boncukRedemption` — `(0, -amountRedeemed, 0)`.
+- `boncukRedemptionRestore` — `(0, +amountRestored, 0)`.
+- `catalogRedemption` — `(0, -rewardCostBoncuk, 0)`.
+- `catalogRedemptionRestore` — `(0, +rewardCostBoncuk, 0)`.
+- `wheelEarn` — `(+prizeBoncuk, prizeBoncuk - debtPaid, -debtPaid)` — same debt-first shape as `orderEarn`, once wheel is designed; not built now.
+- `wheelExpiry` — `(-expiredBoncuk, -spendableRemoved, +debtIncrease)` — same shape as `orderEarnReversal`, conceptually; wheel's own *which-Boncuk-expire* mechanics remain unresolved (`BR-LOYALTY-009`), not solved here — per the task's own instruction not to prematurely unify source-specific entitlement/expiry semantics.
+- `taskEarn` — `(+taskBoncuk, taskBoncuk - debtPaid, -debtPaid)`.
+- `taskReversal` — `(-taskBoncuk, -spendableRemoved, +debtIncrease)`.
+- `adminAdjustment` — staff-directed, out-of-band: default `(amount, amount, 0)` (entitlement and
+  spendable move in lockstep, debt untouched) unless the admin action explicitly targets debt — the
+  exact UX/authorization for that is future admin-tooling work, not resolved here.
+
+### 4. Revised `orderEarn` accounting representation
+
+```
+entryType: "orderEarn"
+entitlementDeltaBoncuk: grossBoncukEarned
+spendableDeltaBoncuk:   grossBoncukEarned - debtPaid
+debtDeltaBoncuk:        -debtPaid
+amountBasisMinorUnits:      eligibleNetSpendMinorUnits   (this order's own contribution)
+aggregateBeforeMinorUnits:  oldAggregate                  // NEW — explicit, no recomputation needed
+aggregateAfterMinorUnits:   newAggregate                  // NEW
+entitlementBeforeBoncuk:    oldEntitlement                // NEW
+entitlementAfterBoncuk:     newEntitlement                // NEW
+remainderBeforeMinorUnits:  oldAggregate % 5000
+remainderAfterMinorUnits:   newAggregate % 5000
+debtBeforeBoncuk:  oldDebt   (nullable — null only if debt has never existed for this account)
+debtAfterBoncuk:   newDebt
+earningRateMinorUnitsPerBoncuk: 5000
+sourceId: orderId
+orderId:  orderId
+idempotencyKey: orderId
+reversalOf: null
+metadata: null
+```
+`aggregateBefore/After` and `remainderBefore/After` are individually derivable from each other
+(`remainder = aggregate % 5000`), and `entitlementBefore/After` from `aggregate` — deliberately stored
+redundantly anyway, so a reader never has to recompute financially meaningful state to audit an entry
+("without guessing," per the task's own requirement) — a standard, accepted trade-off in
+append-only financial ledgers (storage cost for zero-recomputation trust).
+
+### 5. Revised `orderEarnReversal` representation
+
+```
+entryType: "orderEarnReversal"
+entitlementDeltaBoncuk: -requiredClawback
+spendableDeltaBoncuk:   -spendableRemoved
+debtDeltaBoncuk:        +debtIncrease
+amountBasisMinorUnits:      refundedEligibleMinorUnits
+aggregateBeforeMinorUnits:  oldAggregate
+aggregateAfterMinorUnits:   newAggregate
+entitlementBeforeBoncuk:    oldEntitlement
+entitlementAfterBoncuk:     newEntitlement
+remainderBeforeMinorUnits:  oldAggregate % 5000
+remainderAfterMinorUnits:   newAggregate % 5000
+debtBeforeBoncuk: oldDebt
+debtAfterBoncuk:  newDebt
+earningRateMinorUnitsPerBoncuk: 5000   (rate snapshot)
+sourceId: refund/cancellation's own canonical id (orderId, for a full reversal today)
+orderId:  the original refunded order's id
+idempotencyKey: same as sourceId
+reversalOf: the original orderEarn entry's own ledger-entry id
+metadata: null
+```
+No `metadata` variant is needed for `orderEarnReversal` anymore — every field §8 of the P2B-A task (and
+this correction) required is now a first-class, shared, nullable top-level field on `LoyaltyLedgerEntry`
+itself, populated identically in meaning for both `orderEarn` and `orderEarnReversal` (before/after
+pairs for aggregate, entitlement, remainder, debt) — simpler than the metadata-variant design it
+supersedes, not more complex.
+
+### 6. Earning-with-debt representation
+
+Formula (unchanged from P2B-A, reproduced for completeness):
+```
+oldEntitlement    = floor(oldAggregate / 5000)
+newAggregate      = oldAggregate + newEligibleSpend
+newEntitlement    = floor(newAggregate / 5000)
+grossBoncukEarned = newEntitlement - oldEntitlement
+debtPaid          = min(grossBoncukEarned, boncukDebt)
+spendableCredit   = grossBoncukEarned - debtPaid
+```
+Atomic account update: `orderEligibleNetSpendMinorUnits = newAggregate`;
+`earningRemainderMinorUnits = newAggregate % 5000`; `boncukDebt -= debtPaid`;
+`spendableBalance += spendableCredit`; `lifetimeEarned += grossBoncukEarned` (full gross, regardless of
+debt absorption — historical monotonic metric, confirmed unchanged from P2B-A); `revision += 1`. Ledger
+entry: `orderEarn` shape from item 4 above, with `entitlementDeltaBoncuk = grossBoncukEarned`,
+`spendableDeltaBoncuk = spendableCredit`, `debtDeltaBoncuk = -debtPaid` — all three accounting effects
+explicit, satisfying the task's "must record all three accounting effects explicitly" requirement.
+
+### 7. Account projection schema (confirmed, unchanged fields from P2B-A)
+
+```ts
+interface LoyaltyAccountData {
+  organizationId: string;
+  customerId: string;
+  spendableBalance: number;                 // int, >= 0 — never negative
+  boncukDebt: number;                       // int, >= 0
+  orderEligibleNetSpendMinorUnits: number;  // int, >= 0, cumulative, order-earning-scoped only
+  earningRemainderMinorUnits: number;       // int, 0..4999 — strictly derived cache, never independently set
+  lifetimeEarned: number;                   // int, monotonic — historical gross Boncuk (all entry types)
+  lifetimeRedeemed: number;                 // int, monotonic — historical Boncuk spent via redemption
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  revision: number;
+}
+```
+No structural change from the P2B-A entry — this task confirms the schema, not the account-level field
+list.
+
+### 8. `validOrderEarnedBoncuk` — not stored (avoid redundant state)
+
+**Recommendation: do not add a stored `validOrderEarnedBoncuk` field.** It would always equal
+`floor(orderEligibleNetSpendMinorUnits / 5000)` — a strict, O(1)-cheap function of an already-stored
+field, with no historical-snapshot need the way a *ledger entry's* before/after fields have (item 4's
+redundant ledger fields are justified because a ledger entry is immutable and must stay
+self-explanatory forever without re-deriving from mutable account state; the *account's current*
+entitlement, by contrast, is always freshly and trivially computable from its own current aggregate on
+every read — caching it buys nothing and adds a fourth field that could theoretically drift out of sync
+with the aggregate if a future writer ever forgot to update it). Any consumer (a future
+`getCustomerLoyaltySnapshot` response, an admin tool) computes it on demand:
+`Math.floor(account.orderEligibleNetSpendMinorUnits / 5000)`.
+
+### 9. Partial-refund cumulative-safety architecture
+
+**For full refund (P2B's actual target): no additional state is needed.** A full reversal is
+inherently a one-time event per order — the existing deterministic-ledger-id idempotency check (`sourceId
+= orderId`, already proven by P2A's `orderEarn` writer) already guarantees at most one
+`orderEarnReversal` per order ever exists; there is no "cumulative" concern to protect against when
+only one reversal can ever be written. This directly satisfies the task's own "do not build [a
+per-order projection] unless strictly required for full-refund P2B" — it is not required.
+
+**For future partial refund**, evaluated three options: (A) query-reconstruction — sum every existing
+`orderEarnReversal` entry for a given `orderId` inside the reversal transaction to check the new
+refund won't exceed the order's original `amountBasisMinorUnits`. Rejected as the primary mechanism:
+an unbounded-cardinality query inside a Firestore transaction (transactions have read-latency/read-count
+sensitivity; a heavily-partially-refunded order — plausible for a large catering-style takeaway order —
+could accumulate many reversal entries) is worse than a single-document read. (B) **Recommended**: a
+dedicated, minimal per-order server-maintained projection (name not finalized —
+`loyaltyOrderReversalState/{orderId}` or a field colocated with the order itself once a real
+order-mutation surface exists) tracking `totalRefundedEligibleMinorUnitsSoFar`, atomically incremented
+in the *same transaction* as each partial `orderEarnReversal` write — mirroring the exact
+transactionally-coupled-projection discipline this codebase already uses for the customer-level
+account, just scoped to one order instead of one customer. Gives an O(1), idempotent,
+bounded-cost safety check: `assert(totalRefundedSoFar + thisRefund <= originalAmountBasisMinorUnits)`.
+(C) trusting the upstream refund/payment system's own money-amount bookkeeping alone, with no
+independent loyalty-side check, was considered and rejected — this is a real-value system and should
+not depend entirely on a different subsystem's correctness with no defense-in-depth. **Defined here
+only, per instruction — not built.** Its exact shape (a document vs. a field, its collection name, its
+own `firestore.rules`) is deferred to whenever partial refund execution is actually scoped.
+
+### 10. Worked sequence — full reconciliation, both `entitlementDeltaBoncuk` and `spendableDeltaBoncuk` sums verified independently
+
+| Step | Event | entitlementΔ | spendableΔ | debtΔ | aggregate | entitlement | spendable | debt |
+|---|---|---|---|---|---|---|---|---|
+| 0 | — | — | — | — | 0 | 0 | 0 | 0 |
+| 1 | Order A earns (549 TL) | +10 | +10 | 0 | 54900 | 10 | 10 | 0 |
+| 2 | Order B earns (151 TL) | +4 | +4 | 0 | 70000 | 14 | 14 | 0 |
+| 3 | *(implied)* customer redeems 10 Boncuk — required to reach the task's own stated "spendable balance = 4 before refund" | 0 | −10 | 0 | 70000 | 14 | 4 | 0 |
+| 4 | Order A fully refunded | −11 | −4 | +7 | 15100 | 3 | 0 | 7 |
+| 5 | New order earns gross 5 | +5 | 0 | −5 | *(+order's own eligible spend)* | 8 | 0 | 2 |
+| 6 | New order earns gross 4 | +4 | +2 | −2 | *(+order's own eligible spend)* | 12 | 2 | 0 |
+
+**Entitlement reconciliation** (earning/reversal-direction entries only — step 3's redemption correctly
+contributes `0` and is invisible to this sum, per BR-LOYALTY-016): `10+4−11+5+4 = 12`, matching final
+entitlement `floor(aggregate_after_step_6 / 5000) = 12` exactly (step 5's aggregate reaches a value
+whose floor is 8, step 6's reaches a value whose floor is 12 — the illustrative absolute TL amounts for
+steps 5–6 are unconstrained by the task, only the resulting gross-earned deltas 5 and 4 are locked;
+5000·12 ≤ final aggregate < 5000·13 by construction of `newEntitlement=12`).
+
+**Spendable reconciliation** (every entry type, including step 3's redemption): `10+4−10−4+0+2 = 2`,
+matching the task's own stated final state ("Debt remains 2" after step 5, then step 6 brings "spendable
++2") — final `spendableBalance = 2`.
+
+**Debt reconciliation**: `0+0+0+7−5−2 = 0`, matching `boncukDebt = 0` after step 6 ("debtDelta = -2"
+fully retires the debt step 4 created).
+
+All three sums independently reconcile to the correct final account state, using only the entry-level
+deltas — demonstrating the three-first-class-field contract is self-consistent and auditable end to end
+without needing to inspect account state at any intermediate point.
+
+### 11. Exact production-code changes P2B will require (documented now, not implemented — DO NOT
+IMPLEMENT per this task's own instruction)
+
+1. `functions/src/loyaltyLedger.ts` — `LoyaltyLedgerEntry`: remove `deltaBoncuk`; add
+   `entitlementDeltaBoncuk`, `spendableDeltaBoncuk`, `debtDeltaBoncuk` (all required, never null); add
+   `aggregateBeforeMinorUnits`/`aggregateAfterMinorUnits`/`entitlementBeforeBoncuk`/
+   `entitlementAfterBoncuk`/`debtBeforeBoncuk`/`debtAfterBoncuk` (nullable — populated for order-earning-
+   family entries, null otherwise). No new `LoyaltyLedgerMetadata` variant needed for reversal.
+2. `functions/src/getCustomerLoyaltySnapshot.ts` — `LoyaltyAccountData`: add `boncukDebt`,
+   `orderEligibleNetSpendMinorUnits`; `GetCustomerLoyaltySnapshotResult`/the callable's response shape
+   gains at least `boncukDebt` (an implementation-time decision on exactly what else to expose).
+3. `functions/src/loyaltyOrderEarning.ts` — `calculateBoncukEarning` becomes aggregate-based (item 2
+   above); the earning transaction reads/writes `orderEligibleNetSpendMinorUnits` in addition to
+   `earningRemainderMinorUnits`; the `orderEarn` ledger-entry construction populates the three new delta
+   fields plus the before/after snapshots instead of the old single `deltaBoncuk`.
+4. A new `functions/src/loyaltyOrderReversal.ts` (or similarly named) module — the actual
+   `orderEarnReversal` writer — cannot be built until the blockers in the P2B-A entry above are
+   resolved (principally: a real order cancellation/refund trigger to attach it to).
+5. Corresponding test-file updates to `functions/src/test/loyaltyOrderEarning.test.ts` (assert the new
+   fields instead of the removed `deltaBoncuk`) and new test coverage for the reversal writer once built.
+
+### 12. Remaining blockers (unchanged from P2B-A — this entry corrects representation, not scope)
+
+Identical to the five blockers already recorded in the P2B-A entry above (no canonical
+cancellation/refund workflow; no real payment-gateway integration; no authoritative partial-refund
+amount record; checkout Boncuk redemption unbuilt; no per-partial-refund-event id source) — this entry
+adds no new blocker and resolves none of them; it only corrects the ledger schema those five blockers
+will eventually be implemented against.
+
+## Boncuk Loyalty Program P2B-B — Accounting Model Implementation + Debt-Aware Order Earning (2026-08-22)
+
+**Status**: Accepted, implemented. Builds the accepted P2B-A/P2B-A.1 design for real: the ledger and
+account contracts, the aggregate-based earning rewrite, debt-first repayment, and a pure (unwired)
+full-refund reversal calculator. **Does not** expose a refund callable/trigger, invent an order refund
+workflow, execute cancellation/refund against real orders, or implement partial refunds/checkout
+redemption/catalog/wheel/tasks/UI — exactly matching this phase's own locked scope. There is still no
+authoritative server refund event anywhere in this codebase; no fake authority source was invented to
+wire P2B early.
+
+### 1. Final ledger delta contract
+
+`functions/src/loyaltyLedger.ts`'s `LoyaltyLedgerEntry.deltaBoncuk` is **removed**, replaced by three
+always-populated (never `null`) signed fields: `entitlementDeltaBoncuk`, `spendableDeltaBoncuk`,
+`debtDeltaBoncuk` — `BR-LOYALTY-016`. Order-accounting provenance uses the task's own preferred exact
+names (a small, deliberate rename from the P2B-A.1 design draft's `aggregateBefore/After`/
+`entitlementBefore/After` for clarity): `orderEligibleNetSpendBeforeMinorUnits`/
+`orderEligibleNetSpendAfterMinorUnits`, `orderEntitlementBeforeBoncuk`/`orderEntitlementAfterBoncuk`,
+`remainderBeforeMinorUnits`/`remainderAfterMinorUnits` (unchanged names), `debtBeforeBoncuk`/
+`debtAfterBoncuk`, `amountBasisMinorUnits`/`earningRateMinorUnitsPerBoncuk` (unchanged). `metadata`
+keeps its existing three variants (`catalogRedemption`/`taskEarn`/`adminAdjustment`) unchanged — no
+accounting-specific variant was ever needed once the fields above are first-class. `organizationId`/
+`customerId`/`entryType`/`sourceId`/`orderId`/`idempotencyKey`/`reversalOf`/`createdAt`/`expiresAt` are
+all preserved exactly as before.
+
+### 2. Account schema changes
+
+`functions/src/getCustomerLoyaltySnapshot.ts`'s `LoyaltyAccountData` gains `boncukDebt` and
+`orderEligibleNetSpendMinorUnits` (both `int, >= 0`). Initial zero-account state:
+`spendableBalance/boncukDebt/orderEligibleNetSpendMinorUnits/earningRemainderMinorUnits/
+lifetimeEarned/lifetimeRedeemed` all `0`. `validOrderEarnedBoncuk` is deliberately **not** persisted —
+always derived as `floor(orderEligibleNetSpendMinorUnits / 5000)` on demand (P2B-A.1's own
+already-locked recommendation, reconfirmed). `getCustomerLoyaltySnapshot`'s response gains `boncukDebt`
+(architectural preference: a future UX needs to explain why new earning is temporarily paying debt
+rather than becoming spendable) but deliberately **not** `orderEligibleNetSpendMinorUnits` — internal
+accounting provenance no client needs.
+
+### 3. Legacy pre-P2B account compatibility strategy
+
+Implemented exactly as recommended in the P2B-B task's own instruction, inside the earning
+transaction's `resolveAccountForEarning` (`functions/src/loyaltyOrderEarning.ts`): an account missing
+`orderEligibleNetSpendMinorUnits`/`boncukDebt` is safely backfilled to `0` **only if** every other
+field already reads as an untouched zero account (`spendableBalance === 0 &&
+earningRemainderMinorUnits === 0 && lifetimeEarned === 0 && lifetimeRedeemed === 0`). A legacy account
+with genuine non-zero state but no aggregate/debt field fails closed
+(`reason: "inconsistent-legacy-account-state"`, `rewardsEvaluated` left untouched for investigation/
+retry) — never guesses `aggregate = lifetimeEarned * 5000` or any other reconstruction, which would
+silently discard remainder/provenance exactly as the task warned against. `getCustomerLoyaltySnapshot`
+applies a deliberately more lenient rule for its own **pure read, no-write, no-financial-computation**
+path: a missing `boncukDebt` simply reads back as `0` in the response, never persisted, never thrown —
+documented as an intentional asymmetry in both files' own doc comments, not an inconsistency. In
+practice, since this codebase still has no shipping order-completion trigger, no real non-zero legacy
+account can exist in production today — both paths are defensive-in-depth for test/fixture data and
+any future migration, confirmed by this phase's own re-audit of production reality.
+
+### 4. Aggregate-based earning implementation
+
+`calculateBoncukEarning` is replaced by `calculateOrderEarning({previousAggregateMinorUnits,
+eligibleNetSpendMinorUnits})`, returning `{newAggregateMinorUnits, newRemainderMinorUnits,
+oldEntitlementBoncuk, newEntitlementBoncuk, grossBoncukEarned}`. Proven mathematically equivalent to
+P2A's original remainder-only formula (`floor((a+b)/n) = floor(a/n) + floor((a mod n + b)/n)`) — every
+P2A worked example reproduces identically (verified by the pure-function test suite, item 11 below).
+The earning transaction now reads/writes `orderEligibleNetSpendMinorUnits` in the same transaction as
+`earningRemainderMinorUnits` (`= newAggregate % 5000`, never independently set).
+
+### 5. Debt-first earning implementation
+
+`applyDebtFirst({grossBoncukEarned, boncukDebt})` returns `{debtPaidBoncuk, spendableCreditBoncuk,
+newDebtBoncuk}` per the locked formula. Applied inside the same earning transaction, atomically with
+the aggregate/remainder update: `boncukDebt -= debtPaid`, `spendableBalance += spendableCredit`,
+`lifetimeEarned += grossBoncukEarned` (full gross, regardless of debt absorption — `lifetimeRedeemed`
+untouched). Zero-point orders (no whole Boncuk earned) still move the aggregate/remainder and still
+leave debt correctly untouched (`debtPaid = min(0, debt) = 0`) — verified by a dedicated test.
+
+**Bug found and fixed during implementation, not merely during design**: the naive `debtDeltaBoncuk:
+-debtPaidBoncuk` (unary negation) produces IEEE-754 negative zero (`-0`) whenever `debtPaidBoncuk` is
+`0` — caught immediately by the emulator test suite (`assert.strictEqual` correctly distinguishes `-0`
+from `0`, and Firestore round-trips the distinction). Fixed to `0 - debtPaidBoncuk` (subtraction, not
+unary negation, which IEEE-754 defines as always producing `+0` for a `0` operand) — a two-test failure
+caught and corrected before this entry was written, not glossed over.
+
+### 6. `orderEarn` ledger example (worked, from the test suite)
+
+A reservationPreorder order for 151 TL (15100 minor units) against a zero account:
+```
+entryType: "orderEarn"
+entitlementDeltaBoncuk: 3        spendableDeltaBoncuk: 3        debtDeltaBoncuk: 0
+amountBasisMinorUnits: 15100
+orderEligibleNetSpendBeforeMinorUnits: 0    orderEligibleNetSpendAfterMinorUnits: 15100
+orderEntitlementBeforeBoncuk: 0             orderEntitlementAfterBoncuk: 3
+remainderBeforeMinorUnits: 0                remainderAfterMinorUnits: 100
+debtBeforeBoncuk: 0                         debtAfterBoncuk: 0
+earningRateMinorUnitsPerBoncuk: 5000
+```
+A debt-present example (Case 1 of the locked spec): gross earn 5, debt 7 before →
+`entitlementDeltaBoncuk: 5, spendableDeltaBoncuk: 0, debtDeltaBoncuk: -5, debtBeforeBoncuk: 7,
+debtAfterBoncuk: 2` — both verified directly against a running emulator, not merely asserted in
+isolation.
+
+### 7. Pure full-reversal calculator — design and results
+
+`functions/src/loyaltyReversalMath.ts`'s `calculateFullOrderEarningReversal` — **no Firestore I/O, not
+exported from `functions/src/index.ts`**, confirmed by direct grep before this entry was written. Takes
+`{oldAggregateMinorUnits, refundedEligibleMinorUnits, spendableBalance, boncukDebt}`, returns every
+before/after value the task specified. Asserts `newAggregate >= 0`, throwing `RangeError` (never
+clamping/approximating) for a refund exceeding the recorded aggregate, or any negative/non-integer
+input. The locked worked example (`oldAggregate: 70000, refundedEligible: 54900, spendable: 4, debt:
+0`) produces exactly `{newAggregateMinorUnits: 15100, oldEntitlementBoncuk: 14, newEntitlementBoncuk:
+3, requiredClawbackBoncuk: 11, spendableRemovedBoncuk: 4, debtIncreaseBoncuk: 7, newSpendableBalance:
+0, newBoncukDebt: 7, newRemainderMinorUnits: 100}` — verified in one `deepStrictEqual` assertion, plus
+each field individually. A zero-clawback-but-remainder-moves case (24000 → 21000, entitlement
+unchanged at 4, remainder 4000 → 1000, spendable/debt both untouched) is also verified, alongside
+existing-debt-increases-not-overwritten and refund-to-exactly-zero cases.
+
+### 8. Idempotency/concurrency behavior
+
+Every P2A guarantee retained and re-verified against the new fields: duplicate/concurrent processing of
+the same order increases the aggregate exactly once, pays debt exactly once, credits spendable exactly
+once, increments `lifetimeEarned` exactly once, moves the remainder exactly once, bumps `revision`
+exactly once — all still inside the one Firestore transaction, still gated by the same deterministic-
+ledger-id check (`orderEarn`'s id derivation is completely unchanged). The true-concurrency test
+(`Promise.allSettled` racing two simultaneous invocations) continues to tolerate a losing racer
+rejecting under local-emulator contention while asserting the real correctness property — exactly one
+application ever lands.
+
+### 9. Firestore security impact
+
+**None — `firestore.rules` was not touched.** Every P2B-B write happens via the Admin SDK inside the
+existing transaction, which bypasses rules entirely; client read/write permissions for
+`loyaltyAccounts`/`loyaltyLedgerEntries` are exactly as they were after the P2A security fix (owner
+identity + tenant membership for reads, `allow write: if false` unconditionally). The full Rules suite
+was still rerun per instruction and stayed green — `345/345`, unchanged.
+
+### 10. Files changed
+
+New: `functions/src/loyaltyReversalMath.ts`, `functions/src/test/loyaltyReversalMath.test.ts`.
+Modified: `functions/src/loyaltyLedger.ts` (contract rewrite), `functions/src/getCustomerLoyaltySnapshot.ts`
+(schema/response extension, legacy-read tolerance), `functions/src/loyaltyOrderEarning.ts` (aggregate/
+debt rewrite, legacy fail-safe), `functions/src/test/loyaltyOrderEarning.test.ts` (extensive rewrite —
+new algorithm section, debt-first section, legacy-account section, updated ledger/idempotency
+assertions), `functions/src/test/getCustomerLoyaltySnapshot.test.ts` (`boncukDebt` coverage + new
+legacy-tolerance test), `docs/business_rules.md` (BR-LOYALTY-014/015/016 status updates),
+`docs/firestore_data_model.md`, `docs/feature_status.md`. **No `firestore.rules`, no
+`firestore.indexes.json`, no `functions/src/index.ts` export, no Flutter file touched.**
+
+### 11. Exact gate totals
+
+Functions build/typecheck: clean. Functions emulator suite (JDK 21,
+`GOOGLE_MAPS_PROVIDER_MODE=fixture`): **902/902 passed** (up from 875 — 27 new tests: pure algorithm/
+debt-first/legacy-account/debt-integration tests in `loyaltyOrderEarning.test.ts`, the full new
+`loyaltyReversalMath.test.ts` file, plus `getCustomerLoyaltySnapshot.test.ts`'s new legacy-tolerance
+test). Firestore Rules emulator suite: **345/345 passed**, unchanged. `flutter analyze`: no issues
+found. `flutter test`: **3236 passed / 12 skipped / 0 failed**, unchanged (no Flutter file touched).
+Storage Rules not rerun — nothing storage-related touched.
+
+### 12. Remaining blockers before real P2B refund execution
+
+Unchanged from P2B-A/P2B-A.1 — this phase implements the accounting *foundation* only:
+1. No canonical server-executable order cancellation/refund workflow exists.
+2. No real payment-gateway integration (every refund adapter is an unconfigured stub).
+3. No authoritative partial/item-level refund amount record.
+4. Checkout Boncuk redemption unbuilt (`boncukRedemptionRestore` has no writer).
+5. No stable per-partial-refund-event id source; the per-order cumulative-safety projection remains
+   designed, not built (confirmed still unnecessary for a full refund specifically, per P2B-A.1's own
+   reasoning — the order-id-keyed idempotency check already bounds it to one reversal per order).
+
+**Overall loyalty production readiness is NOT claimed.** The accounting foundation (ledger contract,
+account schema, aggregate/debt-aware earning, tested reversal mathematics) is real and implemented; a
+customer cannot yet be refunded Boncuk from a real order because no real order ever reaches a
+cancellation/refund state in the first place.
