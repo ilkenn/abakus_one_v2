@@ -115,7 +115,7 @@ test("cancelled: writes orderEvents/{orderId}-cancelled with type order.cancelle
   assert.strictEqual("earnReversalEvaluated" in data, false);
 });
 
-test("refunded: writes orderEvents/{orderId}-refunded with type order.refunded and BOTH boncukRedemptionRestoreEvaluated:false and earnReversalEvaluated:false", async () => {
+test("refunded: writes orderEvents/{orderId}-refunded with type order.refunded and both boncukRedemptionRestoreEvaluated/earnReversalEvaluated present", async () => {
   const orderId = nextId("order");
   await seedOrder(orderId, { status: "completed", customerId: "uid-refunded-1" });
   await admin.firestore().collection("orders").doc(orderId).update({ status: "refunded" });
@@ -126,10 +126,21 @@ test("refunded: writes orderEvents/{orderId}-refunded with type order.refunded a
   });
 
   assert.strictEqual(data.type, "order.refunded");
-  // earnReversalEvaluated is safely assertable — the restore consumer
-  // never touches it (only boncukRedemptionRestoreEvaluated, which the
-  // live consumer races to flip; see the "rejected" test's own comment).
-  assert.strictEqual(data.earnReversalEvaluated, false, "refunded must honestly record this still-owed marker");
+  // NOT asserting either flag's VALUE here (Boncuk Loyalty P4-D-B,
+  // 2026-08-22): both the real restore consumer
+  // (onOrderEventCreatedForLoyaltyRedemptionRestore) AND the real
+  // orderEarnReversal consumer (onOrderEventCreatedForOrderEarnReversal)
+  // are live triggers in this emulator environment and race to flip their
+  // own flag to `true` — a correct, deterministic "no original
+  // redemption/earning exists" no-op, since this test never seeds either
+  // — by the time this poll observes the document, neither value is
+  // reliably `false` anymore. Mirrors the "rejected"/"cancelled" tests'
+  // own established comment for boncukRedemptionRestoreEvaluated. Each
+  // field's own initial-value-and-lifecycle is precisely covered by
+  // `loyaltyRedemptionRestore.test.ts`'s and `orderEarnReversal.test.ts`'s
+  // own controlled, direct-call tests respectively.
+  assert.strictEqual("boncukRedemptionRestoreEvaluated" in data, true, "refunded must record this field");
+  assert.strictEqual("earnReversalEvaluated" in data, true, "refunded must record this field");
 });
 
 test("guest order: customerId null is carried through onto the event, exactly as written", async () => {

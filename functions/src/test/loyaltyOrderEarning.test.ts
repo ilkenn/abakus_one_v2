@@ -1449,3 +1449,53 @@ test("a corrupt organization policy fails earning closed — never fabricates a 
   assert.strictEqual(await accountDoc(uid, org), undefined);
   assert.strictEqual(await ledgerDoc(orderId, uid, org), undefined);
 });
+
+// =========================================================================
+// Boncuk Loyalty P4-D-B (2026-08-22) — completed -> refunded async race
+// closure. An order that genuinely reached `completed` (producing the
+// `order.completed` event this consumer processes) may have ALREADY been
+// refunded by the time this transaction's own `tx.get(orderRef)` runs —
+// this function must recognize that as a permanent, honest skip, never an
+// anomaly, and never create an `orderEarn` entry for it. See this file's
+// own doc comment and `orderEarnReversal.ts`'s doc comment for the full
+// causal safety proof this test exercises directly.
+// =========================================================================
+
+test("race closure: an order already refunded by the time the completion event is processed never earns — honest skip, marked evaluated, no ledger entry, no account mutation", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  // The order genuinely reached completed at some point (that's what
+  // produced this very event) but has SINCE been refunded — the exact
+  // state a `refundTakeawayOrder` transaction committing between this
+  // event's creation and this consumer's own transaction would leave.
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 50000, status: "refunded" });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+
+  assert.strictEqual(result.processed, true);
+  assert.strictEqual(result.reason, "order-refunded-before-earning");
+  assert.strictEqual(await accountDoc(uid), undefined, "no account is ever provisioned for a refunded order's completion event");
+  assert.strictEqual(await ledgerDoc(orderId, uid), undefined, "no orderEarn entry is ever created");
+  assert.strictEqual(await eventFlag(eventId), true, "marked evaluated — this is what makes orderEarnReversal.ts's own missing-orderEarn no-op branch permanently safe, per this file's own doc comment");
+});
+
+test("race closure: retrying the same already-refunded completion event twice is still a safe, evaluated no-op both times", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 50000, status: "refunded" });
+  const event = completionEvent({ orderId, customerId: uid, channel: "takeaway" });
+
+  const first = await processOrderCompletionEventForLoyaltyEarning(db(), eventId, event);
+  const second = await processOrderCompletionEventForLoyaltyEarning(db(), eventId, event);
+
+  assert.strictEqual(first.reason, "order-refunded-before-earning");
+  assert.strictEqual(second.reason, "order-refunded-before-earning");
+  assert.strictEqual(await accountDoc(uid), undefined);
+  assert.strictEqual(await ledgerDoc(orderId, uid), undefined);
+});

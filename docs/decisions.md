@@ -13884,3 +13884,213 @@ tests with the 16 new ones rather than replacing);
 Firestore Rules suite **354/354**, 0 failed, unchanged; `flutter analyze`/`flutter test` — see this
 entry's own closing gate line for the exact re-run counts. No commit was made, per this task's own
 explicit instruction.
+
+## Boncuk Loyalty Program P4-D-A — Full Refund + Order Earn Reversal Architecture Audit (2026-08-22)
+
+**Status**: Design only, delivered in-conversation, now recorded. No files changed. Audited what
+`completed → refunded` and `orderEarnReversal` would require, given P4-C-B/P4-C-C-B's already-shipped
+foundation (`onOrderTerminalFailureOrRefund.ts` already emits `order.refunded`;
+`loyaltyRedemptionRestore.ts` already consumes it; `loyaltyReversalMath.ts`'s O(1)
+`calculateFullOrderEarningReversal` already exists, fully tested, unwired). Confirmed via direct
+reads: no shipped code performs an order refund anywhere; every payment-provider adapter
+unconditionally returns `notConfigured`; `submitTakeawayOrder.ts`'s order document has zero
+payment-related fields.
+
+**Proposal `refundDisposition: "businessAuthorizedNoPaymentRecord"` was explicitly REJECTED** as
+insufficiently precise — it does not distinguish "a manager attests money was actually returned" from
+"a manager merely authorized a refund that hasn't happened yet." Replaced with the locked design
+P4-D-B implements: `"manualExternalRefundConfirmed"`, meaning an authorized manager+ CONFIRMS a real,
+complete, external/manual refund already occurred — `order.status == "refunded"` must always mean the
+refund is done, never merely requested/authorized/pending/failed. See P4-D-B below for the accepted,
+implemented design.
+
+## Boncuk Loyalty Program P4-D-B — Full Takeaway Refund + Order Earn Reversal + Refund/Earning Race
+Closure (2026-08-22)
+
+**Status**: Implemented — a new refund callable, a new server permission, a hardened earning consumer,
+and a new independent reversal consumer, all backend only. **Still explicitly out of scope**: partial
+refund, real payment-provider refund execution, any Admin/POS/KDS UI, any customer Boncuk checkout UI.
+
+### 1. Refund semantics — `order.status == "refunded"` means ACTUALLY refunded
+
+`refundTakeawayOrder` does not "request" a refund — it CERTIFIES a real, complete monetary refund
+already happened through some business-side process outside this system's own visibility. The single
+disposition value this phase can ever produce is `refundDisposition: "manualExternalRefundConfirmed"`.
+A second value, `"providerRefundSucceeded"`, is reserved in `TAKEAWAY_REFUND_DISPOSITIONS` for a future
+real payment-provider integration but is structurally unreachable today (no writer ever produces it).
+Deliberately no pending/failed disposition exists — a provider's pending or failed refund attempt must
+NEVER set `status: "refunded"`; the order stays `completed` in both cases.
+
+### 2. Refund permission — `manageTakeawayOrderRefunds`, `functions/src/staffAuthorization.ts`
+
+A new, dedicated entry in the closed `StaffPermission` union — deliberately never reusing
+`manageTakeawayOrderCancellations`, even though both sit at the same manager+ tier. Granted ONLY to
+`manager`/`admin`/`tenantOwner`; `staff` (which still holds only `manageTakeawayOrders`) and `courier`
+(no entry at all) both remain excluded. Verified by a dedicated regression test asserting `staff`'s
+permission array is unchanged and iterating every pre-existing permission (including
+`manageTakeawayOrderCancellations`) confirming `staff` gained none of them as a side effect.
+
+### 3. `refundTakeawayOrder({orderId, reasonCode, reasonMessage?})`
+
+Mirrors every other takeaway lifecycle callable's shape exactly
+(`respondToTakeawayOrder`/`advanceTakeawayOrderStatus`/`cancelTakeawayOrder`/
+`cancelTakeawayOrderForStaff`): loads the order first inside a transaction, requires `channel ==
+"takeaway"`, derives `organizationId`/`branchId` from the server-loaded order (never client input),
+requires `manageTakeawayOrderRefunds` + `requireBranchAccess`, requires CURRENT status exactly
+`completed` (already-`refunded` → idempotent `duplicate: true`; any other status → `failed-precondition`),
+uses `canTransition("completed", "refunded")` as defense-in-depth. Writes the transition via the
+existing, extended `applyTakeawayLifecycleTransition` (now `refunded`-aware — `isTerminal` includes
+`refunded`, and it writes `refundDisposition` only for that transition) and the existing
+`writeTakeawayOrderStatusChangeAuditEvent` (unmodified). **No direct loyalty write** — a successful
+`refunded` transition alone is what triggers BOTH the existing `boncukRedemptionRestore` consumer and
+the new `orderEarnReversal` consumer, independently, via `onOrderTerminalFailureOrRefund.ts` (unmodified).
+
+### 4. Refund reason codes — `TAKEAWAY_REFUND_REASON_CODES`, `functions/src/takeawayOrderLifecycle.ts`
+
+A THIRD closed reason-code enum, deliberately separate from rejection's and cancellation's own (even
+though `operationalError` here and `operationalIssue` there look similar — rejection/cancellation are
+about the ABILITY to fulfill an order that hasn't happened yet; a refund's `operationalError` is about
+something that went wrong in an order that already DID happen): `qualityIssue`/`wrongItem`/
+`missingItem`/`customerComplaint`/`operationalError`/`other`. Customer-readable order metadata:
+`terminalReasonCode`/`terminalActorType`/`terminalAt`/`refundDisposition`. `terminalActorUid` and any
+internal `reasonMessage` remain, as with every prior terminal transition, `auditEvents`-only — never on
+the order document (verified by a dedicated test).
+
+### 5. The completed → refunded async race — closed structurally, not by convention
+
+The unsafe sequence this task's own spec named explicitly: an order reaches `completed` (producing the
+`order.completed` outbox event) → before the earning consumer's transaction commits → a
+`refundTakeawayOrder` transaction commits `completed → refunded` first → the reversal consumer (running
+first, since earning hasn't credited anything yet) finds no `orderEarn` entry, marks
+`earnReversalEvaluated: true` → the completed-event consumer LATER creates an `orderEarn` entry anyway,
+permanently leaving refunded-order earning active with no way to ever reverse it (the reversal consumer
+already concluded, correctly at the time, that there was nothing to reverse).
+
+**Fix, `functions/src/loyaltyOrderEarning.ts`**: the earning transaction's existing
+`tx.get(orderRef)` — already genuinely transactional, unmodified in shape — is now followed by an
+explicit `orderData.status === "refunded"` branch: mark the event's `rewardsEvaluated: true` and return
+`{processed: true, reason: "order-refunded-before-earning"}` without ever creating an `orderEarn` entry,
+rather than falling into the pre-existing generic "not completed" hard-failure branch (which would have
+left the event retryable forever, worse than the race itself). Because this read and this branch both
+happen inside the SAME transaction, Firestore's own optimistic-concurrency conflict/retry is the actual
+enforcement mechanism: a `refundTakeawayOrder` transaction committing its own write to the same order
+document AFTER the earning transaction's read but BEFORE its commit aborts and retries the earning
+transaction, which re-reads the now-refunded status on retry and takes this exact branch. **This is what
+makes `orderEarnReversal.ts`'s own "no `orderEarn` entry exists → safe no-op" branch actually safe** —
+documented explicitly on both sides as one causal unit, not two independently-safe halves.
+
+### 6. `orderEarnReversal` consumer — new `functions/src/orderEarnReversal.ts`
+
+Mirrors `loyaltyRedemptionRestore.ts`'s thin-trigger/pure-function split exactly:
+`onOrderEventCreatedForOrderEarnReversal` (thin `onDocumentCreated("orderEvents/{eventId}")`) +
+`processOrderRefundEventForOrderEarnReversal` (the real, independently-testable business logic),
+processing ONLY `type == "order.refunded"`, ignoring every other event type without ever touching
+`earnReversalEvaluated`.
+
+**Defense-in-depth**: re-reads the real `orders/{orderId}` document INSIDE the transaction, requires its
+CURRENT `status === "refunded"` and its `organizationId`/`customerId` to match the event's claim — never
+reverses from a forged/stale/mismatched event.
+
+**Original earning lookup**: derives the ORIGINAL `orderEarn` entry's deterministic id
+(`deriveLoyaltyLedgerEntryId`, `entryType: "orderEarn"`, `sourceId: orderId`) — never trusts any
+denormalized field. Validates `entryType`/`organizationId`/`customerId`/`orderId`/`sourceId`
+consistency plus `amountBasisMinorUnits`/`earningSpendMinorUnits`/`earningBoncukAmount` numeric
+validity. Missing entry → SAFE no-op (see §5's causal proof). Malformed entry → fails closed, never
+fabricates a clawback.
+
+**O(1) reversal math**: uses the EXISTING, already-proven `calculateFullOrderEarningReversal`
+(`loyaltyReversalMath.ts`) verbatim — no reimplementation. Inputs: the account's CURRENT
+`validOrderEntitlementBoncuk`/`earningCarry`/`spendableBalance`/`boncukDebt`, plus the ONE original
+`orderEarn` entry's own immutable `amountBasisMinorUnits`/`earningSpendMinorUnits`/`earningBoncukAmount`.
+A thrown `RangeError` (the account's current total exact entitlement is lower than the original
+contribution — a data-integrity signal, e.g. an order somehow already reversed without the deterministic
+reversal-entry id existing) is caught and fails the transaction closed, leaving the event unevaluated
+rather than applying a guessed/negative clawback.
+
+**Reversal ledger entry**: `entryType: "orderEarnReversal"`, `entitlementDeltaBoncuk: 0 -
+requiredClawbackBoncuk`, `spendableDeltaBoncuk: 0 - spendableRemovedBoncuk`, `debtDeltaBoncuk:
+debtIncreaseBoncuk` (the three-delta invariant `entitlementDelta === spendableDelta - debtDelta` holds
+by the reversal math's own construction: `spendableRemovedBoncuk + debtIncreaseBoncuk ==
+requiredClawbackBoncuk`), `reversalOf:` the original entry's own document id, every provenance field
+(`amountBasisMinorUnits`/`earningSpendMinorUnits`/`earningBoncukAmount`/`loyaltyPolicyVersion`) copied
+VERBATIM from the original entry — never re-derived from today's policy or account state. Account
+mutation: `validOrderEntitlementBoncuk`/`earningCarryNumerator`/`earningCarryDenominator`/
+`spendableBalance`/`boncukDebt` all set to the math's own output fields; `lifetimeEarned`/
+`lifetimeRedeemed`/`organizationId`/`customerId`/`createdAt` preserved exactly; `revision` incremented
+once.
+
+**Idempotency**: a second deterministic ledger id (`entryType: "orderEarnReversal"`, same
+`sourceId: orderId`) is checked for existence first; `tx.create()` is the defense-in-depth backstop. A
+duplicate delivery re-asserts `earnReversalEvaluated: true` without touching the account or ledger a
+second time.
+
+### 7. Restore/reversal concurrency — two genuinely independent consumers, proven order-independent
+
+`loyaltyRedemptionRestore.ts` and `orderEarnReversal.ts` remain two separate consumers of the SAME
+`order.refunded` event — neither knows about the other; both transactionally read/write the same
+`loyaltyAccounts` document. Firestore's own contention handling, never an in-process lock or ordering
+assumption, is what keeps the final state correct regardless of which commits first. Proven, not merely
+asserted: a dedicated test (`refundLoyaltyRaceAndConcurrency.test.ts`) seeds an order with BOTH a
+`boncukRedemption` to restore AND an `orderEarn` to reverse, runs both orderings (restore-then-reversal,
+reversal-then-restore), and asserts byte-for-byte identical final `spendableBalance`/`boncukDebt`/
+`validOrderEntitlementBoncuk` — including a debt-creating variant where the account's currently
+spendable balance is smaller than the full clawback, so the two orderings genuinely diverge in their
+INTERMEDIATE state (whether reversal alone must create debt, or restore already covered it) yet still
+converge to the identical final numbers.
+
+### 8. The three mandatory race scenarios
+
+`refundLoyaltyRaceAndConcurrency.test.ts` implements all three, exactly as required:
+- **Scenario A** (earning finishes, then refund happens): direct sequential calls —
+  `processOrderCompletionEventForLoyaltyEarning` then `processOrderRefundEventForOrderEarnReversal` —
+  asserting the `orderEarn` entry exists AND was reversed, net zero.
+- **Scenario B** (refund happens before earning ever runs): the order is seeded already `refunded`;
+  calling the reversal consumer first proves the safe no-op branch, then calling the earning consumer
+  with a (simulated late) `order.completed` event proves it also refuses — no `orderEarn` entry ever
+  appears regardless of delivery order.
+- **Scenario C** (a TRUE race through the real trigger/callable chain): a real takeaway order is driven
+  to `completed` via the real `advanceTakeawayOrderStatus` callable, then `refundTakeawayOrder` is
+  called IMMEDIATELY with no artificial delay — racing against the real, asynchronous
+  `onOrderCompleted → orderEvents → onOrderEventCreatedForLoyaltyEarning` trigger chain. After a
+  generous settle window (long enough for either ordering to fully resolve, re-checked a second time to
+  prove stability, not a transient snapshot), the account converges to net-zero Boncuk regardless of
+  which internal consumer won — and if an `orderEarn` entry exists, an `orderEarnReversal` entry exists
+  too; if neither exists, that is equally valid.
+
+**There is no ordering, proven across all three scenarios, that leaves refunded-order earning active.**
+
+### 9. A pre-existing test corrected for the new live trigger
+
+`onOrderTerminalFailureOrRefund.test.ts`'s own "refunded" test used to assert
+`data.earnReversalEvaluated === false` immediately after the producer wrote it — but
+`onOrderEventCreatedForOrderEarnReversal` is now ALSO a live trigger in the same emulator environment,
+and correctly races to flip it `true` (a genuine "no original earning exists" no-op, since that specific
+test never seeds one) before the test's own poll observes the document. Fixed by asserting field
+PRESENCE rather than VALUE, mirroring the exact, already-established pattern this same file already used
+for `boncukRedemptionRestoreEvaluated` on the sibling "rejected"/"cancelled" tests (added at P4-C-B) —
+not a new pattern, an application of an existing one to a field that only just started racing.
+
+**Files changed — backend**: `functions/src/staffAuthorization.ts` (new permission),
+`functions/src/takeawayOrderLifecycle.ts` (refund reason codes + `refundDisposition` support),
+`functions/src/refundTakeawayOrder.ts` (new), `functions/src/loyaltyOrderEarning.ts` (race-closure
+branch), `functions/src/orderEarnReversal.ts` (new), `functions/src/index.ts` (two new exports).
+**Tests**: `functions/src/test/staffAuthorization.test.ts` (extended — merged, not overwritten, per the
+lesson learned at P4-C-C-B), `functions/src/test/refundTakeawayOrder.test.ts` (new),
+`functions/src/test/orderEarnReversal.test.ts` (new — worked cases A/B/D/E/F, idempotency, policy
+safety, defense-in-depth), `functions/src/test/loyaltyOrderEarning.test.ts` (extended — the race-closure
+branch), `functions/src/test/refundLoyaltyRaceAndConcurrency.test.ts` (new — the three mandatory race
+scenarios + the restore/reversal concurrency proof, worked case C),
+`functions/src/test/onOrderTerminalFailureOrRefund.test.ts` (one stale assertion corrected). **Rules**:
+none touched — no client write path was added or broadened (order status/loyalty documents remain
+server-only); the full Rules suite was rerun regardless, unchanged. **Flutter**: none — no Admin/POS/
+refund/checkout UI was built, no schema-parsing change was necessary. **Docs**: this entry,
+`docs/business_rules.md` (`BR-LOYALTY-020`/`BR-LOYALTY-021` blocker notes resolved, new
+`BR-LOYALTY-022`, `BR-REFUND-003` cross-referenced), `docs/firestore_data_model.md`,
+`docs/feature_status.md`.
+
+**Exact gate totals**: Functions build (`tsc`) clean; Functions emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`) **1151/1151**, 0 failed (up from 1099 — 52 new tests, after fixing
+one mid-run stale test assertion, not a production-code defect — see §9); Firestore Rules suite
+**354/354**, 0 failed, unchanged (no rules file touched); `flutter analyze` clean; `flutter test`
+**3288 passed, 12 skipped, 0 failed**, unchanged. No commit was made, per this task's own explicit
+instruction.

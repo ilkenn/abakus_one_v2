@@ -178,6 +178,46 @@ test("courier role has no entry at all in the permission map -> zero permissions
   assert.strictEqual(roleHasPermission("courier", "manageTakeawayOrderCancellations"), false);
 });
 
+// =======================================================================
+// Boncuk Loyalty P4-D-B (2026-08-22) — manageTakeawayOrderRefunds. Its own
+// dedicated permission, deliberately its own manager+-only tier — never
+// granted to staff (unlike manageTakeawayOrders) and never granted to
+// courier. Mirrors the manageTakeawayOrderCancellations coverage above
+// exactly, one permission over.
+// =======================================================================
+
+test("staff role does NOT have manageTakeawayOrderRefunds", () => {
+  assert.strictEqual(roleHasPermission("staff", "manageTakeawayOrderRefunds"), false);
+});
+
+test("staff role has EXACTLY manageTakeawayOrders and nothing else — re-asserted here to prove manageTakeawayOrderRefunds was not silently added to staff's grant", () => {
+  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, ["manageTakeawayOrders"]);
+});
+
+test("manager/admin/tenantOwner all have manageTakeawayOrderRefunds under the default mapping", () => {
+  for (const role of ["manager", "admin", "tenantOwner"]) {
+    assert.strictEqual(
+      roleHasPermission(role, "manageTakeawayOrderRefunds"),
+      true,
+      `${role} should have manageTakeawayOrderRefunds`,
+    );
+  }
+});
+
+test("courier role does NOT have manageTakeawayOrderRefunds", () => {
+  assert.strictEqual(roleHasPermission("courier", "manageTakeawayOrderRefunds"), false);
+});
+
+test("granting manageTakeawayOrderRefunds does not implicitly grant any pre-existing manager-tier permission or the other takeaway permissions to staff — no accidental escalation", () => {
+  for (const permission of [...ALL_PRE_EXISTING_PERMISSIONS, "manageTakeawayOrderCancellations" as const]) {
+    assert.strictEqual(
+      roleHasPermission("staff", permission),
+      false,
+      `staff must not have ${permission}`,
+    );
+  }
+});
+
 // -----------------------------------------------------------------------
 // requireStaffPermission — pure, fake-request tests.
 // -----------------------------------------------------------------------

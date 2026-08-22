@@ -7,11 +7,12 @@ import type { OrderStatus } from "./orderStatus";
 /**
  * `takeawayOrderLifecycle` — Boncuk Loyalty Program P4-C-C-B (2026-08-22).
  *
- * Shared building blocks for the four new takeaway lifecycle callables
+ * Shared building blocks for the five takeaway lifecycle callables
  * (`respondToTakeawayOrder`/`advanceTakeawayOrderStatus`/
- * `cancelTakeawayOrder`/`cancelTakeawayOrderForStaff`) — closed reason-code
- * enums, input sanitizers, and the two write-phase helpers every callable
- * shares (`applyTakeawayLifecycleTransition`/
+ * `cancelTakeawayOrder`/`cancelTakeawayOrderForStaff`/`refundTakeawayOrder`,
+ * the last added P4-D-B, 2026-08-22) — closed reason-code enums, input
+ * sanitizers, and the two write-phase helpers every callable shares
+ * (`applyTakeawayLifecycleTransition`/
  * `writeTakeawayOrderStatusChangeAuditEvent`). No Firestore reads happen
  * here — every function in this file is either pure validation or a
  * write-phase helper the CALLER invokes only after its own transaction has
@@ -51,6 +52,54 @@ export const TAKEAWAY_CANCELLATION_REASON_CODES = [
 export type TakeawayCancellationReasonCode = (typeof TAKEAWAY_CANCELLATION_REASON_CODES)[number];
 
 /**
+ * Boncuk Loyalty P4-D-B (2026-08-22) — a refund happens strictly AFTER
+ * `completed`, a semantically distinct trigger set from rejection
+ * (pre-acceptance) or cancellation (post-acceptance, pre-fulfillment) —
+ * deliberately its own closed enum, never sharing either prior set, even
+ * though `operationalError` here and `operationalIssue` above look
+ * similar: rejection/cancellation are about ABILITY to fulfill an order
+ * that hasn't happened yet; a refund's `operationalError` is about
+ * something that went wrong in an order that already DID happen.
+ */
+export const TAKEAWAY_REFUND_REASON_CODES = [
+  "qualityIssue",
+  "wrongItem",
+  "missingItem",
+  "customerComplaint",
+  "operationalError",
+  "other",
+] as const;
+export type TakeawayRefundReasonCode = (typeof TAKEAWAY_REFUND_REASON_CODES)[number];
+
+/**
+ * Boncuk Loyalty P4-D-B — deliberately separates the CANONICAL order
+ * refund fact (`order.status == 'refunded'`, meaning the refund has
+ * actually been completed/confirmed) from the PAYMENT-execution fact
+ * (`refundDisposition`, meaning HOW the money was actually returned).
+ * **`manualExternalRefundConfirmed` is the ONLY value this phase can ever
+ * produce** — takeaway carries no payment-method record and no payment
+ * provider is wired for any channel in this codebase (confirmed by audit,
+ * P4-D-A) — an authorized manager/admin/tenantOwner is CERTIFYING that a
+ * real monetary refund already happened externally/manually (cash, a
+ * manual card terminal, or any other business-side process outside this
+ * system's own visibility), never that this system itself moved money.
+ * `providerRefundSucceeded` is reserved for a genuinely future phase, once
+ * a real payment-provider refund execution path exists for takeaway — it
+ * is declared here only so the type is forward-compatible, never written
+ * by any code in this phase. There is deliberately NO
+ * `providerRefundPending`/`providerRefundFailed` value at all: per the
+ * locked design, a pending or failed provider refund must never cause
+ * `order.status` to become `refunded` in the first place (the order stays
+ * `completed` until a provider refund genuinely succeeds), so those two
+ * outcomes could never legitimately coexist with this field regardless.
+ */
+export const TAKEAWAY_REFUND_DISPOSITIONS = [
+  "manualExternalRefundConfirmed",
+  "providerRefundSucceeded",
+] as const;
+export type TakeawayRefundDisposition = (typeof TAKEAWAY_REFUND_DISPOSITIONS)[number];
+
+/**
  * Closed, customer-safe actor category — the ONLY actor field ever written
  * to the customer-readable order document (`terminalActorType`). Never a
  * raw uid — see `applyTakeawayLifecycleTransition`'s own doc comment for
@@ -81,6 +130,13 @@ export function sanitizeCancellationReasonCode(raw: unknown): TakeawayCancellati
     invalid(`reasonCode must be one of: ${TAKEAWAY_CANCELLATION_REASON_CODES.join(", ")}.`);
   }
   return raw as TakeawayCancellationReasonCode;
+}
+
+export function sanitizeRefundReasonCode(raw: unknown): TakeawayRefundReasonCode {
+  if (typeof raw !== "string" || !(TAKEAWAY_REFUND_REASON_CODES as readonly string[]).includes(raw)) {
+    invalid(`reasonCode must be one of: ${TAKEAWAY_REFUND_REASON_CODES.join(", ")}.`);
+  }
+  return raw as TakeawayRefundReasonCode;
 }
 
 const MAX_REASON_MESSAGE_LENGTH = 500;
@@ -128,8 +184,10 @@ export interface ApplyTakeawayLifecycleTransitionParams {
   toStatus: OrderStatus;
   actorType: TerminalActorType;
   now: Timestamp;
-  /** Present only for a terminal (`rejected`/`cancelled`) transition; ignored otherwise. */
+  /** Present only for a terminal (`rejected`/`cancelled`/`refunded`) transition; ignored otherwise. */
   terminalReasonCode?: string | null;
+  /** Present ONLY for a `refunded` transition — see `TAKEAWAY_REFUND_DISPOSITIONS`'s own doc comment. Always passed explicitly by the caller (`refundTakeawayOrder.ts`), never defaulted here. */
+  refundDisposition?: TakeawayRefundDisposition | null;
 }
 
 /**
@@ -154,10 +212,20 @@ export interface ApplyTakeawayLifecycleTransitionParams {
 export function applyTakeawayLifecycleTransition(
   params: ApplyTakeawayLifecycleTransitionParams,
 ): void {
-  const { tx, orderRef, orderId, order, fromStatus, toStatus, actorType, now, terminalReasonCode } =
-    params;
+  const {
+    tx,
+    orderRef,
+    orderId,
+    order,
+    fromStatus,
+    toStatus,
+    actorType,
+    now,
+    terminalReasonCode,
+    refundDisposition,
+  } = params;
   const nowIso = now.toDate().toISOString();
-  const isTerminal = toStatus === "rejected" || toStatus === "cancelled";
+  const isTerminal = toStatus === "rejected" || toStatus === "cancelled" || toStatus === "refunded";
 
   const statusHistory = Array.isArray(order.statusHistory) ? order.statusHistory : [];
   const transitionId = `${orderId}-transition-${toStatus}`;
@@ -187,6 +255,9 @@ export function applyTakeawayLifecycleTransition(
     update.terminalReasonCode = terminalReasonCode ?? null;
     update.terminalActorType = actorType;
     update.terminalAt = nowIso;
+  }
+  if (toStatus === "refunded") {
+    update.refundDisposition = refundDisposition ?? null;
   }
 
   tx.update(orderRef, update);

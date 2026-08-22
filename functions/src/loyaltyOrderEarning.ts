@@ -116,6 +116,24 @@ import { applyBoncukCreditDebtFirst } from "./loyaltyAccounting";
  * a newly-earned one. No behavior change here — this file's own earning
  * transaction produces byte-for-byte identical results, only the formula's
  * home moved.
+ *
+ * **P4-D-B (2026-08-22) — completed→refunded async race closure.** Once
+ * `refundTakeawayOrder.ts`/`orderEarnReversal.ts` made `completed ->
+ * refunded` a real, reachable transition, a genuine race became possible:
+ * an order reaches `completed` (producing the `order.completed` event this
+ * consumer reacts to), then — before this consumer's own transaction
+ * commits — a refund transaction commits `completed -> refunded` first.
+ * Without a fix, this consumer could still create an `orderEarn` entry for
+ * an order that is no longer a valid sale, and — since it committed AFTER
+ * the refund's own `order.refunded` outbox event had already been
+ * processed — `orderEarnReversal.ts`'s own consumer would have already
+ * concluded "no orderEarn entry exists, nothing to reverse" and moved on,
+ * permanently. The fix: this transaction's EXISTING `tx.get(orderRef)`
+ * read (unchanged in shape, already present before this correction) is now
+ * followed by an explicit `orderData.status === "refunded"` check — see
+ * that branch's own inline comment for the full mechanism proof. This is
+ * what makes `orderEarnReversal.ts`'s own "missing orderEarn -> safe
+ * no-op" branch actually safe, not merely convenient.
  */
 
 // -----------------------------------------------------------------------
@@ -406,6 +424,38 @@ export async function processOrderCompletionEventForLoyaltyEarning(
       return { processed: false, reason: "order-document-missing" };
     }
     const orderData = orderSnap.data()!;
+    if (orderData.status === "refunded") {
+      // Boncuk Loyalty P4-D-B — the completed -> refunded async race
+      // closure. This order genuinely reached `completed` (this is what
+      // produced the `order.completed` event this function is processing
+      // at all), but a `refundTakeawayOrder` transaction has ALREADY
+      // committed a `completed -> refunded` transition since then — a
+      // real, expected, PERMANENT outcome (refunded is terminal; this
+      // order can never become completed again), never a transient
+      // anomaly. Never create an orderEarn entry for an order that no
+      // longer represents a valid sale. Marking `rewardsEvaluated: true`
+      // here (rather than leaving it unmarked/retryable) is what makes
+      // `orderEarnReversal.ts`'s own "no orderEarn entry exists -> safe
+      // no-op" branch actually safe: it is now structurally impossible for
+      // an orderEarn entry to appear for this order AFTER this point, so a
+      // refund-reversal consumer that finds none missing can trust that
+      // absence permanently — see that file's own doc comment for the
+      // full causal proof this branch is the other half of.
+      //
+      // This check, and the `tx.get(orderRef)` above producing it, both
+      // happen INSIDE this same authoritative transaction — never a
+      // separate check-then-write. This is what makes Firestore's own
+      // optimistic-concurrency conflict/retry the actual enforcement
+      // mechanism: if a `refundTakeawayOrder` transaction commits its own
+      // write to this exact order document AFTER this transaction's read
+      // but BEFORE this transaction's commit, this transaction is aborted
+      // and automatically retried by the Firestore client, re-reading the
+      // now-refunded status on the retry and taking this exact branch —
+      // never a race window where both an `orderEarn` entry and a
+      // `refunded` status could coexist.
+      tx.set(eventRef, { rewardsEvaluated: true }, { merge: true });
+      return { processed: true, reason: "order-refunded-before-earning" };
+    }
     if (orderData.status !== "completed") {
       logger.error(
         `[loyaltyOrderEarning] order ${orderId} is not status "completed" at read time (was "${String(orderData.status)}").`,

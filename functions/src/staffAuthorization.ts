@@ -38,7 +38,8 @@ export type StaffPermission =
   | "manageStaffBranchAccess"
   | "moderateCustomerPhotos"
   | "manageTakeawayOrders"
-  | "manageTakeawayOrderCancellations";
+  | "manageTakeawayOrderCancellations"
+  | "manageTakeawayOrderRefunds";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -81,6 +82,17 @@ export type StaffPermission =
  *   `_managerTier`-and-above only, mirroring every other manager-gated
  *   permission in this map). `staff` is intentionally NOT granted this one
  *   — see `manageTakeawayOrders` above for the boundary this draws.
+ * - `manageTakeawayOrderRefunds` (Boncuk Loyalty P4-D-B, 2026-08-22):
+ *   `completed -> refunded` — a strictly more consequential action than any
+ *   pre-fulfillment cancellation (it reverses an order the business already
+ *   recorded as complete, and may trigger BOTH a Boncuk redemption restore
+ *   AND an earned-Boncuk clawback at once). Deliberately its OWN dedicated
+ *   permission, never reusing `manageTakeawayOrderCancellations` — the two
+ *   actions are conceptually distinct (mid-lifecycle cancellation vs.
+ *   post-completion refund) and conflating them under one name would be
+ *   less honest/auditable. `_managerTier`-and-above only — `staff` is
+ *   deliberately NOT granted this one, same boundary as
+ *   `manageTakeawayOrderCancellations`.
  *
  * Role name strings match `StaffRole.name` / the custom-claims `roles` map
  * convention already established by `platformAuthorization.ts`/
@@ -101,6 +113,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "moderateCustomerPhotos",
     "manageTakeawayOrders",
     "manageTakeawayOrderCancellations",
+    "manageTakeawayOrderRefunds",
   ],
   admin: [
     "manageReservations",
@@ -112,6 +125,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "moderateCustomerPhotos",
     "manageTakeawayOrders",
     "manageTakeawayOrderCancellations",
+    "manageTakeawayOrderRefunds",
   ],
   tenantOwner: [
     "manageReservations",
@@ -123,6 +137,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "moderateCustomerPhotos",
     "manageTakeawayOrders",
     "manageTakeawayOrderCancellations",
+    "manageTakeawayOrderRefunds",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must

@@ -4140,3 +4140,32 @@ Functions emulator suite 1099/1099, 0 failed (up from 1049, 50 new tests); Fires
 354/354, 0 failed, unchanged; `flutter analyze` clean; `flutter test` unaffected (no Flutter source file
 touched — no schema-parsing change was necessary). See `docs/business_rules.md`'s new `BR-LOYALTY-021`
 and `docs/decisions.md`'s P4-C-C-B entry for the full mechanism and files changed. No commit was made.
+
+**Boncuk Loyalty Program P4-D-A (2026-08-22) — Full Refund + Order Earn Reversal Architecture Audit,
+CLOSED (design only, delivered in-conversation, now recorded).** Confirmed no shipped code performs an
+order refund anywhere, and every payment-provider adapter unconditionally returns `notConfigured`. A
+proposed `refundDisposition: "businessAuthorizedNoPaymentRecord"` was explicitly REJECTED as
+insufficiently precise (does not distinguish "authorized" from "actually completed") and replaced with
+the locked, subsequently implemented `"manualExternalRefundConfirmed"`. No files changed. See
+`docs/decisions.md`'s P4-D-A entry.
+
+**Boncuk Loyalty Program P4-D-B (2026-08-22) — Full Takeaway Refund + Order Earn Reversal +
+Refund/Earning Race Closure, CLOSED, backend only.** Implements P4-D-A's accepted design: a new
+`refundTakeawayOrder` callable (`completed → refunded`, manager+ only via the new
+`manageTakeawayOrderRefunds` permission — `staff`/`courier` excluded), a new `refundDisposition` field
+locking `order.status == "refunded"` to mean an ACTUALLY completed refund (never
+requested/pending/failed), and a new independent `orderEarnReversal` consumer reusing the existing,
+already-proven O(1) `calculateFullOrderEarningReversal` verbatim. Closes the completed → refunded async
+race STRUCTURALLY: `loyaltyOrderEarning.ts`'s earning transaction now re-checks the canonical order's
+status for `"refunded"` inside its own transaction before ever creating an `orderEarn` entry, relying on
+Firestore's own optimistic-concurrency retry as the enforcement mechanism — proven by three mandatory
+race scenarios (earning-then-refund, refund-before-earning, and a true concurrent race through the real
+HTTP callables with no artificial delay), all converging to net-zero Boncuk regardless of ordering.
+Restore and reversal proven to remain genuinely independent, order-commutative consumers of the same
+`order.refunded` event. **Still explicitly out of scope**: partial refund, real payment-provider refund
+execution (no executor exists anywhere in this codebase), any Admin/POS/KDS UI, any customer Boncuk
+checkout UI — do not mark Loyalty production-ready. Gates: Functions build clean; Functions emulator
+suite 1151/1151, 0 failed (up from 1099, 52 new tests); Firestore Rules suite 354/354, 0 failed,
+unchanged; `flutter analyze` clean; `flutter test` 3288 passed/12 skipped/0 failed, unchanged (no
+Flutter source file touched). See `docs/business_rules.md`'s new `BR-LOYALTY-022` and
+`docs/decisions.md`'s P4-D-B entry for the full mechanism and files changed. No commit was made.

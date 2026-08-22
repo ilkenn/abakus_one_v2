@@ -1299,11 +1299,13 @@ this design introduces.
 - **Blocker resolved (P4-C-C-B, 2026-08-22) — see `BR-LOYALTY-021`.** The canonical takeaway
   reject/cancel/complete transition chain this entry's own blocker used to name is now implemented —
   `rejected`/`cancelled` on a real takeaway order now genuinely reach this consumer in production, not
-  only in tests. `orderEarnReversal` (the earned-Boncuk half of a completed-order refund) remains
-  unwritten — a separate, still-open gap, tracked in `BR-LOYALTY-021`'s own blocker note, not this one.
+  only in tests. **`orderEarnReversal` blocker resolved (P4-D-B, 2026-08-22) — see `BR-LOYALTY-022`.**
+  A completed order's own `order.refunded` event now also reaches this SAME consumer (this entry's
+  restoration logic is unchanged) — `orderEarnReversal` is a genuinely separate, independent consumer
+  of that same event, never merged into this one, exactly as originally designed.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-014, BR-LOYALTY-016, BR-LOYALTY-018, BR-LOYALTY-019,
-  BR-LOYALTY-021
+  BR-LOYALTY-021, BR-LOYALTY-022
 
 ### BR-LOYALTY-021 — Canonical server-authoritative takeaway order lifecycle
 - **Status**: DECIDED — **IMPLEMENTED (P4-C-C-B, 2026-08-22)**, backend only. Audited (P4-C-C-A) before
@@ -1355,13 +1357,97 @@ this design introduces.
   callable ever writes `loyaltyAccounts`/`loyaltyLedgerEntries` directly — `BR-LOYALTY-020`'s terminal
   outbox and the existing `onOrderCompleted` earning chain both activate automatically from the
   `status` write alone.
-- **Known, disclosed blocker**: `completed → refunded` and `orderEarnReversal` remain unimplemented —
-  a completed takeaway order cannot yet be refunded through any canonical path. No Admin/POS/KDS UI and
-  no customer Boncuk checkout UI were built this phase (explicitly out of scope) — this entry closes
-  the BACKEND authority gap only; **Boncuk checkout is still not safe to expose to customers** until a
-  real UI, and the refund path, both exist.
+- **Blocker resolved (P4-D-B, 2026-08-22) — see `BR-LOYALTY-022`.** `completed → refunded` and
+  `orderEarnReversal` are now implemented, backend only — `refundTakeawayOrder` is the one canonical
+  path a completed takeaway order can reach `refunded` through. No Admin/POS/KDS UI and no customer
+  Boncuk checkout UI were built this phase either (still explicitly out of scope) — **Boncuk checkout
+  is still not safe to expose to customers** until a real UI exists; see `BR-LOYALTY-022`'s own
+  disclosed blockers for what remains open (partial refund, real payment-provider execution).
 - **Owner Agent**: restaurant_domain / security_engineer
-- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-020, BR-PRICE-002
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-020, BR-LOYALTY-022,
+  BR-PRICE-002
+
+### BR-LOYALTY-022 — Full takeaway refund + order-earn reversal + refund/earning race closure
+- **Status**: DECIDED — **IMPLEMENTED (P4-D-B, 2026-08-22)**, backend only. Audited (P4-D-A) before
+  implementation. Closes the two blockers `BR-LOYALTY-020`/`BR-LOYALTY-021` both disclosed:
+  `completed → refunded` now has one real, canonical writer, and the earned-Boncuk half of a refund is
+  now reversed by a genuinely separate, independent consumer from `BR-LOYALTY-020`'s redemption
+  restore.
+- **Rule — `order.status == "refunded"` means the refund has ACTUALLY been completed, never merely
+  requested/authorized/pending/failed.** `refundTakeawayOrder` does not "request" a refund — it
+  CERTIFIES that a real, complete monetary refund already happened through some business-side process
+  outside this system's own visibility (cash, a manual card terminal, or any other external process).
+  `refundDisposition: "manualExternalRefundConfirmed"` is the only value this phase can ever produce;
+  `"providerRefundSucceeded"` is reserved and structurally unreachable until a real payment-provider
+  refund executor exists. There is deliberately no pending/failed disposition value, because a
+  provider's pending or failed refund attempt must NEVER set `status: "refunded"` — the order stays
+  `completed` in both of those cases. **No real payment-provider refund executor exists anywhere in
+  this codebase** (confirmed by a fresh audit, consistent with `docs/decisions.md`'s P2B-A re-audit) —
+  this rule governs future provider integration too, not just today's manual-only reality.
+- **Rule — refund permission is its own dedicated tier, never reusing `manageTakeawayOrderCancellations`**:
+  `manageTakeawayOrderRefunds`, granted ONLY to `manager`/`admin`/`tenantOwner` — never `staff` (which
+  still holds only `manageTakeawayOrders`), never `courier`. A refund is strictly more consequential
+  than a pre-fulfillment cancellation: it may trigger BOTH a Boncuk redemption restore AND an
+  earned-Boncuk clawback at once.
+- **Rule — `completed → refunded` only, full refund only**: `refundTakeawayOrder` requires the order's
+  CURRENT status to be exactly `completed` (any other current status fails closed;
+  already-`refunded` returns an idempotent `duplicate: true`), derives `organizationId`/`branchId`
+  from the server-loaded order (never client input), and requires `manageTakeawayOrderRefunds` plus
+  the same server-side branch authorization every other lifecycle callable already requires
+  (`BR-LOYALTY-021`). Partial refund is explicitly BLOCKED/OPEN — no authoritative partial-refund
+  amount source exists anywhere in this codebase; not attempted here.
+- **Rule — closed refund reason-code enum, deliberately separate from rejection/cancellation's own
+  enums**: `qualityIssue`/`wrongItem`/`missingItem`/`customerComplaint`/`operationalError`/`other`. The
+  order document gains `terminalReasonCode`/`terminalActorType`/`terminalAt`/`refundDisposition` — as
+  with every prior terminal transition (`BR-LOYALTY-021`), `terminalActorUid` and any internal
+  `reasonMessage` are deliberately never written to the order document, only to `auditEvents`.
+- **Rule — the completed → refunded async race is structurally impossible, not merely unlikely.** A
+  genuine race exists: an order reaches `completed` (producing the `order.completed` outbox event),
+  then — before the earning consumer's own transaction commits — a `refundTakeawayOrder` transaction
+  commits `completed → refunded` first. Fix: `loyaltyOrderEarning.ts`'s existing earning transaction's
+  `tx.get(orderRef)` (already genuinely transactional, unchanged in shape) now branches explicitly on
+  `orderData.status === "refunded"` — if true, it marks the event evaluated and returns without ever
+  creating an `orderEarn` entry, rather than treating `refunded` as an anomalous "not completed"
+  failure. Because this check and its own read happen inside the SAME transaction, Firestore's own
+  optimistic-concurrency conflict/retry is the actual enforcement mechanism: a `refundTakeawayOrder`
+  transaction committing between the earning transaction's read and its own commit aborts and retries
+  the earning transaction, which re-reads the now-refunded status and takes this exact branch. **There
+  is no ordering that leaves refunded-order earning active** — proven by three mandatory test
+  scenarios (earning-then-refund, refund-before-earning, and a true concurrent race through the real
+  HTTP callables with no artificial delay), all converging to net-zero Boncuk regardless of internal
+  ordering.
+- **Rule — `orderEarnReversal` is O(1), reuses the existing, already-proven
+  `loyaltyReversalMath.ts` verbatim, never replays the ledger, never reads today's policy.** The new
+  `orderEarnReversal.ts` consumer (thin `onDocumentCreated("orderEvents/{eventId}")` trigger,
+  processing ONLY `type == "order.refunded"`, mirroring every other outbox consumer's
+  thin-trigger/pure-function split) looks up the ONE original `orderEarn` entry by its deterministic
+  id; if absent, this is a SAFE, honest no-op — safety is causally dependent on the race-closure rule
+  above (documented on both sides): it is now structurally impossible for an `orderEarn` entry to
+  appear for a refunded order after this consumer has already observed its absence.
+- **Rule — reversal ledger semantics, three-delta accounting (`BR-LOYALTY-016`)**:
+  `entitlementDeltaBoncuk = 0 - requiredClawbackBoncuk`, `spendableDeltaBoncuk = 0 -
+  spendableRemovedBoncuk`, `debtDeltaBoncuk = debtIncreaseBoncuk`, `reversalOf` = the original
+  `orderEarn` entry's own id, every provenance field copied VERBATIM from that original entry —
+  reversing an order earned under an old policy version reverses EXACTLY that version's own
+  contribution, never today's policy.
+- **Rule — restore and reversal remain two genuinely independent consumers of the same
+  `order.refunded` event**, each transactionally reading/writing the same `loyaltyAccounts` document —
+  Firestore's own contention handling, never an in-process lock or ordering assumption, keeps the final
+  state correct regardless of which commits first. Proven, not merely asserted, by a dedicated test
+  seeding an order with BOTH a redemption to restore and an earning to reverse, run in both orderings,
+  asserting byte-for-byte identical final `spendableBalance`/`boncukDebt`/`validOrderEntitlementBoncuk`.
+- **Rule — idempotent**: a deterministic `orderEarnReversal` ledger-entry id (same
+  `deriveLoyaltyLedgerEntryId` helper, `sourceId: orderId`) makes a duplicate outbox delivery a no-op —
+  no second clawback, no second debt/carry change, no second `revision` bump. `lifetimeEarned` is never
+  decremented, mirroring `BR-LOYALTY-020`'s own `lifetimeRedeemed` precedent.
+- **Disclosed blockers, unchanged from before this phase**: partial refund; real payment-provider
+  refund execution (no executor exists — this phase records a manager-confirmed completed
+  manual/external refund only); customer Boncuk checkout UI; any Admin/POS/KDS UI. Do not treat this
+  entry as production-ready payment-refund integration — it is a backend accounting-correctness
+  closure only.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-016, BR-LOYALTY-019, BR-LOYALTY-020,
+  BR-LOYALTY-021, BR-REFUND-003
 
 # Customer CRM & Loyalty Platform
 
@@ -2283,8 +2369,14 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Status**: VERIFIED
 - **Rule**: A refund is only valid as `completed → refunded` — never modeled as reopening or
   reversing an earlier state.
+- **Implemented for the takeaway channel (P4-D-B, 2026-08-22) — see `BR-LOYALTY-022`.** This rule
+  predates and is separate from that entry's own `refundTakeawayOrder` callable/`orderEarnReversal`
+  ledger mechanism, which is scoped to server-authoritative takeaway orders and their Boncuk
+  accounting only — the `RefundIntent`/`RefundCalculator`/`OrderCancellationInfo` POS/cashier-domain
+  model this section otherwise describes remains a separate, orthogonal, still-unimplemented concern
+  (`BR-REFUND-004`–`BR-REFUND-008`).
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Orders, Payments
+- **Related Modules**: Orders, Payments, BR-LOYALTY-022
 
 ### BR-REFUND-004 — `OrderRefundInfo` pattern
 - **Status**: ROADMAP
