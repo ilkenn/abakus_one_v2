@@ -36,7 +36,9 @@ export type StaffPermission =
   | "manageStaffAdminRole"
   | "manageStaffRoles"
   | "manageStaffBranchAccess"
-  | "moderateCustomerPhotos";
+  | "moderateCustomerPhotos"
+  | "manageTakeawayOrders"
+  | "manageTakeawayOrderCancellations";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -61,18 +63,44 @@ export type StaffPermission =
  *   the Dart `RolePermissionMap`'s own `PosAuthorizedAction
  *   .moderateCustomerPhoto` placement exactly (same tier as
  *   `manageBranch`, `role_permission_map.dart`'s `_managerTier` set).
+ * - `manageTakeawayOrders` (Boncuk Loyalty P4-C-C-B, 2026-08-22): confirm/
+ *   reject a pending takeaway order, advance it through
+ *   `confirmed -> preparing -> ready -> completed`, and cancel it while
+ *   still `confirmed` (before kitchen prep has actually started). Granted
+ *   to `staff` — **the first-ever permission this map has EVER granted to
+ *   the `staff` tier** (approved explicitly, P4-C-C-A/P4-C-C-B; every prior
+ *   permission here was manager-tier-and-above only, since ordinary
+ *   day-to-day order confirm/reject/advance is routine, high-volume
+ *   operational work that would make the whole takeaway channel unusable
+ *   if it required a manager for every single order) — as well as
+ *   `manager`/`admin`/`tenantOwner`.
+ * - `manageTakeawayOrderCancellations` (Boncuk Loyalty P4-C-C-B): the
+ *   ESCALATED tier — cancelling a takeaway order that has already entered
+ *   `preparing` or `ready` (real kitchen time/inventory already
+ *   committed — a loss-prevention/accountability decision, deliberately
+ *   `_managerTier`-and-above only, mirroring every other manager-gated
+ *   permission in this map). `staff` is intentionally NOT granted this one
+ *   — see `manageTakeawayOrders` above for the boundary this draws.
  *
  * Role name strings match `StaffRole.name` / the custom-claims `roles` map
  * convention already established by `platformAuthorization.ts`/
  * `firestore.rules`'s own `hasRole`.
  */
 export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly StaffPermission[]>> = {
+  // Boncuk Loyalty P4-C-C-B — the first-ever `staff`-tier entry in this
+  // map. Deliberately narrow: ONLY `manageTakeawayOrders`, never any
+  // existing manager-tier permission — an ordinary staff member must never
+  // gain `manageReservations`/`manageBranch`/etc. as an accidental side
+  // effect of this addition.
+  staff: ["manageTakeawayOrders"],
   manager: [
     "manageReservations",
     "manageBranch",
     "manageStaffBranchAccess",
     "manageStaffRoles",
     "moderateCustomerPhotos",
+    "manageTakeawayOrders",
+    "manageTakeawayOrderCancellations",
   ],
   admin: [
     "manageReservations",
@@ -82,6 +110,8 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageStaffAdminRole",
     "manageStaffAccounts",
     "moderateCustomerPhotos",
+    "manageTakeawayOrders",
+    "manageTakeawayOrderCancellations",
   ],
   tenantOwner: [
     "manageReservations",
@@ -91,7 +121,12 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageStaffAdminRole",
     "manageStaffAccounts",
     "moderateCustomerPhotos",
+    "manageTakeawayOrders",
+    "manageTakeawayOrderCancellations",
   ],
+  // `courier` deliberately has no entry at all — zero permissions, exactly
+  // like every role not listed here. Explicit instruction: courier must
+  // never gain takeaway lifecycle authority.
 };
 
 /**
@@ -151,6 +186,62 @@ export function requireStaffPermission(
     throw new HttpsError(
       "permission-denied",
       `${permission} authorization is required for this organization.`,
+    );
+  }
+}
+
+/**
+ * Server-authoritative branch-scoping check — Boncuk Loyalty P4-C-C-B
+ * (2026-08-22), the Cloud-Functions-side mirror of `firestore.rules`'s
+ * `hasBranchAccess(organizationId, branchId)` (confirmed by direct
+ * inspection before writing this — same claim, same shape, no new
+ * semantics invented). `branchAccess` is a custom claim map
+ * `{[organizationId]: [branchId, ...]}`, synced from
+ * `memberships/{organizationId}_{uid}`'s own `branchAccess` array field by
+ * `staffMembership.ts`'s `resyncClaimsForUid` — never a client-supplied
+ * value, and never a role-based bypass: this codebase's branch-access
+ * model has no wildcard/"all branches" semantics for any role, not even
+ * `admin`/`tenantOwner` (`bootstrapFirstAdminAccount` itself starts with
+ * `branchAccess: []`).
+ *
+ * **This is the first Cloud Function to enforce branch-level authorization
+ * server-side** — every existing staff callable audited before writing
+ * this (`listReservationsForBranch`/`getReservationBranchInfoForStaff`/
+ * `respondToReservation`) checks only ORGANIZATION-level permission via
+ * `requireStaffPermission`, relying on Firestore query filtering alone for
+ * branch scoping. `firestore.rules`' own `orders` READ rule already
+ * requires `hasBranchAccess` in addition to `isOrgMember` (a prior,
+ * documented tightening — org-only access let any staff member read every
+ * branch's orders, "unacceptable for the multi-branch SaaS architecture").
+ * Every takeaway lifecycle callable in this file's sibling modules matches
+ * that same bar on the write side for the first time, rather than
+ * repeating the org-only gap other callables still have.
+ *
+ * Always call AFTER `requireStaffPermission` for the same `organizationId`
+ * — this function does not itself re-verify organization membership
+ * (`hasBranchAccess`'s own rules-side definition also composes
+ * `isOrgMember` first; callers here get the identical layering by calling
+ * both functions in sequence). Fails closed structurally: a missing
+ * `branchAccess` claim key, a missing `organizationId` entry, or a
+ * malformed (non-array) value all resolve to denied, never to an
+ * exception a caller could mistake for something else.
+ */
+export function requireBranchAccess(
+  request: CallableRequest,
+  organizationId: string,
+  branchId: string,
+): void {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Sign-in is required.");
+  }
+  const token = request.auth.token;
+  const branchAccessByOrg = token?.branchAccess as Record<string, unknown> | undefined;
+  const branchesForOrg = branchAccessByOrg?.[organizationId];
+  const authorized = Array.isArray(branchesForOrg) && branchesForOrg.includes(branchId);
+  if (!authorized) {
+    throw new HttpsError(
+      "permission-denied",
+      "Branch authorization is required for this operation.",
     );
   }
 }

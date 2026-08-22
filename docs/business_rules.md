@@ -1204,10 +1204,12 @@ this design introduces.
 ### BR-LOYALTY-019 — Server-authoritative checkout redemption: settlement not discount, takeaway only
 - **Status**: DECIDED — **IMPLEMENTED (P4-B, 2026-08-22), takeaway backend only**. No customer-facing
   checkout UI exists yet (Flutter is out of scope this phase). Restoration on rejection/cancellation/
-  refund is now implemented (`BR-LOYALTY-020`, P4-C-B) — see that entry for the mechanism — but the
-  canonical server-side transition that would actually PRODUCE a rejected/cancelled/refunded takeaway
-  order does not exist yet (P4-C-A's own audit finding, still true). See `BR-LOYALTY-020`'s own blocker
-  note for what remains before Boncuk checkout can go to production.
+  refund is implemented (`BR-LOYALTY-020`). **The canonical takeaway reject/cancel/complete transition
+  chain this entry's own blocker used to name is now implemented too — see `BR-LOYALTY-021`** — a
+  takeaway order carrying a Boncuk redemption can now genuinely reach `rejected`/`cancelled`/`completed`
+  in real production, activating both the restore chain (`BR-LOYALTY-020`) and the earning chain
+  (`BR-LOYALTY-004`) for the first time. The remaining blocker is narrower now: `completed → refunded`
+  and `orderEarnReversal` are still out of scope — see `BR-LOYALTY-021`'s own blocker note.
 - **Rule — Boncuk is settlement, not discount**: redeeming Boncuk at checkout never touches
   `pricing.discount`/`pricing.grossSubtotal`/`pricing.grandTotal` — the order's own price is exactly
   what the server pricing pipeline computed, unaffected by how the customer chooses to pay it. A
@@ -1251,14 +1253,12 @@ this design introduces.
   `dineInQr`/POS/staff-created orders can never carry a redemption (BR-PRICE-002's existing
   server-authoritative-pricing exclusion for those channels applies here too — redemption requires the
   same trusted pricing provenance earning does, BR-LOYALTY-013).
-- **Restoration is now implemented — see `BR-LOYALTY-020`.** If a takeaway order that redeemed Boncuk
-  is later rejected/cancelled/refunded, the debited `spendableBalance` and a matching immutable
-  `boncukRedemptionRestore` ledger entry are restored, debt-first. **Still a hard production blocker**,
-  for a different reason than before: no canonical server-side transition exists yet that would ever
-  actually PRODUCE a `rejected`/`cancelled`/`refunded` takeaway order — see `BR-LOYALTY-020`.
+- **Restoration is implemented — see `BR-LOYALTY-020`.** If a takeaway order that redeemed Boncuk is
+  later rejected/cancelled (or, once refund is built, refunded), the debited `spendableBalance` and a
+  matching immutable `boncukRedemptionRestore` ledger entry are restored, debt-first.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-005, BR-LOYALTY-006, BR-LOYALTY-013,
-  BR-LOYALTY-014, BR-LOYALTY-018, BR-LOYALTY-020, BR-PRICE-002
+  BR-LOYALTY-014, BR-LOYALTY-018, BR-LOYALTY-020, BR-LOYALTY-021, BR-PRICE-002
 
 ### BR-LOYALTY-020 — Debt-first Boncuk redemption restoration on order failure/cancellation/refund
 - **Status**: DECIDED — **IMPLEMENTED (P4-C-B, 2026-08-22)**, backend/ledger mechanism only. Audited
@@ -1296,14 +1296,72 @@ this design introduces.
   no second credit, no second debt payment, no second `revision` bump.
 - **Rule — `lifetimeRedeemed` is never decremented**; it remains the honest historical total, restored
   or not, mirroring `lifetimeEarned`'s own monotonic-even-across-reversal precedent.
-- **Known, disclosed blocker**: no canonical server-side Cloud Function exists yet that ever transitions
-  a takeaway order (the only channel that can currently redeem Boncuk) to `rejected`/`cancelled`/
-  `refunded` — this restore mechanism is real, tested, and correct, but currently unreachable in
-  production for the one channel that matters. **Do not expose Boncuk checkout to production until a
-  canonical takeaway reject/cancel/refund transition exists.** `orderEarnReversal` (the earned-Boncuk
-  half of a completed-order refund) also remains unwritten — a separate, pre-existing gap.
+- **Blocker resolved (P4-C-C-B, 2026-08-22) — see `BR-LOYALTY-021`.** The canonical takeaway
+  reject/cancel/complete transition chain this entry's own blocker used to name is now implemented —
+  `rejected`/`cancelled` on a real takeaway order now genuinely reach this consumer in production, not
+  only in tests. `orderEarnReversal` (the earned-Boncuk half of a completed-order refund) remains
+  unwritten — a separate, still-open gap, tracked in `BR-LOYALTY-021`'s own blocker note, not this one.
 - **Owner Agent**: restaurant_domain / security_engineer
-- **Related Modules**: Loyalty, Orders, BR-LOYALTY-014, BR-LOYALTY-016, BR-LOYALTY-018, BR-LOYALTY-019
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-014, BR-LOYALTY-016, BR-LOYALTY-018, BR-LOYALTY-019,
+  BR-LOYALTY-021
+
+### BR-LOYALTY-021 — Canonical server-authoritative takeaway order lifecycle
+- **Status**: DECIDED — **IMPLEMENTED (P4-C-C-B, 2026-08-22)**, backend only. Audited (P4-C-C-A) before
+  implementation. This is the transition authority `BR-LOYALTY-019`/`BR-LOYALTY-020` both depended on
+  and previously lacked — a takeaway order can now genuinely reach `confirmed`/`rejected`/`preparing`/
+  `ready`/`completed`/`cancelled` in real production, not only via test-harness status writes.
+- **Rule — canonical flow**: `pendingConfirmation → confirmed → preparing → ready → completed`.
+  Terminal failure: customer-only `pendingConfirmation → cancelled`; restaurant-only
+  `pendingConfirmation → rejected`. Post-acceptance termination: `confirmed|preparing|ready →
+  cancelled`. `completed → refunded` remains explicitly out of scope this phase.
+- **Rule — REJECTED and CANCELLED stay semantically distinct, enforced structurally, not by convention**:
+  a restaurant refusing an order that was never accepted MUST use `respondToTakeawayOrder(decision:
+  "reject")`; `cancelTakeawayOrderForStaff` explicitly REJECTS a `pendingConfirmation` order outright
+  (`failed-precondition`, redirecting to the correct callable) rather than silently accepting it as a
+  cancellation.
+- **Rule — `completed` means fulfilled, not merely prepared**: `ready ≠ completed`. `ready → completed`
+  is the one transition that may trigger Boncuk earning (`onOrderCompleted.ts`, unmodified) — this
+  semantic did not previously exist anywhere in the app/backend (both statuses were, until now, unused
+  enum values with no writer at all); it is established here for the first time, not merely documented.
+- **Rule — exact-next-only, no status skipping**: `advanceTakeawayOrderStatus`'s own
+  `TAKEAWAY_NEXT_STATUS` map (`confirmed→preparing`, `preparing→ready`, `ready→completed`) is a
+  takeaway-specific allow-list layered on top of the generic `orderStatus.ts` `canTransition` table
+  (which alone would also permit `ready→outForDelivery`/`ready→served`, delivery/dine-in concepts that
+  never apply to takeaway) — `confirmed → completed` and every other skip fails outright.
+- **Rule — actor permissions, extending the existing permission-based (never role-name-inline)
+  authorization architecture (`staffAuthorization.ts`)**: two new closed permissions,
+  `manageTakeawayOrders` (confirm/reject/advance/cancel-while-`confirmed`; granted to `staff`/`manager`/
+  `admin`/`tenantOwner` — **the first-ever permission this codebase has granted to the `staff` tier**,
+  explicitly approved) and `manageTakeawayOrderCancellations` (cancel while `preparing`/`ready` — real
+  kitchen commitment already spent; `manager`/`admin`/`tenantOwner` only, deliberately excluding
+  `staff`). `courier` receives neither. The customer may only ever `cancelTakeawayOrder` their own order
+  while `pendingConfirmation` — no staff branch exists in that callable at all.
+- **Rule — server-derived branch authorization, the first Cloud-Functions-side enforcement of it in this
+  codebase**: `requireBranchAccess` (new, `staffAuthorization.ts`) mirrors `firestore.rules`'
+  `hasBranchAccess`'s exact `branchAccess` claim semantics — required in addition to
+  `requireStaffPermission` for every staff lifecycle callable, matching the same bar `orders`' own READ
+  rule already set (a prior, documented tightening) that no Cloud Function had matched on the write
+  side until now. `organizationId`/`branchId` are always derived from the server-loaded order, never
+  trusted from client input.
+- **Rule — customer-safe terminal metadata, split from internal audit provenance**: the order document
+  gains `terminalReasonCode` (closed enum)/`terminalActorType` (`customer`\|`staff`\|`system`)/
+  `terminalAt` — **`terminalActorUid` and any internal `reasonMessage` are deliberately never written to
+  the order document**, only to `auditEvents` (extending its existing `type: "order.statusChanged"`
+  shape, not a new parallel audit collection).
+- **Rule — transactional, single-winner concurrency**: every lifecycle callable loads the order inside
+  its own transaction and re-validates the current status before writing — Firestore's own optimistic
+  concurrency resolves any real race to exactly one winner; the loser fails closed or, for a genuinely
+  identical repeated decision, returns a defined idempotent `duplicate: true` result. No lifecycle
+  callable ever writes `loyaltyAccounts`/`loyaltyLedgerEntries` directly — `BR-LOYALTY-020`'s terminal
+  outbox and the existing `onOrderCompleted` earning chain both activate automatically from the
+  `status` write alone.
+- **Known, disclosed blocker**: `completed → refunded` and `orderEarnReversal` remain unimplemented —
+  a completed takeaway order cannot yet be refunded through any canonical path. No Admin/POS/KDS UI and
+  no customer Boncuk checkout UI were built this phase (explicitly out of scope) — this entry closes
+  the BACKEND authority gap only; **Boncuk checkout is still not safe to expose to customers** until a
+  real UI, and the refund path, both exist.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-020, BR-PRICE-002
 
 # Customer CRM & Loyalty Platform
 

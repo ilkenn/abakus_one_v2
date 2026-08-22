@@ -65,3 +65,7 @@ export { getCustomerLoyaltyHistory } from "./getCustomerLoyaltyHistory";
 export { onOrderEventCreatedForLoyaltyEarning } from "./loyaltyOrderEarning";
 export { onOrderTerminalFailureOrRefund } from "./onOrderTerminalFailureOrRefund";
 export { onOrderEventCreatedForLoyaltyRedemptionRestore } from "./loyaltyRedemptionRestore";
+export { respondToTakeawayOrder } from "./respondToTakeawayOrder";
+export { advanceTakeawayOrderStatus } from "./advanceTakeawayOrderStatus";
+export { cancelTakeawayOrder } from "./cancelTakeawayOrder";
+export { cancelTakeawayOrderForStaff } from "./cancelTakeawayOrderForStaff";

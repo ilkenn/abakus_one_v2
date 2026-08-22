@@ -4101,3 +4101,42 @@ production for the one channel that matters), `orderEarnReversal`'s writer, and 
 rules file touched — no client permission needed broadening); `flutter analyze` clean; `flutter test`
 3288 passed, 12 skipped, 0 failed, unchanged. See `docs/business_rules.md`'s new `BR-LOYALTY-020` and
 `docs/decisions.md`'s P4-C-B entry for the full mechanism and files changed. No commit was made.
+
+**Boncuk Loyalty Program P4-C-C-A (2026-08-22) — Takeaway Canonical Order Lifecycle + Authorization
+Audit, CLOSED (design only, delivered in-conversation, now recorded).** Confirmed `takeaway` — the only
+channel that can redeem Boncuk — had zero post-creation status writers anywhere in the backend prior to
+this phase; `orderStatus.ts`'s generic transition table already covered the entire target flow, no
+change needed there. Found `staffAuthorization.ts`'s permission map had never granted the `staff` role
+any permission at all, and that no Cloud Function anywhere enforced branch-level authorization
+server-side (rules-only until now — a real, confirmed gap). Recommended, all accepted into P4-C-C-B: two
+new permissions (`manageTakeawayOrders` — first-ever `staff`-tier grant — and
+`manageTakeawayOrderCancellations`, manager-tier); the first Cloud-Functions-side branch check;
+REJECTED/CANCELLED kept structurally distinct; escalating staff cancellation authority by kitchen
+commitment (Model B); `completed` redefined as fulfillment/handover, not merely "kitchen finished" — a
+genuinely new semantic, not previously encoded anywhere. No files changed. See
+`docs/decisions.md`'s P4-C-C-A entry.
+
+**Boncuk Loyalty Program P4-C-C-B (2026-08-22) — Canonical Takeaway Order Lifecycle Implementation,
+CLOSED, backend only.** Implements P4-C-C-A's accepted design: four new Cloud Functions
+(`respondToTakeawayOrder`/`advanceTakeawayOrderStatus`/`cancelTakeawayOrder`/
+`cancelTakeawayOrderForStaff`), two new staff permissions (`staff` role now genuinely holds
+`manageTakeawayOrders` and nothing else — verified by a dedicated regression test iterating every
+pre-existing permission and asserting `staff` has none of them), the first server-side branch
+authorization helper (`requireBranchAccess`, mirroring `firestore.rules`' `hasBranchAccess` exactly),
+customer-safe terminal metadata on the order (`terminalReasonCode`/`terminalActorType`/`terminalAt` —
+`terminalActorUid` and internal `reasonMessage` deliberately never appear there, only in `auditEvents`),
+and exact-next-only status advancement (`confirmed -> completed` and every other skip fails outright,
+even though the generic `orderStatus.ts` table alone doesn't forbid every one of them for other
+channels). Proved, not merely asserted, that the existing P4-C-B Boncuk-restore chain and the existing
+`onOrderCompleted`/earning chain both activate automatically from a lifecycle callable's own `status`
+write alone — a real Boncuk-redeeming order walked through reject/cancel-while-pending/
+confirm-then-cancel all correctly restore exactly once; a real full
+`pending -> confirmed -> preparing -> ready -> completed` walk correctly earns exactly once. No
+lifecycle callable writes loyalty state directly. Concurrency proven with real `Promise.all` races
+(staff-confirm-vs-customer-cancel, complete-vs-cancel), each resolving to exactly one winner. **Still
+explicitly out of scope**: `completed -> refunded`, `orderEarnReversal`, any Admin/POS/KDS UI, any
+customer Boncuk checkout UI — do not mark Loyalty production-ready. Gates: Functions build clean;
+Functions emulator suite 1099/1099, 0 failed (up from 1049, 50 new tests); Firestore Rules suite
+354/354, 0 failed, unchanged; `flutter analyze` clean; `flutter test` unaffected (no Flutter source file
+touched — no schema-parsing change was necessary). See `docs/business_rules.md`'s new `BR-LOYALTY-021`
+and `docs/decisions.md`'s P4-C-C-B entry for the full mechanism and files changed. No commit was made.

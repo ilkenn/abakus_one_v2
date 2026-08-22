@@ -13713,3 +13713,174 @@ rows updated), `docs/feature_status.md`.
 Rules suite **354/354**, 0 failed, unchanged (no rules file touched); `flutter analyze` clean; `flutter
 test` **3288 passed, 12 skipped, 0 failed**, unchanged. No commit was made, per this task's own explicit
 instruction.
+
+## Boncuk Loyalty Program P4-C-C-A — Takeaway Canonical Order Lifecycle + Authorization Audit (2026-08-22)
+
+**Status**: Audit + design, nothing implemented (explicit instruction). Delivered entirely as an
+in-conversation report at the time, like P4-C-A before it — recorded here now alongside its
+implementation (P4-C-C-B), below.
+
+**Confirmed, not assumed**: `takeaway` — the only channel that can redeem Boncuk — had ZERO
+post-creation status writers of any kind anywhere in `functions/src` prior to this phase; only
+`reservationPreorder` orders could move at all. `orderStatus.ts`'s generic `ALLOWED_TRANSITIONS` table
+already supported the entire target takeaway flow without modification — the missing piece was
+authority (who can call what), not the transition graph itself.
+
+**Authorization infrastructure audit** found: `requireStaffPermission` (`staffAuthorization.ts`) is the
+existing, permission-based (never role-name-inline) tenant-staff authorization primitive — but
+`DEFAULT_STAFF_ROLE_PERMISSIONS` had NO entry for the `staff` role at all (zero permissions, ever,
+codebase-wide, prior to this phase). Branch-level authorization (`hasBranchAccess`) existed only in
+`firestore.rules` — confirmed, by direct inspection of every staff callable, that **no Cloud Function
+anywhere enforced branch-level authorization server-side**; every existing staff callable checks only
+organization-level permission, relying on Firestore query filtering alone for branch scoping — a real,
+confirmed gap this phase's implementation was designed to close, not repeat.
+
+**Key recommendations, all accepted into P4-C-C-B**: extend the existing permission architecture with
+two new permissions (`manageTakeawayOrders` — the first staff-tier grant ever — and
+`manageTakeawayOrderCancellations`, manager-tier); add the first-ever Cloud-Functions-side branch
+authorization check; keep REJECTED and CANCELLED structurally distinct (never a shared "declined"
+concept); escalating cancellation authority by kitchen commitment (Model B: staff can cancel
+`confirmed`, manager+ required once `preparing`/`ready` has started); `completed` means fulfilled/handed
+over, not merely prepared — a genuinely new semantic this codebase's schema didn't previously encode
+(the `timestamps.completed` slot already existed, always `null`, since nothing had ever written it).
+
+**Files changed**: none (audit/design only).
+
+## Boncuk Loyalty Program P4-C-C-B — Canonical Takeaway Order Lifecycle Implementation (2026-08-22)
+
+**Status**: Implemented — four new Cloud Function callables, two new staff permissions, the first
+Cloud-Functions-side branch authorization helper, and full test coverage including 13 mandatory
+full-chain/concurrency scenarios. **Still explicitly out of scope, per this task's own instruction**:
+`completed → refunded`, `orderEarnReversal`, any Admin/POS/KDS UI, any customer Boncuk checkout UI.
+
+### 1. Permission changes — `functions/src/staffAuthorization.ts`
+
+Two new entries in the closed `StaffPermission` union: `manageTakeawayOrders` (confirm/reject/advance/
+cancel-while-`confirmed`) and `manageTakeawayOrderCancellations` (cancel while `preparing`/`ready`).
+`DEFAULT_STAFF_ROLE_PERMISSIONS` gains a brand-new `staff: ["manageTakeawayOrders"]` entry (this map's
+first-ever `staff`-tier grant, explicitly approved) and both permissions are added to `manager`/`admin`/
+`tenantOwner`'s existing arrays. `courier` receives neither (no entry, matching every unlisted role's
+existing zero-permission default). Verified explicitly, per instruction: `staffAuthorization.test.ts`
+asserts `staff`'s permission array is `["manageTakeawayOrders"]` and iterates every pre-existing
+permission confirming `staff` holds none of them — a real regression guard against accidental privilege
+escalation, not just a one-off check.
+
+### 2. Server branch authorization — `requireBranchAccess`, new, `staffAuthorization.ts`
+
+Mirrors `firestore.rules`' `hasBranchAccess(organizationId, branchId)` exactly (confirmed by direct
+inspection before writing it): reads the `branchAccess` custom claim (`{[organizationId]:
+[branchId, ...]}`, synced by `staffMembership.ts`'s existing `resyncClaimsForUid`, never client-supplied)
+— never a new semantic. The first Cloud-Functions-side branch check in this codebase, matching the bar
+`orders`' own READ rule already set. Always called AFTER `requireStaffPermission` for the same
+organization in every lifecycle callable — never the sole check.
+
+### 3. `respondToTakeawayOrder({orderId, decision: "confirm"|"reject", reasonCode?, reasonMessage?})`
+
+Staff-only. Loads the order first, derives `organizationId`/`branchId`/`channel` from it (never from
+client input), requires `manageTakeawayOrders` + branch access, requires current status
+`pendingConfirmation`, uses `canTransition` as defense-in-depth on top of the callable's own exact-status
+check. `reasonCode` is a NEW closed enum (`itemUnavailable`/`kitchenUnavailable`/`capacityUnavailable`/
+`operationalIssue`/`other`), required for `reject` — checked against existing project terminology first
+(`reservation`'s own `cancelReservation.ts` `reasonCode` turned out to be an unvalidated free-form
+string, not a closed enum to reuse — confirming this is genuinely new ground). Retried identical
+decision → `duplicate: true`, no second `statusHistory`/`auditEvents` write. Conflicting decision after
+a real transition → `failed-precondition`.
+
+### 4. `advanceTakeawayOrderStatus({orderId, targetStatus})`
+
+`TAKEAWAY_NEXT_STATUS` (`confirmed→preparing`, `preparing→ready`, `ready→completed`) is a
+takeaway-specific allow-list layered ON TOP of the generic `canTransition` table — `orderStatus.ts`
+itself was never modified; it already permits every edge this flow needs, plus several
+takeaway-inappropriate ones (`ready→outForDelivery`/`ready→served`) this callable explicitly rejects.
+`targetStatus` must equal the CURRENT status's single allowed next value exactly — `confirmed→completed`
+fails `failed-precondition` outright, proven by a dedicated test.
+
+### 5. `cancelTakeawayOrder({orderId})` — customer
+
+No `customerId` in the request at all — ownership derives exclusively from the server-loaded order's own
+`customerId` vs. `request.auth.uid`. No staff branch exists in this callable, deliberately (a staff
+member's own anonymous-sign-in token is rejected by the same `requireRealCustomer` check every real
+customer must pass, proven by a dedicated test). Only while `pendingConfirmation`; a later attempt fails
+with a stable `failed-precondition`. **No loyalty write** — confirmed, the existing, unmodified
+`onOrderTerminalFailureOrRefund.ts`/`loyaltyRedemptionRestore.ts` chain (P4-C-B) activates automatically
+from the `status: "cancelled"` write alone.
+
+### 6. `cancelTakeawayOrderForStaff({orderId, reasonCode, reasonMessage?})`
+
+Baseline `manageTakeawayOrders` + branch access verified UNCONDITIONALLY first — an unauthorized caller
+learns nothing about the order's real status before that check passes. `pendingConfirmation` is
+explicitly rejected (`failed-precondition`, redirecting to `respondToTakeawayOrder`'s own `reject`
+decision) — keeping REJECTED and CANCELLED structurally distinct, not merely by convention. `completed`
+is denied outright. `preparing`/`ready` additionally require the escalated
+`manageTakeawayOrderCancellations` permission, verified only after the status is known to need it.
+`reasonCode` closed enum extends the rejection set with `customerNoShow` (cancellation-only — a real,
+common restaurant scenario the task's own example list didn't include, added as this task's own
+"challenge names" instruction intended).
+
+### 7. Terminal metadata — customer-safe vs. internal, on the order document
+
+New fields: `terminalReasonCode`/`terminalActorType` (`customer`\|`staff`\|`system`)/`terminalAt`.
+**`terminalActorUid` and any internal `reasonMessage` are deliberately never written here** — proven by
+a dedicated test asserting `"terminalActorUid" in order === false` and that a reject's own internal
+`reasonMessage` string never appears anywhere in the serialized order document.
+
+### 8. Audit logging — extends the existing shape, no parallel collection
+
+`auditEvents`' existing `type: "order.statusChanged"` shape (already written by `onOrderCreated.ts`/
+`reservationPreorder.ts`) gains additive fields: `branchId`, `actorType`, `actorUid`, `actorRoles` (the
+caller's full role array for the org — a lightweight capture of "what roles held this action," since
+`requireStaffPermission` itself has no return-value seam to report exactly which single permission
+authorized it), `reasonCode`, `reasonMessage`. `actor` (the pre-existing coarse string field) is
+preserved unchanged in shape. Deterministic event id (`${orderId}-status-${fromStatus}-${toStatus}`) —
+a given order can only make a specific transition once (the state machine has no cycles), so this can
+never legitimately collide; `tx.set()` (not `tx.create()`) is used deliberately, since the true
+idempotency gate is each callable's own current-status precondition check, re-verified inside the same
+transaction — `tx.create()`'s ALREADY_EXISTS failure mode cannot be gracefully caught mid-transaction the
+way `onOrderCompleted.ts`'s own standalone `.create()` can.
+
+### 9. Concurrency
+
+Every lifecycle callable: `tx.get(orderRef)` first, authorize using the server-read order, re-validate
+current status, write. Firestore's own optimistic-concurrency retry resolves any genuine race to exactly
+one winner; the loser's re-read determines the outcome — `failed-precondition` for a genuinely different
+final state, `duplicate: true` for the exact same decision arriving twice (e.g. two staff confirming
+simultaneously). Proven, not just asserted: dedicated `Promise.all`-driven tests for staff-confirm-vs-
+customer-cancel and complete-vs-cancel, both asserting exactly one real transition landed and
+`statusHistory` recorded it exactly once.
+
+### 10. Boncuk restore / earning integration — confirmed automatic, zero new loyalty code
+
+The full chain was proven end-to-end, not merely re-asserted from P4-C-B's own design: a takeaway order
+seeded with a real `boncukRedemption` ledger entry, rejected via `respondToTakeawayOrder` (or cancelled
+via either cancel callable), is restored to its exact original spendable balance via the already-built,
+completely unmodified `onOrderTerminalFailureOrRefund.ts`/`loyaltyRedemptionRestore.ts` chain — and a
+full `pendingConfirmation → confirmed → preparing → ready → completed` walk via
+`respondToTakeawayOrder`/`advanceTakeawayOrderStatus` alone (no direct Firestore write) correctly
+triggers the existing, unmodified `onOrderCompleted.ts` → `loyaltyOrderEarning.ts` chain, crediting the
+exact expected Boncuk amount exactly once. No lifecycle callable in this phase writes
+`loyaltyAccounts`/`loyaltyLedgerEntries` directly — confirmed by design and by test.
+
+**Files changed — backend**: `functions/src/staffAuthorization.ts` (two new permissions +
+`requireBranchAccess`), `functions/src/takeawayOrderLifecycle.ts` (new, shared reason-code enums +
+write-phase helpers), `functions/src/respondToTakeawayOrder.ts` (new), `functions/src/
+advanceTakeawayOrderStatus.ts` (new), `functions/src/cancelTakeawayOrder.ts` (new), `functions/src/
+cancelTakeawayOrderForStaff.ts` (new), `functions/src/index.ts` (four new exports). `orderStatus.ts` was
+deliberately NOT modified — its existing table already covers every edge this phase needs. **Tests**:
+`functions/src/test/staffAuthorization.test.ts` (new — pure permission-map + fake-request authorization
+tests), `functions/src/test/takeawayOrderLifecycle.test.ts` (new — every callable's own correctness,
+authorization, idempotency, the 13 mandatory full-chain/concurrency scenarios). **Rules**: none touched
+— no client permission needed broadening; the full suite was rerun regardless, unchanged. **Flutter**:
+none — no schema-parsing change was necessary. **Docs**: this entry, `docs/business_rules.md`
+(`BR-LOYALTY-019`/`BR-LOYALTY-020` blocker notes updated, new `BR-LOYALTY-021`),
+`docs/firestore_data_model.md`, `docs/feature_status.md`.
+
+**Exact gate totals**: Functions build (`tsc`) clean; Functions emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`) **1099/1099**, 0 failed (up from 1049 — 50 new tests, after fixing
+two mid-run test-design bugs, neither a production-code defect: six off-by-one `statusHistory.length`
+assertions that forgot `submitTakeawayOrder.ts` already seeds one entry at creation time, and one
+overwritten pre-existing `staffAuthorization.test.ts` — a real, prior test file this task's own new file
+briefly clobbered instead of extending, caught before finishing and corrected by merging the original 19
+tests with the 16 new ones rather than replacing);
+Firestore Rules suite **354/354**, 0 failed, unchanged; `flutter analyze`/`flutter test` — see this
+entry's own closing gate line for the exact re-run counts. No commit was made, per this task's own
+explicit instruction.

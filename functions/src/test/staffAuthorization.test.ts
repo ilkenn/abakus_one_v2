@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { roleHasPermission, DEFAULT_STAFF_ROLE_PERMISSIONS } from "../staffAuthorization";
+import type { CallableRequest } from "firebase-functions/v2/https";
+import {
+  roleHasPermission,
+  DEFAULT_STAFF_ROLE_PERMISSIONS,
+  requireStaffPermission,
+  requireBranchAccess,
+  type StaffPermission,
+} from "../staffAuthorization";
 
 // Pure-function tests — no emulator needed. Faz R.1B.1 REQUIRED fix #1:
 // proves `roleHasPermission` is a genuine, data-driven permission resolver
@@ -111,4 +118,137 @@ test("roleHasPermission: base staff does NOT have moderateCustomerPhotos under t
 
 test("roleHasPermission: courier does NOT have moderateCustomerPhotos under the default mapping", () => {
   assert.strictEqual(roleHasPermission("courier", "moderateCustomerPhotos"), false);
+});
+
+// =======================================================================
+// Boncuk Loyalty P4-C-C-B (2026-08-22) — manageTakeawayOrders /
+// manageTakeawayOrderCancellations, and the two new authorization
+// primitives (requireStaffPermission/requireBranchAccess) exercised
+// directly via a hand-built fake CallableRequest (both only ever read
+// request.auth.token — no Firestore/Auth I/O needed here; their real,
+// end-to-end correctness against genuine custom claims is additionally
+// exercised by takeawayOrderLifecycle.test.ts's own emulator-backed
+// callable tests). Explicit regression coverage for the "staff must gain
+// ONLY manageTakeawayOrders, never any pre-existing manager-tier
+// permission" instruction.
+// =======================================================================
+
+const ALL_PRE_EXISTING_PERMISSIONS: readonly StaffPermission[] = [
+  "manageReservations",
+  "manageBranch",
+  "manageStaffAccounts",
+  "manageStaffAdminRole",
+  "manageStaffRoles",
+  "manageStaffBranchAccess",
+  "moderateCustomerPhotos",
+];
+
+test("staff role has EXACTLY manageTakeawayOrders and nothing else", () => {
+  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, ["manageTakeawayOrders"]);
+});
+
+test("staff role does NOT have manageTakeawayOrderCancellations", () => {
+  assert.strictEqual(roleHasPermission("staff", "manageTakeawayOrderCancellations"), false);
+});
+
+test("staff role does not gain any pre-existing manager-tier permission as a side effect of the new grant", () => {
+  for (const permission of ALL_PRE_EXISTING_PERMISSIONS) {
+    assert.strictEqual(
+      roleHasPermission("staff", permission),
+      false,
+      `staff must not have ${permission}`,
+    );
+  }
+});
+
+test("manager/admin/tenantOwner all have BOTH new takeaway permissions", () => {
+  for (const role of ["manager", "admin", "tenantOwner"]) {
+    assert.strictEqual(roleHasPermission(role, "manageTakeawayOrders"), true, `${role} should have manageTakeawayOrders`);
+    assert.strictEqual(
+      roleHasPermission(role, "manageTakeawayOrderCancellations"),
+      true,
+      `${role} should have manageTakeawayOrderCancellations`,
+    );
+  }
+});
+
+test("courier role has no entry at all in the permission map -> zero permissions, including the new takeaway ones", () => {
+  assert.strictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.courier, undefined);
+  assert.strictEqual(roleHasPermission("courier", "manageTakeawayOrders"), false);
+  assert.strictEqual(roleHasPermission("courier", "manageTakeawayOrderCancellations"), false);
+});
+
+// -----------------------------------------------------------------------
+// requireStaffPermission — pure, fake-request tests.
+// -----------------------------------------------------------------------
+
+function fakeRequest(auth: null | { uid?: string; token: Record<string, unknown> }): CallableRequest {
+  return {
+    auth: auth ? { uid: auth.uid ?? "fake-uid", token: auth.token } : null,
+    data: {},
+  } as unknown as CallableRequest;
+}
+
+function throwsWithCode(fn: () => void, code: string): void {
+  assert.throws(fn, (err: unknown) => (err as { code?: string }).code === code);
+}
+
+test("requireStaffPermission: no auth -> unauthenticated", () => {
+  throwsWithCode(() => requireStaffPermission(fakeRequest(null), "org-1", "manageTakeawayOrders"), "unauthenticated");
+});
+
+test("requireStaffPermission: no organizationAccess for this org -> permission-denied", () => {
+  const req = fakeRequest({ token: { organizationAccess: [], roles: {} } });
+  throwsWithCode(() => requireStaffPermission(req, "org-1", "manageTakeawayOrders"), "permission-denied");
+});
+
+test("requireStaffPermission: org member but role lacks the requested permission -> permission-denied", () => {
+  const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["staff"] } } });
+  throwsWithCode(() => requireStaffPermission(req, "org-1", "manageTakeawayOrderCancellations"), "permission-denied");
+});
+
+test("requireStaffPermission: staff role WITH manageTakeawayOrders -> succeeds", () => {
+  const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["staff"] } } });
+  assert.doesNotThrow(() => requireStaffPermission(req, "org-1", "manageTakeawayOrders"));
+});
+
+test("requireStaffPermission: role claim for a DIFFERENT organization never leaks authority into this one", () => {
+  const req = fakeRequest({
+    token: { organizationAccess: ["org-2"], roles: { "org-2": ["admin"] } },
+  });
+  throwsWithCode(() => requireStaffPermission(req, "org-1", "manageTakeawayOrders"), "permission-denied");
+});
+
+// -----------------------------------------------------------------------
+// requireBranchAccess — pure, fake-request tests, mirroring
+// firestore.rules' hasBranchAccess exactly.
+// -----------------------------------------------------------------------
+
+test("requireBranchAccess: no auth -> unauthenticated", () => {
+  throwsWithCode(() => requireBranchAccess(fakeRequest(null), "org-1", "branch-1"), "unauthenticated");
+});
+
+test("requireBranchAccess: branch not present in the claim array -> permission-denied", () => {
+  const req = fakeRequest({ token: { branchAccess: { "org-1": ["branch-2"] } } });
+  throwsWithCode(() => requireBranchAccess(req, "org-1", "branch-1"), "permission-denied");
+});
+
+test("requireBranchAccess: branch present -> succeeds", () => {
+  const req = fakeRequest({ token: { branchAccess: { "org-1": ["branch-1"] } } });
+  assert.doesNotThrow(() => requireBranchAccess(req, "org-1", "branch-1"));
+});
+
+test("requireBranchAccess: a branch grant recorded under a DIFFERENT organization never leaks across tenants", () => {
+  const req = fakeRequest({ token: { branchAccess: { "org-2": ["branch-1"] } } });
+  throwsWithCode(() => requireBranchAccess(req, "org-1", "branch-1"), "permission-denied");
+});
+
+test("requireBranchAccess: missing branchAccess claim key entirely -> permission-denied, fails closed", () => {
+  const req = fakeRequest({ token: {} });
+  throwsWithCode(() => requireBranchAccess(req, "org-1", "branch-1"), "permission-denied");
+});
+
+test("requireBranchAccess: malformed (non-array) branchAccess value -> permission-denied, fails closed", () => {
+  const req = fakeRequest({ token: { branchAccess: { "org-1": "branch-1" } } });
+  throwsWithCode(() => requireBranchAccess(req, "org-1", "branch-1"), "permission-denied");
 });
