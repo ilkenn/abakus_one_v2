@@ -22,6 +22,7 @@ import {
 } from "./loyaltyPolicy";
 import type { LoyaltyAccountData } from "./getCustomerLoyaltySnapshot";
 import { hasServerPricingAuthority } from "./orderPricingAuthority";
+import { applyBoncukCreditDebtFirst } from "./loyaltyAccounting";
 
 /**
  * `loyaltyOrderEarning` — Boncuk Loyalty Program P2A (2026-08-20), security
@@ -105,6 +106,16 @@ import { hasServerPricingAuthority } from "./orderPricingAuthority";
  * against the existing `orderEvents`/`onOrderCompleted.ts` contract, but
  * production execution is unreachable until a canonical server-side
  * order-completion transition exists (out of scope here).
+ *
+ * **P4-C-B (2026-08-22) — debt-first math moved to a shared module.** The
+ * `applyDebtFirst` function that used to live here is now
+ * `loyaltyAccounting.ts`'s `applyBoncukCreditDebtFirst` — a channel-neutral
+ * primitive, since P4-C-A.1's accepted correction requires Boncuk
+ * redemption restoration (`loyaltyRedemptionRestore.ts`) to apply the exact
+ * same debt-first rule to a restored credit that earning already applies to
+ * a newly-earned one. No behavior change here — this file's own earning
+ * transaction produces byte-for-byte identical results, only the formula's
+ * home moved.
  */
 
 // -----------------------------------------------------------------------
@@ -209,25 +220,6 @@ export function calculateOrderEarning(params: {
     earningSpendMinorUnits: params.earningSpendMinorUnits,
     earningBoncukAmount: params.earningBoncukAmount,
   });
-}
-
-export interface DebtAwareEarningResult {
-  debtPaidBoncuk: number;
-  spendableCreditBoncuk: number;
-  newDebtBoncuk: number;
-}
-
-/** BR-LOYALTY-014 — future earning pays down existing debt before any of it becomes spendable. */
-export function applyDebtFirst(params: {
-  grossBoncukEarned: number;
-  boncukDebt: number;
-}): DebtAwareEarningResult {
-  const debtPaidBoncuk = Math.min(params.grossBoncukEarned, params.boncukDebt);
-  return {
-    debtPaidBoncuk,
-    spendableCreditBoncuk: params.grossBoncukEarned - debtPaidBoncuk,
-    newDebtBoncuk: params.boncukDebt - debtPaidBoncuk,
-  };
 }
 
 export interface ProcessOrderCompletionForLoyaltyEarningResult {
@@ -499,10 +491,12 @@ export async function processOrderCompletionEventForLoyaltyEarning(
       earningSpendMinorUnits: policy.earningSpendMinorUnits,
       earningBoncukAmount: policy.earningBoncukAmount,
     });
-    const { debtPaidBoncuk, spendableCreditBoncuk, newDebtBoncuk } = applyDebtFirst({
-      grossBoncukEarned: calc.wholeBoncukEarned,
-      boncukDebt: debtBeforeBoncuk,
-    });
+    const { debtPaidBoncuk, spendableCreditBoncuk, newSpendableBalance, newBoncukDebt } =
+      applyBoncukCreditDebtFirst({
+        creditedBoncuk: calc.wholeBoncukEarned,
+        spendableBalance: existingAccount.spendableBalance,
+        boncukDebt: debtBeforeBoncuk,
+      });
 
     const ledgerEntry: LoyaltyLedgerEntry = {
       organizationId,
@@ -526,7 +520,7 @@ export async function processOrderCompletionEventForLoyaltyEarning(
       earningBoncukAmount: policy.earningBoncukAmount,
       loyaltyPolicyVersion: policy.version,
       debtBeforeBoncuk,
-      debtAfterBoncuk: newDebtBoncuk,
+      debtAfterBoncuk: newBoncukDebt,
       redemptionValueMinorUnitsPerBoncuk: null,
       maxRedemptionBasisPoints: null,
       idempotencyKey: orderId,
@@ -548,8 +542,8 @@ export async function processOrderCompletionEventForLoyaltyEarning(
     tx.set(accountRef, {
       organizationId: existingAccount.organizationId,
       customerId: existingAccount.customerId,
-      spendableBalance: existingAccount.spendableBalance + spendableCreditBoncuk,
-      boncukDebt: newDebtBoncuk,
+      spendableBalance: newSpendableBalance,
+      boncukDebt: newBoncukDebt,
       // O(1) reversal projection — a running sum of every wholeBoncukEarned
       // ever credited (before any future reversal decrements it). See
       // loyaltyReversalMath.ts's own doc comment for why this, combined

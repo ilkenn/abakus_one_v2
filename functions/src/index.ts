@@ -63,3 +63,5 @@ export { getCustomerProfileCompletionState } from "./getCustomerProfileCompletio
 export { getCustomerLoyaltySnapshot } from "./getCustomerLoyaltySnapshot";
 export { getCustomerLoyaltyHistory } from "./getCustomerLoyaltyHistory";
 export { onOrderEventCreatedForLoyaltyEarning } from "./loyaltyOrderEarning";
+export { onOrderTerminalFailureOrRefund } from "./onOrderTerminalFailureOrRefund";
+export { onOrderEventCreatedForLoyaltyRedemptionRestore } from "./loyaltyRedemptionRestore";

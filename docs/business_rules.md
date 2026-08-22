@@ -900,10 +900,13 @@ this design introduces.
 ### BR-LOYALTY-014 — Spendable balance never negative; Boncuk debt absorbs excess clawback
 - **Status**: DECIDED (2026-08-22, P2B-A design task) — **ACCOUNTING FOUNDATION IMPLEMENTED (P2B-B,
   2026-08-22)**: `boncukDebt` is real, persisted, transactionally maintained state, and future order
-  earning genuinely pays it down first (`applyDebtFirst`, `functions/src/loyaltyOrderEarning.ts`).
-  **The clawback-creating direction remains NOT implemented** — no reversal Cloud Function exists, so
-  debt can accumulate only in tests today, never from a real refund. See `docs/decisions.md`'s P2B-B
-  entry for the full implementation report.
+  earning genuinely pays it down first. **P4-C-B (2026-08-22)**: the debt-first formula was extracted
+  into a shared, channel-neutral primitive (`applyBoncukCreditDebtFirst`,
+  `functions/src/loyaltyAccounting.ts`) — `loyaltyOrderEarning.ts` no longer defines its own copy, and
+  Boncuk redemption restoration (`BR-LOYALTY-020`) now applies this exact same rule to a restored
+  credit, not a separate formula. **The clawback-creating direction remains NOT implemented** — no
+  `orderEarnReversal` Cloud Function exists, so debt can accumulate only in tests today, never from a
+  real refund. See `docs/decisions.md`'s P2B-B entry for the full implementation report.
 - **Rule**: A customer's visible/spendable Boncuk balance (`loyaltyAccounts.spendableBalance`) must
   never become negative. When a refund/cancellation requires clawing back more Boncuk than the
   customer currently holds spendable, the clawback is applied in two steps, both inside the same
@@ -1200,8 +1203,11 @@ this design introduces.
 
 ### BR-LOYALTY-019 — Server-authoritative checkout redemption: settlement not discount, takeaway only
 - **Status**: DECIDED — **IMPLEMENTED (P4-B, 2026-08-22), takeaway backend only**. No customer-facing
-  checkout UI exists yet (Flutter is out of scope this phase); no restoration-on-cancellation trigger
-  exists yet (see the blocker note below).
+  checkout UI exists yet (Flutter is out of scope this phase). Restoration on rejection/cancellation/
+  refund is now implemented (`BR-LOYALTY-020`, P4-C-B) — see that entry for the mechanism — but the
+  canonical server-side transition that would actually PRODUCE a rejected/cancelled/refunded takeaway
+  order does not exist yet (P4-C-A's own audit finding, still true). See `BR-LOYALTY-020`'s own blocker
+  note for what remains before Boncuk checkout can go to production.
 - **Rule — Boncuk is settlement, not discount**: redeeming Boncuk at checkout never touches
   `pricing.discount`/`pricing.grossSubtotal`/`pricing.grandTotal` — the order's own price is exactly
   what the server pricing pipeline computed, unaffected by how the customer chooses to pay it. A
@@ -1245,14 +1251,59 @@ this design introduces.
   `dineInQr`/POS/staff-created orders can never carry a redemption (BR-PRICE-002's existing
   server-authoritative-pricing exclusion for those channels applies here too — redemption requires the
   same trusted pricing provenance earning does, BR-LOYALTY-013).
-- **Known, disclosed blocker — restoration not implemented**: if a takeaway order that redeemed Boncuk
-  is later rejected/cancelled, the debited `spendableBalance` and the `boncukRedemption` ledger entry
-  are **not currently restored** — no `boncukRedemptionRestore` writer exists yet (the ledger entry type
-  itself was already reserved in the closed union from the original P0-A design). **Do not expose Boncuk
-  checkout to production until this is closed.**
+- **Restoration is now implemented — see `BR-LOYALTY-020`.** If a takeaway order that redeemed Boncuk
+  is later rejected/cancelled/refunded, the debited `spendableBalance` and a matching immutable
+  `boncukRedemptionRestore` ledger entry are restored, debt-first. **Still a hard production blocker**,
+  for a different reason than before: no canonical server-side transition exists yet that would ever
+  actually PRODUCE a `rejected`/`cancelled`/`refunded` takeaway order — see `BR-LOYALTY-020`.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-005, BR-LOYALTY-006, BR-LOYALTY-013,
-  BR-LOYALTY-014, BR-LOYALTY-018, BR-PRICE-002
+  BR-LOYALTY-014, BR-LOYALTY-018, BR-LOYALTY-020, BR-PRICE-002
+
+### BR-LOYALTY-020 — Debt-first Boncuk redemption restoration on order failure/cancellation/refund
+- **Status**: DECIDED — **IMPLEMENTED (P4-C-B, 2026-08-22)**, backend/ledger mechanism only. Audited
+  (P4-C-A) and corrected for debt-first accounting (P4-C-A.1) before implementation.
+- **Rule — restoration is mandatory, never a loss**: if Boncuk was debited for an order and that order
+  does not successfully continue to a valid sale outcome (rejected, cancelled, or refunded after
+  completion), the customer's spent Boncuk must never be lost. Rejected/cancelled orders never earned
+  anything (they never reached `completed`), so only a redemption restore is needed. A refunded order
+  may ALSO have earned Boncuk before being refunded — that requires a SEPARATE `orderEarnReversal`
+  event (not implemented — see the blocker note below); the two are never merged into one ledger write.
+- **Rule — debt-first (corrects an earlier, rejected direct-credit design)**: `debtPaid = min(restored
+  Boncuk, boncukDebt)`; `spendableCredit = restoredBoncuk - debtPaid`. A direct-credit model (crediting
+  `spendableBalance` unconditionally regardless of existing debt) was evaluated and rejected — it can
+  produce `spendableBalance > 0` while `boncukDebt > 0` simultaneously, letting a customer spend Boncuk
+  while an equal debt still exists. The canonical account invariant, upheld by every economic-credit
+  event (earning AND restoration alike, via the one shared `functions/src/loyaltyAccounting.ts`
+  primitive): `spendableBalance >= 0`, `boncukDebt >= 0`, `spendableBalance > 0 ⟹ boncukDebt == 0`.
+- **Rule — restored count is immutable, independent of current policy**: the restored Boncuk COUNT is
+  read directly from the original `boncukRedemption` ledger entry's own `spendableDeltaBoncuk` (an
+  exact, already-integer historical fact) — never recomputed from `valueMinorUnits` against whatever
+  `loyaltyPolicies` document is active at restoration time. A policy change between the original
+  redemption and its later restoration has zero effect on the restored count.
+- **Rule — never fabricated**: if no original `boncukRedemption` ledger entry exists for the order
+  (looked up by its own deterministic id — never the order document's own denormalized snapshot field),
+  there is nothing to restore — a clean, deterministic no-op, not a special case.
+- **Rule — architecture**: a generic `onOrderTerminalFailureOrRefund` trigger (mirrors the existing
+  `onOrderCompleted` outbox producer exactly — passive, `onDocumentUpdated`, decoupled from whichever
+  future transition function eventually writes the terminal status) writes `order.rejected`/
+  `order.cancelled`/`order.refunded` outbox events; a dedicated `loyaltyRedemptionRestore` consumer
+  (mirrors `loyaltyOrderEarning`'s own thin-trigger/pure-function split) performs the restore inside one
+  atomic transaction with the account debit, re-verifying the real order document's current status
+  before ever restoring (defense-in-depth against a forged/stale event).
+- **Rule — idempotent**: a deterministic `boncukRedemptionRestore` ledger-entry id (same
+  `deriveLoyaltyLedgerEntryId` helper, `sourceId: orderId`) makes a duplicate outbox delivery a no-op —
+  no second credit, no second debt payment, no second `revision` bump.
+- **Rule — `lifetimeRedeemed` is never decremented**; it remains the honest historical total, restored
+  or not, mirroring `lifetimeEarned`'s own monotonic-even-across-reversal precedent.
+- **Known, disclosed blocker**: no canonical server-side Cloud Function exists yet that ever transitions
+  a takeaway order (the only channel that can currently redeem Boncuk) to `rejected`/`cancelled`/
+  `refunded` — this restore mechanism is real, tested, and correct, but currently unreachable in
+  production for the one channel that matters. **Do not expose Boncuk checkout to production until a
+  canonical takeaway reject/cancel/refund transition exists.** `orderEarnReversal` (the earned-Boncuk
+  half of a completed-order refund) also remains unwritten — a separate, pre-existing gap.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-014, BR-LOYALTY-016, BR-LOYALTY-018, BR-LOYALTY-019
 
 # Customer CRM & Loyalty Platform
 

@@ -13509,3 +13509,207 @@ failed (up from 345 before this pass — 9 new anti-forgery tests); `flutter ana
 found; `flutter test` **3288 passed, 12 skipped, 0 failed** — byte-for-byte identical to the count before
 this pass, confirming no Flutter behavior was affected (no Flutter source file was modified). No commit
 was made, per this task's own explicit instruction.
+
+## Boncuk Loyalty Program P4-C-A — Order Lifecycle + Redemption Restore Audit (2026-08-22)
+
+**Status**: Audit + design, nothing implemented (explicit instruction). Delivered entirely as an
+in-conversation report at the time — no file was written or committed for this pass; this entry now
+records it for the permanent record, alongside its accepted correction (P4-C-A.1) and its
+implementation (P4-C-B), below.
+
+**Audited the REAL server-side order lifecycle** (source, not docs) and found: three real `onCall`
+creation paths (`submitTakeawayOrder`/`submitDeliveryOrder`/`submitReservation`'s preorder branch), all
+writing `pendingConfirmation` directly. Post-creation, only `reservationPreorder` orders can move at
+all (`pendingConfirmation → confirmed` via `respondToReservation`/`respondToProposedChange`/
+`reservationPreorderKdsRelease`; `pendingConfirmation → cancelled` via `cancelReservation`/
+`markReservationNoShow`/`reservationSweep`, only pre-confirmation). **`takeaway` — the only channel that
+can redeem Boncuk (P4-B) — has ZERO post-creation status writers of any kind**: no reject, no cancel, no
+refund, no kitchen-lifecycle transition exists anywhere in `functions/src`; `firestore.rules` denies
+every direct client write to `orders.status` unconditionally. `preparing`/`ready`/`served`/
+`outForDelivery`/`completed`/`rejected`/`refunded` are never written to a real order document by any
+Cloud Function today.
+
+**The one load-bearing design decision**: **redemption restoration and earned-Boncuk reversal are two
+separate, independent ledger events, never merged.** A rejected/cancelled order never earned anything
+(it never reached `completed`, so `onOrderCompleted.ts`'s earning consumer never fired) — only a
+`boncukRedemptionRestore` is ever needed there. A refunded (post-`completed`) order may need BOTH a
+redemption restore AND a separate `orderEarnReversal` — the latter remains out of scope, a disclosed,
+pre-existing gap.
+
+**Architecture recommendation, evaluated against the existing pattern**: `onOrderCompleted.ts` is a
+generic, passive `onDocumentUpdated` trigger, decoupled from whichever function performs the
+transition — the recommendation was to mirror this exactly for `rejected`/`cancelled`/`refunded` rather
+than requiring each future transition function to remember to write an outbox event itself. This is
+what P4-C-B implements.
+
+**Files changed**: none (audit/design only).
+
+## Boncuk Loyalty Program P4-C-A.1 — Redemption Restore Debt-First Correction (2026-08-22)
+
+**Status**: Design correction, nothing implemented at the time (explicit instruction); implemented by
+P4-C-B, below. Rejected P4-C-A's own "restored Boncuk always credits `spendableBalance` directly, never
+touches `boncukDebt`" recommendation as incorrect.
+
+**The locked correction**: restoration must be debt-first, using the exact same shape as earning's own
+`applyDebtFirst`: `debtPaid = min(restoredBoncuk, boncukDebt)`, `spendableCredit = restoredBoncuk -
+debtPaid`. **Proof the rejected direct-credit model was wrong**: worked scenario — customer earns 10,
+spends 8 on Order B (spendable 2 remains), the earning source is refunded (clawback 10 against
+spendable 2 → spendable 0, debt 8), Order B is then cancelled (restore 8). Direct-credit would produce
+`spendable: 8, debt: 8` simultaneously — violating the canonical account invariant
+(`spendableBalance > 0 ⟹ boncukDebt == 0`, established by earning's own debt-first discipline) and
+letting the customer spend Boncuk while an equal debt remains. Debt-first correctly produces
+`spendable: 0, debt: 0` — exactly the state as if Order B's redemption had never happened.
+
+**Order-independence, proven mathematically**: `f(S, D, δ) = project(net(S,D) + δ)` where `net(S,D) =
+S - D` and `project(n) = (max(n,0), max(-n,0))` — verified by case analysis for both credit (`δ ≥ 0`)
+and debit (`δ < 0`, a clawback) transforms. By induction over any sequence of such steps, the final
+account state depends only on the SUM of all deltas, never their order — the same telescoping-sum proof
+technique `loyaltyPolicy.ts`'s `combineCarryWithEarning` already uses for the earning-carry model, not a
+new kind of argument. Applied concretely: a redemption restore (+8) and an earn-reversal clawback (-10)
+for the same refunded order, processed in either order, converge to the identical final state
+(`spendable: 0, debt: 0`) — verified with exact numbers in both orderings.
+
+**Files changed**: none (design correction only).
+
+## Boncuk Loyalty Program P4-C-B — Terminal Order Events + Debt-First Redemption Restore (2026-08-22)
+
+**Status**: Implemented — the terminal-event outbox producer, the debt-first restore consumer, and the
+shared debt-first primitive are real, tested, and wired. **Still not implemented, deliberately, per this
+task's own scope**: the canonical takeaway reject/cancel/refund transition itself,
+`orderEarnReversal`'s writer, and any customer-facing UI. The terminal-event architecture was tested via
+direct emulator/test-harness status writes (mirroring `functions.test.ts`'s own established
+`onOrderCompleted` test pattern), not through a real reject/cancel callable — none exists yet.
+
+### 1. Shared debt-first primitive — `functions/src/loyaltyAccounting.ts`
+
+`applyBoncukCreditDebtFirst({creditedBoncuk, spendableBalance, boncukDebt})` → `{debtPaidBoncuk,
+spendableCreditBoncuk, newSpendableBalance, newBoncukDebt}`. `loyaltyOrderEarning.ts`'s own
+`applyDebtFirst`/`DebtAwareEarningResult` were REMOVED, not kept as a parallel copy — its one call site
+now calls the shared primitive directly, and its own `newSpendableBalance` output replaces the earning
+transaction's previous manual `existingAccount.spendableBalance + spendableCreditBoncuk` computation.
+The formula itself is byte-for-byte unchanged (verified: the earning transaction's own emulator tests,
+including its existing debt-first integration coverage, pass unmodified). The 4 direct unit tests that
+used to test `applyDebtFirst` in `loyaltyOrderEarning.test.ts` were relocated (not duplicated) to the
+new `test/loyaltyAccounting.test.ts`, adapted for the primitive's new `spendableBalance`/
+`newSpendableBalance` fields.
+
+### 2. Terminal order event producer — `functions/src/onOrderTerminalFailureOrRefund.ts`
+
+A generic `onDocumentUpdated("orders/{orderId}")` trigger, deliberately mirroring `onOrderCompleted.ts`'s
+exact shape (never modified by this phase): detects `before.status !== after.status &&
+after.status ∈ {rejected, cancelled, refunded}`, writes `orderEvents/{orderId}-{terminalStatus}` via
+`.create()` (`ALREADY_EXISTS` swallowed, identical idempotency mechanism), `type: 'order.rejected'` \|
+`'order.cancelled'` \| `'order.refunded'`, plus `boncukRedemptionRestoreEvaluated: false` and, `refunded`
+only, `earnReversalEvaluated: false` (an honest "still owed" marker for the not-yet-built reversal
+consumer — never implied as already handled). Deliberately FROM-state-agnostic (`cancelled` is reachable
+from every non-terminal status per `orderStatus.ts`'s own table) and decoupled from whoever performs the
+transition — it is already live and correctly firing for `reservationPreorder`'s existing cancellation
+paths today (a no-op in practice, since that channel cannot redeem Boncuk), and will activate for
+`takeaway`/`delivery` the moment a canonical transition exists for them, with zero further change to
+this trigger.
+
+### 3. Redemption restore consumer — `functions/src/loyaltyRedemptionRestore.ts`
+
+Mirrors `loyaltyOrderEarning.ts`'s thin-trigger/pure-function split exactly:
+`onOrderEventCreatedForLoyaltyRedemptionRestore` (thin `onDocumentCreated("orderEvents/{eventId}")`) +
+`processOrderTerminalEventForBoncukRedemptionRestore` (the real, independently-testable business logic).
+Filters for the three new event types, ignoring everything else (including `order.completed`) safely.
+
+**Defense-in-depth (§5)**: re-reads the real `orders/{orderId}` document INSIDE the transaction and
+requires its CURRENT `status` to match the event's claimed terminal status, and its
+`organizationId`/`customerId` to match the event's — never restores from a forged/stale/mismatched
+event, even though the event itself is trusted routing data written by a trusted trigger.
+
+**Original redemption lookup (§6)**: derives the ORIGINAL `boncukRedemption` entry's deterministic id
+(`deriveLoyaltyLedgerEntryId`, same helper, `entryType: 'boncukRedemption'`, `sourceId: orderId`) —
+never trusts the order document's own denormalized `boncukRedemption` snapshot field for this purpose.
+Validates: `entryType === 'boncukRedemption'`, `organizationId`/`customerId`/`orderId`/`sourceId`
+consistency, `entitlementDeltaBoncuk === 0`, `debtDeltaBoncuk === 0`, `spendableDeltaBoncuk` a negative
+integer. Missing entry → deterministic no-op (nothing was ever redeemed). Malformed entry → fails
+closed, never fabricates a count.
+
+**Restored count (§8)**: `restoredBoncuk = 0 - originalEntry.spendableDeltaBoncuk` — an exact, already-
+integer historical fact, never recomputed from `valueMinorUnits`/any current `loyaltyPolicies` document.
+A dedicated policy-change test (redeem 20 under a rate-100/cap-50% policy, THEN change the organization's
+active policy to rate-50/cap-25%, then restore) proves the restored count stays exactly 20 — a
+hypothetical bug that divided `valueMinorUnits` by the CURRENT rate would have produced 40, not 20; the
+test's own seeded numbers are chosen specifically to make that class of bug observable, not just
+theoretically excluded.
+
+**Debt-first restore (§9)**: uses `applyBoncukCreditDebtFirst` — the shared primitive, never a second
+copy. Ledger effects: `entitlementDeltaBoncuk: 0`, `spendableDeltaBoncuk: spendableCreditBoncuk`,
+`debtDeltaBoncuk: 0 - debtPaidBoncuk`. Account: `spendableBalance`/`boncukDebt` set to the primitive's
+own `newSpendableBalance`/`newBoncukDebt`; `lifetimeRedeemed`/`lifetimeEarned`/
+`validOrderEntitlementBoncuk`/`earningCarryNumerator`/`earningCarryDenominator`/`createdAt` all preserved
+exactly; `revision` incremented once.
+
+**Restore ledger entry (§10)**: `entryType: 'boncukRedemptionRestore'`, `reversalOf:` the original
+entry's own document id, `amountBasisMinorUnits`/`redemptionValueMinorUnitsPerBoncuk`/
+`maxRedemptionBasisPoints`/`loyaltyPolicyVersion` all copied VERBATIM from the original entry — never
+re-resolved from today's policy.
+
+**Idempotency (§7)**: a second deterministic ledger id (`entryType: 'boncukRedemptionRestore'`, same
+`sourceId: orderId`) is checked for existence first; `tx.create()` is the defense-in-depth backstop.
+A duplicate delivery re-asserts `boncukRedemptionRestoreEvaluated: true` without touching the account or
+ledger a second time.
+
+**Event finalization (§11)**: `boncukRedemptionRestoreEvaluated` is set `true` ONLY on a genuine success
+or a deterministic no-op (guest order, no original redemption, already-restored retry) — every anomaly
+(missing order, status mismatch, identity mismatch, malformed original entry, missing/inconsistent
+account) leaves it untouched, so a retry stays possible; never marked `true` while a required
+restoration failed.
+
+**Refunded separation (§12)**: this consumer NEVER touches `earnReversalEvaluated` and never performs an
+`orderEarnReversal` — verified by a dedicated test asserting the marker stays `false` after a successful
+restore on a `refunded` event.
+
+### 4. A test-writing correction made mid-implementation
+
+The first full test run surfaced 6 failures, all test-design bugs, not production-code bugs: three
+`onOrderTerminalFailureOrRefund.test.ts` assertions checked `boncukRedemptionRestoreEvaluated === false`
+immediately after the producer wrote it — but the restore consumer is ALSO a live, real trigger in the
+same emulator environment, and correctly races ahead to flip it `true` (a genuine "no redemption exists"
+no-op, since those specific tests never seed one) before the test's own poll observes it; those
+assertions were removed as inherently racy, with the field's real lifecycle already covered precisely by
+`loyaltyRedemptionRestore.test.ts`'s own controlled, direct-call tests. Three
+`loyaltyRedemptionRestore.test.ts` anomaly tests asserted the event document's field stayed `false`
+without ever having seeded that document first (calling the consumer directly never creates one on the
+anomaly branches it was testing) — fixed by seeding the `orderEvents` document first, exactly as the real
+producer would already have written it, before exercising the anomaly.
+
+### 5. Test coverage (all worked examples from the task's own §13/§14/§15/§16/§17 verified exactly)
+
+`test/loyaltyAccounting.test.ts` (pure, no emulator): the 4 relocated debt-first unit tests, Cases A–D
+with the task's own exact numbers, the unrelated-pre-existing-debt example, the order-independence proof
+(a local test-only `applyClawbackDebitFixture` — never exported, never used by production code — models
+the not-yet-built `orderEarnReversal`'s expected debit shape per BR-LOYALTY-014, per this task's own
+explicit "do not implement `orderEarnReversal` solely for this test" instruction), and a fuzz-style
+account-invariant check across several starting states/credit amounts.
+`test/onOrderTerminalFailureOrRefund.test.ts` (emulator): each of the three terminal statuses produces
+the correctly-shaped event; non-terminal transitions and `completed` never write one;
+from-state-agnostic; idempotent against an unrelated later update; `onOrderCompleted.ts` itself
+untouched. `test/loyaltyRedemptionRestore.test.ts` (emulator): full happy-path field verification, Cases
+A–D end to end (ledger deltas, not just the pure primitive), the policy-change regression test, consumer
+idempotency, the no-redemption case, the guest-order case, ignoring unrelated event types, six distinct
+defense-in-depth anomaly cases (status mismatch, missing order, identity mismatch, three flavors of
+malformed original-entry provenance, missing account, inconsistent account), refunded-event separation,
+and one true end-to-end test driving the real trigger chain via a genuine order-status update rather than
+a direct function call.
+
+**Files changed — backend**: `functions/src/loyaltyAccounting.ts` (new), `functions/src/
+onOrderTerminalFailureOrRefund.ts` (new), `functions/src/loyaltyRedemptionRestore.ts` (new),
+`functions/src/loyaltyOrderEarning.ts` (`applyDebtFirst` removed, call site + doc comment updated),
+`functions/src/index.ts` (two new exports), `functions/src/test/{loyaltyAccounting,
+onOrderTerminalFailureOrRefund,loyaltyRedemptionRestore}.test.ts` (new),
+`functions/src/test/loyaltyOrderEarning.test.ts` (the 4 relocated debt-first tests removed, replaced
+with a pointer comment). **Rules**: none touched — no client permission needed broadening; the full
+Rules suite was rerun regardless, unchanged. **Flutter**: none. **Docs**: this entry (covering P4-C-A/
+P4-C-A.1/P4-C-B together), `docs/business_rules.md` (`BR-LOYALTY-014`/`BR-LOYALTY-019` updated, new
+`BR-LOYALTY-020`), `docs/firestore_data_model.md` (`orderEvents`/`loyaltyLedgerEntries`/`loyaltyAccounts`
+rows updated), `docs/feature_status.md`.
+
+**Exact gate totals**: Functions build (`tsc`) clean; Functions emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`) **1049/1049**, 0 failed (up from 1012 — 37 new tests); Firestore
+Rules suite **354/354**, 0 failed, unchanged (no rules file touched); `flutter analyze` clean; `flutter
+test` **3288 passed, 12 skipped, 0 failed**, unchanged. No commit was made, per this task's own explicit
+instruction.

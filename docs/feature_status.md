@@ -4059,3 +4059,45 @@ from 345, 9 new anti-forgery tests); `flutter analyze` clean; `flutter test` 328
 failed — byte-for-byte unchanged (no Flutter source file touched). See
 `docs/business_rules.md`'s new `BR-LOYALTY-019` for the full locked rule and
 `docs/decisions.md`'s P4-B entry for files changed. No commit was made.
+
+**Boncuk Loyalty Program P4-C-A/P4-C-A.1 (2026-08-22) — Order Lifecycle + Redemption Restore Audit &
+Debt-First Correction, CLOSED (design only, delivered in-conversation, now recorded).** Audited the REAL
+server-side order lifecycle: `takeaway` (the only channel that can redeem Boncuk) has ZERO post-creation
+status writers of any kind today — no reject, cancel, refund, or kitchen-lifecycle transition exists
+anywhere in `functions/src`. Locked the restore architecture: redemption restoration
+(`boncukRedemptionRestore`) and earned-Boncuk reversal (`orderEarnReversal`) are separate, never-merged
+ledger events; a generic passive outbox-producer trigger (mirroring the existing `onOrderCompleted.ts`
+pattern) is the right architecture. **Corrected same day**: restoration must be debt-first (mirrors
+earning's own `applyDebtFirst`), not a direct, unconditional credit to `spendableBalance` — the rejected
+direct-credit model could produce `spendableBalance > 0` and `boncukDebt > 0` simultaneously. Proved
+order-independence between a redemption restore and an earn-reversal clawback mathematically (a
+telescoping-sum argument, the same technique `loyaltyPolicy.ts`'s `combineCarryWithEarning` already
+uses). No files changed by either pass. See `docs/decisions.md`'s P4-C-A/P4-C-A.1 entries.
+
+**Boncuk Loyalty Program P4-C-B (2026-08-22) — Terminal Order Events + Debt-First Redemption Restore,
+CLOSED.** Implements P4-C-A.1's accepted design: `functions/src/loyaltyAccounting.ts` (new) — the shared
+`applyBoncukCreditDebtFirst` primitive, now the SOLE debt-first formula in the codebase (`loyaltyOrderEarning
+.ts`'s own former `applyDebtFirst` was removed, not kept as a parallel copy — its one call site now uses
+the shared primitive directly, with byte-for-byte unchanged earning behavior, confirmed by its own
+existing emulator tests passing unmodified). `functions/src/onOrderTerminalFailureOrRefund.ts` (new) — a
+generic, passive `onDocumentUpdated` trigger mirroring `onOrderCompleted.ts` exactly, writing
+`order.rejected`/`order.cancelled`/`order.refunded` outbox events on any transition into those statuses,
+from any prior status; already live (and correctly a no-op) for `reservationPreorder`'s existing
+cancellation paths, ready to activate for `takeaway`/`delivery` the instant a canonical transition exists
+for them. `functions/src/loyaltyRedemptionRestore.ts` (new) — the debt-first restore consumer, mirroring
+`loyaltyOrderEarning.ts`'s thin-trigger/pure-function split: re-verifies the real order document's status
+inside the transaction (defense-in-depth against a forged/stale event), looks up the ORIGINAL
+`boncukRedemption` ledger entry by its own deterministic id (never the order document's denormalized
+snapshot, never fabricated if absent), restores the exact original Boncuk COUNT (never recomputed from
+current policy — proven by a dedicated policy-change regression test), applies the shared debt-first
+primitive, writes an immutable `boncukRedemptionRestore` entry with `reversalOf` pointing at the original,
+is fully idempotent via a second deterministic ledger id, and never touches `earnReversalEvaluated` or
+performs an `orderEarnReversal` (verified by a dedicated separation test). `lifetimeRedeemed` is never
+decremented. **Still not implemented, deliberately**: the canonical takeaway reject/cancel/refund
+transition itself (so this whole mechanism, while real and tested, is currently unreachable in
+production for the one channel that matters), `orderEarnReversal`'s writer, and any customer-facing UI.
+**Do not expose Boncuk checkout to production.** Gates: Functions build clean; Functions emulator suite
+1049/1049, 0 failed (up from 1012, 37 new tests); Firestore Rules suite 354/354, 0 failed, unchanged (no
+rules file touched — no client permission needed broadening); `flutter analyze` clean; `flutter test`
+3288 passed, 12 skipped, 0 failed, unchanged. See `docs/business_rules.md`'s new `BR-LOYALTY-020` and
+`docs/decisions.md`'s P4-C-B entry for the full mechanism and files changed. No commit was made.

@@ -5,7 +5,6 @@ import { Timestamp } from "firebase-admin/firestore";
 import {
   LOYALTY_EARNING_ELIGIBLE_CHANNELS,
   calculateOrderEarning,
-  applyDebtFirst,
   resolveEligibleNetSpendMinorUnits,
   processOrderCompletionEventForLoyaltyEarning,
 } from "../loyaltyOrderEarning";
@@ -349,28 +348,15 @@ test("algorithm: repeated small orders under 5000 -> 3 produce EXACTLY the same 
 });
 
 // =========================================================================
-// A2. Pure algorithm — debt-first repayment (BR-LOYALTY-014)
+// A2. Pure algorithm — debt-first repayment (BR-LOYALTY-014) — MOVED,
+// P4-C-B: the formula itself now lives in `loyaltyAccounting.ts`'s
+// `applyBoncukCreditDebtFirst`, tested in `test/loyaltyAccounting.test.ts`
+// (shared by both earning and redemption restoration). This file no longer
+// duplicates that unit coverage — the emulator-backed integration tests
+// below still exercise the real earning transaction end to end, including
+// its debt-first behavior (see the "debt-first repayment inside a real
+// earning transaction" tests further down).
 // =========================================================================
-
-test("debt-first: no debt -> full gross becomes spendable credit", () => {
-  const result = applyDebtFirst({ grossBoncukEarned: 10, boncukDebt: 0 });
-  assert.deepStrictEqual(result, { debtPaidBoncuk: 0, spendableCreditBoncuk: 10, newDebtBoncuk: 0 });
-});
-
-test("debt-first: gross earn 5, debt 7 before -> debt 2, spendable credit 0 (Case 1)", () => {
-  const result = applyDebtFirst({ grossBoncukEarned: 5, boncukDebt: 7 });
-  assert.deepStrictEqual(result, { debtPaidBoncuk: 5, spendableCreditBoncuk: 0, newDebtBoncuk: 2 });
-});
-
-test("debt-first: gross earn 4, debt 2 before -> debt 0, spendable credit 2 (Case 2)", () => {
-  const result = applyDebtFirst({ grossBoncukEarned: 4, boncukDebt: 2 });
-  assert.deepStrictEqual(result, { debtPaidBoncuk: 2, spendableCreditBoncuk: 2, newDebtBoncuk: 0 });
-});
-
-test("debt-first: gross earn 0 -> nothing moves regardless of debt", () => {
-  const result = applyDebtFirst({ grossBoncukEarned: 0, boncukDebt: 7 });
-  assert.deepStrictEqual(result, { debtPaidBoncuk: 0, spendableCreditBoncuk: 0, newDebtBoncuk: 7 });
-});
 
 // =========================================================================
 // B. resolveEligibleNetSpendMinorUnits — pure basis-extraction tests
