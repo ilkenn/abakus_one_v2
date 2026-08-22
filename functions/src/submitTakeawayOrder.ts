@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { getFirestore, Firestore } from "firebase-admin/firestore";
+import { getFirestore, Firestore, Timestamp } from "firebase-admin/firestore";
 import { resolveActiveTakeawayBranch } from "./takeawayScope";
 import {
   loadCanonicalMenuProduct,
@@ -18,6 +18,21 @@ import {
 } from "./takeawayPricing";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "./orderPricingAuthority";
+import {
+  LOYALTY_ACCOUNTS_COLLECTION,
+  LOYALTY_LEDGER_ENTRIES_COLLECTION,
+  deriveLoyaltyLedgerEntryId,
+  type LoyaltyLedgerEntry,
+} from "./loyaltyLedger";
+import {
+  loyaltyPolicyDocRef,
+  loyaltyPolicyBootstrapRef,
+  readLoyaltyPolicyInTransaction,
+  writeDefaultLoyaltyPolicyInTransaction,
+  type LoyaltyPolicy,
+} from "./loyaltyPolicy";
+import { calculateBoncukRedemption, resolveAccountForRedemption } from "./loyaltyRedemption";
+import type { LoyaltyAccountData } from "./getCustomerLoyaltySnapshot";
 
 /**
  * Server-authoritative takeaway order creation — Faz D.3. The one
@@ -129,6 +144,20 @@ function sanitizeSubmissionKey(raw: unknown): string {
   if (typeof raw !== "string" || raw.length === 0) invalid("submissionKey is required.");
   if (raw.length > MAX_SUBMISSION_KEY_LENGTH) invalid("submissionKey is too long.");
   return raw;
+}
+
+/**
+ * Boncuk Loyalty P4-B — the customer submits only a whole Boncuk COUNT,
+ * never a value/rate/cap/remaining-payable amount (those are always
+ * server-resolved from the active policy — P4-B locked rule). Absent/`null`
+ * means "no Boncuk requested," identical to an explicit `0`.
+ */
+function sanitizeRequestedBoncukAmount(raw: unknown): number {
+  if (raw === undefined || raw === null) return 0;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+    invalid("requestedBoncukAmount must be a non-negative integer.");
+  }
+  return raw as number;
 }
 
 export function parseItems(raw: unknown): RawItem[] {
@@ -346,6 +375,7 @@ export const submitTakeawayOrder = onCall(
     const contactFirstName = sanitizeContactField(data.contactFirstName, "contactFirstName");
     const contactLastName = sanitizeContactField(data.contactLastName, "contactLastName");
     const contactPhone = sanitizePhone(data.contactPhone);
+    const requestedBoncukAmount = sanitizeRequestedBoncukAmount(data.requestedBoncukAmount);
 
     const hasGuestField = typeof data.takeawaySessionId === "string";
     const hasAuthenticatedFields =
@@ -389,6 +419,7 @@ export const submitTakeawayOrder = onCall(
         contactLastName,
         contactPhone,
         takeawaySessionId: data.takeawaySessionId as string,
+        requestedBoncukAmount,
       });
     }
 
@@ -415,6 +446,7 @@ export const submitTakeawayOrder = onCall(
       branchId: data.branchId,
       pickupMode: data.pickupMode,
       pickupTime: data.pickupTime,
+      requestedBoncukAmount,
     });
   },
 );
@@ -433,10 +465,23 @@ async function submitGuestOrder(
     contactLastName: string;
     contactPhone: string;
     takeawaySessionId: string;
+    requestedBoncukAmount: number;
   },
 ) {
   const { uid, submissionKey, rawItems, contactFirstName, contactLastName, contactPhone } =
     params;
+
+  // Boncuk Loyalty P4-B locked rule — guest orders can never redeem Boncuk
+  // (no real customer identity to own a loyalty account). Rejected outright,
+  // never silently ignored, before the transaction even opens — this is a
+  // static request-shape check with no data dependency.
+  if (params.requestedBoncukAmount > 0) {
+    throw new HttpsError(
+      "permission-denied",
+      "Guest takeaway orders cannot redeem Boncuk — Boncuk requires a real, phone-verified customer identity.",
+    );
+  }
+
   const orderId = deriveOrderId(uid, submissionKey);
   const orderNumber = deriveOrderNumber(orderId);
 
@@ -512,6 +557,8 @@ async function submitGuestOrder(
         pricing,
         now,
         fingerprint,
+        selectedBenefitType: "none",
+        boncukRedemption: null,
       }),
     );
 
@@ -522,6 +569,25 @@ async function submitGuestOrder(
 // -----------------------------------------------------------------------
 // Authenticated customer path
 // -----------------------------------------------------------------------
+
+/** The fully-resolved, not-yet-written redemption effects — computed during the transaction's read phase, applied only during its write phase (Firestore requires every `tx.get()` to happen before any `tx.set()`/`tx.create()`). */
+interface PendingBoncukRedemption {
+  accountRef: FirebaseFirestore.DocumentReference;
+  account: LoyaltyAccountData;
+  boncukUsed: number;
+  ledgerEntryRef: FirebaseFirestore.DocumentReference;
+  ledgerEntry: LoyaltyLedgerEntry;
+  policy: LoyaltyPolicy;
+  policyNeedsProvisioning: boolean;
+  orderSnapshot: {
+    boncukUsed: number;
+    valueMinorUnits: number;
+    remainingPayableMinorUnits: number;
+    redemptionValueMinorUnitsPerBoncuk: number;
+    maxRedemptionBasisPoints: number;
+    loyaltyPolicyVersion: number;
+  };
+}
 
 async function submitAuthenticatedOrder(
   db: Firestore,
@@ -536,6 +602,7 @@ async function submitAuthenticatedOrder(
     branchId: unknown;
     pickupMode: unknown;
     pickupTime: unknown;
+    requestedBoncukAmount: number;
   },
 ) {
   const { uid, submissionKey, rawItems, contactFirstName, contactLastName, contactPhone } =
@@ -588,8 +655,8 @@ async function submitAuthenticatedOrder(
       );
     }
 
-    const policy = await loadCanonicalChannelPricingPolicy(db, restaurantId);
-    const { lines, normalizedItems } = await buildLines(db, rawItems, { restaurantId }, policy);
+    const pricingPolicy = await loadCanonicalChannelPricingPolicy(db, restaurantId);
+    const { lines, normalizedItems } = await buildLines(db, rawItems, { restaurantId }, pricingPolicy);
     const pricing = computeOrderPriceBreakdown(lines);
 
     const normalizedForFingerprint = {
@@ -602,6 +669,13 @@ async function submitAuthenticatedOrder(
       contactFirstName,
       contactLastName,
       contactPhone,
+      // Boncuk Loyalty P4-B §10 — a retry that reuses the same submissionKey
+      // but changes requestedBoncukAmount must be treated as "a different
+      // order payload," not silently accepted or silently ignored. Folding
+      // this into the fingerprint makes the EXISTING mismatch-rejection
+      // branch below (`takeawaySubmissionFingerprint !== fingerprint`)
+      // cover it for free, with no separate special-case check.
+      requestedBoncukAmount: params.requestedBoncukAmount,
     };
     const fingerprint = computeRequestFingerprint(normalizedForFingerprint);
 
@@ -618,7 +692,179 @@ async function submitAuthenticatedOrder(
       return { orderId, orderNumber: existingData.orderNumber, duplicate: true };
     }
 
+    // -------------------------------------------------------------
+    // Boncuk Loyalty P4-B §7 — redemption resolution (reads only; this
+    // whole block runs strictly before the transaction's first write
+    // below, so every tx.get() here is safely ordered ahead of every
+    // tx.set()/tx.create() in this transaction, including the dedupe
+    // read above).
+    //
+    // §7 step 5 ("if Boncuk requested: require a real phone customer") is
+    // already structurally guaranteed here — submitAuthenticatedOrder is
+    // only ever reached after the top-level handler's own isRealCustomer
+    // check rejects every anonymous/guest caller before dispatch. No
+    // additional branch is needed; this comment documents the existing
+    // invariant this code relies on.
+    // -------------------------------------------------------------
+    const organizationId = scope.organizationId!;
+    let selectedBenefitType: "none" | "boncukRedemption" = "none";
+    let pendingRedemption: PendingBoncukRedemption | null = null;
+
+    if (params.requestedBoncukAmount > 0) {
+      // §2 — cap basis is grandTotal MINUS tip, never grossSubtotal. Tip is
+      // always 0 for takeaway today (buildOrderDocument always stamps
+      // `tip: moneyField(0)`) — no persisted tip field exists yet to read.
+      const TAKEAWAY_TIP_MINOR_UNITS = 0;
+      const boncukEligibleOrderAmountMinorUnits =
+        pricing.grandTotalMinorUnits - TAKEAWAY_TIP_MINOR_UNITS;
+      if (boncukEligibleOrderAmountMinorUnits < 0) {
+        throw new HttpsError("internal", "Computed a negative Boncuk-eligible order amount.");
+      }
+
+      const accountRef = db
+        .collection(LOYALTY_ACCOUNTS_COLLECTION)
+        .doc(`${organizationId}_${uid}`);
+      const loyaltyPolicyRef = loyaltyPolicyDocRef(db, organizationId);
+      const loyaltyPolicyBootstrapDocRef = loyaltyPolicyBootstrapRef(db, organizationId);
+
+      const accountSnap = await tx.get(accountRef);
+      const loyaltyPolicySnap = await tx.get(loyaltyPolicyRef);
+      const loyaltyPolicyBootstrapSnap = await tx.get(loyaltyPolicyBootstrapDocRef);
+
+      const nowForPolicy = Timestamp.now();
+      const policyResult = readLoyaltyPolicyInTransaction(
+        loyaltyPolicySnap,
+        loyaltyPolicyBootstrapSnap,
+        organizationId,
+        nowForPolicy,
+      );
+      if (
+        policyResult.status === "corrupt-policy-state" ||
+        policyResult.status === "missing-live-policy"
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Loyalty economics are temporarily unavailable for this organization.",
+        );
+      }
+      const loyaltyPolicy = policyResult.policy;
+
+      const accountResult = resolveAccountForRedemption(accountSnap);
+      if (accountResult.status === "missing-loyalty-account") {
+        throw new HttpsError(
+          "failed-precondition",
+          "No loyalty account exists for this customer — cannot redeem Boncuk.",
+        );
+      }
+      if (accountResult.status === "inconsistent-loyalty-account-state") {
+        throw new HttpsError(
+          "failed-precondition",
+          "This customer's loyalty account is in an inconsistent state.",
+        );
+      }
+      const account = accountResult.account;
+
+      const calc = calculateBoncukRedemption({
+        requestedBoncukAmount: params.requestedBoncukAmount,
+        spendableBalance: account.spendableBalance,
+        grandTotalMinorUnits: pricing.grandTotalMinorUnits,
+        boncukEligibleOrderAmountMinorUnits,
+        redemptionValueMinorUnitsPerBoncuk: loyaltyPolicy.redemptionValueMinorUnitsPerBoncuk,
+        maxRedemptionBasisPoints: loyaltyPolicy.maxRedemptionBasisPoints,
+      });
+      if (calc.status === "exceeds-max-usable") {
+        invalid(
+          `requestedBoncukAmount exceeds the maximum usable Boncuk for this order (max ${calc.maxUsableBoncuk}).`,
+        );
+      }
+
+      const ledgerEntryId = deriveLoyaltyLedgerEntryId({
+        organizationId,
+        customerId: uid,
+        entryType: "boncukRedemption",
+        sourceId: orderId,
+      });
+      const ledgerEntryRef = db.collection(LOYALTY_LEDGER_ENTRIES_COLLECTION).doc(ledgerEntryId);
+      const ledgerSnap = await tx.get(ledgerEntryRef);
+      if (ledgerSnap.exists) {
+        // Defense-in-depth only — the order-level dedupe check above
+        // already guarantees this transaction only reaches here for a
+        // genuinely new order, so this should never happen. Fail closed
+        // rather than silently proceeding.
+        throw new HttpsError(
+          "failed-precondition",
+          "A Boncuk redemption ledger entry already exists for this order.",
+        );
+      }
+
+      selectedBenefitType = "boncukRedemption";
+      pendingRedemption = {
+        accountRef,
+        account,
+        boncukUsed: calc.boncukUsed,
+        ledgerEntryRef,
+        ledgerEntry: {
+          organizationId,
+          customerId: uid,
+          entryType: "boncukRedemption",
+          entitlementDeltaBoncuk: 0,
+          spendableDeltaBoncuk: 0 - calc.boncukUsed,
+          debtDeltaBoncuk: 0,
+          sourceId: orderId,
+          orderId,
+          amountBasisMinorUnits: calc.valueMinorUnits,
+          earningCarryNumeratorBefore: null,
+          earningCarryDenominatorBefore: null,
+          earningCarryNumeratorAfter: null,
+          earningCarryDenominatorAfter: null,
+          earningSpendMinorUnits: null,
+          earningBoncukAmount: null,
+          loyaltyPolicyVersion: loyaltyPolicy.version,
+          debtBeforeBoncuk: account.boncukDebt,
+          debtAfterBoncuk: account.boncukDebt,
+          redemptionValueMinorUnitsPerBoncuk: loyaltyPolicy.redemptionValueMinorUnitsPerBoncuk,
+          maxRedemptionBasisPoints: loyaltyPolicy.maxRedemptionBasisPoints,
+          idempotencyKey: orderId,
+          reversalOf: null,
+          expiresAt: null,
+          metadata: null,
+        } as LoyaltyLedgerEntry,
+        policy: loyaltyPolicy,
+        policyNeedsProvisioning: policyResult.needsProvisioning,
+        orderSnapshot: {
+          boncukUsed: calc.boncukUsed,
+          valueMinorUnits: calc.valueMinorUnits,
+          remainingPayableMinorUnits: calc.remainingPayableMinorUnits,
+          redemptionValueMinorUnitsPerBoncuk: loyaltyPolicy.redemptionValueMinorUnitsPerBoncuk,
+          maxRedemptionBasisPoints: loyaltyPolicy.maxRedemptionBasisPoints,
+          loyaltyPolicyVersion: loyaltyPolicy.version,
+        },
+      };
+    }
+
+    // -------------------------------------------------------------
+    // Write phase — every tx.get() this transaction will ever perform has
+    // already happened above.
+    // -------------------------------------------------------------
     const now = new Date();
+
+    if (pendingRedemption) {
+      if (pendingRedemption.policyNeedsProvisioning) {
+        writeDefaultLoyaltyPolicyInTransaction(tx, db, pendingRedemption.policy);
+      }
+      tx.set(pendingRedemption.accountRef, {
+        ...pendingRedemption.account,
+        spendableBalance: pendingRedemption.account.spendableBalance - pendingRedemption.boncukUsed,
+        lifetimeRedeemed: pendingRedemption.account.lifetimeRedeemed + pendingRedemption.boncukUsed,
+        revision: pendingRedemption.account.revision + 1,
+        updatedAt: Timestamp.fromDate(now),
+      });
+      tx.create(pendingRedemption.ledgerEntryRef, {
+        ...pendingRedemption.ledgerEntry,
+        createdAt: Timestamp.fromDate(now),
+      });
+    }
+
     tx.set(
       orderRef,
       buildOrderDocument({
@@ -640,6 +886,8 @@ async function submitAuthenticatedOrder(
         pricing,
         now,
         fingerprint,
+        selectedBenefitType,
+        boncukRedemption: pendingRedemption ? pendingRedemption.orderSnapshot : null,
       }),
     );
 
@@ -703,6 +951,15 @@ function buildOrderDocument(params: {
   pricing: import("./takeawayPricing").ComputedPriceBreakdown;
   now: Date;
   fingerprint: string;
+  selectedBenefitType: "none" | "boncukRedemption";
+  boncukRedemption: {
+    boncukUsed: number;
+    valueMinorUnits: number;
+    remainingPayableMinorUnits: number;
+    redemptionValueMinorUnitsPerBoncuk: number;
+    maxRedemptionBasisPoints: number;
+    loyaltyPolicyVersion: number;
+  } | null;
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -762,6 +1019,14 @@ function buildOrderDocument(params: {
       tip: moneyField(0),
       grandTotal: moneyField(params.pricing.grandTotalMinorUnits),
     },
+    // Boncuk Loyalty P4-B — settlement, not discount (P4-A, accepted): the
+    // `pricing` block above is never touched by redemption. This is a
+    // parallel snapshot of how part of that unchanged total is being paid
+    // — server-computed and server-stamped only, never accepted from the
+    // request (see `firestore.rules`' `clientOrderCreateOmitsBoncukRedemption()`
+    // for why a direct-client create can never forge either field).
+    selectedBenefitType: params.selectedBenefitType,
+    boncukRedemption: params.boncukRedemption,
     statusHistory: [
       {
         id: `${params.orderId}-transition-1`,

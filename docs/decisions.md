@@ -13351,3 +13351,161 @@ confirmed by rerunning `flutter test` unchanged. **Docs**: this entry, `docs/bus
 analyze`/`dart format` clean; `flutter test` **3288 passed, 12 skipped, 0 failed**, unchanged. Firestore
 Rules suite not rerun — no rules file touched. No commit was made, per this task's own explicit
 instruction.
+
+## Boncuk Loyalty Program P4-A — Checkout Redemption Audit & Design (2026-08-22)
+
+**Status**: Design accepted, nothing implemented (explicit "DO NOT IMPLEMENT YET" scope for this pass —
+implementation followed immediately as P4-B, below). Audited the existing cart/checkout flows
+(takeaway/delivery/reservationPreorder/dineInQr), payment models, discount/campaign models, order
+pricing snapshot, and `BR-PRICE-002`'s server-authoritative-pricing channel exclusions, to design how
+checkout Boncuk redemption should integrate with all of that without redesigning any of it.
+
+**The one load-bearing decision**: **Boncuk is settlement, not discount.** Every existing
+discount/campaign mechanism in this codebase works by changing `pricing.discount` (and therefore
+`pricing.grandTotal`). Redemption does the opposite on purpose — the order's price is exactly what the
+server pricing pipeline already computed; a customer choosing to pay part of that unchanged price with
+Boncuk is a payment-method fact, not a pricing fact. This keeps redemption from ever needing to
+re-enter `DiscountStackingPolicy`/campaign-eligibility logic, and keeps `pricing.grandTotal` a stable,
+single source of truth for every other system (kitchen tickets, reporting, refunds) that reads it.
+Directly informed BR-LOYALTY-019/P4-B's schema: a parallel `boncukRedemption` snapshot block, never a
+`pricing.discount` mutation.
+
+**Also locked in this pass, carried into P4-B unchanged**: cap basis is `grandTotal - tip` (never
+`grossSubtotal`); redemption must be validated/debited synchronously inside the same transaction that
+creates the order (not an async outbox, unlike earning) so Firestore's own optimistic-concurrency retry
+structurally prevents double-spend; `dineInQr`/POS stay excluded this phase for the same reason earning
+already excludes them (`BR-LOYALTY-012`/`BR-PRICE-002` — no trusted server pricing pipeline for those
+channels yet).
+
+**Files changed**: none (audit/design only).
+
+## Boncuk Loyalty Program P4-B — Server-Authoritative Redemption Foundation + Takeaway Integration (2026-08-22)
+
+**Status**: Implemented, takeaway backend only. No customer-facing checkout UI (Flutter untouched
+except where required to keep the build green — nothing was, in the end). No restoration-on-cancellation
+trigger (explicit, disclosed production blocker — see `BR-LOYALTY-019`).
+
+### 1. New pure module — `functions/src/loyaltyRedemption.ts`
+
+Two pure functions, no Firestore I/O, mirroring `loyaltyPolicy.ts`/`loyaltyOrderEarning.ts`'s own
+pure-calculation-core convention:
+
+- **`calculateBoncukRedemption`** — the locked P4-A algorithm as exact `BigInt` arithmetic (never
+  floating point, matching every other economics computation in this codebase):
+  `maxRedemptionValueMinorUnits = floor(boncukEligibleOrderAmountMinorUnits * maxRedemptionBasisPoints
+  / 10000)`, `maxUsableBoncukByOrderCap = floor(maxRedemptionValueMinorUnits /
+  redemptionValueMinorUnitsPerBoncuk)`, `maxUsableBoncuk = min(spendableBalance,
+  maxUsableBoncukByOrderCap)`. A `requestedBoncukAmount` exceeding `maxUsableBoncuk` returns a
+  discriminated `{status: "exceeds-max-usable", maxUsableBoncuk}` result — **never silently clamped** —
+  distinct from a thrown `RangeError`, which is reserved for genuinely malformed input (non-integer,
+  negative), mirroring the same "expected business outcome vs. programming error" split
+  `resolveActiveLoyaltyPolicy`/`resolveAccountForEarning` already establish elsewhere in this codebase.
+- **`resolveAccountForRedemption`** — takes an already-fetched `DocumentSnapshot` (performs no read
+  itself, exactly like `loyaltyOrderEarning.ts`'s own `resolveAccountForEarning`), validates the fields
+  redemption reads/mutates, and returns a discriminated `ok | missing-loyalty-account |
+  inconsistent-loyalty-account-state` result. A missing account is its own explicit, distinct outcome —
+  never silently treated as `spendableBalance: 0` — since a real customer attempting redemption should
+  already have one (provisioned by `getCustomerLoyaltySnapshot` on first loyalty-screen view); its
+  absence at redemption time is anomalous and deserves its own diagnosable reason.
+
+### 2. `functions/src/submitTakeawayOrder.ts` — the one integration point
+
+The authenticated (non-guest) transaction is the only writer. The guest path gets a flat, upfront
+rejection instead: `requestedBoncukAmount > 0` on a QR-guest request throws `permission-denied` before
+the transaction even opens (Boncuk requires a real, phone-verified identity, which a guest technical
+identity structurally can never have — matches `BR-LOYALTY-019`'s "guest cannot spend Boncuk" rule).
+
+Inside the authenticated transaction, redemption resolution is inserted **after** the existing
+submissionKey/fingerprint dedupe check (so a genuine retry never re-runs it — see §3) and **before**
+the transaction's first write (so every new `tx.get()` this phase adds stays correctly ordered ahead of
+every `tx.set()`/`tx.create()`, including the pre-existing dedupe read): resolve the organization's
+active policy (`readLoyaltyPolicyInTransaction`, reused verbatim from `loyaltyPolicy.ts`) → read the
+loyalty account (`tx.get`, not a plain `db.get()` — this is what makes the balance check
+transaction-scoped, per P4-A's own double-spend design) → run `calculateBoncukRedemption` → derive a
+deterministic ledger entry id (`deriveLoyaltyLedgerEntryId`, `entryType: "boncukRedemption"`, `sourceId:
+orderId` — the same natural idempotency guarantee earning's own ledger write already has via
+`tx.create`) → build the pending account/ledger writes, applied only in the write phase alongside the
+order's own `tx.set`. `§7 step 5` ("Boncuk requires a real phone customer") is structurally already
+guaranteed by the top-level handler's existing dispatch (an anonymous caller can never reach
+`submitAuthenticatedOrder` at all) — documented as an existing invariant, not a new runtime check.
+
+`buildOrderDocument` gains two new top-level fields, written by both the guest path (always
+`selectedBenefitType: "none", boncukRedemption: null`) and the authenticated path (server-computed):
+`selectedBenefitType: "none" | "boncukRedemption"` and `boncukRedemption: {boncukUsed, valueMinorUnits,
+remainingPayableMinorUnits, redemptionValueMinorUnitsPerBoncuk, maxRedemptionBasisPoints,
+loyaltyPolicyVersion} | null`. `pricing.discount`/`pricing.grandTotal` are untouched — confirmed by an
+explicit assertion in every redemption test.
+
+### 3. Idempotency — `requestedBoncukAmount` folded into the existing fingerprint
+
+The existing `normalizedForFingerprint` object (already the mechanism that distinguishes "a genuine
+retry" from "the same `submissionKey` reused with a different payload") now includes
+`requestedBoncukAmount`. This was the one open design question from P4-A: should changing the requested
+Boncuk count on a retry with the same `submissionKey` count as "a different payload"? Folding it into
+the fingerprint answers yes, for free, via the EXISTING mismatch-rejection branch
+(`takeawaySubmissionFingerprint !== fingerprint` → `failed-precondition`) — no new idempotency mechanism
+was needed. A retry with the identical `requestedBoncukAmount` still short-circuits to
+`{duplicate: true}` before any redemption logic re-runs, so it never double-debits.
+
+### 4. Double-spend prevention — proven under real concurrency, not just asserted
+
+Because the account read/write is `tx.get()`/`tx.set()` inside the SAME transaction that creates the
+order, two concurrent `submitTakeawayOrder` calls racing on the same customer's balance are correctly
+serialized by Firestore's own optimistic-concurrency conflict-and-retry: the loser's transaction is
+aborted and retried, re-reading the winner's already-committed balance, and correctly rejects if the
+remaining balance is now insufficient. `functions/src/test/submitTakeawayOrder.test.ts` proves this
+against the real emulator (`Promise.all` of two genuinely concurrent 15-Boncuk requests against a
+balance of 20 — exactly one succeeds, the balance ends at exactly 5, never negative, never
+double-debited) rather than merely asserting it from the code shape.
+
+### 5. `functions/src/loyaltyOrderEarning.ts` — BR-LOYALTY-004 earning-basis exclusion
+
+`resolveEligibleNetSpendMinorUnits` now subtracts `boncukRedemption.valueMinorUnits` from
+`pricing.grandTotal.minorUnits` when a `boncukRedemption` snapshot is present on the order. Safe to
+trust that snapshot verbatim ONLY because this function is called exclusively after the order has
+already proven `hasServerPricingAuthority` (BR-LOYALTY-013) — `firestore.rules`' new
+`clientOrderCreateOmitsBoncukRedemption()` (see §6) guarantees no client-authored order create can ever
+carry the field at all, so a pricing-authoritative order's `boncukRedemption` was necessarily written by
+`submitTakeawayOrder.ts`'s own trusted transaction. A present-but-malformed block still fails the whole
+earning attempt closed (`untrustworthy-pricing-data`) — same "do not silently approximate" discipline as
+every other check in that function. No redemption present → byte-for-byte unchanged behavior (every
+pre-existing earning test still passes unmodified).
+
+### 6. `firestore.rules` — `clientOrderCreateOmitsBoncukRedemption()`
+
+Mirrors `clientOrderCreateOmitsPricingAuthority()` (BR-LOYALTY-013) exactly: denies any direct-client
+`orders` create — staff/POS, anonymous QR guest, or authenticated-customer QR guest, on any channel —
+that sets either `boncukRedemption` or `selectedBenefitType: 'boncukRedemption'`. A client may still
+freely omit `selectedBenefitType` or set it to `'none'`; the rule forbids claiming the one benefit type
+this phase actually implements server-side, not the discriminator field itself. Composed into the
+`orders` `allow create` rule alongside the existing pricing-authority check, applying uniformly across
+all three creation branches (`isOrgMember`/`isValidGuestTableOrder`/
+`isValidAuthenticatedCustomerTableOrder`) the same way the pricing-authority check already does.
+
+### 7. Restoration — explicitly not implemented, disclosed blocker
+
+If a takeaway order that redeemed Boncuk is later rejected/cancelled, nothing currently restores the
+debited `spendableBalance` or reverses the `boncukRedemption` ledger entry. The `boncukRedemptionRestore`
+ledger entry type was already reserved in the closed union from the original P0-A design, so the schema
+has a home for this once it's built — but no writer exists yet. **This is a hard production blocker,
+not a nice-to-have**: exposing Boncuk checkout to real customers before this exists would let a
+cancelled/rejected order's Boncuk simply vanish.
+
+**Files changed — backend**: `functions/src/loyaltyRedemption.ts` (new), `functions/src/
+submitTakeawayOrder.ts` (redemption wiring, `requestedBoncukAmount` sanitizer, `buildOrderDocument`
+schema extension, fingerprint extension), `functions/src/loyaltyOrderEarning.ts`
+(`resolveEligibleNetSpendMinorUnits` exclusion), `functions/src/test/{loyaltyRedemption,
+submitTakeawayOrder,loyaltyOrderEarning}.test.ts` (new/extended — pure calculator worked examples,
+integration tests for the happy path/caps/missing-account/guest-rejection, concurrency and idempotency
+proofs, earning-exclusion tests). **Rules**: `firestore.rules`
+(`clientOrderCreateOmitsBoncukRedemption()`), `firestore-tests/rules.test.js` (9 new anti-forgery
+tests). **Flutter**: none. **Docs**: this entry, `docs/business_rules.md` (`BR-LOYALTY-004`/
+`BR-LOYALTY-005` statuses updated, new `BR-LOYALTY-019`), `docs/firestore_data_model.md` (`orders` row
+gains `selectedBenefitType`/`boncukRedemption`), `docs/feature_status.md`.
+
+**Exact gate totals**: Functions build (`tsc`) clean; Functions emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`) **1012/1012**, 0 failed; Firestore Rules suite **354/354**, 0
+failed (up from 345 before this pass — 9 new anti-forgery tests); `flutter analyze` clean, no issues
+found; `flutter test` **3288 passed, 12 skipped, 0 failed** — byte-for-byte identical to the count before
+this pass, confirming no Flutter behavior was affected (no Flutter source file was modified). No commit
+was made, per this task's own explicit instruction.

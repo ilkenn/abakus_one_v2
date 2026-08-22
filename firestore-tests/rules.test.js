@@ -3194,6 +3194,224 @@ test('pricingAuthority: client updates remain denied regardless of this fix — 
 });
 
 // ---------------------------------------------------------------------
+// Boncuk Loyalty P4-B (2026-08-22) — `boncukRedemption` and
+// `selectedBenefitType: 'boncukRedemption'` are settlement facts computed
+// exclusively inside `submitTakeawayOrder.ts`'s own server-authoritative
+// transaction. Exactly like `pricingAuthority` above, no client create
+// path — staff/POS, an anonymous QR guest, or a real-customer QR guest —
+// may ever claim a Boncuk redemption for itself, on any channel.
+// ---------------------------------------------------------------------
+
+test('boncukRedemption: a legitimate existing staff/POS dine-in order WITHOUT the fields remains allowed', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-br-1', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertSucceeds(
+    setDoc(doc(staff, 'orders/br-legit-staff-order-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'dineInStaff',
+      status: 'created',
+      customerId: null,
+    }),
+  );
+});
+
+test('boncukRedemption: a legitimate existing guest table (dineInQr) order WITHOUT the fields remains allowed', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'tableGuestSessions/tgs-br-1'),
+      activeGuestSession({ guestAuthUid: 'guest-br-1' }),
+    );
+  });
+  const guest = testEnv.authenticatedContext('guest-br-1').firestore();
+
+  await assertSucceeds(
+    setDoc(
+      doc(guest, 'orders/br-legit-guest-order-1'),
+      tableOrderPayload({ tableSessionId: 'tgs-br-1', guestAuthUid: 'guest-br-1' }),
+    ),
+  );
+});
+
+test('boncukRedemption: explicitly setting selectedBenefitType:"none" remains allowed — the rule forbids the redemption value, not the discriminator field itself', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-br-none', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertSucceeds(
+    setDoc(doc(staff, 'orders/br-legit-staff-order-none'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'takeaway',
+      status: 'created',
+      customerId: null,
+      selectedBenefitType: 'none',
+    }),
+  );
+});
+
+test('boncukRedemption: a malicious org-member client cannot forge a boncukRedemption block on channel:"takeaway" — DENIED', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-br-2', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/br-forged-takeaway-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'takeaway',
+      status: 'created',
+      customerId: null,
+      selectedBenefitType: 'boncukRedemption',
+      boncukRedemption: {
+        boncukUsed: 100,
+        valueMinorUnits: 10000,
+        remainingPayableMinorUnits: 0,
+        redemptionValueMinorUnitsPerBoncuk: 100,
+        maxRedemptionBasisPoints: 5000,
+        loyaltyPolicyVersion: 1,
+      },
+    }),
+  );
+});
+
+test('boncukRedemption: an org-member client cannot forge it even on a channel this phase never wires it to (defense in depth — the rule forbids the fields unconditionally)', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-br-3', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/br-forged-dineinstaff-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'dineInStaff',
+      status: 'created',
+      customerId: null,
+      boncukRedemption: {
+        boncukUsed: 1,
+        valueMinorUnits: 100,
+        remainingPayableMinorUnits: 0,
+        redemptionValueMinorUnitsPerBoncuk: 100,
+        maxRedemptionBasisPoints: 5000,
+        loyaltyPolicyVersion: 1,
+      },
+    }),
+  );
+});
+
+test('boncukRedemption: an org-member client cannot claim the benefit type alone, even without a boncukRedemption block — DENIED', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-br-4', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/br-forged-benefit-type-only-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'takeaway',
+      status: 'created',
+      customerId: null,
+      selectedBenefitType: 'boncukRedemption',
+    }),
+  );
+});
+
+test('boncukRedemption: an anonymous guest table order cannot inject the fields — DENIED even though the rest of the payload is otherwise a valid guest table order', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'tableGuestSessions/tgs-br-2'),
+      activeGuestSession({ guestAuthUid: 'guest-br-2' }),
+    );
+  });
+  const guest = testEnv.authenticatedContext('guest-br-2').firestore();
+
+  await assertFails(
+    setDoc(
+      doc(guest, 'orders/br-forged-guest-order-1'),
+      tableOrderPayload({
+        tableSessionId: 'tgs-br-2',
+        guestAuthUid: 'guest-br-2',
+        boncukRedemption: {
+          boncukUsed: 1,
+          valueMinorUnits: 100,
+          remainingPayableMinorUnits: 0,
+          redemptionValueMinorUnitsPerBoncuk: 100,
+          maxRedemptionBasisPoints: 5000,
+          loyaltyPolicyVersion: 1,
+        },
+      }),
+    ),
+  );
+});
+
+test('boncukRedemption: an authenticated customer table order cannot inject the fields — DENIED', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'tableGuestSessions/tgs-br-3'),
+      activeGuestSession({ guestAuthUid: 'cust-br-3' }),
+    );
+  });
+  const customer = customerContext('cust-br-3');
+
+  await assertFails(
+    setDoc(
+      doc(customer, 'orders/br-forged-customer-order-1'),
+      tableOrderPayload({
+        tableSessionId: 'tgs-br-3',
+        guestAuthUid: 'cust-br-3',
+        customerId: 'cust-br-3',
+        selectedBenefitType: 'boncukRedemption',
+        boncukRedemption: {
+          boncukUsed: 1,
+          valueMinorUnits: 100,
+          remainingPayableMinorUnits: 0,
+          redemptionValueMinorUnitsPerBoncuk: 100,
+          maxRedemptionBasisPoints: 5000,
+          loyaltyPolicyVersion: 1,
+        },
+      }),
+    ),
+  );
+});
+
+test('boncukRedemption: client updates remain denied regardless of this fix — a staff actor cannot add the fields to an existing order via update either', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/br-existing-order-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'takeaway',
+      status: 'pendingConfirmation',
+      customerId: null,
+    });
+  });
+  const staff = testEnv
+    .authenticatedContext('staff-br-5', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    updateDoc(doc(staff, 'orders/br-existing-order-1'), {
+      selectedBenefitType: 'boncukRedemption',
+      boncukRedemption: {
+        boncukUsed: 1,
+        valueMinorUnits: 100,
+        remainingPayableMinorUnits: 0,
+        redemptionValueMinorUnitsPerBoncuk: 100,
+        maxRedemptionBasisPoints: 5000,
+        loyaltyPolicyVersion: 1,
+      },
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------
 // P.4.1 — Profile photo architecture prep: customerPhotos,
 // customerPublicProfiles, and customers/{uid}.profilePicturePath
 // client-write tightening.

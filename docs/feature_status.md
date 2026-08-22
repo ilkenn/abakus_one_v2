@@ -4018,3 +4018,44 @@ row** — zero Flutter changes required, confirmed by rerunning `flutter test` u
 failed). Functions emulator suite: 977/977, 0 failed (up from 963). See `docs/decisions.md`'s
 Configurable Loyalty Economics entry §13 for the full corrected architecture, the mathematical proof,
 the cross-policy worked example, and files changed. No commit was made.
+
+**Boncuk Loyalty Program P4-A (2026-08-22) — Checkout Redemption Audit + Implementation Plan, CLOSED
+(design only, nothing implemented, as explicitly instructed).** Audited the existing cart/checkout
+flows, payment models, discount/campaign models, and `BR-PRICE-002`'s channel exclusions to design how
+checkout Boncuk redemption integrates without redesigning any of it. The one load-bearing decision,
+directly informing P4-B: **Boncuk is settlement, not discount** — `pricing.discount`/`pricing.grandTotal`
+untouched by redemption, a separate `boncukRedemption` snapshot records how part of the unchanged total
+is settled. Also locked: cap basis `grandTotal - tip` (never `grossSubtotal`); redemption validated/
+debited synchronously inside the SAME transaction that creates the order (not an async outbox like
+earning), so Firestore's own optimistic-concurrency retry structurally prevents double-spend;
+`dineInQr`/POS excluded this phase (same server-pricing-authority gap earning already excludes them
+for). See `docs/decisions.md`'s P4-A entry. No files changed, no commit.
+
+**Boncuk Loyalty Program P4-B (2026-08-22) — Server-Authoritative Redemption Foundation + Takeaway
+Integration, CLOSED, takeaway backend only.** Implements P4-A's accepted design end to end for
+`submitTakeawayOrder.ts`'s authenticated (non-guest) path — the only writer this phase.
+`functions/src/loyaltyRedemption.ts` (new): a pure `calculateBoncukRedemption` (exact `BigInt`
+arithmetic, never floating point, never silently clamps a request exceeding what's usable — returns a
+discriminated `exceeds-max-usable` result instead) and `resolveAccountForRedemption` (validates an
+already-fetched account snapshot, treats a missing account as its own distinct rejection reason, never
+an implicit zero balance). The authenticated transaction reads the organization's active policy and the
+customer's loyalty account via `tx.get()` (not a plain read) — this is what makes the balance check
+transaction-scoped and structurally double-spend-safe, proven under real concurrency in
+`submitTakeawayOrder.test.ts` (two simultaneous 15-Boncuk requests against a balance of 20 — exactly one
+succeeds, balance ends at exactly 5). `requestedBoncukAmount` is folded into the existing submissionKey
+fingerprint, so a retry with a different Boncuk count is correctly treated as "a different payload" by
+the EXISTING mismatch-rejection path — no new idempotency mechanism needed. The order document gains
+`selectedBenefitType`/`boncukRedemption` (server-written only); `firestore.rules`' new
+`clientOrderCreateOmitsBoncukRedemption()` (mirrors `clientOrderCreateOmitsPricingAuthority()`) denies
+any direct-client `orders` create that claims either field, on any channel, via any of the three create
+branches. `loyaltyOrderEarning.ts`'s `resolveEligibleNetSpendMinorUnits` now excludes the redeemed value
+from the earning basis (`BR-LOYALTY-004`) when a trusted `boncukRedemption` snapshot is present — a
+malformed one still fails the earning attempt closed, never approximated. **Not implemented this
+phase, disclosed blocker**: no restoration writer exists for a rejected/cancelled order that redeemed
+Boncuk (`boncukRedemptionRestore` stays a reserved-but-unwritten ledger entry type) — **do not expose
+Boncuk checkout to production until this closes.** No Flutter checkout UI (out of scope). Gates: Functions
+build clean; Functions emulator suite 1012/1012, 0 failed; Firestore Rules suite 354/354, 0 failed (up
+from 345, 9 new anti-forgery tests); `flutter analyze` clean; `flutter test` 3288 passed, 12 skipped, 0
+failed — byte-for-byte unchanged (no Flutter source file touched). See
+`docs/business_rules.md`'s new `BR-LOYALTY-019` for the full locked rule and
+`docs/decisions.md`'s P4-B entry for files changed. No commit was made.

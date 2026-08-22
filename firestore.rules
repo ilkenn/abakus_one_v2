@@ -147,6 +147,26 @@ service cloud.firestore {
       return !('pricingAuthority' in request.resource.data);
     }
 
+    // Boncuk Loyalty P4-B (2026-08-22) — `boncukRedemption` and
+    // `selectedBenefitType: 'boncukRedemption'` are settlement facts
+    // computed exclusively inside `submitTakeawayOrder.ts`'s own
+    // server-authoritative transaction (real customer identity, real
+    // loyalty account balance, real active policy, atomic debit). Exactly
+    // like `pricingAuthority` above, no client create path — staff/POS
+    // (`isOrgMember`), an anonymous QR guest (`isValidGuestTableOrder`), or
+    // a real-customer QR guest (`isValidAuthenticatedCustomerTableOrder`) —
+    // may ever claim a Boncuk redemption for itself, on any channel. A
+    // client MAY still freely omit `selectedBenefitType` entirely or set it
+    // to `'none'` — this only forbids claiming the one benefit type this
+    // phase actually implements server-side; it says nothing about
+    // `'coupon'`/`'catalogReward'` (not implemented anywhere yet, so no
+    // create path can satisfy any of the other branches below regardless).
+    function clientOrderCreateOmitsBoncukRedemption() {
+      return !('boncukRedemption' in request.resource.data) &&
+        (!('selectedBenefitType' in request.resource.data) ||
+          request.resource.data.selectedBenefitType != 'boncukRedemption');
+    }
+
     // ---------------------------------------------------------------------
     // Platform-owned collections
     // ---------------------------------------------------------------------
@@ -796,7 +816,8 @@ service cloud.firestore {
       // pricing-authority marker. This is additive — it forbids one new
       // field, it does not relax any existing branch's own checks.
       allow create: if
-        clientOrderCreateOmitsPricingAuthority() && (
+        clientOrderCreateOmitsPricingAuthority() &&
+        clientOrderCreateOmitsBoncukRedemption() && (
           (isOrgMember(request.resource.data.organizationId) &&
             (!('channel' in request.resource.data) ||
               request.resource.data.channel != 'delivery') &&

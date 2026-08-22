@@ -131,6 +131,22 @@ function isEligibleChannel(channel: unknown): channel is LoyaltyEarningEligibleC
  * The single, isolated seam for computing the eligible net spend basis —
  * BR-LOYALTY §3: "eligible net spend after campaign/coupon discount." See
  * the P2A doc comment history for the full reasoning — unchanged by P2B-B.
+ *
+ * **Boncuk Loyalty P4-B (2026-08-22) — BR-LOYALTY-004, Boncuk-paid amount
+ * never earns.** When the order carries a valid `boncukRedemption`
+ * snapshot, the eligible basis excludes the redeemed value:
+ * `eligibleNetSpendMinorUnits = pricing.grandTotal.minorUnits -
+ * boncukRedemption.valueMinorUnits`. Safe to trust `boncukRedemption`
+ * verbatim here ONLY because this function is called exclusively after the
+ * order has already proven `hasServerPricingAuthority` (see this file's
+ * own call site) — `firestore.rules`' `clientOrderCreateOmitsBoncukRedemption()`
+ * guarantees no client-authored order create can ever carry this field at
+ * all, so a server-pricing-authoritative order's `boncukRedemption` (if
+ * present) was necessarily written by `submitTakeawayOrder.ts`'s own
+ * trusted transaction, never forged. A present-but-malformed block still
+ * fails this function closed (`null`), same "do not silently approximate"
+ * discipline as every other check here. No redemption present →
+ * unchanged behavior.
  */
 export function resolveEligibleNetSpendMinorUnits(
   orderData: FirebaseFirestore.DocumentData,
@@ -145,7 +161,19 @@ export function resolveEligibleNetSpendMinorUnits(
     return null;
   }
   if (currencyCode !== "TRY") return null;
-  return minorUnits;
+
+  const boncukRedemption = orderData.boncukRedemption;
+  if (boncukRedemption === null || boncukRedemption === undefined) {
+    return minorUnits;
+  }
+  if (typeof boncukRedemption !== "object") return null;
+  const valueMinorUnits = (boncukRedemption as Record<string, unknown>).valueMinorUnits;
+  if (typeof valueMinorUnits !== "number" || !Number.isInteger(valueMinorUnits) || valueMinorUnits < 0) {
+    return null;
+  }
+  const eligibleNetSpendMinorUnits = minorUnits - valueMinorUnits;
+  if (eligibleNetSpendMinorUnits < 0) return null;
+  return eligibleNetSpendMinorUnits;
 }
 
 export interface OrderEarningCalculation {

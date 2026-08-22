@@ -739,11 +739,15 @@ this design introduces.
 - **Related Modules**: Loyalty, Orders, Campaigns
 
 ### BR-LOYALTY-004 — Boncuk-paid amount never earns new Boncuk
-- **Status**: DECIDED — **NOT YET IMPLEMENTED** (no Boncuk redemption exists yet — out of P2A's scope).
-  P2A's earning-basis extraction (`resolveEligibleNetSpendMinorUnits`,
-  `functions/src/loyaltyOrderEarning.ts`) is deliberately isolated to one function specifically so a
-  future redemption phase can subtract a Boncuk-paid amount there without redesigning the earning
-  transaction — the seam exists, the exclusion itself does not yet.
+- **Status**: DECIDED — **IMPLEMENTED (P4-B, 2026-08-22), takeaway only**. P2A's earning-basis
+  extraction (`resolveEligibleNetSpendMinorUnits`, `functions/src/loyaltyOrderEarning.ts`) was
+  deliberately isolated to one function specifically so P4-B could subtract a Boncuk-paid amount there
+  without redesigning the earning transaction — that seam is now used: when a valid, server-written
+  `boncukRedemption` snapshot exists on the order, `eligibleNetSpendMinorUnits = pricing.grandTotal
+  .minorUnits - boncukRedemption.valueMinorUnits`. Applies only to takeaway orders today (P4-B's own
+  scope, see BR-LOYALTY-019); delivery/reservationPreorder orders cannot yet carry a `boncukRedemption`
+  snapshot at all, so this exclusion is currently a no-op for them (unchanged behavior, not yet a gap
+  since redemption itself isn't wired for those channels either).
 - **Rule**: If a customer redeems Boncuk (cash-like redemption) against an order, the portion of the
   order paid with Boncuk is excluded from that order's earning basis. Only the remaining
   cash/normal-payment-eligible amount (plus any prior earning remainder) is used to calculate newly
@@ -754,15 +758,19 @@ this design introduces.
 - **Related Modules**: Loyalty, Orders, Payments
 
 ### BR-LOYALTY-005 — Cash-like redemption: rate, customer choice, and caps
-- **Status**: DECIDED — rate changed P3A Visual Polish, 2026-08-24 (redemption itself remains
-  **NOT YET IMPLEMENTED** — no checkout redemption flow exists; the rate constant is defined and
-  displayed informationally in the Boncuklarım screen only).
+- **Status**: DECIDED — **backend IMPLEMENTED for takeaway only (P4-B, 2026-08-22)**; the rate/cap
+  values themselves are the organization's real, versioned `loyaltyPolicies` document
+  (`redemptionValueMinorUnitsPerBoncuk`/`maxRedemptionBasisPoints`, BR-LOYALTY-018), currently at the
+  locked initial policy (1 Boncuk = 1 TL, max 50%). No customer-facing checkout UI exists yet — see
+  BR-LOYALTY-019.
 - **Rule**: 1 Boncuk = 1 TL for ordinary cash-like redemption (rate change, 2026-08-24 — supersedes the
   original P0-A-locked 1 Boncuk = 2 TL; see `docs/decisions.md`'s P3A Visual Polish entry). The customer
   explicitly chooses how many whole Boncuk to use — the system never automatically applies the maximum.
   Minimum redemption is 1 Boncuk. Maximum redemption is the **lower of**: (A) the customer's current
   spendable Boncuk balance, and (B) the Boncuk amount equivalent to 50% of the eligible order amount —
-  **unchanged by this rate change**. Fractional Boncuk redemption is never permitted.
+  **unchanged by this rate change**. Fractional Boncuk redemption is never permitted. The eligible order
+  amount is `pricing.grandTotal.minorUnits - pricing.tip.minorUnits` (never `grossSubtotal` — see
+  BR-LOYALTY-019).
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Loyalty, Orders, Payments
 
@@ -1189,6 +1197,62 @@ this design introduces.
 - **Owner Agent**: restaurant_domain / security_engineer / flutter_architect
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-001, BR-LOYALTY-005, BR-LOYALTY-014, BR-LOYALTY-015,
   BR-LOYALTY-016
+
+### BR-LOYALTY-019 — Server-authoritative checkout redemption: settlement not discount, takeaway only
+- **Status**: DECIDED — **IMPLEMENTED (P4-B, 2026-08-22), takeaway backend only**. No customer-facing
+  checkout UI exists yet (Flutter is out of scope this phase); no restoration-on-cancellation trigger
+  exists yet (see the blocker note below).
+- **Rule — Boncuk is settlement, not discount**: redeeming Boncuk at checkout never touches
+  `pricing.discount`/`pricing.grossSubtotal`/`pricing.grandTotal` — the order's own price is exactly
+  what the server pricing pipeline computed, unaffected by how the customer chooses to pay it. A
+  parallel, server-written snapshot records the settlement: `selectedBenefitType` (`'none'` |
+  `'boncukRedemption'` | `'coupon'` | `'catalogReward'` — only the first two are ever actually
+  reachable this phase, the latter two are reserved for BR-LOYALTY-006/BR-LOYALTY-007's future
+  implementations) and, only when `selectedBenefitType == 'boncukRedemption'`, `boncukRedemption:
+  {boncukUsed, valueMinorUnits, remainingPayableMinorUnits, redemptionValueMinorUnitsPerBoncuk,
+  maxRedemptionBasisPoints, loyaltyPolicyVersion}` — a snapshot of the real values used, never a
+  currently-live policy re-read.
+- **Rule — request authority**: the client submits only a whole-Boncuk **count**
+  (`requestedBoncukAmount`) — never the redemption value, rate, cap, remaining-payable amount, or
+  policy version, all of which are always resolved server-side from the caller's trusted identity and
+  the organization's active `loyaltyPolicies` document (BR-LOYALTY-018). A guest (non-phone-verified)
+  takeaway order with `requestedBoncukAmount > 0` is rejected outright (`permission-denied`), never
+  silently ignored — Boncuk requires a real customer identity to own a spendable balance.
+- **Rule — atomicity and double-spend prevention**: unlike earning (an asynchronous outbox consumer),
+  redemption validates and debits `loyaltyAccounts.spendableBalance` **synchronously, inside the same
+  Firestore transaction that creates the order** — the account read and the account write are both
+  `tx.get()`/`tx.set()` calls in that one transaction, so Firestore's own optimistic-concurrency
+  conflict-and-retry mechanism structurally prevents two concurrent requests from both successfully
+  redeeming against the same balance. A `boncukRedemption`-entryType ledger entry
+  (`loyaltyLedgerEntries`, `entitlementDeltaBoncuk: 0`, `spendableDeltaBoncuk: -boncukUsed`,
+  `debtDeltaBoncuk: 0`) is written atomically alongside the account debit and the order itself.
+- **Rule — never silently clamped**: a `requestedBoncukAmount` exceeding either the customer's
+  spendable balance or the order's own cap (`floor(boncukEligibleOrderAmountMinorUnits *
+  maxRedemptionBasisPoints / 10000) / redemptionValueMinorUnitsPerBoncuk`, floored) is rejected
+  (`invalid-argument`) — never silently reduced to the maximum usable amount.
+- **Rule — cap basis**: `boncukEligibleOrderAmountMinorUnits = pricing.grandTotal.minorUnits -
+  pricing.tip.minorUnits` — **never `grossSubtotal`**. Takeaway orders always have `tip.minorUnits ==
+  0` today, so this equals `grandTotal` in practice, but the formula is written against `grandTotal -
+  tip` so it stays correct once tipping is wired for any channel.
+- **Rule — anti-forgery**: `firestore.rules`' `clientOrderCreateOmitsBoncukRedemption()` denies any
+  direct-client `orders` create (staff/POS, anonymous QR guest, or authenticated-customer QR guest) that
+  sets either `boncukRedemption` or `selectedBenefitType: 'boncukRedemption'` — mirrors the existing
+  `clientOrderCreateOmitsPricingAuthority()` pattern (BR-LOYALTY-013) exactly. Only
+  `submitTakeawayOrder`'s own trusted transaction (Admin SDK, bypasses these rules) can ever write
+  either field.
+- **Scope this phase — takeaway only**: `submitTakeawayOrder.ts`'s authenticated (non-guest) path is the
+  only writer. `submitDeliveryOrder`/`reservationPreorder` do not accept `requestedBoncukAmount` at all;
+  `dineInQr`/POS/staff-created orders can never carry a redemption (BR-PRICE-002's existing
+  server-authoritative-pricing exclusion for those channels applies here too — redemption requires the
+  same trusted pricing provenance earning does, BR-LOYALTY-013).
+- **Known, disclosed blocker — restoration not implemented**: if a takeaway order that redeemed Boncuk
+  is later rejected/cancelled, the debited `spendableBalance` and the `boncukRedemption` ledger entry
+  are **not currently restored** — no `boncukRedemptionRestore` writer exists yet (the ledger entry type
+  itself was already reserved in the closed union from the original P0-A design). **Do not expose Boncuk
+  checkout to production until this is closed.**
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-005, BR-LOYALTY-006, BR-LOYALTY-013,
+  BR-LOYALTY-014, BR-LOYALTY-018, BR-PRICE-002
 
 # Customer CRM & Loyalty Platform
 

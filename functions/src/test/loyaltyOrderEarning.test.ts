@@ -70,6 +70,8 @@ interface SeedOrderParams {
    * arbitrary string to simulate a forged/invalid value.
    */
   pricingAuthority?: string | null;
+  /** Boncuk Loyalty P4-B — omitted entirely unless explicitly provided, matching a real order's own field (absent when no redemption was applied). */
+  boncukRedemption?: Record<string, unknown> | null;
 }
 
 async function seedOrder(params: SeedOrderParams) {
@@ -96,6 +98,9 @@ async function seedOrder(params: SeedOrderParams) {
   };
   if (pricingAuthority !== null) {
     doc.pricingAuthority = pricingAuthority;
+  }
+  if (params.boncukRedemption !== undefined) {
+    doc.boncukRedemption = params.boncukRedemption;
   }
   await db().collection("orders").doc(params.orderId).set(doc);
 }
@@ -570,12 +575,101 @@ test("eligibility: zero eligible net spend creates no artificial Boncuk", async 
   assert.strictEqual(ledger?.amountBasisMinorUnits, 0);
 });
 
-// Boncuk-redemption-paid-amount exclusion (BR-LOYALTY §3) — no persisted
-// field for a Boncuk-paid portion exists anywhere in the order schema yet
-// (checkout redemption is out of P2A's scope, per instruction), so there is
-// nothing to exercise here. `resolveEligibleNetSpendMinorUnits` (see file
-// under test) is the single, isolated seam a future redemption phase would
-// extend to subtract that amount — documented, not implemented.
+// =========================================================================
+// Boncuk-redemption-paid-amount exclusion (BR-LOYALTY-004, Boncuk Loyalty
+// P4-B, 2026-08-22) — the Boncuk-paid portion of an order never itself
+// earns Boncuk. `resolveEligibleNetSpendMinorUnits` is the single, isolated
+// seam that subtracts it; these tests exercise it end-to-end through the
+// real earning transaction, exactly like every other eligibility test in
+// this file.
+// =========================================================================
+
+test("eligibility: a valid boncukRedemption snapshot reduces the eligible net spend by its value", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  await seedOrder({
+    orderId,
+    customerId: uid,
+    channel: "takeaway",
+    grandTotalMinorUnits: 50000,
+    boncukRedemption: {
+      boncukUsed: 120,
+      valueMinorUnits: 12000,
+      remainingPayableMinorUnits: 38000,
+      redemptionValueMinorUnitsPerBoncuk: 100,
+      maxRedemptionBasisPoints: 5000,
+      loyaltyPolicyVersion: 1,
+    },
+  });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.reason, "earned");
+  // 50000 grandTotal - 12000 redeemed = 38000 eligible; default policy
+  // 5000 minor -> 5 Boncuk is 1000 minor/Boncuk exactly -> 38 whole Boncuk.
+  assert.strictEqual(result.boncukEarned, 38);
+  const ledger = await ledgerDoc(orderId, uid);
+  assert.strictEqual(ledger?.amountBasisMinorUnits, 38000);
+});
+
+test("eligibility: boncukRedemption explicitly null behaves identically to an absent field (unchanged behavior)", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  await seedOrder({ orderId, customerId: uid, channel: "takeaway", grandTotalMinorUnits: 5000, boncukRedemption: null });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.reason, "earned");
+  assert.strictEqual(result.boncukEarned, 5);
+});
+
+test("eligibility: a malformed boncukRedemption snapshot (missing valueMinorUnits) fails closed, never approximated", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  await seedOrder({
+    orderId,
+    customerId: uid,
+    channel: "takeaway",
+    grandTotalMinorUnits: 5000,
+    boncukRedemption: { boncukUsed: 10 },
+  });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.reason, "untrustworthy-pricing-data");
+  assert.strictEqual(result.processed, false);
+  const ledger = await ledgerDoc(orderId, uid);
+  assert.strictEqual(ledger, undefined);
+});
+
+test("eligibility: a boncukRedemption value exceeding grandTotal fails closed rather than earning on a negative basis", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-completed`;
+  await seedMembership(uid);
+  await seedOrder({
+    orderId,
+    customerId: uid,
+    channel: "takeaway",
+    grandTotalMinorUnits: 5000,
+    boncukRedemption: { valueMinorUnits: 6000 },
+  });
+
+  const result = await processOrderCompletionEventForLoyaltyEarning(
+    db(), eventId, completionEvent({ orderId, customerId: uid, channel: "takeaway" }),
+  );
+  assert.strictEqual(result.reason, "untrustworthy-pricing-data");
+  assert.strictEqual(result.processed, false);
+});
 
 // =========================================================================
 // G. Server pricing-authority provenance (security fix, 2026-08-21) —

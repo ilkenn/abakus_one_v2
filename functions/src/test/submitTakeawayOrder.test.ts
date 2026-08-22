@@ -1,6 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert";
 import * as admin from "firebase-admin";
+import { LOYALTY_ACCOUNTS_COLLECTION, LOYALTY_LEDGER_ENTRIES_COLLECTION, deriveLoyaltyLedgerEntryId } from "../loyaltyLedger";
 
 /**
  * Emulator-backed tests for `submitTakeawayOrder` — Faz D.3
@@ -154,6 +155,49 @@ async function seedValidChain() {
   await seedRestaurant(restaurantId, organizationId);
   await seedBranch(branchId, restaurantId, organizationId);
   return { organizationId, restaurantId, branchId };
+}
+
+/** Boncuk Loyalty P4-B — a fully-shaped, well-formed loyalty account (the "normal existing account" baseline every redemption test starts from), keyed exactly like `getCustomerLoyaltySnapshot`'s own provisioning shape. */
+async function seedLoyaltyAccount(
+  organizationId: string,
+  uid: string,
+  overrides: Partial<{ spendableBalance: number; boncukDebt: number; lifetimeRedeemed: number; revision: number }> = {},
+) {
+  const now = admin.firestore.Timestamp.now();
+  await admin
+    .firestore()
+    .collection(LOYALTY_ACCOUNTS_COLLECTION)
+    .doc(`${organizationId}_${uid}`)
+    .set({
+      organizationId,
+      customerId: uid,
+      spendableBalance: overrides.spendableBalance ?? 0,
+      boncukDebt: overrides.boncukDebt ?? 0,
+      validOrderEntitlementBoncuk: 0,
+      earningCarryNumerator: "0",
+      earningCarryDenominator: "1",
+      lifetimeEarned: 0,
+      lifetimeRedeemed: overrides.lifetimeRedeemed ?? 0,
+      createdAt: now,
+      updatedAt: now,
+      revision: overrides.revision ?? 1,
+    });
+}
+
+async function loyaltyAccountDoc(organizationId: string, uid: string) {
+  return (
+    await admin.firestore().collection(LOYALTY_ACCOUNTS_COLLECTION).doc(`${organizationId}_${uid}`).get()
+  ).data();
+}
+
+async function boncukRedemptionLedgerDoc(organizationId: string, uid: string, orderId: string) {
+  const id = deriveLoyaltyLedgerEntryId({
+    organizationId,
+    customerId: uid,
+    entryType: "boncukRedemption",
+    sourceId: orderId,
+  });
+  return (await admin.firestore().collection(LOYALTY_LEDGER_ENTRIES_COLLECTION).doc(id).get()).data();
 }
 
 async function seedChannelPricingPolicy(
@@ -1292,4 +1336,373 @@ test("Idempotency: two different actors using the identical submissionKey get tw
   assert.strictEqual(resultA.httpStatus, 200);
   assert.strictEqual(resultB.httpStatus, 200);
   assert.notStrictEqual(resultA.body.result?.orderId, resultB.body.result?.orderId);
+});
+
+// =======================================================================
+// C. Boncuk Loyalty P4-B — checkout redemption (authenticated takeaway
+// only; delivery/reservation/dineInQr/POS are out of scope this phase).
+// "Boncuk is settlement, not discount" (P4-A, accepted) — pricing.discount
+// and pricing.grandTotal are asserted UNCHANGED by every redemption test
+// below; only the parallel boncukRedemption snapshot reflects it.
+// =======================================================================
+
+test("Redemption: no requestedBoncukAmount -> selectedBenefitType 'none', boncukRedemption null, unchanged pricing", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 50000 });
+  const { idToken } = await createRealPhoneUser();
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200);
+  const order = (await admin.firestore().collection("orders").doc(body.result!.orderId as string).get()).data()!;
+  assert.strictEqual(order.selectedBenefitType, "none");
+  assert.strictEqual(order.boncukRedemption, null);
+  assert.strictEqual(order.pricing.discount.minorUnits, 0);
+  assert.strictEqual(order.pricing.grandTotal.minorUnits, 50000);
+});
+
+test("Redemption: a valid within-caps request settles part of the (unchanged) total, debits the account, and writes a ledger entry", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 50000 });
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedLoyaltyAccount(chain.organizationId, uid, { spendableBalance: 400 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+      requestedBoncukAmount: 120,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200);
+  const orderId = body.result!.orderId as string;
+  const order = (await admin.firestore().collection("orders").doc(orderId).get()).data()!;
+
+  // Settlement, not discount — the order's own price fields are untouched.
+  assert.strictEqual(order.pricing.discount.minorUnits, 0);
+  assert.strictEqual(order.pricing.grandTotal.minorUnits, 50000);
+
+  assert.strictEqual(order.selectedBenefitType, "boncukRedemption");
+  assert.strictEqual(order.boncukRedemption.boncukUsed, 120);
+  assert.strictEqual(order.boncukRedemption.valueMinorUnits, 12000);
+  assert.strictEqual(order.boncukRedemption.remainingPayableMinorUnits, 38000);
+  assert.strictEqual(order.boncukRedemption.redemptionValueMinorUnitsPerBoncuk, 100);
+  assert.strictEqual(order.boncukRedemption.maxRedemptionBasisPoints, 5000);
+  assert.strictEqual(order.boncukRedemption.loyaltyPolicyVersion, 1);
+
+  const account = await loyaltyAccountDoc(chain.organizationId, uid);
+  assert.strictEqual(account?.spendableBalance, 280);
+  assert.strictEqual(account?.lifetimeRedeemed, 120);
+  assert.strictEqual(account?.boncukDebt, 0);
+  assert.strictEqual(account?.revision, 2);
+
+  const ledger = await boncukRedemptionLedgerDoc(chain.organizationId, uid, orderId);
+  assert.ok(ledger);
+  assert.strictEqual(ledger?.entryType, "boncukRedemption");
+  assert.strictEqual(ledger?.entitlementDeltaBoncuk, 0);
+  assert.strictEqual(ledger?.spendableDeltaBoncuk, -120);
+  assert.strictEqual(ledger?.debtDeltaBoncuk, 0);
+  assert.strictEqual(ledger?.amountBasisMinorUnits, 12000);
+  assert.strictEqual(ledger?.redemptionValueMinorUnitsPerBoncuk, 100);
+  assert.strictEqual(ledger?.maxRedemptionBasisPoints, 5000);
+  assert.strictEqual(ledger?.loyaltyPolicyVersion, 1);
+  assert.strictEqual(ledger?.sourceId, orderId);
+  assert.strictEqual(ledger?.orderId, orderId);
+  assert.strictEqual(ledger?.organizationId, chain.organizationId);
+  assert.strictEqual(ledger?.customerId, uid);
+  assert.strictEqual(ledger?.idempotencyKey, orderId);
+  assert.strictEqual(ledger?.reversalOf, null);
+});
+
+test("Redemption: exactly at the order-cap boundary succeeds", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 4000 });
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedLoyaltyAccount(chain.organizationId, uid, { spendableBalance: 100 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+      requestedBoncukAmount: 20,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200);
+  const order = (await admin.firestore().collection("orders").doc(body.result!.orderId as string).get()).data()!;
+  assert.strictEqual(order.boncukRedemption.boncukUsed, 20);
+  assert.strictEqual(order.boncukRedemption.valueMinorUnits, 2000);
+  assert.strictEqual(order.boncukRedemption.remainingPayableMinorUnits, 2000);
+});
+
+test("Redemption: one Boncuk over the order cap is rejected outright, never clamped, no order/account/ledger mutation", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 4000 });
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedLoyaltyAccount(chain.organizationId, uid, { spendableBalance: 100 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+      requestedBoncukAmount: 21,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+  const account = await loyaltyAccountDoc(chain.organizationId, uid);
+  assert.strictEqual(account?.spendableBalance, 100, "the account must be untouched by a rejected request");
+  const orders = await admin.firestore().collection("orders").where("customerId", "==", uid).get();
+  assert.strictEqual(orders.size, 0);
+});
+
+test("Redemption: a request exceeding the spendable balance (but within the order cap) is rejected", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 50000 });
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedLoyaltyAccount(chain.organizationId, uid, { spendableBalance: 50 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+      requestedBoncukAmount: 60,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+  const account = await loyaltyAccountDoc(chain.organizationId, uid);
+  assert.strictEqual(account?.spendableBalance, 50);
+});
+
+test("Redemption: no loyalty account exists for the customer -> rejected, fails safely", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 50000 });
+  const { idToken, uid } = await createRealPhoneUser();
+  // Deliberately no seedLoyaltyAccount call.
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+      requestedBoncukAmount: 10,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
+  const orders = await admin.firestore().collection("orders").where("customerId", "==", uid).get();
+  assert.strictEqual(orders.size, 0);
+});
+
+test("Redemption: a guest (QR) takeaway request with requestedBoncukAmount > 0 is rejected outright, never silently ignored", async () => {
+  const session = await seedGuestSession();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, session.restaurantId, session.organizationId, { basePriceMinorUnits: 50000 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      takeawaySessionId: session.sessionId,
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+      requestedBoncukAmount: 1,
+    },
+    session.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 403);
+  assert.strictEqual(body.error?.status, "PERMISSION_DENIED");
+  const orders = await admin.firestore().collection("orders").where("guestAuthUid", "==", session.uid).get();
+  assert.strictEqual(orders.size, 0);
+});
+
+test("Redemption: requestedBoncukAmount must be a non-negative integer — a fractional value is rejected", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 50000 });
+  const { idToken } = await createRealPhoneUser();
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+      requestedBoncukAmount: 1.5,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+});
+
+// -----------------------------------------------------------------------
+// C.1 Idempotency — the existing submissionKey/fingerprint retry mechanism
+// must correctly cover redemption too (P4-B §10).
+// -----------------------------------------------------------------------
+
+test("Redemption idempotency: retrying the identical submissionKey + identical requestedBoncukAmount is a no-op the second time — no double debit, no double ledger entry", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 50000 });
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedLoyaltyAccount(chain.organizationId, uid, { spendableBalance: 100 });
+
+  const payload = {
+    submissionKey: nextId("key"),
+    restaurantId: chain.restaurantId,
+    branchId: chain.branchId,
+    pickupMode: "scheduled",
+    pickupTime: futurePickupIso(30),
+    items: [{ kind: "product", productId, quantity: 1 }],
+    ...CONTACT,
+    requestedBoncukAmount: 10,
+  };
+
+  const first = await callCallable(SUBMIT_URL, payload, idToken);
+  const second = await callCallable(SUBMIT_URL, payload, idToken);
+
+  assert.strictEqual(first.httpStatus, 200);
+  assert.strictEqual(second.httpStatus, 200);
+  assert.strictEqual(second.body.result?.duplicate, true);
+  assert.strictEqual(first.body.result?.orderId, second.body.result?.orderId);
+
+  const account = await loyaltyAccountDoc(chain.organizationId, uid);
+  assert.strictEqual(account?.spendableBalance, 90, "a retry must never debit the account a second time");
+  assert.strictEqual(account?.lifetimeRedeemed, 10);
+  assert.strictEqual(account?.revision, 2, "a retry must never bump revision a second time");
+});
+
+test("Redemption idempotency: reusing the same submissionKey with a DIFFERENT requestedBoncukAmount fails closed and never mutates the already-created order", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 50000 });
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedLoyaltyAccount(chain.organizationId, uid, { spendableBalance: 100 });
+
+  const submissionKey = nextId("key");
+  const basePayload = {
+    submissionKey,
+    restaurantId: chain.restaurantId,
+    branchId: chain.branchId,
+    pickupMode: "scheduled",
+    pickupTime: futurePickupIso(30),
+    items: [{ kind: "product", productId, quantity: 1 }],
+    ...CONTACT,
+  };
+
+  const first = await callCallable(SUBMIT_URL, { ...basePayload, requestedBoncukAmount: 10 }, idToken);
+  const second = await callCallable(SUBMIT_URL, { ...basePayload, requestedBoncukAmount: 20 }, idToken);
+
+  assert.strictEqual(first.httpStatus, 200);
+  assert.strictEqual(second.httpStatus, 400);
+  assert.strictEqual(second.body.error?.status, "FAILED_PRECONDITION");
+
+  const account = await loyaltyAccountDoc(chain.organizationId, uid);
+  assert.strictEqual(account?.spendableBalance, 90, "the rejected retry must never debit the account a second time");
+
+  const order = (await admin.firestore().collection("orders").doc(first.body.result!.orderId as string).get()).data()!;
+  assert.strictEqual(order.boncukRedemption.boncukUsed, 10, "the original order must be untouched by the rejected retry");
+});
+
+// -----------------------------------------------------------------------
+// C.2 Double-spend protection (P4-B §9) — the balance check must be
+// inside the authoritative transaction, proven under real concurrency.
+// -----------------------------------------------------------------------
+
+test("Redemption double-spend: two concurrent requests for 15 Boncuk each, against a balance of 20, must not both succeed", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 50000 });
+  const { idToken, uid } = await createRealPhoneUser();
+  await seedLoyaltyAccount(chain.organizationId, uid, { spendableBalance: 20 });
+
+  const payloadFor = () => ({
+    submissionKey: nextId("key"),
+    restaurantId: chain.restaurantId,
+    branchId: chain.branchId,
+    pickupMode: "scheduled",
+    pickupTime: futurePickupIso(30),
+    items: [{ kind: "product", productId, quantity: 1 }],
+    ...CONTACT,
+    requestedBoncukAmount: 15,
+  });
+
+  const [resultA, resultB] = await Promise.all([
+    callCallable(SUBMIT_URL, payloadFor(), idToken),
+    callCallable(SUBMIT_URL, payloadFor(), idToken),
+  ]);
+
+  const successes = [resultA, resultB].filter((r) => r.httpStatus === 200);
+  const failures = [resultA, resultB].filter((r) => r.httpStatus !== 200);
+  assert.strictEqual(successes.length, 1, "exactly one of the two concurrent 15-Boncuk requests must succeed");
+  assert.strictEqual(failures.length, 1);
+  assert.strictEqual(failures[0].body.error?.status, "INVALID_ARGUMENT");
+
+  const account = await loyaltyAccountDoc(chain.organizationId, uid);
+  assert.strictEqual(account?.spendableBalance, 5, "the balance must reflect exactly one debit, never negative, never double-debited");
+  assert.strictEqual(account?.lifetimeRedeemed, 15);
 });
