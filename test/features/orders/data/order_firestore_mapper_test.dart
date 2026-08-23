@@ -4,6 +4,7 @@ import 'package:abakus_one_v2/features/orders/data/canonical_order_repository.da
 import 'package:abakus_one_v2/features/orders/data/order_firestore_mapper.dart';
 import 'package:abakus_one_v2/features/orders/domain/identity/order_identity.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/delivery_address_snapshot.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_benefit_type.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/pickup_mode.dart';
 import 'package:abakus_one_v2/features/payment/domain/models/payment_method_seed_data.dart';
@@ -557,6 +558,139 @@ void main() {
       expect(restored.id.value, order.id.value);
       expect(restored.deliveryAddressSnapshot, isNull);
       expect(restored.paymentMethodSnapshot, isNull);
+    });
+  });
+
+  group('OrderFirestoreMapper — Boncuk redemption fields, P4-E-B', () {
+    // `toFirestore` deliberately never writes `selectedBenefitType`/
+    // `boncukRedemption` at all (mirrors `pricingAuthority`'s own
+    // precedent: server-authoritative-only fields are never produced by
+    // the client write path) — so these tests inject the two keys onto an
+    // otherwise-real `toFirestore` map, simulating exactly what a genuine
+    // `submitTakeawayOrder.ts`-written document looks like on read.
+    Future<Map<String, dynamic>> baseOrderData() async {
+      final order = await SubmitCustomerOrder(
+        clock: FakeClock(DateTime(2026, 8, 5, 18, 30)),
+        identityProvider: InMemoryOrderIdentityProvider(),
+        repository: InMemoryCanonicalOrderRepository(),
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+      ).call(
+        cartItems: const [
+          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        ],
+        customerId: 'uid-1',
+        channel: OrderChannel.takeaway,
+      );
+      return OrderFirestoreMapper.toFirestore(order, organizationId: 'org-1');
+    }
+
+    test('an old order with neither key at all parses normally — none, null',
+        () async {
+      final data = await baseOrderData();
+      expect(data.containsKey('selectedBenefitType'), isFalse);
+      expect(data.containsKey('boncukRedemption'), isFalse);
+
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      expect(restored.selectedBenefitType, OrderBenefitType.none);
+      expect(restored.boncukRedemption, isNull);
+    });
+
+    test('an explicit selectedBenefitType: "none" order parses to none/null',
+        () async {
+      final data = await baseOrderData();
+      data['selectedBenefitType'] = 'none';
+      data['boncukRedemption'] = null;
+
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      expect(restored.selectedBenefitType, OrderBenefitType.none);
+      expect(restored.boncukRedemption, isNull);
+    });
+
+    test(
+        'a boncukRedemption order parses selectedBenefitType and every '
+        'canonical snapshot value exactly', () async {
+      final data = await baseOrderData();
+      data['selectedBenefitType'] = 'boncukRedemption';
+      data['boncukRedemption'] = {
+        'boncukUsed': 120,
+        'valueMinorUnits': 12000,
+        'remainingPayableMinorUnits': 38000,
+        'redemptionValueMinorUnitsPerBoncuk': 100,
+        'maxRedemptionBasisPoints': 5000,
+        'loyaltyPolicyVersion': 1,
+      };
+
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      expect(restored.selectedBenefitType, OrderBenefitType.boncukRedemption);
+      final snapshot = restored.boncukRedemption;
+      expect(snapshot, isNotNull);
+      expect(snapshot!.boncukUsed, 120);
+      expect(snapshot.valueMinorUnits, 12000);
+      expect(snapshot.remainingPayableMinorUnits, 38000);
+      expect(snapshot.redemptionValueMinorUnitsPerBoncuk, 100);
+      expect(snapshot.maxRedemptionBasisPoints, 5000);
+      expect(snapshot.loyaltyPolicyVersion, 1);
+    });
+
+    test(
+        'pricing (discount/grandTotal) is completely untouched by a Boncuk '
+        'redemption — settlement, never a discount (BR-LOYALTY-019)', () async {
+      final data = await baseOrderData();
+      final pricingBefore = Map<String, dynamic>.from(data['pricing'] as Map);
+      data['selectedBenefitType'] = 'boncukRedemption';
+      data['boncukRedemption'] = {
+        'boncukUsed': 10,
+        'valueMinorUnits': 1000,
+        'remainingPayableMinorUnits': 9000,
+        'redemptionValueMinorUnitsPerBoncuk': 100,
+        'maxRedemptionBasisPoints': 5000,
+        'loyaltyPolicyVersion': 1,
+      };
+
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      expect(restored.pricing.discount.minorUnits,
+          (pricingBefore['discount'] as Map)['minorUnits']);
+      expect(restored.pricing.grandTotal.minorUnits,
+          (pricingBefore['grandTotal'] as Map)['minorUnits']);
+    });
+
+    test(
+        'a genuinely unknown future selectedBenefitType value degrades to '
+        'none rather than throwing — forward compatibility, never a fake '
+        'benefit surfaced', () async {
+      final data = await baseOrderData();
+      data['selectedBenefitType'] = 'someFutureBenefitTypeNotYetBuilt';
+
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      expect(restored.selectedBenefitType, OrderBenefitType.none);
+    });
+
+    test(
+        'a present but malformed boncukRedemption map fails loudly (throws), '
+        'never silently drops or fabricates a value', () async {
+      final data = await baseOrderData();
+      data['selectedBenefitType'] = 'boncukRedemption';
+      data['boncukRedemption'] = {
+        'boncukUsed': 10,
+        // deliberately missing every other required key
+      };
+
+      expect(
+        () =>
+            OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data)),
+        throwsA(anything),
+      );
     });
   });
 }

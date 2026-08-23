@@ -89,9 +89,14 @@ one is actually reachable/used; prefer the canonical one and don't extend the ob
 - Notification settings: canonical = `features/notifications/...` (wired into
   `ProfileScreen`/`NotificationsScreen`). `features/profile/presentation/screens/
   notification_settings_screen.dart` + its provider are a fully-built but unreferenced duplicate.
-- Loyalty: the real implementation lives in `features/profile` (`LoyaltyScreen`, reachable from
-  `ProfileScreen`). The separate `features/loyalty/` folder (screen, `BeadsHistoryScreen`,
-  `AbacusCard`, `LoyaltyProgress`, `RewardCard`) is empty dead scaffolding.
+- Loyalty: **corrected P4-E-A (2026-08-22)** — this bullet previously had the two implementations
+  backwards. As of the Boncuk Loyalty Program's P3A rewrite (2026-08-23 in-repo dating), the real,
+  server-authoritative implementation lives in `features/loyalty/` (`LoyaltyScreen`,
+  `BeadsHistoryScreen`/`LoyaltyHistoryScreen`, `AbacusCard`, `LoyaltyProgressCard`) — reachable from
+  `ProfileScreen`/`ProfileLoyaltyCard`/`HomeScreen`, all of which import from `features/loyalty/`, not
+  `features/profile`. `features/profile/presentation/screens/loyalty_screen.dart` (the original mock
+  balance/tiers/rewards/wheel/campaigns implementation this bullet used to describe as canonical) is
+  now the orphaned duplicate — confirmed unreferenced by any import in `lib/`.
 
 Never delete obsolete/orphaned files or folders on your own initiative — report them, let the human
 decide (see §14).

@@ -8,6 +8,8 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../auth/domain/phone_number.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../loyalty/domain/models/loyalty_account_snapshot.dart';
+import '../../../loyalty/presentation/providers/loyalty_providers.dart';
 import '../../../orders/domain/models/order_id.dart';
 import '../../../orders/domain/models/order_model.dart';
 import '../../../orders/domain/models/pickup_time_policy.dart';
@@ -18,7 +20,36 @@ import '../../../takeaway/presentation/providers/takeaway_dependencies_provider.
 import '../../domain/models/cart_item.dart';
 import '../providers/cart_provider.dart';
 import '../providers/shopping_channel_provider.dart';
+import '../widgets/boncuk_redemption_card.dart';
 import 'order_success_screen.dart';
+
+/// Boncuk Loyalty Program P4-E-B (2026-08-22) — the presentation-only,
+/// NON-AUTHORITATIVE estimate of the maximum whole Boncuk this order can
+/// use right now, mirroring `functions/src/loyaltyRedemption.ts`'s own
+/// locked `calculateBoncukRedemption` cap formula exactly (P4-B §3), using
+/// the SAME approximate cart total this screen already labels
+/// "tahminidir" elsewhere. Integer/minor-unit arithmetic throughout — the
+/// cart's own `double` TL total is converted to minor units exactly once,
+/// then every further step uses `~/` (never floating point) — never a
+/// separate pricing engine, never a claim of exactness beyond what the
+/// existing cart estimate already is. `submitTakeawayOrder` revalidates
+/// everything server-side (P4-B); this value drives UI bounds only.
+int computeClientEstimatedMaxBoncuk(
+  LoyaltyAccountSnapshot snapshot,
+  double cartTotalPriceTl,
+) {
+  if (snapshot.spendableBalance <= 0 || snapshot.boncukDebt > 0) return 0;
+  if (snapshot.redemptionValueMinorUnitsPerBoncuk <= 0) return 0;
+  final estimatedGrandTotalMinorUnits = (cartTotalPriceTl * 100).round();
+  final maxRedemptionValueMinorUnits = estimatedGrandTotalMinorUnits *
+      snapshot.maxRedemptionBasisPoints ~/
+      10000;
+  final maxUsableBoncukByOrderCap = maxRedemptionValueMinorUnits ~/
+      snapshot.redemptionValueMinorUnitsPerBoncuk;
+  return snapshot.spendableBalance < maxUsableBoncukByOrderCap
+      ? snapshot.spendableBalance
+      : maxUsableBoncukByOrderCap;
+}
 
 /// Checkout for an authenticated in-app Gel Al (takeaway) order.
 ///
@@ -67,6 +98,20 @@ class _TakeawayCheckoutScreenState
   DateTime? _selectedPickupTime;
   bool _isSubmitting = false;
   String? _submitError;
+
+  /// Boncuk Loyalty Program P4-E-B (2026-08-22) — local, screen-owned
+  /// interaction state ONLY (per the locked state-management decision: no
+  /// new checkout controller/provider). Server data continues to come
+  /// exclusively from [loyaltySnapshotProvider], watched fresh in [build];
+  /// nothing here duplicates it. [_boncukUsageEnabled]/
+  /// [_selectedBoncukAmount] are the customer's own explicit choices —
+  /// never silently mutated to a different NONZERO value by a cart/
+  /// snapshot change (see [_handleBoncukEstimateMightHaveChanged]); the one
+  /// exception is resetting both to off/0 when the estimated max reaches
+  /// exactly zero, which is an explicit, locked instruction (P4-E-B §9),
+  /// not a silent substitution.
+  bool _boncukUsageEnabled = false;
+  int _selectedBoncukAmount = 0;
 
   /// Idempotency (Faz D.3.1): generated once, on screen init, then reused
   /// on every retry within this screen's lifetime — the backend's own
@@ -139,6 +184,69 @@ class _TakeawayCheckoutScreenState
     });
   }
 
+  /// Boncuk Loyalty P4-E-B — the customer explicitly turning Boncuk usage
+  /// on/off. Off means the selected amount is effectively 0 (§6's own
+  /// rule); on seeds the minimum whole amount (1) if nothing was already
+  /// selected — never leaves the toggle "on" with a 0 amount, which would
+  /// be an invalid intermediate state the stepper/submit guard would then
+  /// have to special-case.
+  void _onBoncukToggle(bool value) {
+    setState(() {
+      _boncukUsageEnabled = value;
+      _selectedBoncukAmount =
+          value ? (_selectedBoncukAmount > 0 ? _selectedBoncukAmount : 1) : 0;
+      _submitError = null;
+    });
+  }
+
+  void _onBoncukAmountChanged(int newAmount) {
+    setState(() {
+      _selectedBoncukAmount = newAmount;
+      _submitError = null;
+    });
+  }
+
+  void _onBoncukUseMax() {
+    final snapshot = ref.read(loyaltySnapshotProvider).valueOrNull;
+    if (snapshot == null) return;
+    final max = computeClientEstimatedMaxBoncuk(
+      snapshot,
+      ref.read(cartTotalPriceProvider),
+    );
+    setState(() {
+      _boncukUsageEnabled = max > 0;
+      _selectedBoncukAmount = max > 0 ? max : 0;
+      _submitError = null;
+    });
+  }
+
+  /// Boncuk Loyalty P4-E-B §9/§10 — reacts to a cart total or loyalty
+  /// snapshot change while Boncuk usage is on. **Never silently clamps
+  /// [_selectedBoncukAmount] down to a smaller nonzero value** — if the
+  /// estimated max shrinks but stays above zero, [_selectedBoncukAmount]
+  /// is left exactly as the customer chose it; [build]'s own
+  /// `boncukSelectionInvalid` computation (derived, not stored) is what
+  /// then disables submission and shows the recovery notice/actions. The
+  /// ONE state mutation this method performs is the explicitly locked
+  /// exception: if the estimated max reaches exactly zero, Boncuk usage is
+  /// turned off and the selection reset to 0 — there is nothing a
+  /// stepper/MAX action could recover to in that case.
+  void _handleBoncukEstimateMightHaveChanged() {
+    if (!_boncukUsageEnabled) return;
+    final snapshot = ref.read(loyaltySnapshotProvider).valueOrNull;
+    if (snapshot == null) return;
+    final max = computeClientEstimatedMaxBoncuk(
+      snapshot,
+      ref.read(cartTotalPriceProvider),
+    );
+    if (max <= 0) {
+      setState(() {
+        _boncukUsageEnabled = false;
+        _selectedBoncukAmount = 0;
+      });
+    }
+  }
+
   bool get _isPickupTimeValid {
     final pickupTime = _selectedPickupTime;
     if (pickupTime == null) return false;
@@ -191,8 +299,32 @@ class _TakeawayCheckoutScreenState
     ];
   }
 
-  String _errorMessageFor(String code) {
-    switch (code) {
+  /// Boncuk Loyalty P4-E-B §13 — a Boncuk-specific rejection is mapped from
+  /// [SubmitTakeawayOrderException.boncukErrorReason] (the stable,
+  /// machine-readable server reason), NEVER inferred from [error]'s `code`
+  /// alone: `invalid-argument`/`failed-precondition` are also used for
+  /// entirely unrelated validation in this same callable (contact fields,
+  /// pickup time, branch scope, ...), so `code` alone cannot safely
+  /// distinguish "your Boncuk selection is now invalid" from any of those.
+  String _errorMessageFor(SubmitTakeawayOrderException error) {
+    final boncukReason = error.boncukErrorReason;
+    if (boncukReason != null) {
+      switch (boncukReason) {
+        case 'boncuk/exceeds-max-usable':
+          return 'Boncuk bakiyen veya kullanabileceğin miktar değişti. '
+              'Bilgileri güncelledik; tekrar seçim yap.';
+        case 'boncuk/account-unavailable':
+          return 'Boncuk hesabına şu anda ulaşılamıyor. Tekrar deneyebilir '
+              'veya Boncuk kullanmadan devam edebilirsin.';
+        case 'boncuk/policy-unavailable':
+          return 'Boncuk kullanımı şu anda geçici olarak kullanılamıyor. '
+              'Biraz sonra tekrar deneyebilirsin.';
+        default:
+          return 'Boncuk kullanılırken bir sorun oluştu. Boncuk kullanmadan '
+              'devam edebilirsin.';
+      }
+    }
+    switch (error.code) {
       case 'not-found':
         return 'Şube bulunamadı. Lütfen şube seçimine geri dön.';
       case 'failed-precondition':
@@ -211,6 +343,23 @@ class _TakeawayCheckoutScreenState
   Future<void> _submitOrder() async {
     if (_isSubmitting) return;
     if (!_canSubmit) return;
+
+    // Defense-in-depth (P4-E-B §9) — the submit button is already disabled
+    // whenever the UI's own derived `boncukSelectionInvalid` is true; this
+    // re-checks the same condition against a freshly-read snapshot right
+    // before sending, rather than trusting only the last-built widget
+    // state. Never sends a Boncuk amount the customer didn't explicitly
+    // choose and that still fits the latest estimate.
+    if (_boncukUsageEnabled) {
+      final snapshot = ref.read(loyaltySnapshotProvider).valueOrNull;
+      final max = snapshot == null
+          ? 0
+          : computeClientEstimatedMaxBoncuk(
+              snapshot, ref.read(cartTotalPriceProvider));
+      if (_selectedBoncukAmount <= 0 || _selectedBoncukAmount > max) {
+        return;
+      }
+    }
 
     final channelContext = ref.read(shoppingChannelProvider);
     final branchId = channelContext.branchId;
@@ -262,12 +411,16 @@ class _TakeawayCheckoutScreenState
             contactFirstName: _firstNameController.text.trim(),
             contactLastName: _lastNameController.text.trim(),
             contactPhone: normalizedPhone,
+            requestedBoncukAmount:
+                _boncukUsageEnabled ? _selectedBoncukAmount : 0,
           );
 
       // The backend's own canonical order is the single source of truth
       // for what was actually created (§7 — "backend order snapshot'ı
       // kullanılmalı") — read it back rather than reconstructing one
-      // client-side from the pre-submit cart estimate.
+      // client-side from the pre-submit cart estimate. This is also the
+      // ONLY source `boncukRedemption`/`selectedBenefitType` below come
+      // from (P4-E-B §14) — never the pre-submit local estimate.
       final order = await ref
           .read(canonicalOrderRepositoryProvider)
           .findById(OrderId(result.orderId));
@@ -283,7 +436,14 @@ class _TakeawayCheckoutScreenState
           .addOrder(OrderModel.fromCanonicalOrder(order));
       ref.read(cartProvider.notifier).clearCart();
 
+      // Boncuk Loyalty P4-E-B §14 — redemption occurs at submission time,
+      // not at completed-order earning; refresh the customer's displayed
+      // balance now rather than waiting for a later screen to happen to
+      // re-fetch it. Reuses the existing provider — no new loyalty cache.
+      ref.invalidate(loyaltySnapshotProvider);
+
       if (!mounted) return;
+      final boncukRedemption = order.boncukRedemption;
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
@@ -291,16 +451,33 @@ class _TakeawayCheckoutScreenState
             orderId: order.id.value,
             takeawayBranchName: channelContext.branchDisplayName,
             takeawayPickupTime: order.pickupTime,
+            orderTotalMinorUnits: order.pricing.grandTotal.minorUnits,
+            boncukUsed: boncukRedemption?.boncukUsed,
+            boncukValueMinorUnits: boncukRedemption?.valueMinorUnits,
+            remainingPayableMinorUnits:
+                boncukRedemption?.remainingPayableMinorUnits,
           ),
         ),
         (route) => route.isFirst,
       );
     } on SubmitTakeawayOrderException catch (error) {
       if (!mounted) return;
+      final isBoncukError = error.boncukErrorReason != null;
       setState(() {
         _isSubmitting = false;
-        _submitError = _errorMessageFor(error.code);
+        _submitError = _errorMessageFor(error);
+        if (isBoncukError) {
+          // CRITICAL (§13) — never auto-resubmit without Boncuk. Turning
+          // the selection off makes the screen immediately submittable
+          // again WITHOUT Boncuk, but the customer must tap "Siparişi
+          // Ver" themselves; nothing here resubmits on their behalf.
+          _boncukUsageEnabled = false;
+          _selectedBoncukAmount = 0;
+        }
       });
+      if (isBoncukError) {
+        ref.invalidate(loyaltySnapshotProvider);
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -316,6 +493,31 @@ class _TakeawayCheckoutScreenState
     final channelContext = ref.watch(shoppingChannelProvider);
     final cartItems = ref.watch(cartProvider);
     final totalPrice = ref.watch(cartTotalPriceProvider);
+    final loyaltySnapshotAsync = ref.watch(loyaltySnapshotProvider);
+
+    // Boncuk Loyalty P4-E-B §9/§10 — react to a cart-total or loyalty
+    // snapshot change while Boncuk usage is on. `ref.listen` (not
+    // `ref.watch`) is used here specifically because this needs to run a
+    // side effect (`setState` via `_handleBoncukEstimateMightHaveChanged`)
+    // in response to a change, never during `build` itself.
+    ref.listen<double>(cartTotalPriceProvider, (previous, next) {
+      _handleBoncukEstimateMightHaveChanged();
+    });
+    ref.listen<AsyncValue<LoyaltyAccountSnapshot>>(loyaltySnapshotProvider,
+        (previous, next) {
+      _handleBoncukEstimateMightHaveChanged();
+    });
+
+    final clientEstimatedMaxBoncuk = loyaltySnapshotAsync.maybeWhen(
+      data: (snapshot) => computeClientEstimatedMaxBoncuk(snapshot, totalPrice),
+      orElse: () => 0,
+    );
+    // Derived, never stored — this is deliberately NOT a mutable field:
+    // recomputing it fresh every build is what guarantees it can never
+    // drift from `_selectedBoncukAmount`/the latest snapshot (P4-E-B §9).
+    final boncukSelectionInvalid =
+        _boncukUsageEnabled && _selectedBoncukAmount > clientEstimatedMaxBoncuk;
+    final canSubmit = _canSubmit && !boncukSelectionInvalid;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Gel Al Siparişi')),
@@ -463,6 +665,20 @@ class _TakeawayCheckoutScreenState
                 ],
               ),
             ),
+            const SizedBox(height: AppSpacing.lg),
+            BoncukRedemptionCard(
+              snapshotAsync: loyaltySnapshotAsync,
+              enabled: _boncukUsageEnabled,
+              selectedAmount: _selectedBoncukAmount,
+              maxUsableBoncuk: clientEstimatedMaxBoncuk,
+              selectionInvalid: boncukSelectionInvalid,
+              controlsFrozen: _isSubmitting,
+              cartTotalPriceTl: totalPrice,
+              onToggle: _onBoncukToggle,
+              onAmountChanged: _onBoncukAmountChanged,
+              onUseMax: _onBoncukUseMax,
+              onRetry: () => ref.invalidate(loyaltySnapshotProvider),
+            ),
             if (_submitError != null) ...[
               const SizedBox(height: AppSpacing.lg),
               Text(
@@ -476,7 +692,7 @@ class _TakeawayCheckoutScreenState
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _canSubmit ? _submitOrder : null,
+                onPressed: canSubmit ? _submitOrder : null,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(
                     vertical: AppSpacing.md,

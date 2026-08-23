@@ -1,10 +1,12 @@
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../../payment/domain/models/payment_method_snapshot.dart';
 import '../pricing/price_breakdown.dart';
+import 'boncuk_redemption_snapshot.dart';
 import 'courier_visibility.dart';
 import 'delivery_address_snapshot.dart';
 import 'order_actor.dart';
 import 'order_audit_entry.dart';
+import 'order_benefit_type.dart';
 import 'order_channel.dart';
 import 'order_id.dart';
 import 'order_line.dart';
@@ -61,6 +63,8 @@ class Order {
     this.kitchenNote = '',
     this.deliveryAddressSnapshot,
     this.paymentMethodSnapshot,
+    this.selectedBenefitType = OrderBenefitType.none,
+    this.boncukRedemption,
   }) : assert(
           pickupMode != PickupMode.scheduled || pickupTime != null,
           'pickupMode == PickupMode.scheduled requires a non-null pickupTime',
@@ -235,6 +239,23 @@ class Order {
   /// itself, though P.1's only populated use is the delivery flow.
   final PaymentMethodSnapshot? paymentMethodSnapshot;
 
+  /// Which single benefit (if any) settled part of this order's total —
+  /// Boncuk Loyalty Program P4-E-B (2026-08-22). [OrderBenefitType.none] by
+  /// default, matching every order that predates this field and every
+  /// order that simply never redeemed anything. Server-authoritative only
+  /// — never set from local/client state; see [OrderBenefitType]'s own doc
+  /// comment for the exact closed set.
+  final OrderBenefitType selectedBenefitType;
+
+  /// The server-computed Boncuk redemption snapshot when
+  /// [selectedBenefitType] is [OrderBenefitType.boncukRedemption]; `null`
+  /// otherwise, including every pre-P4-E-B order (additive/nullable, same
+  /// backward-compatibility contract as [deliveryAddressSnapshot]/
+  /// [paymentMethodSnapshot]). See [BoncukRedemptionSnapshot]'s own doc
+  /// comment — settlement, never a discount; [pricing] is never touched by
+  /// this field.
+  final BoncukRedemptionSnapshot? boncukRedemption;
+
   /// Moves this order from [status] to [newStatus], appending a new
   /// [OrderAuditEntry.statusChange] to [statusHistory] and recording the
   /// timestamp via [OrderTimestamps.recordedAt].
@@ -302,6 +323,8 @@ class Order {
     String? kitchenNote,
     DeliveryAddressSnapshot? deliveryAddressSnapshot,
     PaymentMethodSnapshot? paymentMethodSnapshot,
+    OrderBenefitType? selectedBenefitType,
+    BoncukRedemptionSnapshot? boncukRedemption,
   }) {
     return Order(
       id: id ?? this.id,
@@ -335,6 +358,8 @@ class Order {
           deliveryAddressSnapshot ?? this.deliveryAddressSnapshot,
       paymentMethodSnapshot:
           paymentMethodSnapshot ?? this.paymentMethodSnapshot,
+      selectedBenefitType: selectedBenefitType ?? this.selectedBenefitType,
+      boncukRedemption: boncukRedemption ?? this.boncukRedemption,
     );
   }
 }

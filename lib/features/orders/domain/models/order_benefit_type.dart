@@ -1,0 +1,43 @@
+/// The customer-safe, closed representation of which single benefit (if
+/// any) an order settled part of its total with — Boncuk Loyalty Program
+/// P4-E-B (2026-08-22), mirroring `functions/src/submitTakeawayOrder.ts`'s
+/// own `selectedBenefitType: "none" | "boncukRedemption"` server contract
+/// field-for-field. **Only these two values are real; nothing else is ever
+/// produced by any writer today** — coupon/campaign/catalog-reward benefit
+/// types have no backend authority yet (`docs/business_rules.md`
+/// `BR-LOYALTY-022`'s own disclosed scope). A future benefit type must stay
+/// parse-safe (see [orderBenefitTypeFromWire]) without this enum ever
+/// pretending to support one before its own backend exists.
+enum OrderBenefitType { none, boncukRedemption }
+
+/// Parses `Order.selectedBenefitType`'s wire value.
+///
+/// Deliberately **not** the strict `EnumType.values.byName(...)`
+/// fail-fast-on-unknown discipline this mapper otherwise uses for closed
+/// state-machine fields (`status`/`channel`) — a genuinely unknown or
+/// future value here degrades to [OrderBenefitType.none] rather than
+/// throwing, so an old client build reading an order written by a NEWER
+/// backend release (a future benefit type this build doesn't understand
+/// yet) never crashes reading order history; it simply shows no benefit,
+/// never fabricated or wrong information. Absent/`null` (every
+/// pre-P4-E-B order) also resolves to [OrderBenefitType.none].
+OrderBenefitType orderBenefitTypeFromWire(String? raw) {
+  switch (raw) {
+    case 'boncukRedemption':
+      return OrderBenefitType.boncukRedemption;
+    default:
+      return OrderBenefitType.none;
+  }
+}
+
+/// The inverse of [orderBenefitTypeFromWire] — used only where this
+/// codebase ever needs to round-trip a value back to Firestore's own wire
+/// shape (none today; reserved for symmetry/testability).
+String orderBenefitTypeToWire(OrderBenefitType value) {
+  switch (value) {
+    case OrderBenefitType.boncukRedemption:
+      return 'boncukRedemption';
+    case OrderBenefitType.none:
+      return 'none';
+  }
+}

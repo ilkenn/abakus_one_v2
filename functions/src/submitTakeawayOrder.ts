@@ -118,6 +118,38 @@ export function invalid(message: string): never {
   throw new HttpsError("invalid-argument", message);
 }
 
+/**
+ * Boncuk Loyalty Program P4-E-B (2026-08-22) — stable, machine-readable
+ * failure reasons for a Boncuk-redemption-specific rejection, carried in
+ * `HttpsError`'s own `details` field (`{ reason: BoncukRedemptionErrorReason
+ * }`) — round-trips to the Dart `cloud_functions` client verbatim as
+ * `FirebaseFunctionsException.details`, a genuinely new pattern in this
+ * codebase (no prior `HttpsError` call site uses `details`), introduced
+ * because `code` alone is insufficient here: `invalid-argument`/
+ * `failed-precondition` are ALSO thrown by entirely unrelated validation in
+ * this same callable (contact fields, pickup time, branch scope, item
+ * shape, ...), so a client branching on `code` alone cannot safely tell
+ * "your Boncuk selection is now invalid" apart from "your phone number is
+ * malformed." `reason` is the one stable value a client may branch
+ * business logic on; `message` remains human-readable/diagnostic only,
+ * never parsed by a caller.
+ */
+export const BONCUK_REDEMPTION_ERROR_REASONS = [
+  "boncuk/exceeds-max-usable",
+  "boncuk/account-unavailable",
+  "boncuk/policy-unavailable",
+  "boncuk/redemption-not-allowed",
+] as const;
+export type BoncukRedemptionErrorReason = (typeof BONCUK_REDEMPTION_ERROR_REASONS)[number];
+
+function boncukError(
+  code: "invalid-argument" | "failed-precondition" | "internal",
+  message: string,
+  reason: BoncukRedemptionErrorReason,
+): never {
+  throw new HttpsError(code, message, { reason });
+}
+
 /** Trim, length-cap, and reject disallowed characters (see `DISALLOWED_CONTACT_CHARACTERS`). */
 function sanitizeContactField(raw: unknown, fieldName: string): string {
   if (typeof raw !== "string") invalid(`${fieldName} is required.`);
@@ -718,7 +750,11 @@ async function submitAuthenticatedOrder(
       const boncukEligibleOrderAmountMinorUnits =
         pricing.grandTotalMinorUnits - TAKEAWAY_TIP_MINOR_UNITS;
       if (boncukEligibleOrderAmountMinorUnits < 0) {
-        throw new HttpsError("internal", "Computed a negative Boncuk-eligible order amount.");
+        boncukError(
+          "internal",
+          "Computed a negative Boncuk-eligible order amount.",
+          "boncuk/redemption-not-allowed",
+        );
       }
 
       const accountRef = db
@@ -742,24 +778,27 @@ async function submitAuthenticatedOrder(
         policyResult.status === "corrupt-policy-state" ||
         policyResult.status === "missing-live-policy"
       ) {
-        throw new HttpsError(
+        boncukError(
           "failed-precondition",
           "Loyalty economics are temporarily unavailable for this organization.",
+          "boncuk/policy-unavailable",
         );
       }
       const loyaltyPolicy = policyResult.policy;
 
       const accountResult = resolveAccountForRedemption(accountSnap);
       if (accountResult.status === "missing-loyalty-account") {
-        throw new HttpsError(
+        boncukError(
           "failed-precondition",
           "No loyalty account exists for this customer — cannot redeem Boncuk.",
+          "boncuk/account-unavailable",
         );
       }
       if (accountResult.status === "inconsistent-loyalty-account-state") {
-        throw new HttpsError(
+        boncukError(
           "failed-precondition",
           "This customer's loyalty account is in an inconsistent state.",
+          "boncuk/account-unavailable",
         );
       }
       const account = accountResult.account;
@@ -773,8 +812,10 @@ async function submitAuthenticatedOrder(
         maxRedemptionBasisPoints: loyaltyPolicy.maxRedemptionBasisPoints,
       });
       if (calc.status === "exceeds-max-usable") {
-        invalid(
+        boncukError(
+          "invalid-argument",
           `requestedBoncukAmount exceeds the maximum usable Boncuk for this order (max ${calc.maxUsableBoncuk}).`,
+          "boncuk/exceeds-max-usable",
         );
       }
 
@@ -791,9 +832,10 @@ async function submitAuthenticatedOrder(
         // already guarantees this transaction only reaches here for a
         // genuinely new order, so this should never happen. Fail closed
         // rather than silently proceeding.
-        throw new HttpsError(
+        boncukError(
           "failed-precondition",
           "A Boncuk redemption ledger entry already exists for this order.",
+          "boncuk/redemption-not-allowed",
         );
       }
 

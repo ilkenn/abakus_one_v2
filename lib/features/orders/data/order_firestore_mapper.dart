@@ -3,11 +3,13 @@ import '../../../shared/models/money.dart';
 import '../../payment/domain/models/payment_method_reporting_category.dart';
 import '../../payment/domain/models/payment_method_snapshot.dart';
 import '../../payment/domain/models/payment_provider_id.dart';
+import '../domain/models/boncuk_redemption_snapshot.dart';
 import '../domain/models/courier_visibility.dart';
 import '../domain/models/delivery_address_snapshot.dart';
 import '../domain/models/order.dart';
 import '../domain/models/order_actor.dart';
 import '../domain/models/order_audit_entry.dart';
+import '../domain/models/order_benefit_type.dart';
 import '../domain/models/order_channel.dart';
 import '../domain/models/order_id.dart';
 import '../domain/models/order_line.dart';
@@ -147,6 +149,35 @@ abstract final class OrderFirestoreMapper {
           ? null
           : _paymentMethodSnapshotFromFirestore(
               Map<String, dynamic>.from(data['paymentMethodSnapshot'] as Map)),
+      // Boncuk Loyalty P4-E-B (2026-08-22) — additive/nullable, same
+      // backward-compatibility contract as deliveryAddressSnapshot/
+      // paymentMethodSnapshot above: a pre-existing order document with
+      // neither key present continues to parse exactly as it did before
+      // this field existed (`orderBenefitTypeFromWire(null)` resolves to
+      // `OrderBenefitType.none`, `boncukRedemption` stays `null`). A
+      // PRESENT but malformed `boncukRedemption` map fails loudly via the
+      // same `as`-cast-throws discipline every other required nested field
+      // on this mapper already uses (`_moneyFromFirestore`, `_lineFromFirestore`,
+      // ...) — never silently dropped or approximated.
+      selectedBenefitType:
+          orderBenefitTypeFromWire(data['selectedBenefitType'] as String?),
+      boncukRedemption: data['boncukRedemption'] == null
+          ? null
+          : _boncukRedemptionSnapshotFromFirestore(
+              Map<String, dynamic>.from(data['boncukRedemption'] as Map)),
+    );
+  }
+
+  static BoncukRedemptionSnapshot _boncukRedemptionSnapshotFromFirestore(
+      Map<String, dynamic> data) {
+    return BoncukRedemptionSnapshot(
+      boncukUsed: data['boncukUsed'] as int,
+      valueMinorUnits: data['valueMinorUnits'] as int,
+      remainingPayableMinorUnits: data['remainingPayableMinorUnits'] as int,
+      redemptionValueMinorUnitsPerBoncuk:
+          data['redemptionValueMinorUnitsPerBoncuk'] as int,
+      maxRedemptionBasisPoints: data['maxRedemptionBasisPoints'] as int,
+      loyaltyPolicyVersion: data['loyaltyPolicyVersion'] as int,
     );
   }
 

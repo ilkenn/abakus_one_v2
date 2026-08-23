@@ -34,10 +34,44 @@ class SubmitTakeawayOrderException implements Exception {
   final String code;
   final String message;
 
-  const SubmitTakeawayOrderException(this.code, this.message);
+  /// Boncuk Loyalty Program P4-E-B (2026-08-22) — the stable,
+  /// machine-readable reason from `functions/src/submitTakeawayOrder.ts`'s
+  /// `BONCUK_REDEMPTION_ERROR_REASONS` (e.g.
+  /// `'boncuk/exceeds-max-usable'`), carried through from the callable's
+  /// `HttpsError.details.reason` — never inferred from [code] alone. [code]
+  /// on its own is insufficient here: `'invalid-argument'`/
+  /// `'failed-precondition'` are ALSO thrown for entirely unrelated
+  /// validation in this same callable (contact fields, pickup time, branch
+  /// scope, ...), so a caller that needs to know specifically "the Boncuk
+  /// selection is now invalid" must branch on this field, never on [code].
+  /// `null` for every non-Boncuk rejection, and for a Boncuk rejection
+  /// whose `details` this gateway could not parse (fails safe to `null`,
+  /// never fabricates a reason).
+  final String? boncukErrorReason;
+
+  const SubmitTakeawayOrderException(
+    this.code,
+    this.message, {
+    this.boncukErrorReason,
+  });
 
   @override
-  String toString() => 'SubmitTakeawayOrderException($code): $message';
+  String toString() => 'SubmitTakeawayOrderException($code): $message'
+      '${boncukErrorReason != null ? ' [reason: $boncukErrorReason]' : ''}';
+}
+
+/// Extracts `error.details['reason']` defensively — `details` is `dynamic`
+/// on [functions.FirebaseFunctionsException] (it round-trips whatever the
+/// callable's own `HttpsError` constructor was given, or `null` if it gave
+/// nothing), so this never assumes a shape; any mismatch resolves to `null`
+/// rather than throwing while already handling an error.
+String? _extractBoncukErrorReason(functions.FirebaseFunctionsException error) {
+  final details = error.details;
+  if (details is Map) {
+    final reason = details['reason'];
+    if (reason is String) return reason;
+  }
+  return null;
 }
 
 /// One line item in an authenticated takeaway order submission — either a
@@ -116,6 +150,15 @@ class TakeawayBowlItem extends TakeawayOrderItem {
 /// duplicated business logic" design; nothing about pricing/validation is
 /// re-implemented client-side for either.
 abstract interface class SubmitTakeawayOrderGateway {
+  /// Boncuk Loyalty Program P4-E-B (2026-08-22) — [requestedBoncukAmount]
+  /// is the ONLY Boncuk-related value this method ever sends: a whole,
+  /// non-negative Boncuk COUNT the customer explicitly chose. There is
+  /// structurally no parameter here for a monetary value, a policy
+  /// version, a max percentage, an available balance, or a remaining
+  /// payable amount — the server resolves and re-validates every one of
+  /// those itself (`functions/src/submitTakeawayOrder.ts`, P4-B). `0` (the
+  /// default) means "no Boncuk requested," identical in effect to omitting
+  /// the field entirely.
   Future<SubmitTakeawayOrderResult> submitAuthenticatedOrder({
     required String submissionKey,
     required String restaurantId,
@@ -125,6 +168,7 @@ abstract interface class SubmitTakeawayOrderGateway {
     required String contactFirstName,
     required String contactLastName,
     required String contactPhone,
+    int requestedBoncukAmount = 0,
   });
 
   /// The QR-guest scenario (Faz D.2/D.4) — [takeawaySessionId] is the
@@ -158,6 +202,7 @@ class FirebaseSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
     required String contactFirstName,
     required String contactLastName,
     required String contactPhone,
+    int requestedBoncukAmount = 0,
   }) async {
     final callable = functions.FirebaseFunctions.instance
         .httpsCallable('submitTakeawayOrder');
@@ -172,6 +217,12 @@ class FirebaseSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
         'contactFirstName': contactFirstName,
         'contactLastName': contactLastName,
         'contactPhone': contactPhone,
+        // Boncuk Loyalty P4-E-B — sent ONLY when > 0, mirroring the
+        // server's own `sanitizeRequestedBoncukAmount`'s "absent == 0"
+        // contract exactly; omitting it for the common no-Boncuk case
+        // keeps the wire payload identical to every pre-P4-E-B call.
+        if (requestedBoncukAmount > 0)
+          'requestedBoncukAmount': requestedBoncukAmount,
       });
       final data = result.data;
       return SubmitTakeawayOrderResult(
@@ -183,6 +234,7 @@ class FirebaseSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
       throw SubmitTakeawayOrderException(
         error.code,
         error.message ?? 'Takeaway order could not be submitted.',
+        boncukErrorReason: _extractBoncukErrorReason(error),
       );
     }
   }

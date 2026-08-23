@@ -14094,3 +14094,185 @@ one mid-run stale test assertion, not a production-code defect — see §9); Fir
 **354/354**, 0 failed, unchanged (no rules file touched); `flutter analyze` clean; `flutter test`
 **3288 passed, 12 skipped, 0 failed**, unchanged. No commit was made, per this task's own explicit
 instruction.
+
+## Boncuk Loyalty Program P4-E-A — Takeaway Customer Boncuk Checkout UX + Integration Audit
+(2026-08-22)
+
+**Status**: Design only, delivered in-conversation, now recorded. No files changed. Read
+`TakeawayCheckoutScreen`/`SubmitTakeawayOrderGateway`/`Order`/`OrderFirestoreMapper` and the Loyalty
+client (`LoyaltyAccountSnapshot`/`LoyaltyGateway`/`loyaltySnapshotProvider`) directly, not from docs.
+
+**Key findings**: no dedicated checkout controller/provider exists — every interaction field is local
+`State` on `_TakeawayCheckoutScreenState`. `submitTakeawayOrder.ts`'s order document already carries a
+full `boncukRedemption`/`selectedBenefitType` snapshot (confirmed by direct read of
+`buildOrderDocument`), and `TakeawayCheckoutScreen` already re-reads that exact document post-submit —
+but `Order`/`OrderFirestoreMapper` silently dropped both fields (zero references anywhere under
+`lib/features/orders/`), so the gap was entirely client-side, not a backend response extension.
+`SubmitTakeawayOrderGateway.submitAuthenticatedOrder`/`TakeawayOrderItem` had zero Boncuk plumbing —
+structurally no field for a monetary value even by mistake. `LoyaltyAccountSnapshot` already excludes
+every raw accounting internal and already carries `redemptionValueMinorUnitsPerBoncuk`/
+`maxRedemptionBasisPoints` server-resolved — nothing to fix there. `loyaltySnapshotProvider`
+(`FutureProvider.autoDispose`) already refetches fresh on every screen entry and supports
+`ref.invalidate` for retry/refresh — reusable as-is, no new cache needed. Confirmed the delivery
+checkout's legacy client-side mock coupon system (`CheckoutScreen`'s `ABAKUS10`/`ILKSIPARIS`/
+`UCRETSIZ`) is a fully separate screen/state class — a do-not-replicate anti-pattern, not something
+needing isolation work. **Also flagged**: `CLAUDE.md` §3's Loyalty canonical/obsolete bullet was
+factually backwards — `features/loyalty/` (not `features/profile`) has been the real, reachable
+implementation since the P3A rewrite; corrected as part of P4-E-B (see below).
+
+**Recommended and accepted**: a stepper + "Maks. Kullan" quick action (never a slider), local
+screen-owned interaction state (no new controller), an integer-minor-units non-authoritative estimate
+mirroring the server's own cap formula, explicit never-silent selection invalidation, and a new stable
+server-side Boncuk error-reason mechanism (since `code` alone is ambiguous — shared with unrelated
+validation in the same callable). See P4-E-B below for the accepted, implemented design.
+
+## Boncuk Loyalty Program P4-E-B — Real Takeaway Boncuk Checkout UI + Server Integration (2026-08-22)
+
+**Status**: Implemented — takeaway (Gel Al) channel only. **Still explicitly out of scope**: delivery/
+reservation/dine-in-POS Boncuk redemption UI, coupons/campaigns, catalog rewards/wheel/tasks,
+Admin/POS/KDS UI, partial refund, real payment-provider execution.
+
+### 1. Order model — additive, backward- and forward-compatible
+
+New `lib/features/orders/domain/models/order_benefit_type.dart`: `OrderBenefitType { none,
+boncukRedemption }` + `orderBenefitTypeFromWire`/`orderBenefitTypeToWire`. Deliberately **not** the
+strict `EnumType.values.byName(...)` fail-fast discipline `_statusFromName`/`_channelFromName` use for
+closed state-machine fields — a genuinely unknown/future wire value degrades to `none` rather than
+throwing, so an OLDER client build reading an order written by a NEWER backend release (a future
+benefit type this build doesn't understand yet) never crashes reading order history. New
+`lib/features/orders/domain/models/boncuk_redemption_snapshot.dart`: `BoncukRedemptionSnapshot`
+(`boncukUsed`/`valueMinorUnits`/`remainingPayableMinorUnits`/`redemptionValueMinorUnitsPerBoncuk`/
+`maxRedemptionBasisPoints`/`loyaltyPolicyVersion`), immutable value object with `==`/`hashCode`,
+mirroring `DeliveryAddressSnapshot`'s exact shape/style. `Order` gains `selectedBenefitType`
+(defaults `OrderBenefitType.none`) and `boncukRedemption` (nullable) — additive constructor params +
+`copyWith` support. `OrderFirestoreMapper.fromFirestore` parses both, mirroring
+`deliveryAddressSnapshot`/`paymentMethodSnapshot`'s exact "missing key -> null" pattern. **Deliberately
+NOT added to `toFirestore`** — mirrors `pricingAuthority`'s own precedent: a server-authoritative-only
+field is never producible by the client write path at all, not merely discouraged. A present-but-
+malformed `boncukRedemption` map fails loudly (a normal Dart cast exception propagates), matching every
+other required nested field on this mapper — never silently dropped or fabricated.
+
+### 2. Request model — count only, structurally incapable of anything else
+
+`SubmitTakeawayOrderGateway.submitAuthenticatedOrder` gains `int requestedBoncukAmount = 0`. The real
+implementation sends `'requestedBoncukAmount': requestedBoncukAmount` in the wire payload **only when
+`> 0`** (mirrors `sanitizeRequestedBoncukAmount`'s own server-side "absent == 0" contract exactly). No
+monetary value/policy version/max percent/balance/remaining payable/`selectedBenefitType`-as-authority/
+loyalty identity parameter exists anywhere on this method — not merely undocumented, structurally
+absent from the signature, so sending any of them is a compile error, not a runtime discipline.
+
+### 3. Stable Boncuk domain error reasons — new mechanism, both sides
+
+**Server** (`functions/src/submitTakeawayOrder.ts`): new `BONCUK_REDEMPTION_ERROR_REASONS` (`
+boncuk/exceeds-max-usable`\|`boncuk/account-unavailable`\|`boncuk/policy-unavailable`\|
+`boncuk/redemption-not-allowed`) and a `boncukError(code, message, reason)` helper wrapping
+`HttpsError`'s own `details` field (`{ reason }`) — a genuinely new pattern in this codebase (no prior
+`HttpsError` call site used `details`), necessary because `invalid-argument`/`failed-precondition` are
+ALSO thrown for entirely unrelated validation in this same callable (contact fields, pickup time,
+branch scope), so a client branching on `code` alone cannot safely distinguish a Boncuk-specific
+rejection from any of those. Applied at all 5 Boncuk-specific throw sites (negative eligible amount,
+policy corrupt/missing, missing account, inconsistent account, exceeds-max-usable, duplicate ledger
+entry). **Client**: `SubmitTakeawayOrderException` gains `boncukErrorReason` (nullable), extracted
+defensively from `FirebaseFunctionsException.details['reason']` (fails safe to `null` on any shape
+mismatch, never fabricates a reason). Verified server-side: 3 new `body.error?.details?.reason`
+assertions added to already-existing `submitTakeawayOrder.test.ts` redemption-rejection tests (no new
+test COUNT — same 3 tests, additional assertions).
+
+### 4. Premium checkout card — local state only, per the locked decision
+
+New `lib/features/cart/presentation/widgets/boncuk_redemption_card.dart` (`BoncukRedemptionCard`) — a
+presentational widget receiving every value from `TakeawayCheckoutScreen`'s own local state + watched
+`loyaltySnapshotProvider`; owns no state, makes no server call. Reuses only existing design tokens
+(`AppCard`/`AppColors`/`AppRadius`/`AppSpacing`/`AppTypography`/`ErrorView`) — mirrors
+`AbacusCard`/`LoyaltyScreen`'s established premium visual language (gradient-free here, but same
+skeleton-block loading pattern, same `primaryExtraLight` chip treatment). Control: stepper (+/−, whole
+integers only, minimum 1 once enabled, decrement disabled at 1 rather than a route to 0) + one "Maks.
+Kullan" quick action — no `Slider` anywhere. Toggle off means selected amount is exactly 0.
+
+`TakeawayCheckoutScreen` gains exactly the three locked local fields (`_boncukUsageEnabled`,
+`_selectedBoncukAmount`, plus derived — not stored — invalidation state) — **no new controller/
+provider was introduced**, per the locked state-management decision. `loyaltySnapshotProvider` is
+watched directly; no new loyalty cache.
+
+### 5. Non-authoritative estimate — integer minor-unit arithmetic, mirrors the real server formula
+
+New top-level `computeClientEstimatedMaxBoncuk(LoyaltyAccountSnapshot, double cartTotalPriceTl)` in
+`takeaway_checkout_screen.dart`, mirroring `functions/src/loyaltyRedemption.ts`'s locked P4-B §3 cap
+formula exactly: `estimatedGrandTotalMinorUnits = (cartTotalPriceTl * 100).round()` (the ONE floating-
+point conversion, applied once to the existing approximate cart total this screen already labels
+"tahminidir"), then integer (`~/`) division throughout —
+`maxRedemptionValueMinorUnits = estimatedGrandTotalMinorUnits * maxRedemptionBasisPoints ~/ 10000`,
+`maxUsableBoncukByOrderCap = maxRedemptionValueMinorUnits ~/ redemptionValueMinorUnitsPerBoncuk`,
+`min(spendableBalance, maxUsableBoncukByOrderCap)`. `boncukDebt > 0` or `spendableBalance <= 0` short-
+circuits to `0`. No second server-pricing engine — this value bounds UI controls only;
+`submitTakeawayOrder` revalidates everything.
+
+### 6. Selection invalidation — never a silent nonzero clamp
+
+`boncukSelectionInvalid` is computed FRESH every `build()` (`_boncukUsageEnabled &&
+_selectedBoncukAmount > clientEstimatedMaxBoncuk`) — deliberately never a stored/cached flag, so it can
+never drift from the latest snapshot/cart state. When true: submission is disabled
+(`canSubmit = _canSubmit && !boncukSelectionInvalid`) and the card shows an inline notice + "Maks.
+Kullan" recovery action — `_selectedBoncukAmount` itself is NEVER mutated by this path. The one real
+state mutation, via `ref.listen` on both `cartTotalPriceProvider` and `loyaltySnapshotProvider`
+(chosen over `ref.watch` specifically because a side effect, not a rebuild, is needed): if the
+recomputed estimate reaches **exactly zero**, Boncuk usage is turned off and the selection reset to
+0 — the one explicitly locked exception, itself an explicit action, not a silent substitution to a
+smaller nonzero value.
+
+### 7. Submission — freeze, no double-submit, defense-in-depth
+
+Every Boncuk control (toggle/stepper/MAX) is frozen via `controlsFrozen: _isSubmitting`, reusing the
+exact existing `_isSubmitting` guard the submit button itself already used. `_submitOrder` additionally
+re-checks the selection against a freshly-read snapshot immediately before sending (defense-in-depth
+on top of the disabled button). A Boncuk-specific rejection turns Boncuk off and refreshes the
+snapshot but **never automatically resubmits** — the customer must tap "Siparişi Ver" again themselves,
+satisfying the locked "never resubmit with `requestedBoncukAmount=0` automatically" rule by never
+resubmitting at all on the screen's own initiative.
+
+### 8. Success state — server-confirmed only
+
+After a successful submission, the existing canonical-order re-read (`canonicalOrderRepository
+.findById`) is unchanged; the re-read `order.boncukRedemption`/`order.pricing.grandTotal.minorUnits`
+are passed as new OPTIONAL parameters to `OrderSuccessScreen` (`orderTotalMinorUnits`/`boncukUsed`/
+`boncukValueMinorUnits`/`remainingPayableMinorUnits`) — `null` (the default) leaves every existing
+caller (dine-in/delivery/reservation/no-Boncuk-takeaway) byte-for-byte unchanged; a new
+`_BoncukSuccessSummary` section renders only when `_isTakeaway && _hasBoncukSummary`. `ref.invalidate
+(loyaltySnapshotProvider)` is called immediately after a successful submission (redemption happens at
+submission time, not at completed-order earning) — reusing the existing provider, no new cache.
+
+### 9. Benefit exclusivity + documentation correction
+
+No coupon/campaign UI was added; the delivery checkout's legacy mock coupon system was confirmed
+untouched (`git diff` shows zero changes to `checkout_screen.dart`). `CLAUDE.md` §3's Loyalty bullet
+(previously stating `features/profile` was canonical and `features/loyalty/` was dead scaffolding) was
+corrected — confirmed by import-site grep that all three real references
+(`profile_screen.dart`/`profile_loyalty_card.dart`/`home_screen.dart`) import from `features/loyalty/`,
+and `features/profile/presentation/screens/loyalty_screen.dart` is now the unreferenced duplicate.
+
+**Files changed — backend**: `functions/src/submitTakeawayOrder.ts` (stable Boncuk error-reason
+mechanism), `functions/src/test/submitTakeawayOrder.test.ts` (3 new `details.reason` assertions on
+existing tests). **Files changed — Flutter**: `lib/features/orders/domain/models/order.dart` (additive
+fields), `lib/features/orders/data/order_firestore_mapper.dart` (additive parsing),
+`lib/features/takeaway/data/submit_takeaway_order_gateway.dart` (`requestedBoncukAmount`,
+`boncukErrorReason`), `lib/features/cart/presentation/screens/takeaway_checkout_screen.dart` (local
+state, estimate formula, wiring), `lib/features/cart/presentation/screens/order_success_screen.dart`
+(additive Boncuk summary). **New files**: `lib/features/orders/domain/models/{order_benefit_type,
+boncuk_redemption_snapshot}.dart`, `lib/features/cart/presentation/widgets/boncuk_redemption_card.dart`.
+**Tests — new**: `test/features/orders/domain/models/{order_benefit_type,
+boncuk_redemption_snapshot}_test.dart`, `test/features/takeaway/data/submit_takeaway_order_gateway_test.dart`,
+`test/features/cart/presentation/screens/compute_client_estimated_max_boncuk_test.dart`. **Tests —
+extended**: `test/features/orders/data/order_firestore_mapper_test.dart` (6 new Boncuk cases),
+`test/features/cart/presentation/screens/takeaway_checkout_screen_test.dart` (a fake `LoyaltyGateway` +
+20+ new cases covering the full A-R mandatory list), `test/features/cart/presentation/screens/
+takeaway_guest_checkout_screen_test.dart` (interface-compatibility fix only, guest flow behavior
+unchanged). **Docs**: this entry, `docs/business_rules.md` (`BR-LOYALTY-022` blocker note resolved,
+new `BR-LOYALTY-023`), `docs/feature_status.md`, `CLAUDE.md` §3 (Loyalty canonical/obsolete
+correction). **Rules**: none touched — no client write path was added or broadened; the full suite was
+rerun regardless, unchanged.
+
+**Exact gate totals**: Functions build (`tsc`) clean; Functions emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`) **1151/1151**, 0 failed, unchanged test count (existing tests
+gained assertions, no new tests); Firestore Rules suite **354/354**, 0 failed, unchanged (no rules file
+touched); `flutter analyze` clean; `flutter test` **3332 passed, 12 skipped, 0 failed** (up from 3288 —
+44 new tests). No commit was made, per this task's own explicit instruction.

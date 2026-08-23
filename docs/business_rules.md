@@ -1445,9 +1445,71 @@ this design introduces.
   manual/external refund only); customer Boncuk checkout UI; any Admin/POS/KDS UI. Do not treat this
   entry as production-ready payment-refund integration — it is a backend accounting-correctness
   closure only.
+- **Blocker resolved (P4-E-B, 2026-08-22) — see `BR-LOYALTY-023`.** A real customer Boncuk checkout
+  UI now exists for the takeaway channel only — delivery/reservation/dine-in-POS redemption UI remain
+  unimplemented.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-016, BR-LOYALTY-019, BR-LOYALTY-020,
-  BR-LOYALTY-021, BR-REFUND-003
+  BR-LOYALTY-021, BR-LOYALTY-023, BR-REFUND-003
+
+### BR-LOYALTY-023 — Takeaway customer Boncuk checkout UI
+- **Status**: DECIDED — **IMPLEMENTED (P4-E-B, 2026-08-22)**, TAKEAWAY (Gel Al) checkout only. Audited
+  (P4-E-A) before implementation. Closes `BR-LOYALTY-022`'s own disclosed "customer Boncuk checkout UI"
+  blocker for this one channel — delivery, reservation, and dine-in/POS redemption UI remain
+  unimplemented and out of scope.
+- **Rule — client never holds redemption authority.** The premium "Boncuklarını Kullan" card on
+  `TakeawayCheckoutScreen` lets the customer choose a whole Boncuk count (stepper + "Maks. Kullan"
+  quick action, off by default, minimum 1 once enabled, no slider) — every displayed figure
+  (spendable balance, redemption value, monetary equivalence, estimated maximum usable Boncuk) is read
+  directly from the live `getCustomerLoyaltySnapshot` response (`LoyaltyAccountSnapshot`, reusing the
+  existing `loyaltySnapshotProvider` — no new loyalty cache/provider). The client sends exactly one
+  Boncuk-related value to `submitTakeawayOrder`: `requestedBoncukAmount` (a whole non-negative integer,
+  sent only when `> 0`) — no monetary value, policy version, max percentage, balance, or remaining
+  payable is ever sent; the request DTO (`SubmitTakeawayOrderGateway.submitAuthenticatedOrder`) has
+  structurally no parameter for any of those. The server (`BR-LOYALTY-019`) remains the sole authority
+  for balance, policy, cap, value, and final payable amount.
+- **Rule — the client-side maximum is a non-authoritative UX estimate, never duplicated pricing
+  logic.** `computeClientEstimatedMaxBoncuk` mirrors `functions/src/loyaltyRedemption.ts`'s own locked
+  cap formula (`floor(cartTotal × maxRedemptionBasisPoints / 10000) ÷ redemptionValueMinorUnitsPerBoncuk`,
+  capped at `spendableBalance`) using integer/minor-unit arithmetic against the SAME approximate cart
+  total this screen already labels "tahminidir" — never a second server-pricing engine, never treated
+  as final. `submitTakeawayOrder` revalidates everything; a stale/wrong client estimate can only ever
+  produce an honest server rejection, never an incorrect charge.
+- **Rule — stable, machine-readable Boncuk error reasons, never inferred from the generic `HttpsError`
+  code alone.** `submitTakeawayOrder.ts` now carries a `reason` (`BONCUK_REDEMPTION_ERROR_REASONS`:
+  `boncuk/exceeds-max-usable`\|`boncuk/account-unavailable`\|`boncuk/policy-unavailable`\|
+  `boncuk/redemption-not-allowed`) in `HttpsError`'s own `details` field for every Boncuk-specific
+  rejection — necessary because `invalid-argument`/`failed-precondition` are also thrown for entirely
+  unrelated validation in the same callable (contact fields, pickup time, branch scope). The Dart
+  gateway carries this through as `SubmitTakeawayOrderException.boncukErrorReason`, mapped to
+  Turkish copy distinct from the generic error switch.
+- **Rule — no silent selection substitution, ever.** A cart or snapshot change that lowers the
+  estimated maximum below the customer's own chosen amount NEVER silently reduces it to a smaller
+  nonzero value — the selection stays exactly as chosen, submission is disabled, and an explicit
+  notice + recovery action (adjust/"Maks. Kullan"/turn off) is shown. The ONE exception, itself
+  explicit rather than silent: the estimated maximum reaching exactly zero turns Boncuk usage off and
+  resets the selection, since there is nothing left to recover to. A Boncuk-specific server rejection
+  at submission time NEVER triggers an automatic resubmission without Boncuk — the customer must
+  explicitly tap submit again themselves.
+- **Rule — success state shows only server-confirmed values.** After a successful submission, the
+  screen re-reads the canonical order from Firestore (the existing, unmodified pattern) and shows
+  `selectedBenefitType`/`boncukRedemption`'s server-computed `boncukUsed`/`valueMinorUnits`/
+  `remainingPayableMinorUnits` — never the pre-submit local estimate. The Loyalty snapshot provider is
+  invalidated immediately after a successful submission (redemption happens at submission time, not at
+  completed-order earning) so the customer's next view of their balance is already current.
+- **Rule — debt never shown in checkout.** Mirrors `AbacusCard`'s existing, already-shipped calm copy
+  pattern exactly — a `boncukDebt > 0` account shows only "Boncuk bakiyen şu anda kullanıma uygun
+  değil.", never the debt figure; the detailed number remains visible only on the Loyalty screen.
+- **Rule — benefit exclusivity preserved, no fake benefits.** The takeaway checkout offers exactly
+  `none`/`boncukRedemption` — no coupon/campaign control was added, and the pre-existing, fully
+  separate delivery-checkout mock coupon system (`CheckoutScreen`'s own client-side `ABAKUS10`/
+  `ILKSIPARIS`/`UCRETSIZ` codes) was confirmed untouched and structurally isolated (different screen,
+  different state class) — explicitly flagged as a do-not-replicate anti-pattern, not a precedent to
+  extend.
+- **Known, disclosed blockers**: delivery/reservation/dine-in-POS Boncuk redemption UI; partial refund;
+  real payment-provider execution; catalog rewards/wheel/tasks UI; Admin/POS/KDS UI.
+- **Owner Agent**: ui_ux_designer / restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-022
 
 # Customer CRM & Loyalty Platform
 

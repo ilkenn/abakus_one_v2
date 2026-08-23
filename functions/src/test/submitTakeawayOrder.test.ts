@@ -36,7 +36,7 @@ async function callCallable(url: string, data: Record<string, unknown>, idToken?
   const response = await fetch(url, { method: "POST", headers, body: JSON.stringify({ data }) });
   const body = (await response.json()) as {
     result?: Record<string, unknown>;
-    error?: { status?: string; message?: string };
+    error?: { status?: string; message?: string; details?: { reason?: string } };
   };
   return { httpStatus: response.status, body };
 }
@@ -1489,6 +1489,11 @@ test("Redemption: one Boncuk over the order cap is rejected outright, never clam
 
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+  assert.strictEqual(
+    body.error?.details?.reason,
+    "boncuk/exceeds-max-usable",
+    "P4-E-B — the stable machine-readable reason, never inferred from code alone",
+  );
   const account = await loyaltyAccountDoc(chain.organizationId, uid);
   assert.strictEqual(account?.spendableBalance, 100, "the account must be untouched by a rejected request");
   const orders = await admin.firestore().collection("orders").where("customerId", "==", uid).get();
@@ -1519,6 +1524,7 @@ test("Redemption: a request exceeding the spendable balance (but within the orde
 
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+  assert.strictEqual(body.error?.details?.reason, "boncuk/exceeds-max-usable");
   const account = await loyaltyAccountDoc(chain.organizationId, uid);
   assert.strictEqual(account?.spendableBalance, 50);
 });
@@ -1547,6 +1553,7 @@ test("Redemption: no loyalty account exists for the customer -> rejected, fails 
 
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
+  assert.strictEqual(body.error?.details?.reason, "boncuk/account-unavailable");
   const orders = await admin.firestore().collection("orders").where("customerId", "==", uid).get();
   assert.strictEqual(orders.size, 0);
 });

@@ -4169,3 +4169,37 @@ suite 1151/1151, 0 failed (up from 1099, 52 new tests); Firestore Rules suite 35
 unchanged; `flutter analyze` clean; `flutter test` 3288 passed/12 skipped/0 failed, unchanged (no
 Flutter source file touched). See `docs/business_rules.md`'s new `BR-LOYALTY-022` and
 `docs/decisions.md`'s P4-D-B entry for the full mechanism and files changed. No commit was made.
+
+**Boncuk Loyalty Program P4-E-A (2026-08-22) — Takeaway Customer Boncuk Checkout UX + Integration
+Audit, CLOSED (design only, delivered in-conversation, now recorded).** Audited the real
+`TakeawayCheckoutScreen`/`SubmitTakeawayOrderGateway`/`Order`/`OrderFirestoreMapper`/loyalty-client
+architecture (no dedicated checkout controller/provider exists — state is screen-local; the order
+document's `boncukRedemption`/`selectedBenefitType` snapshot already existed server-side but was
+silently dropped by the Dart mapper; `requestedBoncukAmount` had zero client-side plumbing). Also
+found and flagged `CLAUDE.md` §3's Loyalty canonical/obsolete bullet was factually backwards
+(superseded by P3A but never corrected). No files changed. See `docs/decisions.md`'s P4-E-A entry.
+
+**Boncuk Loyalty Program P4-E-B (2026-08-22) — Real Takeaway Boncuk Checkout UI + Server Integration,
+CLOSED, takeaway channel only.** Implements P4-E-A's accepted design: `Order`/`OrderFirestoreMapper`
+extended additively (`selectedBenefitType`/`boncukRedemption`, backward-compatible, forward-compatible
+unknown-benefit-type degrade); `SubmitTakeawayOrderGateway.submitAuthenticatedOrder` gains
+`requestedBoncukAmount` (sent only when `> 0`, no other Boncuk field possible by construction); a new
+stable, machine-readable Boncuk error-reason mechanism server-side (`HttpsError.details.reason`,
+`BONCUK_REDEMPTION_ERROR_REASONS`) carried through to `SubmitTakeawayOrderException.boncukErrorReason`
+— resolves the "code alone is ambiguous" gap the audit flagged; a new premium "Boncuklarını Kullan"
+card (stepper + MAX, no slider, off by default, minimum 1 once enabled) with zero hardcoded economics
+(every figure from the live `getCustomerLoyaltySnapshot` response, reusing the existing
+`loyaltySnapshotProvider` — no new cache); a non-authoritative client estimate mirroring the server's
+own cap formula exactly; explicit, never-silent selection invalidation on cart/snapshot change (the
+one exception being an explicit reset when the estimate reaches exactly zero); server-confirmed
+success values on `OrderSuccessScreen` (order total/Boncuk used/remaining payable, from the re-read
+canonical order, never the pre-submit estimate); Loyalty snapshot invalidated immediately after a
+successful redemption. Corrected the stale `CLAUDE.md` §3 Loyalty bullet P4-E-A flagged. **Still
+explicitly out of scope**: delivery/reservation/dine-in-POS Boncuk redemption UI, coupons/campaigns,
+catalog rewards/wheel/tasks, Admin/POS/KDS UI, partial refund, real payment-provider execution — do
+not mark Loyalty checkout production-ready beyond takeaway. Gates: Functions build clean; Functions
+emulator suite 1151/1151, 0 failed, unchanged test count (3 new `details.reason` assertions added to
+already-existing tests); Firestore Rules suite 354/354, 0 failed, unchanged (no rules file touched);
+`flutter analyze` clean; `flutter test` 3332 passed/12 skipped/0 failed (up from 3288, 44 new tests).
+See `docs/business_rules.md`'s new `BR-LOYALTY-023` and `docs/decisions.md`'s P4-E-B entry for the
+full mechanism and files changed. No commit was made.
