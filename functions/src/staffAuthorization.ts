@@ -42,7 +42,9 @@ export type StaffPermission =
   | "manageTakeawayOrderRefunds"
   | "manageDeliveryOrders"
   | "manageDeliveryOrderCancellations"
-  | "manageDeliveryOrderRefunds";
+  | "manageDeliveryOrderRefunds"
+  | "manageDineInOrders"
+  | "manageDineInOrderRefunds";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -119,6 +121,20 @@ export type StaffPermission =
  *   three in this phase — courier-authoritative delivery completion is
  *   explicitly deferred until a canonical courier assignment/lifecycle
  *   integration exists (P5-B's own locked scope).
+ * - `manageDineInOrders` / `manageDineInOrderRefunds` (Boncuk Loyalty
+ *   P7-D.1, 2026-08-24): the dine-in-channel analogues, deliberately
+ *   CONSOLIDATED to two permissions rather than three — this phase's own
+ *   "minimum necessary lifecycle primitive" scope covers confirm/reject/
+ *   advance/pre-completion-cancel under one `manageDineInOrders`
+ *   permission (granted to `staff` and above, same day-to-day-volume
+ *   reasoning as `manageTakeawayOrders`), with `manageDineInOrderRefunds`
+ *   as its own dedicated, `_managerTier`-and-above-only permission for the
+ *   post-completion refund action — mirroring every other channel's own
+ *   refund-is-always-separate boundary. No escalated
+ *   `manageDineInOrderCancellations` tier exists yet (unlike takeaway/
+ *   delivery); the same manager-tier gate other channels apply to
+ *   preparing/ready-stage cancellation can be layered on later without any
+ *   callable redesign.
  *
  * Role name strings match `StaffRole.name` / the custom-claims `roles` map
  * convention already established by `platformAuthorization.ts`/
@@ -130,7 +146,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
   // existing manager-tier permission — an ordinary staff member must never
   // gain `manageReservations`/`manageBranch`/etc. as an accidental side
   // effect of this addition.
-  staff: ["manageTakeawayOrders", "manageDeliveryOrders"],
+  staff: ["manageTakeawayOrders", "manageDeliveryOrders", "manageDineInOrders"],
   manager: [
     "manageReservations",
     "manageBranch",
@@ -143,6 +159,8 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageDeliveryOrders",
     "manageDeliveryOrderCancellations",
     "manageDeliveryOrderRefunds",
+    "manageDineInOrders",
+    "manageDineInOrderRefunds",
   ],
   admin: [
     "manageReservations",
@@ -158,6 +176,8 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageDeliveryOrders",
     "manageDeliveryOrderCancellations",
     "manageDeliveryOrderRefunds",
+    "manageDineInOrders",
+    "manageDineInOrderRefunds",
   ],
   tenantOwner: [
     "manageReservations",
@@ -173,6 +193,8 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageDeliveryOrders",
     "manageDeliveryOrderCancellations",
     "manageDeliveryOrderRefunds",
+    "manageDineInOrders",
+    "manageDineInOrderRefunds",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must

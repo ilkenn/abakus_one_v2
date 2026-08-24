@@ -1087,15 +1087,19 @@ this design introduces.
   ingredient total, covered in one flat discount) — proven at the pricing-primitive unit-test level, not
   via a reachable end-to-end reward, since none can exist yet.
 - **BLOCKER — Dine-in catalog-reward redemption could not be implemented this phase; reported, not
-  worked around.** A dedicated audit (before any code was written) confirmed dine-in order creation
-  (`dineInQr`/`dineInStaff`) is today a **direct client-side Firestore write**, gated only by
-  `firestore.rules` — there is no Cloud Function, no transaction, and no server-authoritative pricing
-  pipeline for dine-in at all (dine-in does not even earn Boncuk today — `LOYALTY_EARNING_ELIGIBLE
-  _CHANNELS` excludes it). Adding catalog-reward redemption requires an atomic server-side account
-  debit inside the SAME transaction that creates the order — there is structurally no transaction to
-  extend. Building one is a new, architecture-change-sized server-authoritative dine-in order pipeline,
-  explicitly out of scope for this phase per this task's own "STOP and report the exact structural
-  blocker rather than creating a workaround" instruction. **Defensive hardening applied regardless**: the
+  worked around. Resolved P7-D.1 (2026-08-24) — see `BR-LOYALTY-030`.** A dedicated audit (before any
+  code was written) confirmed dine-in order creation (`dineInQr`/`dineInStaff`) is today a **direct
+  client-side Firestore write**, gated only by `firestore.rules` — there is no Cloud Function, no
+  transaction, and no server-authoritative pricing pipeline for dine-in at all (dine-in does not even
+  earn Boncuk today — `LOYALTY_EARNING_ELIGIBLE_CHANNELS` excludes it). Adding catalog-reward redemption
+  requires an atomic server-side account debit inside the SAME transaction that creates the order —
+  there is structurally no transaction to extend. Building one is a new, architecture-change-sized
+  server-authoritative dine-in order pipeline, explicitly out of scope for this phase per this task's own
+  "STOP and report the exact structural blocker rather than creating a workaround" instruction.
+  `BR-LOYALTY-030` builds exactly that pipeline and extends catalog-reward redemption to dine-in for
+  phone-verified customers; dine-in **cash** Boncuk redemption remains excluded by deliberate,
+  separately-documented product decision, not a technical blocker. **Defensive hardening applied
+  regardless, at the time this blocker was still open**: the
   audit flagged that once `catalogReward` exists as a real concept elsewhere in the codebase, an
   unmodified dine-in client write becomes a NEW forgery surface (a client could set `catalogReward`/
   `selectedBenefitType: "catalogReward"` directly on its own order document) — `firestore.rules`'
@@ -1130,6 +1134,89 @@ this design introduces.
 - **Owner Agent**: restaurant_domain / security_engineer / ui_ux_designer
 - **Related Modules**: Loyalty, Orders, Menu, Delivery, Reservation, BR-LOYALTY-004, BR-LOYALTY-019,
   BR-LOYALTY-024, BR-LOYALTY-025, BR-LOYALTY-026, BR-LOYALTY-027, BR-LOYALTY-028
+
+### BR-LOYALTY-030 — Server-authoritative dine-in order pipeline; catalog-reward redemption extended to
+    dine-in; cash Boncuk redemption remains explicitly excluded (P7-D.1, 2026-08-24)
+- **Status**: DECIDED — **IMPLEMENTED (P7-D.1, 2026-08-24)**, backend + Flutter. Resolves the exact
+  structural blocker `BR-LOYALTY-029` reported (no server-authoritative order pipeline existed for
+  dine-in) by introducing one, then reuses it to extend catalog-reward redemption to dine-in for
+  phone-verified customers. Campaign Engine, POS/Admin/KDS, and table-QR architecture changes remain
+  explicitly out of scope, per this task's own instruction.
+- **Rule — one canonical server transaction replaces the customer direct-write path.** New callable
+  `submitDineInOrder.ts` is now the sole customer-facing writer of `dineInQr` orders — validates
+  auth/technical identity, validates the table guest session (`isTableGuestSessionActive`, previously an
+  unused exported validator with no real caller), derives `organizationId`/`restaurantId`/`branchId`/
+  `tableId` exclusively from the trusted `tableGuestSessions` document (never from client input),
+  classifies identity, prices the cart server-side, resolves an optional catalog reward, and creates the
+  order — all inside one Firestore transaction. `firestore.rules`' customer-direct-create branches for
+  dine-in (`isValidGuestTableOrder`/`isValidAuthenticatedCustomerTableOrder` and their supporting
+  helpers) were removed entirely; a customer can no longer create a `dineInQr` order by any direct
+  Firestore write. The staff/POS direct-create path (`dineInStaff`, `isOrgMember` branch) is deliberately
+  untouched — POS/Admin/KDS server-authoritative pricing remains explicitly out of scope this phase, per
+  `BR-PRICE-002`.
+- **Rule — identity classification happens inside the transaction, from the table guest session, never
+  from `auth != null` alone.** Both identity types (anonymous table guest, phone-verified customer) share
+  the SAME `tableGuestSessions` record; only `request.auth.token?.firebase?.sign_in_provider === "phone"`
+  (the same inlined check used throughout the codebase, e.g. `completeCustomerProfile.ts`) decides
+  `customerId`/benefit eligibility. `guestAuthUid` is always `request.auth.uid` for both, matching the
+  removed rules' own `guestAuthUid == request.auth.uid` requirement. Anonymous guests: `customerId: null`,
+  no Loyalty account read or write ever occurs, `selectedRewardId` fails closed
+  (`catalogReward/reward-not-currently-valid`), any `requestedBoncukAmount > 0` fails closed
+  (`boncuk/redemption-not-allowed`) — proven by test that no `loyaltyAccounts`/`loyaltyLedgerEntries`
+  document is ever touched for a guest order, reward or no reward.
+- **Rule — server-authoritative pricing, reusing the exact same channel-agnostic pipeline every other
+  channel uses.** `resolveProductUnitPriceMinorUnits`/`buildOrderLine`/`computeOrderPriceBreakdown`
+  (`takeawayPricing.ts`) and `buildProductLine`/`buildBowlLine` (`submitTakeawayOrder.ts`) are called with
+  a dedicated commercial channel key `"dineIn"` (distinct from the order document's own literal `channel`
+  field, always `"dineInQr"` for this callable) — no dine-in-specific pricing code was needed. No
+  `channelPricingPolicies` seed exists for `"dineIn"` yet, so it resolves to a zero adjustment by design,
+  proven by test to never leak Takeaway/Delivery surcharges in. A client-sent price is never trusted;
+  `grandTotal` is never patched after pricing.
+- **Rule — catalog-reward redemption extended to dine-in for phone-verified customers only, reusing
+  `BR-LOYALTY-027`'s established two-phase resolution verbatim.** `selectedRewardId` requires
+  `eligibleChannels` to include `"dineIn"` (the same commercial channel key pricing uses); wrong-channel
+  rejected with the same stable reason as every other channel. Exactly one eligible unit is freed
+  regardless of quantity; the debit, ledger entry, and immutable order-level `catalogReward` snapshot are
+  all written atomically with order creation. Rewarded value earns zero Boncuk. Anonymous guests can never
+  select a reward, enforced fail-closed before the transaction even opens.
+- **Rule — dine-in cash Boncuk redemption remains explicitly, permanently excluded — not silently added
+  despite the technical blocker now being resolved.** Per this rule's own audit-first instruction and
+  `BR-LOYALTY-019`'s pre-existing statement that "`dineInQr`/POS/staff-created orders can never carry a
+  redemption," `submitDineInOrder.ts` unconditionally rejects any `requestedBoncukAmount > 0` with
+  `boncuk/redemption-not-allowed`, for both identity types, before the transaction opens. The Flutter
+  gateway (`SubmitDineInOrderGateway`) structurally has no `requestedBoncukAmount` parameter at all — this
+  is a deliberate, conservative product decision being reported, not a silent reversal of prior scope.
+- **Rule — minimum-necessary server-authoritative lifecycle, consolidated rather than split.** New
+  `advanceDineInOrderStatus.ts` (single `manageDineInOrders` staff permission, granted at the baseline
+  `staff` role) handles confirm/reject/kitchen-advance/pre-completion-cancel through the canonical
+  transition table `pendingConfirmation → confirmed → preparing → ready → served → completed`, mirroring
+  Reservation-preorder's own kitchen chain. A separate `refundDineInOrder.ts` (escalated
+  `manageDineInOrderRefunds` permission, manager+) handles `completed → refunded` only — mirroring every
+  other channel's own refund-is-a-separate-boundary precedent. Both write status exclusively through the
+  shared, channel-agnostic `applyOrderLifecycleTransition` helper — deliberately narrower than
+  Takeaway/Delivery's 3-callable split, since broader POS/staff lifecycle work is explicitly out of scope.
+- **Rule — Loyalty earning and redemption-restore required zero new dine-in-specific code, because both
+  are fully automatic, channel-agnostic Firestore trigger chains.** `LOYALTY_EARNING_ELIGIBLE_CHANNELS`
+  gained `"dineInQr"` (not `"dineInStaff"`, which still has no server pricing) — the existing
+  `hasServerPricingAuthority()` gate (`orderPricingAuthority.ts`) does the rest. `loyaltyOrderEarning.ts`/
+  `loyaltyRedemptionRestore.ts` react to the same `orderEvents` outbox every other channel already
+  produces; the new lifecycle callables only need to write `status` correctly for the two-hop trigger
+  chain (`orders/{id}` update → `onOrderCompleted`/`onOrderTerminalFailureOrRefund` → `orderEvents` create
+  → the loyalty consumers) to fire, proven end-to-end by test (staff confirm→complete chain earns exactly
+  once; reject/refund restores a redeemed catalog reward exactly once; refund also claws back earning).
+- **Rule — `firestore.rules` denies any customer attempt to bypass the callable.** After the new submit
+  path existed, the customer direct-create branches for `dineInQr` were removed, not merely hardened —
+  proven by flipping the corresponding `rules.test.js` positive-control tests (previously asserting a
+  legitimate direct create succeeds) to `assertFails`, while every pre-existing negative-control test
+  (expired/revoked/cross-org/cross-branch/cross-table/wrong-channel session forgery) remains correctly
+  denied, now for the same totalizing reason. Guest read via `guestAuthUid`, customer read via
+  `customerId`, and staff read permissions are all unaffected. The staff/POS `isOrgMember` create branch
+  and its own existing positive controls (`dineInStaff`) are unchanged, confirming staff-assisted creation
+  still works exactly as before.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, Menu, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-020,
+  BR-LOYALTY-021, BR-LOYALTY-022, BR-LOYALTY-026, BR-LOYALTY-027, BR-LOYALTY-028, BR-LOYALTY-029,
+  BR-PRICE-002
 
 ### BR-LOYALTY-008 — Task-based earning
 - **Status**: DECIDED (task list and point values) / UNRESOLVED (verification mechanism, unfollow

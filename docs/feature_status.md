@@ -4509,3 +4509,35 @@ build clean; Functions FULL emulator suite (JDK 21) **1421/1421, 0 failed** (up 
 full-repo `flutter analyze` clean; `flutter test` **3406 passed / 12 skipped / 0 failed** (up from 3376 —
 30 new tests). See `docs/business_rules.md`'s new `BR-LOYALTY-029`, and `docs/decisions.md`'s P7-D entry
 for the full mechanism and files changed. No commit was made.
+
+**Boncuk Loyalty Program P7-D.1 (2026-08-24) — Server-Authoritative Dine-in Order Pipeline, CLOSED.**
+Resolves P7-D's own reported blocker: dine-in (`dineInQr`) order creation was a direct client-side
+Firestore write with no Cloud Function, no transaction, and no server-authoritative pricing at all. New
+`submitDineInOrder.ts` is now the sole customer-facing writer — one Firestore transaction validating
+auth/table-guest-session identity (deriving `organizationId`/`restaurantId`/`branchId`/`tableId`
+exclusively from the trusted session document, never client input), classifying anonymous-guest vs.
+phone-verified-customer identity (never from `auth != null` alone), pricing the cart through the exact
+same channel-agnostic pipeline every other channel already uses, and atomically creating the order.
+Catalog-reward redemption (`BR-LOYALTY-027`/`BR-LOYALTY-029`'s established two-phase resolution) is now
+extended to dine-in for phone-verified customers only — anonymous guests can never select a reward and
+never trigger any Loyalty read/write. **Dine-in cash Boncuk redemption remains explicitly excluded** — a
+deliberate, audited product decision (`BR-LOYALTY-019` already stated dine-in/POS orders can never carry
+a redemption), not a technical limitation, reported rather than silently reversed. New minimal lifecycle:
+`advanceDineInOrderStatus.ts` (one consolidated callable, one new `manageDineInOrders` staff permission,
+`confirmed → preparing → ready → served → completed`) and `refundDineInOrder.ts` (`completed → refunded`,
+escalated `manageDineInOrderRefunds` permission). Loyalty earning/redemption-restore required zero new
+dine-in-specific code — both are fully automatic, channel-agnostic Firestore trigger chains already
+reacting to any correctly-written order status; `LOYALTY_EARNING_ELIGIBLE_CHANNELS` gained `"dineInQr"`
+only (not `"dineInStaff"`, which still lacks server pricing). `firestore.rules`' customer direct-create
+branches for dine-in were removed entirely (not merely hardened) — proven by flipping the corresponding
+positive-control rules tests to `assertFails`; the staff/POS `dineInStaff` create path is unchanged.
+Flutter: new `SubmitDineInOrderGateway` replaces `dine_in_checkout_screen.dart`'s previous direct-write
+implementation; the client no longer computes `customerId`/`guestAuthUid` at all. Guests see no
+reward/Boncuk UI at all (not even disabled). `order_success_screen.dart`'s pre-existing `_isDineIn` gate
+was wired into the Boncuk/catalogReward summary blocks for the first time. Gates: Functions build clean;
+Functions FULL emulator suite (JDK 21) **1450/1450, 0 failed** (up from 1421 — 29 new
+`submitDineInOrder.test.ts` tests); Firestore Rules FULL suite (JDK 21) **367/367, 0 failed** (same total
+as P7-D, 7 tests flipped in place); full-repo `flutter analyze` clean; `dart format` reformatted 3 files
+(whitespace only); `flutter test` result recorded in the final P7-D.1 report. See
+`docs/business_rules.md`'s new `BR-LOYALTY-030`, and `docs/decisions.md`'s P7-D.1 entry for the full
+mechanism and files changed. No commit was made.

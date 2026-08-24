@@ -143,8 +143,12 @@ const ALL_PRE_EXISTING_PERMISSIONS: readonly StaffPermission[] = [
   "moderateCustomerPhotos",
 ];
 
-test("staff role has EXACTLY manageTakeawayOrders and manageDeliveryOrders — Boncuk Loyalty P5-B (2026-08-24) added manageDeliveryOrders to staff's default grant alongside its existing manageTakeawayOrders; this assertion was corrected in the same change (was previously ['manageTakeawayOrders'] only, before delivery lifecycle existed)", () => {
-  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, ["manageTakeawayOrders", "manageDeliveryOrders"]);
+test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, and manageDineInOrders — Boncuk Loyalty P7-D.1 (2026-08-24) added manageDineInOrders to staff's default grant alongside its existing takeaway/delivery permissions (was previously ['manageTakeawayOrders', 'manageDeliveryOrders'] only, before the dine-in lifecycle existed)", () => {
+  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, [
+    "manageTakeawayOrders",
+    "manageDeliveryOrders",
+    "manageDineInOrders",
+  ]);
 });
 
 test("staff role does NOT have manageTakeawayOrderCancellations", () => {
@@ -190,8 +194,12 @@ test("staff role does NOT have manageTakeawayOrderRefunds", () => {
   assert.strictEqual(roleHasPermission("staff", "manageTakeawayOrderRefunds"), false);
 });
 
-test("staff role has EXACTLY manageTakeawayOrders and manageDeliveryOrders — re-asserted here to prove manageTakeawayOrderRefunds was not silently added to staff's grant (see P5-B correction above for why manageDeliveryOrders is now part of the expected set)", () => {
-  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, ["manageTakeawayOrders", "manageDeliveryOrders"]);
+test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, and manageDineInOrders — re-asserted here to prove manageTakeawayOrderRefunds was not silently added to staff's grant (see the P7-D.1 correction above for why manageDineInOrders is now part of the expected set)", () => {
+  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, [
+    "manageTakeawayOrders",
+    "manageDeliveryOrders",
+    "manageDineInOrders",
+  ]);
 });
 
 test("manager/admin/tenantOwner all have manageTakeawayOrderRefunds under the default mapping", () => {

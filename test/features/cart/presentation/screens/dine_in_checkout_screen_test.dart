@@ -1,25 +1,159 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
+import 'package:abakus_one_v2/features/cart/data/submit_dine_in_order_gateway.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
+import 'package:abakus_one_v2/features/cart/presentation/providers/dine_in_order_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/cart/presentation/screens/dine_in_checkout_screen.dart';
 import 'package:abakus_one_v2/features/cart/presentation/screens/order_success_screen.dart';
+import 'package:abakus_one_v2/features/loyalty/data/loyalty_gateway.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_account_snapshot.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_history_entry.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_reward.dart';
+import 'package:abakus_one_v2/features/loyalty/presentation/providers/loyalty_providers.dart';
+import 'package:abakus_one_v2/features/orders/data/canonical_order_repository.dart';
+import 'package:abakus_one_v2/features/orders/domain/identity/order_identity.dart';
+import 'package:abakus_one_v2/features/orders/domain/mappers/cart_to_order_mapper.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/catalog_reward_snapshot.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_actor.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_benefit_type.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
+import 'package:abakus_one_v2/features/orders/presentation/providers/order_identity_provider.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
 import 'package:abakus_one_v2/features/qr/domain/models/active_table_context.dart';
 import 'package:abakus_one_v2/features/qr/domain/models/guest_session.dart';
 import 'package:abakus_one_v2/features/qr/domain/models/table_session.dart';
 import 'package:abakus_one_v2/features/qr/data/table_guest_session_firestore_client.dart';
-import 'package:abakus_one_v2/features/qr/data/technical_identity_provider.dart';
 import 'package:abakus_one_v2/features/qr/presentation/providers/active_table_context_provider.dart';
 import 'package:abakus_one_v2/features/qr/presentation/providers/table_guest_session_dependencies_provider.dart';
 
-/// Test double for [TableGuestSessionFirestoreClient] — the real
-/// implementation talks to Firestore, which isn't available under
-/// `flutter test`; every test here seeds this in-memory map instead of a
-/// real `tableGuestSessions` document.
+/// Boncuk Loyalty Program P7-D.1 (2026-08-24) — `DineInCheckoutScreen` now
+/// submits through `SubmitDineInOrderGateway` (the real implementation
+/// talks to the `submitDineInOrder` Cloud Function, unavailable under
+/// `flutter test`), never a direct Firestore write. Mirrors
+/// `delivery_checkout_screen_test.dart`'s own fake-gateway pattern —
+/// organization/branch/restaurant/table/identity resolution is now a
+/// SERVER concern (`submitDineInOrder.ts`'s own test suite), so this file
+/// only proves the SCREEN's own wiring: what it sends, how it reacts to
+/// success/failure, and its guest-vs-customer reward-UI gating.
+class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
+  _FakeSubmitDineInOrderGateway({
+    required this.repository,
+    required this.identityProvider,
+    required this.cartItemsSnapshot,
+    required this.resolveCustomerId,
+  });
+
+  final CanonicalOrderRepository repository;
+  final OrderIdentityProvider identityProvider;
+  final List Function() cartItemsSnapshot;
+  final String? Function() resolveCustomerId;
+
+  final Map<String, dynamic> _orderIdByKey = {};
+  int callCount = 0;
+  String? lastTableSessionId;
+  String? lastSelectedRewardId;
+  List<Map<String, dynamic>>? lastRequestItems;
+
+  String catalogRewardTitleToReturn = 'Test Ödülü';
+  int catalogRewardBoncukCostToReturn = 100;
+  int catalogRewardCoveredValueMinorUnitsToReturn = 12000;
+
+  SubmitDineInOrderException? errorToThrow;
+  SubmitDineInOrderException? throwOnNextSubmit;
+  Completer<void>? holdUntil;
+
+  @override
+  Future<SubmitDineInOrderResult> submit({
+    required String submissionKey,
+    required String tableSessionId,
+    required List<DineInOrderItem> items,
+    String customerNote = '',
+    String? selectedRewardId,
+  }) async {
+    callCount += 1;
+    lastTableSessionId = tableSessionId;
+    lastSelectedRewardId = selectedRewardId;
+    lastRequestItems = [for (final item in items) item.toJson()];
+
+    final pendingHold = holdUntil;
+    if (pendingHold != null) await pendingHold.future;
+
+    final pendingThrow = throwOnNextSubmit;
+    if (pendingThrow != null) {
+      throwOnNextSubmit = null;
+      throw pendingThrow;
+    }
+    final error = errorToThrow;
+    if (error != null) throw error;
+
+    final existingOrderId = _orderIdByKey[submissionKey];
+    if (existingOrderId != null) {
+      final existing = await repository.findById(existingOrderId);
+      return SubmitDineInOrderResult(
+        orderId: existingOrderId.value,
+        orderNumber: existing!.orderNumber.value,
+        duplicate: true,
+      );
+    }
+
+    final orderId = await identityProvider.nextOrderId();
+    final orderNumber = await identityProvider.nextOrderNumber();
+    _orderIdByKey[submissionKey] = orderId;
+
+    final now = DateTime.now();
+    final customerId = resolveCustomerId();
+
+    var order = CartToOrderMapper.map(
+      orderId: orderId,
+      orderNumber: orderNumber,
+      cartItems: cartItemsSnapshot().cast(),
+      channel: OrderChannel.dineInQr,
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      customerId: customerId,
+      tableId: 'dev-table-12',
+      tableSessionId: tableSessionId,
+      guestAuthUid: customerId ?? 'guest-technical-uid-1',
+      now: now,
+      customerNote: customerNote,
+    );
+    order = order.transitionTo(
+      OrderStatus.pendingConfirmation,
+      actor: OrderActor.customer,
+      at: now,
+      auditEntryId: '${orderId.value}-transition-1',
+    );
+    if (selectedRewardId != null) {
+      order = order.copyWith(
+        selectedBenefitType: OrderBenefitType.catalogReward,
+        catalogReward: CatalogRewardSnapshot(
+          rewardId: selectedRewardId,
+          rewardVersion: 1,
+          title: catalogRewardTitleToReturn,
+          boncukCost: catalogRewardBoncukCostToReturn,
+          redeemedProductId: cartItemsSnapshot().first.id as String,
+          redeemedQuantity: 1,
+          coveredValueMinorUnits: catalogRewardCoveredValueMinorUnitsToReturn,
+          rewardCatalogVersionId: '${selectedRewardId}_1',
+        ),
+      );
+    }
+    await repository.submitOrder(order);
+
+    return SubmitDineInOrderResult(
+      orderId: orderId.value,
+      orderNumber: orderNumber.value,
+      duplicate: false,
+    );
+  }
+}
+
 class _FakeTableGuestSessionFirestoreClient
     implements TableGuestSessionFirestoreClient {
   final Map<String, TableGuestSessionSnapshot> _sessions = {};
@@ -34,28 +168,47 @@ class _FakeTableGuestSessionFirestoreClient
   }
 }
 
-/// Test double for [TechnicalIdentityProvider] — the real implementation
-/// talks to `FirebaseAuth.instance`, unavailable under `flutter test`.
-/// [DineInCheckoutScreen] only ever reads [currentUid] (a passive
-/// snapshot), never calls [ensureSignedIn] itself (that's
-/// `OpenTableGuestSessionFromQrScan`'s job, during the QR scan step, not
-/// checkout) — [ensureSignedIn] throws here to prove that assumption
-/// holds.
-class _FakeTechnicalIdentityProvider implements TechnicalIdentityProvider {
-  _FakeTechnicalIdentityProvider(this._currentUid);
+class _FakeLoyaltyGateway implements LoyaltyGateway {
+  _FakeLoyaltyGateway(
+      {LoyaltyAccountSnapshot? snapshot, this.rewards = const []})
+      : snapshot = snapshot ?? LoyaltyAccountSnapshot.zero;
 
-  final String? _currentUid;
+  LoyaltyAccountSnapshot snapshot;
+  List<LoyaltyReward> rewards;
 
   @override
-  String? get currentUid => _currentUid;
+  Future<LoyaltyAccountSnapshot> getSnapshot() async => snapshot;
 
   @override
-  Future<String> ensureSignedIn() async {
-    throw StateError(
-      'DineInCheckoutScreen must never call ensureSignedIn() itself — it '
-      'only reads the already-established currentUid.',
-    );
+  Future<LoyaltyHistoryPage> getHistory({int? pageSize, String? cursor}) async {
+    return LoyaltyHistoryPage.empty;
   }
+
+  @override
+  Future<List<LoyaltyReward>> getRewardCatalog() async => rewards;
+}
+
+LoyaltyReward _catalogReward({
+  String rewardId = 'reward-1',
+  List<String> eligibleProductIds = const ['p1'],
+  int boncukCost = 100,
+}) {
+  return LoyaltyReward(
+    rewardId: rewardId,
+    title: 'Test Ödülü',
+    description: 'Bir test ödülü.',
+    rewardType: 'explicitProductSet',
+    eligibleProductIds: eligibleProductIds,
+    eligibleChannels: const [
+      'dineIn',
+      'takeaway',
+      'delivery',
+      'reservationPreorder'
+    ],
+    boncukCost: boncukCost,
+    sortOrder: 0,
+    version: 1,
+  );
 }
 
 ActiveTableContext _context({
@@ -97,25 +250,50 @@ ActiveTableContext _context({
 }
 
 void main() {
-  Future<ProviderContainer> pumpWithSeededCart(
+  Future<
+      ({
+        ProviderContainer container,
+        _FakeSubmitDineInOrderGateway gateway,
+      })> pumpWithSeededCart(
     WidgetTester tester, {
     ActiveTableContext? tableContext,
     TableGuestSessionSnapshot? sessionSnapshot,
     AuthSession? signedInCustomer,
-    String? technicalUid = 'guest-technical-uid-1',
+    // ignore: library_private_types_in_public_api
+    _FakeLoyaltyGateway? loyaltyGateway,
   }) async {
+    // The CatalogRewardCard adds substantial height for a real-customer
+    // scenario — the default test surface is too short for the ListView's
+    // Sliver machinery to materialize everything below it (e.g. the error
+    // banner), even with `skipOffstage: false` (that only affects finder
+    // traversal, not whether a Sliver chose to build the item at all).
+    // Mirrors `delivery_checkout_screen_test.dart`'s own `pumpCheckout`.
+    tester.view.physicalSize = const Size(480, 2000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     final fakeSessionClient = _FakeTableGuestSessionFirestoreClient();
     if (tableContext != null && sessionSnapshot != null) {
       fakeSessionClient.seed(tableContext.session.id, sessionSnapshot);
     }
 
-    final container = ProviderContainer(
+    late final ProviderContainer container;
+    final gateway = _FakeSubmitDineInOrderGateway(
+      repository: InMemoryCanonicalOrderRepository(),
+      identityProvider: InMemoryOrderIdentityProvider(),
+      cartItemsSnapshot: () => container.read(cartProvider),
+      resolveCustomerId: () => signedInCustomer?.uid,
+    );
+
+    container = ProviderContainer(
       overrides: [
         tableGuestSessionFirestoreClientProvider
             .overrideWithValue(fakeSessionClient),
-        technicalIdentityProviderProvider.overrideWithValue(
-          _FakeTechnicalIdentityProvider(technicalUid),
-        ),
+        canonicalOrderRepositoryProvider.overrideWithValue(gateway.repository),
+        orderIdentityProvider.overrideWithValue(gateway.identityProvider),
+        submitDineInOrderGatewayProvider.overrideWithValue(gateway),
+        loyaltyGatewayProvider
+            .overrideWithValue(loyaltyGateway ?? _FakeLoyaltyGateway()),
         if (signedInCustomer != null)
           authProvider.overrideWith(
             () => SeededAuthNotifier(
@@ -148,7 +326,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    return container;
+    return (container: container, gateway: gateway);
   }
 
   testWidgets(
@@ -173,16 +351,15 @@ void main() {
   );
 
   testWidgets(
-    'guest (customer oturumu yok): customerId null, guestAuthUid teknik uid',
+    'guest (customer oturumu yok): gateway tableSessionId ile cagrilir, siparis olusur, sepet temizlenir',
     (tester) async {
-      final container = await pumpWithSeededCart(
+      final pumped = await pumpWithSeededCart(
         tester,
         tableContext: _context(),
         sessionSnapshot: TableGuestSessionSnapshot(
           status: 'active',
           expiresAt: DateTime.now().add(const Duration(hours: 1)),
         ),
-        technicalUid: 'anon-technical-uid-1',
       );
 
       await tester.tap(
@@ -194,135 +371,32 @@ void main() {
       expect(find.text('Abaküs Ortaköy · Masa 12'), findsOneWidget);
       expect(find.text('Siparişin Alındı!'), findsOneWidget);
 
-      final orders = container.read(ordersProvider).value!;
+      expect(pumped.gateway.callCount, 1);
+      expect(pumped.gateway.lastTableSessionId, 'tgs-1');
+      expect(pumped.gateway.lastRequestItems, [
+        {
+          'kind': 'product',
+          'productId': 'p1',
+          'quantity': 2,
+          'selectedModifiers': <Map<String, String>>[],
+          'note': '',
+        },
+      ]);
+
+      final orders = pumped.container.read(ordersProvider).value!;
       expect(orders, hasLength(1));
-      final order = orders.first;
-      expect(order.channel, OrderChannel.dineInQr);
-      expect(order.tableId, 'dev-table-12');
 
-      // The canonical Order (not just its OrderModel projection, which
-      // doesn't carry customerId/guestAuthUid at all) is what actually
-      // gets written to Firestore — Phase 3.1's real behavior lives here.
-      final canonicalOrders =
-          await container.read(canonicalOrderRepositoryProvider).findAll();
-      expect(canonicalOrders, hasLength(1));
-      expect(canonicalOrders.first.customerId, isNull);
-      expect(canonicalOrders.first.guestAuthUid, 'anon-technical-uid-1');
-
-      // The order id was attached onto the client-held TableSession via
-      // the existing `withOrderAdded` domain seam (Phase 3: local-only —
-      // `tableGuestSessions` has no client-writable order-list field).
-      final updatedContext = container.read(activeTableContextProvider);
+      final updatedContext = pumped.container.read(activeTableContextProvider);
       expect(updatedContext!.session.activeOrderIds, hasLength(1));
-      expect(updatedContext.session.activeOrderIds.first, order.id);
 
-      // Cart was cleared after a successful submit.
-      expect(container.read(cartProvider), isEmpty);
+      expect(pumped.container.read(cartProvider), isEmpty);
     },
   );
 
   testWidgets(
-    'reservationContextId taşınan bir masa bağlamında sipariş, canonical Order üzerinde aynı reservationContextId ile oluşur',
-    (tester) async {
-      final container = await pumpWithSeededCart(
-        tester,
-        tableContext: _context(reservationContextId: 'RES_123'),
-        sessionSnapshot: TableGuestSessionSnapshot(
-          status: 'active',
-          expiresAt: DateTime.now().add(const Duration(hours: 1)),
-        ),
-        technicalUid: 'anon-technical-uid-rc',
-      );
-
-      await tester.tap(
-        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
-      );
-      await tester.pumpAndSettle();
-
-      final canonicalOrders =
-          await container.read(canonicalOrderRepositoryProvider).findAll();
-      expect(canonicalOrders, hasLength(1));
-      expect(canonicalOrders.first.reservationContextId, 'RES_123');
-    },
-  );
-
-  testWidgets(
-    'authenticated customer: customerId gercek uid, guestAuthUid ayni Firebase uid — mevcut auth session overwrite edilmez',
-    (tester) async {
-      final container = await pumpWithSeededCart(
-        tester,
-        tableContext: _context(),
-        sessionSnapshot: TableGuestSessionSnapshot(
-          status: 'active',
-          expiresAt: DateTime.now().add(const Duration(hours: 1)),
-        ),
-        signedInCustomer: AuthSession(
-          uid: 'real-customer-uid',
-          phoneNumber: '+905551234567',
-          createdAt: DateTime(2026, 8, 1),
-          expiresAt: DateTime(2027, 8, 1),
-        ),
-        // The technical identity the Table Guest Session was opened with
-        // matches the real customer's own uid — the expected shape when
-        // `TechnicalIdentityProvider.ensureSignedIn()` correctly reused
-        // an already-signed-in real customer instead of going anonymous.
-        technicalUid: 'real-customer-uid',
-      );
-
-      await tester.tap(
-        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.byType(OrderSuccessScreen), findsOneWidget);
-      final canonicalOrders =
-          await container.read(canonicalOrderRepositoryProvider).findAll();
-      expect(canonicalOrders, hasLength(1));
-      expect(canonicalOrders.first.customerId, 'real-customer-uid');
-      expect(canonicalOrders.first.guestAuthUid, 'real-customer-uid');
-    },
-  );
-
-  testWidgets(
-    'authProvider.session.uid ile mevcut teknik Firebase uid uyusmazsa fail closed davranilir — order olusturulmaz',
-    (tester) async {
-      final container = await pumpWithSeededCart(
-        tester,
-        tableContext: _context(),
-        sessionSnapshot: TableGuestSessionSnapshot(
-          status: 'active',
-          expiresAt: DateTime.now().add(const Duration(hours: 1)),
-        ),
-        signedInCustomer: AuthSession(
-          uid: 'real-customer-uid',
-          phoneNumber: '+905551234567',
-          createdAt: DateTime(2026, 8, 1),
-          expiresAt: DateTime(2027, 8, 1),
-        ),
-        // Deliberately mismatched — the app believes 'real-customer-uid'
-        // is signed in, but the Table Guest Session was actually opened
-        // with a different technical uid (should be unreachable in
-        // practice; this proves the fail-closed guard, not a realistic
-        // user flow).
-        technicalUid: 'a-completely-different-uid',
-      );
-
-      await tester.tap(
-        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.byType(OrderSuccessScreen), findsNothing);
-      final canonicalOrders =
-          await container.read(canonicalOrderRepositoryProvider).findAll();
-      expect(canonicalOrders, isEmpty);
-    },
-  );
-
-  testWidgets(
-      'hizli cift dokunma sadece bir siparis olusturur (yinelenen '
+      'hizli cift dokunma sadece bir gateway cagrisi yapar (yinelenen '
       'gonderim engellenir)', (tester) async {
-    final container = await pumpWithSeededCart(
+    final pumped = await pumpWithSeededCart(
       tester,
       tableContext: _context(),
       sessionSnapshot: TableGuestSessionSnapshot(
@@ -332,20 +406,19 @@ void main() {
     );
 
     final button = find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL');
-    // Two taps with no pump in between — the second must be swallowed by
-    // the `_isSubmitting` guard, not create a second order.
     await tester.tap(button);
     await tester.tap(button);
     await tester.pumpAndSettle();
 
-    final orders = container.read(ordersProvider).value!;
+    expect(pumped.gateway.callCount, 1);
+    final orders = pumped.container.read(ordersProvider).value!;
     expect(orders, hasLength(1));
   });
 
   testWidgets(
-    'aktif masa baglami yoksa (kaybolmus baglam) siparis engellenir',
+    'aktif masa baglami yoksa (kaybolmus baglam) siparis engellenir, gateway hic cagrilmaz',
     (tester) async {
-      final container = await pumpWithSeededCart(tester);
+      final pumped = await pumpWithSeededCart(tester);
 
       await tester.tap(
         find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
@@ -353,35 +426,22 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(OrderSuccessScreen), findsNothing);
-      // The error banner is the last item in a non-lazy ListView whose
-      // content exceeds the test surface's laid-out extent, so it's
-      // genuinely rendered but excluded by the default offstage-skipping
-      // finder — skipOffstage: false is required to see it here.
+      expect(pumped.gateway.callCount, 0);
       expect(
         find.textContaining('Masa bilgisi bulunamadı', skipOffstage: false),
         findsOneWidget,
       );
-      // `ordersProvider` is an `AsyncNotifier`; `.value` is legitimately
-      // null until its `build()` resolves — nothing in this blocked-
-      // submission path ever calls `addOrder` to force that, so asserting
-      // on `.value` directly races the provider's own lifecycle. Await
-      // `.future` first, matching this codebase's established pattern in
-      // `orders_provider_test.dart`.
-      final orders = await container.read(ordersProvider.future);
+      final orders = await pumped.container.read(ordersProvider.future);
       expect(orders, isEmpty);
-      expect(container.read(cartProvider), isNotEmpty);
+      expect(pumped.container.read(cartProvider), isNotEmpty);
     },
   );
 
   testWidgets(
     'oturum baska bir yerde kapatilmissa (gecersiz/kaybolmus oturum) '
-    'siparis engellenir',
+    'siparis engellenir, gateway hic cagrilmaz',
     (tester) async {
-      // The context still claims to be active, but the *actual*
-      // server-authoritative tableGuestSessions record has since been
-      // revoked — e.g. staff closed the table while the customer was
-      // sitting on this screen.
-      final container = await pumpWithSeededCart(
+      final pumped = await pumpWithSeededCart(
         tester,
         tableContext: _context(),
         sessionSnapshot: TableGuestSessionSnapshot(
@@ -396,8 +456,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(OrderSuccessScreen), findsNothing);
-      // Same non-lazy ListView / test-surface-extent artifact as the
-      // missing-context test above — the banner is genuinely rendered.
+      expect(pumped.gateway.callCount, 0);
       expect(
         find.textContaining(
           'Masa oturumun artık aktif değil',
@@ -405,17 +464,13 @@ void main() {
         ),
         findsOneWidget,
       );
-      // Same `AsyncNotifier` lifecycle point as the missing-context test
-      // above — await `.future` rather than reading `.value` directly.
-      final orders = await container.read(ordersProvider.future);
-      expect(orders, isEmpty);
     },
   );
 
   testWidgets(
     'oturumun suresi dolmussa (expiresAt gecmis) siparis engellenir',
     (tester) async {
-      final container = await pumpWithSeededCart(
+      final pumped = await pumpWithSeededCart(
         tester,
         tableContext: _context(),
         sessionSnapshot: TableGuestSessionSnapshot(
@@ -430,77 +485,139 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(OrderSuccessScreen), findsNothing);
-      expect(
-        find.textContaining(
-          'Masa oturumun artık aktif değil',
-          skipOffstage: false,
+      expect(pumped.gateway.callCount, 0);
+    },
+  );
+
+  // =========================================================================
+  // Boncuk Loyalty Program P7-D.1 (2026-08-24) — catalog-reward selection,
+  // real customer only; an anonymous table guest sees no reward control at
+  // all, not even a disabled state.
+  // =========================================================================
+
+  testWidgets(
+    'anonim misafir: odul karti hic gosterilmez (devre disi bile degil)',
+    (tester) async {
+      await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
         ),
+        loyaltyGateway: _FakeLoyaltyGateway(
+          snapshot: const LoyaltyAccountSnapshot(
+            spendableBalance: 500,
+            boncukDebt: 0,
+            earningRemainderMinorUnits: 0,
+            minorUnitsUntilNextBoncuk: 5000,
+            lifetimeEarned: 500,
+            lifetimeRedeemed: 0,
+            earningSpendMinorUnits: 5000,
+            earningBoncukAmount: 5,
+            redemptionValueMinorUnitsPerBoncuk: 100,
+            maxRedemptionBasisPoints: 5000,
+          ),
+          rewards: [_catalogReward()],
+        ),
+      );
+
+      expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+      expect(find.byKey(const Key('catalogRewardCardSkeleton')), findsNothing);
+      expect(find.textContaining('Boncuk'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'gercek musteri: uygun bir odul secilebilir, gateway secilenRewardId ile cagrilir',
+    (tester) async {
+      final signedInCustomer = AuthSession(
+        uid: 'real-customer-uid',
+        phoneNumber: '+905551234567',
+        createdAt: DateTime(2026, 8, 1),
+        expiresAt: DateTime(2027, 8, 1),
+      );
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        signedInCustomer: signedInCustomer,
+        loyaltyGateway: _FakeLoyaltyGateway(
+          rewards: [
+            _catalogReward(rewardId: 'reward-1', eligibleProductIds: ['p1'])
+          ],
+        ),
+      );
+
+      expect(find.byKey(const Key('catalogRewardCard')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.lastSelectedRewardId, 'reward-1');
+      expect(find.byType(OrderSuccessScreen), findsOneWidget);
+      expect(find.byKey(const Key('orderSuccessCatalogRewardSummary')),
+          findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'catalogReward-spesifik sunucu reddi secimi sifirlar, gateway hatasiz tekrar cagrilabilir',
+    (tester) async {
+      final signedInCustomer = AuthSession(
+        uid: 'real-customer-uid',
+        phoneNumber: '+905551234567',
+        createdAt: DateTime(2026, 8, 1),
+        expiresAt: DateTime(2027, 8, 1),
+      );
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        signedInCustomer: signedInCustomer,
+        loyaltyGateway: _FakeLoyaltyGateway(
+          rewards: [_catalogReward(rewardId: 'reward-1')],
+        ),
+      );
+      await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+      await tester.pumpAndSettle();
+
+      pumped.gateway.throwOnNextSubmit = const SubmitDineInOrderException(
+        'invalid-argument',
+        'Reward no longer valid.',
+        boncukErrorReason: 'catalogReward/insufficient-balance',
+      );
+
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.callCount, 1);
+      expect(find.byType(OrderSuccessScreen), findsNothing);
+      expect(
+        find.textContaining('Bu ödül için yeterli Boncuk bakiyen yok',
+            skipOffstage: false),
         findsOneWidget,
       );
-      final orders = await container.read(ordersProvider.future);
-      expect(orders, isEmpty);
-    },
-  );
-
-  testWidgets(
-    'siparişin branchId alanı QR ile çözülen gerçek şubeden gelir, '
-    'submitCustomerOrderProvider\'ın varsayılanından değil (Faz B)',
-    (tester) async {
-      final container = await pumpWithSeededCart(
-        tester,
-        // A branch distinct from submitCustomerOrderProvider's constructor
-        // default ('branch-1') — proves the wiring, not a coincidence.
-        tableContext: _context(branchId: 'branch-ortakoy-2'),
-        sessionSnapshot: TableGuestSessionSnapshot(
-          status: 'active',
-          expiresAt: DateTime.now().add(const Duration(hours: 1)),
-        ),
-      );
 
       await tester.tap(
         find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
       );
       await tester.pumpAndSettle();
-
+      expect(pumped.gateway.callCount, 2);
+      expect(pumped.gateway.lastSelectedRewardId, isNull);
       expect(find.byType(OrderSuccessScreen), findsOneWidget);
-      final canonicalOrders =
-          await container.read(canonicalOrderRepositoryProvider).findAll();
-      expect(canonicalOrders, hasLength(1));
-      expect(canonicalOrders.first.branchId, 'branch-ortakoy-2');
-    },
-  );
-
-  testWidgets(
-    'siparişin restaurantId alanı da QR ile çözülen gerçek işletmeden '
-    'gelir, submitCustomerOrderProvider\'ın varsayılanından değil (Faz B.1)',
-    (tester) async {
-      final container = await pumpWithSeededCart(
-        tester,
-        // A restaurantId distinct from submitCustomerOrderProvider's
-        // constructor default ('restaurant-1') — proves the wiring, not a
-        // coincidence, and that branchId/restaurantId can vary
-        // independently.
-        tableContext: _context(
-          branchId: 'branch-ortakoy-2',
-          restaurantId: 'restaurant-abakus-2',
-        ),
-        sessionSnapshot: TableGuestSessionSnapshot(
-          status: 'active',
-          expiresAt: DateTime.now().add(const Duration(hours: 1)),
-        ),
-      );
-
-      await tester.tap(
-        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.byType(OrderSuccessScreen), findsOneWidget);
-      final canonicalOrders =
-          await container.read(canonicalOrderRepositoryProvider).findAll();
-      expect(canonicalOrders, hasLength(1));
-      expect(canonicalOrders.first.branchId, 'branch-ortakoy-2');
-      expect(canonicalOrders.first.restaurantId, 'restaurant-abakus-2');
     },
   );
 }

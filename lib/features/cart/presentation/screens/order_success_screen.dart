@@ -221,7 +221,8 @@ class OrderSuccessScreen extends StatelessWidget {
               // — never the pre-submit local estimate. Every other
               // channel/scenario's success experience is byte-for-byte
               // unchanged (this block simply never renders for them).
-              if ((_isTakeaway || isDeliveryOrder) && _hasBoncukSummary) ...[
+              if ((_isTakeaway || isDeliveryOrder || _isDineIn) &&
+                  _hasBoncukSummary) ...[
                 const SizedBox(height: AppSpacing.md),
                 BoncukSuccessSummary(
                   orderTotalMinorUnits: orderTotalMinorUnits!,
@@ -237,7 +238,7 @@ class OrderSuccessScreen extends StatelessWidget {
               // construction (`_hasBoncukSummary`/`_hasCatalogRewardSummary`
               // can never both be true for the same order — one benefit
               // per order).
-              if ((_isTakeaway || isDeliveryOrder) &&
+              if ((_isTakeaway || isDeliveryOrder || _isDineIn) &&
                   _hasCatalogRewardSummary) ...[
                 const SizedBox(height: AppSpacing.md),
                 CatalogRewardSuccessSummary(

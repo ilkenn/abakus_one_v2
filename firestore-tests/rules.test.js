@@ -630,11 +630,31 @@ test('tableQrCodes and restaurantTables are unreadable by any client — covered
 });
 
 // ---------------------------------------------------------------------
-// Table Guest Session order authorization (Phase 3) — the actual fix for
-// the reported `orders/local-order-X PERMISSION_DENIED` bug. The
+// Table Guest Session order authorization (Phase 3) — originally the fix
+// for the reported `orders/local-order-X PERMISSION_DENIED` bug via two
+// direct-client-create rule branches (`isValidGuestTableOrder`/
+// `isValidAuthenticatedCustomerTableOrder`).
+//
+// **Boncuk Loyalty P7-D.1 (2026-08-24) — both branches REMOVED.** Dine-in
+// order creation (both an anonymous table guest and a real, phone-verified
+// customer) is now exclusively server-authoritative via `submitDineInOrder`
+// (Admin SDK, bypasses these rules entirely) — full canonical catalog/
+// pricing/Loyalty validation no rules-only shape check could ever provide.
+// Every "-> allow" test below that used to prove a direct client `create`
+// succeeded now proves the OPPOSITE (`assertFails`) — the request shape
+// itself is unchanged (still exactly what a legitimate order would have
+// looked like), only the verdict flipped, since there is no longer ANY
+// rule branch that could admit it. The already-`assertFails` tests in this
+// section remain correctly denied, now for the same single reason (no
+// client-create path exists for this channel at all) rather than each
+// their own specific violation — still valid, still exercising real
+// request shapes, no test removed. Read-ownership tests further below are
+// completely unaffected (`read` was never touched by P7-D.1). The
 // `isOrgMember` staff branch is never touched by any test in this
-// section; the pre-existing "an order can be created by an org member..."
-// tests above already prove that branch still passes unchanged.
+// section, deliberately preserved (POS/staff-assisted dine-in creation is
+// out of P7-D.1's scope) — the pre-existing "an order can be created by an
+// org member..." tests above already prove that branch still passes
+// unchanged, for `dineInQr` included.
 // ---------------------------------------------------------------------
 
 function activeGuestSession(overrides = {}) {
@@ -683,7 +703,7 @@ function customerContext(uid) {
 
 // ===== Variant A: anonymous Table Guest =====
 
-test('anonymous + valid table session + customerId null + correct guestAuthUid -> allow (direct regression test for the reported PERMISSION_DENIED bug)', async () => {
+test('Boncuk Loyalty P7-D.1 (2026-08-24): anonymous + otherwise-valid table session/customerId/guestAuthUid shape -> now DENIED — isValidGuestTableOrder was removed; submitDineInOrder is the sole create path', async () => {
   await seed(async (db) => {
     await setDoc(
       doc(db, 'tableGuestSessions/tgs-1'),
@@ -692,7 +712,7 @@ test('anonymous + valid table session + customerId null + correct guestAuthUid -
   });
   const guest = testEnv.authenticatedContext('guest-uid-1').firestore();
 
-  await assertSucceeds(
+  await assertFails(
     setDoc(
       doc(guest, 'orders/guest-order-1'),
       tableOrderPayload({ tableSessionId: 'tgs-1', guestAuthUid: 'guest-uid-1' }),
@@ -969,7 +989,7 @@ test('guest update -> deny (status transitions stay server-authoritative)', asyn
 
 // ===== Variant B: authenticated (real, phone-verified) customer at a table =====
 
-test('real customer + valid session + customerId own uid -> allow', async () => {
+test('Boncuk Loyalty P7-D.1 (2026-08-24): real customer + otherwise-valid session/customerId shape -> now DENIED — isValidAuthenticatedCustomerTableOrder was removed; submitDineInOrder is the sole create path', async () => {
   await seed(async (db) => {
     await setDoc(
       doc(db, 'tableGuestSessions/tgs-20'),
@@ -978,7 +998,7 @@ test('real customer + valid session + customerId own uid -> allow', async () => 
   });
   const customer = customerContext('customer-uid-1');
 
-  await assertSucceeds(
+  await assertFails(
     setDoc(
       doc(customer, 'orders/customer-order-1'),
       tableOrderPayload({
@@ -1066,19 +1086,17 @@ test('anonymous uid cannot spoof a customer identity by claiming a real sign_in_
 // ordinary walk-in order) continues to pass unmodified — this section adds
 // the cases that specifically exercise the new equality.
 
-test('reservation-context session + matching order reservationContextId -> allow', async () => {
+test('Boncuk Loyalty P7-D.1 (2026-08-24): reservation-context session + matching order reservationContextId -> now DENIED — direct client create removed entirely; submitDineInOrder re-derives and re-checks this server-side', async () => {
   await seed(async (db) => {
     await setDoc(
       doc(db, 'tableGuestSessions/tgs-rc-1'),
       activeGuestSession({ guestAuthUid: 'guest-uid-rc-1', reservationContextId: 'RES_123' }),
     );
-    // Faz R.3B §11 — a table-linked order create now also requires the
-    // referenced Reservation to exist and be 'confirmed'.
     await setDoc(doc(db, 'reservations/RES_123'), reservationPayload({ status: 'confirmed' }));
   });
   const guest = testEnv.authenticatedContext('guest-uid-rc-1').firestore();
 
-  await assertSucceeds(
+  await assertFails(
     setDoc(
       doc(guest, 'orders/guest-order-rc-1'),
       tableOrderPayload({
@@ -1167,7 +1185,7 @@ test('ordinary walk-in session (no reservationContextId) + client claims one on 
   );
 });
 
-test('reservation-context session, real phone-verified customer variant, exact match -> allow', async () => {
+test('Boncuk Loyalty P7-D.1 (2026-08-24): reservation-context session, real phone-verified customer variant, exact match -> now DENIED', async () => {
   await seed(async (db) => {
     await setDoc(
       doc(db, 'tableGuestSessions/tgs-rc-6'),
@@ -1177,7 +1195,7 @@ test('reservation-context session, real phone-verified customer variant, exact m
   });
   const customer = customerContext('customer-uid-rc-6');
 
-  await assertSucceeds(
+  await assertFails(
     setDoc(
       doc(customer, 'orders/customer-order-rc-6'),
       tableOrderPayload({
@@ -1286,13 +1304,13 @@ test('reservation-context session referencing a reservation that does not exist 
   );
 });
 
-test('ordinary walk-in dine-in order (no reservationContextId at all) is completely unaffected by the R.3B orderable-state check', async () => {
+test('Boncuk Loyalty P7-D.1 (2026-08-24): ordinary walk-in dine-in order (no reservationContextId at all) direct client create -> now DENIED, same as every other create variant in this section', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'tableGuestSessions/tgs-rc-11'), activeGuestSession({ guestAuthUid: 'guest-uid-rc-11' }));
   });
   const guest = testEnv.authenticatedContext('guest-uid-rc-11').firestore();
 
-  await assertSucceeds(
+  await assertFails(
     setDoc(
       doc(guest, 'orders/guest-order-rc-11'),
       tableOrderPayload({ tableSessionId: 'tgs-rc-11', guestAuthUid: 'guest-uid-rc-11' }),
@@ -3057,7 +3075,7 @@ test('pricingAuthority: a legitimate existing staff/POS dine-in order WITHOUT th
   );
 });
 
-test('pricingAuthority: a legitimate existing guest table order WITHOUT the marker remains allowed exactly as before this fix', async () => {
+test('Boncuk Loyalty P7-D.1 (2026-08-24): pricingAuthority — a guest table (dineInQr) order create is now DENIED regardless of the marker, since the direct-client guest-create path was removed entirely; the sibling staff/POS positive control above already proves this rule does not over-block a still-legitimate client create', async () => {
   await seed(async (db) => {
     await setDoc(
       doc(db, 'tableGuestSessions/tgs-pa-1'),
@@ -3066,7 +3084,7 @@ test('pricingAuthority: a legitimate existing guest table order WITHOUT the mark
   });
   const guest = testEnv.authenticatedContext('guest-pa-1').firestore();
 
-  await assertSucceeds(
+  await assertFails(
     setDoc(
       doc(guest, 'orders/pa-legit-guest-order-1'),
       tableOrderPayload({ tableSessionId: 'tgs-pa-1', guestAuthUid: 'guest-pa-1' }),
@@ -3219,7 +3237,7 @@ test('boncukRedemption: a legitimate existing staff/POS dine-in order WITHOUT th
   );
 });
 
-test('boncukRedemption: a legitimate existing guest table (dineInQr) order WITHOUT the fields remains allowed', async () => {
+test('Boncuk Loyalty P7-D.1 (2026-08-24): boncukRedemption — a guest table (dineInQr) order create is now DENIED regardless of the fields, since the direct-client guest-create path was removed entirely; the sibling staff/POS positive control above already proves this rule does not over-block a still-legitimate client create', async () => {
   await seed(async (db) => {
     await setDoc(
       doc(db, 'tableGuestSessions/tgs-br-1'),
@@ -3228,7 +3246,7 @@ test('boncukRedemption: a legitimate existing guest table (dineInQr) order WITHO
   });
   const guest = testEnv.authenticatedContext('guest-br-1').firestore();
 
-  await assertSucceeds(
+  await assertFails(
     setDoc(
       doc(guest, 'orders/br-legit-guest-order-1'),
       tableOrderPayload({ tableSessionId: 'tgs-br-1', guestAuthUid: 'guest-br-1' }),

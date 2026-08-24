@@ -80,3 +80,6 @@ export { advanceDeliveryOrderStatus } from "./advanceDeliveryOrderStatus";
 export { cancelDeliveryOrder } from "./cancelDeliveryOrder";
 export { cancelDeliveryOrderForStaff } from "./cancelDeliveryOrderForStaff";
 export { refundDeliveryOrder } from "./refundDeliveryOrder";
+export { submitDineInOrder } from "./submitDineInOrder";
+export { advanceDineInOrderStatus } from "./advanceDineInOrderStatus";
+export { refundDineInOrder } from "./refundDineInOrder";

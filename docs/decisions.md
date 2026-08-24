@@ -15401,3 +15401,149 @@ No commit was made, per this task's own explicit instruction.
 **Operational note**: running the full backend gate suite required freeing ports 8080/9099/5001 again,
 held by the user's own persistent `abakus-one-dev` local dev emulator — stopped with explicit user
 confirmation this turn, restarted afterward on the same project/ports.
+
+## Boncuk Loyalty Program P7-D.1 — Server-Authoritative Dine-in Order Pipeline (2026-08-24)
+
+**Status**: Implemented. Resolves P7-D's own reported blocker — dine-in (`dineInQr`) now has a real
+server-authoritative order-creation and lifecycle pipeline — and extends catalog-reward redemption to it
+for phone-verified customers. Campaign Engine, POS/Admin/KDS, and table-QR architecture changes remain
+out of scope. See `docs/business_rules.md`'s new `BR-LOYALTY-030` for the full locked rule set.
+
+### 1. Architecture research before implementation
+
+Two dedicated audits shaped the design before any code was written. First: `GuestSession`/
+`guestSessionId` (the client-local, `ActiveTableContext.guestSession` concept) is confirmed vestigial
+pre-Phase-3 legacy with zero server-side meaning anywhere; `TableSession`/`tableSessionId`
+(`ActiveTableContext.session.id`, the real `tableGuestSessions` document id) is the only server-meaningful
+identifier — the new callable's request shape therefore takes `tableSessionId` only, never
+`guestSessionId`. Second: Loyalty earning and redemption-restore are a fully automatic, two-hop Firestore
+trigger chain (`orders/{id}.status` write → `onOrderCompleted`/`onOrderTerminalFailureOrRefund` →
+`orderEvents` create → `loyaltyOrderEarning`/`loyaltyRedemptionRestore`/`orderEarnReversal`) — not
+callable-driven at all. This meant the new lifecycle callables needed only to write `status` correctly
+through the existing shared helper; no direct loyalty-function calls were needed anywhere.
+
+### 2. `submitDineInOrder.ts` — the one canonical submit path
+
+New callable, one Firestore transaction: validate auth/technical identity; validate the table guest
+session (`isTableGuestSessionActive`, `tableGuestSessionConfig.ts` — a real, previously-unused exported
+validator, now with its first real caller); derive `organizationId`/`restaurantId`/`branchId`/`tableId`
+exclusively from the session document (never from client input — forged values in the request have zero
+effect, proven by test); if the session carries a `reservationContextId`, require the linked
+reservation's `status === "confirmed"` (the rules-only `reservationContextIsOrderable` equivalent,
+reimplemented server-side since the rules-only version no longer has a live create path to guard);
+classify identity via the same inlined `sign_in_provider === "phone"` check used throughout the codebase
+(never `auth != null` alone); price the cart via the exact same channel-agnostic pipeline every other
+channel uses (`takeawayPricing.ts`, `buildProductLine`/`buildBowlLine` from `submitTakeawayOrder.ts`),
+under a dedicated commercial channel key `"dineIn"` (`DINE_IN_COMMERCIAL_CHANNEL`, distinct from the
+order's own literal `channel: "dineInQr"`); resolve an optional catalog reward via the identical two-phase
+PRE/POST resolution `submitDeliveryOrder.ts`/`submitReservation.ts` already established (P7-D); dedupe via
+a `dineIn-` prefixed idempotency fingerprint (`deriveDineInOrderId`, mirrors `submitTakeawayOrder.ts`'s
+own `deriveOrderId` pattern). Cash Boncuk redemption (`requestedBoncukAmount > 0`) is unconditionally
+rejected before the transaction opens, for both identity types — see §4.
+
+### 3. Identity: one transaction, not two dispatch paths
+
+Unlike `submitTakeawayOrder.ts` (which dispatches to structurally separate guest/authenticated
+functions), dine-in's anonymous guest and phone-verified customer both resolve from the SAME
+`tableGuestSessions` record inside the SAME transaction; only the sign-in-provider check decides
+`customerId`/benefit eligibility. `guestAuthUid` is always `request.auth.uid` for both, matching the
+removed rules' own requirement. Anonymous guests: `customerId: null`, no Loyalty account ever read or
+written, `selectedRewardId` rejected fail-closed with the same `catalogReward/reward-not-currently-valid`
+reason every other channel uses for an ineligible request — proven by test that zero `loyaltyAccounts`/
+`loyaltyLedgerEntries` documents are ever touched for a guest order, reward requested or not.
+
+### 4. Cash Boncuk redemption: audited, explicitly not enabled
+
+`docs/business_rules.md`'s `BR-LOYALTY-019` already states "`dineInQr`/POS/staff-created orders can never
+carry a redemption." Per this task's own instruction ("If dine-in Boncuk cash redemption was never
+explicitly approved/implemented, DO NOT silently add new product behavior"), `submitDineInOrder.ts`
+unconditionally rejects any `requestedBoncukAmount > 0` with `boncuk/redemption-not-allowed`, for both
+identity types, before the transaction even opens — despite the technical blocker (no server pricing) now
+being resolved. `SubmitDineInOrderGateway` (Flutter) has no `requestedBoncukAmount` parameter at all —
+structurally absent, not silently ignored. This is a conservative decision being reported, not a reversal.
+
+### 5. Lifecycle: consolidated to the minimum necessary
+
+`dineInOrderLifecycle.ts` re-exports the shared `applyOrderLifecycleTransition`/
+`writeOrderStatusChangeAuditEvent` helpers (mirrors `takeawayOrderLifecycle.ts`'s own thin re-export
+pattern) with dine-in-specific closed reason-code enums. `advanceDineInOrderStatus.ts` consolidates
+confirm/reject/kitchen-advance/pre-completion-cancel into ONE callable (deliberately not split into 3 like
+Takeaway/Delivery) under one new `manageDineInOrders` permission (granted at the baseline `staff` role),
+transitioning `pendingConfirmation → confirmed → preparing → ready → served → completed`, mirroring
+Reservation-preorder's own kitchen chain. `refundDineInOrder.ts` handles `completed → refunded` only,
+under a separate, escalated `manageDineInOrderRefunds` permission (manager+) — mirroring every other
+channel's own refund-is-a-separate-boundary precedent. `staffAuthorization.ts`'s `StaffPermission` union
+and `DEFAULT_STAFF_ROLE_PERMISSIONS` map were extended with both new permissions.
+
+### 6. `firestore.rules` — customer direct-create removed, not just hardened
+
+`isValidGuestTableOrder`, `isValidAuthenticatedCustomerTableOrder`, and their three supporting helpers
+(`isActiveTableGuestSession`, `tableGuestSessionMatchesOrderScope`, `reservationContextIsOrderable`) were
+deleted entirely, with explanatory removal-note comments left at their original definition sites — mirrors
+the established full-deletion precedent from earlier phases rather than merely unwiring the branch. The
+two corresponding OR-branches were removed from `orders`' `allow create`. The `isOrgMember` staff/POS
+branch was deliberately left completely untouched — staff-assisted dine-in creation is explicitly out of
+scope. `clientOrderCreateOmitsBoncukRedemption()`'s doc comment was updated to reflect that
+`submitDineInOrder` is now the real server-authoritative writer of `dineInQr`'s `catalogReward` field.
+`read`/`update`/`delete` rules for `orders` are unaffected.
+
+### 7. Flutter: gateway replaces direct write, no unnecessary visual change
+
+New `SubmitDineInOrderGateway` (mirrors `SubmitDeliveryOrderGateway`'s exact shape) replaces
+`dine_in_checkout_screen.dart`'s previous direct-Firestore-write `_submitOrder` implementation entirely —
+the client no longer computes `customerId`/`guestAuthUid` at all; identity resolution moved fully
+server-side. `CatalogRewardCard` wiring is gated on `isRealCustomer(ref.watch(authProvider))` — guests see
+no reward/Boncuk UI at all, not even a disabled state that would leak account existence. Final success
+values (`catalogRewardTitle`/`catalogRewardBoncukCost`/etc.) come exclusively from the canonical
+server-created order snapshot, read back via `canonicalOrderRepositoryProvider.findById(...)`.
+`order_success_screen.dart`'s existing `_isDineIn` gate (present before this phase for plain copy, never
+wired into the Boncuk/catalogReward summary gates) was broadened to include dine-in.
+
+### 8. Tests
+
+**New backend test file**: `functions/src/test/submitDineInOrder.test.ts` (~30 tests across Identity,
+Table session security, Pricing, Catalog reward, Idempotency, and Lifecycle/restore). **Extended**:
+`functions/src/test/loyaltyOrderEarning.test.ts` (3 tests updated for the new eligible-channels list —
+one test's own premise was found to be inaccurate: the order it built already had real server pricing
+authority by the seed helper's default, so it was rewritten to correctly prove a dine-in order WITH
+server pricing now earns, and a sibling test explicitly forces `pricingAuthority: null` to prove the
+provenance gate alone still excludes an untrusted order); `functions/src/test/staffAuthorization.test.ts`
+(2 tests updated for `staff`'s new permission list); `firestore-tests/rules.test.js` (7 existing
+positive-control tests for the now-removed customer-create path flipped from `assertSucceeds` to
+`assertFails`, each with an updated P7-D.1-dated description; every negative-control test in the same
+region left unchanged, since they remain correctly denied for the same totalizing reason). **Flutter**:
+`test/features/cart/presentation/screens/dine_in_checkout_screen_test.dart` fully rewritten (9 tests) for
+the new gateway architecture.
+
+**One non-obvious Flutter test bug found and fixed**: `ListView(children: [...])` still uses Sliver
+machinery internally and only materializes widgets within the current viewport + `cacheExtent` — an
+error-banner `Text` below a tall `CatalogRewardCard` was never built under the default test-surface size,
+making it unfindable even with `skipOffstage: false`. Fixed by setting an explicit, taller
+`tester.view.physicalSize`, mirroring `delivery_checkout_screen_test.dart`'s own established pattern
+(present there, omitted when this file was first written from scratch).
+
+**Files changed — backend**: new `functions/src/submitDineInOrder.ts`, `dineInOrderLifecycle.ts`,
+`advanceDineInOrderStatus.ts`, `refundDineInOrder.ts`, `test/submitDineInOrder.test.ts`; modified
+`functions/src/staffAuthorization.ts`, `loyaltyOrderEarning.ts`, `index.ts`,
+`test/loyaltyOrderEarning.test.ts`, `test/staffAuthorization.test.ts`. **Files changed — rules**:
+`firestore.rules`, `firestore-tests/rules.test.js`. **Files changed — Flutter**: new
+`lib/features/cart/data/submit_dine_in_order_gateway.dart`,
+`lib/features/cart/presentation/providers/dine_in_order_dependencies_provider.dart`; modified
+`lib/features/cart/presentation/screens/dine_in_checkout_screen.dart`, `order_success_screen.dart`,
+`test/features/cart/presentation/screens/dine_in_checkout_screen_test.dart`. **Docs**: this entry,
+`docs/business_rules.md` (new `BR-LOYALTY-030`, `BR-LOYALTY-029`'s blocker note updated to point to it),
+`docs/feature_status.md` (P7-D.1 entry).
+
+**Exact gate totals**: Functions build (`tsc`) clean. Functions FULL emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`, JDK 21) — **1450/1450, 0 failed** (up from P7-D's 1421 — 29 new
+`submitDineInOrder.test.ts` tests). Firestore Rules FULL suite (JDK 21) — **367/367, 0 failed** (same
+total as P7-D — 7 tests flipped in place from `assertSucceeds` to `assertFails`, none added/removed).
+`flutter analyze` — clean, no issues. `dart format` — 3 files reformatted (whitespace only). `flutter
+test` — result pending at the time of writing this entry, to be confirmed in the final report. No commit
+was made, per this task's own explicit instruction (stated twice: "DO NOT commit until review" /
+"DO NOT COMMIT").
+
+**Operational note**: the persistent `abakus-one-dev` dev emulator was stopped to free ports for the
+Functions FULL suite (a re-stop of an emulator restarted moments earlier in this same continuous session,
+consistent with the already-disclosed and approved stop/rerun/restart pattern from the P7-D turn) and
+restarted afterward on the same project/ports; all three new dine-in functions confirmed loaded.

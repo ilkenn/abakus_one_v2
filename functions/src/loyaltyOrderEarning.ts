@@ -146,6 +146,13 @@ export const LOYALTY_EARNING_ELIGIBLE_CHANNELS = [
   "takeaway",
   "delivery",
   "reservationPreorder",
+  // Boncuk Loyalty P7-D.1 (2026-08-24) — `dineInQr` joins the moment a real
+  // server pricing pipeline (`submitDineInOrder.ts`) exists to stamp
+  // `pricingAuthority: ORDER_PRICING_AUTHORITY_SERVER_V1` on it, exactly as
+  // `orderPricingAuthority.ts`'s own doc comment anticipated. `dineInStaff`
+  // (POS-created dine-in) is deliberately NOT added — that path still has
+  // no server pricing authority and remains excluded, same as before.
+  "dineInQr",
 ] as const;
 type LoyaltyEarningEligibleChannel = (typeof LOYALTY_EARNING_ELIGIBLE_CHANNELS)[number];
 

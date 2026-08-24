@@ -1,17 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/auth/real_customer_check.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
-import '../../../orders/domain/models/order_channel.dart';
+import '../../domain/models/cart_item.dart';
+import '../../../loyalty/domain/models/loyalty_reward.dart';
+import '../../../loyalty/presentation/providers/loyalty_providers.dart';
+import '../../../orders/domain/models/order_id.dart';
 import '../../../orders/domain/models/order_model.dart';
 import '../../../orders/presentation/providers/orders_provider.dart';
 import '../../../qr/presentation/providers/active_table_context_provider.dart';
 import '../../../qr/presentation/providers/table_guest_session_dependencies_provider.dart';
 import '../../../qr/presentation/widgets/table_context_badge.dart';
+import '../../data/submit_dine_in_order_gateway.dart';
 import '../providers/cart_provider.dart';
+import '../providers/dine_in_order_dependencies_provider.dart';
+import '../widgets/catalog_reward_card.dart';
 import 'order_success_screen.dart';
 
 /// Checkout for a "Masada Sipariş" (dine-in QR) order — a separate,
@@ -22,6 +29,18 @@ import 'order_success_screen.dart';
 /// no cutlery/courier preferences, no pickup wording. The existing
 /// (non-functional) payment-method selector UI is kept as-is — "preserve
 /// the current payment architecture."
+///
+/// Boncuk Loyalty Program P7-D.1 (2026-08-24) — submission now goes
+/// through the server-authoritative `submitDineInOrder` Cloud Function
+/// (`SubmitDineInOrderGateway`), never a direct client Firestore write.
+/// Catalog-reward selection ([CatalogRewardCard]) is offered ONLY to a
+/// real, phone-verified customer ([isRealCustomer]) — an anonymous table
+/// guest sees no reward/Loyalty control of any kind, not even a disabled
+/// one (never leaks account-existence/balance information a guest has no
+/// business seeing). There is no cash-Boncuk-redemption control on this
+/// screen at all — dine-in cash Boncuk redemption is not a supported
+/// product behavior (`submitDineInOrder.ts`'s own doc comment,
+/// BR-LOYALTY-019).
 ///
 /// `CartScreen`'s "Siparişi Tamamla" button pushes this screen instead of
 /// `CheckoutScreen` whenever `activeTableContextProvider` is non-null.
@@ -41,7 +60,9 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
   ];
 
   late final TextEditingController _noteController;
+  late final String _submissionKey;
   String? _selectedPaymentMethod;
+  String? _selectedRewardId;
   bool _isSubmitting = false;
   String? _submitError;
 
@@ -50,12 +71,95 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
     super.initState();
     _noteController = TextEditingController();
     _selectedPaymentMethod = _paymentMethods.first;
+    _submissionKey = DateTime.now().microsecondsSinceEpoch.toString();
   }
 
   @override
   void dispose() {
     _noteController.dispose();
     super.dispose();
+  }
+
+  bool _isBowlCartItem(CartItem item) => item.id.startsWith('custom_bowl_');
+
+  List<DineInOrderItem> _buildOrderItems(List<CartItem> cartItems) {
+    return [
+      for (final item in cartItems)
+        if (_isBowlCartItem(item))
+          DineInBowlItem(
+            quantity: item.quantity,
+            ingredientIds: [
+              for (final modifier in item.selectedModifiers) modifier.optionId,
+            ],
+            note: item.note,
+          )
+        else
+          DineInProductItem(
+            productId: item.id,
+            quantity: item.quantity,
+            selectedModifiers: [
+              for (final modifier in item.selectedModifiers)
+                (groupId: modifier.groupId, optionId: modifier.optionId),
+            ],
+            note: item.note,
+          ),
+    ];
+  }
+
+  void _onRewardSelect(String? rewardId) {
+    setState(() {
+      _selectedRewardId = rewardId;
+      _submitError = null;
+    });
+  }
+
+  /// Mirrors `DeliveryCheckoutScreen._handleCartMightHaveInvalidatedReward`
+  /// exactly.
+  void _handleCartMightHaveInvalidatedReward() {
+    final rewardId = _selectedRewardId;
+    if (rewardId == null) return;
+    final rewards = ref.read(loyaltyRewardCatalogProvider).valueOrNull;
+    final reward = rewards?.where((r) => r.rewardId == rewardId).firstOrNull;
+    final cartProductIds = ref
+        .read(cartProvider)
+        .where((item) => !_isBowlCartItem(item))
+        .map((item) => item.id)
+        .toSet();
+    if (reward == null || !reward.isEligibleForCart(cartProductIds)) {
+      setState(() => _selectedRewardId = null);
+    }
+  }
+
+  /// Mirrors `DeliveryCheckoutScreen`'s own `_errorMessageFor` catalog-
+  /// reward branches exactly — no cash-Boncuk cases exist here at all,
+  /// since this channel never offers that control.
+  String _errorMessageFor(SubmitDineInOrderException error) {
+    final reason = error.boncukErrorReason;
+    if (reason != null) {
+      switch (reason) {
+        case 'catalogReward/reward-not-found':
+        case 'catalogReward/reward-not-currently-valid':
+          return 'Seçtiğin ödül artık kullanılamıyor. Lütfen tekrar seçim '
+              'yap veya ödül kullanmadan devam et.';
+        case 'catalogReward/product-not-in-cart':
+          return 'Seçtiğin ödül için uygun bir ürün sepetinde bulunamadı. '
+              'Lütfen sepetini kontrol et.';
+        case 'catalogReward/insufficient-balance':
+          return 'Bu ödül için yeterli Boncuk bakiyen yok. Bilgileri '
+              'güncelledik; ödül kullanmadan devam edebilirsin.';
+        case 'catalogReward/account-unavailable':
+          return 'Boncuk hesabına şu anda ulaşılamıyor. Tekrar deneyebilir '
+              'veya ödül kullanmadan devam edebilirsin.';
+        case 'catalogReward/benefit-stacking-not-allowed':
+          return 'Aynı anda birden fazla avantaj kullanılamaz.';
+        case 'catalogReward/channel-not-eligible':
+          return 'Seçtiğin ödül Masa siparişleri için kullanılamıyor. '
+              'Lütfen tekrar seçim yap veya ödül kullanmadan devam et.';
+        case 'boncuk/redemption-not-allowed':
+          return 'Boncuk Masa siparişlerinde şu anda kullanılamıyor.';
+      }
+    }
+    return error.message;
   }
 
   Future<void> _submitOrder() async {
@@ -79,13 +183,10 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
     });
 
     // Re-verify the session is still active right before submitting —
-    // against the real, server-authoritative `tableGuestSessions` record
-    // (Phase 3), never the client's own possibly-stale copy. The customer
-    // may have been sitting on this screen for a while, and an expired/
-    // revoked session must never accept a new order — the Firestore
-    // Security Rule re-checks this independently at write time regardless
-    // of this call; this exists only to show a friendly message instead
-    // of a raw write failure.
+    // against the real, server-authoritative `tableGuestSessions` record,
+    // never the client's own possibly-stale copy. `submitDineInOrder`
+    // independently re-checks this itself regardless; this exists only to
+    // show a friendly message instead of a raw callable failure.
     final liveSession = await ref
         .read(tableGuestSessionFirestoreClientProvider)
         .findById(tableContext.session.id);
@@ -108,81 +209,30 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
       return;
     }
 
-    // Phase 3.1 — canonical customer detection, client-side: `authProvider`
-    // is the app's own trustworthy signal for "a real, phone-verified
-    // Abaküs customer is signed in" (it never reacts to
-    // `signInAnonymously()` — see `TechnicalIdentityProvider`'s doc
-    // comment). `guestAuthUid` is always the raw technical uid the active
-    // Table Guest Session was actually opened with — set regardless of
-    // whether that uid also belongs to a real customer.
-    final authSession = ref.read(authProvider).session;
-    final technicalUid = ref.read(technicalIdentityProviderProvider).currentUid;
-    if (technicalUid == null) {
-      // The Table Guest Session couldn't have been opened without a
-      // Firebase Auth identity — this should be unreachable in practice.
-      // Fail closed rather than submit an order with no ownership at all.
-      if (!mounted) return;
-      setState(() {
-        _isSubmitting = false;
-        _submitError =
-            'Sipariş gönderilirken bir sorun oluştu. Lütfen tekrar dene.';
-      });
-      return;
-    }
-    if (authSession != null &&
-        !authSession.isExpired &&
-        authSession.uid != technicalUid) {
-      // The app believes a specific real customer is signed in, but the
-      // actual current Firebase Auth uid disagrees — never guess which
-      // one is right. Fail closed rather than risk attaching the wrong
-      // customerId to a real order.
-      if (!mounted) return;
-      setState(() {
-        _isSubmitting = false;
-        _submitError =
-            'Sipariş gönderilirken bir sorun oluştu. Lütfen tekrar dene.';
-      });
-      return;
-    }
-    final customerId = (authSession != null && !authSession.isExpired)
-        ? authSession.uid
-        : null;
-
     try {
-      final order = await ref.read(submitCustomerOrderProvider).call(
-            cartItems: cartItems,
-            customerId: customerId,
-            channel: OrderChannel.dineInQr,
-            // The QR-resolved branch/restaurant this table actually
-            // belongs to, not submitCustomerOrderProvider's constructor
-            // default — closes the "Order.branchId/restaurantId never
-            // reflected the scanned table's real scope" gap the Gel Al
-            // architecture analysis found (Faz B/B.1). Harmless today
-            // (both currently resolve to the same single seeded
-            // restaurant/branch) and correct once a second one exists —
-            // and firestore.rules' tableGuestSessionMatchesOrderScope()
-            // already requires the order's restaurantId to match the
-            // session's, so submitting the real value (rather than always
-            // 'restaurant-1') is what makes that check meaningful instead
-            // of trivially true by coincidence.
-            branchId: tableContext.branchId,
-            restaurantId: tableContext.restaurantId,
-            tableId: tableContext.tableId,
-            tableSessionId: tableContext.session.id,
-            guestSessionId: tableContext.guestSession.id,
-            guestAuthUid: technicalUid,
-            // Server-generated snapshot from when this session was opened
-            // (Faz R.1C.2) — carried straight through, never re-derived
-            // here; `null` for the ordinary walk-in case.
-            reservationContextId: tableContext.reservationContextId,
-            customerNote: _noteController.text.trim(),
-          );
+      final gateway = ref.read(submitDineInOrderGatewayProvider);
+      final result = await gateway.submit(
+        submissionKey: _submissionKey,
+        tableSessionId: tableContext.session.id,
+        items: _buildOrderItems(cartItems),
+        customerNote: _noteController.text.trim(),
+        selectedRewardId: _selectedRewardId,
+      );
+
+      final order = await ref
+          .read(canonicalOrderRepositoryProvider)
+          .findById(OrderId(result.orderId));
+      if (order == null) {
+        throw StateError(
+          'submitDineInOrder succeeded but the resulting order could not '
+          'be read back (orderId: ${result.orderId}).',
+        );
+      }
 
       // Local-only bookkeeping via the existing domain seam
       // (`TableSession.withOrderAdded`) — `tableGuestSessions` has no
-      // client-writable order-list field (Cloud-Function/Admin-SDK-write-
-      // only), so unlike the pre-Phase-3 in-memory flow this updates only
-      // the client-held context, never a server record.
+      // client-writable order-list field, so this updates only the
+      // client-held context, never a server record.
       final updatedSession =
           tableContext.session.withOrderAdded(order.id.value);
       ref.read(activeTableContextProvider.notifier).set(
@@ -196,7 +246,23 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
           );
       ref.read(cartProvider.notifier).clearCart();
 
+      // Boncuk Loyalty P7-D.1 — a catalog-reward redemption debits the
+      // customer's Loyalty account; refresh their displayed balance/reward
+      // catalog now rather than waiting for a later screen (mirrors
+      // DeliveryCheckoutScreen/TakeawayCheckoutScreen exactly).
+      if (order.catalogReward != null) {
+        ref.invalidate(loyaltySnapshotProvider);
+        ref.invalidate(loyaltyRewardCatalogProvider);
+      }
+
       if (!mounted) return;
+      final catalogReward = order.catalogReward;
+      final catalogRewardProductName = catalogReward == null
+          ? null
+          : order.lines
+              .firstWhere(
+                  (line) => line.productId == catalogReward.redeemedProductId)
+              .productName;
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
@@ -204,10 +270,31 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
             orderId: order.id.value,
             dineInBranchName: tableContext.branchName,
             dineInTableName: tableContext.tableName,
+            catalogRewardTitle: catalogReward?.title,
+            catalogRewardBoncukCost: catalogReward?.boncukCost,
+            catalogRewardRedeemedProductName: catalogRewardProductName,
+            catalogRewardCoveredValueMinorUnits:
+                catalogReward?.coveredValueMinorUnits,
           ),
         ),
         (route) => route.isFirst,
       );
+    } on SubmitDineInOrderException catch (error) {
+      if (!mounted) return;
+      final isBoncukError = error.boncukErrorReason != null;
+      setState(() {
+        _isSubmitting = false;
+        _submitError = _errorMessageFor(error);
+        if (isBoncukError) {
+          // CRITICAL — never auto-resubmit without the reward (mirrors
+          // DeliveryCheckoutScreen/TakeawayCheckoutScreen exactly).
+          _selectedRewardId = null;
+        }
+      });
+      if (isBoncukError) {
+        ref.invalidate(loyaltySnapshotProvider);
+        ref.invalidate(loyaltyRewardCatalogProvider);
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -222,6 +309,24 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
   Widget build(BuildContext context) {
     final cartItems = ref.watch(cartProvider);
     final totalPrice = ref.watch(cartTotalPriceProvider);
+    final isRealCustomerSession = isRealCustomer(ref.watch(authProvider));
+
+    ref.listen<List<CartItem>>(cartProvider, (previous, next) {
+      _handleCartMightHaveInvalidatedReward();
+    });
+    if (isRealCustomerSession) {
+      ref.listen<AsyncValue<List<LoyaltyReward>>>(loyaltyRewardCatalogProvider,
+          (previous, next) {
+        _handleCartMightHaveInvalidatedReward();
+      });
+    }
+
+    final cartProductIds = cartItems
+        .where((item) => !_isBowlCartItem(item))
+        .map((item) => item.id)
+        .toSet();
+    final rewardsAsync =
+        isRealCustomerSession ? ref.watch(loyaltyRewardCatalogProvider) : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -294,6 +399,22 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
                       ],
                     ),
                   ),
+                  // Boncuk Loyalty Program P7-D.1 (2026-08-24) — real
+                  // customer only; an anonymous table guest never sees this
+                  // card at all, not even a disabled/zero state.
+                  if (isRealCustomerSession && rewardsAsync != null) ...[
+                    const SizedBox(height: AppSpacing.lg),
+                    CatalogRewardCard(
+                      rewardsAsync: rewardsAsync,
+                      cartProductIds: cartProductIds,
+                      selectedRewardId: _selectedRewardId,
+                      boncukCashRedemptionActive: false,
+                      controlsFrozen: _isSubmitting,
+                      onSelect: _onRewardSelect,
+                      onRetry: () =>
+                          ref.invalidate(loyaltyRewardCatalogProvider),
+                    ),
+                  ],
                   const SizedBox(height: AppSpacing.lg),
                   Text(
                     'Ödeme Yöntemi',

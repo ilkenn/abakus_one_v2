@@ -147,31 +147,31 @@ service cloud.firestore {
       return !('pricingAuthority' in request.resource.data);
     }
 
-    // Boncuk Loyalty P4-B (2026-08-22) / P7-D (2026-08-24) —
+    // Boncuk Loyalty P4-B (2026-08-22) / P7-D (2026-08-24) / P7-D.1
+    // (2026-08-24) —
     // `boncukRedemption`/`catalogReward` and
     // `selectedBenefitType: 'boncukRedemption'|'catalogReward'` are
     // settlement/redemption facts computed exclusively inside
     // `submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`/`submitReservation
-    // .ts`'s own server-authoritative transactions (real customer identity,
-    // real loyalty account balance, atomic debit + deterministic ledger
-    // entry). Exactly like `pricingAuthority` above, no client create
-    // path — staff/POS (`isOrgMember`), an anonymous QR guest
-    // (`isValidGuestTableOrder`), or a real-customer QR guest
-    // (`isValidAuthenticatedCustomerTableOrder`) — may ever claim EITHER
-    // benefit for itself, on any channel. A client MAY still freely omit
-    // `selectedBenefitType` entirely or set it to `'none'`.
+    // .ts`/`submitDineInOrder.ts`'s own server-authoritative transactions
+    // (real customer identity, real loyalty account balance, atomic debit +
+    // deterministic ledger entry). Exactly like `pricingAuthority` above, no
+    // client create path may ever claim either benefit for itself, on any
+    // channel. A client MAY still freely omit `selectedBenefitType` entirely
+    // or set it to `'none'`.
     //
-    // **P7-D note**: dine-in (`dineInQr`) order CREATION still has no
-    // server-authoritative pipeline at all (see P7-D's own audit,
-    // `docs/decisions.md`) — a dine-in customer can never legitimately
-    // reach a real `catalogReward`/`boncukRedemption` this way, so this
-    // function's own job is purely defensive: close the gap outright,
-    // rather than leave it open on the reasoning "nothing can satisfy it
-    // yet" (that reasoning stops holding the moment ANY other channel's
-    // server-authoritative writer starts producing these fields — Admin SDK
-    // writes bypass these rules entirely, but a forged CLIENT create must
-    // never be able to mimic one). `'coupon'` remains unimplemented
-    // anywhere and is intentionally not listed here yet.
+    // **P7-D.1 update**: as of this phase, `submitDineInOrder` IS the real
+    // server-authoritative writer of `catalogReward` for the `dineInQr`
+    // channel — the direct-client-create paths that used to make this
+    // function's dine-in coverage purely defensive
+    // (`isValidGuestTableOrder`/`isValidAuthenticatedCustomerTableOrder`)
+    // are REMOVED this phase (see this file's own removal note further up).
+    // This function's job for `dineInQr` is now identical to every other
+    // channel's: the ONE remaining client-create path for this channel
+    // (the `isOrgMember` staff/POS branch, deliberately left untouched —
+    // POS is out of scope) must still never be able to forge these fields
+    // for itself. `'coupon'` remains unimplemented anywhere and is
+    // intentionally not listed here yet.
     function clientOrderCreateOmitsBoncukRedemption() {
       return !('boncukRedemption' in request.resource.data) &&
         !('catalogReward' in request.resource.data) &&
@@ -505,61 +505,25 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
-    // Phase 3 — whether `sessionId` is a live, currently-usable Table
-    // Guest Session belonging to the caller. Every condition is checked
-    // against the server-written `tableGuestSessions` document itself,
-    // never against anything the order-create request claims about
-    // itself — this is the one place "request.auth.uid matches the
-    // session" and "the session hasn't expired/been revoked" are decided.
-    function isActiveTableGuestSession(sessionId) {
-      return isSignedIn() &&
-        sessionId is string &&
-        exists(/databases/$(database)/documents/tableGuestSessions/$(sessionId)) &&
-        get(/databases/$(database)/documents/tableGuestSessions/$(sessionId)).data.guestAuthUid == request.auth.uid &&
-        get(/databases/$(database)/documents/tableGuestSessions/$(sessionId)).data.status == 'active' &&
-        get(/databases/$(database)/documents/tableGuestSessions/$(sessionId)).data.expiresAt > request.time;
-    }
-
-    // Whether the order payload's own organization/restaurant/branch/table
-    // claims match the session's server-recorded scope for those same
-    // fields — the step that makes it impossible for a client to create an
-    // order "for" a different tenant/branch/table than the one their QR
-    // scan actually resolved to, no matter what it puts in the request
-    // body.
-    function tableGuestSessionMatchesOrderScope(sessionId, data) {
-      let session = get(/databases/$(database)/documents/tableGuestSessions/$(sessionId)).data;
-      return session.organizationId == data.organizationId &&
-        session.restaurantId == data.restaurantId &&
-        session.branchId == data.branchId &&
-        session.tableId == data.tableId &&
-        // Faz R.1C.2 §15 — exact reservationContextId equality, missing-
-        // field-safe (`.get(key, default)`) so a client can never bypass
-        // this by omitting the field from either side, coerce a real
-        // context id down to null, or claim a different reservation's
-        // context than the one the session was actually snapshotted with.
-        // `null == null` when neither side carries a context (the ordinary
-        // walk-in case) is the one case this must still allow.
-        session.get('reservationContextId', null) == data.get('reservationContextId', null);
-    }
-
-    // Faz R.3B §11/§14/§15 — a table-session order create must never be
-    // usable to place a NEW reservation-linked order once the referenced
-    // Reservation has gone terminal (cancelled/completed/noShow/rejected):
-    // the session itself is deliberately never deleted/killed on a
-    // terminal transition (its own read/lifetime behavior is preserved, an
-    // old session's immutable `reservationContextId` is never rewritten),
-    // but this rule is the actual invariant enforcement — every new order
-    // create checks the REFERENCED Reservation's own live `status`, not
-    // anything cached on the session. `reservationContextId == null` (the
-    // ordinary walk-in case) is always allowed, unaffected. A context that
-    // references a Reservation document that somehow doesn't exist fails
-    // closed (`exists(...)` first, never assumed).
-    function reservationContextIsOrderable(data) {
-      let reservationContextId = data.get('reservationContextId', null);
-      return reservationContextId == null ||
-        (exists(/databases/$(database)/documents/reservations/$(reservationContextId)) &&
-          get(/databases/$(database)/documents/reservations/$(reservationContextId)).data.status == 'confirmed');
-    }
+    // Boncuk Loyalty P7-D.1 (2026-08-24) — `isActiveTableGuestSession`/
+    // `tableGuestSessionMatchesOrderScope`/`reservationContextIsOrderable`
+    // (Phase 3/Faz R.3B) REMOVED. They existed only to validate the two
+    // direct-client-create `orders` branches below
+    // (`isValidGuestTableOrder`/`isValidAuthenticatedCustomerTableOrder`),
+    // also removed this phase — dine-in order creation is no longer a
+    // rules-validated direct write at all. `submitDineInOrder` (Admin SDK,
+    // bypasses this file by construction) is now the sole creation path
+    // for both an anonymous table guest and a phone-verified customer at a
+    // table: it re-reads the same `tableGuestSessions` document server-side
+    // (own-session ownership, active/expiry, scope derivation, and the
+    // linked-reservation orderable check all reimplemented inside that
+    // callable's transaction) with full canonical catalog/pricing/Loyalty
+    // validation no rules-only shape check could ever provide — the exact
+    // same removal shape Faz D.3.1 already applied to takeaway's own
+    // `isValidAuthenticatedTakeawayOrder` (see that removal's own note
+    // below). The staff (`isOrgMember`) branch is completely untouched —
+    // POS/staff-assisted dine-in order creation remains explicitly out of
+    // this phase's scope.
 
     // Phase 3.1 — whether the caller's Firebase Auth token was issued by a
     // real phone-verification sign-in, never by `signInAnonymously()`.
@@ -580,42 +544,12 @@ service cloud.firestore {
         request.auth.token.firebase.sign_in_provider == 'phone';
     }
 
-    // Variant A — an anonymous (or otherwise non-phone-verified) Table
-    // Guest Session order. `customerId` must be `null`: this is the one
-    // condition that keeps an anonymous guest from ever appearing as a
-    // real Abaküs customer, independent of `isRealCustomerAuth()` (a
-    // belt-and-suspenders pair, not a single point of failure).
-    function isValidGuestTableOrder(data) {
-      return data.tableSessionId is string &&
-        isActiveTableGuestSession(data.tableSessionId) &&
-        tableGuestSessionMatchesOrderScope(data.tableSessionId, data) &&
-        reservationContextIsOrderable(data) &&
-        data.customerId == null &&
-        data.guestAuthUid == request.auth.uid &&
-        data.channel == 'dineInQr' &&
-        (data.status == 'created' || data.status == 'pendingConfirmation');
-    }
-
-    // Variant B — a real, phone-verified Abaküs customer ordering at a
-    // table. Requires everything Variant A does (a live, owned, correctly-
-    // scoped Table Guest Session — customer identity is never a substitute
-    // for table authorization) **plus** `isRealCustomerAuth()` and
-    // `customerId == request.auth.uid`. The `isRealCustomerAuth()` check is
-    // what stops an anonymous guest from simply writing
-    // `customerId: request.auth.uid` to impersonate a customer — their
-    // token's `sign_in_provider` is `'anonymous'`, so this function is
-    // `false` for them regardless of what `customerId` value they claim.
-    function isValidAuthenticatedCustomerTableOrder(data) {
-      return isRealCustomerAuth() &&
-        data.tableSessionId is string &&
-        isActiveTableGuestSession(data.tableSessionId) &&
-        tableGuestSessionMatchesOrderScope(data.tableSessionId, data) &&
-        reservationContextIsOrderable(data) &&
-        data.customerId == request.auth.uid &&
-        data.guestAuthUid == request.auth.uid &&
-        data.channel == 'dineInQr' &&
-        (data.status == 'created' || data.status == 'pendingConfirmation');
-    }
+    // Boncuk Loyalty P7-D.1 (2026-08-24) — `isValidGuestTableOrder`
+    // (anonymous table guest) and `isValidAuthenticatedCustomerTableOrder`
+    // (phone-verified customer at a table) REMOVED — see this file's own
+    // removal note further up (immediately after `isActiveTableGuestSession`
+    // used to live). `submitDineInOrder` now validates both identity
+    // variants server-side, inside its own transaction.
 
     // Faz C originally added `isValidAuthenticatedTakeawayOrder` here — a
     // direct-client-create path for an authenticated in-app Gel Al order,
@@ -808,14 +742,19 @@ service cloud.firestore {
       // 'created' alone (without number-only progression) still can't
       // reach any further state on its own.
       //
-      // Phase 3/3.1 add two more independent ways to satisfy this rule —
-      // an anonymous Table Guest order (`isValidGuestTableOrder`) and a
-      // real-customer Table Guest order (`isValidAuthenticatedCustomerTableOrder`)
-      // — for the QR-guest/dine-in channel this PERMISSION_DENIED bug
-      // report was about. The original `isOrgMember` branch is completely
-      // unmodified: a staff/POS create that already worked continues to
-      // work exactly as before, evaluated first, independently of both
-      // new branches.
+      // Phase 3/3.1 had added two more independent ways to satisfy this
+      // rule here — an anonymous Table Guest order
+      // (`isValidGuestTableOrder`) and a real-customer Table Guest order
+      // (`isValidAuthenticatedCustomerTableOrder`). **Removed, Boncuk
+      // Loyalty P7-D.1 (2026-08-24)**: both customer-facing dine-in order
+      // types are now created exclusively via `submitDineInOrder` (Admin
+      // SDK, bypasses this rule entirely) — full canonical catalog/
+      // pricing/Loyalty validation no rules-only shape check could ever
+      // provide, mirroring Faz D.3.1's own takeaway removal immediately
+      // below. The `isOrgMember` staff branch is DELIBERATELY left
+      // unmodified (unlike the `delivery` exclusion further down) — a
+      // staff/POS direct-write dine-in order create is explicitly out of
+      // this phase's scope, not removed.
       //
       // Faz C had added one more independent branch here —
       // `isValidAuthenticatedTakeawayOrder`, for an authenticated in-app
@@ -859,9 +798,7 @@ service cloud.firestore {
             (!('channel' in request.resource.data) ||
               request.resource.data.channel != 'delivery') &&
             (request.resource.data.status == 'created' ||
-              request.resource.data.status == 'pendingConfirmation')) ||
-          isValidGuestTableOrder(request.resource.data) ||
-          isValidAuthenticatedCustomerTableOrder(request.resource.data)
+              request.resource.data.status == 'pendingConfirmation'))
         );
       allow update: if false; // Cloud Function only — every status
                                // transition after creation is

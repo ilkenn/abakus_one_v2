@@ -385,8 +385,13 @@ test("basis: a negative or non-integer minorUnits returns null", () => {
 // C. Eligible-channel closed list
 // =========================================================================
 
-test("eligible channels are exactly takeaway/delivery/reservationPreorder", () => {
-  assert.deepStrictEqual([...LOYALTY_EARNING_ELIGIBLE_CHANNELS], ["takeaway", "delivery", "reservationPreorder"]);
+test("eligible channels are exactly takeaway/delivery/reservationPreorder/dineInQr", () => {
+  // Boncuk Loyalty P7-D.1 (2026-08-24) — dineInQr joined once
+  // submitDineInOrder.ts gave it a real server pricing authority.
+  assert.deepStrictEqual(
+    [...LOYALTY_EARNING_ELIGIBLE_CHANNELS],
+    ["takeaway", "delivery", "reservationPreorder", "dineInQr"],
+  );
 });
 
 // =========================================================================
@@ -470,7 +475,7 @@ test("eligibility: a technical anonymous guest uid is never treated as a loyalty
   assert.strictEqual(result.reason, "guest-order-no-customer");
 });
 
-test("eligibility: dine-in QR orders (client-computed pricing) never earn today", async () => {
+test("eligibility: Boncuk Loyalty P7-D.1 (2026-08-24) — a dine-in QR order WITH real server pricing authority (submitDineInOrder.ts's own stamp, the default `seedOrder` shape here) now earns Boncuk", async () => {
   const orderId = nextId("order");
   const uid = nextId("uid");
   const eventId = `${orderId}-completed`;
@@ -480,8 +485,11 @@ test("eligibility: dine-in QR orders (client-computed pricing) never earn today"
   const result = await processOrderCompletionEventForLoyaltyEarning(
     db(), eventId, completionEvent({ orderId, customerId: uid, channel: "dineInQr" }),
   );
-  assert.strictEqual(result.reason, "channel-not-eligible-for-earning");
-  assert.strictEqual(await accountDoc(uid), undefined);
+  assert.strictEqual(result.processed, true);
+  assert.strictEqual(result.reason, "earned");
+  assert.strictEqual(result.boncukEarned, 5);
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.lifetimeEarned, 5);
   assert.strictEqual(await eventFlag(eventId), true);
 });
 
@@ -762,17 +770,17 @@ test("provenance: a client-like order — arbitrary pricing, an eligible channel
   assert.strictEqual(await accountDoc(uid), undefined);
 });
 
-test("provenance: dineInQr remains excluded even with numerically valid pricing and even if it somehow carried a marker — channel gate is evaluated independently, first", async () => {
+test("provenance: Boncuk Loyalty P7-D.1 (2026-08-24) — a dineInQr order WITHOUT real server pricing authority (no submitDineInOrder.ts marker) is still excluded — the channel gate alone no longer suffices to exclude dineInQr, but the pricing-provenance gate still does for any order this untrusted", async () => {
   const orderId = nextId("order");
   const uid = nextId("uid");
   const eventId = `${orderId}-completed`;
   await seedMembership(uid);
-  await seedOrder({ orderId, customerId: uid, channel: "dineInQr", grandTotalMinorUnits: 5000 });
+  await seedOrder({ orderId, customerId: uid, channel: "dineInQr", grandTotalMinorUnits: 5000, pricingAuthority: null });
 
   const result = await processOrderCompletionEventForLoyaltyEarning(
     db(), eventId, completionEvent({ orderId, customerId: uid, channel: "dineInQr" }),
   );
-  assert.strictEqual(result.reason, "channel-not-eligible-for-earning");
+  assert.strictEqual(result.reason, "untrusted-pricing-provenance");
   assert.strictEqual(await accountDoc(uid), undefined);
 });
 
