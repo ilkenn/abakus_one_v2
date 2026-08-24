@@ -18,6 +18,7 @@ import {
 import { canTransition } from "./orderStatus";
 import { PREORDER_KITCHEN_RELEASE_LEAD_MINUTES } from "./reservationConfig";
 import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "./orderPricingAuthority";
+import { sanitizeRequestedBoncukAmount } from "./boncukRedemptionErrors";
 
 /**
  * Optional reservation preorder — Faz R.1D.1 (`docs/decisions.md` ADR-027
@@ -107,6 +108,16 @@ type RawItem = RawProductItem | RawBowlItem;
 
 export interface ParsedPreorderRequest {
   items: RawItem[];
+  /**
+   * Boncuk Loyalty P6-B (2026-08-24) — a whole, non-negative Boncuk COUNT,
+   * mirroring `submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`'s own
+   * `requestedBoncukAmount` contract exactly (reused `sanitizeRequestedBoncukAmount`,
+   * not a third copy). Only ever meaningful when a preorder itself exists —
+   * there is structurally no field on a plain (no-preorder) reservation
+   * request for this value at all, since it lives nested inside `preorder`.
+   * `0` (the default, absent/null on the wire) means "no Boncuk requested."
+   */
+  requestedBoncukAmount: number;
 }
 
 /**
@@ -144,7 +155,8 @@ export function parsePreorderRequest(raw: unknown): ParsedPreorderRequest | null
     }
     return invalid('each preorder item must have kind "product" or "bowl".');
   });
-  return { items };
+  const requestedBoncukAmount = sanitizeRequestedBoncukAmount(data.requestedBoncukAmount);
+  return { items, requestedBoncukAmount };
 }
 
 function requireValidQuantity(raw: unknown, context: string): number {
@@ -380,6 +392,16 @@ export function buildPreorderOrderDocument(params: {
   lines: ComputedOrderLine[];
   pricing: ComputedPriceBreakdown;
   now: Date;
+  /** Boncuk Loyalty P6-B (2026-08-24) — settlement, never a discount (BR-LOYALTY-019); `pricing` above is never touched by redemption. Mirrors `submitDeliveryOrder.ts`'s own `buildDeliveryOrderDocument` extension exactly. */
+  selectedBenefitType: "none" | "boncukRedemption";
+  boncukRedemption: {
+    boncukUsed: number;
+    valueMinorUnits: number;
+    remainingPayableMinorUnits: number;
+    redemptionValueMinorUnitsPerBoncuk: number;
+    maxRedemptionBasisPoints: number;
+    loyaltyPolicyVersion: number;
+  } | null;
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -459,6 +481,13 @@ export function buildPreorderOrderDocument(params: {
       tip: moneyField(0),
       grandTotal: moneyField(params.pricing.grandTotalMinorUnits),
     },
+    // Boncuk Loyalty P6-B (2026-08-24) — server-computed and server-stamped
+    // only, mirroring `submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`'s
+    // own `buildOrderDocument` exactly — `firestore.rules`'
+    // `clientOrderCreateOmitsBoncukRedemption()` is already generic across
+    // every order-create branch, no change needed there.
+    selectedBenefitType: params.selectedBenefitType,
+    boncukRedemption: params.boncukRedemption,
     statusHistory: [
       {
         id: `${params.orderId}-transition-1`,

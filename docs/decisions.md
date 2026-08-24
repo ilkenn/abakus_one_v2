@@ -14522,3 +14522,223 @@ suite (ruling out a listener-leak explanation before pursuing the two confirmed 
 Rules suite rerun **354/354** (no rules file touched; rerun anyway for rigor). `flutter analyze` rerun
 clean; `flutter test` rerun **3352/12/0**, unchanged (no Flutter file touched by this correction). No
 commit was made.
+
+## Boncuk Loyalty Program P6-A — Reservation Preorder Boncuk Fast Reuse Audit (2026-08-24)
+
+**Status**: Audit only — no code changed. Goal: extend the already-accepted takeaway/delivery Boncuk
+architecture to the `reservationPreorder` channel with maximum reuse.
+
+**Key finding — the exact structural blocker**: a `reservationPreorder`-channel order, once released to
+kitchen (`status: confirmed`), had **no code path anywhere in the codebase** that could ever write its
+status again. `completeReservation.ts` explicitly never touched it ("DO NOT cancel"),
+`cancelReservation.ts`'s staff-cancel branch left it frozen, `markReservationNoShow.ts` explicitly
+skipped a released order. If Boncuk were debited at submission (the architecturally consistent point,
+matching takeaway/delivery), it would be silently, permanently lost in the overwhelming majority of real
+confirmed-reservation outcomes, since nothing would ever move the order to a terminal status that
+triggers the existing restore consumer. Reservation authorization was also confirmed single-tier
+(`manageReservations` only, org-scoped, no `requireBranchAccess`) — unlike takeaway/delivery's tiered
+model — and `orderStatus.ts`'s generic `ALLOWED_TRANSITIONS` table was confirmed to already support
+everything a `confirmed → preparing → ready → served → completed` chain would need, zero changes.
+
+**Verdict**: `RESERVATION_BONCUK_IMPLEMENTATION_READY=NO` pending a new post-release order lifecycle.
+Directly informed P6-B's implementation plan — no architectural questions were reopened.
+
+## Boncuk Loyalty Program P6-B — Reservation Preorder Boncuk Redemption + Canonical Post-Release
+Lifecycle (2026-08-24)
+
+**Status**: Implemented — `reservationPreorder` channel only. Implements P6-A's accepted reuse plan
+directly (no further audit phase). **Still explicitly out of scope**: real payment-provider refund
+execution, partial refund, courier-authoritative lifecycle (not applicable to this channel),
+Admin/POS/KDS UI for the three new callables.
+
+### 1. Redemption backend — reuses the takeaway/delivery engine verbatim, debited at submission
+
+A reservation's linked preorder `Order` is created atomically inside `submitReservation.ts`'s own
+transaction — the same instant as takeaway/delivery order creation — so debiting Boncuk there is
+architecturally consistent. `submitReservation.ts` gains `requestedBoncukAmount` (parsed only when a
+preorder exists), and inside the SAME transaction: `boncukEligibleOrderAmountMinorUnits =
+pricing.grandTotalMinorUnits` directly (no fee/tip subtraction, matching delivery's own simplicity);
+reads `loyaltyAccounts`/`loyaltyPolicies`, calls `readLoyaltyPolicyInTransaction`/
+`resolveAccountForRedemption`/`calculateBoncukRedemption` (all imported, not reimplemented, mirroring
+`submitDeliveryOrder.ts`'s exact `PendingBoncukRedemption` shape); applies the account debit +
+`tx.create()`s the ledger entry during the write phase, never before all reads complete. Every
+`boncukError(...)` call site reuses `boncukRedemptionErrors.ts`'s shared vocabulary byte-for-byte. The
+idempotency fingerprint's `preorder` field was extended to include `requestedBoncukAmount`, so a retry
+with a different amount is rejected as a different payload — same rule as takeaway/delivery.
+
+### 2. Canonical post-release preorder lifecycle — implemented for the first time
+
+Three new callables, `orderId`-based (mirroring takeaway/delivery's KDS-board mental model, since staff
+operating the kitchen pipeline see orders, not reservations), each requiring `channel ===
+"reservationPreorder"` and reusing the existing single-tier `requireReservationManagerPermission`
+(`manageReservations`, org-scoped, `manager`/`admin`/`tenantOwner` — deliberately not tiered, unlike
+delivery's `manageDeliveryOrders`/`manageDeliveryOrderCancellations` split, since reservation
+authorization has never had a tiered model to extend): `advanceReservationPreorderOrderStatus`
+(`confirmed → preparing → ready → served → completed`, exact-next-only via its own
+`RESERVATION_PREORDER_NEXT_STATUS` map — one extra step than takeaway's own map, via `served`, mirroring
+dine-in rather than takeaway's direct hand-off or delivery's `outForDelivery`), which is genuinely
+reachable code for the first time since `LOYALTY_EARNING_ELIGIBLE_CHANNELS` whitelisted
+`"reservationPreorder"` back in P2A); `cancelReservationPreorderOrderForStaff` (`confirmed`\|`preparing`\|
+`ready → cancelled` only — `pendingConfirmation` redirected to the existing reservation-side path,
+`served`\|`completed` rejected as already fulfilled); `refundReservationPreorderOrder` (`completed →
+refunded` only, `refundDisposition` hardcoded exactly `manualExternalRefundConfirmed`, mirroring
+`BR-LOYALTY-022`/`BR-LOYALTY-024`'s own refund-attestation semantics). `orderStatus.ts`'s generic
+`ALLOWED_TRANSITIONS` table needed ZERO changes, confirmed by direct read before writing any callable —
+P6-A's own finding held.
+
+The PRE-release transitions (`pendingConfirmation → confirmed`/`pendingConfirmation → cancelled`) remain
+owned, completely unchanged, by `reservationPreorder.ts`'s own hand-rolled
+`buildPreorderConfirmationPatch`/`buildPreorderCancellationPatch` — still used by
+`respondToReservation.ts`/`respondToProposedChange.ts`/`cancelReservation.ts`/`reservationSweep.ts`. New
+`functions/src/reservationPreorderOrderLifecycle.ts` re-exports the same channel-generic
+`orderLifecycle.ts` functions (`applyOrderLifecycleTransition`/`writeOrderStatusChangeAuditEvent`) under
+reservation-scoped names, exactly mirroring `deliveryOrderLifecycle.ts`'s own thin-alias pattern
+(`BR-LOYALTY-024`) — zero changes to the shared engine itself.
+
+### 3. `markReservationNoShow.ts` and `completeReservation.ts` — extended, not replaced
+
+`markReservationNoShow.ts`: a still-`pendingConfirmation` preorder uses the existing, unmodified
+cancellation patch (unchanged code path); a released-but-unfulfilled (`confirmed`\|`preparing`\|`ready`)
+preorder is now inline-cancelled in the SAME transaction as the no-show write
+(`terminalReasonCode: "customerNoShow"`, `actorType: "staff"`, via direct calls to
+`applyReservationPreorderOrderLifecycleTransition`/`writeReservationPreorderOrderStatusChangeAuditEvent`),
+restoring Boncuk through the standard terminal-cancellation path the existing restore consumer already
+handles — never a bespoke confiscation path; an already-`served`\|`completed` preorder is left untouched.
+`completeReservation.ts` gains a new guard, inserted right after the existing confirmed-time-passed
+check: it reads the linked preorder order's status before any write and, when a preorder is linked,
+permits completion only via a fail-closed ALLOWLIST — exactly `completed`\|`refunded` — throwing
+`failed-precondition` for every other status (`pendingConfirmation`\|`confirmed`\|`preparing`\|`ready`\|
+`served`\|`cancelled`\|`rejected`); no linked preorder at all -> the guard does not apply. **Same-day
+microfix (2026-08-24)**: the guard originally shipped as a narrower denylist (`confirmed`\|`preparing`\|
+`ready` blocked, `served` sufficient to proceed) but was tightened the same day to this allowlist after
+an explicit locked-rule review — `served` (handed to the guest) and `completed` (lifecycle formally
+closed) are different facts, and only the latter satisfies "linked order fulfilled." `refunded` was
+deliberately kept allowed alongside `completed`, since it is only ever reachable FROM `completed`
+(`ALLOWED_TRANSITIONS.completed = ["refunded"]`, `orderStatus.ts`) — a refund is a later financial
+outcome layered on an already-fulfilled order, never a substitute for fulfillment. This decouples
+"kitchen finished the food" / "guest received the food" from "reservation desk marked the visit
+complete."
+
+### 4. Loyalty integration — zero consumer changes, verified not redesigned
+
+Exactly like takeaway/delivery, none of the three new callables (nor the two extended ones) writes
+`loyaltyAccounts`/`loyaltyLedgerEntries` directly — every one only ever writes the order's own `status`.
+The existing, unmodified terminal outbox (`onOrderTerminalFailureOrRefund.ts`) and its two independent
+consumers (`loyaltyRedemptionRestore.ts`/`orderEarnReversal.ts`), plus the existing `onOrderCompleted`/
+`loyaltyOrderEarning.ts` earning chain, all activate automatically from that single write — zero
+Loyalty-consumer code changed for this phase.
+
+### 5. Flutter — gateway, models, flow screen, confirmation screen, and a genuine bug fix
+
+`ReservationGateway.submitReservation` gains `int requestedBoncukAmount = 0`, sent nested inside
+`'preorder': {...}` only when a preorder exists and the amount is `> 0`; `ReservationException` gains
+`boncukErrorReason` (same `_extractBoncukErrorReason` pattern as takeaway/delivery).
+`ReservationPreorderStatus` extended from 3 values (`pendingConfirmation`/`confirmed`/`cancelled`) to 9
+(adds `preparing`/`ready`/`served`/`completed`/`rejected`/`refunded`); `ReservationPreorderSummary` gains
+optional `boncukUsed`/`boncukValueMinorUnits`/`remainingPayableMinorUnits`, mapped through by
+`ReservationRepository._mapPreorder`. `ReservationFlowScreen`'s review step wires the identical
+`BoncukRedemptionCard`/`computeClientEstimatedMaxBoncuk`/`loyaltySnapshotProvider` takeaway/delivery
+already use (basis: `preorderCartTotalPriceProvider`), shown only when the preorder cart is non-empty —
+no new Boncuk card. `OrderSuccessScreen`'s private `_BoncukSuccessSummary` was made public
+(`BoncukSuccessSummary`) and is reused verbatim by `ReservationConfirmationScreen` — no second summary
+widget was created; every value shown is server-confirmed, re-read from the canonical preorder order,
+never the pre-submit estimate.
+
+**Genuine bug found and fixed as a direct, necessary consequence of extending the enum** (judged
+in-scope without separate approval, since it was not an unrelated cleanup): `reservation_detail_screen
+.dart`'s `_PreorderStatusCard` used an if/else-if chain keyed partly on `kitchenReleaseAt != null`, which
+stays non-null after confirm and is never cleared for later statuses — every new post-confirm status
+would have fallen through to the stale "will be sent to kitchen at HH:mm" copy. Fixed by converting to an
+exhaustive `switch` over `ReservationPreorderStatus` with correct per-status Turkish copy.
+
+### 6. Tests
+
+**Backend, new**: `functions/src/test/reservationPreorderOrderLifecycle.test.ts` (37 tests — advance/
+cancel-staff/refund including authorization and idempotency, the full A-F loyalty chain covering both the
+pre-release paths that were already safe and the two paths P6-A proved were previously impossible
+(staff-cancel-after-release, no-show-after-release), and `completeReservation`'s new guard).
+**Backend, extended**: `functions/src/test/submitReservation.test.ts` (+10 Boncuk redemption tests —
+no-redemption baseline, within-caps settlement, exact-cap-boundary, over-cap rejection proving the WHOLE
+transaction rolls back — no Reservation at all, not merely no preorder — exceeds-balance, no-account,
+fractional-amount, idempotency, fail-closed different-amount retry, concurrent double-spend protection).
+**Backend, corrected**: `functions/src/test/reservationTerminalLifecycle.test.ts` — one genuinely
+superseded assertion (`markReservationNoShow` no longer leaves a released preorder's order status
+untouched; it now cancels it, restoring Boncuk) was corrected after direct re-reading of
+`cancelReservation.ts`/`completeReservation.ts`/`markReservationNoShow.ts` confirmed the other two
+originally-flagged assertions were still accurate and were left unchanged rather than weakened without
+evidence. **Flutter, extended**:
+`test/features/reservation/presentation/screens/reservation_flow_screen_test.dart` (+10 Boncuk cases —
+card visibility, toggle on/off, MAX-uses-order-cap, zero-balance quiet state, loading skeleton, scoped
+error retry, never-silently-clamp invalidation, no-auto-resubmit-on-Boncuk-error, snapshot invalidation
+on success), new `test/features/reservation/presentation/screens/reservation_confirmation_screen_test
+.dart` (3 cases — no preorder, preorder without redemption, preorder with a server-confirmed redemption
+rendering the reused `BoncukSuccessSummary` with exact values), and 2 pre-existing gateway test doubles
+(`reservation_flow_screen_test.dart`'s two fakes, `reservation_detail_screen_test.dart`'s one fake) fixed
+to add the new `requestedBoncukAmount` override parameter after the interface change.
+
+**Files changed — backend**: `functions/src/submitReservation.ts` (redemption),
+`functions/src/reservationPreorder.ts` (`requestedBoncukAmount`/`selectedBenefitType`/`boncukRedemption`
+on the order document), `functions/src/markReservationNoShow.ts` (post-release inline cancellation),
+`functions/src/completeReservation.ts` (new guard), `functions/src/index.ts` (3 new exports). **New
+files — backend**: `functions/src/reservationPreorderOrderLifecycle.ts`,
+`functions/src/advanceReservationPreorderOrderStatus.ts`,
+`functions/src/cancelReservationPreorderOrderForStaff.ts`,
+`functions/src/refundReservationPreorderOrder.ts`. **Files changed — Flutter**:
+`lib/features/reservation/data/reservation_gateway.dart` (`requestedBoncukAmount`/`boncukErrorReason`),
+`lib/features/reservation/domain/reservation_error_messages.dart` (Boncuk-first branch),
+`lib/features/reservation/domain/models/reservation_summary.dart` (enum extension, new summary fields),
+`lib/features/reservation/data/reservation_repository.dart` (mapping), `lib/features/cart/presentation/
+screens/order_success_screen.dart` (`BoncukSuccessSummary` made public),
+`lib/features/reservation/presentation/screens/reservation_confirmation_screen.dart` (reuses it),
+`lib/features/reservation/presentation/screens/reservation_flow_screen.dart` (Boncuk wiring),
+`lib/features/reservation/presentation/screens/reservation_detail_screen.dart` (status-copy bug fix).
+**Docs**: this entry (plus the P6-A audit entry immediately above), `docs/business_rules.md` (new
+`BR-LOYALTY-025`, `BR-LOYALTY-024`'s blocker note updated), `docs/feature_status.md` (P6-A + P6-B
+entries). **Rules**: `firestore.rules` not directly touched — no client write path was added or
+broadened (`clientOrderCreateOmitsBoncukRedemption()` is already channel-generic) — the full suite was
+rerun regardless, unchanged.
+
+**Exact gate totals**: Functions build (`tsc`) clean. Functions emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`) — **1281/1281, 0 failed**. Firestore Rules suite — **354/354, 0
+failed**, unchanged (no rules file touched). `flutter analyze` clean. `flutter test` — **3365 passed, 12
+skipped, 0 failed** (up from 3352 — 13 new tests: 10 flow-screen + 3 confirmation-screen). No commit was
+made, per this task's own explicit instruction.
+
+### P6-B microfix — `completeReservation`'s guard tightened from a denylist to a fail-closed allowlist
+(2026-08-24)
+
+**Status**: Implemented, same day as P6-B itself. A locked-rule review found the shipped guard
+insufficiently strict: it treated `served` as sufficient to permit `Reservation → completed`, but
+`served` (handed to the guest) and `completed` (the order's own lifecycle formally closed) are different
+facts. `completeReservation.ts`'s guard was rewritten from "reject `confirmed`\|`preparing`\|`ready`,
+otherwise proceed" to "when a preorder is linked, proceed ONLY if its status is exactly `completed`\|
+`refunded`, otherwise reject" — every other status now fails closed, including `served`\|`cancelled`\|
+`rejected`\|`pendingConfirmation`. `refunded` was deliberately kept in the allowlist because it is only
+ever reachable FROM `completed` (`ALLOWED_TRANSITIONS.completed = ["refunded"]`, `orderStatus.ts`) — a
+refund is a later financial outcome layered on an already-fulfilled order, never a substitute for
+fulfillment. No Boncuk accounting was touched — this is purely a `completeReservation`-side read-only
+precondition change; the redemption/restore/reversal/earning engine is unaffected.
+
+**Test corrections**: `reservationPreorderOrderLifecycle.test.ts`'s section E — the old "`served`
+succeeds" test was replaced with "`served` still blocks" (proving the tightened rule), and two new cases
+were added: "`cancelled` (via staff cancellation) blocks" and "`refunded` (necessarily
+completed-then-refunded) still permits completion." `reservationTerminalLifecycle.test.ts`'s test 28 (
+"never cancels a linked preorder when it is still `pendingConfirmation`") asserted the OLD guard's
+behavior — that `pendingConfirmation` did not block completion — which the tightened allowlist now
+contradicts; corrected to assert the reservation is blocked (`FAILED_PRECONDITION`) while still proving
+`completeReservation` never directly writes the linked preorder order either way (blocked or allowed).
+No other test file referenced the old guard's specific status list.
+
+**Files changed**: `functions/src/completeReservation.ts` (guard logic + doc comment),
+`functions/src/test/reservationPreorderOrderLifecycle.test.ts` (section E: 1 test rewritten, 2 added),
+`functions/src/test/reservationTerminalLifecycle.test.ts` (1 test corrected). **Docs**: this entry,
+`docs/business_rules.md`'s `BR-LOYALTY-025` guard bullet corrected, `docs/feature_status.md`'s P6-B entry
+corrected. No Flutter file touched (the guard is backend-only; nothing client-side referenced its
+specific status list).
+
+**Exact gate totals**: Functions build (`tsc`) clean. Targeted run (`reservationPreorderOrderLifecycle
+.test.ts` + `reservationTerminalLifecycle.test.ts` + `submitReservation.test.ts`) — **113/113, 0
+failed**. Functions FULL emulator suite (`GOOGLE_MAPS_PROVIDER_MODE=fixture`) — **1283/1283, 0 failed**
+(up from 1281 — net +2 tests: 1 test replaced, 2 added, 1 corrected in place). Firestore Rules suite not
+rerun (no rules file touched). `flutter analyze`/`flutter test` not rerun — Flutter was not touched by
+this microfix, per the task's own explicit instruction. No commit was made.

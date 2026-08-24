@@ -8,10 +8,17 @@ import 'package:go_router/go_router.dart';
 import 'package:abakus_one_v2/core/router/app_routes.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
+import 'package:abakus_one_v2/features/cart/presentation/screens/takeaway_checkout_screen.dart'
+    show computeClientEstimatedMaxBoncuk;
+import 'package:abakus_one_v2/features/loyalty/data/loyalty_gateway.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_account_snapshot.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_history_entry.dart';
+import 'package:abakus_one_v2/features/loyalty/presentation/providers/loyalty_providers.dart';
 import 'package:abakus_one_v2/features/reservation/data/reservation_gateway.dart';
 import 'package:abakus_one_v2/features/reservation/domain/models/reservation_area.dart';
 import 'package:abakus_one_v2/features/reservation/domain/models/reservation_availability_slot.dart';
 import 'package:abakus_one_v2/features/reservation/domain/models/reservation_branch_info.dart';
+import 'package:abakus_one_v2/features/reservation/presentation/providers/preorder_cart_provider.dart';
 import 'package:abakus_one_v2/features/reservation/presentation/providers/reservation_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/reservation/presentation/providers/reservation_draft_provider.dart';
 import 'package:abakus_one_v2/features/reservation/presentation/screens/reservation_flow_screen.dart';
@@ -57,6 +64,7 @@ class _FakeReservationGateway implements ReservationGateway {
   Completer<void>? submitGate;
   int submitCallCount = 0;
   final List<Map<String, dynamic>> submitCalls = [];
+  int? lastRequestedBoncukAmount;
 
   @override
   Future<ReservationBranchInfo> getReservationBranchInfo({
@@ -90,8 +98,10 @@ class _FakeReservationGateway implements ReservationGateway {
     required String contactFirstName,
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
+    int requestedBoncukAmount = 0,
   }) async {
     submitCallCount++;
+    lastRequestedBoncukAmount = requestedBoncukAmount;
     submitCalls.add({
       'restaurantId': restaurantId,
       'branchId': branchId,
@@ -101,6 +111,7 @@ class _FakeReservationGateway implements ReservationGateway {
       'contactFirstName': contactFirstName,
       'contactLastName': contactLastName,
       'preorderItems': preorderItems,
+      'requestedBoncukAmount': requestedBoncukAmount,
     });
     if (submitGate != null) await submitGate!.future;
     if (submitError != null) throw submitError!;
@@ -146,12 +157,71 @@ class _FakeGuestAuthNotifier extends AuthNotifier {
   AuthState build() => const AuthState(isAuthenticated: false, isGuest: true);
 }
 
+/// Boncuk Loyalty P6-B — mirrors `takeaway_checkout_screen_test.dart`'s/
+/// `delivery_checkout_screen_test.dart`'s own private `_FakeLoyaltyGateway`
+/// exactly (duplicated per this codebase's established per-file
+/// test-double convention, not shared).
+class _FakeLoyaltyGateway implements LoyaltyGateway {
+  _FakeLoyaltyGateway({
+    LoyaltyAccountSnapshot? snapshot,
+    this.snapshotError,
+    this.neverCompleteSnapshot = false,
+  }) : snapshot = snapshot ?? LoyaltyAccountSnapshot.zero;
+
+  LoyaltyAccountSnapshot snapshot;
+  LoyaltyGatewayException? snapshotError;
+  bool neverCompleteSnapshot;
+  int snapshotCalls = 0;
+
+  @override
+  Future<LoyaltyAccountSnapshot> getSnapshot() async {
+    snapshotCalls += 1;
+    if (neverCompleteSnapshot) {
+      return Completer<LoyaltyAccountSnapshot>().future;
+    }
+    if (snapshotError != null) throw snapshotError!;
+    return snapshot;
+  }
+
+  @override
+  Future<LoyaltyHistoryPage> getHistory({int? pageSize, String? cursor}) async {
+    return LoyaltyHistoryPage.empty;
+  }
+}
+
+/// A well-formed, non-default snapshot for Boncuk reservation-preorder
+/// tests — mirrors `takeaway_checkout_screen_test.dart`'s own
+/// `_boncukSnapshot` exactly (a non-default redemption rate/cap
+/// deliberately, so a test can prove the UI reads
+/// [LoyaltyAccountSnapshot]'s own fields rather than a Flutter constant).
+LoyaltyAccountSnapshot _boncukSnapshot({
+  int spendableBalance = 500,
+  int boncukDebt = 0,
+  int redemptionValueMinorUnitsPerBoncuk = 150,
+  int maxRedemptionBasisPoints = 4000,
+}) {
+  return LoyaltyAccountSnapshot(
+    spendableBalance: spendableBalance,
+    boncukDebt: boncukDebt,
+    earningRemainderMinorUnits: 0,
+    minorUnitsUntilNextBoncuk: 5000,
+    lifetimeEarned: spendableBalance,
+    lifetimeRedeemed: 0,
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 5,
+    redemptionValueMinorUnitsPerBoncuk: redemptionValueMinorUnitsPerBoncuk,
+    maxRedemptionBasisPoints: maxRedemptionBasisPoints,
+  );
+}
+
 String? _lastConfirmationReservationId;
 
 Future<ProviderContainer> _pumpFlow(
   WidgetTester tester, {
   required _FakeReservationGateway gateway,
   AuthNotifier Function()? authNotifierBuilder,
+  // ignore: library_private_types_in_public_api
+  _FakeLoyaltyGateway? loyaltyGateway,
 }) async {
   _lastConfirmationReservationId = null;
   final router = GoRouter(
@@ -191,6 +261,8 @@ Future<ProviderContainer> _pumpFlow(
         reservationGatewayProvider.overrideWithValue(gateway),
         authProvider.overrideWith(
             authNotifierBuilder ?? _FakeRealCustomerAuthNotifier.new),
+        if (loyaltyGateway != null)
+          loyaltyGatewayProvider.overrideWithValue(loyaltyGateway),
       ],
       child: Builder(builder: (context) {
         container = ProviderScope.containerOf(context, listen: false);
@@ -232,6 +304,48 @@ Future<void> _driveToReviewStep(WidgetTester tester) async {
 
   // Step 4 — preorder: skip (cart empty).
   await tester.tap(find.text('Şimdilik Geç'));
+  await tester.pumpAndSettle();
+}
+
+/// Boncuk Loyalty P6-B — identical to [_driveToReviewStep] through step 3,
+/// but seeds [preorderCartProvider] directly (bypassing the real
+/// menu/product-detail UI, which needs a full catalog this test doesn't
+/// set up — mirrors `preorderCartTotalPriceProvider`'s own reliance on the
+/// same provider) before reaching step 4, then taps 'Devam Et' (the
+/// non-empty-cart label) instead of 'Şimdilik Geç'.
+Future<void> _driveToReviewStepWithPreorder(
+  WidgetTester tester,
+  ProviderContainer container,
+) async {
+  await tester.tap(find.text('Devam Et'));
+  await tester.pumpAndSettle();
+
+  await tester.tap(find.text(_area.displayName));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Devam Et'));
+  await tester.pumpAndSettle();
+
+  final today = DateTime.now();
+  await tester.tap(find.text('${today.day}').first);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Devam Et'));
+  await tester.pumpAndSettle();
+
+  await tester.tap(find.text(_timeChipLabel(_fakeSlotTime)));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Devam Et'));
+  await tester.pumpAndSettle();
+
+  // Step 4 — preorder: seed the cart directly, then continue.
+  container.read(preorderCartProvider.notifier).addToCart(
+        id: 'p1',
+        name: 'Falafel Bowl',
+        desc: '',
+        price: 120.0,
+        quantity: 2,
+      );
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Devam Et'));
   await tester.pumpAndSettle();
 }
 
@@ -475,6 +589,340 @@ void main() {
     expect(_lastConfirmationReservationId, 'reservation-retry');
     expect(gateway.submitCallCount, 2);
   });
+
+  // =========================================================================
+  // Boncuk Loyalty P6-B (2026-08-24) — reservation preorder Boncuk checkout,
+  // reusing `BoncukRedemptionCard`/`computeClientEstimatedMaxBoncuk`
+  // UNCHANGED (already exhaustively proven correct by takeaway's own P4-E-B
+  // A-R suite and delivery's own P5-B mirror) — this file's job is to prove
+  // the WIRING into `ReservationFlowScreen` is correct, not re-prove the
+  // shared widget/estimate-function's own internal behavior a third time.
+  // =========================================================================
+
+  testWidgets(
+      'no preorder in cart -> the Boncuk card never appears on the review step',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ];
+    await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(snapshot: _boncukSnapshot()),
+    );
+    await _driveToReviewStep(tester);
+
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsNothing);
+  });
+
+  testWidgets(
+      'a preorder in cart with balance > 0 -> the Boncuk card is available',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ];
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(snapshot: _boncukSnapshot()),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsOneWidget);
+    expect(find.byKey(const Key('boncukToggle')), findsOneWidget);
+  });
+
+  testWidgets('toggle off -> requestedBoncukAmount sent is 0', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-boncuk-1',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-1',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(snapshot: _boncukSnapshot()),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+    // Toggle stays off — the default state.
+
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.lastRequestedBoncukAmount, 0);
+  });
+
+  testWidgets(
+      'toggle on -> minimum selected amount is 1, MAX uses the order cap',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-boncuk-2',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-2',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshot: _boncukSnapshot(
+          spendableBalance: 500,
+          redemptionValueMinorUnitsPerBoncuk: 150,
+          maxRedemptionBasisPoints: 4000,
+        ),
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('1 Boncuk'), findsOneWidget);
+
+    // Cart total is 240 TL (120 x 2, seeded by _driveToReviewStepWithPreorder)
+    // -> 24000 minor units. maxRedemptionValueMinorUnits = 24000*4000/10000 =
+    // 9600. maxUsableBoncukByOrderCap = 9600/150 = 64. min(500, 64) = 64.
+    expect(computeClientEstimatedMaxBoncuk(_boncukSnapshot(), 240.0), 64);
+
+    await tester.tap(find.byKey(const Key('boncukMaxButton')));
+    await tester.pumpAndSettle();
+    expect(find.text('64 Boncuk'), findsOneWidget);
+
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+    expect(gateway.lastRequestedBoncukAmount, 64);
+    expect(_lastConfirmationReservationId, 'reservation-boncuk-2');
+  });
+
+  testWidgets('zero spendable balance shows the quiet zero state, no toggle',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ];
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshot: _boncukSnapshot(spendableBalance: 0),
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    expect(find.byKey(const Key('boncukZeroState')), findsOneWidget);
+    expect(find.byKey(const Key('boncukToggle')), findsNothing);
+  });
+
+  testWidgets(
+      'snapshot loading renders the inline premium skeleton on the review step',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ];
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(neverCompleteSnapshot: true),
+    );
+    // Deliberately no pumpAndSettle for the drive helper's own steps beyond
+    // the last one — the snapshot future never completes, so we only need
+    // one settled frame once the review step itself is reachable.
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    expect(find.byKey(const Key('boncukCardSkeleton')), findsOneWidget);
+  });
+
+  testWidgets(
+      'snapshot load failure shows scoped retry, ordinary reservation '
+      'submission remains fully usable without Boncuk', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-boncuk-k',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-k',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshotError: const LoyaltyGatewayException(
+          'internal',
+          'Boncuk bakiyenize şu anda ulaşılamıyor.',
+        ),
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('boncukCardError')), findsOneWidget);
+
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(_lastConfirmationReservationId, 'reservation-boncuk-k');
+    expect(gateway.lastRequestedBoncukAmount, 0);
+  });
+
+  testWidgets(
+      'a cart change that lowers the estimated max below the current selection '
+      'NEVER silently clamps to a smaller nonzero amount — submission is '
+      'disabled and an explicit recovery notice is shown', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ];
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshot: _boncukSnapshot(
+          spendableBalance: 500,
+          redemptionValueMinorUnitsPerBoncuk: 100,
+          maxRedemptionBasisPoints: 5000,
+        ),
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+
+    // Cart total 240 TL -> max = min(500, floor(24000*5000/10000)/100) = 120.
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('boncukMaxButton')));
+    await tester.pumpAndSettle();
+    expect(find.text('120 Boncuk'), findsOneWidget);
+
+    // Halve the cart total (quantity 2 -> 1), lowering the order cap to 60.
+    container
+        .read(preorderCartProvider.notifier)
+        .updateQuantity('p1', '', '', 1);
+    await tester.pumpAndSettle();
+
+    // Selection must remain exactly 120 — never silently reduced.
+    expect(find.text('120 Boncuk'), findsOneWidget);
+    expect(
+        find.byKey(const Key('boncukInvalidSelectionNotice')), findsOneWidget);
+    final button = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Rezervasyon Talebini Gönder'));
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets(
+      'a Boncuk-specific server rejection never auto-resubmits without '
+      'Boncuk — the customer must explicitly tap submit again', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitError = const ReservationException(
+        'invalid-argument',
+        'requestedBoncukAmount exceeds the maximum usable Boncuk for this order.',
+        boncukErrorReason: 'boncuk/exceeds-max-usable',
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(snapshot: _boncukSnapshot()),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.submitCallCount, 1);
+    expect(
+      find.textContaining('Bilgileri güncelledik; tekrar seçim yapın'),
+      findsOneWidget,
+    );
+    final toggle = tester.widget<Switch>(find.byKey(const Key('boncukToggle')));
+    expect(toggle.value, isFalse);
+
+    gateway.submitError = null;
+    gateway.submitResultToReturn = const SubmitReservationResult(
+      reservationId: 'reservation-boncuk-retry',
+      status: 'pendingRestaurantApproval',
+      requestedAvailabilityAtSubmission: 'available',
+      preorderOrderId: 'order-retry',
+      duplicate: false,
+    );
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+    expect(gateway.submitCallCount, 2);
+    expect(gateway.lastRequestedBoncukAmount, 0);
+    expect(_lastConfirmationReservationId, 'reservation-boncuk-retry');
+  });
+
+  testWidgets(
+      'loyalty snapshot is invalidated after a successful Boncuk redemption '
+      'so the customer\'s displayed balance refreshes', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-boncuk-3',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-3',
+        duplicate: false,
+      );
+    final loyaltyGateway = _FakeLoyaltyGateway(snapshot: _boncukSnapshot());
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: loyaltyGateway,
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+    final callsBeforeSubmit = loyaltyGateway.snapshotCalls;
+
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(
+      loyaltyGateway.snapshotCalls,
+      greaterThan(callsBeforeSubmit),
+      reason:
+          'ref.invalidate(loyaltySnapshotProvider) must trigger a fresh fetch',
+    );
+  });
 }
 
 class _DelayedBranchInfoGateway implements ReservationGateway {
@@ -511,6 +959,7 @@ class _DelayedBranchInfoGateway implements ReservationGateway {
     required String contactFirstName,
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
+    int requestedBoncukAmount = 0,
   }) {
     throw UnimplementedError();
   }

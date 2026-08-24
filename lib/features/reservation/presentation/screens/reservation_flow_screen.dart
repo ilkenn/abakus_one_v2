@@ -12,6 +12,11 @@ import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
+import '../../../cart/presentation/screens/takeaway_checkout_screen.dart'
+    show computeClientEstimatedMaxBoncuk;
+import '../../../cart/presentation/widgets/boncuk_redemption_card.dart';
+import '../../../loyalty/domain/models/loyalty_account_snapshot.dart';
+import '../../../loyalty/presentation/providers/loyalty_providers.dart';
 import '../../data/reservation_gateway.dart';
 import '../../domain/models/reservation_draft.dart';
 import '../../domain/reservation_error_messages.dart';
@@ -52,6 +57,18 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
   late final TextEditingController _firstNameController;
   late final TextEditingController _lastNameController;
 
+  /// Boncuk Loyalty Program P6-B (2026-08-24) — local, screen-owned
+  /// interaction state ONLY, mirroring `TakeawayCheckoutScreen`'s/
+  /// `DeliveryCheckoutScreen`'s own `_boncukUsageEnabled`/
+  /// `_selectedBoncukAmount` exactly (no new checkout controller/provider
+  /// for reservation either). Only ever meaningful when a preorder exists
+  /// — Boncuk redemption applies against the preorder, never a table-only
+  /// booking. Server data continues to come exclusively from
+  /// [loyaltySnapshotProvider], watched fresh in [build]; nothing here
+  /// duplicates it.
+  bool _boncukUsageEnabled = false;
+  int _selectedBoncukAmount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -78,15 +95,87 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
     setState(() => _stepIndex = index.clamp(0, _stepCount - 1));
   }
 
+  /// Boncuk Loyalty P6-B — mirrors `TakeawayCheckoutScreen._onBoncukToggle`
+  /// exactly.
+  void _onBoncukToggle(bool value) {
+    setState(() {
+      _boncukUsageEnabled = value;
+      _selectedBoncukAmount =
+          value ? (_selectedBoncukAmount > 0 ? _selectedBoncukAmount : 1) : 0;
+      _submitError = null;
+    });
+  }
+
+  void _onBoncukAmountChanged(int newAmount) {
+    setState(() {
+      _selectedBoncukAmount = newAmount;
+      _submitError = null;
+    });
+  }
+
+  void _onBoncukUseMax() {
+    final snapshot = ref.read(loyaltySnapshotProvider).valueOrNull;
+    if (snapshot == null) return;
+    final max = computeClientEstimatedMaxBoncuk(
+      snapshot,
+      ref.read(preorderCartTotalPriceProvider),
+    );
+    setState(() {
+      _boncukUsageEnabled = max > 0;
+      _selectedBoncukAmount = max > 0 ? max : 0;
+      _submitError = null;
+    });
+  }
+
+  /// Boncuk Loyalty P6-B — mirrors
+  /// `TakeawayCheckoutScreen._handleBoncukEstimateMightHaveChanged` exactly:
+  /// never silently clamps [_selectedBoncukAmount] down to a smaller
+  /// nonzero value; the ONE state mutation is turning Boncuk usage off and
+  /// resetting the selection to 0 when the estimated max reaches exactly
+  /// zero.
+  void _handleBoncukEstimateMightHaveChanged() {
+    if (!_boncukUsageEnabled) return;
+    final snapshot = ref.read(loyaltySnapshotProvider).valueOrNull;
+    if (snapshot == null) return;
+    final max = computeClientEstimatedMaxBoncuk(
+      snapshot,
+      ref.read(preorderCartTotalPriceProvider),
+    );
+    if (max <= 0) {
+      setState(() {
+        _boncukUsageEnabled = false;
+        _selectedBoncukAmount = 0;
+      });
+    }
+  }
+
   Future<void> _submit() async {
     if (_isSubmitting) return;
+
+    final preorderItems = ref.read(preorderCartProvider);
+
+    // Defense-in-depth (mirrors TakeawayCheckoutScreen/DeliveryCheckoutScreen)
+    // — the submit button is already disabled whenever the UI's own derived
+    // `boncukSelectionInvalid` is true; this re-checks the same condition
+    // against a freshly-read snapshot right before sending. Boncuk is only
+    // ever meaningful alongside a preorder.
+    if (_boncukUsageEnabled && preorderItems.isNotEmpty) {
+      final snapshot = ref.read(loyaltySnapshotProvider).valueOrNull;
+      final max = snapshot == null
+          ? 0
+          : computeClientEstimatedMaxBoncuk(
+              snapshot, ref.read(preorderCartTotalPriceProvider));
+      if (_selectedBoncukAmount <= 0 || _selectedBoncukAmount > max) {
+        return;
+      }
+    }
+
     setState(() {
       _isSubmitting = true;
       _submitError = null;
     });
 
     final draft = ref.read(reservationDraftProvider);
-    final preorderItems = ref.read(preorderCartProvider);
     final gateway = ref.read(reservationGatewayProvider);
 
     try {
@@ -115,9 +204,17 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
                     ],
                   ),
               ],
+        requestedBoncukAmount: (_boncukUsageEnabled && preorderItems.isNotEmpty)
+            ? _selectedBoncukAmount
+            : 0,
       );
 
       if (!mounted) return;
+      // Boncuk Loyalty P6-B — redemption occurs at submission time; refresh
+      // the customer's displayed balance now rather than waiting for a
+      // later screen to happen to re-fetch it (mirrors
+      // TakeawayCheckoutScreen/DeliveryCheckoutScreen).
+      ref.invalidate(loyaltySnapshotProvider);
       // `context.go` kicks off go_router's own (internally async)
       // route-matching pipeline rather than swapping the tree
       // synchronously, so this widget can still rebuild before the
@@ -134,10 +231,22 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
       context.go(AppRoutes.reservationConfirmation(result.reservationId));
     } on ReservationException catch (error) {
       if (!mounted) return;
+      final isBoncukError = error.boncukErrorReason != null;
       setState(() {
         _isSubmitting = false;
         _submitError = reservationErrorMessage(error);
+        if (isBoncukError) {
+          // CRITICAL — never auto-resubmit without Boncuk (mirrors
+          // TakeawayCheckoutScreen/DeliveryCheckoutScreen). Turning the
+          // selection off makes the screen immediately submittable again
+          // WITHOUT Boncuk, but the customer must tap submit themselves.
+          _boncukUsageEnabled = false;
+          _selectedBoncukAmount = 0;
+        }
       });
+      if (isBoncukError) {
+        ref.invalidate(loyaltySnapshotProvider);
+      }
     }
   }
 
@@ -159,6 +268,18 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
     }
 
     final branchInfoAsync = ref.watch(reservationBranchInfoProvider);
+    final loyaltySnapshotAsync = ref.watch(loyaltySnapshotProvider);
+
+    // Boncuk Loyalty P6-B — react to a preorder-cart or loyalty snapshot
+    // change while Boncuk usage is on (mirrors TakeawayCheckoutScreen's own
+    // `ref.listen` side-effect pattern exactly).
+    ref.listen<double>(preorderCartTotalPriceProvider, (previous, next) {
+      _handleBoncukEstimateMightHaveChanged();
+    });
+    ref.listen<AsyncValue<LoyaltyAccountSnapshot>>(loyaltySnapshotProvider,
+        (previous, next) {
+      _handleBoncukEstimateMightHaveChanged();
+    });
 
     return Scaffold(
       appBar: AppBar(
@@ -208,6 +329,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
                     branchInfo: branchInfo,
                     effectivePartySize: effectivePartySize,
                     authState: authState,
+                    loyaltySnapshotAsync: loyaltySnapshotAsync,
                   ),
                 ),
               ],
@@ -225,6 +347,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
     required dynamic branchInfo,
     required int effectivePartySize,
     required AuthState authState,
+    required AsyncValue<LoyaltyAccountSnapshot> loyaltySnapshotAsync,
   }) {
     switch (_stepIndex) {
       case 0:
@@ -302,7 +425,23 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
       default:
         final preorderItems = ref.watch(preorderCartProvider);
         final verifiedPhone = authState.session?.phoneNumber ?? '';
-        final canSubmit = draft.isReadyToReview && !_isSubmitting;
+        final preorderTotalTl = ref.watch(preorderCartTotalPriceProvider);
+
+        // Boncuk Loyalty P6-B — only ever meaningful alongside a preorder.
+        final clientEstimatedMaxBoncuk = preorderItems.isEmpty
+            ? 0
+            : loyaltySnapshotAsync.maybeWhen(
+                data: (snapshot) =>
+                    computeClientEstimatedMaxBoncuk(snapshot, preorderTotalTl),
+                orElse: () => 0,
+              );
+        // Derived, never stored (mirrors TakeawayCheckoutScreen).
+        final boncukSelectionInvalid = preorderItems.isNotEmpty &&
+            _boncukUsageEnabled &&
+            _selectedBoncukAmount > clientEstimatedMaxBoncuk;
+        final canSubmit =
+            draft.isReadyToReview && !_isSubmitting && !boncukSelectionInvalid;
+
         return ReservationStepScaffold(
           title: 'Özet',
           subtitle: 'Bilgilerinizi kontrol edin ve talebinizi gönderin.',
@@ -320,6 +459,22 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
                   lastName: _lastNameController.text,
                 ),
               ),
+              if (preorderItems.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.lg),
+                BoncukRedemptionCard(
+                  snapshotAsync: loyaltySnapshotAsync,
+                  enabled: _boncukUsageEnabled,
+                  selectedAmount: _selectedBoncukAmount,
+                  maxUsableBoncuk: clientEstimatedMaxBoncuk,
+                  selectionInvalid: boncukSelectionInvalid,
+                  controlsFrozen: _isSubmitting,
+                  cartTotalPriceTl: preorderTotalTl,
+                  onToggle: _onBoncukToggle,
+                  onAmountChanged: _onBoncukAmountChanged,
+                  onUseMax: _onBoncukUseMax,
+                  onRetry: () => ref.invalidate(loyaltySnapshotProvider),
+                ),
+              ],
               if (_submitError != null) ...[
                 const SizedBox(height: AppSpacing.md),
                 Container(

@@ -13,10 +13,35 @@ class ReservationException implements Exception {
   final String code;
   final String message;
 
-  const ReservationException(this.code, this.message);
+  /// Boncuk Loyalty Program P6-B (2026-08-24) — the stable, machine-readable
+  /// reason from `functions/src/boncukRedemptionErrors.ts`'s
+  /// `BONCUK_REDEMPTION_ERROR_REASONS` (e.g. `'boncuk/exceeds-max-usable'`),
+  /// carried through from the callable's `HttpsError.details.reason` — the
+  /// SAME shared vocabulary `SubmitTakeawayOrderException.boncukErrorReason`/
+  /// `SubmitDeliveryOrderException.boncukErrorReason` use, never inferred
+  /// from [code] alone. `null` for every non-Boncuk rejection, and for a
+  /// Boncuk rejection whose `details` this gateway could not parse (fails
+  /// safe to `null`, never fabricates a reason).
+  final String? boncukErrorReason;
+
+  const ReservationException(this.code, this.message, {this.boncukErrorReason});
 
   @override
-  String toString() => 'ReservationException($code): $message';
+  String toString() => 'ReservationException($code): $message'
+      '${boncukErrorReason != null ? ' [reason: $boncukErrorReason]' : ''}';
+}
+
+/// Extracts `error.details['reason']` defensively — mirrors
+/// `submit_takeaway_order_gateway.dart`'s/`submit_delivery_order_gateway
+/// .dart`'s own `_extractBoncukErrorReason` exactly; `details` is `dynamic`
+/// on [functions.FirebaseFunctionsException], so this never assumes a shape.
+String? _extractBoncukErrorReason(functions.FirebaseFunctionsException error) {
+  final details = error.details;
+  if (details is Map) {
+    final reason = details['reason'];
+    if (reason is String) return reason;
+  }
+  return null;
 }
 
 /// One preorder line item — structurally identical to
@@ -106,6 +131,19 @@ class SubmitReservationResult {
 /// shape (narrow, mockable interface + real implementation; the real
 /// `cloud_functions` SDK is unavailable under `flutter test`).
 abstract interface class ReservationGateway {
+  /// Boncuk Loyalty Program P6-B (2026-08-24) — [requestedBoncukAmount] is
+  /// the ONLY Boncuk-related value this method ever sends: a whole,
+  /// non-negative Boncuk COUNT the customer explicitly chose. Mirrors
+  /// `SubmitTakeawayOrderGateway`/`SubmitDeliveryOrderGateway`'s own
+  /// contract exactly — there is structurally no parameter here for a
+  /// monetary value, a policy version, a max percentage, an available
+  /// balance, or a remaining payable amount; the server resolves and
+  /// re-validates every one of those itself
+  /// (`functions/src/submitReservation.ts`, P6-B). `0` (the default) means
+  /// "no Boncuk requested," identical in effect to omitting the field
+  /// entirely. **Only ever meaningful when [preorderItems] is non-empty** —
+  /// Boncuk redemption applies against the preorder, never the reservation
+  /// itself (there is nothing to redeem against a table-only booking).
   Future<SubmitReservationResult> submitReservation({
     required String submissionKey,
     required String restaurantId,
@@ -116,6 +154,7 @@ abstract interface class ReservationGateway {
     required String contactFirstName,
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
+    int requestedBoncukAmount = 0,
   });
 
   Future<void> respondToProposedChange({
@@ -163,9 +202,11 @@ class FirebaseReservationGateway implements ReservationGateway {
     required String contactFirstName,
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
+    int requestedBoncukAmount = 0,
   }) async {
     final callable =
         functions.FirebaseFunctions.instance.httpsCallable('submitReservation');
+    final hasPreorder = preorderItems != null && preorderItems.isNotEmpty;
     try {
       final result = await callable.call<Map<String, dynamic>>({
         'submissionKey': submissionKey,
@@ -176,9 +217,15 @@ class FirebaseReservationGateway implements ReservationGateway {
         'requestedTime': requestedTime.toIso8601String(),
         'contactFirstName': contactFirstName,
         'contactLastName': contactLastName,
-        if (preorderItems != null && preorderItems.isNotEmpty)
+        if (hasPreorder)
           'preorder': {
             'items': [for (final item in preorderItems) item.toJson()],
+            // Boncuk Loyalty P6-B — sent ONLY when > 0, mirroring the
+            // server's own `sanitizeRequestedBoncukAmount`'s "absent == 0"
+            // contract exactly; nested inside `preorder` since it is only
+            // ever meaningful alongside one.
+            if (requestedBoncukAmount > 0)
+              'requestedBoncukAmount': requestedBoncukAmount,
           },
       });
       final data = result.data;
@@ -194,6 +241,7 @@ class FirebaseReservationGateway implements ReservationGateway {
       throw ReservationException(
         error.code,
         error.message ?? 'Reservation could not be submitted.',
+        boncukErrorReason: _extractBoncukErrorReason(error),
       );
     }
   }

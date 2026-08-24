@@ -4261,3 +4261,76 @@ consecutively** (fully green, not a lucky retry); Firestore Rules suite 354/354,
 analyze` clean; `flutter test` 3352 passed/12 skipped/0 failed (up from 3332, 20 new tests). See
 `docs/business_rules.md`'s new `BR-LOYALTY-024` and `docs/decisions.md`'s P5-B entry for the full
 mechanism and files changed. No commit was made.
+
+**Boncuk Loyalty Program P6-A (2026-08-24) — Reservation Preorder Boncuk Fast Reuse Audit, CLOSED
+(audit only, no code changed).** Proved the exact structural blocker: a `reservationPreorder`-channel
+order, once released to kitchen (`status: confirmed`), had no code path anywhere that could ever write
+its status again (`completeReservation.ts` explicitly never touched it, `cancelReservation.ts`'s
+staff-cancel branch left it frozen, `markReservationNoShow.ts` explicitly skipped a released order) —
+meaning Boncuk debited at submission would be silently, permanently lost in the overwhelming majority
+of real confirmed-reservation outcomes. Confirmed reservation authorization is single-tier
+(`manageReservations` only, org-scoped) and `orderStatus.ts`'s generic transitions table already
+supported the full lifecycle a `confirmed → preparing → ready → served → completed` chain would need,
+zero changes required. Verdict: implementation-ready pending a new post-release order lifecycle.
+Directly informed P6-B's implementation plan.
+
+**Boncuk Loyalty Program P6-B (2026-08-24) — Reservation Preorder Boncuk Redemption + Canonical
+Post-Release Lifecycle, CLOSED, `reservationPreorder` channel only.** Implements P6-A's accepted reuse
+plan. `submitReservation.ts` extended with `requestedBoncukAmount` (parsed only when a preorder
+exists); Boncuk is debited atomically inside the same transaction that creates the linked preorder
+`Order`, reusing `calculateBoncukRedemption`/`resolveAccountForRedemption`/`boncukRedemptionErrors.ts`
+verbatim, eligible basis `pricing.grandTotalMinorUnits` directly (matching delivery's simplicity).
+Implemented the canonical post-release preorder lifecycle for the first time — `confirmed → preparing
+→ ready → served → completed`, exact-next-only, `completed` meaning actually served — via 3 new
+callables (`advanceReservationPreorderOrderStatus`/`cancelReservationPreorderOrderForStaff`/
+`refundReservationPreorderOrder`), all reusing the existing single-tier `manageReservations`
+permission as-is (no new permission, unlike delivery's tiered split). New
+`reservationPreorderOrderLifecycle.ts` re-exports the same channel-generic `orderLifecycle.ts`
+functions under reservation-scoped names, mirroring `deliveryOrderLifecycle.ts`'s own thin-alias
+pattern — zero changes to the shared engine. The PRE-release transitions
+(`pendingConfirmation → confirmed`/`cancelled`) remain owned, completely unchanged, by
+`reservationPreorder.ts`'s own hand-rolled patch builders. `markReservationNoShow.ts` extended: a
+released-but-unfulfilled (`confirmed`/`preparing`/`ready`) preorder is now inline-cancelled in the same
+transaction as the no-show write, restoring Boncuk through the standard terminal-cancellation path —
+never confiscated; an already-`served`/`completed` preorder is left untouched.
+`completeReservation.ts` gains a new guard permitting `Reservation → completed` only when a linked
+preorder's own status is exactly `completed`/`refunded` (fail-closed allowlist — tightened same-day by
+a microfix from an initial denylist that had incorrectly treated `served` as sufficient; see the P6-B
+microfix entry below). No Loyalty consumer file was touched — the existing terminal
+outbox/restore/reversal/earning chain activates automatically from the lifecycle callables' own
+`status` writes (`"reservationPreorder"` was already whitelisted in
+`LOYALTY_EARNING_ELIGIBLE_CHANNELS` since P2A, now finally structurally reachable), verified via a full
+A-F loyalty-chain integration test. `ReservationGateway.submitReservation` gains
+`requestedBoncukAmount`; `ReservationException` gains `boncukErrorReason` — same shared vocabulary.
+`ReservationPreorderStatus` extended from 3 to 9 values; `ReservationFlowScreen`'s review step reuses
+`BoncukRedemptionCard`/`computeClientEstimatedMaxBoncuk`/`loyaltySnapshotProvider` UNCHANGED, shown
+only when the preorder cart is non-empty. `OrderSuccessScreen`'s private `_BoncukSuccessSummary` was
+made public (`BoncukSuccessSummary`) and reused verbatim by `ReservationConfirmationScreen` — no second
+summary widget. **Genuine bug fixed as a direct consequence of the enum extension**:
+`reservation_detail_screen.dart`'s `_PreorderStatusCard` would have shown stale "will be sent to
+kitchen" copy for every new post-confirm status (since `kitchenReleaseAt` is never cleared after
+confirm) — converted to an exhaustive `switch` with correct per-status Turkish copy. **Still explicitly
+out of scope**: real payment-provider refund execution, partial refund, courier-authoritative
+lifecycle (not applicable to this channel), Admin/POS/KDS UI for the 3 new callables (reachable only
+via direct function call today, exercised by tests — no staff-facing screen calls them yet, same gap
+`BR-LOYALTY-021`/`BR-LOYALTY-024` disclosed at their own equivalent points). Gates: Functions build
+clean; Functions emulator suite **1281/1281, 0 failed**; Firestore Rules suite 354/354, 0 failed,
+unchanged (no rules file touched); `flutter analyze` clean; `flutter test` 3365 passed/12 skipped/0
+failed (up from 3352, 13 new tests). See `docs/business_rules.md`'s new `BR-LOYALTY-025` and
+`docs/decisions.md`'s P6-A/P6-B entries for the full mechanism and files changed. No commit was made.
+
+**Boncuk Loyalty Program P6-B microfix (2026-08-24) — `completeReservation`'s guard tightened from a
+denylist to a fail-closed allowlist, CLOSED, same day as P6-B.** The shipped guard treated `served` as
+sufficient to permit `Reservation → completed`; a locked-rule review required a stricter rule:
+`Reservation → completed` is now permitted, when a preorder is linked, ONLY if the linked order's own
+status is exactly `completed`/`refunded` — every other status (`pendingConfirmation`/`confirmed`/
+`preparing`/`ready`/`served`/`cancelled`/`rejected`) fails closed. `refunded` stays allowed since it is
+only ever reachable FROM `completed`, making it a later financial outcome, never a substitute for
+fulfillment. No Boncuk accounting touched — read-only precondition change only. Test corrections:
+`reservationPreorderOrderLifecycle.test.ts`'s section E (the old "`served` succeeds" case replaced with
+"`served` still blocks"; 2 new cases added — "`cancelled` blocks", "`refunded` permits"); one genuinely
+superseded assertion in `reservationTerminalLifecycle.test.ts`'s test 28 corrected (it had asserted the
+OLD guard's "`pendingConfirmation` doesn't block" behavior). Gates: Functions build clean; targeted
+reservation-test run 113/113, 0 failed; Functions FULL emulator suite **1283/1283, 0 failed** (up from
+1281); Firestore Rules suite not rerun (unaffected); `flutter analyze`/`flutter test` not rerun (Flutter
+untouched). See `docs/decisions.md`'s dedicated P6-B microfix entry for full detail. No commit was made.

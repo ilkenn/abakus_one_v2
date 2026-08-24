@@ -448,6 +448,17 @@ class _ChangeProposalCardState extends ConsumerState<_ChangeProposalCard> {
 /// onay bekliyor" (that would incorrectly suggest the *preorder itself*,
 /// not the reservation, needs approval). An already-confirmed/immediately-
 /// released preorder gets the "sent to the kitchen" copy.
+///
+/// Boncuk Loyalty P6-B (2026-08-24) — extended for the now-reachable
+/// post-release kitchen pipeline (`preparing`/`ready`/`served`/`completed`)
+/// and `refunded`. Before this phase `kitchenReleaseAt` was only ever
+/// non-null for `pendingConfirmation`/`confirmed`, so the previous
+/// `else if (preorder.kitchenReleaseAt != null)` fallback branch was safe;
+/// now that an order can progress further while still carrying its
+/// original (unmodified) `kitchenReleaseAt`, that same fallback would
+/// incorrectly keep showing "will be sent to the kitchen" for an order
+/// already being prepared, ready, served, or completed — a genuine,
+/// newly-exposed copy bug, fixed here rather than left stale.
 class _PreorderStatusCard extends StatelessWidget {
   const _PreorderStatusCard(
       {required this.reservation, required this.preorder});
@@ -458,18 +469,32 @@ class _PreorderStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     String copy;
-    if (preorder.status == ReservationPreorderStatus.cancelled) {
-      copy = 'Ön siparişiniz iptal edildi.';
-    } else if (preorder.status == ReservationPreorderStatus.confirmed) {
-      copy = 'Ön siparişiniz mutfağa iletildi.';
-    } else if (preorder.kitchenReleaseAt != null) {
-      final release = preorder.kitchenReleaseAt!.toLocal();
-      copy =
-          'Ön siparişiniz mutfağa ${release.hour.toString().padLeft(2, '0')}:${release.minute.toString().padLeft(2, '0')}\'da iletilecek.';
-    } else {
-      // Reservation not yet confirmed at all -- nothing scheduled yet.
-      copy = 'Rezervasyonunuz onaylandığında ön siparişinizin mutfağa ne zaman '
-          'iletileceğini burada görebilirsiniz.';
+    switch (preorder.status) {
+      case ReservationPreorderStatus.cancelled:
+      case ReservationPreorderStatus.rejected:
+        copy = 'Ön siparişiniz iptal edildi.';
+      case ReservationPreorderStatus.refunded:
+        copy = 'Ön siparişiniz iptal edildi ve ücreti iade edildi.';
+      case ReservationPreorderStatus.completed:
+      case ReservationPreorderStatus.served:
+        copy = 'Ön siparişiniz servis edildi.';
+      case ReservationPreorderStatus.ready:
+        copy = 'Ön siparişiniz hazır.';
+      case ReservationPreorderStatus.preparing:
+        copy = 'Ön siparişiniz hazırlanıyor.';
+      case ReservationPreorderStatus.confirmed:
+        copy = 'Ön siparişiniz mutfağa iletildi.';
+      case ReservationPreorderStatus.pendingConfirmation:
+        if (preorder.kitchenReleaseAt != null) {
+          final release = preorder.kitchenReleaseAt!.toLocal();
+          copy =
+              'Ön siparişiniz mutfağa ${release.hour.toString().padLeft(2, '0')}:${release.minute.toString().padLeft(2, '0')}\'da iletilecek.';
+        } else {
+          // Reservation not yet confirmed at all -- nothing scheduled yet.
+          copy =
+              'Rezervasyonunuz onaylandığında ön siparişinizin mutfağa ne zaman '
+              'iletileceğini burada görebilirsiniz.';
+        }
     }
 
     return Container(

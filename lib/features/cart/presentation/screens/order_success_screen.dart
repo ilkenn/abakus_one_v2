@@ -198,7 +198,7 @@ class OrderSuccessScreen extends StatelessWidget {
               // unchanged (this block simply never renders for them).
               if ((_isTakeaway || isDeliveryOrder) && _hasBoncukSummary) ...[
                 const SizedBox(height: AppSpacing.md),
-                _BoncukSuccessSummary(
+                BoncukSuccessSummary(
                   orderTotalMinorUnits: orderTotalMinorUnits!,
                   boncukUsed: boncukUsed!,
                   boncukValueMinorUnits: boncukValueMinorUnits!,
@@ -241,13 +241,16 @@ String _formatMinorUnitsTl(int minorUnits) {
 }
 
 /// The compact, server-confirmed Boncuk summary shown on a successful
-/// takeaway order that redeemed Boncuk — Boncuk Loyalty Program P4-E-B
-/// (2026-08-22). Every figure is a plain, already-resolved value passed in
-/// by [OrderSuccessScreen] (sourced from the canonical re-read `Order`,
-/// never the pre-submit estimate) — this widget performs no computation
-/// beyond minor-units-to-TL formatting.
-class _BoncukSuccessSummary extends StatelessWidget {
-  const _BoncukSuccessSummary({
+/// order that redeemed Boncuk — Boncuk Loyalty Program P4-E-B (2026-08-22),
+/// made public and reused verbatim by `ReservationConfirmationScreen` in
+/// P6-B (2026-08-24) — no second, near-duplicate summary widget. Every
+/// figure is a plain, already-resolved value passed in by the caller
+/// (sourced from the canonical re-read `Order`, never the pre-submit
+/// estimate) — this widget performs no computation beyond minor-units-to-TL
+/// formatting.
+class BoncukSuccessSummary extends StatelessWidget {
+  const BoncukSuccessSummary({
+    super.key,
     required this.orderTotalMinorUnits,
     required this.boncukUsed,
     required this.boncukValueMinorUnits,

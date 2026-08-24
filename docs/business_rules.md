@@ -1594,9 +1594,105 @@ this design introduces.
   authoritative delivery-completion authority; Admin/POS/KDS delivery-lifecycle UI (these callables are
   currently reachable only via direct function call, exercised by tests — no staff-facing screen calls
   them yet, mirroring `BR-LOYALTY-021`'s own equivalent takeaway-era gap at the time it shipped).
+  **Reservation-preorder Boncuk redemption + canonical post-release lifecycle are now implemented — see
+  `BR-LOYALTY-025`** (this entry's own blocker list only ever covered the delivery channel; reservation
+  was always a separate, later phase).
 - **Owner Agent**: restaurant_domain / security_engineer / ui_ux_designer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-020, BR-LOYALTY-021,
-  BR-LOYALTY-022, BR-LOYALTY-023, BR-PRICE-002
+  BR-LOYALTY-022, BR-LOYALTY-023, BR-PRICE-002, BR-LOYALTY-025
+
+### BR-LOYALTY-025 — Reservation-preorder Boncuk redemption + canonical post-release preorder lifecycle
+- **Status**: DECIDED — **IMPLEMENTED (P6-B, 2026-08-24)**, `reservationPreorder` channel only. Audited
+  (P6-A) before implementation, which proved the exact structural blocker: a released
+  (kitchen-confirmed) preorder order had no code path anywhere to a terminal status, so Boncuk debited
+  at submission would be silently, permanently unrecoverable in the overwhelming majority of real
+  confirmed-reservation outcomes. P6-B closes that gap with the smallest reuse-first surface area,
+  mirroring `BR-LOYALTY-024`'s delivery-phase discipline exactly.
+- **Rule — debited at submission, not at reservation approval.** A reservation's linked preorder
+  `Order` is created atomically inside `submitReservation.ts`'s own transaction — the exact same
+  instant as takeaway/delivery order creation — so `submitReservation.ts` calls the SAME
+  `calculateBoncukRedemption`/`resolveAccountForRedemption` (`loyaltyRedemption.ts`), the same
+  deterministic ledger-id derivation, the same debt-first account transaction model, inside the same
+  reads-before-writes discipline as `submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`. The Boncuk-
+  eligible basis is `pricing.grandTotalMinorUnits` directly (no fee/tip subtraction), matching
+  delivery's own simplicity. `boncukRedemptionErrors.ts`'s shared error-reason vocabulary is reused
+  byte-for-byte, not duplicated.
+- **Rule — canonical post-release preorder lifecycle, implemented for the first time**: `confirmed →
+  preparing → ready → served → completed`, exact-next-only (no skipping) via
+  `advanceReservationPreorderOrderStatus`'s own `RESERVATION_PREORDER_NEXT_STATUS` map — one extra step
+  than takeaway's own map (via `served`, mirroring dine-in), reflecting that a reservation preorder is
+  picked up in person rather than handed off or dispatched. `completed` means the order was actually
+  served/fulfilled — never merely that the kitchen finished preparing it (`ready ≠ completed`). The
+  PRE-release transitions (`pendingConfirmation → confirmed`/`pendingConfirmation → cancelled`, owned by
+  `reservationPreorder.ts`'s own hand-rolled patch builders) are completely unchanged — this rule only
+  ever governs what happens after kitchen release.
+- **Rule — staff post-release cancellation terminates the linked order; customer post-release
+  cancellation remains denied.** `cancelReservationPreorderOrderForStaff` allows only `confirmed`\|
+  `preparing`\|`ready → cancelled` (never `served`\|`completed`, which are already fulfilled, and never
+  `pendingConfirmation`, which is redirected to the existing reservation-side cancellation path). A
+  customer can still never cancel a released preorder — unchanged from the pre-P6-B state audited by
+  P6-A.
+- **Rule — no-show never confiscates Boncuk.** `markReservationNoShow.ts` was extended: a still-
+  `pendingConfirmation` preorder uses the existing, unmodified cancellation patch; a released-but-
+  unfulfilled (`confirmed`\|`preparing`\|`ready`) preorder is now inline-cancelled
+  (`terminalReasonCode: "customerNoShow"`) in the SAME transaction as the no-show write, restoring
+  Boncuk through the standard terminal-cancellation path; an already-`served`\|`completed` preorder is
+  left untouched (nothing to undo, and nothing to confiscate).
+- **Rule — `completeReservation` cannot mark a reservation completed unless its linked preorder has
+  reached genuine lifecycle closure, not merely been handed to the guest.** Tightened by a same-day
+  microfix into a fail-closed ALLOWLIST: a new guard reads the linked preorder order's status before any
+  write and permits completion only if that status is exactly `completed`\|`refunded`; every other status
+  (`pendingConfirmation`\|`confirmed`\|`preparing`\|`ready`\|`served`\|`cancelled`\|`rejected`) is rejected
+  (`failed-precondition`) — `served` alone is deliberately NOT sufficient. `refunded` is permitted
+  because it is only ever reachable FROM `completed` (`ALLOWED_TRANSITIONS.completed = ["refunded"]`),
+  making it a later financial outcome layered on an already-fulfilled order, never a substitute for
+  fulfillment. No linked preorder at all -> the guard does not apply. This decouples "kitchen finished
+  the food" / "guest received the food" from "the order's own lifecycle is formally closed out."
+- **Rule — `completed → refunded` reuses the exact takeaway/delivery refund semantics.**
+  `refundReservationPreorderOrder` only accepts `completed → refunded`, `refundDisposition` hardcoded
+  exactly `manualExternalRefundConfirmed` — mirrors `BR-LOYALTY-022`/`BR-LOYALTY-024`'s own refund-
+  attestation semantics exactly, never a real payment-provider refund execution.
+- **Rule — the generic write-phase lifecycle machinery was reused, not duplicated.** A new
+  `reservationPreorderOrderLifecycle.ts` re-exports the same channel-generic `orderLifecycle.ts`
+  functions (`applyOrderLifecycleTransition`/`writeOrderStatusChangeAuditEvent`) under
+  reservation-scoped names, exactly mirroring `deliveryOrderLifecycle.ts`'s own thin-alias pattern
+  (`BR-LOYALTY-024`) — zero changes to the shared engine itself.
+- **Rule — authorization stays single-tier, matching the reservation domain's existing model.** All
+  three new callables (`advanceReservationPreorderOrderStatus`, `cancelReservationPreorderOrderForStaff`,
+  `refundReservationPreorderOrder`) reuse the existing `manageReservations` permission
+  (`requireReservationManagerPermission`, org-scoped only, `manager`/`admin`/`tenantOwner`) as-is — no
+  new permission was introduced, unlike delivery's escalated-tier split (`BR-LOYALTY-024`), since
+  reservation authorization has never had a tiered model to extend.
+- **Rule — no direct Loyalty mutation from any reservation-preorder lifecycle callable.** Exactly like
+  takeaway/delivery, every new callable only ever writes the order's own `status` — the existing,
+  unmodified, channel-generic terminal outbox (`onOrderTerminalFailureOrRefund.ts`) and its two
+  independent consumers (`loyaltyRedemptionRestore.ts`/`orderEarnReversal.ts`), plus the existing
+  `onOrderCompleted` earning chain (`LOYALTY_EARNING_ELIGIBLE_CHANNELS` already included
+  `"reservationPreorder"` since P2A, now finally structurally reachable), activate automatically from
+  that single write — zero Loyalty-consumer code changed for this phase.
+- **Rule — reservation checkout UI reuses `BoncukRedemptionCard` and `BoncukSuccessSummary`
+  unchanged.** `ReservationFlowScreen`'s review step wires the identical widget, the identical
+  `computeClientEstimatedMaxBoncuk` estimate function (basis: `preorderCartTotalPriceProvider`), and the
+  identical `loyaltySnapshotProvider` that takeaway/delivery already use — no new Boncuk card. The card
+  only appears when the preorder cart is non-empty (a reservation without a preorder has nothing to
+  redeem against). `OrderSuccessScreen`'s private `_BoncukSuccessSummary` was made public
+  (`BoncukSuccessSummary`) and is reused verbatim by `ReservationConfirmationScreen` — no second summary
+  widget was created. Every value shown is server-confirmed, re-read from the canonical preorder order
+  after submission, never the pre-submit estimate.
+- **Genuine bug found and fixed as a direct consequence of this rule's own lifecycle extension**:
+  extending `ReservationPreorderStatus` from 3 to 9 values exposed a pre-existing UI bug in
+  `reservation_detail_screen.dart`'s `_PreorderStatusCard` — its old if/else-if chain would have shown
+  stale "will be sent to kitchen at HH:mm" copy for `preparing`\|`ready`\|`served`\|`completed` orders,
+  since `kitchenReleaseAt` is set once at confirm and never cleared afterward. Fixed with an exhaustive
+  `switch` covering every status with correct Turkish copy.
+- **Known, disclosed blockers**: real payment-provider refund execution; partial refund; courier-
+  authoritative lifecycle (not applicable to this channel — a reservation preorder is picked up
+  in-restaurant, never dispatched); Admin/POS/KDS UI for the three new callables (currently reachable
+  only via direct function call, exercised by tests — no staff-facing screen calls them yet, mirroring
+  `BR-LOYALTY-021`/`BR-LOYALTY-024`'s own equivalent gap at the time each shipped).
+- **Owner Agent**: restaurant_domain / security_engineer / ui_ux_designer
+- **Related Modules**: Loyalty, Orders, Reservations, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-020,
+  BR-LOYALTY-021, BR-LOYALTY-022, BR-LOYALTY-023, BR-LOYALTY-024, BR-PRICE-002
 
 # Customer CRM & Loyalty Platform
 

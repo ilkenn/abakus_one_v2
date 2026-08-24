@@ -266,7 +266,11 @@ async function directlyConfirmedReservationFixture(
   overrides: {
     partySize?: number;
     confirmedTime?: Date;
-    preorderStatus?: "pendingConfirmation" | "confirmed";
+    // Boncuk Loyalty P6-B (2026-08-24) — widened from "pendingConfirmation" |
+    // "confirmed" so this fixture can also seed a preorder already past
+    // release (preparing/ready/served/completed), needed to prove the new
+    // "already served/completed is left untouched by no-show" boundary.
+    preorderStatus?: "pendingConfirmation" | "confirmed" | "preparing" | "ready" | "served" | "completed";
     capacity?: number;
   } = {},
 ) {
@@ -798,7 +802,7 @@ test("completeReservation: 26/27. a confirmed reservation whose confirmedTime ha
   assert.strictEqual(occupancy, null);
 });
 
-test("completeReservation: 28. never cancels a linked preorder, regardless of its status", async () => {
+test("completeReservation: 28. a linked preorder still 'pendingConfirmation' now blocks completion (Boncuk Loyalty P6-B microfix, 2026-08-24 — SUPERSEDES this test's own original pre-microfix assertion). The guard was tightened from a denylist (only confirmed/preparing/ready blocked) to a fail-closed ALLOWLIST (only completed/refunded permitted) — see reservationPreorderOrderLifecycle.test.ts's own section E for the full allowlist coverage. Whether blocked or allowed, completeReservation never directly writes the linked preorder order itself either way — that invariant is asserted here too.", async () => {
   const chain = await seedValidReservationChain();
   const managerToken = await mintStaffIdToken(chain.organizationId, ["manager"]);
   const { reservationId, preorderOrderId } = await directlyConfirmedReservationFixture(chain, {
@@ -807,10 +811,13 @@ test("completeReservation: 28. never cancels a linked preorder, regardless of it
   const orderBefore = await getPreorderOrder(preorderOrderId!);
 
   const result = await callCallable(COMPLETE_URL, { reservationId }, managerToken);
-  assert.strictEqual(result.httpStatus, 200, JSON.stringify(result.body));
+  assert.strictEqual(result.httpStatus, 400, JSON.stringify(result.body));
+  assert.strictEqual(result.body.error?.status, "FAILED_PRECONDITION");
 
+  const reservation = await getReservation(reservationId);
+  assert.strictEqual(reservation.status, "confirmed", "must remain unchanged — completion must not partially apply");
   const orderAfter = await getPreorderOrder(preorderOrderId!);
-  assert.strictEqual(orderAfter!.status, orderBefore!.status);
+  assert.strictEqual(orderAfter!.status, orderBefore!.status, "completeReservation never directly writes the linked preorder order, whether it blocks or allows completion");
 });
 
 test("completeReservation: 34/35. duplicate complete is a safe no-op", async () => {
@@ -876,7 +883,7 @@ test("markReservationNoShow: 32. a pending (never-released) preorder is auto-can
   assert.strictEqual(orderAfter!.status, "cancelled");
 });
 
-test("markReservationNoShow: 33. a released preorder is preserved, not auto-cancelled", async () => {
+test("markReservationNoShow: 33. CORRECTED by Boncuk Loyalty P6-B (2026-08-24) — a released-but-not-yet-fulfilled preorder ('confirmed') is now auto-cancelled by no-show, closing the P6-A-proven 'frozen forever' gap (markReservationNoShow.ts's own P6-B extension). The OLD (pre-P6-B) expectation this test asserted — 'a released preorder is preserved, not auto-cancelled' — is now superseded and would deterministically fail against the new source; corrected here per this file's own explicit instruction to update superseded assertions rather than silently carry them forward. See reservationPreorderOrderLifecycle.test.ts's own 'loyalty chain D' for the companion Boncuk-restore proof.", async () => {
   const chain = await seedValidReservationChain();
   const managerToken = await mintStaffIdToken(chain.organizationId, ["manager"]);
   const { reservationId, preorderOrderId } = await directlyConfirmedReservationFixture(chain, {
@@ -886,7 +893,22 @@ test("markReservationNoShow: 33. a released preorder is preserved, not auto-canc
   const result = await callCallable(NO_SHOW_URL, { reservationId }, managerToken);
   assert.strictEqual(result.httpStatus, 200, JSON.stringify(result.body));
   const orderAfter = await getPreorderOrder(preorderOrderId!);
-  assert.strictEqual(orderAfter!.status, "confirmed", "a released preorder must never be auto-cancelled by noShow");
+  assert.strictEqual(orderAfter!.status, "cancelled", "P6-B: a released-but-unfulfilled ('confirmed') preorder must now be cancelled by no-show, so any redeemed Boncuk is restored via the standard terminal-cancellation chain instead of being confiscated forever");
+  assert.strictEqual(orderAfter!.terminalReasonCode, "customerNoShow");
+  assert.strictEqual(orderAfter!.terminalActorType, "staff");
+});
+
+test("markReservationNoShow: P6-B — a preorder already 'served' (guest already received it) is left untouched by no-show, nothing to undo", async () => {
+  const chain = await seedValidReservationChain();
+  const managerToken = await mintStaffIdToken(chain.organizationId, ["manager"]);
+  const { reservationId, preorderOrderId } = await directlyConfirmedReservationFixture(chain, {
+    preorderStatus: "served",
+  });
+
+  const result = await callCallable(NO_SHOW_URL, { reservationId }, managerToken);
+  assert.strictEqual(result.httpStatus, 200, JSON.stringify(result.body));
+  const orderAfter = await getPreorderOrder(preorderOrderId!);
+  assert.strictEqual(orderAfter!.status, "served", "an already-served preorder must never be touched by no-show — the guest already received it");
 });
 
 test("markReservationNoShow: 36. duplicate no-show is a safe no-op", async () => {

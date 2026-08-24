@@ -5,6 +5,31 @@ import '../data/reservation_gateway.dart';
 /// Faz R.2 §21. The raw Firebase error code/message is never shown to the
 /// user.
 String reservationErrorMessage(ReservationException error) {
+  // Boncuk Loyalty P6-B (2026-08-24) — a Boncuk-specific rejection is
+  // mapped from [ReservationException.boncukErrorReason] (the SAME stable,
+  // machine-readable server reason vocabulary
+  // `takeaway_checkout_screen.dart`/`delivery_checkout_screen.dart` branch
+  // on), NEVER inferred from [error.code] alone: `invalid-argument`/
+  // `failed-precondition` are also used for entirely unrelated reservation
+  // validation in this same callable.
+  final boncukReason = error.boncukErrorReason;
+  if (boncukReason != null) {
+    switch (boncukReason) {
+      case 'boncuk/exceeds-max-usable':
+        return 'Boncuk bakiyeniz veya kullanabileceğiniz miktar değişti. '
+            'Bilgileri güncelledik; tekrar seçim yapın.';
+      case 'boncuk/account-unavailable':
+        return 'Boncuk hesabınıza şu anda ulaşılamıyor. Tekrar deneyebilir '
+            'veya Boncuk kullanmadan devam edebilirsiniz.';
+      case 'boncuk/policy-unavailable':
+        return 'Boncuk kullanımı şu anda geçici olarak kullanılamıyor. '
+            'Biraz sonra tekrar deneyebilirsiniz.';
+      default:
+        return 'Boncuk kullanılırken bir sorun oluştu. Boncuk kullanmadan '
+            'devam edebilirsiniz.';
+    }
+  }
+
   final message = error.message.toLowerCase();
 
   switch (error.code) {

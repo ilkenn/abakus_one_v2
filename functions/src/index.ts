@@ -40,6 +40,9 @@ export { getReservationBranchInfoForStaff } from "./getReservationBranchInfoForS
 export { cancelReservation } from "./cancelReservation";
 export { completeReservation } from "./completeReservation";
 export { markReservationNoShow } from "./markReservationNoShow";
+export { advanceReservationPreorderOrderStatus } from "./advanceReservationPreorderOrderStatus";
+export { cancelReservationPreorderOrderForStaff } from "./cancelReservationPreorderOrderForStaff";
+export { refundReservationPreorderOrder } from "./refundReservationPreorderOrder";
 export {
   onReservationEventCreated,
   reservationNotificationRetrySweep,

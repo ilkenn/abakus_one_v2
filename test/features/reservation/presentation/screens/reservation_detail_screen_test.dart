@@ -102,6 +102,7 @@ class _FakeDetailGateway implements ReservationGateway {
     required String contactFirstName,
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
+    int requestedBoncukAmount = 0,
   }) {
     throw UnimplementedError();
   }

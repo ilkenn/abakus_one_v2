@@ -9,6 +9,7 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../cart/presentation/screens/order_success_screen.dart';
 import '../../domain/models/reservation_area.dart';
 import '../../domain/models/reservation_status.dart';
 import '../../domain/models/reservation_summary.dart';
@@ -163,6 +164,24 @@ class _ConfirmationBody extends ConsumerWidget {
               ],
             ),
           ),
+          // Boncuk Loyalty Program P6-B (2026-08-24) — server-confirmed
+          // only, and only when a real redemption happened (mirrors
+          // `OrderSuccessScreen`'s own gate exactly, reusing the same
+          // `BoncukSuccessSummary` widget verbatim — no second Boncuk
+          // summary component). Every value here comes from the canonical
+          // preorder order re-read via `ReservationRepository`, never a
+          // pre-submit estimate.
+          if (reservation.preorder?.hasBoncukSummary ?? false) ...[
+            const SizedBox(height: AppSpacing.md),
+            BoncukSuccessSummary(
+              orderTotalMinorUnits: reservation.preorder!.grandTotalMinorUnits,
+              boncukUsed: reservation.preorder!.boncukUsed!,
+              boncukValueMinorUnits:
+                  reservation.preorder!.boncukValueMinorUnits!,
+              remainingPayableMinorUnits:
+                  reservation.preorder!.remainingPayableMinorUnits!,
+            ),
+          ],
           const SizedBox(height: AppSpacing.xl),
           ElevatedButton(
             onPressed: () =>

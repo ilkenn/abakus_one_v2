@@ -20,13 +20,24 @@ class ReservationProposalSnapshot {
 }
 
 /// Mirrors the backend's `Order.status` for a `reservationPreorder`
-/// order — only the three values that flow ever reaches (`pendingConfirmation`/
-/// `confirmed`/`cancelled`; `preparing`/`ready`/etc. belong to the kitchen
-/// pipeline this phase never touches).
+/// order. Boncuk Loyalty P6-B (2026-08-24) — extended with the full
+/// canonical post-release kitchen pipeline (`preparing`/`ready`/`served`/
+/// `completed`) plus `refunded`, now that `advanceReservationPreorderOrderStatus`/
+/// `refundReservationPreorderOrder` actually drive an order through them;
+/// `rejected` is included for completeness (the generic `OrderStatus` enum
+/// has it, even though a reservation preorder always reaches its
+/// pre-release terminal state via `cancelled`, never `rejected`, per
+/// `reservationPreorder.ts`'s own `buildPreorderCancellationPatch`).
 enum ReservationPreorderStatus {
   pendingConfirmation,
   confirmed,
-  cancelled;
+  preparing,
+  ready,
+  served,
+  completed,
+  cancelled,
+  rejected,
+  refunded;
 
   static ReservationPreorderStatus fromName(String name) =>
       ReservationPreorderStatus.values.byName(name);
@@ -53,6 +64,9 @@ class ReservationPreorderSummary {
     required this.kitchenReleaseAt,
     required this.lines,
     required this.grandTotalMinorUnits,
+    this.boncukUsed,
+    this.boncukValueMinorUnits,
+    this.remainingPayableMinorUnits,
   });
 
   final String orderId;
@@ -60,6 +74,22 @@ class ReservationPreorderSummary {
   final DateTime? kitchenReleaseAt;
   final List<ReservationPreorderLineSummary> lines;
   final int grandTotalMinorUnits;
+
+  /// Boncuk Loyalty Program P6-B (2026-08-24) — additive, optional
+  /// server-confirmed redemption summary, sourced directly from the
+  /// canonical order's own `boncukRedemption` map (never a pre-submit
+  /// estimate). `null` (the default) means no Boncuk was redeemed against
+  /// this preorder — mirrors `OrderSuccessScreen`'s own
+  /// `orderTotalMinorUnits`/`boncukUsed`/`boncukValueMinorUnits`/
+  /// `remainingPayableMinorUnits` optional-additive-field convention.
+  final int? boncukUsed;
+  final int? boncukValueMinorUnits;
+  final int? remainingPayableMinorUnits;
+
+  bool get hasBoncukSummary =>
+      boncukUsed != null &&
+      boncukValueMinorUnits != null &&
+      remainingPayableMinorUnits != null;
 }
 
 /// The customer-facing read model for their own reservation — sourced

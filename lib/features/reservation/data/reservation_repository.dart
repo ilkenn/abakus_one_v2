@@ -98,12 +98,21 @@ class FirestoreReservationRepository implements ReservationRepository {
     final kitchenReleaseAtTimestamp =
         data['kitchenReleaseAtTimestamp'] as fs.Timestamp?;
 
+    // Boncuk Loyalty P6-B (2026-08-24) — additive, optional; `null` when no
+    // redemption happened (the `boncukRedemption` map is `null` on the
+    // canonical order in that case, matching every other channel's schema).
+    final boncukRedemption = data['boncukRedemption'] as Map<String, dynamic>?;
+
     return ReservationPreorderSummary(
       orderId: orderId,
       status: ReservationPreorderStatus.fromName(data['status'] as String),
       kitchenReleaseAt: kitchenReleaseAtTimestamp?.toDate(),
       lines: lines,
       grandTotalMinorUnits: grandTotal['minorUnits'] as int,
+      boncukUsed: boncukRedemption?['boncukUsed'] as int?,
+      boncukValueMinorUnits: boncukRedemption?['valueMinorUnits'] as int?,
+      remainingPayableMinorUnits:
+          boncukRedemption?['remainingPayableMinorUnits'] as int?,
     );
   }
 

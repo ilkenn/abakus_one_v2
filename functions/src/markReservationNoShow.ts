@@ -1,6 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import type { CallableRequest } from "firebase-functions/v2/https";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { requireReservationManagerPermission } from "./reservationAuthorization";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import {
@@ -13,6 +13,11 @@ import {
   buildPreorderCancellationPatch,
   isReservationPreorderReleasedToKitchen,
 } from "./reservationPreorder";
+import { canTransition, type OrderStatus } from "./orderStatus";
+import {
+  applyReservationPreorderOrderLifecycleTransition,
+  writeReservationPreorderOrderStatusChangeAuditEvent,
+} from "./reservationPreorderOrderLifecycle";
 
 /**
  * Faz R.3B §13 — staff-only no-show marking of a confirmed reservation.
@@ -24,9 +29,20 @@ import {
  * `completeReservation`'s "never touch it" and mirrors
  * `cancelReservation`'s own §6 rule instead: a still-`pendingConfirmation`
  * preorder (never reached the kitchen) is auto-cancelled — nothing was
- * ever sent to the kitchen for a guest who never showed; a preorder
- * already released to the kitchen is left untouched, exactly like a staff
- * cancellation.
+ * ever sent to the kitchen for a guest who never showed.
+ *
+ * **Boncuk Loyalty P6-B (2026-08-24) — extended.** A preorder already
+ * released to the kitchen (`confirmed`/`preparing`/`ready` — not yet
+ * `served`/`completed`) is now ALSO cancelled here, closing the P6-A-proven
+ * structural gap: before this phase, such an order was left frozen forever
+ * (never restorable), which would have silently confiscated any Boncuk
+ * redeemed against it. §7/§8's own locked rule: a no-show BEFORE
+ * fulfillment cancels the order (never confiscates Boncuk — the same
+ * generic terminal-outbox/restore consumer every other cancellation
+ * already relies on); a preorder already `served`/`completed` (the guest
+ * DID receive it before failing to otherwise show, or the order already
+ * reached its own terminal state independently) is left untouched — there
+ * is nothing to undo.
  */
 
 function invalid(message: string): never {
@@ -113,18 +129,60 @@ export const markReservationNoShow = onCall(
         });
       }
 
-      // §13 — a still-pendingConfirmation preorder is auto-cancelled; a
-      // released one (isReservationPreorderReleasedToKitchen) is left
-      // untouched. buildPreorderCancellationPatch itself already no-ops
-      // for any non-pendingConfirmation status, so this is safe either way
-      // — the explicit release check below exists only for clarity/intent,
-      // not as a second gate the patch function doesn't already enforce.
+      // §13 — a still-pendingConfirmation preorder is auto-cancelled via the
+      // existing pre-release patch builder, unchanged.
+      //
+      // Boncuk Loyalty P6-B (2026-08-24) — a preorder already released to
+      // the kitchen but not yet fulfilled (`confirmed`/`preparing`/`ready`)
+      // is now ALSO cancelled here, via the same post-release lifecycle
+      // helpers the dedicated staff-cancel/advance/refund callables use —
+      // closes the P6-A-proven gap where such an order was previously left
+      // frozen forever. A preorder already `served`/`completed` (the guest
+      // received it) or already terminal is left untouched — nothing to
+      // undo.
       if (preorderOrderRef && preorderDoc && preorderDoc.exists) {
-        const released = isReservationPreorderReleasedToKitchen(preorderDoc.data()!.status as string);
+        const preorderOrderData = preorderDoc.data()!;
+        const currentPreorderStatus = preorderOrderData.status as string;
+        const released = isReservationPreorderReleasedToKitchen(currentPreorderStatus);
         if (!released) {
           const patch = buildPreorderCancellationPatch(preorderDoc, now);
           if (patch) tx.set(preorderOrderRef, patch, { merge: true });
+        } else if (
+          currentPreorderStatus === "confirmed" ||
+          currentPreorderStatus === "preparing" ||
+          currentPreorderStatus === "ready"
+        ) {
+          const nowTimestamp = Timestamp.fromDate(now);
+          if (canTransition(currentPreorderStatus as OrderStatus, "cancelled")) {
+            applyReservationPreorderOrderLifecycleTransition({
+              tx,
+              orderRef: preorderOrderRef,
+              orderId: preorderDoc.id,
+              order: preorderOrderData,
+              fromStatus: currentPreorderStatus as OrderStatus,
+              toStatus: "cancelled",
+              actorType: "staff",
+              now: nowTimestamp,
+              terminalReasonCode: "customerNoShow",
+            });
+            writeReservationPreorderOrderStatusChangeAuditEvent({
+              tx,
+              db,
+              orderId: preorderDoc.id,
+              organizationId: reservation.organizationId as string,
+              branchId: reservation.branchId as string,
+              fromStatus: currentPreorderStatus as OrderStatus,
+              toStatus: "cancelled",
+              actorType: "staff",
+              actorUid: staffUid,
+              actorRoles: null,
+              reasonCode: "customerNoShow",
+              now: nowTimestamp,
+            });
+          }
         }
+        // else: already served/completed/cancelled/rejected/refunded — left
+        // untouched, nothing to undo.
       }
 
       tx.set(
