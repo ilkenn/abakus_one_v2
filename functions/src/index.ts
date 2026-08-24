@@ -65,6 +65,7 @@ export { completeCustomerProfile } from "./completeCustomerProfile";
 export { getCustomerProfileCompletionState } from "./getCustomerProfileCompletionState";
 export { getCustomerLoyaltySnapshot } from "./getCustomerLoyaltySnapshot";
 export { getCustomerLoyaltyHistory } from "./getCustomerLoyaltyHistory";
+export { getCustomerLoyaltyRewardCatalog } from "./getCustomerLoyaltyRewardCatalog";
 export { onOrderEventCreatedForLoyaltyEarning } from "./loyaltyOrderEarning";
 export { onOrderTerminalFailureOrRefund } from "./onOrderTerminalFailureOrRefund";
 export { onOrderEventCreatedForLoyaltyRedemptionRestore } from "./loyaltyRedemptionRestore";

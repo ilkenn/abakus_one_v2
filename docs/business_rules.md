@@ -788,16 +788,249 @@ this design introduces.
 - **Related Modules**: Loyalty, Campaigns, Orders, Payments
 
 ### BR-LOYALTY-007 — Reward catalog
-- **Status**: DECIDED (catalog values) / UNRESOLVED (bowl-over-500-TL behavior)
-- **Rule**: The redeemable reward catalog is: 50 Boncuk → a drink; 100 Boncuk → a snack; 200 Boncuk →
-  a pasta item; 200 Boncuk → one bowl, up to 500 TL menu value. Every catalog redemption selects
-  exactly one eligible item — extras/add-ons are never automatically included free. A redeemed catalog
-  reward earns no Boncuk. Cancelling the order the reward was attached to restores the redemption (the
-  spent Boncuk is returned to the customer's balance). **Explicitly UNRESOLVED, not invented here**:
-  behavior when the chosen bowl's menu value exceeds 500 TL (customer pays the difference? a
-  lower-value bowl is enforced? the reward is simply unavailable for that bowl?).
+- **Status**: SUPERSEDED (original 50/100/200/200 catalog values) — **CORRECTED AND FOUNDATION
+  IMPLEMENTED, P7-B (2026-08-24) — see `BR-LOYALTY-026`**. UNRESOLVED (bowl-over-500-TL behavior)
+  remains open, now moot for the four initial rewards (see `BR-LOYALTY-026`'s own note).
+- **Original rule (2026-08-20, P0-A) — no longer in effect**: 50 Boncuk → a drink; 100 Boncuk → a
+  snack; 200 Boncuk → a pasta item; 200 Boncuk → one bowl, up to 500 TL menu value. **Correction
+  (P7-A audit, 2026-08-24)**: these exact costs were priced against the ORIGINAL 1 Boncuk = 2 TL
+  redemption rate in effect at P0-A. The P3A rate change (`docs/business_rules.md`'s own v3.21 Change
+  History entry) halved the redemption value to 1 Boncuk = 1 TL while simultaneously making earning 5×
+  more generous — a combined ~2.5× swing in effective cashback rate — and the reward catalog's Boncuk
+  costs were never revisited afterward. Preserving 50/100/200/200 unchanged today would have been
+  roughly twice as generous to the customer as originally intended, confirmed against real current
+  menu prices (drinks 80 TL; snacks 200–300 TL; pasta 380–550 TL; bowls 430–800 TL, with only 4 of 16
+  current bowls actually ≤500 TL). Not carried forward — see `BR-LOYALTY-026` for the actual locked
+  initial rewards and their real costs.
+- **Rule (still in effect, unchanged by the correction)**: every catalog redemption selects exactly one
+  eligible item — extras/add-ons are never automatically included free. A redeemed catalog reward earns
+  no Boncuk. Cancelling the order the reward was attached to restores the redemption (the spent Boncuk
+  is returned to the customer's balance) — **not yet implemented**, since P7-B builds the catalog
+  foundation only; no checkout/redemption/restore wiring exists yet (`BR-LOYALTY-026`).
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Loyalty, Orders, Menu
+- **Related Modules**: Loyalty, Orders, Menu, BR-LOYALTY-026
+
+### BR-LOYALTY-026 — Server-authoritative Reward Catalog foundation (backend only)
+- **Status**: DECIDED — **FOUNDATION IMPLEMENTED (P7-B, 2026-08-24)**. Audited first (P7-A, same day)
+  with an explicit reuse-first mandate. **Explicitly NOT included in this phase**: checkout/redemption
+  wiring into any order-submission channel (takeaway/delivery/reservation), the `catalogRedemption`
+  ledger writer, any account debit, any Admin UI, and the general Campaign Engine (percentage/fixed
+  discounts, timed promotions) — all deferred to later, separately-approved phases. Do not treat this
+  entry as "customers can redeem rewards today" — they cannot; only the definition/catalog layer and a
+  read-only customer listing exist.
+- **Takeaway checkout/redemption wiring, the `catalogRedemption` ledger writer, and the account debit are
+  now implemented — see `BR-LOYALTY-027`** (P7-C, same day). Delivery, Reservation-preorder, the Admin
+  UI, and the Campaign Engine remain exactly as deferred above.
+- **Rule — dynamic, server-authoritative, versioned reward definitions.** `loyaltyRewardCatalog/{rewardId}`
+  (live, current) + `loyaltyRewardCatalogVersions/{rewardId}_{version}` (append-only, immutable) —
+  mirrors `loyaltyPolicy.ts`'s own already-accepted "live doc + version-history collection" pattern
+  exactly, the closest and most directly reusable precedent in this codebase for this exact question.
+  Every reward-defining field a customer's historical redemption would need to reconstruct
+  (`title`/`description`/`rewardType`/`eligibleProductIds`/`boncukCost`/`sortOrder`/validity window) is
+  captured in each immutable version snapshot. `active`/`archived` are deliberately NOT part of the
+  versioned definition — they are live operational flags, toggled directly on the live doc without
+  creating a new version (a reward being paused/archived is not a change to what it WAS when redeemed).
+- **Rule — no destructive delete, ever.** "Delete" is exclusively `active: false, archived: true` on the
+  live doc. Every version and the live doc itself are permanently retained. An archived reward can never
+  be reactivated (a deliberate P7-B simplification — un-archiving is not a supported operation this
+  phase).
+- **Rule — `rewardType = "explicitProductSet"` only this phase, no category-based eligibility.** The
+  P7-A audit found real, current price spread within a single menu category (bowl: 430–800 TL) that
+  would let a customer systematically pick the most expensive eligible item under a category-level
+  entitlement. `eligibleProductIds` is a required, non-empty, explicit array of canonical `menuProducts`
+  document ids — every id is validated server-side (exists, belongs to the same organization) before a
+  reward can be created or updated; a client-asserted product title/price/category is never accepted as
+  proof of eligibility. `rewardType` is a discriminated union so a future category-scoped variant can be
+  added additively without a breaking change.
+- **Rule — trusted service primitives, not a callable, this phase.** `loyaltyRewardCatalogAdminService.ts`
+  exposes `createLoyaltyReward`/`updateLoyaltyRewardByCreatingNextVersion`/`setLoyaltyRewardActive`/
+  `archiveLoyaltyReward` as plain, directly-importable trusted functions — never a client-reachable
+  `onCall`. Challenged against `provisionOrganization`/`provisionRestaurant`/`provisionBranch`'s own
+  `platformOwner`-authorized-callable precedent before deciding against it: no equivalent "reward catalog
+  manager" role exists yet, and inventing one before any real Admin screen consumes it would be exactly
+  the premature permission/UI scope this phase's own instruction warned against. Invoked today only by
+  the local dev-seed script (`functions/scripts/seed_dev_loyalty_reward_catalog.mjs`); a future
+  Admin-authorized callable wrapper can call these same functions with zero redesign.
+- **Rule — customer-facing read is callable-only, never a direct Firestore read.**
+  `getCustomerLoyaltyRewardCatalog` mirrors `getCustomerLoyaltySnapshot.ts`'s exact identity discipline
+  (real phone-verified customer required, `organizationId` resolved exclusively server-side, tenant
+  membership independently re-verified). `firestore.rules` denies all direct client access to both
+  collections unconditionally — the same "reference/filtered data goes through a callable, never a rules
+  -encoded filter" precedent already established by `menuProducts`/`reservationAreas`/
+  `reservationPolicies` (none of which has a client-read rule either). Returns only currently
+  active/non-archived/currently-valid (server time only, never client-supplied)/correct-tenant rewards,
+  as a sanitized DTO (`rewardId`/`title`/`description`/`rewardType`/`eligibleProductIds`/`boncukCost`/
+  `sortOrder`/`version` — never `organizationId`/`active`/`archived`/validity window/timestamps).
+- **Rule — the redemption resolver is pure and debits nothing.**
+  `resolveCatalogRewardRedemption.ts` validates (reward found, organization match, currently valid,
+  requested product is in the explicit allowlist, `spendableBalance >= boncukCost`) and returns an
+  immutable proposed snapshot (`rewardId`/`rewardVersion`/`title`/`boncukCost`/`redeemedProductId`) —
+  every value server-resolved from the loaded reward, never client-supplied. Deliberately NOT built on
+  `calculateBoncukRedemption` (that function's 50%-of-order-cap math is specific to proportional cash
+  discount and does not apply to a fixed-cost item exchange). No account debit, no `catalogRedemption`
+  ledger write, no order integration — that is P7-C's own scope, not this one's.
+- **Rule — the four LOCKED initial rewards, re-priced against real current data, not the old P0-A
+  figures.** İçecek (drink) → 70 Boncuk, an explicit 4-item beverage allowlist
+  (`prod_acili_ayran`/`prod_cocacola`/`prod_eksili_ayran`/`prod_naneli_ayran` — every current canonical
+  beverage product, all uniformly 80 TL, so no category-drift/arbitrage risk within this specific
+  allowlist even though it is hand-maintained rather than dynamic); Çıtırtı Bowl → 420 Boncuk
+  (`prod_citirti_bowl`); Crispy Chicken Fettuccine → 400 Boncuk (`prod_fettucine_crispy_chicken_alfredo`
+  — the sole catalog product matching both "crispy chicken" and "fettuccine," an unambiguous, not
+  invented, resolution); Falafel Salad → 400 Boncuk (`prod_crispy_falafel_salad` — the sole Salata-
+  category product containing "falafel," same reasoning). The old 500-TL bowl-value-cap question is moot
+  for Çıtırtı Bowl specifically (430 TL, under any plausible cap) but remains open for any future
+  bowl-category reward. See `docs/decisions.md`'s P7-A entry for the full economics table this re-pricing
+  is based on — final commercial correctness of these four exact costs is still a business/architect call,
+  not something this implementation can itself validate.
+- **Architectural boundary — Reward Catalog vs. future Campaign Engine, permanently separate server
+  domains.** A LOYALTY REWARD is a customer exchanging Boncuk for one explicitly defined item (this
+  entry). A CAMPAIGN is a percentage/fixed discount, a free-product promotion, or a timed/channel-scoped
+  offer — none of which exist as real, implemented mechanics anywhere in this codebase today (the
+  `ABAKUS10`/`ILKSIPARIS`/etc. mock coupon codes are dead, unreachable client-side code, not a real
+  Campaign Engine). A future Campaign Engine must eventually support start/end date-time, recurring
+  day/time windows, instant activation, product/category/channel scope, minimum basket, usage limits
+  (total and per-customer), and percentage/fixed/free-product mechanics — none of that is built by this
+  entry, and this entry's own reward-catalog data model is not to be reused or overloaded for it. Both
+  domains may eventually be exposed under one future Admin experience ("Kampanyalar & Boncuk"), the same
+  way `docs/business_rules.md`'s CRM section already documents Boncuk and the Visit Passport program
+  sharing a UI umbrella while remaining fully separate backend domains (`BR-CRM-008`) — a UI-level
+  grouping decision, never a backend-merge.
+- **Rule — one order = maximum one benefit, extended (aspirational until P7-C+/coupon both exist).**
+  `selectedBenefitType` is designed to extend from today's real `"none" | "boncukRedemption"` to include
+  `"catalogReward"` (P7-C) and eventually `"coupon"` — exactly one of these per order, customer-selected,
+  server-enforced, mirroring `BR-LOYALTY-006`'s already-locked exclusivity rule. Not enforced anywhere
+  yet for `catalogReward` specifically, since no order-submission channel reads a reward selection at
+  all this phase — recorded here so the rule is locked before any channel wiring begins, not decided ad
+  hoc when it does.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, Menu, BR-LOYALTY-004, BR-LOYALTY-006, BR-LOYALTY-007,
+  BR-LOYALTY-010, BR-CRM-008
+
+### BR-LOYALTY-027 — Atomic catalog-reward redemption, Takeaway channel only (P7-C, 2026-08-24)
+- **Status**: DECIDED — **IMPLEMENTED (P7-C, 2026-08-24)**, closing `BR-LOYALTY-026`'s own disclosed
+  "checkout/redemption wiring" gap for exactly one channel. **Explicitly NOT included**: Delivery or
+  Reservation-preorder catalog-reward redemption (both remain cash-Boncuk-only, per `BR-LOYALTY-024`/
+  `BR-LOYALTY-025`), the general Campaign Engine, and any Admin UI for managing rewards.
+- **Rule — client sends only `selectedRewardId`, server resolves everything else.** `submitTakeawayOrder`
+  accepts an optional `selectedRewardId`; the reward's cost, title, version, and eligible-product list are
+  always re-resolved server-side from the current canonical `loyaltyRewardCatalog` entry via
+  `resolveCatalogRewardRedemption.ts` (`BR-LOYALTY-026`) — there is no field a client could use to assert
+  a cost, and a forged/extra client field is structurally inert.
+- **Rule — `catalogReward` and `boncukRedemption` are mutually exclusive, fail-closed.**
+  `requestedBoncukAmount > 0` together with a non-null `selectedRewardId` is rejected with a stable
+  `catalogReward/benefit-stacking-not-allowed` reason before any pricing/account work begins — realizes
+  `BR-LOYALTY-026`'s own "one order = maximum one benefit" extension for `selectedBenefitType`, which now
+  takes the real value `"catalogReward"` (alongside `"none"`/`"boncukRedemption"`) for the first time.
+- **Rule — a reward makes exactly ONE eligible product UNIT free, never the whole line.** The reward must
+  match a product genuinely present in the cart (`findFirstEligibleCartProductId`, deterministic
+  first-match tie-break when the same eligible product appears on more than one cart line); of that
+  line's quantity, exactly one unit's price (base + per-unit modifiers, already channel-resolved — so a
+  Takeaway product's own +20 TL packaging surcharge is covered automatically, never left as residual
+  payable) is reduced to zero via a new `freeUnitCount` parameter on `buildOrderLine`
+  (`takeawayPricing.ts`), proven exact (not approximate) because every unit within one order line is
+  priced identically. `redeemedQuantity` is always exactly `1`, regardless of the line's own cart
+  quantity; every other unit on that line and every other cart item remain fully, normally priced. An
+  order with no reward/Boncuk selection prices exactly as before this change (zero regression to the
+  base Takeaway pricing path).
+- **Rule — the order snapshot preserves immutable, server-confirmed redemption provenance.** Every
+  Takeaway order carries a `catalogReward: {rewardId, rewardVersion, title, boncukCost, redeemedProductId,
+  redeemedQuantity, coveredValueMinorUnits, rewardCatalogVersionId} | null` field, written once at
+  submission and never re-derived from the live catalog afterward — a later edit to the reward's live
+  cost/title/version can never rewrite an already-placed order's own history (mirrors `BR-LOYALTY-026`'s
+  own version-immutability guarantee, extended to the order document itself).
+- **Rule — the account debit and ledger write reuse the existing accounting engine, never a second one.**
+  `spendableBalance -= boncukCost` (never negative — insufficient balance is rejected pre-write with the
+  exact required/available figures) is applied in the SAME transaction as order creation, atomically. A
+  deterministic `catalogRedemption` ledger entry is written via the existing `deriveLoyaltyLedgerEntryId`
+  convention (`entryType: "catalogRedemption"`, `sourceId: orderId`) — the exact same shared
+  `loyaltyLedgerEntries` collection/shape `boncukRedemption` already uses, with `metadata: {entryType,
+  rewardId}` for audit/restore provenance. No parallel accounting mechanism exists.
+- **Rule — restore is a generalization of the existing consumer, never a second one.**
+  `loyaltyRedemptionRestore.ts`'s single consumer now checks for a `boncukRedemption` OR a
+  `catalogRedemption` original ledger entry (never both — "one order = maximum one benefit" guarantees
+  at most one family exists per order; both existing simultaneously is treated as an invariant violation
+  and fails closed, crediting nothing, rather than guessing which is authoritative) and restores whichever
+  it finds via the exact same debt-first `applyBoncukCreditDebtFirst` primitive, the exact same
+  deterministic-restore-entry-id idempotency discipline, and the exact same terminal-event trigger chain
+  (rejection, eligible cancellation, refund) `boncukRedemption` already used — restoring the ORIGINAL
+  `boncukCost`, never a live (possibly since-changed) reward cost/version. Cash-Boncuk restore behavior is
+  byte-for-byte unchanged. **Order-document validity checks (existence, status match, org/customer
+  identity match) always run BEFORE the redemption-family lookup** — an anomalous/forged/mismatched event
+  is never masked by a "nothing to restore anyway" no-op, matching the pre-existing cash-redemption
+  behavior exactly.
+- **Rule — the rewarded unit earns zero Boncuk; other paid spend in the same order earns normally.**
+  Verified from canonical post-reward server pricing (`pricing.grandTotal`), not assumed: the rewarded
+  unit's price is already zero by the time the earning-basis calculation (`loyaltyOrderEarning.ts`) runs,
+  so the existing "no redemption present → use the order total unchanged" branch is already exactly
+  correct for a catalog-reward order (`boncukRedemption: null` on such an order) — zero code change to
+  that function's actual earning logic was needed, only a clarifying comment. A later edit to the live
+  reward's cost/version has zero effect on an already-completed order's historical earned amount.
+- **Rule — Flutter (Takeaway checkout only) reuses the real server-authoritative catalog, never a mock
+  one.** `CatalogRewardCard` reads `loyaltyRewardCatalogProvider` → `getCustomerLoyaltyRewardCatalog`
+  (`BR-LOYALTY-026`), filters to rewards eligible for the current cart, and is mutually exclusive with
+  `BoncukRedemptionCard` by REMOVAL (selecting a reward hides the Boncuk card entirely, not merely
+  disables it, and vice versa) — never two simultaneously visible selection paths. The success screen
+  shows the compact server-confirmed summary ("`<title>` ödülü kullanıldı" / "`X` Boncuk kullanıldı" /
+  "Ücretsiz ürün: `<product>`" / "Karşılanan tutar: `Y` TL") sourced exclusively from the canonical
+  re-read `Order`, never a pre-submit client estimate (none exists for a catalog reward, unlike cash
+  Boncuk redemption's own estimate).
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-006, BR-LOYALTY-022, BR-LOYALTY-026
+
+### BR-LOYALTY-028 — Canonical commercial-channel scoping for Reward Catalog entries (P7-C.1, 2026-08-24)
+- **Status**: DECIDED — **IMPLEMENTED (P7-C.1, 2026-08-24)**. A schema/validation microfix layered onto
+  `BR-LOYALTY-026`/`BR-LOYALTY-027`, not a new redemption mechanism — no new order-submission channel
+  gained catalog-reward redemption this phase (still Takeaway only).
+- **Rule — every reward carries a required, non-empty `eligibleChannels` array from one closed,
+  canonical vocabulary.** `CANONICAL_COMMERCIAL_CHANNELS = ["dineIn", "takeaway", "delivery",
+  "reservationPreorder"]` (`loyaltyRewardCatalog.ts`) is **the shared channel vocabulary boundary
+  between the Reward Catalog and the future Campaign Engine** — a future Campaign Engine imports this
+  same constant rather than declaring a parallel one, so "delivery only" / "takeaway only" / "dineIn +
+  takeaway" / "reservationPreorder only" / "all channels" mean identically the same thing in both
+  domains (this phase documents the boundary only; it does not build the Campaign Engine). Deliberately
+  a COARSER vocabulary than a real order's own raw `channel` field (`"dineInQr"`/`"dineInStaff"` both
+  collapse into the single commercial concept `"dineIn"`) — a customer/Admin-facing abstraction, not a
+  1:1 mirror of the order-lifecycle literal values.
+- **Rule — required, non-empty, no duplicates, only canonical values, deterministically normalized.**
+  `sanitizeEligibleChannels` (mirroring `sanitizeEligibleProductIds`'s own dedupe-not-reject convention)
+  rejects a missing/empty array or any value outside the closed vocabulary, and always returns the
+  channel set in `CANONICAL_COMMERCIAL_CHANNELS`'s own fixed order — two requests describing the same
+  channel SET in a different order, or with duplicates, produce a byte-identical stored array. Enforced
+  identically at both `createLoyaltyReward` and `updateLoyaltyRewardByCreatingNextVersion`.
+- **Rule — `eligibleChannels` is part of the versioned definition, exactly like `boncukCost`/
+  `eligibleProductIds`.** Changing it via `updateLoyaltyRewardByCreatingNextVersion` creates a new
+  immutable version; every prior version's own `eligibleChannels` (and every other field) remains
+  byte-for-byte unchanged — an Admin narrowing a reward from all four channels down to one never rewrites
+  what that reward WAS valid for at any past moment.
+- **Rule — Takeaway checkout validates the reward's `eligibleChannels` against the server's own real,
+  hardcoded channel, never a client claim.** `submitTakeawayOrder.ts` rejects a selected reward whose
+  `eligibleChannels` does not include `"takeaway"` with the stable, new `catalogReward/channel-not
+  -eligible` reason, BEFORE any pricing/build work — no balance debit, no `catalogRedemption` ledger
+  write, no order created with the reward applied (identical fail-closed shape to every other P7-C
+  rejection reason). There is structurally no request field a client could use to assert a different
+  channel — `submitTakeawayOrder` derives its own channel as the literal `"takeaway"`, exactly as it
+  already did for every other purpose before this phase; a client-sent extra `channel`/`orderChannel`
+  field has zero effect (proven by test, not merely asserted). The same check is duplicated, defense-in
+  -depth only, inside `resolveCatalogRewardRedemption`'s own pure resolver (a new `orderChannel` param
+  and `"channel-not-eligible"` status) — the reusable, channel-agnostic redemption-validation function a
+  future Delivery/Reservation-preorder integration would also call.
+- **Rule — the order snapshot preserves the actual redemption channel, immutably.** `CatalogRewardOrderSnapshot`
+  gained `orderChannel: CanonicalCommercialChannel` (always `"takeaway"` for this callable), written once
+  at submission and never re-derived — a later change to the reward's own live/future-version channel
+  scope can never rewrite an already-placed order's own history. The redeemed reward version's own
+  immutable `eligibleChannels` (in `loyaltyRewardCatalogVersions`) additionally preserves what the reward
+  itself was configured for at redemption time — historical orders are never re-evaluated against the
+  CURRENT live reward.
+- **Initial rewards re-seeded with all four canonical channels.** The four LOCKED P7-B rewards
+  (`BR-LOYALTY-026`) now carry `eligibleChannels: ["dineIn", "takeaway", "delivery",
+  "reservationPreorder"]` in the local dev seed — the starting configuration only; a future Admin can
+  independently narrow each reward's own channel scope without any Flutter/backend redesign. No channel
+  vocabulary is hardcoded into Flutter behavior — the customer-facing DTO (`getCustomerLoyaltyRewardCatalog`)
+  carries `eligibleChannels` for a future UI to read, but no Flutter production code was changed this
+  phase to consume it (nothing required it — `submitTakeawayOrder`'s own server-side validation already
+  fails closed for a wrong-channel reward selection).
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Loyalty, Orders, Menu, BR-LOYALTY-026, BR-LOYALTY-027
 
 ### BR-LOYALTY-008 — Task-based earning
 - **Status**: DECIDED (task list and point values) / UNRESOLVED (verification mechanism, unfollow
@@ -5892,6 +6125,22 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.22 — 2026-08-24
+- **Version**: 3.22
+- **Date**: 2026-08-24
+- **Summary**: Boncuk Loyalty Program P7-A (audit) + P7-B (backend foundation only). New
+  `BR-LOYALTY-026` — server-authoritative Reward Catalog foundation:
+  `loyaltyRewardCatalog`/`loyaltyRewardCatalogVersions` (live + immutable version history, mirroring
+  `loyaltyPolicy.ts`'s own pattern), trusted admin-service primitives (not a callable this phase), a
+  read-only customer callable (`getCustomerLoyaltyRewardCatalog`), a pure redemption resolver
+  (`resolveCatalogRewardRedemption`, debits nothing yet). `BR-LOYALTY-007`'s original 50/100/200/200
+  reward costs are marked SUPERSEDED — priced against a redemption rate that no longer exists since the
+  P3A rate change (v3.21) — and replaced with four re-priced, real-current-menu-data-grounded initial
+  rewards (İçecek 70, Çıtırtı Bowl 420, Crispy Chicken Fettuccine 400, Falafel Salad 400). No checkout
+  wiring, no ledger writer, no account debit, no Admin UI, no Campaign Engine — all explicitly deferred.
+  See `docs/decisions.md`'s P7-A/P7-B entries for the full audit/economics table and implementation
+  detail.
 
 ### v3.21 — 2026-08-24
 - **Version**: 3.21

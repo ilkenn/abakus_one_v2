@@ -4,6 +4,7 @@ import '../../payment/domain/models/payment_method_reporting_category.dart';
 import '../../payment/domain/models/payment_method_snapshot.dart';
 import '../../payment/domain/models/payment_provider_id.dart';
 import '../domain/models/boncuk_redemption_snapshot.dart';
+import '../domain/models/catalog_reward_snapshot.dart';
 import '../domain/models/courier_visibility.dart';
 import '../domain/models/delivery_address_snapshot.dart';
 import '../domain/models/order.dart';
@@ -165,6 +166,12 @@ abstract final class OrderFirestoreMapper {
           ? null
           : _boncukRedemptionSnapshotFromFirestore(
               Map<String, dynamic>.from(data['boncukRedemption'] as Map)),
+      // Boncuk Loyalty P7-C (2026-08-24) — same additive/nullable
+      // backward-compatibility contract as boncukRedemption above.
+      catalogReward: data['catalogReward'] == null
+          ? null
+          : _catalogRewardSnapshotFromFirestore(
+              Map<String, dynamic>.from(data['catalogReward'] as Map)),
     );
   }
 
@@ -178,6 +185,20 @@ abstract final class OrderFirestoreMapper {
           data['redemptionValueMinorUnitsPerBoncuk'] as int,
       maxRedemptionBasisPoints: data['maxRedemptionBasisPoints'] as int,
       loyaltyPolicyVersion: data['loyaltyPolicyVersion'] as int,
+    );
+  }
+
+  static CatalogRewardSnapshot _catalogRewardSnapshotFromFirestore(
+      Map<String, dynamic> data) {
+    return CatalogRewardSnapshot(
+      rewardId: data['rewardId'] as String,
+      rewardVersion: data['rewardVersion'] as int,
+      title: data['title'] as String,
+      boncukCost: data['boncukCost'] as int,
+      redeemedProductId: data['redeemedProductId'] as String,
+      redeemedQuantity: data['redeemedQuantity'] as int,
+      coveredValueMinorUnits: data['coveredValueMinorUnits'] as int,
+      rewardCatalogVersionId: data['rewardCatalogVersionId'] as String,
     );
   }
 

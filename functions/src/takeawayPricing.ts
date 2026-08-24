@@ -114,11 +114,31 @@ export interface ComputedOrderLine {
  * Mirrors `OrderLine.create`'s exact computation — `modifierTotal`,
  * `lineSubtotal = (unitPrice + modifierTotal) * quantity`, `lineTotal`,
  * and gross-to-VAT extraction, deterministically from raw inputs, never
- * independently supplied. No line-level discount exists in this flow
- * (takeaway has none today, matching `CartToOrderMapper`'s own takeaway
- * call site never passing one) — `lineDiscountMinorUnits` is always 0,
- * kept as an explicit field for shape-fidelity with `OrderLine` rather
- * than silently omitted.
+ * independently supplied. No line-level discount exists in this flow for
+ * an ordinary line (takeaway had none at all until this phase, matching
+ * `CartToOrderMapper`'s own takeaway call site never passing one) —
+ * `freeUnitCount` defaults to `0`, giving `lineDiscountMinorUnits: 0`
+ * exactly as before for every existing caller.
+ *
+ * **Boncuk Loyalty P7-C (2026-08-24) — `freeUnitCount`, the smallest
+ * canonical pricing change able to represent "exactly one unit of this
+ * line is free" without corrupting quantity math.** Because every unit
+ * within one line is already priced identically (same `unitPriceMinorUnits`
+ * + the same per-unit `modifierTotalMinorUnits`, per `OrderLine`'s own
+ * design — a line is N identical units of one product+modifier
+ * combination), a FLAT discount equal to exactly `freeUnitCount` units'
+ * worth of (unitPrice + modifierTotal) is mathematically exact, not an
+ * approximation: `lineTotal = (unitPrice + modifierTotal) *
+ * (quantity - freeUnitCount)`, i.e. precisely "freeUnitCount units free,
+ * the rest at full price" — never a percentage or a post-hoc grandTotal
+ * adjustment. `unitPriceMinorUnits` is already the CHANNEL-RESOLVED price
+ * (e.g. takeaway's own +20 TL product-level surcharge, folded in by
+ * `resolveProductUnitPriceMinorUnits` before this function ever sees it)
+ * — so covering it automatically covers that surcharge too, with no
+ * separate surcharge-specific logic anywhere in this function. VAT is
+ * extracted from `lineTotalMinorUnits` (i.e. AFTER the discount), exactly
+ * as before — a free unit correctly owes no VAT, since VAT is only ever
+ * due on money actually collected.
  */
 export function buildOrderLine(params: {
   productId: string;
@@ -129,13 +149,20 @@ export function buildOrderLine(params: {
   taxBasisPoints: number;
   kitchenNote?: string;
   customerNote?: string;
+  freeUnitCount?: number;
 }): ComputedOrderLine {
   const { productId, productName, modifiers, quantity, unitPriceMinorUnits, taxBasisPoints } =
     params;
+  const freeUnitCount = params.freeUnitCount ?? 0;
 
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new NegativeAmountError(
       `quantity for product "${productId}" must be a positive integer (mirrors OrderLine.create's NonPositiveQuantityViolation)`,
+    );
+  }
+  if (!Number.isInteger(freeUnitCount) || freeUnitCount < 0 || freeUnitCount > quantity) {
+    throw new NegativeAmountError(
+      `freeUnitCount for product "${productId}" must be a non-negative integer no greater than quantity`,
     );
   }
 
@@ -144,7 +171,7 @@ export function buildOrderLine(params: {
     0,
   );
   const lineSubtotalMinorUnits = (unitPriceMinorUnits + modifierTotalMinorUnits) * quantity;
-  const lineDiscountMinorUnits = 0;
+  const lineDiscountMinorUnits = (unitPriceMinorUnits + modifierTotalMinorUnits) * freeUnitCount;
   const lineTotalMinorUnits = lineSubtotalMinorUnits - lineDiscountMinorUnits;
   if (lineTotalMinorUnits < 0) {
     throw new NegativeAmountError(`computed lineTotal for product "${productId}" is negative`);

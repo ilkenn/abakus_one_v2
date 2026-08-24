@@ -4106,3 +4106,130 @@ test('loyaltyLedgerEntries: a query targeting another customer\'s uid is denied,
     ),
   );
 });
+
+// =========================================================================
+// Reward Catalog — Boncuk Loyalty Program P7-B (2026-08-24).
+// loyaltyRewardCatalog / loyaltyRewardCatalogVersions. No client, not even
+// the reward's own organization's member, ever reads either collection
+// directly — `getCustomerLoyaltyRewardCatalog` (Cloud Function) is the sole
+// read path. Unconditional `allow read, write: if false` for both.
+// =========================================================================
+
+function loyaltyRewardCatalogFixture(overrides = {}) {
+  return {
+    rewardId: 'icecek',
+    organizationId: 'org-1',
+    title: 'İçecek',
+    description: 'Test.',
+    rewardType: 'explicitProductSet',
+    eligibleProductIds: ['prod_cocacola'],
+    boncukCost: 70,
+    active: true,
+    archived: false,
+    sortOrder: 0,
+    version: 1,
+    validFrom: null,
+    validUntil: null,
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+    ...overrides,
+  };
+}
+
+test('loyaltyRewardCatalog: a real, tenant-member customer cannot read a reward document directly', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyRewardCatalog/icecek'), loyaltyRewardCatalogFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+  });
+  const owner = customerContext('loyalty-owner-1');
+
+  await assertFails(getDoc(doc(owner, 'loyaltyRewardCatalog/icecek')));
+});
+
+test('loyaltyRewardCatalog: an unauthenticated caller cannot read a reward document', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyRewardCatalog/icecek'), loyaltyRewardCatalogFixture());
+  });
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  await assertFails(getDoc(doc(anon, 'loyaltyRewardCatalog/icecek')));
+});
+
+test('loyaltyRewardCatalog: a list query is denied outright, for any authenticated identity', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyRewardCatalog/icecek'), loyaltyRewardCatalogFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+  });
+  const owner = customerContext('loyalty-owner-1');
+
+  await assertFails(
+    getDocs(query(collection(owner, 'loyaltyRewardCatalog'), where('organizationId', '==', 'org-1'))),
+  );
+});
+
+test('loyaltyRewardCatalog: no client can create, update, or delete a reward document directly', async () => {
+  const owner = customerContext('loyalty-owner-1');
+  await assertFails(setDoc(doc(owner, 'loyaltyRewardCatalog/icecek'), loyaltyRewardCatalogFixture()));
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyRewardCatalog/icecek'), loyaltyRewardCatalogFixture());
+  });
+  await assertFails(updateDoc(doc(owner, 'loyaltyRewardCatalog/icecek'), { boncukCost: 999999 }));
+  await assertFails(deleteDoc(doc(owner, 'loyaltyRewardCatalog/icecek')));
+});
+
+function loyaltyRewardCatalogVersionFixture(overrides = {}) {
+  return {
+    rewardId: 'icecek',
+    organizationId: 'org-1',
+    title: 'İçecek',
+    description: 'Test.',
+    rewardType: 'explicitProductSet',
+    eligibleProductIds: ['prod_cocacola'],
+    boncukCost: 70,
+    sortOrder: 0,
+    version: 1,
+    validFrom: null,
+    validUntil: null,
+    effectiveAt: Timestamp.now(),
+    createdAt: Timestamp.now(),
+    ...overrides,
+  };
+}
+
+test('loyaltyRewardCatalogVersions: a real, tenant-member customer cannot read a version document directly', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyRewardCatalogVersions/icecek_1'), loyaltyRewardCatalogVersionFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+  });
+  const owner = customerContext('loyalty-owner-1');
+
+  await assertFails(getDoc(doc(owner, 'loyaltyRewardCatalogVersions/icecek_1')));
+});
+
+test('loyaltyRewardCatalogVersions: a list query is denied outright', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyRewardCatalogVersions/icecek_1'), loyaltyRewardCatalogVersionFixture());
+    await seedMembership(db, 'loyalty-owner-1', 'org-1');
+  });
+  const owner = customerContext('loyalty-owner-1');
+
+  await assertFails(
+    getDocs(query(collection(owner, 'loyaltyRewardCatalogVersions'), where('rewardId', '==', 'icecek'))),
+  );
+});
+
+test('loyaltyRewardCatalogVersions: no client can create, update, or delete a version document directly', async () => {
+  const owner = customerContext('loyalty-owner-1');
+  await assertFails(
+    setDoc(doc(owner, 'loyaltyRewardCatalogVersions/icecek_1'), loyaltyRewardCatalogVersionFixture()),
+  );
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'loyaltyRewardCatalogVersions/icecek_1'), loyaltyRewardCatalogVersionFixture());
+  });
+  await assertFails(
+    updateDoc(doc(owner, 'loyaltyRewardCatalogVersions/icecek_1'), { boncukCost: 999999 }),
+  );
+  await assertFails(deleteDoc(doc(owner, 'loyaltyRewardCatalogVersions/icecek_1')));
+});

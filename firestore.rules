@@ -432,6 +432,30 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // Reward Catalog — Boncuk Loyalty Program P7-B (2026-08-24). No client,
+    // including the reward's own owning customer, ever reads either
+    // collection directly: `getCustomerLoyaltyRewardCatalog` (Cloud
+    // Function) is the sole customer-facing read path, since it must apply
+    // real filtering (active/archived/validity-window/tenant) a Firestore
+    // Rule would have to duplicate for no benefit — the same reasoning
+    // already governing `menuProducts`/`reservationAreas`/
+    // `reservationPolicies` (no rule for any of them either; served only
+    // via callables). `loyaltyRewardCatalogVersions` is a pure, permanent
+    // audit trail with no customer-facing reader at all. Trusted writers
+    // only: `loyaltyRewardCatalogAdminService.ts`'s functions, invoked from
+    // the local dev-seed script this phase, a real Admin-authorized
+    // callable in a future phase — never a direct client write, ever.
+    // ---------------------------------------------------------------------
+
+    match /loyaltyRewardCatalog/{rewardId} {
+      allow read, write: if false; // Cloud Function / Admin SDK only — see getCustomerLoyaltyRewardCatalog.
+    }
+
+    match /loyaltyRewardCatalogVersions/{versionId} {
+      allow read, write: if false; // Cloud Function / Admin SDK only — permanent audit trail, no client reader.
+    }
+
+    // ---------------------------------------------------------------------
     // Entitlements — "clients cannot write arbitrary entitlement grants."
     // ---------------------------------------------------------------------
 

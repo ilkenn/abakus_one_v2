@@ -9,6 +9,7 @@ import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../auth/domain/phone_number.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../loyalty/domain/models/loyalty_account_snapshot.dart';
+import '../../../loyalty/domain/models/loyalty_reward.dart';
 import '../../../loyalty/presentation/providers/loyalty_providers.dart';
 import '../../../orders/domain/models/order_id.dart';
 import '../../../orders/domain/models/order_model.dart';
@@ -21,6 +22,7 @@ import '../../domain/models/cart_item.dart';
 import '../providers/cart_provider.dart';
 import '../providers/shopping_channel_provider.dart';
 import '../widgets/boncuk_redemption_card.dart';
+import '../widgets/catalog_reward_card.dart';
 import 'order_success_screen.dart';
 
 /// Boncuk Loyalty Program P4-E-B (2026-08-22) — the presentation-only,
@@ -113,6 +115,15 @@ class _TakeawayCheckoutScreenState
   bool _boncukUsageEnabled = false;
   int _selectedBoncukAmount = 0;
 
+  /// Boncuk Loyalty Program P7-C (2026-08-24) — the customer's own explicit
+  /// catalog-reward choice, `null` meaning none. Mutually exclusive with
+  /// [_boncukUsageEnabled] by construction: [_onBoncukToggle] clears this
+  /// when turning cash redemption on, [_onRewardSelect] clears
+  /// [_boncukUsageEnabled]/[_selectedBoncukAmount] when a reward is picked
+  /// — never both set at once, matching the server's own fail-closed
+  /// stacking rejection.
+  String? _selectedRewardId;
+
   /// Idempotency (Faz D.3.1): generated once, on screen init, then reused
   /// on every retry within this screen's lifetime — the backend's own
   /// `sha256(actorUid|submissionKey)` derivation (`docs/decisions.md`
@@ -195,6 +206,23 @@ class _TakeawayCheckoutScreenState
       _boncukUsageEnabled = value;
       _selectedBoncukAmount =
           value ? (_selectedBoncukAmount > 0 ? _selectedBoncukAmount : 1) : 0;
+      // Boncuk Loyalty P7-C — mutual exclusivity: turning cash redemption
+      // on clears any catalog-reward selection.
+      if (value) _selectedRewardId = null;
+      _submitError = null;
+    });
+  }
+
+  /// Boncuk Loyalty Program P7-C (2026-08-24) — the customer picking (or
+  /// un-picking) a catalog reward. Mutual exclusivity: selecting a reward
+  /// clears any active cash-Boncuk selection.
+  void _onRewardSelect(String? rewardId) {
+    setState(() {
+      _selectedRewardId = rewardId;
+      if (rewardId != null) {
+        _boncukUsageEnabled = false;
+        _selectedBoncukAmount = 0;
+      }
       _submitError = null;
     });
   }
@@ -244,6 +272,29 @@ class _TakeawayCheckoutScreenState
         _boncukUsageEnabled = false;
         _selectedBoncukAmount = 0;
       });
+    }
+  }
+
+  /// Boncuk Loyalty Program P7-C (2026-08-24) — the catalog-reward sibling
+  /// of [_handleBoncukEstimateMightHaveChanged]: if the cart changes such
+  /// that the currently-selected reward's product is no longer present
+  /// (removed, quantity change doesn't matter — only presence does),
+  /// there is no "stepper/MAX" recovery for a reward pick the way there is
+  /// for a Boncuk amount, so the only correct behavior is to clear the
+  /// now-impossible selection outright, never silently leave it selected
+  /// and pointing at nothing.
+  void _handleCartMightHaveInvalidatedReward() {
+    final rewardId = _selectedRewardId;
+    if (rewardId == null) return;
+    final rewards = ref.read(loyaltyRewardCatalogProvider).valueOrNull;
+    final reward = rewards?.where((r) => r.rewardId == rewardId).firstOrNull;
+    final cartProductIds = ref
+        .read(cartProvider)
+        .where((item) => !_isBowlCartItem(item))
+        .map((item) => item.id)
+        .toSet();
+    if (reward == null || !reward.isEligibleForCart(cartProductIds)) {
+      setState(() => _selectedRewardId = null);
     }
   }
 
@@ -319,6 +370,24 @@ class _TakeawayCheckoutScreenState
         case 'boncuk/policy-unavailable':
           return 'Boncuk kullanımı şu anda geçici olarak kullanılamıyor. '
               'Biraz sonra tekrar deneyebilirsin.';
+        // Boncuk Loyalty P7-C (2026-08-24) — catalog-reward-specific
+        // reasons, same shared `boncukErrorReason` field/namespace.
+        case 'catalogReward/reward-not-found':
+        case 'catalogReward/reward-not-currently-valid':
+          return 'Seçtiğin ödül artık kullanılamıyor. Lütfen tekrar seçim '
+              'yap veya ödül kullanmadan devam et.';
+        case 'catalogReward/product-not-in-cart':
+          return 'Seçtiğin ödül için uygun bir ürün sepetinde bulunamadı. '
+              'Lütfen sepetini kontrol et.';
+        case 'catalogReward/insufficient-balance':
+          return 'Bu ödül için yeterli Boncuk bakiyen yok. Bilgileri '
+              'güncelledik; ödül kullanmadan devam edebilirsin.';
+        case 'catalogReward/account-unavailable':
+          return 'Boncuk hesabına şu anda ulaşılamıyor. Tekrar deneyebilir '
+              'veya ödül kullanmadan devam edebilirsin.';
+        case 'catalogReward/benefit-stacking-not-allowed':
+          return 'Aynı anda hem Boncuk hem ödül kullanılamaz. Lütfen '
+              'birini seç.';
         default:
           return 'Boncuk kullanılırken bir sorun oluştu. Boncuk kullanmadan '
               'devam edebilirsin.';
@@ -357,6 +426,28 @@ class _TakeawayCheckoutScreenState
           : computeClientEstimatedMaxBoncuk(
               snapshot, ref.read(cartTotalPriceProvider));
       if (_selectedBoncukAmount <= 0 || _selectedBoncukAmount > max) {
+        return;
+      }
+    }
+
+    // Boncuk Loyalty P7-C — the same defense-in-depth discipline for a
+    // catalog-reward selection: re-verify against the freshest cart/reward
+    // data right before sending, never trusting only the last-built widget
+    // state. The server re-validates everything again regardless; this
+    // only prevents sending an obviously-stale selection.
+    if (_selectedRewardId != null) {
+      final rewards = ref.read(loyaltyRewardCatalogProvider).valueOrNull;
+      final cartProductIds = ref
+          .read(cartProvider)
+          .where((item) => !_isBowlCartItem(item))
+          .map((item) => item.id)
+          .toSet();
+      final stillEligible = rewards != null &&
+          rewards.any((r) =>
+              r.rewardId == _selectedRewardId &&
+              r.isEligibleForCart(cartProductIds));
+      if (!stillEligible) {
+        setState(() => _selectedRewardId = null);
         return;
       }
     }
@@ -413,6 +504,7 @@ class _TakeawayCheckoutScreenState
             contactPhone: normalizedPhone,
             requestedBoncukAmount:
                 _boncukUsageEnabled ? _selectedBoncukAmount : 0,
+            selectedRewardId: _selectedRewardId,
           );
 
       // The backend's own canonical order is the single source of truth
@@ -440,10 +532,25 @@ class _TakeawayCheckoutScreenState
       // not at completed-order earning; refresh the customer's displayed
       // balance now rather than waiting for a later screen to happen to
       // re-fetch it. Reuses the existing provider — no new loyalty cache.
+      // Boncuk Loyalty P7-C — a catalog-reward redemption debits the same
+      // account, so the reward catalog's own eligibility-by-balance state
+      // (not tracked here, but the snapshot IS) is refreshed identically.
       ref.invalidate(loyaltySnapshotProvider);
+      if (order.catalogReward != null) {
+        ref.invalidate(loyaltyRewardCatalogProvider);
+      }
 
       if (!mounted) return;
       final boncukRedemption = order.boncukRedemption;
+      final catalogReward = order.catalogReward;
+      // Server-confirmed only (P7-C) — cross-referenced from the SAME
+      // canonical order's own `lines`, never a separate catalog lookup and
+      // never the pre-submit cart's own product name.
+      final catalogRewardProductName = catalogReward == null
+          ? null
+          : order.lines
+              .firstWhere((line) => line.productId == catalogReward.redeemedProductId)
+              .productName;
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
@@ -456,6 +563,11 @@ class _TakeawayCheckoutScreenState
             boncukValueMinorUnits: boncukRedemption?.valueMinorUnits,
             remainingPayableMinorUnits:
                 boncukRedemption?.remainingPayableMinorUnits,
+            catalogRewardTitle: catalogReward?.title,
+            catalogRewardBoncukCost: catalogReward?.boncukCost,
+            catalogRewardRedeemedProductName: catalogRewardProductName,
+            catalogRewardCoveredValueMinorUnits:
+                catalogReward?.coveredValueMinorUnits,
           ),
         ),
         (route) => route.isFirst,
@@ -471,12 +583,16 @@ class _TakeawayCheckoutScreenState
           // the selection off makes the screen immediately submittable
           // again WITHOUT Boncuk, but the customer must tap "Siparişi
           // Ver" themselves; nothing here resubmits on their behalf.
+          // Boncuk Loyalty P7-C — the same reset covers a catalog-reward
+          // rejection too (shared `boncukErrorReason` namespace/signal).
           _boncukUsageEnabled = false;
           _selectedBoncukAmount = 0;
+          _selectedRewardId = null;
         }
       });
       if (isBoncukError) {
         ref.invalidate(loyaltySnapshotProvider);
+        ref.invalidate(loyaltyRewardCatalogProvider);
       }
     } catch (_) {
       if (!mounted) return;
@@ -494,6 +610,7 @@ class _TakeawayCheckoutScreenState
     final cartItems = ref.watch(cartProvider);
     final totalPrice = ref.watch(cartTotalPriceProvider);
     final loyaltySnapshotAsync = ref.watch(loyaltySnapshotProvider);
+    final rewardsAsync = ref.watch(loyaltyRewardCatalogProvider);
 
     // Boncuk Loyalty P4-E-B §9/§10 — react to a cart-total or loyalty
     // snapshot change while Boncuk usage is on. `ref.listen` (not
@@ -507,6 +624,20 @@ class _TakeawayCheckoutScreenState
         (previous, next) {
       _handleBoncukEstimateMightHaveChanged();
     });
+    // Boncuk Loyalty P7-C — same reasoning, for a catalog-reward selection
+    // the cart itself (not just the total) can invalidate.
+    ref.listen<List<CartItem>>(cartProvider, (previous, next) {
+      _handleCartMightHaveInvalidatedReward();
+    });
+    ref.listen<AsyncValue<List<LoyaltyReward>>>(loyaltyRewardCatalogProvider,
+        (previous, next) {
+      _handleCartMightHaveInvalidatedReward();
+    });
+
+    final cartProductIds = cartItems
+        .where((item) => !_isBowlCartItem(item))
+        .map((item) => item.id)
+        .toSet();
 
     final clientEstimatedMaxBoncuk = loyaltySnapshotAsync.maybeWhen(
       data: (snapshot) => computeClientEstimatedMaxBoncuk(snapshot, totalPrice),
@@ -666,18 +797,37 @@ class _TakeawayCheckoutScreenState
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
-            BoncukRedemptionCard(
-              snapshotAsync: loyaltySnapshotAsync,
-              enabled: _boncukUsageEnabled,
-              selectedAmount: _selectedBoncukAmount,
-              maxUsableBoncuk: clientEstimatedMaxBoncuk,
-              selectionInvalid: boncukSelectionInvalid,
+            // Boncuk Loyalty P7-C (2026-08-24) — mutual exclusivity with
+            // the catalog-reward card below: selecting a reward REMOVES
+            // this card entirely (never just visually disables it),
+            // matching the locked "selecting catalog reward disables/
+            // removes Boncuk cash redemption selection" requirement.
+            // `BoncukRedemptionCard` itself is unchanged — also shared by
+            // `DeliveryCheckoutScreen`, so no new required param was added
+            // to it for this takeaway-only phase.
+            if (_selectedRewardId == null)
+              BoncukRedemptionCard(
+                snapshotAsync: loyaltySnapshotAsync,
+                enabled: _boncukUsageEnabled,
+                selectedAmount: _selectedBoncukAmount,
+                maxUsableBoncuk: clientEstimatedMaxBoncuk,
+                selectionInvalid: boncukSelectionInvalid,
+                controlsFrozen: _isSubmitting,
+                cartTotalPriceTl: totalPrice,
+                onToggle: _onBoncukToggle,
+                onAmountChanged: _onBoncukAmountChanged,
+                onUseMax: _onBoncukUseMax,
+                onRetry: () => ref.invalidate(loyaltySnapshotProvider),
+              ),
+            const SizedBox(height: AppSpacing.lg),
+            CatalogRewardCard(
+              rewardsAsync: rewardsAsync,
+              cartProductIds: cartProductIds,
+              selectedRewardId: _selectedRewardId,
+              boncukCashRedemptionActive: _boncukUsageEnabled,
               controlsFrozen: _isSubmitting,
-              cartTotalPriceTl: totalPrice,
-              onToggle: _onBoncukToggle,
-              onAmountChanged: _onBoncukAmountChanged,
-              onUseMax: _onBoncukUseMax,
-              onRetry: () => ref.invalidate(loyaltySnapshotProvider),
+              onSelect: _onRewardSelect,
+              onRetry: () => ref.invalidate(loyaltyRewardCatalogProvider),
             ),
             if (_submitError != null) ...[
               const SizedBox(height: AppSpacing.lg),

@@ -29,6 +29,23 @@ export const BONCUK_REDEMPTION_ERROR_REASONS = [
   "boncuk/account-unavailable",
   "boncuk/policy-unavailable",
   "boncuk/redemption-not-allowed",
+  // Boncuk Loyalty P7-C (2026-08-24) — catalog-reward-specific reasons,
+  // added to the SAME stable `details.reason` vocabulary rather than a
+  // second, parallel error channel, so the Flutter client's existing
+  // `boncukErrorReason`-keyed branch (`reservation_error_messages.dart`/
+  // `takeaway_checkout_screen.dart`'s own equivalents) already recognizes
+  // "this is a loyalty-related rejection" for free — only the specific
+  // `case` values are new.
+  "catalogReward/reward-not-found",
+  "catalogReward/reward-not-currently-valid",
+  "catalogReward/product-not-in-cart",
+  "catalogReward/insufficient-balance",
+  "catalogReward/account-unavailable",
+  "catalogReward/benefit-stacking-not-allowed",
+  // Boncuk Loyalty P7-C.1 (2026-08-24) — the reward is real/valid/product-
+  // eligible, but its own `eligibleChannels` does not include the real,
+  // server-derived channel of THIS order (never the client's own claim).
+  "catalogReward/channel-not-eligible",
 ] as const;
 export type BoncukRedemptionErrorReason = (typeof BONCUK_REDEMPTION_ERROR_REASONS)[number];
 
@@ -38,6 +55,34 @@ export function boncukError(
   reason: BoncukRedemptionErrorReason,
 ): never {
   throw new HttpsError(code, message, { reason });
+}
+
+/**
+ * Boncuk Loyalty P7-C (2026-08-24) — the ONE shared `selectedBenefitType`
+ * union, replacing the previously independently hand-typed `"none" |
+ * "boncukRedemption"` literal that appeared at each order-submission call
+ * site. Exported from this already-shared, already-imported-by-every-
+ * channel module rather than a new file. Channels that don't yet support
+ * `"catalogReward"` (delivery, reservation preorder) are deliberately left
+ * on their own existing local unions this phase — widening THEIR type to
+ * include a value they can never actually set would be misleading, not a
+ * genuine duplication removal.
+ */
+export type SelectedBenefitType = "none" | "boncukRedemption" | "catalogReward";
+
+/**
+ * `undefined`/`null` both mean "no reward selected" — collapses to `null`.
+ * Real existence/eligibility/validity is never decided here; this only
+ * validates SHAPE, mirroring `sanitizeRequestedBoncukAmount`'s own
+ * minimal-shape-check-only philosophy (the real semantic validation
+ * happens transactionally against `loyaltyRewardCatalog`).
+ */
+export function sanitizeSelectedRewardId(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "selectedRewardId must be a non-empty string.");
+  }
+  return raw;
 }
 
 /**

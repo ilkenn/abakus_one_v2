@@ -13,6 +13,7 @@ import 'package:abakus_one_v2/features/cart/presentation/screens/takeaway_checko
 import 'package:abakus_one_v2/features/loyalty/data/loyalty_gateway.dart';
 import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_account_snapshot.dart';
 import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_history_entry.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_reward.dart';
 import 'package:abakus_one_v2/features/loyalty/presentation/providers/loyalty_providers.dart';
 import 'package:abakus_one_v2/features/reservation/data/reservation_gateway.dart';
 import 'package:abakus_one_v2/features/reservation/domain/models/reservation_area.dart';
@@ -187,6 +188,9 @@ class _FakeLoyaltyGateway implements LoyaltyGateway {
   Future<LoyaltyHistoryPage> getHistory({int? pageSize, String? cursor}) async {
     return LoyaltyHistoryPage.empty;
   }
+
+  @override
+  Future<List<LoyaltyReward>> getRewardCatalog() async => const [];
 }
 
 /// A well-formed, non-default snapshot for Boncuk reservation-preorder

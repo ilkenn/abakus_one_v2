@@ -6,6 +6,7 @@ import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/loyalty_gateway.dart';
 import '../../domain/models/loyalty_account_snapshot.dart';
 import '../../domain/models/loyalty_history_entry.dart';
+import '../../domain/models/loyalty_reward.dart';
 
 /// P3A (2026-08-23) — dependency-injection seam for the real,
 /// server-authoritative Boncuk Loyalty feature. Mirrors this codebase's
@@ -39,6 +40,22 @@ final loyaltySnapshotProvider =
     return LoyaltyAccountSnapshot.zero;
   }
   return ref.read(loyaltyGatewayProvider).getSnapshot();
+});
+
+/// Boncuk Loyalty Program P7-C (2026-08-24) — the real, server-authoritative
+/// Reward Catalog (`getCustomerLoyaltyRewardCatalog`), mirroring
+/// [loyaltySnapshotProvider]'s exact shape (`autoDispose`, guest-safe empty
+/// list, re-fetches on any `authProvider` change or explicit
+/// `ref.invalidate`). Never a mock/local reward source — every consumer
+/// (currently `TakeawayCheckoutScreen`) reads real rewards through this
+/// provider only.
+final loyaltyRewardCatalogProvider =
+    FutureProvider.autoDispose<List<LoyaltyReward>>((ref) async {
+  final authState = ref.watch(authProvider);
+  if (!isRealCustomer(authState)) {
+    return const [];
+  }
+  return ref.read(loyaltyGatewayProvider).getRewardCatalog();
 });
 
 /// One page's worth of Boncuk movement history, plus pagination state for

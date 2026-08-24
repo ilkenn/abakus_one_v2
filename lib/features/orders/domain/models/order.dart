@@ -2,6 +2,7 @@ import '../../../../core/errors/business_rule_violation.dart';
 import '../../../payment/domain/models/payment_method_snapshot.dart';
 import '../pricing/price_breakdown.dart';
 import 'boncuk_redemption_snapshot.dart';
+import 'catalog_reward_snapshot.dart';
 import 'courier_visibility.dart';
 import 'delivery_address_snapshot.dart';
 import 'order_actor.dart';
@@ -65,6 +66,7 @@ class Order {
     this.paymentMethodSnapshot,
     this.selectedBenefitType = OrderBenefitType.none,
     this.boncukRedemption,
+    this.catalogReward,
   }) : assert(
           pickupMode != PickupMode.scheduled || pickupTime != null,
           'pickupMode == PickupMode.scheduled requires a non-null pickupTime',
@@ -256,6 +258,16 @@ class Order {
   /// this field.
   final BoncukRedemptionSnapshot? boncukRedemption;
 
+  /// The server-computed Reward Catalog redemption snapshot when
+  /// [selectedBenefitType] is [OrderBenefitType.catalogReward]; `null`
+  /// otherwise, including every pre-P7-C order (additive/nullable, same
+  /// backward-compatibility contract as [boncukRedemption]). See
+  /// [CatalogRewardSnapshot]'s own doc comment — unlike [boncukRedemption],
+  /// this reflects a genuine, already-applied price reduction on the
+  /// relevant [OrderLine], not a settlement layered on top of an unchanged
+  /// total.
+  final CatalogRewardSnapshot? catalogReward;
+
   /// Moves this order from [status] to [newStatus], appending a new
   /// [OrderAuditEntry.statusChange] to [statusHistory] and recording the
   /// timestamp via [OrderTimestamps.recordedAt].
@@ -325,6 +337,7 @@ class Order {
     PaymentMethodSnapshot? paymentMethodSnapshot,
     OrderBenefitType? selectedBenefitType,
     BoncukRedemptionSnapshot? boncukRedemption,
+    CatalogRewardSnapshot? catalogReward,
   }) {
     return Order(
       id: id ?? this.id,
@@ -360,6 +373,7 @@ class Order {
           paymentMethodSnapshot ?? this.paymentMethodSnapshot,
       selectedBenefitType: selectedBenefitType ?? this.selectedBenefitType,
       boncukRedemption: boncukRedemption ?? this.boncukRedemption,
+      catalogReward: catalogReward ?? this.catalogReward,
     );
   }
 }

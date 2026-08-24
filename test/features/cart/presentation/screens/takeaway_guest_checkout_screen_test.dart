@@ -54,6 +54,7 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
     required String contactLastName,
     required String contactPhone,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   }) {
     throw UnimplementedError(
       'This screen (the guest flow) never calls the authenticated path — '

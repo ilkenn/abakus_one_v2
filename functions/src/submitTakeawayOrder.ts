@@ -33,7 +33,31 @@ import {
 } from "./loyaltyPolicy";
 import { calculateBoncukRedemption, resolveAccountForRedemption } from "./loyaltyRedemption";
 import type { LoyaltyAccountData } from "./getCustomerLoyaltySnapshot";
-import { boncukError, sanitizeRequestedBoncukAmount } from "./boncukRedemptionErrors";
+import {
+  boncukError,
+  sanitizeRequestedBoncukAmount,
+  sanitizeSelectedRewardId,
+  type SelectedBenefitType,
+} from "./boncukRedemptionErrors";
+import {
+  loadLoyaltyRewardForRedemption,
+  resolveCatalogRewardRedemption,
+} from "./resolveCatalogRewardRedemption";
+import {
+  isRewardCurrentlyValid,
+  loyaltyRewardCatalogVersionDocId,
+  type LoyaltyRewardCatalogEntry,
+  type CanonicalCommercialChannel,
+} from "./loyaltyRewardCatalog";
+
+/**
+ * Boncuk Loyalty P7-C.1 (2026-08-24) — the real, server-derived commercial
+ * channel of every order this callable ever creates. A `CanonicalCommercialChannel`
+ * literal (never read from client input), used to validate a selected
+ * catalog reward's own `eligibleChannels` and to snapshot the actual
+ * redemption channel onto the order document, immutably.
+ */
+const TAKEAWAY_COMMERCIAL_CHANNEL: CanonicalCommercialChannel = "takeaway";
 
 /**
  * Server-authoritative takeaway order creation — Faz D.3. The one
@@ -242,6 +266,7 @@ export async function buildProductLine(
   channel: string,
   policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy,
   tx?: import("firebase-admin/firestore").Transaction,
+  freeUnitCount = 0,
 ): Promise<ComputedOrderLine> {
   if (typeof item.productId !== "string" || item.productId.length === 0) {
     invalid("each product item requires a productId.");
@@ -257,6 +282,11 @@ export async function buildProductLine(
   if (!product!.isAvailable) invalid(`product "${productId}" is not available.`);
 
   const modifiers = await resolveProductModifiers(product!, item.selectedModifiers);
+  // `unitPriceMinorUnits` is already channel-resolved here (includes
+  // takeaway's own product-level surcharge, if any) — a catalog reward's
+  // `freeUnitCount` therefore automatically covers that surcharge too, with
+  // no separate surcharge-specific logic (see `buildOrderLine`'s own P7-C
+  // doc comment).
   const unitPriceMinorUnits = resolveProductUnitPriceMinorUnits({
     product: product!,
     channel,
@@ -272,6 +302,7 @@ export async function buildProductLine(
     unitPriceMinorUnits,
     taxBasisPoints: TAKEAWAY_TAX_BASIS_POINTS,
     customerNote: note,
+    freeUnitCount,
   });
 }
 
@@ -373,6 +404,21 @@ export const submitTakeawayOrder = onCall(
     const contactLastName = sanitizeContactField(data.contactLastName, "contactLastName");
     const contactPhone = sanitizePhone(data.contactPhone);
     const requestedBoncukAmount = sanitizeRequestedBoncukAmount(data.requestedBoncukAmount);
+    const selectedRewardId = sanitizeSelectedRewardId(data.selectedRewardId);
+
+    // Boncuk Loyalty P7-C (2026-08-24) — locked rule: cash Boncuk redemption
+    // and a catalog reward are mutually exclusive, exactly one benefit per
+    // order. A static, data-independent check — applies uniformly to both
+    // the guest and authenticated dispatch paths below, before either has a
+    // chance to independently reject just one of the two fields (which
+    // would produce a less specific error for a request that sent both).
+    if (requestedBoncukAmount > 0 && selectedRewardId !== null) {
+      boncukError(
+        "invalid-argument",
+        "requestedBoncukAmount and selectedRewardId cannot both be set — exactly one benefit per order.",
+        "catalogReward/benefit-stacking-not-allowed",
+      );
+    }
 
     const hasGuestField = typeof data.takeawaySessionId === "string";
     const hasAuthenticatedFields =
@@ -417,6 +463,7 @@ export const submitTakeawayOrder = onCall(
         contactPhone,
         takeawaySessionId: data.takeawaySessionId as string,
         requestedBoncukAmount,
+        selectedRewardId,
       });
     }
 
@@ -444,6 +491,7 @@ export const submitTakeawayOrder = onCall(
       pickupMode: data.pickupMode,
       pickupTime: data.pickupTime,
       requestedBoncukAmount,
+      selectedRewardId,
     });
   },
 );
@@ -463,6 +511,7 @@ async function submitGuestOrder(
     contactPhone: string;
     takeawaySessionId: string;
     requestedBoncukAmount: number;
+    selectedRewardId: string | null;
   },
 ) {
   const { uid, submissionKey, rawItems, contactFirstName, contactLastName, contactPhone } =
@@ -476,6 +525,14 @@ async function submitGuestOrder(
     throw new HttpsError(
       "permission-denied",
       "Guest takeaway orders cannot redeem Boncuk — Boncuk requires a real, phone-verified customer identity.",
+    );
+  }
+  // Boncuk Loyalty P7-C (2026-08-24) — the identical rule extended to
+  // catalog rewards: no real customer identity, no loyalty account to debit.
+  if (params.selectedRewardId !== null) {
+    throw new HttpsError(
+      "permission-denied",
+      "Guest takeaway orders cannot redeem a catalog reward — this requires a real, phone-verified customer identity.",
     );
   }
 
@@ -556,6 +613,7 @@ async function submitGuestOrder(
         fingerprint,
         selectedBenefitType: "none",
         boncukRedemption: null,
+        catalogReward: null,
       }),
     );
 
@@ -586,6 +644,38 @@ interface PendingBoncukRedemption {
   };
 }
 
+/** Order-document snapshot shape for a redeemed catalog reward — every field server-resolved, immutable once written (P7-C §7). */
+export interface CatalogRewardOrderSnapshot {
+  rewardId: string;
+  rewardVersion: number;
+  title: string;
+  boncukCost: number;
+  redeemedProductId: string;
+  redeemedQuantity: 1;
+  coveredValueMinorUnits: number;
+  rewardCatalogVersionId: string;
+  /**
+   * P7-C.1 — the real, server-derived commercial channel this redemption
+   * actually happened on (always `"takeaway"` for this callable), snapshot
+   * immutably at submission time. A later channel-eligibility change on the
+   * live/future reward version can never rewrite an already-placed order's
+   * own history — the order always answers "what channel was this
+   * REDEEMED on," never "is the current live reward valid for some
+   * channel."
+   */
+  orderChannel: CanonicalCommercialChannel;
+}
+
+/** The catalog-reward sibling of [PendingBoncukRedemption] — same "resolved during reads, applied during writes" discipline. */
+interface PendingCatalogRewardRedemption {
+  accountRef: FirebaseFirestore.DocumentReference;
+  account: LoyaltyAccountData;
+  boncukCost: number;
+  ledgerEntryRef: FirebaseFirestore.DocumentReference;
+  ledgerEntry: LoyaltyLedgerEntry;
+  orderSnapshot: CatalogRewardOrderSnapshot;
+}
+
 async function submitAuthenticatedOrder(
   db: Firestore,
   params: {
@@ -600,6 +690,7 @@ async function submitAuthenticatedOrder(
     pickupMode: unknown;
     pickupTime: unknown;
     requestedBoncukAmount: number;
+    selectedRewardId: string | null;
   },
 ) {
   const { uid, submissionKey, rawItems, contactFirstName, contactLastName, contactPhone } =
@@ -652,8 +743,66 @@ async function submitAuthenticatedOrder(
       );
     }
 
+    // -------------------------------------------------------------
+    // Boncuk Loyalty P7-C (2026-08-24) — catalog-reward PRE-resolution.
+    // Deliberately BEFORE `buildLines`: unlike cash Boncuk redemption
+    // (whose validation needs `pricing.grandTotalMinorUnits`, computed only
+    // AFTER lines are built), a catalog reward's validity/eligibility/
+    // balance checks need no pricing at all — only the reward definition
+    // and the raw cart contents. Resolving it here lets `buildLines` below
+    // receive `rewardedProductId` and apply the free unit as it builds the
+    // line, rather than requiring a second pricing pass or a post-hoc
+    // grandTotal adjustment. Every `tx.get()` here still happens safely
+    // before this transaction's first write.
+    // -------------------------------------------------------------
+    const organizationId = scope.organizationId!;
+    let catalogRewardPreCheck: { reward: LoyaltyRewardCatalogEntry; redeemedProductId: string } | null =
+      null;
+    if (params.selectedRewardId !== null) {
+      const reward = await loadLoyaltyRewardForRedemption(db, params.selectedRewardId, tx);
+      if (!reward || reward.organizationId !== organizationId) {
+        boncukError("invalid-argument", "The selected reward does not exist.", "catalogReward/reward-not-found");
+      }
+      if (!isRewardCurrentlyValid(reward, Timestamp.now())) {
+        boncukError(
+          "failed-precondition",
+          "The selected reward is not currently active/valid.",
+          "catalogReward/reward-not-currently-valid",
+        );
+      }
+      // Boncuk Loyalty P7-C.1 (2026-08-24) — the real, server-derived
+      // channel of THIS order is always the literal "takeaway" for this
+      // callable (never read from client input — there is structurally no
+      // field a client could use to claim a different channel). Fails
+      // closed BEFORE any pricing/build work if the reward's own
+      // eligibleChannels doesn't include it: no debit, no ledger entry, no
+      // order created with the reward applied.
+      if (!reward.eligibleChannels.includes(TAKEAWAY_COMMERCIAL_CHANNEL)) {
+        boncukError(
+          "failed-precondition",
+          "The selected reward is not available for the Gel Al (Takeaway) channel.",
+          "catalogReward/channel-not-eligible",
+        );
+      }
+      const redeemedProductId = findFirstEligibleCartProductId(rawItems, reward.eligibleProductIds);
+      if (!redeemedProductId) {
+        boncukError(
+          "invalid-argument",
+          "None of the items in this order are eligible for the selected reward.",
+          "catalogReward/product-not-in-cart",
+        );
+      }
+      catalogRewardPreCheck = { reward, redeemedProductId };
+    }
+
     const pricingPolicy = await loadCanonicalChannelPricingPolicy(db, restaurantId);
-    const { lines, normalizedItems } = await buildLines(db, rawItems, { restaurantId }, pricingPolicy);
+    const { lines, normalizedItems, rewardAppliedLineIndex } = await buildLines(
+      db,
+      rawItems,
+      { restaurantId },
+      pricingPolicy,
+      catalogRewardPreCheck?.redeemedProductId ?? null,
+    );
     const pricing = computeOrderPriceBreakdown(lines);
 
     const normalizedForFingerprint = {
@@ -673,6 +822,9 @@ async function submitAuthenticatedOrder(
       // branch below (`takeawaySubmissionFingerprint !== fingerprint`)
       // cover it for free, with no separate special-case check.
       requestedBoncukAmount: params.requestedBoncukAmount,
+      // Boncuk Loyalty P7-C — same reasoning, for the mutually exclusive
+      // catalog-reward selection.
+      selectedRewardId: params.selectedRewardId,
     };
     const fingerprint = computeRequestFingerprint(normalizedForFingerprint);
 
@@ -703,9 +855,9 @@ async function submitAuthenticatedOrder(
     // additional branch is needed; this comment documents the existing
     // invariant this code relies on.
     // -------------------------------------------------------------
-    const organizationId = scope.organizationId!;
-    let selectedBenefitType: "none" | "boncukRedemption" = "none";
+    let selectedBenefitType: SelectedBenefitType = "none";
     let pendingRedemption: PendingBoncukRedemption | null = null;
+    let pendingCatalogReward: PendingCatalogRewardRedemption | null = null;
 
     if (params.requestedBoncukAmount > 0) {
       // §2 — cap basis is grandTotal MINUS tip, never grossSubtotal. Tip is
@@ -847,6 +999,142 @@ async function submitAuthenticatedOrder(
           loyaltyPolicyVersion: loyaltyPolicy.version,
         },
       };
+    } else if (catalogRewardPreCheck !== null) {
+      // -------------------------------------------------------------
+      // Boncuk Loyalty P7-C — catalog-reward FINAL resolution. Reads only,
+      // still strictly before this transaction's first write. Deliberately
+      // does NOT touch `loyaltyPolicies` at all — a catalog reward's cost
+      // is a fixed property of the reward itself, entirely independent of
+      // the organization's cash earning/redemption rate.
+      // -------------------------------------------------------------
+      const { reward, redeemedProductId } = catalogRewardPreCheck;
+      if (rewardAppliedLineIndex === null) {
+        // Structurally unreachable — buildLines was given the exact same
+        // redeemedProductId findFirstEligibleCartProductId just found, so
+        // it always applies the free unit to a real line. Defensive only.
+        boncukError(
+          "internal",
+          "Failed to apply the catalog reward to a cart line.",
+          "catalogReward/product-not-in-cart",
+        );
+      }
+      const rewardedLine = lines[rewardAppliedLineIndex];
+      const coveredValueMinorUnits = rewardedLine.lineDiscountMinorUnits;
+
+      const accountRef = db.collection(LOYALTY_ACCOUNTS_COLLECTION).doc(`${organizationId}_${uid}`);
+      const accountSnap = await tx.get(accountRef);
+      const accountResult = resolveAccountForRedemption(accountSnap);
+      if (accountResult.status === "missing-loyalty-account") {
+        boncukError(
+          "failed-precondition",
+          "No loyalty account exists for this customer — cannot redeem a catalog reward.",
+          "catalogReward/account-unavailable",
+        );
+      }
+      if (accountResult.status === "inconsistent-loyalty-account-state") {
+        boncukError(
+          "failed-precondition",
+          "This customer's loyalty account is in an inconsistent state.",
+          "catalogReward/account-unavailable",
+        );
+      }
+      const account = accountResult.account;
+
+      const resolution = resolveCatalogRewardRedemption({
+        reward,
+        now: new Date(),
+        organizationId,
+        orderChannel: TAKEAWAY_COMMERCIAL_CHANNEL,
+        requestedProductId: redeemedProductId,
+        spendableBalance: account.spendableBalance,
+      });
+      if (resolution.status === "insufficient-balance") {
+        boncukError(
+          "failed-precondition",
+          `Insufficient Boncuk balance for this reward (requires ${resolution.requiredBoncuk}, has ${resolution.availableBoncuk}).`,
+          "catalogReward/insufficient-balance",
+        );
+      }
+      if (resolution.status !== "ok") {
+        // reward-not-found / organization-mismatch / reward-not-currently-valid
+        // / product-not-eligible — all already independently checked above
+        // (same reward object, same product, same clock reference), so this
+        // is defense-in-depth against a logic drift between the two checks,
+        // never expected to actually trigger.
+        boncukError(
+          "failed-precondition",
+          "The selected reward can no longer be redeemed.",
+          "catalogReward/reward-not-currently-valid",
+        );
+      }
+      const { snapshot } = resolution;
+
+      const ledgerEntryId = deriveLoyaltyLedgerEntryId({
+        organizationId,
+        customerId: uid,
+        entryType: "catalogRedemption",
+        sourceId: orderId,
+      });
+      const ledgerEntryRef = db.collection(LOYALTY_LEDGER_ENTRIES_COLLECTION).doc(ledgerEntryId);
+      const ledgerSnap = await tx.get(ledgerEntryRef);
+      if (ledgerSnap.exists) {
+        // Defense-in-depth only, mirrors the boncukRedemption branch above
+        // — the order-level dedupe check already guarantees this
+        // transaction only reaches here for a genuinely new order.
+        boncukError(
+          "failed-precondition",
+          "A catalog reward redemption ledger entry already exists for this order.",
+          "catalogReward/reward-not-currently-valid",
+        );
+      }
+
+      selectedBenefitType = "catalogReward";
+      pendingCatalogReward = {
+        accountRef,
+        account,
+        boncukCost: snapshot.boncukCost,
+        ledgerEntryRef,
+        ledgerEntry: {
+          organizationId,
+          customerId: uid,
+          entryType: "catalogRedemption",
+          entitlementDeltaBoncuk: 0,
+          spendableDeltaBoncuk: 0 - snapshot.boncukCost,
+          debtDeltaBoncuk: 0,
+          sourceId: orderId,
+          orderId,
+          amountBasisMinorUnits: coveredValueMinorUnits,
+          earningCarryNumeratorBefore: null,
+          earningCarryDenominatorBefore: null,
+          earningCarryNumeratorAfter: null,
+          earningCarryDenominatorAfter: null,
+          earningSpendMinorUnits: null,
+          earningBoncukAmount: null,
+          loyaltyPolicyVersion: null,
+          debtBeforeBoncuk: account.boncukDebt,
+          debtAfterBoncuk: account.boncukDebt,
+          redemptionValueMinorUnitsPerBoncuk: null,
+          maxRedemptionBasisPoints: null,
+          idempotencyKey: orderId,
+          reversalOf: null,
+          expiresAt: null,
+          metadata: { entryType: "catalogRedemption", rewardId: snapshot.rewardId },
+        } as LoyaltyLedgerEntry,
+        orderSnapshot: {
+          rewardId: snapshot.rewardId,
+          rewardVersion: snapshot.rewardVersion,
+          title: snapshot.title,
+          boncukCost: snapshot.boncukCost,
+          redeemedProductId: snapshot.redeemedProductId,
+          redeemedQuantity: 1,
+          coveredValueMinorUnits,
+          rewardCatalogVersionId: loyaltyRewardCatalogVersionDocId(
+            snapshot.rewardId,
+            snapshot.rewardVersion,
+          ),
+          orderChannel: TAKEAWAY_COMMERCIAL_CHANNEL,
+        },
+      };
     }
 
     // -------------------------------------------------------------
@@ -868,6 +1156,20 @@ async function submitAuthenticatedOrder(
       });
       tx.create(pendingRedemption.ledgerEntryRef, {
         ...pendingRedemption.ledgerEntry,
+        createdAt: Timestamp.fromDate(now),
+      });
+    }
+
+    if (pendingCatalogReward) {
+      tx.set(pendingCatalogReward.accountRef, {
+        ...pendingCatalogReward.account,
+        spendableBalance: pendingCatalogReward.account.spendableBalance - pendingCatalogReward.boncukCost,
+        lifetimeRedeemed: pendingCatalogReward.account.lifetimeRedeemed + pendingCatalogReward.boncukCost,
+        revision: pendingCatalogReward.account.revision + 1,
+        updatedAt: Timestamp.fromDate(now),
+      });
+      tx.create(pendingCatalogReward.ledgerEntryRef, {
+        ...pendingCatalogReward.ledgerEntry,
         createdAt: Timestamp.fromDate(now),
       });
     }
@@ -895,6 +1197,7 @@ async function submitAuthenticatedOrder(
         fingerprint,
         selectedBenefitType,
         boncukRedemption: pendingRedemption ? pendingRedemption.orderSnapshot : null,
+        catalogReward: pendingCatalogReward ? pendingCatalogReward.orderSnapshot : null,
       }),
     );
 
@@ -906,17 +1209,64 @@ async function submitAuthenticatedOrder(
 // Shared line-building + order document assembly
 // -----------------------------------------------------------------------
 
+/**
+ * Boncuk Loyalty P7-C (2026-08-24) — finds the FIRST `kind: "product"` cart
+ * item whose `productId` is one of the reward's explicit
+ * `eligibleProductIds`, in cart order. A deterministic, documented tie-
+ * break for the (expected-rare) case of the same eligible product
+ * appearing as more than one separate cart line (different modifier
+ * selections) — only ONE line, the first, is ever considered for the
+ * reward, matching "only ONE product unit is redeemed per catalog
+ * reward." `kind: "bowl"` (Bowl Builder custom bowls) items can never
+ * match — they have no real canonical `productId` at all, structurally
+ * ineligible by construction, not by a special-cased check here.
+ */
+export function findFirstEligibleCartProductId(
+  rawItems: RawItem[],
+  eligibleProductIds: readonly string[],
+): string | null {
+  for (const item of rawItems) {
+    if (item.kind === "product" && typeof item.productId === "string") {
+      if (eligibleProductIds.includes(item.productId)) return item.productId;
+    }
+  }
+  return null;
+}
+
 async function buildLines(
   db: Firestore,
   rawItems: RawItem[],
   scope: { restaurantId: string },
   policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy,
-): Promise<{ lines: ComputedOrderLine[]; normalizedItems: unknown[] }> {
+  rewardedProductId: string | null = null,
+): Promise<{
+  lines: ComputedOrderLine[];
+  normalizedItems: unknown[];
+  rewardAppliedLineIndex: number | null;
+}> {
   const lines: ComputedOrderLine[] = [];
   const normalizedItems: unknown[] = [];
+  let rewardAppliedLineIndex: number | null = null;
   for (const item of rawItems) {
     if (item.kind === "product") {
-      const line = await buildProductLine(db, item, scope, "takeaway", policy);
+      // Only the FIRST matching line ever receives the free unit — mirrors
+      // findFirstEligibleCartProductId's own tie-break exactly, so the
+      // pre-buildLines eligibility scan and this application are always
+      // consistent with each other.
+      const isRewardedLine =
+        rewardAppliedLineIndex === null &&
+        rewardedProductId !== null &&
+        item.productId === rewardedProductId;
+      const line = await buildProductLine(
+        db,
+        item,
+        scope,
+        "takeaway",
+        policy,
+        undefined,
+        isRewardedLine ? 1 : 0,
+      );
+      if (isRewardedLine) rewardAppliedLineIndex = lines.length;
       lines.push(line);
       normalizedItems.push({
         kind: "product",
@@ -936,7 +1286,7 @@ async function buildLines(
       });
     }
   }
-  return { lines, normalizedItems };
+  return { lines, normalizedItems, rewardAppliedLineIndex };
 }
 
 function buildOrderDocument(params: {
@@ -958,7 +1308,7 @@ function buildOrderDocument(params: {
   pricing: import("./takeawayPricing").ComputedPriceBreakdown;
   now: Date;
   fingerprint: string;
-  selectedBenefitType: "none" | "boncukRedemption";
+  selectedBenefitType: SelectedBenefitType;
   boncukRedemption: {
     boncukUsed: number;
     valueMinorUnits: number;
@@ -967,6 +1317,7 @@ function buildOrderDocument(params: {
     maxRedemptionBasisPoints: number;
     loyaltyPolicyVersion: number;
   } | null;
+  catalogReward: CatalogRewardOrderSnapshot | null;
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -1027,13 +1378,24 @@ function buildOrderDocument(params: {
       grandTotal: moneyField(params.pricing.grandTotalMinorUnits),
     },
     // Boncuk Loyalty P4-B — settlement, not discount (P4-A, accepted): the
-    // `pricing` block above is never touched by redemption. This is a
-    // parallel snapshot of how part of that unchanged total is being paid
-    // — server-computed and server-stamped only, never accepted from the
-    // request (see `firestore.rules`' `clientOrderCreateOmitsBoncukRedemption()`
-    // for why a direct-client create can never forge either field).
+    // `pricing` block above is never touched by cash Boncuk redemption.
+    // This is a parallel snapshot of how part of that unchanged total is
+    // being paid — server-computed and server-stamped only, never accepted
+    // from the request (see `firestore.rules`'
+    // `clientOrderCreateOmitsBoncukRedemption()` for why a direct-client
+    // create can never forge either field).
+    //
+    // Boncuk Loyalty P7-C (2026-08-24) — a catalog reward is DIFFERENT: it
+    // genuinely changes `pricing` above (the rewarded line's own
+    // `lineDiscount`, and therefore `grossSubtotal`/`grandTotal`, already
+    // reflect it — see `takeawayPricing.ts`'s `buildOrderLine` doc
+    // comment). `catalogReward` here is a read-only AUDIT snapshot of what
+    // was redeemed and why the total is what it is, never a second,
+    // independently-applied discount — the price change happened once,
+    // during line-building, not twice.
     selectedBenefitType: params.selectedBenefitType,
     boncukRedemption: params.boncukRedemption,
+    catalogReward: params.catalogReward,
     statusHistory: [
       {
         id: `${params.orderId}-transition-1`,

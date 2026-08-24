@@ -5,6 +5,7 @@ import '../../../core/services/logging/logging_provider.dart';
 import '../../../core/services/logging/logging_service.dart';
 import '../domain/models/loyalty_account_snapshot.dart';
 import '../domain/models/loyalty_history_entry.dart';
+import '../domain/models/loyalty_reward.dart';
 
 class LoyaltyGatewayException implements Exception {
   const LoyaltyGatewayException(this.code, this.message);
@@ -29,6 +30,13 @@ abstract interface class LoyaltyGateway {
   Future<LoyaltyAccountSnapshot> getSnapshot();
 
   Future<LoyaltyHistoryPage> getHistory({int? pageSize, String? cursor});
+
+  /// Boncuk Loyalty Program P7-B/P7-C (2026-08-24) — the bridge to
+  /// `functions/src/getCustomerLoyaltyRewardCatalog.ts`. Returns only
+  /// currently active/non-archived/currently-valid rewards for the
+  /// caller's own tenant, already sorted by `sortOrder` — the server's own
+  /// contract, never re-filtered/re-sorted client-side.
+  Future<List<LoyaltyReward>> getRewardCatalog();
 }
 
 /// Parses `getCustomerLoyaltySnapshot`'s decoded response — a pure,
@@ -163,6 +171,92 @@ LoyaltyHistoryPage parseLoyaltyHistoryPage(Map<String, dynamic> data) {
       entries: entries, nextCursor: nextCursor as String?);
 }
 
+LoyaltyReward _parseLoyaltyReward(Map<String, dynamic> data) {
+  final rewardId = data['rewardId'];
+  if (rewardId is! String) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: rewardId must be a string, '
+      'got ${rewardId.runtimeType}',
+    );
+  }
+  final title = data['title'];
+  if (title is! String) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: title must be a string, '
+      'got ${title.runtimeType}',
+    );
+  }
+  final description = data['description'];
+  if (description is! String) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: description must be a '
+      'string, got ${description.runtimeType}',
+    );
+  }
+  final rewardType = data['rewardType'];
+  if (rewardType is! String) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: rewardType must be a '
+      'string, got ${rewardType.runtimeType}',
+    );
+  }
+  final eligibleProductIdsRaw = data['eligibleProductIds'];
+  if (eligibleProductIdsRaw is! List) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: eligibleProductIds must be '
+      'a list, got ${eligibleProductIdsRaw.runtimeType}',
+    );
+  }
+  final eligibleProductIds =
+      eligibleProductIdsRaw.map((e) => e as String).toList(growable: false);
+  final boncukCost = data['boncukCost'];
+  if (boncukCost is! num) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: boncukCost must be a '
+      'number, got ${boncukCost.runtimeType}',
+    );
+  }
+  final sortOrder = data['sortOrder'];
+  if (sortOrder is! num) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: sortOrder must be a '
+      'number, got ${sortOrder.runtimeType}',
+    );
+  }
+  final version = data['version'];
+  if (version is! num) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: version must be a number, '
+      'got ${version.runtimeType}',
+    );
+  }
+
+  return LoyaltyReward(
+    rewardId: rewardId,
+    title: title,
+    description: description,
+    rewardType: rewardType,
+    eligibleProductIds: eligibleProductIds,
+    boncukCost: boncukCost.toInt(),
+    sortOrder: sortOrder.toInt(),
+    version: version.toInt(),
+  );
+}
+
+/// Parses `getCustomerLoyaltyRewardCatalog`'s decoded response.
+List<LoyaltyReward> parseLoyaltyRewardCatalog(Map<String, dynamic> data) {
+  final rewards = data['rewards'];
+  if (rewards is! List) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: rewards must be a list, '
+      'got ${rewards.runtimeType}',
+    );
+  }
+  return rewards
+      .map((row) => _parseLoyaltyReward(Map<String, dynamic>.from(row as Map)))
+      .toList(growable: false);
+}
+
 class FirebaseLoyaltyGateway implements LoyaltyGateway {
   FirebaseLoyaltyGateway({
     functions.FirebaseFunctions? functionsInstance,
@@ -242,6 +336,42 @@ class FirebaseLoyaltyGateway implements LoyaltyGateway {
       throw const LoyaltyGatewayException(
         'parse-error',
         'Boncuk geçmişine şu anda ulaşılamıyor.',
+      );
+    }
+  }
+
+  @override
+  Future<List<LoyaltyReward>> getRewardCatalog() async {
+    final callable =
+        _functions.httpsCallable('getCustomerLoyaltyRewardCatalog');
+
+    Map<String, dynamic> data;
+    try {
+      final result = await callable.call<Map<String, dynamic>>();
+      data = result.data;
+    } on functions.FirebaseFunctionsException catch (error) {
+      _loggingService.log(
+        LogLevel.warning,
+        'getCustomerLoyaltyRewardCatalog callable threw',
+        context: {'code': error.code},
+      );
+      throw LoyaltyGatewayException(
+        error.code,
+        error.message ?? 'Ödül kataloğuna şu anda ulaşılamıyor.',
+      );
+    }
+
+    try {
+      return parseLoyaltyRewardCatalog(data);
+    } catch (error) {
+      _loggingService.log(
+        LogLevel.warning,
+        'getCustomerLoyaltyRewardCatalog response parse failed',
+        context: {'exceptionType': error.runtimeType.toString()},
+      );
+      throw const LoyaltyGatewayException(
+        'parse-error',
+        'Ödül kataloğuna şu anda ulaşılamıyor.',
       );
     }
   }

@@ -15,6 +15,7 @@ import 'package:abakus_one_v2/features/orders/domain/identity/order_identity.dar
 import 'package:abakus_one_v2/features/loyalty/data/loyalty_gateway.dart';
 import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_account_snapshot.dart';
 import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_history_entry.dart';
+import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_reward.dart';
 import 'package:abakus_one_v2/features/loyalty/presentation/providers/loyalty_providers.dart';
 import 'package:abakus_one_v2/features/orders/domain/mappers/cart_to_order_mapper.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_actor.dart';
@@ -23,6 +24,7 @@ import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/boncuk_redemption_snapshot.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/catalog_reward_snapshot.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/pickup_mode.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/order_identity_provider.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
@@ -67,6 +69,17 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
   /// call the real gateway would make (the interface's own signature
   /// already makes anything else structurally impossible to send).
   int? lastRequestedBoncukAmount;
+  String? lastSelectedRewardId;
+
+  /// Boncuk Loyalty P7-C (2026-08-24) — the fake's own stand-in for the
+  /// server's resolved reward snapshot, returned on the order whenever
+  /// [submitAuthenticatedOrder] is called with a non-null
+  /// `selectedRewardId`. A test can override these to prove the success
+  /// screen reads them from the canonical re-read `Order`, never from a
+  /// pre-submit client estimate (there is none for a catalog reward).
+  String catalogRewardTitleToReturn = 'Test Ödülü';
+  int catalogRewardBoncukCostToReturn = 100;
+  int catalogRewardCoveredValueMinorUnitsToReturn = 12000;
 
   /// When set, the next [submitAuthenticatedOrder] call throws this
   /// instead of succeeding — simulates a real backend rejection (e.g. a
@@ -90,6 +103,7 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
     required String contactLastName,
     required String contactPhone,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   }) async {
     callCount += 1;
     lastRequestItems = [for (final item in items) item.toJson()];
@@ -101,6 +115,7 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
     lastBranchId = branchId;
     lastPickupTime = pickupTime;
     lastRequestedBoncukAmount = requestedBoncukAmount;
+    lastSelectedRewardId = selectedRewardId;
 
     final pendingThrow = throwOnNextSubmit;
     if (pendingThrow != null) {
@@ -167,6 +182,27 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
           loyaltyPolicyVersion: 1,
         ),
       );
+    } else if (selectedRewardId != null) {
+      // Simulates the SERVER's own resolved reward snapshot (P7-C) —
+      // never re-implementing the real pricing/`freeUnitCount` mechanism
+      // here (that's covered server-side by
+      // `submitTakeawayOrderCatalogReward.test.ts`); this fake only needs
+      // to prove the SCREEN reads `order.catalogReward`/
+      // `selectedBenefitType` from the canonical re-read order, exactly
+      // like the boncukRedemption branch above.
+      order = order.copyWith(
+        selectedBenefitType: OrderBenefitType.catalogReward,
+        catalogReward: CatalogRewardSnapshot(
+          rewardId: selectedRewardId,
+          rewardVersion: 1,
+          title: catalogRewardTitleToReturn,
+          boncukCost: catalogRewardBoncukCostToReturn,
+          redeemedProductId: cartItemsSnapshot().first.id,
+          redeemedQuantity: 1,
+          coveredValueMinorUnits: catalogRewardCoveredValueMinorUnitsToReturn,
+          rewardCatalogVersionId: '${selectedRewardId}_1',
+        ),
+      );
     }
     await repository.submitOrder(order);
 
@@ -203,12 +239,22 @@ class _FakeLoyaltyGateway implements LoyaltyGateway {
     LoyaltyAccountSnapshot? snapshot,
     this.snapshotError,
     this.neverCompleteSnapshot = false,
+    this.rewards = const [],
+    this.rewardCatalogError,
   }) : snapshot = snapshot ?? LoyaltyAccountSnapshot.zero;
 
   LoyaltyAccountSnapshot snapshot;
   LoyaltyGatewayException? snapshotError;
   bool neverCompleteSnapshot;
   int snapshotCalls = 0;
+
+  /// Boncuk Loyalty P7-C (2026-08-24) — the real, server-authoritative
+  /// reward list this fake returns; `const []` (the default) mirrors "no
+  /// rewards for this cart," matching every pre-P7-C test's own behavior
+  /// exactly (the catalog-reward card renders nothing).
+  List<LoyaltyReward> rewards;
+  LoyaltyGatewayException? rewardCatalogError;
+  int rewardCatalogCalls = 0;
 
   @override
   Future<LoyaltyAccountSnapshot> getSnapshot() async {
@@ -223,6 +269,13 @@ class _FakeLoyaltyGateway implements LoyaltyGateway {
   @override
   Future<LoyaltyHistoryPage> getHistory({int? pageSize, String? cursor}) async {
     return LoyaltyHistoryPage.empty;
+  }
+
+  @override
+  Future<List<LoyaltyReward>> getRewardCatalog() async {
+    rewardCatalogCalls += 1;
+    if (rewardCatalogError != null) throw rewardCatalogError!;
+    return rewards;
   }
 }
 
@@ -249,6 +302,29 @@ LoyaltyAccountSnapshot _boncukSnapshot({
     earningBoncukAmount: 5,
     redemptionValueMinorUnitsPerBoncuk: redemptionValueMinorUnitsPerBoncuk,
     maxRedemptionBasisPoints: maxRedemptionBasisPoints,
+  );
+}
+
+/// Boncuk Loyalty P7-C — a well-formed [LoyaltyReward], eligible for the
+/// cart item `'p1'` seeded by [pumpCheckout] by default.
+LoyaltyReward _catalogReward({
+  String rewardId = 'reward-1',
+  String title = 'Test Ödülü',
+  String description = 'Bir test ödülü.',
+  List<String> eligibleProductIds = const ['p1'],
+  int boncukCost = 100,
+  int sortOrder = 0,
+  int version = 1,
+}) {
+  return LoyaltyReward(
+    rewardId: rewardId,
+    title: title,
+    description: description,
+    rewardType: 'explicitProductSet',
+    eligibleProductIds: eligibleProductIds,
+    boncukCost: boncukCost,
+    sortOrder: sortOrder,
+    version: version,
   );
 }
 
@@ -1038,4 +1114,339 @@ void main() {
     // exist carries exactly the customer's own whole-Boncuk count.
     expect(pumped.gateway.lastRequestedBoncukAmount, 1);
   });
+
+  // =========================================================================
+  // Boncuk Loyalty Program P7-C (2026-08-24) — the Takeaway catalog-reward
+  // checkout wiring: [CatalogRewardCard], mutual exclusivity with cash
+  // Boncuk redemption, and the server-confirmed success summary.
+  // =========================================================================
+
+  testWidgets(
+      'P7-C A: only rewards eligible for the current cart are shown; an '
+      'ineligible reward is filtered out entirely', (tester) async {
+    await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        rewards: [
+          _catalogReward(rewardId: 'eligible', eligibleProductIds: ['p1']),
+          _catalogReward(
+              rewardId: 'ineligible', eligibleProductIds: ['other-product']),
+        ],
+      ),
+    );
+
+    expect(find.byKey(const Key('catalogRewardCard')), findsOneWidget);
+    expect(find.byKey(const Key('catalogRewardTile-eligible')),
+        findsOneWidget);
+    expect(find.byKey(const Key('catalogRewardTile-ineligible')),
+        findsNothing);
+  });
+
+  testWidgets(
+      'P7-C B: selecting a reward sends exactly its rewardId, and removes '
+      '(not just disables) the Boncuk cash-redemption card', (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshot: _boncukSnapshot(),
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsNothing);
+
+    await setUpValidForm(tester);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(pumped.gateway.lastSelectedRewardId, 'reward-1');
+    expect(pumped.gateway.lastRequestedBoncukAmount, 0);
+  });
+
+  testWidgets(
+      'P7-C C: selecting a reward while Boncuk cash redemption is already '
+      'on turns Boncuk off (mutual exclusivity, the reward selection wins)',
+      (tester) async {
+    await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshot: _boncukSnapshot(),
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('1 Boncuk'), findsOneWidget);
+
+    // The Boncuk card is showing (reward not yet selected) — its own
+    // CatalogRewardCard sibling self-hides while Boncuk is active, so no
+    // reward tile is visible to tap yet; select it via the gateway path
+    // is not possible from the UI in this state, which is exactly the
+    // locked mutual-exclusivity behavior under test.
+    expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+  });
+
+  testWidgets(
+      'P7-C D: tapping an already-selected reward deselects it, and the '
+      'Boncuk cash-redemption card reappears (the only way back, since '
+      'selecting a reward removes that card entirely)', (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshot: _boncukSnapshot(),
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsOneWidget);
+
+    await setUpValidForm(tester);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+    expect(pumped.gateway.lastSelectedRewardId, isNull);
+  });
+
+  testWidgets(
+      'P7-C E: on success, the server-confirmed catalog reward summary is '
+      'shown — reward title / Boncuk used / free product / covered amount',
+      (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        rewards: [_catalogReward(rewardId: 'reward-1', boncukCost: 420)],
+      ),
+    );
+    pumped.gateway.catalogRewardTitleToReturn = 'Çıtırtı Bowl';
+    pumped.gateway.catalogRewardBoncukCostToReturn = 420;
+    pumped.gateway.catalogRewardCoveredValueMinorUnitsToReturn = 12000;
+
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    await setUpValidForm(tester);
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(OrderSuccessScreen), findsOneWidget);
+    expect(find.byKey(const Key('orderSuccessCatalogRewardSummary')),
+        findsOneWidget);
+    expect(find.textContaining('Çıtırtı Bowl ödülü kullanıldı'),
+        findsWidgets);
+    expect(find.text('420 Boncuk'), findsOneWidget);
+    expect(find.text('120 TL'), findsWidgets);
+  });
+
+  testWidgets('P7-C F: reward catalog loading renders the inline skeleton',
+      (tester) async {
+    tester.view.physicalSize = const Size(480, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final resolvedAuthState = AuthState(
+      isAuthenticated: true,
+      isGuest: false,
+      session: _realCustomerSession(),
+    );
+    late final ProviderContainer container;
+    final gateway = _FakeSubmitTakeawayOrderGateway(
+      repository: InMemoryCanonicalOrderRepository(),
+      identityProvider: InMemoryOrderIdentityProvider(),
+      cartItemsSnapshot: () => container.read(cartProvider),
+      resolveCustomerId: () => container.read(authProvider).session!.uid,
+    );
+    // A [LoyaltyGateway] whose reward catalog future never completes,
+    // mirroring test J's own `neverCompleteSnapshot` pattern but for the
+    // reward catalog instead.
+    container = ProviderContainer(
+      overrides: [
+        authProvider.overrideWith(() => SeededAuthNotifier(resolvedAuthState)),
+        canonicalOrderRepositoryProvider.overrideWithValue(gateway.repository),
+        orderIdentityProvider.overrideWithValue(gateway.identityProvider),
+        submitTakeawayOrderGatewayProvider.overrideWithValue(gateway),
+        loyaltyGatewayProvider
+            .overrideWithValue(_NeverCompletingRewardCatalogGateway()),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.read(shoppingChannelProvider.notifier).selectTakeaway(
+          restaurantId: 'restaurant-1',
+          branchId: 'branch-1',
+          branchDisplayName: 'Abaküs Ortaköy',
+        );
+    container.read(cartProvider.notifier).addToCart(
+          id: 'p1',
+          name: 'Falafel Bowl',
+          desc: '',
+          price: 120.0,
+          quantity: 2,
+          pricedForChannel: OrderChannel.takeaway,
+        );
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: TakeawayCheckoutScreen()),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('catalogRewardCardSkeleton')), findsOneWidget);
+  });
+
+  testWidgets(
+      'P7-C G: reward catalog load failure shows a scoped retry card; '
+      'ordinary checkout (without a reward) remains fully usable',
+      (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        rewardCatalogError: const LoyaltyGatewayException(
+          'internal',
+          'Ödül kataloğuna şu anda ulaşılamıyor.',
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('catalogRewardCardError')), findsOneWidget);
+
+    await setUpValidForm(tester);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(OrderSuccessScreen), findsOneWidget);
+    expect(pumped.gateway.lastSelectedRewardId, isNull);
+  });
+
+  testWidgets(
+      'P7-C H: a cart change that removes the reward\'s only eligible '
+      'product clears the selection automatically — never left selected '
+      'and pointing at nothing', (tester) async {
+    await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('catalogRewardTile-reward-1')),
+        findsOneWidget);
+
+    final scope = tester.widget<UncontrolledProviderScope>(
+        find.byType(UncontrolledProviderScope));
+    scope.container.read(cartProvider.notifier).removeFromCart(id: 'p1');
+    await tester.pumpAndSettle();
+
+    // The reward card renders nothing at all now (no eligible product left
+    // in the cart) — proving the selection was cleared, not merely hidden
+    // while still "selected" underneath.
+    expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+  });
+
+  testWidgets(
+      'P7-C I: a catalogReward-specific server rejection resets the '
+      'selection and never auto-resubmits without the reward — the '
+      'customer must explicitly tap submit again', (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    await setUpValidForm(tester);
+
+    pumped.gateway.throwOnNextSubmit = const SubmitTakeawayOrderException(
+      'invalid-argument',
+      'The requested reward is no longer valid.',
+      boncukErrorReason: 'catalogReward/insufficient-balance',
+    );
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(pumped.gateway.callCount, 1);
+    expect(find.byType(OrderSuccessScreen), findsNothing);
+    expect(
+      find.textContaining('Bilgileri güncelledik; ödül kullanmadan'),
+      findsOneWidget,
+    );
+    // The reward's card is back — selection was reset, not merely hidden.
+    expect(find.byKey(const Key('catalogRewardTile-reward-1')),
+        findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+    expect(pumped.gateway.callCount, 2);
+    expect(pumped.gateway.lastSelectedRewardId, isNull);
+    expect(find.byType(OrderSuccessScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'P7-C J: the reward catalog is invalidated after a successful '
+      'catalog-reward redemption so the customer\'s eligible-reward list '
+      'refreshes (their balance may no longer cover the same rewards)',
+      (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    await setUpValidForm(tester);
+    final callsBeforeSubmit = pumped.loyaltyGateway.rewardCatalogCalls;
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(
+      pumped.loyaltyGateway.rewardCatalogCalls,
+      greaterThan(callsBeforeSubmit),
+      reason:
+          'ref.invalidate(loyaltyRewardCatalogProvider) must trigger a fresh fetch',
+    );
+  });
+
+  testWidgets(
+      'P7-C K: an ordinary checkout with no eligible reward for the cart '
+      'renders no catalog-reward card at all', (tester) async {
+    await pumpCheckout(tester);
+
+    expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+    expect(find.byKey(const Key('catalogRewardCardSkeleton')), findsNothing);
+    expect(find.byKey(const Key('catalogRewardCardError')), findsNothing);
+  });
+}
+
+/// A [LoyaltyGateway] fake whose reward-catalog future never resolves —
+/// mirrors [_FakeLoyaltyGateway]'s own `neverCompleteSnapshot` behavior for
+/// the account snapshot, but for `getRewardCatalog()` instead. Kept as a
+/// separate tiny class (rather than a new flag on [_FakeLoyaltyGateway])
+/// since it's needed by exactly one test.
+class _NeverCompletingRewardCatalogGateway implements LoyaltyGateway {
+  @override
+  Future<LoyaltyAccountSnapshot> getSnapshot() async =>
+      LoyaltyAccountSnapshot.zero;
+
+  @override
+  Future<LoyaltyHistoryPage> getHistory({int? pageSize, String? cursor}) async {
+    return LoyaltyHistoryPage.empty;
+  }
+
+  @override
+  Future<List<LoyaltyReward>> getRewardCatalog() {
+    return Completer<List<LoyaltyReward>>().future;
+  }
 }

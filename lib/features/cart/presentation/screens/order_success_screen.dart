@@ -56,6 +56,21 @@ class OrderSuccessScreen extends StatelessWidget {
   /// default) leaves every existing caller's behavior exactly unchanged.
   final bool isDeliveryOrder;
 
+  /// Boncuk Loyalty Program P7-C (2026-08-24) — additive, optional
+  /// server-confirmed catalog-reward summary. Every value here comes
+  /// straight from the canonical `Order` re-read from Firestore after
+  /// submission (`TakeawayCheckoutScreen._submitOrder`) — [catalogRewardTitle]/
+  /// [catalogRewardBoncukCost]/[catalogRewardCoveredValueMinorUnits] from
+  /// `Order.catalogReward` directly, [catalogRewardRedeemedProductName]
+  /// cross-referenced from the matching `Order.lines` entry (never a
+  /// separate catalog lookup) — never from any pre-submit local state.
+  /// Mutually exclusive with the Boncuk-cash-redemption summary above (one
+  /// order = one benefit); takeaway only this phase.
+  final String? catalogRewardTitle;
+  final int? catalogRewardBoncukCost;
+  final String? catalogRewardRedeemedProductName;
+  final int? catalogRewardCoveredValueMinorUnits;
+
   const OrderSuccessScreen({
     super.key,
     required this.orderId,
@@ -68,6 +83,10 @@ class OrderSuccessScreen extends StatelessWidget {
     this.boncukValueMinorUnits,
     this.remainingPayableMinorUnits,
     this.isDeliveryOrder = false,
+    this.catalogRewardTitle,
+    this.catalogRewardBoncukCost,
+    this.catalogRewardRedeemedProductName,
+    this.catalogRewardCoveredValueMinorUnits,
   });
 
   bool get _isDineIn => dineInBranchName != null && dineInTableName != null;
@@ -79,6 +98,12 @@ class OrderSuccessScreen extends StatelessWidget {
       boncukUsed != null &&
       boncukValueMinorUnits != null &&
       remainingPayableMinorUnits != null;
+
+  bool get _hasCatalogRewardSummary =>
+      catalogRewardTitle != null &&
+      catalogRewardBoncukCost != null &&
+      catalogRewardRedeemedProductName != null &&
+      catalogRewardCoveredValueMinorUnits != null;
 
   @override
   Widget build(BuildContext context) {
@@ -205,6 +230,21 @@ class OrderSuccessScreen extends StatelessWidget {
                   remainingPayableMinorUnits: remainingPayableMinorUnits!,
                 ),
               ],
+              // Boncuk Loyalty P7-C (2026-08-24) — takeaway only, and only
+              // when a real catalog-reward redemption happened. Mutually
+              // exclusive with the Boncuk-cash-redemption summary above by
+              // construction (`_hasBoncukSummary`/`_hasCatalogRewardSummary`
+              // can never both be true for the same order — one benefit
+              // per order).
+              if (_isTakeaway && _hasCatalogRewardSummary) ...[
+                const SizedBox(height: AppSpacing.md),
+                CatalogRewardSuccessSummary(
+                  rewardTitle: catalogRewardTitle!,
+                  boncukCost: catalogRewardBoncukCost!,
+                  redeemedProductName: catalogRewardRedeemedProductName!,
+                  coveredValueMinorUnits: catalogRewardCoveredValueMinorUnits!,
+                ),
+              ],
               const Spacer(),
               SizedBox(
                 width: double.infinity,
@@ -307,6 +347,83 @@ class BoncukSuccessSummary extends StatelessWidget {
           _SummaryRow(
             label: 'Kalan Tutar',
             value: '${_formatMinorUnitsTl(remainingPayableMinorUnits)} TL',
+            emphasized: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The compact, server-confirmed catalog-reward summary shown on a
+/// successful takeaway order that redeemed a Reward Catalog entry —
+/// Boncuk Loyalty Program P7-C (2026-08-24). Every figure is a plain,
+/// already-resolved value passed in by the caller (sourced from the
+/// canonical re-read `Order`, never a pre-submit estimate — this reward
+/// mechanism has no pre-submit cost estimate at all, unlike cash Boncuk
+/// redemption, since the server never discloses a reward's cost to the
+/// client ahead of redemption).
+class CatalogRewardSuccessSummary extends StatelessWidget {
+  const CatalogRewardSuccessSummary({
+    super.key,
+    required this.rewardTitle,
+    required this.boncukCost,
+    required this.redeemedProductName,
+    required this.coveredValueMinorUnits,
+  });
+
+  final String rewardTitle;
+  final int boncukCost;
+  final String redeemedProductName;
+  final int coveredValueMinorUnits;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('orderSuccessCatalogRewardSummary'),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      decoration: const BoxDecoration(
+        color: AppColors.primaryExtraLight,
+        borderRadius: AppRadius.kMedium,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            label: '$rewardTitle ödülü kullanıldı',
+            excludeSemantics: true,
+            child: Row(
+              children: [
+                const Icon(Icons.redeem_rounded,
+                    size: 18, color: AppColors.primary),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    '$rewardTitle ödülü kullanıldı',
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          _SummaryRow(
+            label: 'Boncuk kullanıldı',
+            value: '$boncukCost Boncuk',
+          ),
+          _SummaryRow(
+            label: 'Ücretsiz ürün',
+            value: redeemedProductName,
+          ),
+          _SummaryRow(
+            label: 'Karşılanan tutar',
+            value: '${_formatMinorUnitsTl(coveredValueMinorUnits)} TL',
             emphasized: true,
           ),
         ],

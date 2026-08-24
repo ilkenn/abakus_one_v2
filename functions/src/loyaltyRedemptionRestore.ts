@@ -66,13 +66,31 @@ import { applyBoncukCreditDebtFirst } from "./loyaltyAccounting";
  * never assumes the order hasn't changed again since.
  *
  * **`order.refunded` handling is deliberately narrow.** This consumer ONLY
- * ever restores a `boncukRedemptionRestore` entry — it never performs an
- * `orderEarnReversal` (the separate accounting event for Boncuk the SAME
- * order may have earned before being refunded). `earnReversalEvaluated`
- * (written by `onOrderTerminalFailureOrRefund.ts`) is never touched here;
- * that field is reserved for a future, independent consumer this phase
- * does not build (P4-C-A §3/§9's explicit instruction — never merge the
- * two accounting events).
+ * ever restores a `boncukRedemptionRestore`/`catalogRedemptionRestore`
+ * entry — it never performs an `orderEarnReversal` (the separate
+ * accounting event for Boncuk the SAME order may have earned before being
+ * refunded). `earnReversalEvaluated` (written by
+ * `onOrderTerminalFailureOrRefund.ts`) is never touched here; that field
+ * is reserved for a future, independent consumer this phase does not
+ * build (P4-C-A §3/§9's explicit instruction — never merge the two
+ * accounting events).
+ *
+ * **Boncuk Loyalty P7-C (2026-08-24) — generalized to also restore a
+ * catalog-reward redemption, never both.** "One order = maximum one
+ * benefit" (`BR-LOYALTY-006`) guarantees at most ONE of a
+ * `boncukRedemption` or `catalogRedemption` original ledger entry can ever
+ * exist for a given order — this consumer checks for a `boncukRedemption`
+ * entry first (preserving its exact pre-existing behavior byte-for-byte
+ * when one exists), then a `catalogRedemption` entry, and restores
+ * whichever family it finds via the SAME debt-first
+ * `applyBoncukCreditDebtFirst` primitive and the SAME deterministic-id/
+ * idempotency discipline — never a second, parallel restore engine. The
+ * restored Boncuk COUNT for a catalog reward is the original entry's own
+ * `boncukCost` (via `spendableDeltaBoncuk`, exactly like cash redemption),
+ * never re-read from the LIVE `loyaltyRewardCatalog` — a reward's cost or
+ * eligible products may have changed since redemption; historical restore
+ * must never be affected by that (§10's original policy-version-safety
+ * requirement, extended identically to reward-catalog versions).
  */
 
 export interface ProcessOrderTerminalEventForBoncukRedemptionRestoreResult {
@@ -80,6 +98,13 @@ export interface ProcessOrderTerminalEventForBoncukRedemptionRestoreResult {
   reason: string;
   restoredBoncuk?: number;
 }
+
+/** The two mutually-exclusive redemption "families" this consumer knows how to restore. */
+type RedemptionFamily = "boncukRedemption" | "catalogRedemption";
+const RESTORE_ENTRY_TYPE_FOR: Record<RedemptionFamily, "boncukRedemptionRestore" | "catalogRedemptionRestore"> = {
+  boncukRedemption: "boncukRedemptionRestore",
+  catalogRedemption: "catalogRedemptionRestore",
+};
 
 const TERMINAL_EVENT_TYPE_TO_ORDER_STATUS: Record<string, string> = {
   "order.rejected": "rejected",
@@ -109,11 +134,12 @@ function resolveOriginalRedemptionForRestore(
   organizationId: string,
   customerId: string,
   orderId: string,
+  expectedEntryType: RedemptionFamily,
 ): ResolvedOriginalRedemption {
   if (!snap.exists) return { status: "missing" };
   const raw = snap.data()!;
 
-  if (raw.entryType !== "boncukRedemption") return { status: "malformed" };
+  if (raw.entryType !== expectedEntryType) return { status: "malformed" };
   if (raw.organizationId !== organizationId) return { status: "malformed" };
   if (raw.customerId !== customerId) return { status: "malformed" };
   if (raw.orderId !== orderId) return { status: "malformed" };
@@ -192,7 +218,10 @@ export async function processOrderTerminalEventForBoncukRedemptionRestore(
   }
 
   const orderRef = db.collection("orders").doc(orderId);
-  const originalRedemptionRef = db
+  // Boncuk Loyalty P7-C — both possible original-redemption families are
+  // constructed up front; "one order = maximum one benefit" guarantees at
+  // most one of the two can ever actually exist for this order.
+  const boncukOriginalRef = db
     .collection(LOYALTY_LEDGER_ENTRIES_COLLECTION)
     .doc(
       deriveLoyaltyLedgerEntryId({
@@ -202,13 +231,13 @@ export async function processOrderTerminalEventForBoncukRedemptionRestore(
         sourceId: orderId,
       }),
     );
-  const restoreEntryRef = db
+  const catalogOriginalRef = db
     .collection(LOYALTY_LEDGER_ENTRIES_COLLECTION)
     .doc(
       deriveLoyaltyLedgerEntryId({
         organizationId,
         customerId,
-        entryType: "boncukRedemptionRestore",
+        entryType: "catalogRedemption",
         sourceId: orderId,
       }),
     );
@@ -216,19 +245,12 @@ export async function processOrderTerminalEventForBoncukRedemptionRestore(
 
   return db.runTransaction(
     async (tx): Promise<ProcessOrderTerminalEventForBoncukRedemptionRestoreResult> => {
-      // Reads first, always.
-      const restoreSnap = await tx.get(restoreEntryRef);
-      if (restoreSnap.exists) {
-        // Already restored by a prior invocation (retry, or a duplicate
-        // trigger delivery) — the deterministic restore-entry id, not the
-        // evaluated flag, is the authoritative idempotency check.
-        // Re-assert the flag in case a prior attempt crashed after
-        // creating the restore entry but before this point, then stop —
-        // never a second credit, never a second debt payment.
-        tx.set(eventRef, { boncukRedemptionRestoreEvaluated: true }, { merge: true });
-        return { processed: true, reason: "already-restored" };
-      }
-
+      // Reads first, always. The real order document is read — and fully
+      // validated — BEFORE ever looking up a redemption to restore
+      // (unchanged from the pre-P7-C ordering): an anomaly here (missing
+      // order, status mismatch, identity mismatch) must win over "there's
+      // nothing to restore anyway," since it's a distinct, retryable
+      // failure mode this consumer must never silently swallow as a no-op.
       const orderSnap = await tx.get(orderRef);
       if (!orderSnap.exists) {
         logger.error(
@@ -254,27 +276,84 @@ export async function processOrderTerminalEventForBoncukRedemptionRestore(
         return { processed: false, reason: "order-identity-mismatch" };
       }
 
-      const originalSnap = await tx.get(originalRedemptionRef);
+      // Both original-redemption candidates are read next, so which family
+      // (if any) applies is known before constructing/checking the
+      // corresponding restore-entry ref.
+      const [boncukOriginalSnap, catalogOriginalSnap] = await Promise.all([
+        tx.get(boncukOriginalRef),
+        tx.get(catalogOriginalRef),
+      ]);
+      if (boncukOriginalSnap.exists && catalogOriginalSnap.exists) {
+        // Structurally should never happen — "one order = maximum one
+        // benefit" guarantees exactly one family, never both. Fail closed
+        // rather than guessing which one is authoritative.
+        logger.error(
+          `[loyaltyRedemptionRestore] order ${orderId} has BOTH a boncukRedemption and a catalogRedemption original ledger entry — invariant violation, failing closed.`,
+        );
+        return { processed: false, reason: "both-redemption-families-present" };
+      }
+      const redemptionFamily: RedemptionFamily | null = boncukOriginalSnap.exists
+        ? "boncukRedemption"
+        : catalogOriginalSnap.exists
+          ? "catalogRedemption"
+          : null;
+
+      if (redemptionFamily === null) {
+        // Neither family was ever redeemed on this order — nothing to
+        // restore. A deterministic no-op, correctly marked evaluated.
+        tx.set(eventRef, { boncukRedemptionRestoreEvaluated: true }, { merge: true });
+        return { processed: true, reason: "no-redemption-to-restore" };
+      }
+      const originalSnap = redemptionFamily === "boncukRedemption" ? boncukOriginalSnap : catalogOriginalSnap;
+      const originalRedemptionRef = redemptionFamily === "boncukRedemption" ? boncukOriginalRef : catalogOriginalRef;
+      const restoreEntryType = RESTORE_ENTRY_TYPE_FOR[redemptionFamily];
+      const restoreEntryRef = db
+        .collection(LOYALTY_LEDGER_ENTRIES_COLLECTION)
+        .doc(
+          deriveLoyaltyLedgerEntryId({
+            organizationId,
+            customerId,
+            entryType: restoreEntryType,
+            sourceId: orderId,
+          }),
+        );
+
+      const restoreSnap = await tx.get(restoreEntryRef);
+      if (restoreSnap.exists) {
+        // Already restored by a prior invocation (retry, or a duplicate
+        // trigger delivery) — the deterministic restore-entry id, not the
+        // evaluated flag, is the authoritative idempotency check.
+        // Re-assert the flag in case a prior attempt crashed after
+        // creating the restore entry but before this point, then stop —
+        // never a second credit, never a second debt payment.
+        tx.set(eventRef, { boncukRedemptionRestoreEvaluated: true }, { merge: true });
+        return { processed: true, reason: "already-restored" };
+      }
+
+      // originalSnap was already fetched above (in the family-determination
+      // read) — re-validated here for provenance, never re-fetched.
       const originalResult = resolveOriginalRedemptionForRestore(
         originalSnap,
         organizationId,
         customerId,
         orderId,
+        redemptionFamily,
       );
       if (originalResult.status === "missing") {
-        // No Boncuk was ever redeemed on this order — nothing to restore.
-        // A deterministic no-op, correctly marked evaluated (§6).
+        // Structurally unreachable — redemptionFamily was derived from
+        // originalSnap.exists being true. Defensive only.
         tx.set(eventRef, { boncukRedemptionRestoreEvaluated: true }, { merge: true });
         return { processed: true, reason: "no-redemption-to-restore" };
       }
       if (originalResult.status === "malformed") {
         logger.error(
-          `[loyaltyRedemptionRestore] order ${orderId}'s original boncukRedemption ledger entry has malformed provenance — failing closed rather than guessing at a restored count.`,
+          `[loyaltyRedemptionRestore] order ${orderId}'s original ${redemptionFamily} ledger entry has malformed provenance — failing closed rather than guessing at a restored count.`,
         );
         return { processed: false, reason: "malformed-original-redemption-entry" };
       }
       const restoredBoncuk = originalResult.restoredBoncuk;
       const originalEntry = originalSnap.data()!;
+      const originalMetadata = originalEntry.metadata as { rewardId?: string } | null | undefined;
 
       const accountSnap = await tx.get(accountRef);
       const accountResult = resolveAccountForRedemption(accountSnap);
@@ -304,7 +383,7 @@ export async function processOrderTerminalEventForBoncukRedemptionRestore(
       const restoreEntry: LoyaltyLedgerEntry = {
         organizationId,
         customerId,
-        entryType: "boncukRedemptionRestore",
+        entryType: restoreEntryType,
         entitlementDeltaBoncuk: 0,
         spendableDeltaBoncuk: spendableCreditBoncuk,
         // `0 - x` rather than unary `-x` — avoids IEEE-754 negative zero,
@@ -313,7 +392,9 @@ export async function processOrderTerminalEventForBoncukRedemptionRestore(
         sourceId: orderId,
         orderId,
         // Historical redemption provenance, copied VERBATIM from the
-        // original entry — never re-resolved from today's policy (§10).
+        // original entry — never re-resolved from today's policy (§10), and
+        // for a catalog reward, never re-read from the live reward-catalog
+        // document either (same reasoning, extended).
         amountBasisMinorUnits: (originalEntry.amountBasisMinorUnits as number | null) ?? null,
         earningCarryNumeratorBefore: null,
         earningCarryDenominatorBefore: null,
@@ -330,7 +411,10 @@ export async function processOrderTerminalEventForBoncukRedemptionRestore(
         idempotencyKey: orderId,
         reversalOf: originalRedemptionRef.id,
         expiresAt: null,
-        metadata: null,
+        metadata:
+          redemptionFamily === "catalogRedemption" && originalMetadata?.rewardId
+            ? { entryType: "catalogRedemptionRestore", rewardId: originalMetadata.rewardId }
+            : null,
       };
 
       // Write phase — every tx.get() this transaction will ever perform

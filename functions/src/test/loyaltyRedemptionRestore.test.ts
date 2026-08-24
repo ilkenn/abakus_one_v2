@@ -648,3 +648,260 @@ test("end-to-end: a real order status transition to rejected, via the real trigg
   const restore = await restoreLedgerDoc(orderId, uid);
   assert.ok(restore, "the restore ledger entry must exist once the real trigger chain has run");
 });
+
+// =========================================================================
+// K. Catalog Reward restore — Boncuk Loyalty Program P7-C (2026-08-24).
+// Generalizes this same consumer to also restore a `catalogRedemption`
+// original entry, never a second engine. Existing boncukRedemption
+// behavior (sections A-J above) is completely unchanged — confirmed by
+// those tests still passing unmodified.
+// =========================================================================
+
+interface SeedCatalogRedemptionParams {
+  orderId: string;
+  organizationId?: string;
+  customerId: string;
+  boncukCost: number;
+  rewardId?: string;
+  amountBasisMinorUnits?: number;
+  overrides?: Record<string, unknown>;
+}
+
+/** Seeds a well-formed ORIGINAL `catalogRedemption` ledger entry, keyed exactly like the real submitTakeawayOrder.ts writer would. */
+async function seedCatalogRedemptionEntry(params: SeedCatalogRedemptionParams) {
+  const organizationId = params.organizationId ?? ORG;
+  const rewardId = params.rewardId ?? "citirti-bowl";
+  const id = deriveLoyaltyLedgerEntryId({
+    organizationId,
+    customerId: params.customerId,
+    entryType: "catalogRedemption",
+    sourceId: params.orderId,
+  });
+  await db()
+    .collection(LOYALTY_LEDGER_ENTRIES_COLLECTION)
+    .doc(id)
+    .set({
+      organizationId,
+      customerId: params.customerId,
+      entryType: "catalogRedemption",
+      entitlementDeltaBoncuk: 0,
+      spendableDeltaBoncuk: 0 - params.boncukCost,
+      debtDeltaBoncuk: 0,
+      sourceId: params.orderId,
+      orderId: params.orderId,
+      amountBasisMinorUnits: params.amountBasisMinorUnits ?? 43000,
+      earningCarryNumeratorBefore: null,
+      earningCarryDenominatorBefore: null,
+      earningCarryNumeratorAfter: null,
+      earningCarryDenominatorAfter: null,
+      earningSpendMinorUnits: null,
+      earningBoncukAmount: null,
+      loyaltyPolicyVersion: null,
+      debtBeforeBoncuk: 0,
+      debtAfterBoncuk: 0,
+      redemptionValueMinorUnitsPerBoncuk: null,
+      maxRedemptionBasisPoints: null,
+      idempotencyKey: params.orderId,
+      reversalOf: null,
+      expiresAt: null,
+      metadata: { entryType: "catalogRedemption", rewardId },
+      createdAt: Timestamp.now(),
+      ...params.overrides,
+    });
+  return id;
+}
+
+async function catalogRedemptionRestoreLedgerDoc(orderId: string, uid: string, organizationId: string = ORG) {
+  const id = deriveLoyaltyLedgerEntryId({
+    organizationId,
+    customerId: uid,
+    entryType: "catalogRedemptionRestore",
+    sourceId: orderId,
+  });
+  return (await db().collection(LOYALTY_LEDGER_ENTRIES_COLLECTION).doc(id).get()).data();
+}
+
+test("catalog reward: cancellation restores the exact original boncukCost, writes a catalogRedemptionRestore entry with rewardId metadata", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-cancelled`;
+  await seedOrder({ orderId, customerId: uid, status: "cancelled" });
+  await seedCatalogRedemptionEntry({ orderId, customerId: uid, boncukCost: 420, rewardId: "citirti-bowl" });
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, spendableBalance: 10, lifetimeRedeemed: 420 }));
+
+  const result = await processOrderTerminalEventForBoncukRedemptionRestore(
+    db(), eventId, terminalEvent({ orderId, customerId: uid, type: "order.cancelled" }),
+  );
+
+  assert.strictEqual(result.processed, true);
+  assert.strictEqual(result.reason, "restored");
+  assert.strictEqual(result.restoredBoncuk, 420);
+
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.spendableBalance, 430);
+  assert.strictEqual(account?.boncukDebt, 0);
+  assert.strictEqual(account?.lifetimeRedeemed, 420, "lifetimeRedeemed is never decremented by a restore");
+
+  const originalId = deriveLoyaltyLedgerEntryId({ organizationId: ORG, customerId: uid, entryType: "catalogRedemption", sourceId: orderId });
+  const restore = await catalogRedemptionRestoreLedgerDoc(orderId, uid);
+  assert.ok(restore);
+  assert.strictEqual(restore?.entryType, "catalogRedemptionRestore");
+  assert.strictEqual(restore?.spendableDeltaBoncuk, 420);
+  assert.strictEqual(restore?.debtDeltaBoncuk, 0);
+  assert.strictEqual(restore?.reversalOf, originalId);
+  assert.deepStrictEqual(restore?.metadata, { entryType: "catalogRedemptionRestore", rewardId: "citirti-bowl" });
+
+  assert.strictEqual((await eventDoc(eventId))?.boncukRedemptionRestoreEvaluated, true);
+});
+
+test("catalog reward: rejection restores identically", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-rejected`;
+  await seedOrder({ orderId, customerId: uid, status: "rejected" });
+  await seedCatalogRedemptionEntry({ orderId, customerId: uid, boncukCost: 70, rewardId: "icecek" });
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, spendableBalance: 0 }));
+
+  const result = await processOrderTerminalEventForBoncukRedemptionRestore(
+    db(), eventId, terminalEvent({ orderId, customerId: uid, type: "order.rejected" }),
+  );
+
+  assert.strictEqual(result.reason, "restored");
+  assert.strictEqual(result.restoredBoncuk, 70);
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.spendableBalance, 70);
+});
+
+test("catalog reward: refund restores, leaves earnReversalEvaluated untouched — never merges the two accounting events", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-refunded`;
+  await seedOrder({ orderId, customerId: uid, status: "refunded" });
+  await seedCatalogRedemptionEntry({ orderId, customerId: uid, boncukCost: 400, rewardId: "falafel-salad" });
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, spendableBalance: 0 }));
+  const eventPayload = terminalEvent({ orderId, customerId: uid, type: "order.refunded" });
+  await db().collection("orderEvents").doc(eventId).set(eventPayload);
+
+  const result = await processOrderTerminalEventForBoncukRedemptionRestore(db(), eventId, eventPayload);
+
+  assert.strictEqual(result.reason, "restored");
+  const event = await eventDoc(eventId);
+  assert.strictEqual(event?.earnReversalEvaluated, false, "never touched by this consumer");
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.spendableBalance, 400);
+});
+
+test("catalog reward: idempotent — the same event processed twice credits exactly once", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-cancelled`;
+  await seedOrder({ orderId, customerId: uid, status: "cancelled" });
+  await seedCatalogRedemptionEntry({ orderId, customerId: uid, boncukCost: 100 });
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, spendableBalance: 0 }));
+  const event = terminalEvent({ orderId, customerId: uid, type: "order.cancelled" });
+
+  const first = await processOrderTerminalEventForBoncukRedemptionRestore(db(), eventId, event);
+  const second = await processOrderTerminalEventForBoncukRedemptionRestore(db(), eventId, event);
+
+  assert.strictEqual(first.reason, "restored");
+  assert.strictEqual(second.reason, "already-restored");
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.spendableBalance, 100, "credited exactly once, not twice");
+  assert.strictEqual(account?.revision, 2);
+});
+
+test("catalog reward: debt-first — debt 15, restore 100 -> spendable +85, debt 0", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-cancelled`;
+  await seedOrder({ orderId, customerId: uid, status: "cancelled" });
+  await seedCatalogRedemptionEntry({ orderId, customerId: uid, boncukCost: 100 });
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, spendableBalance: 0, boncukDebt: 15 }));
+
+  await processOrderTerminalEventForBoncukRedemptionRestore(
+    db(), eventId, terminalEvent({ orderId, customerId: uid, type: "order.cancelled" }),
+  );
+
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.spendableBalance, 85);
+  assert.strictEqual(account?.boncukDebt, 0);
+});
+
+test("catalog reward: restore uses the ORIGINAL boncukCost, never a live (since-changed) reward cost/version — no live reward-catalog lookup at all", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-cancelled`;
+  await seedOrder({ orderId, customerId: uid, status: "cancelled" });
+  // The original redemption locked in 420 Boncuk at rewardVersion 1 — even
+  // though nothing in this test ever seeds/updates a live
+  // loyaltyRewardCatalog document (proving this consumer never reads one),
+  // the restore must still be exactly 420, sourced solely from the
+  // immutable original ledger entry.
+  await seedCatalogRedemptionEntry({ orderId, customerId: uid, boncukCost: 420, rewardId: "citirti-bowl" });
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, spendableBalance: 0 }));
+
+  const result = await processOrderTerminalEventForBoncukRedemptionRestore(
+    db(), eventId, terminalEvent({ orderId, customerId: uid, type: "order.cancelled" }),
+  );
+
+  assert.strictEqual(result.restoredBoncuk, 420);
+});
+
+test("catalog reward: no original catalogRedemption entry for a terminal order -> deterministic no-op, no mutation", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-cancelled`;
+  await seedOrder({ orderId, customerId: uid, status: "cancelled" });
+  // Deliberately no boncukRedemption AND no catalogRedemption entry seeded.
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, spendableBalance: 5 }));
+
+  const result = await processOrderTerminalEventForBoncukRedemptionRestore(
+    db(), eventId, terminalEvent({ orderId, customerId: uid, type: "order.cancelled" }),
+  );
+
+  assert.strictEqual(result.processed, true);
+  assert.strictEqual(result.reason, "no-redemption-to-restore");
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.spendableBalance, 5, "untouched");
+});
+
+test("invariant: a boncukRedemption-only order still restores exactly as before (byte-for-byte unchanged) — the generalization never affects the existing family", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-cancelled`;
+  await seedOrder({ orderId, customerId: uid, status: "cancelled" });
+  await seedBoncukRedemptionEntry({ orderId, customerId: uid, boncukUsed: 33 });
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, spendableBalance: 0 }));
+
+  const result = await processOrderTerminalEventForBoncukRedemptionRestore(
+    db(), eventId, terminalEvent({ orderId, customerId: uid, type: "order.cancelled" }),
+  );
+
+  assert.strictEqual(result.restoredBoncuk, 33);
+  const restore = await restoreLedgerDoc(orderId, uid);
+  assert.strictEqual(restore?.entryType, "boncukRedemptionRestore");
+  assert.strictEqual(restore?.metadata, null, "cash-redemption restore metadata is unchanged — still null");
+  // Confirm no catalogRedemptionRestore doc was ever created for this order.
+  const catalogRestore = await catalogRedemptionRestoreLedgerDoc(orderId, uid);
+  assert.strictEqual(catalogRestore?.entryType, undefined);
+});
+
+test("invariant violation: BOTH a boncukRedemption and a catalogRedemption original entry exist for the same order -> fails closed, credits nothing, never guesses which is authoritative", async () => {
+  const orderId = nextId("order");
+  const uid = nextId("uid");
+  const eventId = `${orderId}-cancelled`;
+  await seedOrder({ orderId, customerId: uid, status: "cancelled" });
+  await seedBoncukRedemptionEntry({ orderId, customerId: uid, boncukUsed: 10 });
+  await seedCatalogRedemptionEntry({ orderId, customerId: uid, boncukCost: 10 });
+  await seedAccount(uid, wellFormedAccount({ customerId: uid, spendableBalance: 0 }));
+
+  const result = await processOrderTerminalEventForBoncukRedemptionRestore(
+    db(), eventId, terminalEvent({ orderId, customerId: uid, type: "order.cancelled" }),
+  );
+
+  assert.strictEqual(result.processed, false);
+  assert.strictEqual(result.reason, "both-redemption-families-present");
+  const account = await accountDoc(uid);
+  assert.strictEqual(account?.spendableBalance, 0, "no credit applied on this anomaly");
+  assert.strictEqual((await eventDoc(eventId))?.boncukRedemptionRestoreEvaluated, undefined, "left retryable, never marked evaluated");
+});

@@ -1,14 +1,18 @@
 /// The customer-safe, closed representation of which single benefit (if
 /// any) an order settled part of its total with — Boncuk Loyalty Program
 /// P4-E-B (2026-08-22), mirroring `functions/src/submitTakeawayOrder.ts`'s
-/// own `selectedBenefitType: "none" | "boncukRedemption"` server contract
-/// field-for-field. **Only these two values are real; nothing else is ever
-/// produced by any writer today** — coupon/campaign/catalog-reward benefit
-/// types have no backend authority yet (`docs/business_rules.md`
+/// own `selectedBenefitType` server contract field-for-field. **Only
+/// `none`/`boncukRedemption`/`catalogReward` are real; nothing else is
+/// ever produced by any writer today** — coupon/campaign benefit types
+/// have no backend authority yet (`docs/business_rules.md`
 /// `BR-LOYALTY-022`'s own disclosed scope). A future benefit type must stay
 /// parse-safe (see [orderBenefitTypeFromWire]) without this enum ever
 /// pretending to support one before its own backend exists.
-enum OrderBenefitType { none, boncukRedemption }
+///
+/// **Boncuk Loyalty P7-C (2026-08-24) — `catalogReward` added.** Real for
+/// the takeaway channel only this phase (`submitTakeawayOrder.ts`); every
+/// other channel still only ever produces `none`/`boncukRedemption`.
+enum OrderBenefitType { none, boncukRedemption, catalogReward }
 
 /// Parses `Order.selectedBenefitType`'s wire value.
 ///
@@ -25,6 +29,8 @@ OrderBenefitType orderBenefitTypeFromWire(String? raw) {
   switch (raw) {
     case 'boncukRedemption':
       return OrderBenefitType.boncukRedemption;
+    case 'catalogReward':
+      return OrderBenefitType.catalogReward;
     default:
       return OrderBenefitType.none;
   }
@@ -37,6 +43,8 @@ String orderBenefitTypeToWire(OrderBenefitType value) {
   switch (value) {
     case OrderBenefitType.boncukRedemption:
       return 'boncukRedemption';
+    case OrderBenefitType.catalogReward:
+      return 'catalogReward';
     case OrderBenefitType.none:
       return 'none';
   }

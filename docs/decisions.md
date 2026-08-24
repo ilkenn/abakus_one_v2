@@ -14742,3 +14742,470 @@ failed**. Functions FULL emulator suite (`GOOGLE_MAPS_PROVIDER_MODE=fixture`) �
 (up from 1281 — net +2 tests: 1 test replaced, 2 added, 1 corrected in place). Firestore Rules suite not
 rerun (no rules file touched). `flutter analyze`/`flutter test` not rerun — Flutter was not touched by
 this microfix, per the task's own explicit instruction. No commit was made.
+
+## Boncuk Loyalty Program P7-A — Reward Catalog Fast Audit + Final Product Model Plan (2026-08-24)
+
+**Status**: Audit only — no code changed. Goal: design the smallest professional server-authoritative
+Reward Catalog letting customers exchange Boncuk for defined restaurant rewards, informed by a full audit
+of existing mock/dead reward implementations and real current economics.
+
+**Key findings**: two independently-authored, both-dead mock reward catalogs existed (`docs/business_rules
+.md`'s own `BR-LOYALTY-007` spec: 50/100/200/200; the orphaned `lib/features/profile/.../loyalty_provider
+.dart`'s different 50/100/150/250) — nothing reward-catalog-shaped is reachable in the real customer UI
+today (the canonical `lib/features/loyalty/` screen explicitly documents the absence as deliberate).
+Backend already reserves `"catalogRedemption"`/`"catalogRedemptionRestore"` ledger-entry types and a
+`{entryType, rewardId}` metadata shape in `loyaltyLedger.ts` — zero writer exists. `selectedBenefitType`
+is a hand-typed 2-value union at ~5 call sites, mechanically extensible to 3. `loyaltyRedemptionRestore.ts`
+is hardcoded to `entryType === "boncukRedemption"` specifically — **not** a zero-touch reuse for a future
+catalog-reward restore path (a real, disclosed gap for P7-C+, not this phase). Double-spend protection
+(transaction + deterministic `deriveLoyaltyLedgerEntryId`) generalizes directly. `menuProducts.categoryId`
+is stable but real price spread within a category (bowl: 430–800 TL) makes category-level entitlement a
+real arbitrage risk — explicit product allowlists were recommended instead. The dominant multi-tenant
+convention is flat `{collection}` + `organizationId` field / `{org}_{id}` composite id — **no** nested-
+subcollection precedent exists anywhere in `firestore.rules`, so the originally-proposed
+`loyaltyRewardCatalog/{organizationId}/rewards/{rewardId}` shape was rejected in favor of a flat
+collection. `loyaltyPolicy.ts`'s own "live doc + append-only version-history collection" pattern was
+identified as the closest, most directly reusable precedent for reward versioning.
+
+**Economics finding (the critical one)**: the original 50/100/200/200 catalog was priced at P0-A
+(2026-08-20) against the THEN-current 1 Boncuk = 2 TL redemption rate. The P3A rate change (2026-08-24,
+already committed before this session) moved redemption to 1 Boncuk = 1 TL while making earning 5× more
+generous — a combined ~2.5× swing in effective cashback rate the reward catalog was never re-priced
+against. Real current menu prices (drinks 80 TL uniform; snacks 200–300 TL; pasta 380–550 TL; bowls
+430–800 TL, only 4/16 ≤500 TL) confirmed the old costs would be roughly 2× too generous if carried forward
+unchanged — `OLD_REWARD_COSTS_SAFE_TO_KEEP=NO`, no new costs invented (no COGS data exists in this
+codebase to derive "correct" prices), flagged for architect decision instead.
+
+**Recommendation directly informed P7-B's implementation** — no architectural questions were reopened
+before implementation began.
+
+## Boncuk Loyalty Program P7-B — Server-Authoritative Reward Catalog Foundation (2026-08-24)
+
+**Status**: Implemented — backend foundation only. Implements P7-A's accepted recommendation directly (no
+further audit phase), plus the LOCKED product decisions given alongside the implementation instruction
+(four specific initial rewards, explicit-product-allowlist MVP, archive-not-delete, dynamic-Admin-ready
+data model). **Still explicitly out of scope**: Admin UI, general Campaign Engine, checkout/redemption
+wiring into any order-submission channel, the `catalogRedemption` ledger writer, any account debit.
+
+### 1. Domain module — `functions/src/loyaltyRewardCatalog.ts`
+
+Pure types/sanitizers/parsing, no Firestore I/O. `LoyaltyRewardType` is a closed-but-additively-extensible
+union (`"explicitProductSet"` only this phase — no category-based automatic eligibility, per P7-A's own
+arbitrage finding). `LoyaltyRewardCatalogEntry` (live doc) and `LoyaltyRewardCatalogVersionSnapshot`
+(immutable version doc) are separate types — the version snapshot deliberately excludes `active`/
+`archived` (the locked instruction's own "what requires a new version" list excludes them: `boncukCost`,
+`eligibleProductIds`, `title`/`description`, validity window do; active/archived are live operational
+flags, not part of the historical definition). `isRewardCurrentlyValid(reward, now: Timestamp)` is the one
+server-time-only validity check (`active && !archived && validFrom<=now && now<validUntil`) every
+consumer uses — never client time. `parseLoyaltyRewardCatalogEntry` returns `null` (never throws) on any
+malformed document, so a single corrupt reward can never crash a read path, only be silently excluded.
+
+### 2. Trusted admin-service primitives, not a callable — `functions/src/loyaltyRewardCatalogAdminService.ts`
+
+`createLoyaltyReward`/`updateLoyaltyRewardByCreatingNextVersion`/`setLoyaltyRewardActive`/
+`archiveLoyaltyReward` are plain, directly-importable async functions — challenged against
+`provisionOrganization`/`provisionRestaurant`/`provisionBranch`'s own `platformOwner`-authorized-callable
+precedent and deliberately rejected for this phase: no "reward catalog manager" permission exists yet, and
+inventing one before any real Admin screen consumes it would be exactly the premature permission/UI scope
+the locked instruction warned against. Every operation validates the organization exists and is active,
+and validates every `eligibleProductIds` entry against the real canonical `menuProducts` collection
+(exists, belongs to the same organization) via `takeawayCatalog.ts`'s existing `loadCanonicalMenuProduct`
+— never a client-asserted title/price/category. `createLoyaltyReward` is idempotent by construction (an
+existing `rewardId` is a safe no-op, `created: false`, never an overwrite) — the exact property the local
+dev-seed script's "rerunning must not create duplicates" requirement relies on.
+`updateLoyaltyRewardByCreatingNextVersion` is a partial-field update that creates version N+1 and never
+mutates a prior version doc; `setLoyaltyRewardActive`/`archiveLoyaltyReward` mutate the live doc directly
+with no new version, matching the locked exclusion. Archiving is terminal — an archived reward can never
+be reactivated via `setLoyaltyRewardActive`.
+
+### 3. Pure redemption-resolution foundation — `functions/src/resolveCatalogRewardRedemption.ts`
+
+`loadLoyaltyRewardForRedemption` (I/O loader, returns `null` for missing-or-malformed) is separate from
+`resolveCatalogRewardRedemption` (pure — no Firestore access, hand-testable with fixture objects), mirroring
+`loyaltyRedemption.ts`'s own loader/calculator split exactly. Deliberately NOT built on
+`calculateBoncukRedemption` — that function's 50%-of-order-cap math is proportional-cash-discount-specific
+and does not apply to a fixed-cost item exchange. Validates reward found/organization match/currently
+valid/product in the explicit allowlist/`spendableBalance >= boncukCost`, returns an immutable snapshot
+(`rewardId`/`rewardVersion`/`title`/`boncukCost`/`redeemedProductId`) with every value server-resolved —
+debits nothing, writes nothing.
+
+### 4. Customer read path — `functions/src/getCustomerLoyaltyRewardCatalog.ts`
+
+Mirrors `getCustomerLoyaltySnapshot.ts`'s exact identity discipline (real phone-verified customer,
+`organizationId` resolved exclusively via `SINGLE_TENANT_ORGANIZATION_ID`, tenant membership independently
+re-verified server-side). Query is equality-only (`organizationId`/`active`/`archived`) — no `orderBy`/
+inequality filter, avoiding a new composite index this codebase's own indexing policy says not to add
+speculatively; `validFrom`/`validUntil`/`sortOrder` are applied in memory over the small expected catalog
+size. Returns a sanitized DTO only, never internal/audit fields. Exported from `functions/src/index.ts`.
+
+### 5. Firestore Rules
+
+`loyaltyRewardCatalog`/`loyaltyRewardCatalogVersions` both get an explicit `allow read, write: if false`
+block (mirroring `deliveryServiceAreas`/`fraudEvidence`'s own documented-explicit-deny style, not the
+bare-omission style `menuProducts`/`reservationAreas` use) — no client, not even the owning customer,
+ever reads either collection directly. The customer callable above is the sole read path, matching the
+same "server-computed/filtered reference data goes through a callable" precedent already established by
+`getReservationBranchInfo` for `reservationAreas`/`reservationPolicies`.
+
+### 6. The four LOCKED initial rewards — exact canonical product ids, not guessed
+
+Resolved directly against the live `abakus-one-dev` emulator's real 79-product canonical catalog (never
+invented): İçecek → 70 Boncuk, explicit 4-item beverage allowlist (`prod_acili_ayran`/`prod_cocacola`/
+`prod_eksili_ayran`/`prod_naneli_ayran` — every current canonical beverage, all uniformly 80 TL, so no
+per-item value disparity within this specific hand-maintained allowlist even though it is not dynamic);
+Çıtırtı Bowl → 420 Boncuk (`prod_citirti_bowl`, exact name match); Crispy Chicken Fettuccine → 400 Boncuk
+(`prod_fettucine_crispy_chicken_alfredo` — the sole product in the entire catalog matching both "crispy
+chicken" and "fettuccine," a deterministic single-candidate resolution, not invented); Falafel Salad → 400
+Boncuk (`prod_crispy_falafel_salad` — the sole Salata-category product containing "falafel," same
+reasoning). Neither ambiguous case required stopping/blocking, since exactly one canonical candidate
+existed for each. Seeded via `functions/scripts/seed_dev_loyalty_reward_catalog.mjs` (new
+`npm run seed:dev-loyalty-reward-catalog` script), which calls the real `createLoyaltyReward` function
+(never a direct Firestore write) — run twice against the live `abakus-one-dev` emulator to prove
+idempotency (`created: true` then `created: false`, identical version, no duplicate version doc), and
+smoke-tested end-to-end via a real `getCustomerLoyaltyRewardCatalog` HTTP call returning all four rewards
+correctly sorted and sanitized.
+
+### 7. Tests
+
+**New**: `functions/src/test/loyaltyRewardCatalog.test.ts` (pure-function/parsing — server-time
+authoritative validity, malformed-document parsing returns `null`, sanitizer rejections),
+`functions/src/test/loyaltyRewardCatalogAdminService.test.ts` (create/update-creates-V2/V1-immutability/
+positive-integer-cost/non-empty-products/nonexistent-product-rejected/cross-org-product-rejected/
+active-toggle-no-new-version/archive-terminal/seed-idempotency/version-monotonic/validity-window),
+`functions/src/test/getCustomerLoyaltyRewardCatalog.test.ts` (inactive/archived/future-`validFrom`/past-
+`validUntil` all hidden, valid reward returned with sanitized fields only, guest/no-membership/cross-tenant
+all denied, sort order correct), `functions/src/test/resolveCatalogRewardRedemption.test.ts` (pure —
+eligible-product accepted, non-eligible rejected, insufficient balance rejected with exact figures,
+organization mismatch rejected, not-currently-valid rejected, not-found handled, snapshot values always
+server-resolved never client-injected). **Extended**: `firestore-tests/rules.test.js` (both new
+collections: `get`/`list`/`create`/`update`/`delete` all denied for any authenticated identity).
+
+**Files changed — backend**: `functions/src/index.ts` (1 new export), `functions/package.json` (1 new
+`seed:dev-loyalty-reward-catalog` script), `firestore.rules` (2 new denied collections). **New files —
+backend**: `functions/src/loyaltyRewardCatalog.ts`, `functions/src/loyaltyRewardCatalogAdminService.ts`,
+`functions/src/resolveCatalogRewardRedemption.ts`, `functions/src/getCustomerLoyaltyRewardCatalog.ts`,
+`functions/scripts/seed_dev_loyalty_reward_catalog.mjs`, the 4 new test files above. **Docs**: this entry
+(plus the P7-A audit entry immediately above), `docs/business_rules.md` (`BR-LOYALTY-007` marked
+SUPERSEDED with the exact economics correction, new `BR-LOYALTY-026`), `docs/feature_status.md` (P7-A +
+P7-B entries).
+
+**Exact gate totals**: Functions build (`tsc`) clean. Functions FULL emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`) — **1336/1336, 0 failed** (up from 1283 — 53 new tests: 21
+`loyaltyRewardCatalog.test.ts` + 20 `loyaltyRewardCatalogAdminService.test.ts` + 8
+`getCustomerLoyaltyRewardCatalog.test.ts` + 11 `resolveCatalogRewardRedemption.test.ts`, rounded to the
+suite's own final counts). Firestore Rules FULL suite — **361/361, 0 failed** (up from 354 — 7 new
+tests covering `loyaltyRewardCatalog`/`loyaltyRewardCatalogVersions`). `flutter analyze`/`flutter test`
+not rerun — Flutter was not touched by this phase. The test-writing work was originally delegated to a
+background agent, which hit a session-limit API error before producing any files; all four test files
+plus the Rules extension were written directly in this session instead, using
+`getCustomerLoyaltySnapshot.test.ts`/`loyaltyPolicy.test.ts`/`deliveryOrderLifecycle.test.ts` as the
+exact convention templates. No commit was made, per this task's own explicit instruction.
+
+**Operational note**: running the full gate suite required freeing ports 8080/9099/9199, which were
+held by the user's own persistent `abakus-one-dev` local dev emulator (used for the P6-B Chrome visual
+review in prior turns this session) — stopped with explicit user confirmation, restarted afterward. That
+emulator runs with no `--import`/`--export-on-exit` persistence flags, so stopping it discarded all
+in-memory Firestore state; every dev fixture built up this session (canonical tenant/catalog/reservation
+config, the dev customer's completed profile and 50-Boncuk balance, the four reward-catalog entries) was
+re-seeded via the same scripts immediately after restart, verified via a direct read-back
+(`org-1` exists, 79 `menuProducts`, 4 `loyaltyRewardCatalog` entries, 2 `reservationAreas`).
+
+## Boncuk Loyalty Program P7-C — Atomic Catalog Reward Redemption, Takeaway Only (2026-08-24)
+
+**Status**: Implemented — Takeaway channel only, per the locked instruction. Closes P7-B's own disclosed
+"checkout/redemption wiring," "`catalogRedemption` ledger writer," and "account debit" gaps for exactly
+one order-submission channel. **Explicitly still out of scope**: Delivery/Reservation-preorder catalog-
+reward redemption, the general Campaign Engine, and any Admin UI. See `docs/business_rules.md`'s new
+`BR-LOYALTY-027` for the full locked rule set this entry implements.
+
+### 1. The core pricing-primitive question, proven before implementing
+
+The instruction required first proving whether an existing pricing primitive could represent "exactly one
+free unit" without corrupting quantity math, rather than assuming. Since an `OrderLine`'s
+`lineSubtotalMinorUnits = (unitPriceMinorUnits + modifierTotalMinorUnits) * quantity` and every unit
+within one line is priced identically, subtracting exactly `freeUnitCount * (unitPriceMinorUnits +
+modifierTotalMinorUnits)` is mathematically EXACT (not approximate) for "N units free, the rest at full
+price." `buildOrderLine` (`takeawayPricing.ts`) gained a `freeUnitCount?: number` parameter (validated
+`0 <= freeUnitCount <= quantity`), and its previously-hardcoded-to-`0` `lineDiscountMinorUnits` now
+computes from it. Because `unitPriceMinorUnits` is already channel-resolved (includes Takeaway's own
++20 TL packaging surcharge, when applicable) BEFORE `buildOrderLine` ever sees it, covering it
+automatically covers the surcharge too — no separate surcharge-handling logic was needed. VAT is
+extracted from the post-discount `lineTotalMinorUnits`, so a free unit correctly owes no VAT. This was
+judged the smallest canonical change (extending an existing-but-dead field) rather than inventing a new
+mechanism or hacking `grandTotal` after the fact, which the instruction explicitly forbade.
+
+### 2. `functions/src/submitTakeawayOrder.ts` — the redemption transaction, two-phase
+
+A new PRE-`buildLines` block (pricing-independent: reward found/organization match/currently-valid/
+`findFirstEligibleCartProductId` against the raw cart — a new exported helper giving a deterministic
+first-match tie-break when the same eligible product appears on more than one cart line) determines
+`redeemedProductId`, threaded into `buildLines` (which now also returns `rewardAppliedLineIndex`) so the
+correct line gets `freeUnitCount: 1`. A POST-`buildLines` block (mirroring the pre-existing
+`boncukRedemption` block's own position, `else if` to it — statically enforcing exclusivity in the code
+shape, not just via the earlier stacking rejection) reads `coveredValueMinorUnits` directly off the now-
+built line's own `lineDiscountMinorUnits`, loads the account, calls `resolveCatalogRewardRedemption`
+(P7-B) for the final balance check, derives the ledger id via the existing
+`deriveLoyaltyLedgerEntryId({entryType: "catalogRedemption", ...})` convention, and builds the immutable
+order snapshot (`rewardId`/`rewardVersion`/`title`/`boncukCost`/`redeemedProductId`/`redeemedQuantity: 1`/
+`coveredValueMinorUnits`/`rewardCatalogVersionId`). The write phase debits the account and creates the
+ledger entry in the exact same transaction as order creation, mirroring the `boncukRedemption` write block
+byte-for-byte. `selectedBenefitType`'s type became the new exported `SelectedBenefitType = "none" |
+"boncukRedemption" | "catalogReward"` (in `boncukRedemptionErrors.ts`, the existing shared neutral module
+both Takeaway and Delivery import from) — deliberately not propagated into Delivery's/Reservation's own
+local 2-value unions, since those channels can never set `catalogReward` this phase and widening them
+would be misleading. 6 new error reasons extend the SAME `BoncukRedemptionErrorReason` union (never a
+parallel error channel): `catalogReward/reward-not-found`, `/reward-not-currently-valid`,
+`/product-not-in-cart`, `/insufficient-balance`, `/account-unavailable`, `/benefit-stacking-not-allowed`.
+
+### 3. `functions/src/loyaltyRedemptionRestore.ts` — generalized, not duplicated
+
+Reads both a `boncukRedemption` and a `catalogRedemption` original-ledger-entry candidate; "one order =
+maximum one benefit" guarantees at most one can ever exist — both existing simultaneously is an invariant
+violation, fails closed (`both-redemption-families-present`), credits nothing, never guesses which is
+authoritative. Whichever family is found is restored via the exact same debt-first
+`applyBoncukCreditDebtFirst` primitive and the exact same deterministic-restore-entry-id idempotency
+discipline `boncukRedemption` already used, with the matching `catalogRedemptionRestore` entry type and a
+`{entryType, rewardId}` metadata block copied verbatim from the original entry. **Correctness fix found
+by the full gate run, not by review**: the first implementation read the redemption-family candidates
+BEFORE validating the real order document's existence/status/identity — a genuine regression, caught only
+because 2 of 1366 tests failed (`defense-in-depth: missing order document`,
+`defense-in-depth: organizationId mismatch`), both pre-existing tests this file's own restructuring
+silently broke by letting "nothing to restore anyway" win over a genuine anomaly. Fixed by moving the
+order-document read and its full validation back to the front of the transaction, exactly matching the
+pre-P7-C ordering, with the redemption-family lookup happening only after the order is confirmed valid —
+re-verified clean on a full, correctly-ordered suite rerun (1366/1366) afterward.
+
+### 4. `functions/src/loyaltyOrderEarning.ts` — zero code change, verified not assumed
+
+Traced the actual data flow rather than assuming: a catalog-reward order's `pricing.grandTotal` already
+excludes the free unit's value (via §1's pricing-primitive fix) BEFORE the earning-basis function ever
+runs, and that function's existing "no `boncukRedemption` present → return the total unchanged" branch is
+already exactly correct for this case (a catalog-reward order carries `boncukRedemption: null`). Only a
+clarifying doc-comment paragraph was added — no logic changed.
+
+### 5. Flutter — Takeaway checkout only
+
+New `CatalogRewardSnapshot` (order-domain model, mirrors the backend's `catalogReward` snapshot field-for-
+field), `OrderBenefitType` enum extended with `catalogReward`, `LoyaltyReward` (loyalty-domain model) +
+`LoyaltyGateway.getRewardCatalog()` (calls the real `getCustomerLoyaltyRewardCatalog`, P7-B — no mock
+reward source anywhere), `loyaltyRewardCatalogProvider` (mirrors `loyaltySnapshotProvider` exactly), and
+`CatalogRewardCard` (new checkout widget — self-hides while cash Boncuk redemption is active). In
+`TakeawayCheckoutScreen`: mutual exclusivity is enforced by REMOVAL, not disabling —
+`BoncukRedemptionCard` is conditionally absent from the widget tree entirely
+(`if (_selectedRewardId == null) BoncukRedemptionCard(...)`) whenever a reward is selected, and
+`CatalogRewardCard` self-hides via its own `boncukCashRedemptionActive` param — satisfying the locked
+"disables/removes" requirement literally, never merely visually. A `_handleCartMightHaveInvalidatedReward`
+listener (mirroring the existing Boncuk-estimate listener) clears a now-impossible reward selection if the
+cart changes such that its eligible product is no longer present. `OrderSuccessScreen` gained a
+`CatalogRewardSuccessSummary` widget showing the four locked lines, sourced exclusively from the
+canonical server-confirmed `Order.catalogReward`/`Order.lines` (never a pre-submit estimate — none exists
+for a catalog reward). Extending `LoyaltyGateway`/`SubmitTakeawayOrderGateway`'s interfaces broke 10
+pre-existing test files' fake implementations (`non_abstract_class_inherits_abstract_member`/
+`invalid_override` compile errors) — fixed systematically across all 10, verified via a full-repo
+`flutter analyze`.
+
+### 6. Tests
+
+**New**: `functions/src/test/submitTakeawayOrderCatalogReward.test.ts` (valid redemption/server-cost-used/
+forged-client-field-ignored/inactive/expired/wrong-org/product-not-in-cart/insufficient-balance/benefit-
+stacking-rejected/guest-rejected/exactly-one-unit-free-at-various-quantities/Takeaway-surcharge-covered/
+other-items-unaffected/concurrent-double-spend-protection/earning-exclusion-with-other-paid-items-still-
+earning/historical-earning-immune-to-later-live-reward-edits/end-to-end-rejection-restore/end-to-end-
+refund-restore/regression-ordinary-Boncuk-redemption-still-works/regression-no-benefit-pricing-unchanged).
+**Extended**: `functions/src/test/loyaltyRedemptionRestore.test.ts` (new "K. Catalog Reward restore"
+section — cancellation/rejection/refund restore, idempotency, debt-first, original-cost-not-live-cost,
+no-original-entry no-op, cash-redemption-only invariant unchanged, both-families-present invariant
+violation fails closed). **New Flutter**: 11 widget tests appended to
+`test/features/cart/presentation/screens/takeaway_checkout_screen_test.dart` (eligible-filtering, reward
+selection sends exactly `rewardId`/removes the Boncuk card, deselection restores it, success summary shows
+server-confirmed values, loading skeleton, load-failure scoped retry, cart-invalidates-selection,
+server-rejection resets selection without auto-resubmit, reward-catalog cache invalidated after a
+successful redemption, no-eligible-reward renders nothing).
+
+**Files changed — backend**: `functions/src/submitTakeawayOrder.ts`, `functions/src/takeawayPricing.ts`,
+`functions/src/loyaltyRedemptionRestore.ts`, `functions/src/loyaltyOrderEarning.ts` (comment only),
+`functions/src/boncukRedemptionErrors.ts`. **New files — backend**:
+`functions/src/test/submitTakeawayOrderCatalogReward.test.ts`. **Extended — backend tests**:
+`functions/src/test/loyaltyRedemptionRestore.test.ts`. **Files changed — Flutter**:
+`lib/features/cart/presentation/screens/{order_success_screen,takeaway_checkout_screen}.dart`,
+`lib/features/loyalty/data/loyalty_gateway.dart`,
+`lib/features/loyalty/presentation/providers/loyalty_providers.dart`,
+`lib/features/orders/data/order_firestore_mapper.dart`,
+`lib/features/orders/domain/models/{order,order_benefit_type}.dart`,
+`lib/features/takeaway/data/submit_takeaway_order_gateway.dart`. **New files — Flutter**:
+`lib/features/cart/presentation/widgets/catalog_reward_card.dart`,
+`lib/features/loyalty/domain/models/loyalty_reward.dart`,
+`lib/features/orders/domain/models/catalog_reward_snapshot.dart`. **10 pre-existing Flutter test files**
+fixed for the extended `LoyaltyGateway`/`SubmitTakeawayOrderGateway` interfaces (each gained a trivial
+`getRewardCatalog()`/`selectedRewardId` stub). **Docs**: this entry, `docs/business_rules.md`
+(`BR-LOYALTY-026` cross-referenced forward, new `BR-LOYALTY-027`), `docs/feature_status.md` (P7-C entry).
+
+**Exact gate totals**: Functions build (`tsc`) clean. Functions FULL emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`) — first run **1364/1366, 2 failed** (the restore-ordering regression
+in §3 above); after the fix, **1366/1366, 0 failed** (up from P7-B's 1336 — 30 new tests: 20 in the new
+catalog-reward file + 9 in the extended restore-test section + the file-count net change from removing an
+unused constant, rounded to the suite's own final count). Firestore Rules FULL suite — **361/361, 0
+failed**, unchanged from P7-B (no `firestore.rules` change in this phase). Flutter: full-repo `flutter
+analyze` — clean (0 issues, including the 10 previously-broken fakes and the 2 `unused_element_parameter`
+warnings that existed until this phase's own new tests started exercising those fields). `flutter test` —
+**3376 passed / 12 skipped / 0 failed** (up from the pre-P7-C baseline — 37 tests in the modified checkout
+file alone, 11 of them new P7-C cases). No commit was made, per this task's own explicit instruction.
+
+**Operational note**: running the full gate suite required freeing ports 8080/9099/9199/5001, held by the
+user's own persistent `abakus-one-dev` local dev emulator — stopped with explicit user confirmation,
+restarted afterward. A first restart attempt seeded against the WRONG project id (`GCLOUD_PROJECT` was
+unset, so the seed scripts fell back to their own `demo-abakus-one-emulator` default instead of
+`abakus-one-dev`) — caught before any writes succeeded (the very first script failed outright on a
+missing platform-owner auth user, since that identity only exists in the real dev project) and corrected
+by setting `GCLOUD_PROJECT=abakus-one-dev` explicitly; re-run confirmed against the correct project id in
+its own log output. Every dev fixture (canonical tenant/catalog/reservation config, staff admin account,
+the four reward-catalog entries) was re-seeded via the same scripts; the dev customer's own signup/
+profile/Boncuk-balance seeding was deliberately left for manual re-creation rather than guessed inline,
+since it is not required by any gate and this phase did not include a Chrome visual-review pass.
+
+## Boncuk Loyalty Program P7-C.1 — Channel-Scoped Reward Foundation Microfix (2026-08-24)
+
+**Status**: Implemented — a schema/validation microfix layered on top of P7-B/P7-C, not a new redemption
+mechanism. **Explicitly still out of scope**: Delivery/Reservation-preorder catalog-reward redemption
+(neither gained any new capability this phase — still Takeaway only), the general Campaign Engine, any
+Admin UI. See `docs/business_rules.md`'s new `BR-LOYALTY-028` for the full locked rule set.
+
+### 1. The canonical commercial-channel vocabulary — the shared boundary, documented not built
+
+`CANONICAL_COMMERCIAL_CHANNELS = ["dineIn", "takeaway", "delivery", "reservationPreorder"] as const`
+(`loyaltyRewardCatalog.ts`, deliberately named/placed independent of "reward" so a future
+`campaignEngine.ts` module can import the SAME constant rather than declaring a parallel one). Per the
+locked instruction ("Document ONLY the shared channel vocabulary/interface boundary... DO NOT implement
+campaign discount mechanics now"), this phase locks in exactly this one constant and its doc comment —
+nothing else Campaign-Engine-shaped is built. Deliberately a COARSER vocabulary than a real order's own
+`channel` field: `Order.channel` is `"takeaway"`/`"delivery"`/`"reservationPreorder"`/`"dineInQr"`/
+`"dineInStaff"` (confirmed via a direct source grep across every `submit*Order.ts`/`advance*OrderStatus.ts`
+file — no bare `"dineIn"` literal exists anywhere as a real order channel); the reward/campaign
+vocabulary's `"dineIn"` is a coarser commercial concept collapsing both real dine-in channels into one.
+`"takeaway"`/`"delivery"`/`"reservationPreorder"` happen to be spelled identically in both vocabularies
+(no translation needed at the one checkout-validation site this phase builds), but mapping `"dineIn"` to
+a real dine-in order's own channel remains a problem for whichever future phase wires dine-in reward
+redemption.
+
+### 2. Schema — `eligibleChannels` added to all three reward shapes
+
+`LoyaltyRewardCatalogEntry` (live doc), `LoyaltyRewardCatalogVersionSnapshot` (immutable version doc —
+`eligibleChannels` IS part of the versioned definition, alongside `boncukCost`/`eligibleProductIds`,
+unlike `active`/`archived`), and `SanitizedCustomerLoyaltyReward` (customer DTO — the customer can see
+which channels a reward is available for, though no Flutter code was changed to consume it this phase)
+all gained `eligibleChannels: CanonicalCommercialChannel[]`. New `sanitizeEligibleChannels` — required,
+non-empty, only-canonical-values, and DETERMINISTICALLY NORMALIZED: mirroring
+`sanitizeEligibleProductIds`'s own dedupe-not-reject convention, duplicates are silently collapsed and
+the result is always emitted in `CANONICAL_COMMERCIAL_CHANNELS`'s own fixed order — two requests
+describing the same channel SET in a different order, or with duplicates, produce a byte-identical
+stored array (proven by a dedicated test comparing both forms). `parseLoyaltyRewardCatalogEntry` now
+fails closed (returns `null`) on a missing/malformed `eligibleChannels`, exactly like every other
+required field.
+
+### 3. Admin service — `eligibleChannels` in both create and update
+
+`createLoyaltyReward`'s `CreateLoyaltyRewardInput` gained a required `eligibleChannels: string[]`, written
+to both the live doc and version 1's snapshot. `updateLoyaltyRewardByCreatingNextVersion`'s
+`UpdateLoyaltyRewardOverrides` gained an optional `eligibleChannels?: unknown` — when provided, sanitized
+and creates version N+1 (the locked "changing eligibleChannels creates a new immutable reward version"
+requirement); when omitted, carries over unchanged from the current live definition, identical to every
+other partial-update field. A dedicated test proves V1's own `eligibleChannels` (and every other field)
+remains byte-for-byte unchanged after a V2 update narrows the channel scope from all four down to one.
+
+### 4. Redemption validation — two layers, one authoritative, one defense-in-depth
+
+**Authoritative, early-exit layer**: `submitTakeawayOrder.ts`'s existing PRE-`buildLines` catalog-reward
+resolution block (P7-C) gained one more check, right after `isRewardCurrentlyValid` and before the
+product-in-cart check — `if (!reward.eligibleChannels.includes(TAKEAWAY_COMMERCIAL_CHANNEL))` rejects
+with the new stable `catalogReward/channel-not-eligible` reason, BEFORE any pricing/line-building work,
+matching every other P7-C rejection's own "no debit, no ledger, no order" shape (proven by a dedicated
+test asserting zero orders and zero ledger entries exist for the customer after the rejection).
+`TAKEAWAY_COMMERCIAL_CHANNEL` is a module-level `const: CanonicalCommercialChannel = "takeaway"` — the
+real, server-derived channel this callable always represents; there is structurally no request field a
+client could use to assert a different one (proven by a dedicated test sending forged `channel`/
+`orderChannel` fields alongside `selectedRewardId` and confirming zero effect — still rejected the same
+way). **Defense-in-depth layer**: `resolveCatalogRewardRedemption`'s pure resolver gained a required
+`orderChannel: CanonicalCommercialChannel` parameter and a new `"channel-not-eligible"` result status,
+checked immediately after `isRewardCurrentlyValid` and before the product-eligibility check — this keeps
+the resolver as the complete, reusable "is this redemption valid" answer a future Delivery/Reservation
+integration could also call with its own channel, not something Takeaway-specific bolted on ad hoc. In
+`submitTakeawayOrder.ts`'s POST-`buildLines` block this second check is structurally unreachable (the
+PRE-check already gates it) and collapses into the same existing generic defensive fallback every other
+already-checked status does.
+
+### 5. Immutable order snapshot — `orderChannel` preserved
+
+`CatalogRewardOrderSnapshot` (the order-document field written once at redemption time) gained
+`orderChannel: CanonicalCommercialChannel` (always `"takeaway"` for this callable), populated from the
+same `TAKEAWAY_COMMERCIAL_CHANNEL` constant. A later change to a reward's own live/future-version channel
+scope can never rewrite an already-placed order's own history — the order always answers "what channel
+was this REDEEMED on," independent of the reward's current live configuration. The redeemed reward
+VERSION's own immutable `eligibleChannels` (in `loyaltyRewardCatalogVersions`) is automatically preserved
+too, as a direct consequence of §2's schema extension — no additional code was needed for that half of
+the requirement. No Flutter model changes were made for `orderChannel` — the existing Flutter
+`CatalogRewardSnapshot`/`_catalogRewardSnapshotFromFirestore` mapper reads specific known keys by name
+(no exhaustive-key validation), so the new backend field is simply not read by Flutter yet; nothing
+breaks, and no gate requires a Flutter change for a field nothing currently consumes.
+
+### 6. Local dev seed — the four LOCKED rewards, all four channels
+
+`seed_dev_loyalty_reward_catalog.mjs`'s four `INITIAL_REWARDS` entries each gained
+`eligibleChannels: ["dineIn", "takeaway", "delivery", "reservationPreorder"]` — the starting
+configuration only, per the locked instruction; a future Admin can independently narrow each reward's own
+channel scope with zero backend/Flutter redesign (already proven structurally by §3's version-creating
+update path). Re-run against the freshly restarted `abakus-one-dev` emulator, confirmed idempotent and
+targeting the correct project.
+
+### 7. Tests
+
+**Extended**: `functions/src/test/loyaltyRewardCatalog.test.ts` (new section D — single/multiple valid
+channels accepted and normalized into canonical order; empty/missing/non-array rejected; unsupported
+channel rejected; duplicates normalized deterministically, not rejected; all four channels together
+round-trip in canonical order), `functions/src/test/loyaltyRewardCatalogAdminService.test.ts` (V1
+immutable when V2 narrows `eligibleChannels`; empty/unsupported/missing `eligibleChannels` rejected at
+create time, no doc created; duplicate channels normalized not rejected; idempotent create preserves
+`eligibleChannels` in both the live and version docs), `functions/src/test/resolveCatalogRewardRedemption.test.ts`
+(a channel-eligible reward succeeds; a multi-channel reward succeeds for any one of its channels; a
+wrong-channel reward is rejected as `channel-not-eligible` even with an eligible product and sufficient
+balance; channel eligibility is checked before product eligibility), `functions/src/test/getCustomerLoyaltyRewardCatalog.test.ts`
+(the sanitized DTO carries the reward's real `eligibleChannels`, never a hardcoded default — a narrower
+channel set round-trips exactly; the existing "currently valid reward IS returned" test's exact-DTO-match
+assertion extended to include the new field), `functions/src/test/submitTakeawayOrderCatalogReward.test.ts`
+(new section H — takeaway-eligible reward succeeds, single- and multi-channel; a reward valid for other
+channels but not takeaway is rejected fail-closed with zero debit/ledger/order; a single-channel
+delivery-only reward is rejected the same way; a forged client `channel`/`orderChannel` field has zero
+authorization effect; the order snapshot preserves `orderChannel: "takeaway"`; the initial seeded rewards
+carry all four canonical channels, idempotently). Every pre-existing P7-B/P7-C test file needed its own
+reward-fixture/`createLoyaltyReward`-call helper extended with `eligibleChannels` (now a required field) —
+a compile-time-forced, mechanical fix, not a behavior change to any existing assertion.
+
+**Files changed — backend**: `functions/src/loyaltyRewardCatalog.ts`,
+`functions/src/loyaltyRewardCatalogAdminService.ts`, `functions/src/resolveCatalogRewardRedemption.ts`,
+`functions/src/submitTakeawayOrder.ts`, `functions/src/boncukRedemptionErrors.ts`,
+`functions/scripts/seed_dev_loyalty_reward_catalog.mjs`. **Test files extended**:
+`functions/src/test/loyaltyRewardCatalog.test.ts`,
+`functions/src/test/loyaltyRewardCatalogAdminService.test.ts`,
+`functions/src/test/resolveCatalogRewardRedemption.test.ts`,
+`functions/src/test/getCustomerLoyaltyRewardCatalog.test.ts`,
+`functions/src/test/submitTakeawayOrderCatalogReward.test.ts`. **No Flutter files touched** — nothing in
+this phase required a Flutter change (confirmed, not assumed: the Flutter `CatalogRewardSnapshot` mapper
+tolerates the new unread `orderChannel` field with no change; `submitTakeawayOrder`'s own server-side
+channel validation already fails closed without any client-side awareness of the vocabulary). **Docs**:
+this entry, `docs/business_rules.md` (new `BR-LOYALTY-028`, cross-referencing `BR-LOYALTY-026`/
+`BR-LOYALTY-027`), `docs/feature_status.md` (P7-C.1 entry). `firestore.rules` **not touched** — both
+Reward Catalog collections already deny all direct client read/write unconditionally; adding a field
+changes nothing about that.
+
+**Exact gate totals**: Functions build (`tsc`) clean. Targeted test run (the 5 reward-catalog-related
+files plus the unmodified `loyaltyRedemptionRestore.test.ts` as a P7-C regression check) —
+**128/128, 0 failed**. Functions FULL emulator suite (`GOOGLE_MAPS_PROVIDER_MODE=fixture`) —
+**1391/1391, 0 failed** (up from P7-C's 1366 — 25 new tests across the 5 extended/new test files).
+Firestore Rules suite **not rerun** — `firestore.rules` untouched this phase, same precedent as every
+prior microfix turn that didn't touch rules. `flutter analyze`/`flutter test` **not rerun** — no
+production Flutter file was touched. No commit was made, per this task's own explicit instruction.
+
+**Operational note**: running the full gate suite required freeing ports 8080/9099/9199/5001 again, held
+by the user's own persistent `abakus-one-dev` local dev emulator (freshly re-seeded at the end of the
+P7-C turn immediately before this one) — stopped with explicit user confirmation, restarted and fully
+re-seeded afterward (this time correctly targeting `abakus-one-dev` from the start, applying the lesson
+from P7-C's own project-id mistake).

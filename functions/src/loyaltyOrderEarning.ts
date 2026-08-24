@@ -176,6 +176,24 @@ function isEligibleChannel(channel: unknown): channel is LoyaltyEarningEligibleC
  * fails this function closed (`null`), same "do not silently approximate"
  * discipline as every other check here. No redemption present →
  * unchanged behavior.
+ *
+ * **Boncuk Loyalty P7-C (2026-08-24) — a catalog reward needs NO parallel
+ * subtraction here, verified (not assumed) against the real pricing
+ * engine.** `submitTakeawayOrder.ts`'s rewarded line is priced with
+ * `freeUnitCount: 1` (`takeawayPricing.ts`'s `buildOrderLine`), which
+ * reduces that line's own `lineTotalMinorUnits` — and therefore
+ * `pricing.grossSubtotal`/`pricing.grandTotal` themselves — by exactly the
+ * rewarded unit's value, BEFORE this function ever runs. A catalog-reward
+ * order carries `boncukRedemption: null`, so this function falls straight
+ * into the "no redemption present" branch and returns `minorUnits`
+ * (already reward-adjusted) unchanged — which is already correct: the
+ * free line contributes exactly `0` to the eligible earning basis, and
+ * every other (paid) line earns normally. This is the opposite mechanism
+ * from cash Boncuk redemption (a settlement layered ON TOP of an unchanged
+ * `pricing` block, requiring the explicit subtraction above) — a catalog
+ * reward changes `pricing` itself, once, at line-building time, so no
+ * second subtraction belongs here. Proven, not merely asserted, by
+ * `submitTakeawayOrder.test.ts`'s dedicated earning-exclusion tests.
  */
 export function resolveEligibleNetSpendMinorUnits(
   orderData: FirebaseFirestore.DocumentData,

@@ -159,6 +159,14 @@ abstract interface class SubmitTakeawayOrderGateway {
   /// those itself (`functions/src/submitTakeawayOrder.ts`, P4-B). `0` (the
   /// default) means "no Boncuk requested," identical in effect to omitting
   /// the field entirely.
+  /// Boncuk Loyalty Program P7-C (2026-08-24) — [selectedRewardId] is the
+  /// ONLY reward-related value this method ever sends: which catalog
+  /// reward the customer picked. There is structurally no parameter here
+  /// for its Boncuk cost, its title, or which product it covers — the
+  /// server resolves and re-validates every one of those itself
+  /// (`functions/src/submitTakeawayOrder.ts`, P7-C). `null` (the default)
+  /// means "no reward requested." Mutually exclusive with
+  /// [requestedBoncukAmount] > 0 — sending both is rejected server-side.
   Future<SubmitTakeawayOrderResult> submitAuthenticatedOrder({
     required String submissionKey,
     required String restaurantId,
@@ -169,6 +177,7 @@ abstract interface class SubmitTakeawayOrderGateway {
     required String contactLastName,
     required String contactPhone,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   });
 
   /// The QR-guest scenario (Faz D.2/D.4) — [takeawaySessionId] is the
@@ -203,6 +212,7 @@ class FirebaseSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
     required String contactLastName,
     required String contactPhone,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   }) async {
     final callable = functions.FirebaseFunctions.instance
         .httpsCallable('submitTakeawayOrder');
@@ -223,6 +233,10 @@ class FirebaseSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
         // keeps the wire payload identical to every pre-P4-E-B call.
         if (requestedBoncukAmount > 0)
           'requestedBoncukAmount': requestedBoncukAmount,
+        // Boncuk Loyalty P7-C — sent ONLY when non-null, mirroring the
+        // server's own `sanitizeSelectedRewardId`'s "absent == null"
+        // contract exactly.
+        if (selectedRewardId != null) 'selectedRewardId': selectedRewardId,
       });
       final data = result.data;
       return SubmitTakeawayOrderResult(

@@ -17,6 +17,7 @@
     "seed:dev-reservation": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_reservation.mjs\"",
     "seed:dev-catalog": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_catalog.mjs\"",
     "seed:dev-staff": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_staff.mjs\"",
+    "seed:dev-loyalty-reward-catalog": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/migrate_canonical_catalog.mjs && node scripts/seed_dev_loyalty_reward_catalog.mjs\"",
     "migrate:catalog": "cd .. && dart run tool/export_menu_catalog.dart && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/migrate_canonical_catalog.mjs\"",
     "seed:dev-all": "cd .. && dart run tool/export_menu_catalog.dart && firebase emulators:exec --only firestore,functions,auth \"cd functions && node scripts/seed_dev_tenant.mjs && node scripts/seed_dev_takeaway_qr.mjs && node scripts/seed_dev_reservation.mjs && node scripts/seed_dev_table_qr.mjs && node scripts/seed_dev_staff.mjs && node scripts/migrate_canonical_catalog.mjs\""
   },
