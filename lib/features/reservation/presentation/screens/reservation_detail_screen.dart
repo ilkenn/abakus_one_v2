@@ -522,6 +522,43 @@ class _PreorderStatusCard extends StatelessWidget {
                   '${preorder.grandTotalMinorUnits ~/ 100} TL',
                   style: AppTypography.priceMedium,
                 ),
+                // Boncuk Loyalty Program P7-D (2026-08-24) — the historical
+                // reward, reconstructed exclusively from THIS preorder's own
+                // immutable, already-parsed `catalogReward` snapshot fields
+                // (sourced from the canonical order document, never the
+                // current live Reward Catalog) — a later edit to the live
+                // reward's title/cost can never rewrite what this specific
+                // order actually redeemed.
+                if (preorder.hasCatalogRewardSummary) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.sm,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: const BoxDecoration(
+                      color: AppColors.primaryExtraLight,
+                      borderRadius: AppRadius.kSmall,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.redeem_rounded,
+                            size: 14, color: AppColors.primary),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            '${preorder.catalogRewardTitle} ödülü kullanıldı '
+                            '(${preorder.catalogRewardBoncukCost} Boncuk)',
+                            style: AppTypography.caption
+                                .copyWith(color: AppColors.primary),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

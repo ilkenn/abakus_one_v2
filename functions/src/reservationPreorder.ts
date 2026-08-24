@@ -18,7 +18,13 @@ import {
 import { canTransition } from "./orderStatus";
 import { PREORDER_KITCHEN_RELEASE_LEAD_MINUTES } from "./reservationConfig";
 import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "./orderPricingAuthority";
-import { sanitizeRequestedBoncukAmount } from "./boncukRedemptionErrors";
+import {
+  boncukError,
+  sanitizeRequestedBoncukAmount,
+  sanitizeSelectedRewardId,
+  type SelectedBenefitType,
+} from "./boncukRedemptionErrors";
+import type { CatalogRewardOrderSnapshot } from "./submitTakeawayOrder";
 
 /**
  * Optional reservation preorder — Faz R.1D.1 (`docs/decisions.md` ADR-027
@@ -118,6 +124,14 @@ export interface ParsedPreorderRequest {
    * `0` (the default, absent/null on the wire) means "no Boncuk requested."
    */
   requestedBoncukAmount: number;
+  /**
+   * Boncuk Loyalty P7-D (2026-08-24) — the customer's optional catalog
+   * reward selection, nested inside `preorder` for the identical reason
+   * `requestedBoncukAmount` is: only meaningful when a preorder exists.
+   * Mutually exclusive with `requestedBoncukAmount > 0` — enforced right
+   * here, at parse time, since both fields are parsed together.
+   */
+  selectedRewardId: string | null;
 }
 
 /**
@@ -156,7 +170,19 @@ export function parsePreorderRequest(raw: unknown): ParsedPreorderRequest | null
     return invalid('each preorder item must have kind "product" or "bowl".');
   });
   const requestedBoncukAmount = sanitizeRequestedBoncukAmount(data.requestedBoncukAmount);
-  return { items, requestedBoncukAmount };
+  const selectedRewardId = sanitizeSelectedRewardId(data.selectedRewardId);
+  // Boncuk Loyalty P7-D — locked rule, identical to `submitTakeawayOrder.ts`'s
+  // own: cash Boncuk redemption and a catalog reward are mutually exclusive,
+  // exactly one benefit per order. Static, data-independent — checked here,
+  // at parse time, before any Firestore work.
+  if (requestedBoncukAmount > 0 && selectedRewardId !== null) {
+    boncukError(
+      "invalid-argument",
+      "preorder.requestedBoncukAmount and preorder.selectedRewardId cannot both be set — exactly one benefit per order.",
+      "catalogReward/benefit-stacking-not-allowed",
+    );
+  }
+  return { items, requestedBoncukAmount, selectedRewardId };
 }
 
 function requireValidQuantity(raw: unknown, context: string): number {
@@ -218,6 +244,7 @@ async function buildPreorderProductLine(
   item: RawProductItem,
   scope: { restaurantId: string },
   policy: CanonicalChannelPricingPolicy,
+  freeUnitCount = 0,
 ): Promise<ComputedOrderLine> {
   if (typeof item.productId !== "string" || item.productId.length === 0) {
     invalid("each preorder product item requires a productId.");
@@ -233,6 +260,10 @@ async function buildPreorderProductLine(
   if (!product!.isAvailable) invalid(`product "${productId}" is not available.`);
 
   const modifiers = await resolvePreorderProductModifiers(product!, item.selectedModifiers);
+  // No reservation-preorder-specific surcharge exists (see this file's own
+  // doc comment §1) — `unitPriceMinorUnits` is already the canonical base
+  // price + modifiers, so `freeUnitCount` covers exactly that, no invented
+  // surcharge to worry about.
   const unitPriceMinorUnits = resolveProductUnitPriceMinorUnits({
     product: product!,
     channel: PREORDER_CHANNEL,
@@ -248,6 +279,7 @@ async function buildPreorderProductLine(
     unitPriceMinorUnits,
     taxBasisPoints: PREORDER_TAX_BASIS_POINTS,
     customerNote: note,
+    freeUnitCount,
   });
 }
 
@@ -339,16 +371,37 @@ export async function buildPreorderLines(
   rawItems: RawItem[],
   scope: { restaurantId: string },
   policy: CanonicalChannelPricingPolicy,
-): Promise<{ lines: ComputedOrderLine[]; normalizedItems: unknown[] }> {
+  rewardedProductId: string | null = null,
+): Promise<{
+  lines: ComputedOrderLine[];
+  normalizedItems: unknown[];
+  rewardAppliedLineIndex: number | null;
+}> {
   const lines: ComputedOrderLine[] = [];
+  let rewardAppliedLineIndex: number | null = null;
   for (const item of rawItems) {
-    lines.push(
-      item.kind === "product"
-        ? await buildPreorderProductLine(tx, db, item, scope, policy)
-        : await buildPreorderBowlLine(tx, db, item, scope, policy),
-    );
+    if (item.kind === "product") {
+      // Only the FIRST matching line ever receives the free unit — mirrors
+      // `submitTakeawayOrder.ts`'s own `buildLines` tie-break exactly.
+      const isRewardedLine =
+        rewardAppliedLineIndex === null &&
+        rewardedProductId !== null &&
+        item.productId === rewardedProductId;
+      const line = await buildPreorderProductLine(
+        tx,
+        db,
+        item,
+        scope,
+        policy,
+        isRewardedLine ? 1 : 0,
+      );
+      if (isRewardedLine) rewardAppliedLineIndex = lines.length;
+      lines.push(line);
+    } else {
+      lines.push(await buildPreorderBowlLine(tx, db, item, scope, policy));
+    }
   }
-  return { lines, normalizedItems: normalizePreorderItems(rawItems) };
+  return { lines, normalizedItems: normalizePreorderItems(rawItems), rewardAppliedLineIndex };
 }
 
 export function computePreorderPriceBreakdown(lines: ComputedOrderLine[]): ComputedPriceBreakdown {
@@ -393,7 +446,7 @@ export function buildPreorderOrderDocument(params: {
   pricing: ComputedPriceBreakdown;
   now: Date;
   /** Boncuk Loyalty P6-B (2026-08-24) — settlement, never a discount (BR-LOYALTY-019); `pricing` above is never touched by redemption. Mirrors `submitDeliveryOrder.ts`'s own `buildDeliveryOrderDocument` extension exactly. */
-  selectedBenefitType: "none" | "boncukRedemption";
+  selectedBenefitType: SelectedBenefitType;
   boncukRedemption: {
     boncukUsed: number;
     valueMinorUnits: number;
@@ -402,6 +455,8 @@ export function buildPreorderOrderDocument(params: {
     maxRedemptionBasisPoints: number;
     loyaltyPolicyVersion: number;
   } | null;
+  /** Boncuk Loyalty P7-D (2026-08-24) — a catalog reward genuinely changes `pricing` above (the rewarded line's own `lineDiscount`); this is a read-only audit snapshot of what was redeemed, never a second, independently-applied discount. Mirrors `submitTakeawayOrder.ts`'s own `buildOrderDocument` exactly. */
+  catalogReward: CatalogRewardOrderSnapshot | null;
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -488,6 +543,7 @@ export function buildPreorderOrderDocument(params: {
     // every order-create branch, no change needed there.
     selectedBenefitType: params.selectedBenefitType,
     boncukRedemption: params.boncukRedemption,
+    catalogReward: params.catalogReward,
     statusHistory: [
       {
         id: `${params.orderId}-transition-1`,

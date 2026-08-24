@@ -102,6 +102,9 @@ class FirestoreReservationRepository implements ReservationRepository {
     // redemption happened (the `boncukRedemption` map is `null` on the
     // canonical order in that case, matching every other channel's schema).
     final boncukRedemption = data['boncukRedemption'] as Map<String, dynamic>?;
+    // Boncuk Loyalty P7-D (2026-08-24) — same additive-optional shape, for
+    // the mutually exclusive catalog-reward redemption.
+    final catalogReward = data['catalogReward'] as Map<String, dynamic>?;
 
     return ReservationPreorderSummary(
       orderId: orderId,
@@ -113,6 +116,12 @@ class FirestoreReservationRepository implements ReservationRepository {
       boncukValueMinorUnits: boncukRedemption?['valueMinorUnits'] as int?,
       remainingPayableMinorUnits:
           boncukRedemption?['remainingPayableMinorUnits'] as int?,
+      catalogRewardTitle: catalogReward?['title'] as String?,
+      catalogRewardBoncukCost: catalogReward?['boncukCost'] as int?,
+      catalogRewardRedeemedProductId:
+          catalogReward?['redeemedProductId'] as String?,
+      catalogRewardCoveredValueMinorUnits:
+          catalogReward?['coveredValueMinorUnits'] as int?,
     );
   }
 
@@ -140,6 +149,7 @@ class FirestoreReservationRepository implements ReservationRepository {
             (lineDiscount['minorUnits'] as int);
 
     return ReservationPreorderLineSummary(
+      productId: line['productId'] as String?,
       productName: line['productName'] as String,
       quantity: quantity,
       modifierNames: modifierNames,

@@ -3412,6 +3412,152 @@ test('boncukRedemption: client updates remain denied regardless of this fix — 
 });
 
 // ---------------------------------------------------------------------
+// Boncuk Loyalty P7-D (2026-08-24) — `catalogReward` and
+// `selectedBenefitType: 'catalogReward'` are the identical class of
+// server-authoritative-only fact `boncukRedemption` already was — this
+// section is the catalogReward sibling of the boncukRedemption forgery
+// tests immediately above, specifically closing the gap the P7-D dine-in
+// audit found: dine-in (`dineInQr`) order CREATION has no server pipeline
+// at all, so a client-forged `catalogReward` snapshot must be blocked
+// outright by rules, not merely "nothing legitimate can produce it yet."
+// ---------------------------------------------------------------------
+
+const forgedCatalogReward = {
+  rewardId: 'reward-1',
+  rewardVersion: 1,
+  title: 'Test Reward',
+  boncukCost: 1,
+  redeemedProductId: 'prod-1',
+  redeemedQuantity: 1,
+  coveredValueMinorUnits: 100,
+  rewardCatalogVersionId: 'reward-1_1',
+  orderChannel: 'dineIn',
+};
+
+test('catalogReward: a malicious org-member client cannot forge a catalogReward block on channel:"takeaway" — DENIED', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-cr-1', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/cr-forged-takeaway-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'takeaway',
+      status: 'created',
+      customerId: null,
+      selectedBenefitType: 'catalogReward',
+      catalogReward: forgedCatalogReward,
+    }),
+  );
+});
+
+test('catalogReward: an org-member client cannot forge it on dineInStaff either — defense in depth, the rule forbids the fields unconditionally', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-cr-2', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/cr-forged-dineinstaff-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'dineInStaff',
+      status: 'created',
+      customerId: null,
+      catalogReward: forgedCatalogReward,
+    }),
+  );
+});
+
+test('catalogReward: an org-member client cannot claim the benefit type alone, even without a catalogReward block — DENIED', async () => {
+  const staff = testEnv
+    .authenticatedContext('staff-cr-3', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(staff, 'orders/cr-forged-benefit-type-only-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'takeaway',
+      status: 'created',
+      customerId: null,
+      selectedBenefitType: 'catalogReward',
+    }),
+  );
+});
+
+test('catalogReward: an anonymous guest table (dineInQr) order cannot inject a forged catalogReward — DENIED, closing the exact gap the P7-D dine-in audit found (no server pipeline exists yet to produce a real one)', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'tableGuestSessions/tgs-cr-1'),
+      activeGuestSession({ guestAuthUid: 'guest-cr-1' }),
+    );
+  });
+  const guest = testEnv.authenticatedContext('guest-cr-1').firestore();
+
+  await assertFails(
+    setDoc(
+      doc(guest, 'orders/cr-forged-guest-order-1'),
+      tableOrderPayload({
+        tableSessionId: 'tgs-cr-1',
+        guestAuthUid: 'guest-cr-1',
+        selectedBenefitType: 'catalogReward',
+        catalogReward: forgedCatalogReward,
+      }),
+    ),
+  );
+});
+
+test('catalogReward: an authenticated customer table order cannot inject a forged catalogReward — DENIED (a real phone-verified dine-in customer still has no legitimate way to redeem one today)', async () => {
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'tableGuestSessions/tgs-cr-2'),
+      activeGuestSession({ guestAuthUid: 'cust-cr-2' }),
+    );
+  });
+  const customer = customerContext('cust-cr-2');
+
+  await assertFails(
+    setDoc(
+      doc(customer, 'orders/cr-forged-customer-order-1'),
+      tableOrderPayload({
+        tableSessionId: 'tgs-cr-2',
+        guestAuthUid: 'cust-cr-2',
+        customerId: 'cust-cr-2',
+        selectedBenefitType: 'catalogReward',
+        catalogReward: forgedCatalogReward,
+      }),
+    ),
+  );
+});
+
+test('catalogReward: client updates remain denied regardless of this fix — a staff actor cannot add the fields to an existing order via update either', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/cr-existing-order-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      restaurantId: 'restaurant-1',
+      channel: 'takeaway',
+      status: 'pendingConfirmation',
+      customerId: null,
+    });
+  });
+  const staff = testEnv
+    .authenticatedContext('staff-cr-4', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(
+    updateDoc(doc(staff, 'orders/cr-existing-order-1'), {
+      selectedBenefitType: 'catalogReward',
+      catalogReward: forgedCatalogReward,
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------
 // P.4.1 — Profile photo architecture prep: customerPhotos,
 // customerPublicProfiles, and customers/{uid}.profilePicturePath
 // client-write tightening.

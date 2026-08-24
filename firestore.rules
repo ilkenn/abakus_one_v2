@@ -147,24 +147,37 @@ service cloud.firestore {
       return !('pricingAuthority' in request.resource.data);
     }
 
-    // Boncuk Loyalty P4-B (2026-08-22) — `boncukRedemption` and
-    // `selectedBenefitType: 'boncukRedemption'` are settlement facts
-    // computed exclusively inside `submitTakeawayOrder.ts`'s own
-    // server-authoritative transaction (real customer identity, real
-    // loyalty account balance, real active policy, atomic debit). Exactly
-    // like `pricingAuthority` above, no client create path — staff/POS
-    // (`isOrgMember`), an anonymous QR guest (`isValidGuestTableOrder`), or
-    // a real-customer QR guest (`isValidAuthenticatedCustomerTableOrder`) —
-    // may ever claim a Boncuk redemption for itself, on any channel. A
-    // client MAY still freely omit `selectedBenefitType` entirely or set it
-    // to `'none'` — this only forbids claiming the one benefit type this
-    // phase actually implements server-side; it says nothing about
-    // `'coupon'`/`'catalogReward'` (not implemented anywhere yet, so no
-    // create path can satisfy any of the other branches below regardless).
+    // Boncuk Loyalty P4-B (2026-08-22) / P7-D (2026-08-24) —
+    // `boncukRedemption`/`catalogReward` and
+    // `selectedBenefitType: 'boncukRedemption'|'catalogReward'` are
+    // settlement/redemption facts computed exclusively inside
+    // `submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`/`submitReservation
+    // .ts`'s own server-authoritative transactions (real customer identity,
+    // real loyalty account balance, atomic debit + deterministic ledger
+    // entry). Exactly like `pricingAuthority` above, no client create
+    // path — staff/POS (`isOrgMember`), an anonymous QR guest
+    // (`isValidGuestTableOrder`), or a real-customer QR guest
+    // (`isValidAuthenticatedCustomerTableOrder`) — may ever claim EITHER
+    // benefit for itself, on any channel. A client MAY still freely omit
+    // `selectedBenefitType` entirely or set it to `'none'`.
+    //
+    // **P7-D note**: dine-in (`dineInQr`) order CREATION still has no
+    // server-authoritative pipeline at all (see P7-D's own audit,
+    // `docs/decisions.md`) — a dine-in customer can never legitimately
+    // reach a real `catalogReward`/`boncukRedemption` this way, so this
+    // function's own job is purely defensive: close the gap outright,
+    // rather than leave it open on the reasoning "nothing can satisfy it
+    // yet" (that reasoning stops holding the moment ANY other channel's
+    // server-authoritative writer starts producing these fields — Admin SDK
+    // writes bypass these rules entirely, but a forged CLIENT create must
+    // never be able to mimic one). `'coupon'` remains unimplemented
+    // anywhere and is intentionally not listed here yet.
     function clientOrderCreateOmitsBoncukRedemption() {
       return !('boncukRedemption' in request.resource.data) &&
+        !('catalogReward' in request.resource.data) &&
         (!('selectedBenefitType' in request.resource.data) ||
-          request.resource.data.selectedBenefitType != 'boncukRedemption');
+          (request.resource.data.selectedBenefitType != 'boncukRedemption' &&
+            request.resource.data.selectedBenefitType != 'catalogReward'));
     }
 
     // ---------------------------------------------------------------------

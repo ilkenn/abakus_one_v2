@@ -312,6 +312,12 @@ LoyaltyReward _catalogReward({
   String title = 'Test Ödülü',
   String description = 'Bir test ödülü.',
   List<String> eligibleProductIds = const ['p1'],
+  List<String> eligibleChannels = const [
+    'dineIn',
+    'takeaway',
+    'delivery',
+    'reservationPreorder',
+  ],
   int boncukCost = 100,
   int sortOrder = 0,
   int version = 1,
@@ -322,6 +328,7 @@ LoyaltyReward _catalogReward({
     description: description,
     rewardType: 'explicitProductSet',
     eligibleProductIds: eligibleProductIds,
+    eligibleChannels: eligibleChannels,
     boncukCost: boncukCost,
     sortOrder: sortOrder,
     version: version,
@@ -1136,10 +1143,8 @@ void main() {
     );
 
     expect(find.byKey(const Key('catalogRewardCard')), findsOneWidget);
-    expect(find.byKey(const Key('catalogRewardTile-eligible')),
-        findsOneWidget);
-    expect(find.byKey(const Key('catalogRewardTile-ineligible')),
-        findsNothing);
+    expect(find.byKey(const Key('catalogRewardTile-eligible')), findsOneWidget);
+    expect(find.byKey(const Key('catalogRewardTile-ineligible')), findsNothing);
   });
 
   testWidgets(
@@ -1240,8 +1245,7 @@ void main() {
     expect(find.byType(OrderSuccessScreen), findsOneWidget);
     expect(find.byKey(const Key('orderSuccessCatalogRewardSummary')),
         findsOneWidget);
-    expect(find.textContaining('Çıtırtı Bowl ödülü kullanıldı'),
-        findsWidgets);
+    expect(find.textContaining('Çıtırtı Bowl ödülü kullanıldı'), findsWidgets);
     expect(find.text('420 Boncuk'), findsOneWidget);
     expect(find.text('120 TL'), findsWidgets);
   });
@@ -1338,8 +1342,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('catalogRewardTile-reward-1')),
-        findsOneWidget);
+    expect(find.byKey(const Key('catalogRewardTile-reward-1')), findsOneWidget);
 
     final scope = tester.widget<UncontrolledProviderScope>(
         find.byType(UncontrolledProviderScope));
@@ -1382,8 +1385,7 @@ void main() {
       findsOneWidget,
     );
     // The reward's card is back — selection was reset, not merely hidden.
-    expect(find.byKey(const Key('catalogRewardTile-reward-1')),
-        findsOneWidget);
+    expect(find.byKey(const Key('catalogRewardTile-reward-1')), findsOneWidget);
 
     await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
     await tester.pumpAndSettle();

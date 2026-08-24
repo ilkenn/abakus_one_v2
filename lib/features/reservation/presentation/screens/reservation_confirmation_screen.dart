@@ -182,6 +182,22 @@ class _ConfirmationBody extends ConsumerWidget {
                   reservation.preorder!.remainingPayableMinorUnits!,
             ),
           ],
+          // Boncuk Loyalty Program P7-D (2026-08-24) — the catalog-reward
+          // sibling of the Boncuk summary above, mirroring its exact
+          // reasoning: server-confirmed only, reusing the same
+          // `CatalogRewardSuccessSummary` widget `TakeawayCheckoutScreen`/
+          // `DeliveryCheckoutScreen` already use — no second component.
+          if (reservation.preorder?.hasCatalogRewardSummary ?? false) ...[
+            const SizedBox(height: AppSpacing.md),
+            CatalogRewardSuccessSummary(
+              rewardTitle: reservation.preorder!.catalogRewardTitle!,
+              boncukCost: reservation.preorder!.catalogRewardBoncukCost!,
+              redeemedProductName:
+                  reservation.preorder!.catalogRewardRedeemedProductName ?? '',
+              coveredValueMinorUnits:
+                  reservation.preorder!.catalogRewardCoveredValueMinorUnits!,
+            ),
+          ],
           const SizedBox(height: AppSpacing.xl),
           ElevatedButton(
             onPressed: () =>

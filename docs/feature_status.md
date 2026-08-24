@@ -4464,3 +4464,48 @@ fails closed without client awareness of the vocabulary). Gates: Functions build
 Rules suite not rerun (`firestore.rules` untouched); `flutter analyze`/`flutter test` not rerun (no
 production Flutter touched). See `docs/business_rules.md`'s new `BR-LOYALTY-028`, and
 `docs/decisions.md`'s P7-C.1 entry for the full mechanism and files changed. No commit was made.
+
+**Boncuk Loyalty Program P7-D (2026-08-24) — Catalog Reward Redemption Extended to Delivery and
+Reservation-preorder; Dine-in Blocked, CLOSED for the two implemented channels.** Extends `BR-LOYALTY-027`'s
+Takeaway-only redemption to Delivery (`submitDeliveryOrder.ts`) and Reservation-preorder
+(`reservationPreorder.ts`/`submitReservation.ts`), reusing the exact same resolution/redemption/restore/
+earning machinery — `loyaltyRedemptionRestore.ts`/`loyaltyOrderEarning.ts` needed zero new channel-specific
+code, since both were already written channel-agnostically. The shared `freeUnitCount` pricing primitive
+automatically covers each channel's own product-level surcharge (already channel-resolved into
+`unitPriceMinorUnits` before a line is built) — Delivery's beverage/standard surcharges and
+Reservation-preorder's zero surcharge both required no new surcharge-specific logic. Delivery's order-level
+`deliveryFee` is structurally always zero, proven by test to be untouched by any reward. A reservation's
+proposed-time change (staff propose → customer accept) never re-debits or restores an already-applied
+reward — verified by reading `buildPreorderConfirmationPatch` (touches only `kitchenReleaseAt`/status)
+before writing the claim, then proven by a full round-trip test. **Dine-in catalog-reward redemption is
+explicitly NOT implemented — a real architectural blocker, audited and reported, not worked around**:
+dine-in order creation (`dineInQr`/`dineInStaff`) is a direct client-side Firestore write with no Cloud
+Function, no transaction, and no server-authoritative pricing pipeline at all (dine-in doesn't even earn
+Boncuk today) — there is structurally no transaction to extend a debit into. Building one is a new,
+architecture-change-sized server-authoritative dine-in order pipeline, out of scope this phase.
+`firestore.rules`' `clientOrderCreateOmitsBoncukRedemption()` was hardened defensively regardless, closing
+a NEW forgery surface the audit found (a client could otherwise set a forged `catalogReward` field on its
+own client-created dine-in order) — proven by 6 new rules tests. New real customer UI: `RewardsScreen`/
+`RewardDetailScreen` ("Boncuklarım → Ödüller"), reading exclusively from the real server catalog — no mock
+reward source reachable, no standalone claim/voucher (the CTA only navigates into each channel's own
+existing checkout entry point, mirroring `HomeScreen`'s own navigation targets); `dineIn` is deliberately
+excluded from the app-routable channel set, the direct UI consequence of the blocker above.
+`DeliveryCheckoutScreen`/`ReservationFlowScreen` both gained `CatalogRewardCard` wiring identical in shape
+to Takeaway's own P7-C integration (mutual exclusivity with Boncuk cash redemption by removal, not merely
+disabling). `OrderSuccessScreen`/`ReservationConfirmationScreen` show server-confirmed summaries only;
+`ReservationDetailScreen` gained a historical-reward badge, proven immune to a later live-catalog edit.
+Bowl Builder items remain structurally unreachable by any reward (no real canonical product id) — unchanged
+by this phase; `buildBowlLine` nonetheless gained the same `freeUnitCount` parameter for
+forward-compatibility, proven exact at the pricing-primitive unit-test level. **Two real test-fixture bugs
+were found and fixed by the gate run itself** (both in new test code, not production code): a
+neighborhood-name mismatch between a seeded delivery service area and its matching customer address (fixed
+by computing the name once and reusing it for both seeds — caused all 14 non-stacking Delivery tests to
+fail identically the first time the suite actually ran end-to-end); a 15-minute slot-alignment bug and a
+`null`-vs-`undefined` assertion in the Reservation test file; plus a simple earning-rate arithmetic error in
+a test comment/assertion (the default policy is 5000 minor units → 5 Boncuk, not → 1). Gates: Functions
+build clean; Functions FULL emulator suite (JDK 21) **1421/1421, 0 failed** (up from 1391 — 30 new tests:
+15 Delivery + 13 Reservation + 2 Bowl Builder pricing-primitive); Firestore Rules FULL suite (JDK 21)
+**367/367, 0 failed** (up from 361 — rerun this time since `firestore.rules` was genuinely touched);
+full-repo `flutter analyze` clean; `flutter test` **3406 passed / 12 skipped / 0 failed** (up from 3376 —
+30 new tests). See `docs/business_rules.md`'s new `BR-LOYALTY-029`, and `docs/decisions.md`'s P7-D entry
+for the full mechanism and files changed. No commit was made.

@@ -142,6 +142,15 @@ abstract interface class SubmitDeliveryOrderGateway {
   /// one of those itself (`functions/src/submitDeliveryOrder.ts`, P5-B).
   /// `0` (the default) means "no Boncuk requested," identical in effect to
   /// omitting the field entirely.
+  /// Boncuk Loyalty Program P7-D (2026-08-24) — [selectedRewardId] is the
+  /// ONLY catalog-reward-related value this method ever sends: the
+  /// customer's chosen reward id. Mirrors
+  /// `SubmitTakeawayOrderGateway.submitAuthenticatedOrder`'s own contract —
+  /// there is structurally no parameter here for a reward cost, title, or
+  /// covered value; the server resolves and re-validates every one of those
+  /// itself (`functions/src/submitDeliveryOrder.ts`, P7-D). Mutually
+  /// exclusive with [requestedBoncukAmount] > 0 — the server rejects a
+  /// request that sets both.
   Future<SubmitDeliveryOrderResult> submit({
     required String submissionKey,
     required String savedAddressId,
@@ -150,6 +159,7 @@ abstract interface class SubmitDeliveryOrderGateway {
     ClientLocationEvidence? deviceLocation,
     String? deviceLocationUnavailableReason,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   });
 }
 
@@ -165,6 +175,7 @@ class FirebaseSubmitDeliveryOrderGateway implements SubmitDeliveryOrderGateway {
     ClientLocationEvidence? deviceLocation,
     String? deviceLocationUnavailableReason,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   }) async {
     final callable = functions.FirebaseFunctions.instance.httpsCallable(
       'submitDeliveryOrder',
@@ -185,6 +196,9 @@ class FirebaseSubmitDeliveryOrderGateway implements SubmitDeliveryOrderGateway {
         // payload identical to every pre-P5-B call.
         if (requestedBoncukAmount > 0)
           'requestedBoncukAmount': requestedBoncukAmount,
+        // Boncuk Loyalty P7-D — sent ONLY when set, mirroring
+        // `sanitizeSelectedRewardId`'s own "absent/null == no reward" contract.
+        if (selectedRewardId != null) 'selectedRewardId': selectedRewardId,
       });
       final data = result.data;
       return SubmitDeliveryOrderResult(

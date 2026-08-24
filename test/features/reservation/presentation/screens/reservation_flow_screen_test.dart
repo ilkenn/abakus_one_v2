@@ -66,6 +66,7 @@ class _FakeReservationGateway implements ReservationGateway {
   int submitCallCount = 0;
   final List<Map<String, dynamic>> submitCalls = [];
   int? lastRequestedBoncukAmount;
+  String? lastSelectedRewardId;
 
   @override
   Future<ReservationBranchInfo> getReservationBranchInfo({
@@ -100,9 +101,11 @@ class _FakeReservationGateway implements ReservationGateway {
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   }) async {
     submitCallCount++;
     lastRequestedBoncukAmount = requestedBoncukAmount;
+    lastSelectedRewardId = selectedRewardId;
     submitCalls.add({
       'restaurantId': restaurantId,
       'branchId': branchId,
@@ -113,6 +116,7 @@ class _FakeReservationGateway implements ReservationGateway {
       'contactLastName': contactLastName,
       'preorderItems': preorderItems,
       'requestedBoncukAmount': requestedBoncukAmount,
+      'selectedRewardId': selectedRewardId,
     });
     if (submitGate != null) await submitGate!.future;
     if (submitError != null) throw submitError!;
@@ -167,12 +171,21 @@ class _FakeLoyaltyGateway implements LoyaltyGateway {
     LoyaltyAccountSnapshot? snapshot,
     this.snapshotError,
     this.neverCompleteSnapshot = false,
+    this.rewards = const [],
+    this.rewardCatalogError,
   }) : snapshot = snapshot ?? LoyaltyAccountSnapshot.zero;
 
   LoyaltyAccountSnapshot snapshot;
   LoyaltyGatewayException? snapshotError;
   bool neverCompleteSnapshot;
   int snapshotCalls = 0;
+
+  /// Boncuk Loyalty P7-D (2026-08-24) — the real, server-authoritative
+  /// reward list this fake returns; mirrors
+  /// `takeaway_checkout_screen_test.dart`'s own `_FakeLoyaltyGateway`.
+  List<LoyaltyReward> rewards;
+  LoyaltyGatewayException? rewardCatalogError;
+  int rewardCatalogCalls = 0;
 
   @override
   Future<LoyaltyAccountSnapshot> getSnapshot() async {
@@ -190,7 +203,11 @@ class _FakeLoyaltyGateway implements LoyaltyGateway {
   }
 
   @override
-  Future<List<LoyaltyReward>> getRewardCatalog() async => const [];
+  Future<List<LoyaltyReward>> getRewardCatalog() async {
+    rewardCatalogCalls += 1;
+    if (rewardCatalogError != null) throw rewardCatalogError!;
+    return rewards;
+  }
 }
 
 /// A well-formed, non-default snapshot for Boncuk reservation-preorder
@@ -215,6 +232,38 @@ LoyaltyAccountSnapshot _boncukSnapshot({
     earningBoncukAmount: 5,
     redemptionValueMinorUnitsPerBoncuk: redemptionValueMinorUnitsPerBoncuk,
     maxRedemptionBasisPoints: maxRedemptionBasisPoints,
+  );
+}
+
+/// Boncuk Loyalty P7-D (2026-08-24) — a well-formed [LoyaltyReward],
+/// eligible for the preorder cart item `'p1'` seeded by
+/// [_driveToReviewStepWithPreorder] by default. Mirrors
+/// `delivery_checkout_screen_test.dart`'s own `_catalogReward` exactly.
+LoyaltyReward _catalogReward({
+  String rewardId = 'reward-1',
+  String title = 'Test Ödülü',
+  String description = 'Bir test ödülü.',
+  List<String> eligibleProductIds = const ['p1'],
+  List<String> eligibleChannels = const [
+    'dineIn',
+    'takeaway',
+    'delivery',
+    'reservationPreorder',
+  ],
+  int boncukCost = 100,
+  int sortOrder = 0,
+  int version = 1,
+}) {
+  return LoyaltyReward(
+    rewardId: rewardId,
+    title: title,
+    description: description,
+    rewardType: 'explicitProductSet',
+    eligibleProductIds: eligibleProductIds,
+    eligibleChannels: eligibleChannels,
+    boncukCost: boncukCost,
+    sortOrder: sortOrder,
+    version: version,
   );
 }
 
@@ -927,6 +976,230 @@ void main() {
           'ref.invalidate(loyaltySnapshotProvider) must trigger a fresh fetch',
     );
   });
+
+  // =========================================================================
+  // Boncuk Loyalty Program P7-D (2026-08-24) — the Reservation Preorder
+  // catalog-reward checkout wiring: [CatalogRewardCard], mutual exclusivity
+  // with cash Boncuk redemption. The server-confirmed success summary itself
+  // is proven in `reservation_confirmation_screen_test.dart` (a separate
+  // screen this flow only navigates to) — this file's job, per its own
+  // established Boncuk-section convention above, is the WIRING only.
+  // =========================================================================
+
+  testWidgets(
+      'P7-D reward-catalog load failure never blocks ordinary reservation '
+      'submission — the catalog reward card is simply absent', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-reward-catalog-error',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-reward-catalog-error',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        rewardCatalogError:
+            const LoyaltyGatewayException('internal', 'Ödüller yüklenemedi.'),
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    expect(find.byKey(const Key('catalogRewardCardError')), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.lastSelectedRewardId, isNull);
+    expect(_lastConfirmationReservationId, 'reservation-reward-catalog-error');
+  });
+
+  testWidgets(
+      'P7-D A: no preorder in cart -> the catalog reward card never appears',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ];
+    await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    await _driveToReviewStep(tester);
+
+    expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+  });
+
+  testWidgets(
+      'P7-D B: only rewards eligible for the preorder cart are shown; '
+      'selecting one sends exactly its rewardId and removes the Boncuk card',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-reward-1',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-reward-1',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshot: _boncukSnapshot(),
+        rewards: [
+          _catalogReward(rewardId: 'eligible', eligibleProductIds: ['p1']),
+          _catalogReward(
+              rewardId: 'ineligible', eligibleProductIds: ['other-product']),
+        ],
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsOneWidget);
+    expect(find.byKey(const Key('catalogRewardTile-eligible')), findsOneWidget);
+    expect(find.byKey(const Key('catalogRewardTile-ineligible')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('catalogRewardTile-eligible')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsNothing);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.lastSelectedRewardId, 'eligible');
+    expect(gateway.lastRequestedBoncukAmount, 0);
+  });
+
+  testWidgets(
+      'P7-D C: selecting a reward while Boncuk cash redemption is already on '
+      'turns Boncuk off (mutual exclusivity, the reward selection wins)',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ];
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshot: _boncukSnapshot(),
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('1 Boncuk'), findsOneWidget);
+    expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+  });
+
+  testWidgets(
+      'P7-D D: tapping an already-selected reward deselects it, and the '
+      'Boncuk cash-redemption card reappears', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-reward-2',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-reward-2',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        snapshot: _boncukSnapshot(),
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+    expect(gateway.lastSelectedRewardId, isNull);
+  });
+
+  testWidgets(
+      'P7-D E: a catalogReward-specific server rejection resets the '
+      'selection, ordinary submission (no reward) remains possible',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-reward-3',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-reward-3',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(
+        rewards: [_catalogReward(rewardId: 'reward-1')],
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+
+    gateway.submitError = const ReservationException(
+      'invalid-argument',
+      'Reward no longer valid.',
+      boncukErrorReason: 'catalogReward/insufficient-balance',
+    );
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.submitCallCount, 1);
+    expect(_lastConfirmationReservationId, isNull);
+    // The reward's card is back — selection was reset, not merely hidden.
+    expect(find.byKey(const Key('catalogRewardTile-reward-1')), findsOneWidget);
+
+    gateway.submitError = null;
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+    expect(gateway.submitCallCount, 2);
+    expect(gateway.lastSelectedRewardId, isNull);
+    expect(_lastConfirmationReservationId, 'reservation-reward-3');
+  });
 }
 
 class _DelayedBranchInfoGateway implements ReservationGateway {
@@ -964,6 +1237,7 @@ class _DelayedBranchInfoGateway implements ReservationGateway {
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   }) {
     throw UnimplementedError();
   }

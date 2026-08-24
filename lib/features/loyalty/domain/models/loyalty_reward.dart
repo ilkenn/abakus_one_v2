@@ -14,6 +14,7 @@ class LoyaltyReward {
     required this.description,
     required this.rewardType,
     required this.eligibleProductIds,
+    required this.eligibleChannels,
     required this.boncukCost,
     required this.sortOrder,
     required this.version,
@@ -32,6 +33,16 @@ class LoyaltyReward {
   /// contain at least one of these for the reward to be selectable.
   final List<String> eligibleProductIds;
 
+  /// Boncuk Loyalty P7-D (2026-08-24) — the canonical commercial channels
+  /// this reward is configured for, verbatim from the server's own
+  /// `CANONICAL_COMMERCIAL_CHANNELS` vocabulary (`"dineIn"`/`"takeaway"`/
+  /// `"delivery"`/`"reservationPreorder"`). Never a Flutter-side enum/closed
+  /// set of hardcoded values — this list is only ever read, displayed, and
+  /// compared against as opaque strings the server already validated; a
+  /// future fifth channel needs zero Flutter code change to display
+  /// correctly.
+  final List<String> eligibleChannels;
+
   final int boncukCost;
   final int sortOrder;
 
@@ -44,6 +55,12 @@ class LoyaltyReward {
     return cartProductIds.any(eligibleProductIds.contains);
   }
 
+  /// Whether this reward is usable on [channel] — a plain, opaque string
+  /// comparison against the server-supplied [eligibleChannels], never a
+  /// hardcoded Flutter-side channel list.
+  bool isEligibleForChannel(String channel) =>
+      eligibleChannels.contains(channel);
+
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
@@ -53,6 +70,7 @@ class LoyaltyReward {
             other.description == description &&
             other.rewardType == rewardType &&
             _listEquals(other.eligibleProductIds, eligibleProductIds) &&
+            _listEquals(other.eligibleChannels, eligibleChannels) &&
             other.boncukCost == boncukCost &&
             other.sortOrder == sortOrder &&
             other.version == version);
@@ -65,6 +83,7 @@ class LoyaltyReward {
         description,
         rewardType,
         Object.hashAll(eligibleProductIds),
+        Object.hashAll(eligibleChannels),
         boncukCost,
         sortOrder,
         version,

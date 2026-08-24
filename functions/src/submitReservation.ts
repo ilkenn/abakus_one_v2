@@ -36,7 +36,17 @@ import {
 } from "./loyaltyPolicy";
 import { calculateBoncukRedemption, resolveAccountForRedemption } from "./loyaltyRedemption";
 import type { LoyaltyAccountData } from "./getCustomerLoyaltySnapshot";
-import { boncukError } from "./boncukRedemptionErrors";
+import { boncukError, type SelectedBenefitType } from "./boncukRedemptionErrors";
+import { findFirstEligibleCartProductId, type CatalogRewardOrderSnapshot } from "./submitTakeawayOrder";
+import {
+  loadLoyaltyRewardForRedemption,
+  resolveCatalogRewardRedemption,
+} from "./resolveCatalogRewardRedemption";
+import {
+  isRewardCurrentlyValid,
+  loyaltyRewardCatalogVersionDocId,
+  type LoyaltyRewardCatalogEntry,
+} from "./loyaltyRewardCatalog";
 
 /**
  * Server-authoritative reservation creation — Faz R.1A implementation of
@@ -193,6 +203,16 @@ interface PendingBoncukRedemption {
   };
 }
 
+/** The catalog-reward sibling of [PendingBoncukRedemption] — mirrors `submitTakeawayOrder.ts`'s own `PendingCatalogRewardRedemption` exactly. */
+interface PendingCatalogRewardRedemption {
+  accountRef: FirebaseFirestore.DocumentReference;
+  account: LoyaltyAccountData;
+  boncukCost: number;
+  ledgerEntryRef: FirebaseFirestore.DocumentReference;
+  ledgerEntry: LoyaltyLedgerEntry;
+  orderSnapshot: CatalogRewardOrderSnapshot;
+}
+
 export const submitReservation = onCall(
   { enforceAppCheck: shouldEnforceAppCheck() },
   async (request) => {
@@ -296,6 +316,9 @@ export const submitReservation = onCall(
           ? {
               items: normalizePreorderItems(parsedPreorder.items),
               requestedBoncukAmount: parsedPreorder.requestedBoncukAmount,
+              // Boncuk Loyalty P7-D — same reasoning, for the mutually
+              // exclusive catalog-reward selection.
+              selectedRewardId: parsedPreorder.selectedRewardId,
             }
           : null,
       };
@@ -439,18 +462,61 @@ export const submitReservation = onCall(
       let preorderOrderId: string | null = null;
       let preorderOrderDocument: Record<string, unknown> | null = null;
       let pendingRedemption: PendingBoncukRedemption | null = null;
+      let pendingCatalogReward: PendingCatalogRewardRedemption | null = null;
       if (parsedPreorder) {
+        const organizationId = scope.organizationId!;
+
+        // -----------------------------------------------------------
+        // Boncuk Loyalty P7-D (2026-08-24) — catalog-reward PRE-resolution.
+        // Deliberately BEFORE `buildPreorderLines`, mirroring
+        // `submitTakeawayOrder.ts`'s own placement exactly.
+        // -----------------------------------------------------------
+        let catalogRewardPreCheck: { reward: LoyaltyRewardCatalogEntry; redeemedProductId: string } | null =
+          null;
+        if (parsedPreorder.selectedRewardId !== null) {
+          const reward = await loadLoyaltyRewardForRedemption(db, parsedPreorder.selectedRewardId, tx);
+          if (!reward || reward.organizationId !== organizationId) {
+            boncukError("invalid-argument", "The selected reward does not exist.", "catalogReward/reward-not-found");
+          }
+          if (!isRewardCurrentlyValid(reward, Timestamp.now())) {
+            boncukError(
+              "failed-precondition",
+              "The selected reward is not currently active/valid.",
+              "catalogReward/reward-not-currently-valid",
+            );
+          }
+          if (!reward.eligibleChannels.includes("reservationPreorder")) {
+            boncukError(
+              "failed-precondition",
+              "The selected reward is not available for the Rezervasyon Ön Sipariş channel.",
+              "catalogReward/channel-not-eligible",
+            );
+          }
+          const redeemedProductId = findFirstEligibleCartProductId(
+            parsedPreorder.items,
+            reward.eligibleProductIds,
+          );
+          if (!redeemedProductId) {
+            boncukError(
+              "invalid-argument",
+              "None of the items in this preorder are eligible for the selected reward.",
+              "catalogReward/product-not-in-cart",
+            );
+          }
+          catalogRewardPreCheck = { reward, redeemedProductId };
+        }
+
         const pricingPolicy = await loadCanonicalChannelPricingPolicy(db, restaurantId, tx);
-        const { lines } = await buildPreorderLines(
+        const { lines, rewardAppliedLineIndex } = await buildPreorderLines(
           tx,
           db,
           parsedPreorder.items,
           { restaurantId },
           pricingPolicy,
+          catalogRewardPreCheck?.redeemedProductId ?? null,
         );
         const pricing = computePreorderPriceBreakdown(lines);
         preorderOrderId = derivePreorderOrderId(reservationId);
-        const organizationId = scope.organizationId!;
 
         // -----------------------------------------------------------
         // Boncuk Loyalty P6-B (2026-08-24) — redemption resolution (reads
@@ -467,7 +533,7 @@ export const submitReservation = onCall(
         // is already unconditionally required above (submitReservation
         // never has a guest path), so no additional check is needed here.
         // -----------------------------------------------------------
-        let selectedBenefitType: "none" | "boncukRedemption" = "none";
+        let selectedBenefitType: SelectedBenefitType = "none";
         if (parsedPreorder.requestedBoncukAmount > 0) {
           const boncukEligibleOrderAmountMinorUnits = pricing.grandTotalMinorUnits;
           if (boncukEligibleOrderAmountMinorUnits < 0) {
@@ -603,6 +669,135 @@ export const submitReservation = onCall(
               loyaltyPolicyVersion: loyaltyPolicy.version,
             },
           };
+        } else if (catalogRewardPreCheck !== null) {
+          // -------------------------------------------------------------
+          // Boncuk Loyalty P7-D — catalog-reward FINAL resolution. Reads
+          // only, still strictly before this transaction's first write.
+          // Mirrors `submitTakeawayOrder.ts`'s own POST-buildLines block
+          // exactly — deliberately does NOT touch `loyaltyPolicies` (a
+          // reward's cost is fixed, independent of the org's cash rate).
+          // -------------------------------------------------------------
+          const { reward, redeemedProductId } = catalogRewardPreCheck;
+          if (rewardAppliedLineIndex === null) {
+            // Structurally unreachable — buildPreorderLines was given the
+            // exact same redeemedProductId findFirstEligibleCartProductId
+            // just found, so it always applies the free unit to a real
+            // line. Defensive only.
+            boncukError(
+              "internal",
+              "Failed to apply the catalog reward to a preorder line.",
+              "catalogReward/product-not-in-cart",
+            );
+          }
+          const rewardedLine = lines[rewardAppliedLineIndex];
+          const coveredValueMinorUnits = rewardedLine.lineDiscountMinorUnits;
+
+          const accountRef = db.collection(LOYALTY_ACCOUNTS_COLLECTION).doc(`${organizationId}_${uid}`);
+          const accountSnap = await tx.get(accountRef);
+          const accountResult = resolveAccountForRedemption(accountSnap);
+          if (accountResult.status === "missing-loyalty-account") {
+            boncukError(
+              "failed-precondition",
+              "No loyalty account exists for this customer — cannot redeem a catalog reward.",
+              "catalogReward/account-unavailable",
+            );
+          }
+          if (accountResult.status === "inconsistent-loyalty-account-state") {
+            boncukError(
+              "failed-precondition",
+              "This customer's loyalty account is in an inconsistent state.",
+              "catalogReward/account-unavailable",
+            );
+          }
+          const account = accountResult.account;
+
+          const resolution = resolveCatalogRewardRedemption({
+            reward,
+            now: new Date(),
+            organizationId,
+            orderChannel: "reservationPreorder",
+            requestedProductId: redeemedProductId,
+            spendableBalance: account.spendableBalance,
+          });
+          if (resolution.status === "insufficient-balance") {
+            boncukError(
+              "failed-precondition",
+              `Insufficient Boncuk balance for this reward (requires ${resolution.requiredBoncuk}, has ${resolution.availableBoncuk}).`,
+              "catalogReward/insufficient-balance",
+            );
+          }
+          if (resolution.status !== "ok") {
+            boncukError(
+              "failed-precondition",
+              "The selected reward can no longer be redeemed.",
+              "catalogReward/reward-not-currently-valid",
+            );
+          }
+          const { snapshot } = resolution;
+
+          const ledgerEntryId = deriveLoyaltyLedgerEntryId({
+            organizationId,
+            customerId: uid,
+            entryType: "catalogRedemption",
+            sourceId: preorderOrderId,
+          });
+          const ledgerEntryRef = db.collection(LOYALTY_LEDGER_ENTRIES_COLLECTION).doc(ledgerEntryId);
+          const ledgerSnap = await tx.get(ledgerEntryRef);
+          if (ledgerSnap.exists) {
+            boncukError(
+              "failed-precondition",
+              "A catalog reward redemption ledger entry already exists for this order.",
+              "catalogReward/reward-not-currently-valid",
+            );
+          }
+
+          selectedBenefitType = "catalogReward";
+          pendingCatalogReward = {
+            accountRef,
+            account,
+            boncukCost: snapshot.boncukCost,
+            ledgerEntryRef,
+            ledgerEntry: {
+              organizationId,
+              customerId: uid,
+              entryType: "catalogRedemption",
+              entitlementDeltaBoncuk: 0,
+              spendableDeltaBoncuk: 0 - snapshot.boncukCost,
+              debtDeltaBoncuk: 0,
+              sourceId: preorderOrderId,
+              orderId: preorderOrderId,
+              amountBasisMinorUnits: coveredValueMinorUnits,
+              earningCarryNumeratorBefore: null,
+              earningCarryDenominatorBefore: null,
+              earningCarryNumeratorAfter: null,
+              earningCarryDenominatorAfter: null,
+              earningSpendMinorUnits: null,
+              earningBoncukAmount: null,
+              loyaltyPolicyVersion: null,
+              debtBeforeBoncuk: account.boncukDebt,
+              debtAfterBoncuk: account.boncukDebt,
+              redemptionValueMinorUnitsPerBoncuk: null,
+              maxRedemptionBasisPoints: null,
+              idempotencyKey: preorderOrderId,
+              reversalOf: null,
+              expiresAt: null,
+              metadata: { entryType: "catalogRedemption", rewardId: snapshot.rewardId },
+            } as LoyaltyLedgerEntry,
+            orderSnapshot: {
+              rewardId: snapshot.rewardId,
+              rewardVersion: snapshot.rewardVersion,
+              title: snapshot.title,
+              boncukCost: snapshot.boncukCost,
+              redeemedProductId: snapshot.redeemedProductId,
+              redeemedQuantity: 1,
+              coveredValueMinorUnits,
+              rewardCatalogVersionId: loyaltyRewardCatalogVersionDocId(
+                snapshot.rewardId,
+                snapshot.rewardVersion,
+              ),
+              orderChannel: "reservationPreorder",
+            },
+          };
         }
 
         preorderOrderDocument = buildPreorderOrderDocument({
@@ -617,6 +812,7 @@ export const submitReservation = onCall(
           now,
           selectedBenefitType,
           boncukRedemption: pendingRedemption ? pendingRedemption.orderSnapshot : null,
+          catalogReward: pendingCatalogReward ? pendingCatalogReward.orderSnapshot : null,
         });
       }
 
@@ -639,6 +835,22 @@ export const submitReservation = onCall(
         });
         tx.create(pendingRedemption.ledgerEntryRef, {
           ...pendingRedemption.ledgerEntry,
+          createdAt: Timestamp.fromDate(now),
+        });
+      }
+
+      if (pendingCatalogReward) {
+        tx.set(pendingCatalogReward.accountRef, {
+          ...pendingCatalogReward.account,
+          spendableBalance:
+            pendingCatalogReward.account.spendableBalance - pendingCatalogReward.boncukCost,
+          lifetimeRedeemed:
+            pendingCatalogReward.account.lifetimeRedeemed + pendingCatalogReward.boncukCost,
+          revision: pendingCatalogReward.account.revision + 1,
+          updatedAt: Timestamp.fromDate(now),
+        });
+        tx.create(pendingCatalogReward.ledgerEntryRef, {
+          ...pendingCatalogReward.ledgerEntry,
           createdAt: Timestamp.fromDate(now),
         });
       }

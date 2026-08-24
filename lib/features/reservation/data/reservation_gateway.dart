@@ -155,6 +155,14 @@ abstract interface class ReservationGateway {
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
+
+    /// Boncuk Loyalty Program P7-D (2026-08-24) — the customer's optional
+    /// catalog-reward selection, mirroring [requestedBoncukAmount]'s own
+    /// "only ever meaningful when [preorderItems] is non-empty" contract
+    /// and nested inside the same `preorder` wire map for the identical
+    /// reason. Mutually exclusive with [requestedBoncukAmount] > 0 — the
+    /// server rejects a request that sets both.
+    String? selectedRewardId,
   });
 
   Future<void> respondToProposedChange({
@@ -203,6 +211,7 @@ class FirebaseReservationGateway implements ReservationGateway {
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   }) async {
     final callable =
         functions.FirebaseFunctions.instance.httpsCallable('submitReservation');
@@ -226,6 +235,9 @@ class FirebaseReservationGateway implements ReservationGateway {
             // ever meaningful alongside one.
             if (requestedBoncukAmount > 0)
               'requestedBoncukAmount': requestedBoncukAmount,
+            // Boncuk Loyalty P7-D — same nesting reasoning, for the
+            // mutually exclusive catalog-reward selection.
+            if (selectedRewardId != null) 'selectedRewardId': selectedRewardId,
           },
       });
       final data = result.data;

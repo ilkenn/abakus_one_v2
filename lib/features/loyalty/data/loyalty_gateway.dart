@@ -209,6 +209,15 @@ LoyaltyReward _parseLoyaltyReward(Map<String, dynamic> data) {
   }
   final eligibleProductIds =
       eligibleProductIdsRaw.map((e) => e as String).toList(growable: false);
+  final eligibleChannelsRaw = data['eligibleChannels'];
+  if (eligibleChannelsRaw is! List) {
+    throw FormatException(
+      'getCustomerLoyaltyRewardCatalog response: eligibleChannels must be '
+      'a list, got ${eligibleChannelsRaw.runtimeType}',
+    );
+  }
+  final eligibleChannels =
+      eligibleChannelsRaw.map((e) => e as String).toList(growable: false);
   final boncukCost = data['boncukCost'];
   if (boncukCost is! num) {
     throw FormatException(
@@ -237,6 +246,7 @@ LoyaltyReward _parseLoyaltyReward(Map<String, dynamic> data) {
     description: description,
     rewardType: rewardType,
     eligibleProductIds: eligibleProductIds,
+    eligibleChannels: eligibleChannels,
     boncukCost: boncukCost.toInt(),
     sortOrder: sortOrder.toInt(),
     version: version.toInt(),

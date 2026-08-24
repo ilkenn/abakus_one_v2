@@ -549,7 +549,8 @@ class _TakeawayCheckoutScreenState
       final catalogRewardProductName = catalogReward == null
           ? null
           : order.lines
-              .firstWhere((line) => line.productId == catalogReward.redeemedProductId)
+              .firstWhere(
+                  (line) => line.productId == catalogReward.redeemedProductId)
               .productName;
       Navigator.pushAndRemoveUntil(
         context,

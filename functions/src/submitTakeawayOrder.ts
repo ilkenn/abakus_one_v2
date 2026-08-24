@@ -313,6 +313,7 @@ export async function buildBowlLine(
   channel: string,
   policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy,
   tx?: import("firebase-admin/firestore").Transaction,
+  freeUnitCount = 0,
 ): Promise<ComputedOrderLine> {
   const quantity = requireValidQuantity(item.quantity, "bowl item");
   if (!Array.isArray(item.ingredientIds) || item.ingredientIds.length === 0) {
@@ -359,6 +360,7 @@ export async function buildBowlLine(
     unitPriceMinorUnits,
     taxBasisPoints: TAKEAWAY_TAX_BASIS_POINTS,
     customerNote: note,
+    freeUnitCount,
   });
 }
 

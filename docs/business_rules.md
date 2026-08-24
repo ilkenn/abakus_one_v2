@@ -1032,6 +1032,105 @@ this design introduces.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, Menu, BR-LOYALTY-026, BR-LOYALTY-027
 
+### BR-LOYALTY-029 — Catalog-reward redemption extended to Delivery and Reservation-preorder; Dine-in
+    remains architecturally blocked (P7-D, 2026-08-24)
+- **Status**: DECIDED — **IMPLEMENTED for Delivery and Reservation-preorder (P7-D, 2026-08-24)**, closing
+  `BR-LOYALTY-027`'s own disclosed "Delivery/Reservation-preorder remain cash-Boncuk-only" gap for two of
+  the three remaining channels. **Dine-in catalog-reward redemption is explicitly NOT implemented** — see
+  the dedicated blocker note below. The Campaign Engine and any Admin UI for managing rewards remain out
+  of scope, unchanged from `BR-LOYALTY-026`/`BR-LOYALTY-027`.
+- **Rule — Delivery and Reservation-preorder reuse the exact same resolution/redemption/restore/earning
+  machinery `BR-LOYALTY-027` established, never a second implementation.** `submitDeliveryOrder.ts` and
+  `submitReservation.ts`/`reservationPreorder.ts` both import `findFirstEligibleCartProductId` and the
+  `CatalogRewardOrderSnapshot` type directly from `submitTakeawayOrder.ts` (an already-established
+  cross-file reuse convention — Delivery already imported pricing helpers from there before this phase),
+  and both call the same `loadLoyaltyRewardForRedemption`/`resolveCatalogRewardRedemption` pair Takeaway
+  uses. `loyaltyRedemptionRestore.ts` and `loyaltyOrderEarning.ts` required **zero new channel-specific
+  code** — both were already written channel-agnostically (keyed on ledger-entry family / already
+  including `"delivery"`/`"reservationPreorder"` in `LOYALTY_EARNING_ELIGIBLE_CHANNELS`), so only each
+  channel's own SUBMIT path needed the new redemption wiring.
+- **Rule — the same `freeUnitCount` pricing primitive covers each channel's own product-level surcharge
+  automatically, with no channel-specific surcharge logic.** A flat discount of exactly
+  `freeUnitCount * (unitPriceMinorUnits + modifierTotalMinorUnits)` is mathematically exact for "N units
+  free, rest full price" within one order line, and since `unitPriceMinorUnits` is already
+  channel-resolved (includes any channel surcharge) before the line is built, covering it automatically
+  covers the surcharge too — no new code was needed to reason about Delivery's beverage/standard-product
+  surcharges. Reservation-preorder has **no channel surcharge configured at all** (verified: an
+  unconfigured channel resolves to a zero adjustment in the shared pricing policy, with no "unknown
+  channel falls back to takeaway" behavior anywhere) — `freeUnitCount` there covers exactly the canonical
+  base unit price, nothing invented.
+- **Rule — Delivery's order-level `deliveryFee` is structurally always zero, so a reward can never touch
+  it.** `buildDeliveryOrderDocument` bakes the entire channel adjustment into each line's own
+  channel-resolved `unitPrice` — there is no separate order-level delivery/courier fee for a catalog
+  reward to accidentally zero out, and no code path could make one appear. Unrelated order-level fees
+  (where they exist on other channels) remain payable exactly as before; a reward only ever discounts its
+  own targeted line.
+- **Rule — `eligibleChannels` validation is channel-specific and fails closed identically across all
+  three implemented channels**, mirroring `BR-LOYALTY-028`'s own Takeaway-only rule: Delivery rejects a
+  reward whose `eligibleChannels` excludes `"delivery"`; Reservation-preorder rejects one excluding
+  `"reservationPreorder"` — both with the same stable `catalogReward/channel-not-eligible` reason, before
+  any pricing/build work, no balance debit, no ledger write, no order created with the reward applied.
+  Neither channel accepts a client-sent channel override of any kind.
+- **Rule — a reservation's proposed-time change never re-debits or re-restores an already-applied catalog
+  reward.** `respondToReservation`'s `confirm` action and a customer's subsequent `respondToProposedChange`
+  accept both only ever call `buildPreorderConfirmationPatch`, which patches `kitchenReleaseAt`/status
+  fields only — it never reads or writes `catalogReward`/`selectedBenefitType`/the loyalty ledger. Proven
+  by test: balance, ledger state, and the order's own immutable `catalogReward` snapshot are byte-for-byte
+  identical before and after a full propose → accept round trip.
+- **Rule — Bowl Builder items remain structurally unreachable by any reward, unchanged from before this
+  phase** — `eligibleProductIds` can only ever reference a real canonical `menuProducts` id, and a Bowl
+  Builder cart item mints an ad-hoc `custom_bowl_<timestamp>` id with no real canonical product id, so
+  `findFirstEligibleCartProductId` (matching only `kind: "product"` items) can never match a bowl. Since
+  no reward can reach a bowl end-to-end today, `buildBowlLine` (`submitTakeawayOrder.ts`) was extended
+  with the same `freeUnitCount` parameter `buildProductLine` already has, purely for forward-compatibility
+  and to prove the shared pricing primitive is exact for a bowl-shaped line (channel adjustment +
+  ingredient total, covered in one flat discount) — proven at the pricing-primitive unit-test level, not
+  via a reachable end-to-end reward, since none can exist yet.
+- **BLOCKER — Dine-in catalog-reward redemption could not be implemented this phase; reported, not
+  worked around.** A dedicated audit (before any code was written) confirmed dine-in order creation
+  (`dineInQr`/`dineInStaff`) is today a **direct client-side Firestore write**, gated only by
+  `firestore.rules` — there is no Cloud Function, no transaction, and no server-authoritative pricing
+  pipeline for dine-in at all (dine-in does not even earn Boncuk today — `LOYALTY_EARNING_ELIGIBLE
+  _CHANNELS` excludes it). Adding catalog-reward redemption requires an atomic server-side account
+  debit inside the SAME transaction that creates the order — there is structurally no transaction to
+  extend. Building one is a new, architecture-change-sized server-authoritative dine-in order pipeline,
+  explicitly out of scope for this phase per this task's own "STOP and report the exact structural
+  blocker rather than creating a workaround" instruction. **Defensive hardening applied regardless**: the
+  audit flagged that once `catalogReward` exists as a real concept elsewhere in the codebase, an
+  unmodified dine-in client write becomes a NEW forgery surface (a client could set `catalogReward`/
+  `selectedBenefitType: "catalogReward"` directly on its own order document) — `firestore.rules`'
+  `clientOrderCreateOmitsBoncukRedemption()` was extended to also block a forged `catalogReward` field
+  and `selectedBenefitType == 'catalogReward'` on any client-created order, proven by test (org-member,
+  anonymous table guest, and authenticated table customer forgery attempts all denied, on both `dineInQr`
+  and `dineInStaff`, and on an `updateDoc` against an existing order).
+- **Rule — anonymous table-QR guests were never eligible for any Loyalty benefit before this phase, and
+  remain so** (no change from `BR-LOYALTY-026`'s original design) — since dine-in has no
+  catalog-reward-capable order pipeline at all, this is currently enforced structurally (there is nothing
+  to redeem against), reinforced defensively by the `firestore.rules` hardening above.
+- **Rule — customer Reward Catalog UI ("Boncuklarım → Ödüller") is fully real, server-sourced, with no
+  standalone claim/voucher system.** `RewardsScreen`/`RewardDetailScreen` read exclusively from
+  `loyaltyRewardCatalogProvider` (`getCustomerLoyaltyRewardCatalog`, `BR-LOYALTY-026`) — no mock/local
+  reward source is reachable from either screen or anywhere downstream. `RewardDetailScreen`'s CTA never
+  creates a voucher or claim record; it only navigates the customer into the SAME existing checkout entry
+  point each channel already had (Delivery's menu tab, Takeaway's branch selection, Reservation's flow
+  screen) — the actual reward SELECTION still only happens via `CatalogRewardCard` at that channel's own
+  checkout, once an eligible product is genuinely in the cart. A small, explicitly-documented
+  `_appRoutableChannelLabels` map excludes `dineIn` from the set of channels the UI offers to route into
+  (a navigation-capability concern, not a re-implementation of server-side eligibility — the server alone
+  decides whether a redemption is valid) — this is the direct UI consequence of the Dine-in blocker above.
+- **Rule — every success/detail summary is reconstructed exclusively from the canonical, immutable order
+  snapshot, never a pre-submit client estimate.** Delivery's `OrderSuccessScreen` and Reservation's
+  `ReservationConfirmationScreen` both gate their `CatalogRewardSuccessSummary` on the order's own
+  server-confirmed `catalogReward` fields (reward title, Boncuk used, free product, covered amount) —
+  reused verbatim from `BR-LOYALTY-027`, no second summary component. `ReservationDetailScreen`
+  reconstructs the historical reward badge the same way, sourced only from that specific preorder's own
+  stored snapshot — a later edit to the LIVE reward catalog can never change what an already-placed order
+  historically redeemed (proven by test: editing the live reward after submission leaves the order's
+  stored `boncukCost`/`rewardVersion` untouched).
+- **Owner Agent**: restaurant_domain / security_engineer / ui_ux_designer
+- **Related Modules**: Loyalty, Orders, Menu, Delivery, Reservation, BR-LOYALTY-004, BR-LOYALTY-019,
+  BR-LOYALTY-024, BR-LOYALTY-025, BR-LOYALTY-026, BR-LOYALTY-027, BR-LOYALTY-028
+
 ### BR-LOYALTY-008 — Task-based earning
 - **Status**: DECIDED (task list and point values) / UNRESOLVED (verification mechanism, unfollow
   reversal)

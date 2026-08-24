@@ -230,13 +230,15 @@ class OrderSuccessScreen extends StatelessWidget {
                   remainingPayableMinorUnits: remainingPayableMinorUnits!,
                 ),
               ],
-              // Boncuk Loyalty P7-C (2026-08-24) — takeaway only, and only
-              // when a real catalog-reward redemption happened. Mutually
-              // exclusive with the Boncuk-cash-redemption summary above by
+              // Boncuk Loyalty P7-C (2026-08-24), broadened P7-D
+              // (2026-08-24) — takeaway OR delivery only, and only when a
+              // real catalog-reward redemption happened. Mutually exclusive
+              // with the Boncuk-cash-redemption summary above by
               // construction (`_hasBoncukSummary`/`_hasCatalogRewardSummary`
               // can never both be true for the same order — one benefit
               // per order).
-              if (_isTakeaway && _hasCatalogRewardSummary) ...[
+              if ((_isTakeaway || isDeliveryOrder) &&
+                  _hasCatalogRewardSummary) ...[
                 const SizedBox(height: AppSpacing.md),
                 CatalogRewardSuccessSummary(
                   rewardTitle: catalogRewardTitle!,

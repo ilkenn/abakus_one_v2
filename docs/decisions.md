@@ -15209,3 +15209,195 @@ by the user's own persistent `abakus-one-dev` local dev emulator (freshly re-see
 P7-C turn immediately before this one) — stopped with explicit user confirmation, restarted and fully
 re-seeded afterward (this time correctly targeting `abakus-one-dev` from the start, applying the lesson
 from P7-C's own project-id mistake).
+
+## Boncuk Loyalty Program P7-D — Catalog Reward Redemption Across Delivery and Reservation-preorder; Dine-in Blocked (2026-08-24)
+
+**Status**: Implemented for Delivery and Reservation-preorder — closing `BR-LOYALTY-027`'s own disclosed
+"Delivery/Reservation-preorder remain cash-Boncuk-only" gap for two of the three remaining channels.
+Dine-in catalog-reward redemption is explicitly **not** implemented — an architectural blocker, audited
+first and reported per this task's own "STOP and report" instruction, not worked around. Campaign Engine,
+Admin UI, and POS remain out of scope. See `docs/business_rules.md`'s new `BR-LOYALTY-029` for the full
+locked rule set.
+
+### 1. Audit first — dine-in has no server-authoritative order pipeline at all
+
+Before any implementation, a dedicated audit confirmed dine-in order creation (`dineInQr`/`dineInStaff`)
+is a **direct client-side Firestore write**, gated only by `firestore.rules` — no Cloud Function, no
+transaction, no server-authoritative pricing pipeline exists for it, and dine-in does not even earn
+Boncuk today (`LOYALTY_EARNING_ELIGIBLE_CHANNELS` excludes it). Catalog-reward redemption requires an
+atomic server-side account debit inside the SAME transaction that creates the order — there is
+structurally no transaction to extend. Building one would be a new, architecture-change-sized
+server-authoritative dine-in order pipeline, explicitly out of scope this phase. Reported as the exact
+structural blocker rather than worked around (e.g. writing the debit directly to the client-side order
+document, which the audit flagged as a NEW forgery risk once `catalogReward` exists as a real concept).
+
+### 2. Delivery — extends the exact Takeaway/P7-C pattern
+
+`submitDeliveryOrder.ts` gained the same two-phase resolution Takeaway established: a PRE-`buildLines`
+validity/eligibility scan (reward exists, currently valid, `eligibleChannels` includes `"delivery"`,
+matches a real cart product) followed by a POST-`buildLines` balance/ledger resolution inside the
+transaction. `buildDeliveryLines` gained a `rewardedProductId` param and now returns
+`rewardAppliedLineIndex`, applying `freeUnitCount: isRewardedLine ? 1 : 0` to the matched line via
+`buildProductLine`. `findFirstEligibleCartProductId` and `CatalogRewardOrderSnapshot` are imported
+directly from `submitTakeawayOrder.ts` (an already-established cross-file reuse convention — Delivery
+already imported pricing helpers from there pre-P7-D) rather than relocated into a new shared module.
+Delivery's order-level `deliveryFee` is structurally always `moneyField(0)` (the channel adjustment is
+baked into each line's own `unitPrice`) — proven by test that a reward can never touch it, because
+there is nothing there to touch. All 7 existing COD payment methods remain compatible; no online payment
+work was needed or done.
+
+### 3. Reservation-preorder — same pattern, atomic with preorder-Order creation
+
+`reservationPreorder.ts`'s `parsePreorderRequest` now also parses `selectedRewardId` (read from
+`data.preorder.selectedRewardId` — there is no top-level field a client could use instead) and performs
+the same static stacking-rejection check (`requestedBoncukAmount > 0` together with `selectedRewardId`
+rejected fail-closed). `submitReservation.ts` gained the identical PRE/POST two-phase resolution inside
+its `if (parsedPreorder)` block, atomic with the linked preorder Order's own creation in the same
+transaction — a reward can never apply without a real, atomically-created Order behind it.
+Reservation-preorder has **no channel surcharge configured at all** (verified: an unconfigured channel
+resolves to a zero adjustment, no "unknown channel falls back to takeaway" behavior anywhere in
+`takeawayPricing.ts`), so `freeUnitCount` there covers exactly the canonical base unit price. A
+restaurant-proposed time change, accepted by the customer, never re-debits or restores the reward:
+`respondToReservation`'s `confirm` action and `respondToProposedChange`'s `accept` handler both only ever
+call `buildPreorderConfirmationPatch`, which patches `kitchenReleaseAt`/status fields only — verified by
+reading the code before writing the claim, then proven by a full propose→accept round-trip test asserting
+balance/ledger/snapshot are byte-for-byte unchanged.
+
+### 4. Restore and earning required zero new channel-specific code
+
+`loyaltyRedemptionRestore.ts` has no channel-specific branching at all (keyed only on event type / which
+ledger-entry family exists); `loyaltyOrderEarning.ts`'s `LOYALTY_EARNING_ELIGIBLE_CHANNELS` already
+included `"delivery"` and `"reservationPreorder"` (from earlier phases). Both were already fully
+channel-agnostic — this phase's Delivery and Reservation-preorder SUBMIT paths were the only code that
+needed the new redemption wiring; restore (cancel/reject/no-show/refund) and earning-on-completion worked
+correctly for both channels the moment redemption existed, proven end-to-end via each channel's own real
+terminal-lifecycle callables (`respondToDeliveryOrder`/`advanceDeliveryOrderStatus`/`refundDeliveryOrder`;
+`respondToReservation`/`cancelReservation`/`markReservationNoShow`/
+`advanceReservationPreorderOrderStatus`/`refundReservationPreorderOrder`).
+
+### 5. `firestore.rules` — defensive hardening against the new dine-in forgery surface
+
+Once `catalogReward` exists as a real concept elsewhere in the codebase, an unmodified dine-in client
+write becomes a new forgery surface a client could exploit (setting `catalogReward`/
+`selectedBenefitType: "catalogReward"` directly on its own client-created order document — dine-in order
+creation is the one channel with no server-side validation at all). `clientOrderCreateOmitsBoncukRedemption()`
+was extended to also require `!('catalogReward' in request.resource.data)` and forbid
+`selectedBenefitType == 'catalogReward'` — the single call site this function already had, no rename.
+Proven by a new "Boncuk Loyalty P7-D — catalogReward forgery" rules-test section: org-member forge on a
+`takeaway`-channel order denied; org-member forge on `dineInStaff` denied (defense in depth, since a
+staff member could otherwise construct a dine-in order client-side); benefit-type-alone-without-the-block
+denied; anonymous guest table-order injection denied; authenticated table-customer injection denied; a
+client `updateDoc` injection against an already-existing order denied.
+
+### 6. Customer Reward Catalog UI — "Boncuklarım → Ödüller", fully real
+
+New `RewardsScreen` (list, sorted by `sortOrder`, affordability badge sourced from
+`loyaltySnapshotProvider`) and `RewardDetailScreen` (full detail: exact Boncuk cost, eligible products
+cross-referenced against `menuProductsProvider` by id, "where usable" channel badges). Both read
+exclusively from `loyaltyRewardCatalogProvider` (`getCustomerLoyaltyRewardCatalog`) — no mock/local
+reward source is reachable from either screen. `RewardDetailScreen`'s CTA never creates a standalone
+voucher/claim — it only navigates the customer into the SAME existing checkout entry point each channel
+already had (`ref.read(navigationProvider.notifier).selectTab(AppTab.menu)` for delivery,
+`TakeawayBranchSelectionScreen` for takeaway, `context.push(AppRoutes.reservationPrefix)` for
+reservation, mirroring `HomeScreen`'s own `OrderModeSection` targets exactly) — the actual reward
+SELECTION still only happens via `CatalogRewardCard` at that channel's own checkout, once an eligible
+product is genuinely in the cart. A small `_appRoutableChannelLabels` map explicitly excludes `dineIn`
+from the routable set (a navigation-capability concern, documented as such, never a re-implementation of
+server-side eligibility) — the direct UI consequence of §1's blocker. `LoyaltyReward` gained
+`eligibleChannels: List<String>` (opaque strings, no Flutter-side closed enum, matching
+`BR-LOYALTY-028`'s own "never hardcode the vocabulary" rule) and `isEligibleForChannel`.
+
+### 7. Checkout wiring and server-confirmed summaries — Delivery and Reservation
+
+`DeliveryCheckoutScreen` and `ReservationFlowScreen` both gained `CatalogRewardCard` wiring identical in
+shape to Takeaway's own P7-C integration: reward selection clears any active Boncuk cash-redemption
+selection and vice versa (mutual exclusivity by REMOVAL, never two simultaneous selection paths), a
+catalogReward-specific server rejection resets the selection (never auto-resubmits without the reward),
+and a cart change that could invalidate the selected reward is re-checked pre-flight. `OrderSuccessScreen`
+(Delivery) and the new `CatalogRewardSuccessSummary` block in `ReservationConfirmationScreen` both show
+values sourced exclusively from the canonical, server-confirmed order snapshot — reward title, Boncuk
+used, free product, covered amount — never a pre-submit client estimate. `ReservationDetailScreen` gained
+a historical-reward badge reconstructed the same way, from that specific preorder's own stored snapshot
+only — proven by test that a later edit to the LIVE reward catalog never changes what an already-placed
+order historically redeemed.
+
+### 8. Bowl Builder — pricing primitive extended, still structurally unreachable end-to-end
+
+`eligibleProductIds` can only reference a real canonical `menuProducts` id; a Bowl Builder cart item mints
+an ad-hoc `custom_bowl_<timestamp>` id with no real canonical product id, so `findFirstEligibleCartProductId`
+(matching only `kind: "product"` items) can never match a bowl — no reward can reach a bowl end-to-end
+today, unchanged by this phase. `buildBowlLine` (`submitTakeawayOrder.ts`) was nonetheless extended with
+the same `freeUnitCount` parameter `buildProductLine` already has (default `0`, both existing call sites
+unaffected), proven exact at the pricing-primitive unit-test level in `takeawayPricing.test.ts`: the
+channel adjustment plus the full ingredient total are covered in one flat discount for a single unit, and
+exactly one unit is freed at quantity > 1, the rest remaining fully priced including their own channel
+adjustment.
+
+### 9. Tests
+
+**New backend test files**: `functions/src/test/submitDeliveryOrderCatalogReward.test.ts` (15 tests —
+valid redemption; wrong-channel reject; exactly-one-unit-free at qty>1; beverage/non-beverage surcharge
+coverage; other items and the always-zero `deliveryFee` unaffected; insufficient balance; stacking
+reject; concurrent double-spend protection; earning exclusion; historical cost/version preservation;
+end-to-end staff-reject restore; end-to-end manager-refund restore; two pricing regressions).
+`functions/src/test/submitReservationCatalogReward.test.ts` (13 tests — valid preorder redemption;
+wrong-channel reject; exactly-one-unit-free at qty>1; stacking reject; insufficient balance; no-preorder
+structural proof; proposed-time-change-does-not-re-debit; historical snapshot preservation; customer
+self-cancel restore; no-show restore; completed earning exclusion; completed→refunded restore with
+earning clawback; regression). **Extended**: `functions/src/test/takeawayPricing.test.ts` (2 new
+pure-function tests proving `freeUnitCount` is exact for a bowl-shaped line), `firestore-tests/rules.test.js`
+(new "P7-D — catalogReward forgery" section, 6 tests). **Flutter**: two new files
+(`rewards_screen_test.dart`, `reward_detail_screen_test.dart`), and P7-D sections added to
+`delivery_checkout_screen_test.dart`, `reservation_flow_screen_test.dart`,
+`reservation_confirmation_screen_test.dart`, `reservation_detail_screen_test.dart`.
+
+**Two real test-fixture bugs were found and fixed while running the full suite** (both in test code, not
+production code): (1) `submitDeliveryOrderCatalogReward.test.ts`'s `seedFullValidFixture` independently
+minted a random neighborhood name for the seeded `deliveryServiceAreas` doc and for the customer's own
+`customerAddresses` doc (two separate `nextId("zone")` calls), so `resolveDeliveryServiceArea`'s
+district+neighborhood match structurally never succeeded — fixed by computing the neighborhood name once
+and passing it to both seeds. This single bug caused all 14 non-stacking tests in that file to fail
+identically with a "not covered" address error the first time the full suite actually exercised the file
+end-to-end (the file's own earlier `targetStatus` fix had been verified by reading the code, not by a
+prior live run). (2) `submitReservationCatalogReward.test.ts` had a `requestedTime`/`proposedTime`
+slot-alignment bug (`alignedFutureIso(200)`/`alignedFutureIso(220)` are not multiples of the 15-minute
+slot interval) and an assertion expecting `undefined` instead of the real `null` for an absent
+`preorderOrderId`; both fixed. A third bug — a simple arithmetic error in a code comment/assertion
+(`24000 / 5000 = 4 whole Boncuk` should have been `floor(24000 * 5 / 5000) = 24`, since the default policy
+is 5000 minor units → 5 Boncuk, not → 1) — was also caught and fixed the same way.
+
+**Files changed — backend**: `functions/src/submitDeliveryOrder.ts`, `functions/src/reservationPreorder.ts`,
+`functions/src/submitReservation.ts`, `functions/src/submitTakeawayOrder.ts` (`buildBowlLine` only),
+`firestore.rules`. **New test files**: `functions/src/test/submitDeliveryOrderCatalogReward.test.ts`,
+`functions/src/test/submitReservationCatalogReward.test.ts`. **Extended test files**:
+`functions/src/test/takeawayPricing.test.ts`, `firestore-tests/rules.test.js`. **Files changed —
+Flutter**: `lib/features/loyalty/domain/models/loyalty_reward.dart`,
+`lib/features/loyalty/data/loyalty_gateway.dart`, `lib/features/loyalty/presentation/screens/loyalty_screen.dart`,
+new `lib/features/loyalty/presentation/screens/rewards_screen.dart` and `reward_detail_screen.dart`,
+`lib/features/delivery/data/submit_delivery_order_gateway.dart`,
+`lib/features/delivery/presentation/screens/delivery_checkout_screen.dart`,
+`lib/features/cart/presentation/screens/order_success_screen.dart`,
+`lib/features/reservation/data/reservation_gateway.dart`, `lib/features/reservation/data/reservation_repository.dart`,
+`lib/features/reservation/domain/models/reservation_summary.dart`,
+`lib/features/reservation/domain/reservation_error_messages.dart`,
+`lib/features/reservation/presentation/screens/reservation_flow_screen.dart`,
+`reservation_confirmation_screen.dart`, `reservation_detail_screen.dart`,
+`lib/features/admin/data/admin_reservation_repository.dart` (compile-compatibility only). **New/extended
+Flutter test files**: `test/features/loyalty/presentation/screens/rewards_screen_test.dart`,
+`reward_detail_screen_test.dart`, plus P7-D sections in `delivery_checkout_screen_test.dart`,
+`reservation_flow_screen_test.dart`, `reservation_confirmation_screen_test.dart`,
+`reservation_detail_screen_test.dart`, and a compile-fix in `takeaway_checkout_screen_test.dart`/
+`reservation_operations_screen_test.dart`. **Docs**: this entry, `docs/business_rules.md` (new
+`BR-LOYALTY-029`), `docs/feature_status.md` (P7-D entry).
+
+**Exact gate totals**: Functions build (`tsc`) clean. Functions FULL emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`, JDK 21) — **1421/1421, 0 failed** (up from P7-C.1's 1391 — 30 new
+tests: 15 Delivery + 13 Reservation + 2 Bowl Builder pricing-primitive). Firestore Rules FULL suite (JDK
+21) — **367/367, 0 failed** (up from 361 — 6 new catalogReward-forgery tests; rerun this time, unlike
+P7-C.1's skip, because `firestore.rules` was genuinely touched). `flutter analyze` — clean, no issues.
+`flutter test` — **3406 passed / 12 skipped / 0 failed** (up from the 3376/12 baseline — 30 new tests).
+No commit was made, per this task's own explicit instruction.
+
+**Operational note**: running the full backend gate suite required freeing ports 8080/9099/5001 again,
+held by the user's own persistent `abakus-one-dev` local dev emulator — stopped with explicit user
+confirmation this turn, restarted afterward on the same project/ports.

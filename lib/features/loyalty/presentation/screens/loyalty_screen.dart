@@ -16,6 +16,7 @@ import '../widgets/abacus_card.dart';
 import '../widgets/loyalty_history_tile.dart';
 import '../widgets/loyalty_progress.dart';
 import 'loyalty_history_screen.dart';
+import 'rewards_screen.dart';
 
 /// P3A (2026-08-23) — the canonical, real, server-authoritative Boncuklarım
 /// screen. Replaces the entirely mock implementation previously at
@@ -27,10 +28,13 @@ import 'loyalty_history_screen.dart';
 /// real customer loyalty feature — Boncuk is no longer Profile-domain
 /// business logic.
 ///
-/// **No tiers, no rewards catalog, no wheel, no campaigns** — all remain
-/// unimplemented product decisions (BR-LOYALTY-007/008/009, campaigns is a
-/// separate future customer phase) and are deliberately absent rather than
-/// shown as fake/disabled UI, per this phase's own locked scope.
+/// **No tiers, no wheel, no campaigns** — all remain unimplemented product
+/// decisions (BR-LOYALTY-008/009, campaigns is a separate future customer
+/// phase) and are deliberately absent rather than shown as fake/disabled
+/// UI, per this phase's own locked scope. **The Reward Catalog ("Ödüller")
+/// is real as of P7-B/P7-C/P7-C.1/P7-D (2026-08-24)** — see the
+/// `_RewardsEntrySection` below, sourced from the server-authoritative
+/// `getCustomerLoyaltyRewardCatalog`, never a mock.
 ///
 /// Real, phone-verified customer only — a guest/unauthenticated session
 /// sees [_GuestLoyaltyPrompt] instead of ever touching the loyalty
@@ -101,6 +105,8 @@ class _AuthenticatedLoyaltyScreen extends ConsumerWidget {
                   LoyaltyProgressCard(snapshot: snapshot),
                   const SizedBox(height: AppSpacing.md),
                   _HowItWorksCard(snapshot: snapshot),
+                  const SizedBox(height: AppSpacing.md),
+                  const _RewardsEntrySection(),
                   const SizedBox(height: AppSpacing.xl),
                   const _MovementsSection(),
                 ],
@@ -238,6 +244,57 @@ class _HowItWorksChip extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Boncuk Loyalty Program P7-D (2026-08-24) — "Boncuklarım → Ödüller" entry
+/// point. A compact card, never the full catalog inline — tapping it
+/// navigates to [RewardsScreen], the real server-authoritative listing.
+class _RewardsEntrySection extends StatelessWidget {
+  const _RewardsEntrySection();
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      key: const Key('loyaltyRewardsEntryCard'),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const RewardsScreen()),
+      ),
+      borderRadius: AppRadius.kMedium,
+      child: AppCard(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              decoration: const BoxDecoration(
+                color: AppColors.primaryExtraLight,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.redeem_rounded, color: AppColors.primary),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Ödüller', style: AppTypography.titleMedium),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Boncuklarınla gerçek ödülleri kullan',
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded,
+                color: AppColors.textSecondary),
+          ],
+        ),
       ),
     );
   }

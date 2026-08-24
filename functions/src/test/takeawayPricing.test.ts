@@ -321,6 +321,70 @@ test("buildOrderLine: bowl ingredients — the channel adjustment is the line's 
   assert.strictEqual(line.lineTotalMinorUnits, 54000);
 });
 
+test("buildOrderLine: catalog-reward freeUnitCount on a bowl line covers the COMPLETE canonical single-bowl contribution — channel adjustment + full ingredient total — in one flat discount, Boncuk Loyalty P7-D (2026-08-24)", () => {
+  // No real reward can currently target a Bowl Builder item end-to-end
+  // (custom_bowl_<timestamp> ids never match a reward's eligibleProductIds,
+  // an already-audited, structural constraint) — this proves the shared
+  // `freeUnitCount` pricing primitive itself is exact for a bowl-shaped
+  // line, at the primitive level, exactly like it already is for a plain
+  // product line.
+  const bowlAdjustment = resolveBowlUnitAdjustmentMinorUnits({
+    channel: "delivery",
+    policy: { channelDefaultAdjustments: { delivery: 14000 }, categoryOverrides: {} },
+  });
+  const line = buildOrderLine({
+    productId: "custom_bowl",
+    productName: "Kendi Bowlun",
+    modifiers: [
+      {
+        groupId: "protein", groupName: "protein", optionId: "chicken", optionName: "Tavuk",
+        unitExtraPriceMinorUnits: 15000, quantity: 1,
+      },
+      {
+        groupId: "carbs", groupName: "carbs", optionId: "rice", optionName: "Pirinç",
+        unitExtraPriceMinorUnits: 10000, quantity: 1,
+      },
+    ],
+    quantity: 1,
+    unitPriceMinorUnits: bowlAdjustment,
+    taxBasisPoints: 1000,
+    freeUnitCount: 1,
+  });
+  // (channel adjustment 14000 + ingredients 25000) * 1 unit = 39000, all
+  // of it discounted — nothing left payable for this single-bowl unit.
+  assert.strictEqual(bowlAdjustment, 14000);
+  assert.strictEqual(line.lineSubtotalMinorUnits, 39000);
+  assert.strictEqual(line.lineDiscountMinorUnits, 39000);
+  assert.strictEqual(line.lineTotalMinorUnits, 0);
+});
+
+test("buildOrderLine: catalog-reward freeUnitCount on a bowl line with quantity > 1 frees exactly ONE bowl unit, the rest remain fully priced including their own channel adjustment", () => {
+  const bowlAdjustment = resolveBowlUnitAdjustmentMinorUnits({
+    channel: "takeaway",
+    policy: { channelDefaultAdjustments: { takeaway: 2000 }, categoryOverrides: {} },
+  });
+  const line = buildOrderLine({
+    productId: "custom_bowl",
+    productName: "Kendi Bowlun",
+    modifiers: [
+      {
+        groupId: "protein", groupName: "protein", optionId: "chicken", optionName: "Tavuk",
+        unitExtraPriceMinorUnits: 15000, quantity: 1,
+      },
+    ],
+    quantity: 3,
+    unitPriceMinorUnits: bowlAdjustment,
+    taxBasisPoints: 1000,
+    freeUnitCount: 1,
+  });
+  // Per-unit contribution = 2000 (adjustment) + 15000 (ingredient) = 17000;
+  // subtotal across 3 units = 51000; exactly ONE unit's worth (17000) is
+  // discounted, leaving 34000 (2 units) payable.
+  assert.strictEqual(line.lineSubtotalMinorUnits, 51000);
+  assert.strictEqual(line.lineDiscountMinorUnits, 17000);
+  assert.strictEqual(line.lineTotalMinorUnits, 34000);
+});
+
 test("buildOrderLine: throws for zero or negative quantity", () => {
   assert.throws(() =>
     buildOrderLine({

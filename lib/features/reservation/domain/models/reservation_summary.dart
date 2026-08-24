@@ -45,12 +45,20 @@ enum ReservationPreorderStatus {
 
 class ReservationPreorderLineSummary {
   const ReservationPreorderLineSummary({
+    required this.productId,
     required this.productName,
     required this.quantity,
     required this.modifierNames,
     required this.lineTotalMinorUnits,
   });
 
+  /// Boncuk Loyalty P7-D (2026-08-24) — the canonical `menuProducts` id,
+  /// `null` for a Bowl Builder line (no real canonical id exists for those,
+  /// see `submitTakeawayOrder.ts`'s own `findFirstEligibleCartProductId`
+  /// doc comment). Used to cross-reference a redeemed catalog reward's own
+  /// `redeemedProductId` back to its display name, never the other way
+  /// around.
+  final String? productId;
   final String productName;
   final int quantity;
   final List<String> modifierNames;
@@ -67,6 +75,10 @@ class ReservationPreorderSummary {
     this.boncukUsed,
     this.boncukValueMinorUnits,
     this.remainingPayableMinorUnits,
+    this.catalogRewardTitle,
+    this.catalogRewardBoncukCost,
+    this.catalogRewardRedeemedProductId,
+    this.catalogRewardCoveredValueMinorUnits,
   });
 
   final String orderId;
@@ -90,6 +102,37 @@ class ReservationPreorderSummary {
       boncukUsed != null &&
       boncukValueMinorUnits != null &&
       remainingPayableMinorUnits != null;
+
+  /// Boncuk Loyalty Program P7-D (2026-08-24) — the catalog-reward sibling
+  /// of the Boncuk fields above, sourced directly from the canonical
+  /// order's own immutable `catalogReward` snapshot — never re-derived
+  /// from the current live Reward Catalog, so a later reward edit can
+  /// never rewrite this preorder's own history. `null` means no catalog
+  /// reward was redeemed against this preorder.
+  final String? catalogRewardTitle;
+  final int? catalogRewardBoncukCost;
+  final String? catalogRewardRedeemedProductId;
+  final int? catalogRewardCoveredValueMinorUnits;
+
+  bool get hasCatalogRewardSummary =>
+      catalogRewardTitle != null &&
+      catalogRewardBoncukCost != null &&
+      catalogRewardRedeemedProductId != null &&
+      catalogRewardCoveredValueMinorUnits != null;
+
+  /// The redeemed product's display name, cross-referenced from this SAME
+  /// preorder's own [lines] — never a separate catalog lookup, matching
+  /// `TakeawayCheckoutScreen`'s own identical cross-referencing discipline.
+  /// `null` if [hasCatalogRewardSummary] is false or (defensively) the
+  /// line can no longer be found.
+  String? get catalogRewardRedeemedProductName {
+    final productId = catalogRewardRedeemedProductId;
+    if (productId == null) return null;
+    for (final line in lines) {
+      if (line.productId == productId) return line.productName;
+    }
+    return null;
+  }
 }
 
 /// The customer-facing read model for their own reservation — sourced

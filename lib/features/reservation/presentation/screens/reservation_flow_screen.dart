@@ -12,10 +12,13 @@ import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
+import '../../../cart/domain/models/cart_item.dart';
 import '../../../cart/presentation/screens/takeaway_checkout_screen.dart'
     show computeClientEstimatedMaxBoncuk;
 import '../../../cart/presentation/widgets/boncuk_redemption_card.dart';
+import '../../../cart/presentation/widgets/catalog_reward_card.dart';
 import '../../../loyalty/domain/models/loyalty_account_snapshot.dart';
+import '../../../loyalty/domain/models/loyalty_reward.dart';
 import '../../../loyalty/presentation/providers/loyalty_providers.dart';
 import '../../data/reservation_gateway.dart';
 import '../../domain/models/reservation_draft.dart';
@@ -69,6 +72,13 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
   bool _boncukUsageEnabled = false;
   int _selectedBoncukAmount = 0;
 
+  /// Boncuk Loyalty Program P7-D (2026-08-24) — mirrors
+  /// `TakeawayCheckoutScreen._selectedRewardId` exactly. Only ever
+  /// meaningful alongside a preorder, same as [_boncukUsageEnabled].
+  String? _selectedRewardId;
+
+  bool _isBowlCartItem(CartItem item) => item.id.startsWith('custom_bowl_');
+
   @override
   void initState() {
     super.initState();
@@ -102,6 +112,22 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
       _boncukUsageEnabled = value;
       _selectedBoncukAmount =
           value ? (_selectedBoncukAmount > 0 ? _selectedBoncukAmount : 1) : 0;
+      // Boncuk Loyalty P7-D — mutual exclusivity: turning cash redemption
+      // on clears any catalog-reward selection.
+      if (value) _selectedRewardId = null;
+      _submitError = null;
+    });
+  }
+
+  /// Boncuk Loyalty Program P7-D (2026-08-24) — mirrors
+  /// `TakeawayCheckoutScreen._onRewardSelect` exactly.
+  void _onRewardSelect(String? rewardId) {
+    setState(() {
+      _selectedRewardId = rewardId;
+      if (rewardId != null) {
+        _boncukUsageEnabled = false;
+        _selectedBoncukAmount = 0;
+      }
       _submitError = null;
     });
   }
@@ -149,6 +175,24 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
     }
   }
 
+  /// Boncuk Loyalty Program P7-D (2026-08-24) — mirrors
+  /// `TakeawayCheckoutScreen._handleCartMightHaveInvalidatedReward` exactly,
+  /// against the preorder cart.
+  void _handleCartMightHaveInvalidatedReward() {
+    final rewardId = _selectedRewardId;
+    if (rewardId == null) return;
+    final rewards = ref.read(loyaltyRewardCatalogProvider).valueOrNull;
+    final reward = rewards?.where((r) => r.rewardId == rewardId).firstOrNull;
+    final cartProductIds = ref
+        .read(preorderCartProvider)
+        .where((item) => !_isBowlCartItem(item))
+        .map((item) => item.id)
+        .toSet();
+    if (reward == null || !reward.isEligibleForCart(cartProductIds)) {
+      setState(() => _selectedRewardId = null);
+    }
+  }
+
   Future<void> _submit() async {
     if (_isSubmitting) return;
 
@@ -166,6 +210,24 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
           : computeClientEstimatedMaxBoncuk(
               snapshot, ref.read(preorderCartTotalPriceProvider));
       if (_selectedBoncukAmount <= 0 || _selectedBoncukAmount > max) {
+        return;
+      }
+    }
+
+    // Boncuk Loyalty P7-D — the same defense-in-depth discipline for a
+    // catalog-reward selection, mirroring TakeawayCheckoutScreen exactly.
+    if (_selectedRewardId != null && preorderItems.isNotEmpty) {
+      final rewards = ref.read(loyaltyRewardCatalogProvider).valueOrNull;
+      final cartProductIds = preorderItems
+          .where((item) => !_isBowlCartItem(item))
+          .map((item) => item.id)
+          .toSet();
+      final stillEligible = rewards != null &&
+          rewards.any((r) =>
+              r.rewardId == _selectedRewardId &&
+              r.isEligibleForCart(cartProductIds));
+      if (!stillEligible) {
+        setState(() => _selectedRewardId = null);
         return;
       }
     }
@@ -207,6 +269,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
         requestedBoncukAmount: (_boncukUsageEnabled && preorderItems.isNotEmpty)
             ? _selectedBoncukAmount
             : 0,
+        selectedRewardId: preorderItems.isNotEmpty ? _selectedRewardId : null,
       );
 
       if (!mounted) return;
@@ -215,6 +278,12 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
       // later screen to happen to re-fetch it (mirrors
       // TakeawayCheckoutScreen/DeliveryCheckoutScreen).
       ref.invalidate(loyaltySnapshotProvider);
+      // Boncuk Loyalty P7-D — a catalog-reward redemption debits the same
+      // account, so the reward catalog's own balance-eligibility state is
+      // refreshed identically (mirrors TakeawayCheckoutScreen exactly).
+      if (_selectedRewardId != null && preorderItems.isNotEmpty) {
+        ref.invalidate(loyaltyRewardCatalogProvider);
+      }
       // `context.go` kicks off go_router's own (internally async)
       // route-matching pipeline rather than swapping the tree
       // synchronously, so this widget can still rebuild before the
@@ -240,12 +309,16 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
           // TakeawayCheckoutScreen/DeliveryCheckoutScreen). Turning the
           // selection off makes the screen immediately submittable again
           // WITHOUT Boncuk, but the customer must tap submit themselves.
+          // Boncuk Loyalty P7-D — the same reset covers a catalog-reward
+          // rejection too.
           _boncukUsageEnabled = false;
           _selectedBoncukAmount = 0;
+          _selectedRewardId = null;
         }
       });
       if (isBoncukError) {
         ref.invalidate(loyaltySnapshotProvider);
+        ref.invalidate(loyaltyRewardCatalogProvider);
       }
     }
   }
@@ -269,6 +342,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
 
     final branchInfoAsync = ref.watch(reservationBranchInfoProvider);
     final loyaltySnapshotAsync = ref.watch(loyaltySnapshotProvider);
+    final rewardsAsync = ref.watch(loyaltyRewardCatalogProvider);
 
     // Boncuk Loyalty P6-B — react to a preorder-cart or loyalty snapshot
     // change while Boncuk usage is on (mirrors TakeawayCheckoutScreen's own
@@ -279,6 +353,15 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
     ref.listen<AsyncValue<LoyaltyAccountSnapshot>>(loyaltySnapshotProvider,
         (previous, next) {
       _handleBoncukEstimateMightHaveChanged();
+    });
+    // Boncuk Loyalty P7-D — mirrors TakeawayCheckoutScreen's own reward-
+    // invalidation listeners exactly.
+    ref.listen<List<CartItem>>(preorderCartProvider, (previous, next) {
+      _handleCartMightHaveInvalidatedReward();
+    });
+    ref.listen<AsyncValue<List<LoyaltyReward>>>(loyaltyRewardCatalogProvider,
+        (previous, next) {
+      _handleCartMightHaveInvalidatedReward();
     });
 
     return Scaffold(
@@ -330,6 +413,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
                     effectivePartySize: effectivePartySize,
                     authState: authState,
                     loyaltySnapshotAsync: loyaltySnapshotAsync,
+                    rewardsAsync: rewardsAsync,
                   ),
                 ),
               ],
@@ -348,6 +432,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
     required int effectivePartySize,
     required AuthState authState,
     required AsyncValue<LoyaltyAccountSnapshot> loyaltySnapshotAsync,
+    required AsyncValue<List<LoyaltyReward>> rewardsAsync,
   }) {
     switch (_stepIndex) {
       case 0:
@@ -461,18 +546,36 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
               ),
               if (preorderItems.isNotEmpty) ...[
                 const SizedBox(height: AppSpacing.lg),
-                BoncukRedemptionCard(
-                  snapshotAsync: loyaltySnapshotAsync,
-                  enabled: _boncukUsageEnabled,
-                  selectedAmount: _selectedBoncukAmount,
-                  maxUsableBoncuk: clientEstimatedMaxBoncuk,
-                  selectionInvalid: boncukSelectionInvalid,
+                // Boncuk Loyalty P7-D (2026-08-24) — mutual exclusivity with
+                // the catalog-reward card below: selecting a reward REMOVES
+                // this card entirely, mirroring TakeawayCheckoutScreen
+                // exactly.
+                if (_selectedRewardId == null)
+                  BoncukRedemptionCard(
+                    snapshotAsync: loyaltySnapshotAsync,
+                    enabled: _boncukUsageEnabled,
+                    selectedAmount: _selectedBoncukAmount,
+                    maxUsableBoncuk: clientEstimatedMaxBoncuk,
+                    selectionInvalid: boncukSelectionInvalid,
+                    controlsFrozen: _isSubmitting,
+                    cartTotalPriceTl: preorderTotalTl,
+                    onToggle: _onBoncukToggle,
+                    onAmountChanged: _onBoncukAmountChanged,
+                    onUseMax: _onBoncukUseMax,
+                    onRetry: () => ref.invalidate(loyaltySnapshotProvider),
+                  ),
+                const SizedBox(height: AppSpacing.lg),
+                CatalogRewardCard(
+                  rewardsAsync: rewardsAsync,
+                  cartProductIds: preorderItems
+                      .where((item) => !_isBowlCartItem(item))
+                      .map((item) => item.id)
+                      .toSet(),
+                  selectedRewardId: _selectedRewardId,
+                  boncukCashRedemptionActive: _boncukUsageEnabled,
                   controlsFrozen: _isSubmitting,
-                  cartTotalPriceTl: preorderTotalTl,
-                  onToggle: _onBoncukToggle,
-                  onAmountChanged: _onBoncukAmountChanged,
-                  onUseMax: _onBoncukUseMax,
-                  onRetry: () => ref.invalidate(loyaltySnapshotProvider),
+                  onSelect: _onRewardSelect,
+                  onRetry: () => ref.invalidate(loyaltyRewardCatalogProvider),
                 ),
               ],
               if (_submitError != null) ...[

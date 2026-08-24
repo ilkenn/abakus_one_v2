@@ -161,8 +161,8 @@ class _RewardTile extends StatelessWidget {
             const SizedBox(width: AppSpacing.sm),
             Text(
               '${reward.boncukCost} Boncuk',
-              style: AppTypography.labelLarge
-                  .copyWith(color: AppColors.primary),
+              style:
+                  AppTypography.labelLarge.copyWith(color: AppColors.primary),
             ),
           ],
         ),

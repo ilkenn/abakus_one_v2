@@ -103,6 +103,7 @@ class _FakeDetailGateway implements ReservationGateway {
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   }) {
     throw UnimplementedError();
   }
@@ -359,6 +360,63 @@ void main() {
         ),
         findsOneWidget,
       );
+    });
+
+    testWidgets(
+        'Boncuk Loyalty P7-D (2026-08-24): a completed preorder carrying a '
+        'server-confirmed catalog reward shows the historical reward badge, '
+        'sourced only from THIS preorder\'s own immutable snapshot fields',
+        (tester) async {
+      final repository = await _pumpDetail(tester);
+      repository.emit(_baseReservation(
+        status: ReservationStatus.completed,
+        preorder: const ReservationPreorderSummary(
+          orderId: 'order-1',
+          status: ReservationPreorderStatus.completed,
+          kitchenReleaseAt: null,
+          lines: [
+            ReservationPreorderLineSummary(
+              productId: 'prod-poke-bowl',
+              productName: 'Poke Bowl',
+              quantity: 1,
+              modifierNames: [],
+              lineTotalMinorUnits: 0,
+            ),
+          ],
+          grandTotalMinorUnits: 0,
+          catalogRewardTitle: 'Poke Bowl Ödülü',
+          catalogRewardBoncukCost: 150,
+          catalogRewardRedeemedProductId: 'prod-poke-bowl',
+          catalogRewardCoveredValueMinorUnits: 24000,
+        ),
+      ));
+      await tester.pump();
+
+      expect(
+        find.text('Poke Bowl Ödülü ödülü kullanıldı (150 Boncuk)'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+        'a later edit to the LIVE reward catalog never changes the '
+        'historical badge — a preorder without a catalogReward snapshot '
+        'shows no badge at all, regardless of what the live catalog offers '
+        'today', (tester) async {
+      final repository = await _pumpDetail(tester);
+      repository.emit(_baseReservation(
+        status: ReservationStatus.completed,
+        preorder: const ReservationPreorderSummary(
+          orderId: 'order-1',
+          status: ReservationPreorderStatus.completed,
+          kitchenReleaseAt: null,
+          lines: [],
+          grandTotalMinorUnits: 24000,
+        ),
+      ));
+      await tester.pump();
+
+      expect(find.textContaining('ödülü kullanıldı'), findsNothing);
     });
   });
 

@@ -24,6 +24,27 @@ String reservationErrorMessage(ReservationException error) {
       case 'boncuk/policy-unavailable':
         return 'Boncuk kullanımı şu anda geçici olarak kullanılamıyor. '
             'Biraz sonra tekrar deneyebilirsiniz.';
+      // Boncuk Loyalty P7-D (2026-08-24) — catalog-reward-specific reasons,
+      // same shared `boncukErrorReason` field/namespace.
+      case 'catalogReward/reward-not-found':
+      case 'catalogReward/reward-not-currently-valid':
+        return 'Seçtiğiniz ödül artık kullanılamıyor. Lütfen tekrar seçim '
+            'yapın veya ödül kullanmadan devam edin.';
+      case 'catalogReward/product-not-in-cart':
+        return 'Seçtiğiniz ödül için uygun bir ürün ön siparişinizde '
+            'bulunamadı. Lütfen ön siparişinizi kontrol edin.';
+      case 'catalogReward/insufficient-balance':
+        return 'Bu ödül için yeterli Boncuk bakiyeniz yok. Bilgileri '
+            'güncelledik; ödül kullanmadan devam edebilirsiniz.';
+      case 'catalogReward/account-unavailable':
+        return 'Boncuk hesabınıza şu anda ulaşılamıyor. Tekrar deneyebilir '
+            'veya ödül kullanmadan devam edebilirsiniz.';
+      case 'catalogReward/benefit-stacking-not-allowed':
+        return 'Aynı anda hem Boncuk hem ödül kullanılamaz. Lütfen '
+            'birini seçin.';
+      case 'catalogReward/channel-not-eligible':
+        return 'Seçtiğiniz ödül Rezervasyon Ön Sipariş için kullanılamıyor. '
+            'Lütfen tekrar seçim yapın veya ödül kullanmadan devam edin.';
       default:
         return 'Boncuk kullanılırken bir sorun oluştu. Boncuk kullanmadan '
             'devam edebilirsiniz.';

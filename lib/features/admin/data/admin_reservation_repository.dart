@@ -134,6 +134,7 @@ class FirestoreAdminReservationRepository
             (lineDiscount['minorUnits'] as int);
 
     return ReservationPreorderLineSummary(
+      productId: line['productId'] as String?,
       productName: line['productName'] as String,
       quantity: quantity,
       modifierNames: modifierNames,

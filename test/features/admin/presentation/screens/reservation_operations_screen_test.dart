@@ -751,6 +751,7 @@ void main() {
           kitchenReleaseAt: DateTime.utc(2026, 8, 20, 19, 0),
           lines: const [
             ReservationPreorderLineSummary(
+              productId: 'prod-poke-bowl',
               productName: 'Poke Bowl',
               quantity: 2,
               modifierNames: ['Somon'],

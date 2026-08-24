@@ -69,6 +69,7 @@ class _FakeReservationGateway implements ReservationGateway {
     required String contactLastName,
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
+    String? selectedRewardId,
   }) =>
       throw UnimplementedError();
 
@@ -176,5 +177,43 @@ void main() {
     expect(find.text('240 TL'), findsOneWidget);
     expect(find.text('3 TL'), findsOneWidget);
     expect(find.text('237 TL'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Boncuk Loyalty P7-D (2026-08-24): a preorder with a server-confirmed '
+      'catalog reward -> CatalogRewardSuccessSummary is shown with the exact '
+      'server values, the product name resolved from the preorder\'s own lines',
+      (tester) async {
+    await _pumpConfirmation(
+      tester,
+      _summaryWith(
+        preorder: const ReservationPreorderSummary(
+          orderId: 'order-1',
+          status: ReservationPreorderStatus.pendingConfirmation,
+          kitchenReleaseAt: null,
+          lines: [
+            ReservationPreorderLineSummary(
+              productId: 'prod-poke-bowl',
+              productName: 'Poke Bowl',
+              quantity: 1,
+              modifierNames: [],
+              lineTotalMinorUnits: 0,
+            ),
+          ],
+          grandTotalMinorUnits: 0,
+          catalogRewardTitle: 'Poke Bowl Ödülü',
+          catalogRewardBoncukCost: 150,
+          catalogRewardRedeemedProductId: 'prod-poke-bowl',
+          catalogRewardCoveredValueMinorUnits: 24000,
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('orderSuccessCatalogRewardSummary')),
+        findsOneWidget);
+    expect(find.text('Poke Bowl Ödülü ödülü kullanıldı'), findsOneWidget);
+    // No Boncuk cash-redemption summary alongside it — the two are mutually
+    // exclusive server-confirmed states, never shown together.
+    expect(find.byKey(const Key('orderSuccessBoncukSummary')), findsNothing);
   });
 }
