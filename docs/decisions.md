@@ -14276,3 +14276,249 @@ rerun regardless, unchanged.
 gained assertions, no new tests); Firestore Rules suite **354/354**, 0 failed, unchanged (no rules file
 touched); `flutter analyze` clean; `flutter test` **3332 passed, 12 skipped, 0 failed** (up from 3288 —
 44 new tests). No commit was made, per this task's own explicit instruction.
+
+## Boncuk Loyalty Program P5-A — Delivery Boncuk Redemption Fast Reuse Audit (2026-08-24)
+
+**Status**: Audit only — no code changed. Goal: extend the already-accepted takeaway Boncuk
+architecture to delivery with maximum reuse. Dispatched two parallel research agents (backend +
+Flutter), synthesized into 10 numbered findings.
+
+**Key findings**: the live delivery checkout is `DeliveryCheckoutScreen`/`submitDeliveryOrder.ts`, not
+`checkout_screen.dart` (the latter is dead/unreachable legacy code with a fake client-side coupon
+system — `ABAKUS10`/`ILKSIPARIS`/`UCRETSIZ` — explicitly flagged as a do-not-replicate anti-pattern, not
+a precedent). Delivery pricing is already fully server-authoritative
+(`pricingAuthority: ORDER_PRICING_AUTHORITY_SERVER_V1`). No separate delivery fee exists — the surcharge
+is baked into channel-adjusted unit prices, `pricing.deliveryFee` hardcoded to `0` — so the Boncuk
+eligible basis is simply `pricing.grandTotal.minorUnits`, simpler than takeaway's tip-subtraction step
+(`TAKEAWAY_TIP_MINOR_UNITS`, always `0` today but structurally present for future-proofing).
+`calculateBoncukRedemption`/`resolveAccountForRedemption` (`loyaltyRedemption.ts`) are fully
+channel-agnostic already. **No delivery lifecycle callables existed at all** — a delivery order was
+structurally stuck at `pendingConfirmation` forever (confirmed via every takeaway lifecycle callable's
+own `channel !== "takeaway"` guard and `onOrderTerminalFailureOrRefund.ts`'s own doc comment disclosing
+the gap). The 4 generic Loyalty consumer files
+(`onOrderTerminalFailureOrRefund.ts`/`loyaltyRedemptionRestore.ts`/`orderEarnReversal.ts`/
+`loyaltyOrderEarning.ts`'s `LOYALTY_EARNING_ELIGIBLE_CHANNELS`) and `firestore.rules`'
+`clientOrderCreateOmitsBoncukRedemption()` are already fully channel-generic — zero code needed.
+`order_success_screen.dart`'s Boncuk-summary gate is hardcoded `_isTakeaway && _hasBoncukSummary` and
+needs broadening for delivery.
+
+**Directly informed P5-B's implementation plan** — no architectural questions were reopened; the
+smallest-surface-area implementation path was already fully worked out by this audit before any code
+was written.
+
+## Boncuk Loyalty Program P5-B — Delivery Boncuk Redemption + Canonical Delivery Lifecycle + Customer UI
+(2026-08-24)
+
+**Status**: Implemented — delivery channel only. Implements P5-A's accepted reuse plan directly (no
+further audit phase). **Still explicitly out of scope**: real payment-provider refund execution, partial
+refund, courier-authoritative delivery-completion authority, Admin/POS/KDS delivery-lifecycle UI,
+reservation Boncuk redemption.
+
+### 1. Shared Boncuk error-reason module — extracted, not duplicated
+
+New `functions/src/boncukRedemptionErrors.ts`: `BONCUK_REDEMPTION_ERROR_REASONS`/
+`BoncukRedemptionErrorReason`/`boncukError()`/`sanitizeRequestedBoncukAmount()`, moved verbatim out of
+`submitTakeawayOrder.ts` (which now imports every one of them instead of defining them locally — build-
+verified byte-for-byte behavior-preserving). `submitDeliveryOrder.ts` imports the same module — the
+stable Boncuk error-reason vocabulary (`boncuk/exceeds-max-usable`\|`boncuk/account-unavailable`\|
+`boncuk/policy-unavailable`\|`boncuk/redemption-not-allowed`) is now genuinely shared, not a second
+private copy.
+
+### 2. Delivery redemption backend — reuses the takeaway engine verbatim
+
+`submitDeliveryOrder.ts` gains `requestedBoncukAmount` (count only, folded into the request fingerprint
+so a retry with a different amount is rejected as a different payload, mirroring takeaway's own rule).
+Inside the SAME transaction as order creation: `boncukEligibleOrderAmountMinorUnits =
+pricing.grandTotalMinorUnits` directly (no tip/delivery-fee subtraction — see P5-A finding above);
+reads `loyaltyAccounts`/`loyaltyPolicies`, calls `readLoyaltyPolicyInTransaction`/
+`resolveAccountForRedemption`/`calculateBoncukRedemption` (all imported, not reimplemented), builds a
+`PendingBoncukRedemption` (identical shape to takeaway's own) during the read phase, applies the account
+debit + `tx.create()`s the ledger entry during the write phase — never before all reads complete. The
+created order document gets `selectedBenefitType`/`boncukRedemption` using the exact schema
+`OrderFirestoreMapper`/`firestore.rules`' `clientOrderCreateOmitsBoncukRedemption()` already understand.
+All 7 delivery payment methods (cash/credit_card/pluxee/multinet/setcard/edenred/metropol_card) remain
+Boncuk-compatible — payment method and Boncuk redemption are structurally independent fields.
+
+### 3. Shared, channel-generic order lifecycle module — extracted, not duplicated
+
+New `functions/src/orderLifecycle.ts`: the write-phase helpers (`applyOrderLifecycleTransition`/
+`writeOrderStatusChangeAuditEvent`), `requireRealCustomer`, `sanitizeOptionalReasonMessage`,
+`TerminalActorType`, `requireOrderId`, and the refund-disposition enum
+(`ORDER_REFUND_DISPOSITIONS`/`OrderRefundDisposition`) — every one of these was already 100%
+channel-generic despite living in the "takeaway"-named `takeawayOrderLifecycle.ts`. That file now
+re-exports each one under its ORIGINAL name as a thin alias (`applyTakeawayLifecycleTransition =
+applyOrderLifecycleTransition`, etc.) — build-verified byte-for-byte behavior-preserving; none of the
+five existing takeaway callable files needed a single import change, confirmed by `npm run build`
+staying clean immediately after the extraction and again after every subsequent edit. Only the
+genuinely takeaway-specific closed reason-code enums (`TAKEAWAY_REJECTION_REASON_CODES`/
+`TAKEAWAY_CANCELLATION_REASON_CODES`/`TAKEAWAY_REFUND_REASON_CODES`) and their sanitizers remain in
+`takeawayOrderLifecycle.ts`. New `functions/src/deliveryOrderLifecycle.ts` imports the generic pieces
+from `orderLifecycle.ts` directly (not through the takeaway aliases, to keep the two channels'
+callable boundaries clear) and declares delivery's own parallel reason-code enums — deliberately
+identical VALUES to takeaway's own today (no new business-rule vocabulary was requested), kept as a
+separate enum only so the two channels can diverge independently in the future.
+
+### 4. Canonical delivery lifecycle — implemented for the first time
+
+Five new callables, each mirroring its takeaway counterpart's exact structure (loads the order first,
+derives `organizationId`/`branchId` from IT never from client input, requires `channel === "delivery"`,
+transactional single-winner concurrency, idempotent `duplicate: true` retries):
+`respondToDeliveryOrder` (`pendingConfirmation → confirmed`\|`rejected`), `advanceDeliveryOrderStatus`
+(`confirmed → preparing → ready → outForDelivery → completed`, exact-next-only via its own
+`DELIVERY_NEXT_STATUS` map — one extra step versus takeaway's `TAKEAWAY_NEXT_STATUS`, since delivery has
+no `served` concept but does have `outForDelivery`), `cancelDeliveryOrder` (customer-only,
+`pendingConfirmation → cancelled`), `cancelDeliveryOrderForStaff` (baseline `manageDeliveryOrders`
+covers `confirmed → cancelled`; escalated `manageDeliveryOrderCancellations` required for
+`preparing`\|`ready`\|`outForDelivery → cancelled` — delivery's escalated tier has one more status than
+takeaway's own `preparing`\|`ready`; baseline permission is checked FIRST, unconditionally, before any
+status branching, so an unauthorized caller learns nothing about the order's actual status),
+`refundDeliveryOrder` (`completed → refunded` only, manager+ via `manageDeliveryOrderRefunds`,
+`refundDisposition` always hardcoded `manualExternalRefundConfirmed`, never client-influenced).
+`orderStatus.ts`'s generic `ALLOWED_TRANSITIONS` table needed ZERO changes — it already supported the
+entire delivery flow (`ready→outForDelivery`/`outForDelivery→completed`/`outForDelivery→cancelled`/
+`completed→refunded`), confirmed by direct read before writing any callable.
+
+### 5. Authorization — three new, structurally separate permissions
+
+`staffAuthorization.ts`'s `StaffPermission` union gains `manageDeliveryOrders`\|
+`manageDeliveryOrderCancellations`\|`manageDeliveryOrderRefunds` — deliberately NEVER shared with their
+takeaway counterparts (different operational teams could hold one without the other).
+`DEFAULT_STAFF_ROLE_PERMISSIONS`: `staff` gains `manageDeliveryOrders` (alongside its existing
+`manageTakeawayOrders`); `manager`/`admin`/`tenantOwner` each gain all three new delivery permissions.
+`courier` gains none — courier-authoritative delivery completion is explicitly deferred until a
+canonical courier assignment/lifecycle integration exists; every step including the final `→ completed`
+transition requires staff-side `manageDeliveryOrders` today, same reasoning as `respondToTakeawayOrder`
+being the sole staff-authorized `→ confirmed` path historically.
+
+### 6. Loyalty integration — zero consumer changes, verified not redesigned
+
+No lifecycle callable writes `loyaltyAccounts`/`loyaltyLedgerEntries` directly — every one of them only
+ever writes the order's own `status`. The existing, unmodified terminal outbox
+(`onOrderTerminalFailureOrRefund.ts`) and its two independent consumers
+(`loyaltyRedemptionRestore.ts`/`orderEarnReversal.ts`), plus the existing `onOrderCompleted`/
+`loyaltyOrderEarning.ts` earning chain (`LOYALTY_EARNING_ELIGIBLE_CHANNELS` already included
+`"delivery"`), all activate automatically from that single write. The completed-vs-refunded async
+earning-race guard in `loyaltyOrderEarning.ts` (channel-agnostic by construction, re-checks canonical
+order status inside its own transaction) was verified — not redesigned — to also protect delivery, via
+`deliveryOrderLifecycle.test.ts`'s own concurrency test and `refundDeliveryOrder.test.ts`'s §E
+end-to-end redeemed-AND-earned-then-refunded scenario.
+
+### 7. Flutter — gateway, checkout UI, success screen
+
+`SubmitDeliveryOrderGateway.submit` gains `int requestedBoncukAmount = 0` (sent only when `> 0`,
+mirroring the server's own "absent == 0" contract); `SubmitDeliveryOrderException` gains
+`boncukErrorReason` (nullable, extracted defensively from `FirebaseFunctionsException.details['reason']`
+— same shared vocabulary as `SubmitTakeawayOrderException`, same `_extractBoncukErrorReason` pattern).
+`DeliveryCheckoutScreen` gains the three locked local fields (`_boncukUsageEnabled`,
+`_selectedBoncukAmount`, derived-not-stored invalidation state) — mirrors `TakeawayCheckoutScreen`'s own
+exactly, including the never-silently-substitute-a-smaller-selection rule and the exactly-zero-turns-off
+exception. Reuses `BoncukRedemptionCard`/`computeClientEstimatedMaxBoncuk`/`loyaltySnapshotProvider`
+UNCHANGED — no `DeliveryBoncukRedemptionCard`, no new provider. Since `DeliveryCheckoutScreen` computes
+its own delivery-channel-resolved estimated subtotal locally in `build()` (via `ChannelPriceResolver`/
+`DeliveryChannelPricingPolicy`, not the generic `cartTotalPriceProvider` takeaway uses), a small
+`_currentEstimatedSubtotalTl()` helper recomputes that same estimate for the imperative Boncuk handlers
+(`_onBoncukUseMax`/`_handleBoncukEstimateMightHaveChanged`/the pre-submit defense-in-depth check), and
+`ref.listen` is attached to `cartProvider` directly (rather than a derived total provider, which doesn't
+exist for delivery) to trigger the same invalidation side effect. `OrderSuccessScreen` gains a new
+`isDeliveryOrder` flag (default `false`) — the Boncuk-summary gate broadens from `_isTakeaway` to
+`_isTakeaway || isDeliveryOrder`; delivery has no branch-name signal to reuse the way takeaway's own gate
+inferred channel, so this is an explicit new flag rather than an inference. `BoncukRedemptionCard`'s own
+doc comment was corrected (documentation-only, zero logic change) to reflect it is now shared by both
+checkout screens, not "takeaway only."
+
+### 8. Tests
+
+**Backend, new**: `functions/src/test/deliveryOrderLifecycle.test.ts` (27 tests — respond/advance/
+cancel-customer/cancel-staff including the `outForDelivery` escalation-tier case, the full A-D loyalty
+chain, concurrency), `functions/src/test/refundDeliveryOrder.test.ts` (20 tests — authorization/
+lifecycle-precondition/idempotency/reason-codes/§E the critical redeemed-AND-earned-then-refunded
+scenario, deterministically sequenced rather than raced). **Backend, extended**:
+`functions/src/test/submitDeliveryOrder.test.ts` (+14 Boncuk redemption tests — authenticated succeeds,
+insufficient/exceeds-cap rejected, exact order-cap boundary, missing-account rejected, idempotent retry,
+fail-closed different-amount retry, concurrent double-spend protection, dynamic non-default org policy,
+all 7 payment methods remain compatible), `functions/src/test/staffAuthorization.test.ts` (+permission
+tests for the 3 new delivery permissions, corrected 2 pre-existing assertions that had gone stale against
+the now-shipped `staff` permission set). **Flutter, extended**:
+`test/features/delivery/presentation/screens/delivery_checkout_screen_test.dart` (+20 new Boncuk cases,
+A-R-style mirroring `takeaway_checkout_screen_test.dart`, plus an explicit all-7-payment-methods-remain-
+selectable-with-Boncuk case).
+
+**Files changed — backend**: `functions/src/submitTakeawayOrder.ts` (import from extracted module),
+`functions/src/submitDeliveryOrder.ts` (redemption), `functions/src/staffAuthorization.ts` (3 new
+permissions), `functions/src/takeawayOrderLifecycle.ts` (re-export layer over `orderLifecycle.ts`),
+`functions/src/index.ts` (5 new exports). **New files — backend**:
+`functions/src/boncukRedemptionErrors.ts`, `functions/src/orderLifecycle.ts`,
+`functions/src/deliveryOrderLifecycle.ts`, `functions/src/{respondToDeliveryOrder,
+advanceDeliveryOrderStatus,cancelDeliveryOrder,cancelDeliveryOrderForStaff,refundDeliveryOrder}.ts`.
+**Files changed — Flutter**: `lib/features/delivery/data/submit_delivery_order_gateway.dart`
+(`requestedBoncukAmount`/`boncukErrorReason`), `lib/features/delivery/presentation/screens/
+delivery_checkout_screen.dart` (Boncuk wiring), `lib/features/cart/presentation/screens/
+order_success_screen.dart` (`isDeliveryOrder` flag), `lib/features/cart/presentation/widgets/
+boncuk_redemption_card.dart` (doc-comment correction only). **Docs**: this entry, `docs/business_rules.md`
+(new `BR-LOYALTY-024`, `BR-LOYALTY-023`'s blocker note updated), `docs/firestore_data_model.md` (`orders`/
+`orderEvents`/`auditEvents` rows extended), `docs/feature_status.md` (P5-A + P5-B entries). **Rules**:
+none touched — no client write path was added or broadened; the full suite was rerun regardless,
+unchanged.
+
+**Exact gate totals (post quality-gate correction, below)**: Functions build (`tsc`) clean. Functions
+emulator suite (`GOOGLE_MAPS_PROVIDER_MODE=fixture`) — **1232/1232, 0 failed, two consecutive full runs**
+(both fully green — see the correction entry immediately below for how the two previously-failing tests
+were root-caused and fixed, not retried into luck). Firestore Rules suite **354/354**, 0 failed,
+unchanged (no rules file touched). `flutter analyze` clean. `flutter test` **3352 passed, 12 skipped, 0
+failed** (up from 3332 — 20 new tests). No commit was made, per this task's own explicit instruction.
+
+### Quality-gate correction (2026-08-24) — eliminating full-suite-only test-harness flakiness
+
+The initial P5-B gate run reported **1230/1232**, 2 failures, reproduced identically across 3
+consecutive full-suite runs, both in files with a completely clean `git diff` this phase and both
+passing 23/23 clean in isolation. Investigated and root-caused rather than retried/skipped/weakened;
+both are TEST-HARNESS races, not production bugs — no production accounting semantics were touched.
+
+**Failure 1 — `functions.test.ts`: "onOrderCompleted writes exactly one orderEvents outbox record..."**
+`ROOT_CAUSE`: the test polled `orderEvents/{orderId}-completed` with `.get()` after `waitFor` observed
+`snap.exists`, then asserted `rewardsEvaluated === false`. That field is ALSO independently written by
+`onOrderEventCreatedForLoyaltyEarning` (`loyaltyOrderEarning.ts`) the instant the document exists — for
+this test's guest-order fixture (`customerId: null`), that consumer's very first branch is a single,
+transaction-free `eventRef.set({ rewardsEvaluated: true }, { merge: true })`, the cheapest possible
+write it can perform. Nothing serialized "the test's poll observes the doc" ahead of "the independent
+consumer has already processed it" — a genuine, unsynchronized race between two independent listeners
+reacting to the same document-create event. In isolation the poll reliably won (low background load,
+first poll fires within ~0-250ms); under the full ~1200-test suite's dispatch-queue/event-loop
+contention the race outcome flipped consistently. `FIX`: replaced the poll-then-read with a Firestore
+realtime listener (`ref.onSnapshot`) attached BEFORE the triggering write, resolving on the FIRST
+snapshot where the document `exists` — Firestore delivers listener snapshots in strict write-commit
+order, so the first `exists` snapshot is guaranteed, by the API's own contract, to reflect the document
+exactly as `onOrderCompleted.ts` created it, never merged with any later write, regardless of scheduling
+load. This observes the value deterministically rather than out-racing an independent consumer.
+
+**Failure 2 — `orderEarnReversal.test.ts`: "concurrency: two simultaneous deliveries of the same refund
+event..."** `ROOT_CAUSE`: this test deliberately fires two `db.runTransaction`-backed calls via
+`Promise.all` against the identical documents with zero synchronization — the tightest transaction race
+in the whole suite. The observed failure was a raw gRPC transport error (`3 INVALID_ARGUMENT: Transaction
+is invalid or closed`), not a business-logic assertion failure — meaning one of the two transactions
+never reached commit at all. Under the cumulative Firestore-emulator load of a ~7-minute, 1200+-test
+single-process run, an in-flight transaction handle can apparently be reaped/expired by the emulator
+before commit; the Admin SDK does not itself retry `INVALID_ARGUMENT` (normally a client-bug signal, not
+a transient one), so this emulator-load artifact surfaced as a raw thrown error instead of a business
+outcome. `FIX`: `processOrderRefundEventForOrderEarnReversal` is idempotent by design (a deterministic
+ledger id plus its own existence check are the authoritative gate — confirmed by direct read of
+`orderEarnReversal.ts`'s own doc comments before writing this fix), so a retry of a transaction that
+never committed is safe and proves nothing different — it mirrors the Cloud Functions platform's own
+retry-on-failed-trigger-delivery behavior in production. Added a narrowly-scoped
+`withTransientEmulatorTransportRetry` helper in the TEST file only, matching on the exact transient
+message (`"Transaction is invalid or closed"`) — any other thrown error, including a genuine
+business-logic failure, still propagates and fails the test unchanged.
+
+**Verification discipline applied**: every hypothesis (leaked `admin.app.App` instances, leaked
+`onSnapshot` listeners, deterministic-id collisions across files) was checked by direct grep across
+all 50 backend test files before being ruled out — confirmed every file symmetrically pairs
+`admin.initializeApp`/`app.delete()`, and zero pre-existing `onSnapshot` usage existed anywhere in the
+suite (ruling out a listener-leak explanation before pursuing the two confirmed root causes above).
+
+`PRODUCTION_CODE_CHANGED`: NO. `TEST_HARNESS_CHANGED`: YES — `functions/src/test/functions.test.ts`
+(one new helper, one test rewritten to eliminate its race), `functions/src/test/orderEarnReversal.test.ts`
+(one new helper, the concurrency test's two calls wrapped). Post-fix: Functions emulator suite
+**1232/1232 twice consecutively** (0 failures both runs — genuinely green, not a lucky retry). Firestore
+Rules suite rerun **354/354** (no rules file touched; rerun anyway for rigor). `flutter analyze` rerun
+clean; `flutter test` rerun **3352/12/0**, unchanged (no Flutter file touched by this correction). No
+commit was made.

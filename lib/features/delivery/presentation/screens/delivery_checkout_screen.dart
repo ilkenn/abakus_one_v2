@@ -17,6 +17,11 @@ import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../cart/domain/models/cart_item.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
 import '../../../cart/presentation/screens/order_success_screen.dart';
+import '../../../cart/presentation/screens/takeaway_checkout_screen.dart'
+    show computeClientEstimatedMaxBoncuk;
+import '../../../cart/presentation/widgets/boncuk_redemption_card.dart';
+import '../../../loyalty/domain/models/loyalty_account_snapshot.dart';
+import '../../../loyalty/presentation/providers/loyalty_providers.dart';
 import '../../../menu/domain/models/menu_product.dart';
 import '../../../menu/domain/pricing/channel_price_resolver.dart';
 import '../../../menu/domain/pricing/delivery_channel_pricing_policy.dart';
@@ -77,6 +82,15 @@ class _DeliveryCheckoutScreenState
 
   bool _isCheckingEligibility = false;
   DeliveryEligibilityResult? _eligibility;
+
+  /// Boncuk Loyalty Program P5-B (2026-08-24) — local, screen-owned
+  /// interaction state ONLY, mirroring `TakeawayCheckoutScreen`'s own
+  /// `_boncukUsageEnabled`/`_selectedBoncukAmount` exactly (per the locked
+  /// reuse rule: no new checkout controller/provider for delivery either).
+  /// Server data continues to come exclusively from [loyaltySnapshotProvider],
+  /// watched fresh in [build]; nothing here duplicates it.
+  bool _boncukUsageEnabled = false;
+  int _selectedBoncukAmount = 0;
 
   /// FRAUD-F.2 — captured at most ONCE per submission attempt and reused
   /// across retries of the same [_submissionKey] (Architect Correction
@@ -202,6 +216,81 @@ class _DeliveryCheckoutScreenState
     ];
   }
 
+  /// The current, non-authoritative estimated subtotal (TL) — the same
+  /// delivery-channel-adjusted per-item pricing [build] already displays as
+  /// "Ara Toplam", recomputed here from a fresh `ref.read` for use by the
+  /// imperative Boncuk handlers below (which run outside `build` and so
+  /// cannot close over `build`'s own local `subtotal` variable). Mirrors
+  /// `TakeawayCheckoutScreen`'s reliance on `cartTotalPriceProvider` for the
+  /// same purpose — delivery has no equivalent provider (its estimate is
+  /// channel/catalog-resolved, not a plain cart sum), so this recomputes the
+  /// identical loop instead of introducing one.
+  double _currentEstimatedSubtotalTl() {
+    final cartItems = ref.read(cartProvider);
+    final catalog = ref.read(menuProductsProvider);
+    const currency = Currency.tryLira;
+    Money subtotal = Money.zero(currency);
+    for (final item in cartItems) {
+      subtotal =
+          subtotal + (_estimatedUnitPrice(item, catalog) * item.quantity);
+    }
+    return subtotal.minorUnits / currency.minorUnitsPerWhole;
+  }
+
+  /// Boncuk Loyalty P5-B — mirrors `TakeawayCheckoutScreen._onBoncukToggle`
+  /// exactly.
+  void _onBoncukToggle(bool value) {
+    setState(() {
+      _boncukUsageEnabled = value;
+      _selectedBoncukAmount =
+          value ? (_selectedBoncukAmount > 0 ? _selectedBoncukAmount : 1) : 0;
+      _submitError = null;
+    });
+  }
+
+  void _onBoncukAmountChanged(int newAmount) {
+    setState(() {
+      _selectedBoncukAmount = newAmount;
+      _submitError = null;
+    });
+  }
+
+  void _onBoncukUseMax() {
+    final snapshot = ref.read(loyaltySnapshotProvider).valueOrNull;
+    if (snapshot == null) return;
+    final max = computeClientEstimatedMaxBoncuk(
+      snapshot,
+      _currentEstimatedSubtotalTl(),
+    );
+    setState(() {
+      _boncukUsageEnabled = max > 0;
+      _selectedBoncukAmount = max > 0 ? max : 0;
+      _submitError = null;
+    });
+  }
+
+  /// Boncuk Loyalty P5-B — mirrors
+  /// `TakeawayCheckoutScreen._handleBoncukEstimateMightHaveChanged` exactly:
+  /// never silently clamps [_selectedBoncukAmount] down to a smaller
+  /// nonzero value; the ONE state mutation is turning Boncuk usage off and
+  /// resetting the selection to 0 when the estimated max reaches exactly
+  /// zero.
+  void _handleBoncukEstimateMightHaveChanged() {
+    if (!_boncukUsageEnabled) return;
+    final snapshot = ref.read(loyaltySnapshotProvider).valueOrNull;
+    if (snapshot == null) return;
+    final max = computeClientEstimatedMaxBoncuk(
+      snapshot,
+      _currentEstimatedSubtotalTl(),
+    );
+    if (max <= 0) {
+      setState(() {
+        _boncukUsageEnabled = false;
+        _selectedBoncukAmount = 0;
+      });
+    }
+  }
+
   bool get _canSubmit {
     return _selectedAddress != null &&
         _selectedAddress!.isDeliveryAuthorized &&
@@ -210,7 +299,31 @@ class _DeliveryCheckoutScreenState
         !_isCapturingLocation;
   }
 
-  String _errorMessageFor(String code, String message) {
+  /// Boncuk Loyalty P5-B §13 — a Boncuk-specific rejection is mapped from
+  /// [SubmitDeliveryOrderException.boncukErrorReason] (the SAME stable,
+  /// machine-readable server reason vocabulary
+  /// `TakeawayCheckoutScreen._errorMessageFor` branches on), NEVER inferred
+  /// from [error]'s `code` alone.
+  String _errorMessageFor(SubmitDeliveryOrderException error) {
+    final boncukReason = error.boncukErrorReason;
+    if (boncukReason != null) {
+      switch (boncukReason) {
+        case 'boncuk/exceeds-max-usable':
+          return 'Boncuk bakiyen veya kullanabileceğin miktar değişti. '
+              'Bilgileri güncelledik; tekrar seçim yap.';
+        case 'boncuk/account-unavailable':
+          return 'Boncuk hesabına şu anda ulaşılamıyor. Tekrar deneyebilir '
+              'veya Boncuk kullanmadan devam edebilirsin.';
+        case 'boncuk/policy-unavailable':
+          return 'Boncuk kullanımı şu anda geçici olarak kullanılamıyor. '
+              'Biraz sonra tekrar deneyebilirsin.';
+        default:
+          return 'Boncuk kullanılırken bir sorun oluştu. Boncuk kullanmadan '
+              'devam edebilirsin.';
+      }
+    }
+    final code = error.code;
+    final message = error.message;
     switch (code) {
       case 'not-found':
         return 'Seçilen adres bulunamadı. Lütfen adresini kontrol et.';
@@ -238,6 +351,22 @@ class _DeliveryCheckoutScreenState
   Future<void> _submitOrder() async {
     if (_isSubmitting) return;
     if (!_canSubmit) return;
+
+    // Defense-in-depth (mirrors TakeawayCheckoutScreen §9) — the submit
+    // button is already disabled whenever the UI's own derived
+    // `boncukSelectionInvalid` is true; this re-checks the same condition
+    // against a freshly-read snapshot right before sending, rather than
+    // trusting only the last-built widget state.
+    if (_boncukUsageEnabled) {
+      final snapshot = ref.read(loyaltySnapshotProvider).valueOrNull;
+      final max = snapshot == null
+          ? 0
+          : computeClientEstimatedMaxBoncuk(
+              snapshot, _currentEstimatedSubtotalTl());
+      if (_selectedBoncukAmount <= 0 || _selectedBoncukAmount > max) {
+        return;
+      }
+    }
 
     final address = _selectedAddress;
     final paymentMethodId = _selectedPaymentMethodId;
@@ -289,6 +418,8 @@ class _DeliveryCheckoutScreenState
             items: _buildOrderItems(cartItems),
             deviceLocation: locationCapture.evidence,
             deviceLocationUnavailableReason: locationCapture.unavailableReason,
+            requestedBoncukAmount:
+                _boncukUsageEnabled ? _selectedBoncukAmount : 0,
           );
 
       final order = await ref
@@ -306,20 +437,47 @@ class _DeliveryCheckoutScreenState
           .addOrder(OrderModel.fromCanonicalOrder(order));
       ref.read(cartProvider.notifier).clearCart();
 
+      // Boncuk Loyalty P5-B — redemption occurs at submission time, not at
+      // completed-order earning; refresh the customer's displayed balance
+      // now rather than waiting for a later screen to happen to re-fetch it
+      // (mirrors TakeawayCheckoutScreen §14).
+      ref.invalidate(loyaltySnapshotProvider);
+
       if (!mounted) return;
+      final boncukRedemption = order.boncukRedemption;
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
-          builder: (context) => OrderSuccessScreen(orderId: order.id.value),
+          builder: (context) => OrderSuccessScreen(
+            orderId: order.id.value,
+            isDeliveryOrder: true,
+            orderTotalMinorUnits: order.pricing.grandTotal.minorUnits,
+            boncukUsed: boncukRedemption?.boncukUsed,
+            boncukValueMinorUnits: boncukRedemption?.valueMinorUnits,
+            remainingPayableMinorUnits:
+                boncukRedemption?.remainingPayableMinorUnits,
+          ),
         ),
         (route) => route.isFirst,
       );
     } on SubmitDeliveryOrderException catch (error) {
       if (!mounted) return;
+      final isBoncukError = error.boncukErrorReason != null;
       setState(() {
         _isSubmitting = false;
-        _submitError = _errorMessageFor(error.code, error.message);
+        _submitError = _errorMessageFor(error);
+        if (isBoncukError) {
+          // CRITICAL — never auto-resubmit without Boncuk (mirrors
+          // TakeawayCheckoutScreen §13). Turning the selection off makes the
+          // screen immediately submittable again WITHOUT Boncuk, but the
+          // customer must tap "Siparişi Ver" themselves.
+          _boncukUsageEnabled = false;
+          _selectedBoncukAmount = 0;
+        }
       });
+      if (isBoncukError) {
+        ref.invalidate(loyaltySnapshotProvider);
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -363,7 +521,21 @@ class _DeliveryCheckoutScreenState
   Widget build(BuildContext context) {
     final cartItems = ref.watch(cartProvider);
     final catalog = ref.watch(menuProductsProvider);
+    final loyaltySnapshotAsync = ref.watch(loyaltySnapshotProvider);
     const currency = Currency.tryLira;
+
+    // Boncuk Loyalty P5-B — react to a cart change or loyalty snapshot
+    // change while Boncuk usage is on (mirrors TakeawayCheckoutScreen §9/
+    // §10's `ref.listen` side-effect pattern exactly; see
+    // `_currentEstimatedSubtotalTl`'s own doc comment for why this listens
+    // to `cartProvider` directly rather than a derived total provider).
+    ref.listen<List<CartItem>>(cartProvider, (previous, next) {
+      _handleBoncukEstimateMightHaveChanged();
+    });
+    ref.listen<AsyncValue<LoyaltyAccountSnapshot>>(loyaltySnapshotProvider,
+        (previous, next) {
+      _handleBoncukEstimateMightHaveChanged();
+    });
 
     Money subtotal = Money.zero(currency);
     final lineEstimates = <CartItem, Money>{};
@@ -373,6 +545,16 @@ class _DeliveryCheckoutScreenState
       lineEstimates[item] = lineTotal;
       subtotal = subtotal + lineTotal;
     }
+    final subtotalTl = subtotal.minorUnits / currency.minorUnitsPerWhole;
+
+    final clientEstimatedMaxBoncuk = loyaltySnapshotAsync.maybeWhen(
+      data: (snapshot) => computeClientEstimatedMaxBoncuk(snapshot, subtotalTl),
+      orElse: () => 0,
+    );
+    // Derived, never stored (mirrors TakeawayCheckoutScreen §9).
+    final boncukSelectionInvalid =
+        _boncukUsageEnabled && _selectedBoncukAmount > clientEstimatedMaxBoncuk;
+    final canSubmit = _canSubmit && !boncukSelectionInvalid;
 
     final eligibility = _eligibility;
     final minimumOrderMinorUnits = eligibility?.minimumOrderMinorUnits;
@@ -500,6 +682,20 @@ class _DeliveryCheckoutScreenState
                 ],
               ),
             ),
+            const SizedBox(height: AppSpacing.lg),
+            BoncukRedemptionCard(
+              snapshotAsync: loyaltySnapshotAsync,
+              enabled: _boncukUsageEnabled,
+              selectedAmount: _selectedBoncukAmount,
+              maxUsableBoncuk: clientEstimatedMaxBoncuk,
+              selectionInvalid: boncukSelectionInvalid,
+              controlsFrozen: _isSubmitting,
+              cartTotalPriceTl: subtotalTl,
+              onToggle: _onBoncukToggle,
+              onAmountChanged: _onBoncukAmountChanged,
+              onUseMax: _onBoncukUseMax,
+              onRetry: () => ref.invalidate(loyaltySnapshotProvider),
+            ),
             if (_submitError != null) ...[
               const SizedBox(height: AppSpacing.lg),
               Text(
@@ -513,7 +709,7 @@ class _DeliveryCheckoutScreenState
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _canSubmit ? _submitOrder : null,
+                onPressed: canSubmit ? _submitOrder : null,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(
                     vertical: AppSpacing.md,

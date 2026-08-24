@@ -45,6 +45,17 @@ class OrderSuccessScreen extends StatelessWidget {
   final int? boncukValueMinorUnits;
   final int? remainingPayableMinorUnits;
 
+  /// Boncuk Loyalty Program P5-B (2026-08-24) — broadens the Boncuk-summary
+  /// gate below to also cover a delivery order. `DeliveryCheckoutScreen` has
+  /// no branch-name concept to reuse the way [takeawayBranchName] already
+  /// signals takeaway (a delivery order's identity is its address, not a
+  /// branch), so this is a dedicated, explicit flag rather than inferring
+  /// "delivery" from the absence of the dine-in/takeaway fields — an
+  /// inference that would also (wrongly) match the plain default success
+  /// experience every OTHER unrelated caller still uses. `false` (the
+  /// default) leaves every existing caller's behavior exactly unchanged.
+  final bool isDeliveryOrder;
+
   const OrderSuccessScreen({
     super.key,
     required this.orderId,
@@ -56,6 +67,7 @@ class OrderSuccessScreen extends StatelessWidget {
     this.boncukUsed,
     this.boncukValueMinorUnits,
     this.remainingPayableMinorUnits,
+    this.isDeliveryOrder = false,
   });
 
   bool get _isDineIn => dineInBranchName != null && dineInTableName != null;
@@ -177,13 +189,14 @@ class OrderSuccessScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              // Boncuk Loyalty P4-E-B (2026-08-22) — takeaway-only, and
-              // only when a real redemption happened. Every value here is
+              // Boncuk Loyalty P4-E-B (2026-08-22), broadened P5-B
+              // (2026-08-24) — takeaway OR delivery only, and only when a
+              // real redemption happened. Every value here is
               // server-confirmed (see this class's own field doc comments)
               // — never the pre-submit local estimate. Every other
               // channel/scenario's success experience is byte-for-byte
               // unchanged (this block simply never renders for them).
-              if (_isTakeaway && _hasBoncukSummary) ...[
+              if ((_isTakeaway || isDeliveryOrder) && _hasBoncukSummary) ...[
                 const SizedBox(height: AppSpacing.md),
                 _BoncukSuccessSummary(
                   orderTotalMinorUnits: orderTotalMinorUnits!,

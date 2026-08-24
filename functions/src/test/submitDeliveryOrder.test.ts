@@ -2,6 +2,11 @@ import { test, before, after } from "node:test";
 import assert from "node:assert";
 import * as admin from "firebase-admin";
 import { slugifyAddressComponent } from "../deliveryServiceAreas";
+import {
+  LOYALTY_ACCOUNTS_COLLECTION,
+  LOYALTY_LEDGER_ENTRIES_COLLECTION,
+  deriveLoyaltyLedgerEntryId,
+} from "../loyaltyLedger";
 
 /**
  * Emulator-backed adversarial tests for `submitDeliveryOrder` /
@@ -32,7 +37,10 @@ async function callCallable(url: string, data: Record<string, unknown>, idToken?
   const response = await fetch(url, { method: "POST", headers, body: JSON.stringify({ data }) });
   const body = (await response.json()) as {
     result?: Record<string, unknown>;
-    error?: { status?: string; message?: string };
+    // `details.reason` added (Boncuk Loyalty P5-B) so the redemption tests
+    // below can assert on the stable machine-readable reason, mirroring
+    // submitTakeawayOrder.test.ts's own callCallable body type exactly.
+    error?: { status?: string; message?: string; details?: { reason?: string } };
   };
   return { httpStatus: response.status, body };
 }
@@ -228,6 +236,82 @@ function validSubmission(overrides: Record<string, unknown> = {}): Record<string
     paymentMethodId: "cash",
     ...overrides,
   };
+}
+
+/**
+ * Boncuk Loyalty P5-B — a fully-shaped, well-formed loyalty account (the
+ * "normal existing account" baseline every redemption test starts from),
+ * keyed exactly like `submitTakeawayOrder.test.ts`'s own
+ * `seedLoyaltyAccount` helper.
+ */
+async function seedLoyaltyAccount(
+  organizationId: string,
+  uid: string,
+  overrides: Partial<{ spendableBalance: number; boncukDebt: number; lifetimeRedeemed: number; revision: number }> = {},
+) {
+  const now = admin.firestore.Timestamp.now();
+  await db()
+    .collection(LOYALTY_ACCOUNTS_COLLECTION)
+    .doc(`${organizationId}_${uid}`)
+    .set({
+      organizationId,
+      customerId: uid,
+      spendableBalance: overrides.spendableBalance ?? 0,
+      boncukDebt: overrides.boncukDebt ?? 0,
+      validOrderEntitlementBoncuk: 0,
+      earningCarryNumerator: "0",
+      earningCarryDenominator: "1",
+      lifetimeEarned: 0,
+      lifetimeRedeemed: overrides.lifetimeRedeemed ?? 0,
+      createdAt: now,
+      updatedAt: now,
+      revision: overrides.revision ?? 1,
+    });
+}
+
+async function loyaltyAccountDoc(organizationId: string, uid: string) {
+  return (await db().collection(LOYALTY_ACCOUNTS_COLLECTION).doc(`${organizationId}_${uid}`).get()).data();
+}
+
+async function boncukRedemptionLedgerDoc(organizationId: string, uid: string, orderId: string) {
+  const id = deriveLoyaltyLedgerEntryId({
+    organizationId,
+    customerId: uid,
+    entryType: "boncukRedemption",
+    sourceId: orderId,
+  });
+  return (await db().collection(LOYALTY_LEDGER_ENTRIES_COLLECTION).doc(id).get()).data();
+}
+
+/**
+ * Seeds a non-default `loyaltyPolicies/{organizationId}` document directly —
+ * mirrors `loyaltyRedemptionRestore.test.ts`'s own "policy safety" seeding
+ * pattern. Since the document already exists and is well-formed, the
+ * transaction resolves it as the real active policy (case 1 of
+ * `loyaltyPolicy.ts`'s own missing-vs-first-time-provisioning boundary) —
+ * no auto-provisioning ever runs, proving redemption genuinely reads the
+ * organization's OWN configured economics rather than a hardcoded default.
+ */
+async function seedLoyaltyPolicy(
+  organizationId: string,
+  overrides: Partial<{
+    redemptionValueMinorUnitsPerBoncuk: number;
+    maxRedemptionBasisPoints: number;
+    version: number;
+  }> = {},
+) {
+  const now = admin.firestore.Timestamp.now();
+  await db().collection("loyaltyPolicies").doc(organizationId).set({
+    organizationId,
+    earningSpendMinorUnits: 5000,
+    earningBoncukAmount: 5,
+    redemptionValueMinorUnitsPerBoncuk: overrides.redemptionValueMinorUnitsPerBoncuk ?? 100,
+    maxRedemptionBasisPoints: overrides.maxRedemptionBasisPoints ?? 5000,
+    version: overrides.version ?? 1,
+    effectiveAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 async function fraudEvidenceForOrder(orderId: string) {
@@ -1015,4 +1099,369 @@ test("checkDeliveryEligibility: an eligible result here is advisory only — sub
     fixture.idToken,
   );
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
+});
+
+// =======================================================================
+// BONCUK REDEMPTION — Boncuk Loyalty Program P5-B (2026-08-24). Mirrors
+// submitTakeawayOrder.test.ts's own "C. Boncuk Loyalty P4-B — checkout
+// redemption" section exactly, adapted for delivery's own eligible basis:
+// `boncukEligibleOrderAmountMinorUnits = pricing.grandTotalMinorUnits`
+// directly, no tip/delivery-fee subtraction (delivery has no separate
+// delivery fee — it is already baked into unit prices, `pricing.deliveryFee`
+// stays hardcoded 0). Every test below uses `fixture.standardProductId`
+// quantity 1, whose grandTotal is the well-established 24000 minor units
+// (base 10000 + the 14000 standard delivery adjustment — see the PRICING
+// section above) — under the default policy (rate 100, cap 5000bp) this
+// gives a redemption order-cap of exactly 120 Boncuk, reused throughout.
+// =======================================================================
+
+test("Boncuk redemption: no requestedBoncukAmount -> selectedBenefitType 'none', boncukRedemption null, unchanged pricing", async () => {
+  const fixture = await seedFullValidFixture();
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+    }),
+    fixture.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200);
+  const order = (await db().collection("orders").doc(body.result!.orderId as string).get()).data()!;
+  assert.strictEqual(order.selectedBenefitType, "none");
+  assert.strictEqual(order.boncukRedemption, null);
+  assert.strictEqual(order.pricing.discount.minorUnits, 0);
+  assert.strictEqual(order.pricing.grandTotal.minorUnits, 24000);
+});
+
+test("Boncuk redemption: a valid within-caps request settles part of the (unchanged) total, debits the account, and writes a ledger entry — eligible basis is the full grandTotal directly, no delivery-fee/tip subtraction", async () => {
+  const fixture = await seedFullValidFixture();
+  await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 300 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      requestedBoncukAmount: 100,
+    }),
+    fixture.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200, JSON.stringify(body));
+  const orderId = body.result!.orderId as string;
+  const order = (await db().collection("orders").doc(orderId).get()).data()!;
+
+  // Settlement, not discount — the order's own price fields are untouched.
+  assert.strictEqual(order.pricing.discount.minorUnits, 0);
+  assert.strictEqual(order.pricing.grandTotal.minorUnits, 24000);
+  // Delivery has no separate delivery fee — it is baked into unit prices —
+  // and Boncuk never touches it either way.
+  assert.strictEqual(order.pricing.deliveryFee.minorUnits, 0);
+
+  assert.strictEqual(order.selectedBenefitType, "boncukRedemption");
+  assert.strictEqual(order.boncukRedemption.boncukUsed, 100);
+  // 100 Boncuk * rate 100 = 10000 minor units — the full grandTotal (24000)
+  // is the basis, never grandTotal-minus-something for delivery.
+  assert.strictEqual(order.boncukRedemption.valueMinorUnits, 10000);
+  assert.strictEqual(order.boncukRedemption.remainingPayableMinorUnits, 14000);
+  assert.strictEqual(order.boncukRedemption.redemptionValueMinorUnitsPerBoncuk, 100);
+  assert.strictEqual(order.boncukRedemption.maxRedemptionBasisPoints, 5000);
+  assert.strictEqual(order.boncukRedemption.loyaltyPolicyVersion, 1);
+
+  const account = await loyaltyAccountDoc(fixture.chain.organizationId, fixture.uid);
+  assert.strictEqual(account?.spendableBalance, 200);
+  assert.strictEqual(account?.lifetimeRedeemed, 100);
+  assert.strictEqual(account?.boncukDebt, 0);
+  assert.strictEqual(account?.revision, 2);
+
+  const ledger = await boncukRedemptionLedgerDoc(fixture.chain.organizationId, fixture.uid, orderId);
+  assert.ok(ledger);
+  assert.strictEqual(ledger?.entryType, "boncukRedemption");
+  assert.strictEqual(ledger?.spendableDeltaBoncuk, -100);
+  assert.strictEqual(ledger?.debtDeltaBoncuk, 0);
+  assert.strictEqual(ledger?.amountBasisMinorUnits, 10000);
+  assert.strictEqual(ledger?.sourceId, orderId);
+  assert.strictEqual(ledger?.orderId, orderId);
+  assert.strictEqual(ledger?.organizationId, fixture.chain.organizationId);
+  assert.strictEqual(ledger?.customerId, fixture.uid);
+  assert.strictEqual(ledger?.idempotencyKey, orderId);
+  assert.strictEqual(ledger?.reversalOf, null);
+});
+
+test("Boncuk redemption: exactly at the order-cap boundary (120 Boncuk against a 24000 grandTotal) succeeds", async () => {
+  const fixture = await seedFullValidFixture();
+  await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 150 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      requestedBoncukAmount: 120,
+    }),
+    fixture.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200, JSON.stringify(body));
+  const order = (await db().collection("orders").doc(body.result!.orderId as string).get()).data()!;
+  assert.strictEqual(order.boncukRedemption.boncukUsed, 120);
+  assert.strictEqual(order.boncukRedemption.valueMinorUnits, 12000);
+  assert.strictEqual(order.boncukRedemption.remainingPayableMinorUnits, 12000);
+});
+
+test("Boncuk redemption: one Boncuk over the order cap is rejected outright, never clamped, no order/account/ledger mutation", async () => {
+  const fixture = await seedFullValidFixture();
+  await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 150 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      requestedBoncukAmount: 121,
+    }),
+    fixture.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+  assert.strictEqual(body.error?.details?.reason, "boncuk/exceeds-max-usable");
+  const account = await loyaltyAccountDoc(fixture.chain.organizationId, fixture.uid);
+  assert.strictEqual(account?.spendableBalance, 150, "the account must be untouched by a rejected request");
+  const orders = await db().collection("orders").where("customerId", "==", fixture.uid).get();
+  assert.strictEqual(orders.size, 0);
+});
+
+test("Boncuk redemption: a request exceeding the spendable balance (but within the order cap) is rejected", async () => {
+  const fixture = await seedFullValidFixture();
+  await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 50 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      requestedBoncukAmount: 60,
+    }),
+    fixture.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+  assert.strictEqual(body.error?.details?.reason, "boncuk/exceeds-max-usable");
+  const account = await loyaltyAccountDoc(fixture.chain.organizationId, fixture.uid);
+  assert.strictEqual(account?.spendableBalance, 50);
+});
+
+test("Boncuk redemption: no loyalty account exists for the customer -> rejected, fails safely", async () => {
+  const fixture = await seedFullValidFixture();
+  // Deliberately no seedLoyaltyAccount call.
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      requestedBoncukAmount: 10,
+    }),
+    fixture.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
+  assert.strictEqual(body.error?.details?.reason, "boncuk/account-unavailable");
+  const orders = await db().collection("orders").where("customerId", "==", fixture.uid).get();
+  assert.strictEqual(orders.size, 0);
+});
+
+test("Boncuk redemption: an anonymous (non-real-customer) caller with requestedBoncukAmount > 0 is denied via the ordinary isRealCustomer check — the same permission-denied path every anonymous delivery attempt hits, never reaching any Boncuk-specific logic", async () => {
+  const fixture = await seedFullValidFixture();
+  const anon = await createAnonymousUser();
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      requestedBoncukAmount: 1,
+    }),
+    anon.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 403);
+  assert.strictEqual(body.error?.status, "PERMISSION_DENIED");
+});
+
+test("Boncuk redemption: requestedBoncukAmount must be a non-negative integer — a fractional value is rejected", async () => {
+  const fixture = await seedFullValidFixture();
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      requestedBoncukAmount: 1.5,
+    }),
+    fixture.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+});
+
+// -----------------------------------------------------------------------
+// Idempotency — the existing submissionKey/fingerprint retry mechanism
+// must correctly cover redemption too (mirrors submitTakeawayOrder.test.ts
+// §C.1 exactly).
+// -----------------------------------------------------------------------
+
+test("Boncuk redemption idempotency: retrying the identical submissionKey + identical requestedBoncukAmount is a no-op the second time — no double debit, no double ledger entry", async () => {
+  const fixture = await seedFullValidFixture();
+  await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 100 });
+
+  const payload = validSubmission({
+    savedAddressId: fixture.savedAddressId,
+    items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+    requestedBoncukAmount: 10,
+  });
+
+  const first = await callCallable(SUBMIT_URL, payload, fixture.idToken);
+  const second = await callCallable(SUBMIT_URL, payload, fixture.idToken);
+
+  assert.strictEqual(first.httpStatus, 200);
+  assert.strictEqual(second.httpStatus, 200);
+  assert.strictEqual(second.body.result?.duplicate, true);
+  assert.strictEqual(first.body.result?.orderId, second.body.result?.orderId);
+
+  const account = await loyaltyAccountDoc(fixture.chain.organizationId, fixture.uid);
+  assert.strictEqual(account?.spendableBalance, 90, "a retry must never debit the account a second time");
+  assert.strictEqual(account?.lifetimeRedeemed, 10);
+  assert.strictEqual(account?.revision, 2, "a retry must never bump revision a second time");
+});
+
+test("Boncuk redemption idempotency: reusing the same submissionKey with a DIFFERENT requestedBoncukAmount fails closed and never mutates the already-created order", async () => {
+  const fixture = await seedFullValidFixture();
+  await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 100 });
+
+  const submissionKey = nextId("key");
+  const basePayload = {
+    submissionKey,
+    paymentMethodId: "cash",
+    savedAddressId: fixture.savedAddressId,
+    items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+  };
+
+  const first = await callCallable(SUBMIT_URL, { ...basePayload, requestedBoncukAmount: 10 }, fixture.idToken);
+  const second = await callCallable(SUBMIT_URL, { ...basePayload, requestedBoncukAmount: 20 }, fixture.idToken);
+
+  assert.strictEqual(first.httpStatus, 200);
+  assert.strictEqual(second.httpStatus, 400);
+  assert.strictEqual(second.body.error?.status, "FAILED_PRECONDITION");
+
+  const account = await loyaltyAccountDoc(fixture.chain.organizationId, fixture.uid);
+  assert.strictEqual(account?.spendableBalance, 90, "the rejected retry must never debit the account a second time");
+
+  const order = (await db().collection("orders").doc(first.body.result!.orderId as string).get()).data()!;
+  assert.strictEqual(order.boncukRedemption.boncukUsed, 10, "the original order must be untouched by the rejected retry");
+});
+
+// -----------------------------------------------------------------------
+// Double-spend protection — the balance check must be inside the
+// authoritative transaction, proven under real concurrency (mirrors
+// submitTakeawayOrder.test.ts §C.2 exactly).
+// -----------------------------------------------------------------------
+
+test("Boncuk redemption double-spend: two concurrent requests for 15 Boncuk each, against a balance of 20, must not both succeed", async () => {
+  const fixture = await seedFullValidFixture();
+  await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 20 });
+
+  const payloadFor = () =>
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      requestedBoncukAmount: 15,
+    });
+
+  const [resultA, resultB] = await Promise.all([
+    callCallable(SUBMIT_URL, payloadFor(), fixture.idToken),
+    callCallable(SUBMIT_URL, payloadFor(), fixture.idToken),
+  ]);
+
+  const successes = [resultA, resultB].filter((r) => r.httpStatus === 200);
+  const failures = [resultA, resultB].filter((r) => r.httpStatus !== 200);
+  assert.strictEqual(successes.length, 1, "exactly one of the two concurrent 15-Boncuk requests must succeed");
+  assert.strictEqual(failures.length, 1);
+  assert.strictEqual(failures[0].body.error?.status, "INVALID_ARGUMENT");
+
+  const account = await loyaltyAccountDoc(fixture.chain.organizationId, fixture.uid);
+  assert.strictEqual(account?.spendableBalance, 5, "the balance must reflect exactly one debit, never negative, never double-debited");
+  assert.strictEqual(account?.lifetimeRedeemed, 15);
+});
+
+// -----------------------------------------------------------------------
+// Dynamic (non-default) policy — redemption must read the organization's
+// OWN actually-configured active policy, never assume the locked defaults.
+// -----------------------------------------------------------------------
+
+test("Boncuk redemption: a non-default, dynamically-configured organization policy (rate 50, cap 80%, version 7) is used verbatim — never the locked default (rate 100, cap 50%, version 1)", async () => {
+  const fixture = await seedFullValidFixture();
+  await seedLoyaltyPolicy(fixture.chain.organizationId, {
+    redemptionValueMinorUnitsPerBoncuk: 50,
+    maxRedemptionBasisPoints: 8000,
+    version: 7,
+  });
+  await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 50 });
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    validSubmission({
+      savedAddressId: fixture.savedAddressId,
+      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+      requestedBoncukAmount: 50,
+    }),
+    fixture.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200, JSON.stringify(body));
+  const order = (await db().collection("orders").doc(body.result!.orderId as string).get()).data()!;
+  // Under the DEFAULT policy, 50 Boncuk * rate 100 would be 5000 minor
+  // units and version 1 — the values below only match if the org's own
+  // seeded V7 policy (rate 50) was genuinely read.
+  assert.strictEqual(order.boncukRedemption.valueMinorUnits, 2500);
+  assert.strictEqual(order.boncukRedemption.remainingPayableMinorUnits, 21500);
+  assert.strictEqual(order.boncukRedemption.redemptionValueMinorUnitsPerBoncuk, 50);
+  assert.strictEqual(order.boncukRedemption.maxRedemptionBasisPoints, 8000);
+  assert.strictEqual(order.boncukRedemption.loyaltyPolicyVersion, 7);
+
+  const account = await loyaltyAccountDoc(fixture.chain.organizationId, fixture.uid);
+  assert.strictEqual(account?.spendableBalance, 0);
+});
+
+// -----------------------------------------------------------------------
+// Payment-method compatibility — every LOCKED delivery payment method
+// remains Boncuk-compatible; payment method is never treated as a
+// competing "benefit".
+// -----------------------------------------------------------------------
+
+test("Boncuk redemption: all 7 LOCKED delivery payment methods remain Boncuk-compatible — payment method is never treated as a competing benefit", async () => {
+  const methods = ["cash", "credit_card", "pluxee", "multinet", "setcard", "edenred", "metropol_card"];
+  for (const paymentMethodId of methods) {
+    const fixture = await seedFullValidFixture();
+    await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 50 });
+    const { httpStatus, body } = await callCallable(
+      SUBMIT_URL,
+      validSubmission({
+        savedAddressId: fixture.savedAddressId,
+        paymentMethodId,
+        items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+        requestedBoncukAmount: 10,
+      }),
+      fixture.idToken,
+    );
+    assert.strictEqual(httpStatus, 200, `expected ${paymentMethodId} to remain compatible with a Boncuk redemption`);
+    const order = (await db().collection("orders").doc(body.result!.orderId as string).get()).data()!;
+    assert.strictEqual(order.selectedBenefitType, "boncukRedemption", `expected ${paymentMethodId} order to carry the redemption`);
+    assert.strictEqual(order.paymentMethodSnapshot.paymentMethodId, paymentMethodId);
+  }
 });

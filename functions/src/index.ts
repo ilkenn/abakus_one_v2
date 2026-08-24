@@ -71,3 +71,8 @@ export { advanceTakeawayOrderStatus } from "./advanceTakeawayOrderStatus";
 export { cancelTakeawayOrder } from "./cancelTakeawayOrder";
 export { cancelTakeawayOrderForStaff } from "./cancelTakeawayOrderForStaff";
 export { refundTakeawayOrder } from "./refundTakeawayOrder";
+export { respondToDeliveryOrder } from "./respondToDeliveryOrder";
+export { advanceDeliveryOrderStatus } from "./advanceDeliveryOrderStatus";
+export { cancelDeliveryOrder } from "./cancelDeliveryOrder";
+export { cancelDeliveryOrderForStaff } from "./cancelDeliveryOrderForStaff";
+export { refundDeliveryOrder } from "./refundDeliveryOrder";

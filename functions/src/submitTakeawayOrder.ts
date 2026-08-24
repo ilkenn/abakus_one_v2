@@ -33,6 +33,7 @@ import {
 } from "./loyaltyPolicy";
 import { calculateBoncukRedemption, resolveAccountForRedemption } from "./loyaltyRedemption";
 import type { LoyaltyAccountData } from "./getCustomerLoyaltySnapshot";
+import { boncukError, sanitizeRequestedBoncukAmount } from "./boncukRedemptionErrors";
 
 /**
  * Server-authoritative takeaway order creation — Faz D.3. The one
@@ -118,37 +119,11 @@ export function invalid(message: string): never {
   throw new HttpsError("invalid-argument", message);
 }
 
-/**
- * Boncuk Loyalty Program P4-E-B (2026-08-22) — stable, machine-readable
- * failure reasons for a Boncuk-redemption-specific rejection, carried in
- * `HttpsError`'s own `details` field (`{ reason: BoncukRedemptionErrorReason
- * }`) — round-trips to the Dart `cloud_functions` client verbatim as
- * `FirebaseFunctionsException.details`, a genuinely new pattern in this
- * codebase (no prior `HttpsError` call site uses `details`), introduced
- * because `code` alone is insufficient here: `invalid-argument`/
- * `failed-precondition` are ALSO thrown by entirely unrelated validation in
- * this same callable (contact fields, pickup time, branch scope, item
- * shape, ...), so a client branching on `code` alone cannot safely tell
- * "your Boncuk selection is now invalid" apart from "your phone number is
- * malformed." `reason` is the one stable value a client may branch
- * business logic on; `message` remains human-readable/diagnostic only,
- * never parsed by a caller.
- */
-export const BONCUK_REDEMPTION_ERROR_REASONS = [
-  "boncuk/exceeds-max-usable",
-  "boncuk/account-unavailable",
-  "boncuk/policy-unavailable",
-  "boncuk/redemption-not-allowed",
-] as const;
-export type BoncukRedemptionErrorReason = (typeof BONCUK_REDEMPTION_ERROR_REASONS)[number];
-
-function boncukError(
-  code: "invalid-argument" | "failed-precondition" | "internal",
-  message: string,
-  reason: BoncukRedemptionErrorReason,
-): never {
-  throw new HttpsError(code, message, { reason });
-}
+// Boncuk Loyalty P5-B (2026-08-24) — `BONCUK_REDEMPTION_ERROR_REASONS`/
+// `BoncukRedemptionErrorReason`/`boncukError` moved to the new, neutral
+// `boncukRedemptionErrors.ts` module (imported above) so
+// `submitDeliveryOrder.ts` can reuse the exact same stable-reason
+// vocabulary rather than a second, private copy. Behavior unchanged.
 
 /** Trim, length-cap, and reject disallowed characters (see `DISALLOWED_CONTACT_CHARACTERS`). */
 function sanitizeContactField(raw: unknown, fieldName: string): string {
@@ -178,19 +153,9 @@ function sanitizeSubmissionKey(raw: unknown): string {
   return raw;
 }
 
-/**
- * Boncuk Loyalty P4-B — the customer submits only a whole Boncuk COUNT,
- * never a value/rate/cap/remaining-payable amount (those are always
- * server-resolved from the active policy — P4-B locked rule). Absent/`null`
- * means "no Boncuk requested," identical to an explicit `0`.
- */
-function sanitizeRequestedBoncukAmount(raw: unknown): number {
-  if (raw === undefined || raw === null) return 0;
-  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
-    invalid("requestedBoncukAmount must be a non-negative integer.");
-  }
-  return raw as number;
-}
+// Boncuk Loyalty P5-B — `sanitizeRequestedBoncukAmount` moved to
+// `boncukRedemptionErrors.ts` (imported above), reused verbatim by
+// `submitDeliveryOrder.ts`. Behavior unchanged.
 
 export function parseItems(raw: unknown): RawItem[] {
   if (!Array.isArray(raw) || raw.length === 0) invalid("items must be a non-empty array.");

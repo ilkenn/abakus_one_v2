@@ -19,19 +19,22 @@ String _formatTl(double valueTl) {
   return isWhole ? valueTl.toStringAsFixed(0) : valueTl.toStringAsFixed(2);
 }
 
-/// Boncuk Loyalty Program P4-E-B (2026-08-22) — the premium "Boncuklarını
-/// Kullan" checkout card for TAKEAWAY (Gel Al) only. A presentational
-/// (dumb) widget: every economics figure it renders is passed in from
-/// `TakeawayCheckoutScreen`'s own [snapshotAsync]/[maxUsableBoncuk], never
-/// computed or hardcoded here — this widget owns no state and makes no
-/// server call itself.
+/// Boncuk Loyalty Program P4-E-B (2026-08-22), reused unchanged for delivery
+/// checkout P5-B (2026-08-24) — the premium "Boncuklarını Kullan" checkout
+/// card, shared verbatim by `TakeawayCheckoutScreen` and
+/// `DeliveryCheckoutScreen`. A presentational (dumb) widget: every economics
+/// figure it renders is passed in by the caller's own [snapshotAsync]/
+/// [maxUsableBoncuk], never computed or hardcoded here — this widget owns no
+/// state, makes no server call, and has no channel-specific logic at all.
 ///
 /// **Non-authoritative, by construction.** [maxUsableBoncuk] is a
 /// presentation-only estimate the caller derives from the latest sanitized
 /// [snapshotAsync] snapshot and the current (also approximate) cart total —
-/// this card never claims it is the final word; `submitTakeawayOrder`
-/// revalidates everything server-side. See `TakeawayCheckoutScreen`'s own
-/// doc comment for the full estimate formula and invalidation rules.
+/// this card never claims it is the final word; the server (`submitTakeawayOrder`/
+/// `submitDeliveryOrder`) revalidates everything independently. See
+/// `TakeawayCheckoutScreen`'s own doc comment for the full estimate formula
+/// and invalidation rules — `DeliveryCheckoutScreen` reuses the same
+/// `computeClientEstimatedMaxBoncuk` function verbatim.
 class BoncukRedemptionCard extends ConsumerWidget {
   const BoncukRedemptionCard({
     super.key,

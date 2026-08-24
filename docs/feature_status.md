@@ -4203,3 +4203,61 @@ already-existing tests); Firestore Rules suite 354/354, 0 failed, unchanged (no 
 `flutter analyze` clean; `flutter test` 3332 passed/12 skipped/0 failed (up from 3288, 44 new tests).
 See `docs/business_rules.md`'s new `BR-LOYALTY-023` and `docs/decisions.md`'s P4-E-B entry for the
 full mechanism and files changed. No commit was made.
+
+**Boncuk Loyalty Program P5-A (2026-08-24) — Delivery Boncuk Redemption Fast Reuse Audit, CLOSED
+(audit only, no code changed).** Confirmed the live delivery checkout is `DeliveryCheckoutScreen`/
+`submitDeliveryOrder.ts` (the legacy `CheckoutScreen`/its mock coupon system are dead, unreachable
+code — not to be extended or copied). Found: delivery pricing is already fully server-authoritative,
+no separate delivery fee exists (baked into unit prices), so the Boncuk-eligible basis is simply
+`pricing.grandTotalMinorUnits` — simpler than takeaway's tip-subtraction step; the 4 generic Loyalty
+consumer files and `firestore.rules`' create-omits-redemption rule are already 100% channel-agnostic;
+no delivery lifecycle callables existed at all — a delivery order was structurally stuck at
+`pendingConfirmation` forever. Directly informed P5-B's implementation plan.
+
+**Boncuk Loyalty Program P5-B (2026-08-24) — Delivery Boncuk Redemption + Canonical Delivery
+Lifecycle + Customer UI, CLOSED, delivery channel only.** Implements P5-A's accepted reuse plan.
+Extracted the takeaway-only Boncuk error-reason mechanism into a neutral `boncukRedemptionErrors.ts`
+module, now imported by both channels unchanged. Extended `submitDeliveryOrder.ts` with
+`requestedBoncukAmount`, reusing `calculateBoncukRedemption`/`resolveAccountForRedemption` inside the
+same order-creation transaction, eligible basis `pricing.grandTotalMinorUnits` directly (no tip/fee
+subtraction — delivery has no separate delivery fee). Extracted the channel-generic pieces of
+`takeawayOrderLifecycle.ts` (write-phase transition/audit-event helpers, `requireRealCustomer`,
+`sanitizeOptionalReasonMessage`, `TerminalActorType`, the refund-disposition enum) into a neutral
+`orderLifecycle.ts`, re-exported under their original names so the five existing takeaway callables
+needed zero changes (build-verified byte-for-byte); added a parallel `deliveryOrderLifecycle.ts` with
+delivery's own reason-code enums. Implemented the canonical delivery lifecycle for the first time —
+`pendingConfirmation → confirmed → preparing → ready → outForDelivery → completed`, exact-next-only,
+`completed` meaning actually delivered — via 5 new callables (`respondToDeliveryOrder`/
+`advanceDeliveryOrderStatus`/`cancelDeliveryOrder`/`cancelDeliveryOrderForStaff`/
+`refundDeliveryOrder`), each mirroring its takeaway counterpart with the channel/permission/status-map
+substitutions. Added 3 new `staffAuthorization.ts` permissions
+(`manageDeliveryOrders`/`manageDeliveryOrderCancellations`/`manageDeliveryOrderRefunds`), structurally
+separate from their takeaway counterparts; `courier` receives none — courier-authoritative delivery
+completion remains deferred. No Loyalty consumer file was touched — the existing terminal outbox/
+restore/reversal/earning chain activates automatically from the lifecycle callables' own `status`
+writes, verified (not redesigned) via delivery-specific integration tests including the
+refund-vs-earning race. `SubmitDeliveryOrderGateway.submit` gains `requestedBoncukAmount`;
+`SubmitDeliveryOrderException` gains `boncukErrorReason` — same shared error vocabulary as takeaway.
+`DeliveryCheckoutScreen` reuses `BoncukRedemptionCard`/`computeClientEstimatedMaxBoncuk`/
+`loyaltySnapshotProvider` UNCHANGED, with local `_boncukUsageEnabled`/`_selectedBoncukAmount` state
+mirroring `TakeawayCheckoutScreen` exactly — no new UI component, no new state architecture.
+`OrderSuccessScreen`'s Boncuk-summary gate broadened from takeaway-only to takeaway-OR-delivery (new
+`isDeliveryOrder` flag). All 7 delivery payment methods (cash/credit-card/Pluxee/Multinet/Setcard/
+Edenred/MetropolCard) remain Boncuk-compatible — payment method is not a competing benefit; no live
+coupon system exists for delivery today, so stacking risk does not arise. **Still explicitly out of
+scope**: real payment-provider refund execution, partial refund, courier-authoritative delivery
+lifecycle authority, Admin/POS/KDS delivery-lifecycle UI (the 5 new callables are reachable only via
+direct function call today, exercised by tests — no staff-facing screen calls them yet, same gap
+`BR-LOYALTY-021` disclosed for takeaway at the equivalent point). Reservation Boncuk redemption is
+NOT implemented — do not mark it complete. **Quality-gate correction (2026-08-24)**: the initial gate
+run found 2 full-suite-only failures in `functions.test.ts`/`orderEarnReversal.test.ts` (both
+untouched by P5-B otherwise, both passing clean in isolation) — root-caused as genuine TEST-HARNESS
+races (an unsynchronized poll racing an independent Firestore-trigger consumer; a deliberately-raced
+transaction pair hitting a transient emulator transport error under full-suite load), fixed in the
+test files only (a first-snapshot listener; a narrowly-scoped transient-error retry), zero production
+code changed. See `docs/decisions.md`'s dedicated correction entry for the full root-cause/fix detail.
+Gates (final, post-correction): Functions build clean; Functions emulator suite **1232/1232, twice
+consecutively** (fully green, not a lucky retry); Firestore Rules suite 354/354, 0 failed; `flutter
+analyze` clean; `flutter test` 3352 passed/12 skipped/0 failed (up from 3332, 20 new tests). See
+`docs/business_rules.md`'s new `BR-LOYALTY-024` and `docs/decisions.md`'s P5-B entry for the full
+mechanism and files changed. No commit was made.

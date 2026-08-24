@@ -1506,10 +1506,97 @@ this design introduces.
   `ILKSIPARIS`/`UCRETSIZ` codes) was confirmed untouched and structurally isolated (different screen,
   different state class) — explicitly flagged as a do-not-replicate anti-pattern, not a precedent to
   extend.
-- **Known, disclosed blockers**: delivery/reservation/dine-in-POS Boncuk redemption UI; partial refund;
-  real payment-provider execution; catalog rewards/wheel/tasks UI; Admin/POS/KDS UI.
+- **Known, disclosed blockers**: reservation/dine-in-POS Boncuk redemption UI; partial refund; real
+  payment-provider execution; catalog rewards/wheel/tasks UI; Admin/POS/KDS UI. **Delivery Boncuk
+  redemption + canonical delivery lifecycle are now implemented — see `BR-LOYALTY-024`** (this entry's
+  own "delivery ... remain unimplemented" line is superseded for that one channel).
 - **Owner Agent**: ui_ux_designer / restaurant_domain / security_engineer
-- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-022
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-022, BR-LOYALTY-024
+
+### BR-LOYALTY-024 — Delivery Boncuk redemption + canonical delivery order lifecycle
+- **Status**: DECIDED — **IMPLEMENTED (P5-B, 2026-08-24)**, delivery channel only. Audited (P5-A) before
+  implementation with an explicit maximum-reuse mandate: no second loyalty accounting engine, no
+  duplicate Boncuk UI component, no over-refactor of the shared order system. Extends
+  `BR-LOYALTY-019`/`BR-LOYALTY-020`/`BR-LOYALTY-021`/`BR-LOYALTY-022`/`BR-LOYALTY-023`'s already-locked
+  takeaway design onto delivery with the smallest surface area that reuse allowed.
+- **Rule — redemption reuses the takeaway engine verbatim, only the eligible basis differs.**
+  `submitDeliveryOrder.ts` calls the SAME `calculateBoncukRedemption`/`resolveAccountForRedemption`
+  (`loyaltyRedemption.ts`), the same deterministic ledger id derivation, the same debt-first account
+  transaction model, inside the same reads-before-writes transaction discipline as
+  `submitTakeawayOrder.ts` (`BR-LOYALTY-019`). The one genuine difference: delivery has no separate
+  delivery-fee line (the surcharge is baked into channel-adjusted unit prices, `pricing.deliveryFee`
+  stays `0`), so the Boncuk-eligible basis is `pricing.grandTotalMinorUnits` directly — no tip/fee
+  subtraction step exists for delivery the way takeaway's (currently-always-zero) tip subtraction does.
+  The stable Boncuk error-reason vocabulary (`boncuk/exceeds-max-usable`\|`boncuk/account-unavailable`\|
+  `boncuk/policy-unavailable`\|`boncuk/redemption-not-allowed`) was extracted to a neutral shared module
+  (`boncukRedemptionErrors.ts`) and is now reused byte-for-byte by both channels — not duplicated.
+- **Rule — all 7 delivery payment methods remain Boncuk-compatible; payment method is never a
+  competing "benefit".** Cash, credit/debit card, Pluxee, Multinet, Setcard, Edenred, and MetropolCard
+  all coexist freely with a Boncuk redemption on the same order — `selectedBenefitType` is exactly
+  `none`\|`boncukRedemption`, structurally independent of `paymentMethodSnapshot`. No coupon/campaign
+  system exists live for delivery today (the legacy `CheckoutScreen`'s client-side mock coupon codes
+  remain dead, unreachable code, untouched — `BR-LOYALTY-023`'s own anti-pattern flag applies
+  identically here), so the benefit-exclusivity question that would arise from stacking Boncuk with a
+  real coupon does not yet arise for delivery either.
+- **Rule — canonical delivery lifecycle, implemented for the first time**: `pendingConfirmation →
+  confirmed → preparing → ready → outForDelivery → completed`, exact-next-only (no skipping) via
+  `advanceDeliveryOrderStatus`'s own `DELIVERY_NEXT_STATUS` map. `completed` means the order was
+  actually delivered to / received by the customer — never merely that the kitchen finished preparing
+  it (`ready ≠ completed`) or that it left with a courier (`outForDelivery ≠ completed`); this is what
+  may trigger Boncuk earning (`onOrderCompleted.ts`, unmodified). Terminal paths: customer-only
+  `pendingConfirmation → cancelled` (`cancelDeliveryOrder`); restaurant-only `pendingConfirmation →
+  rejected` (`respondToDeliveryOrder`, decision `reject`); staff `confirmed → cancelled` (baseline
+  permission); manager+ `preparing|ready|outForDelivery → cancelled` (escalated permission — one extra
+  status versus takeaway's own `preparing|ready` tier, since delivery has the additional
+  `outForDelivery` step); manager+ `completed → refunded`, full refund only, `refundDisposition` always
+  exactly `manualExternalRefundConfirmed` (`refundDeliveryOrder`) — mirrors `BR-LOYALTY-022`'s own
+  refund-attestation semantics exactly, never a real payment-provider refund execution.
+- **Rule — the generic write-phase lifecycle machinery was extracted, not duplicated.**
+  `applyTakeawayLifecycleTransition`/`writeTakeawayOrderStatusChangeAuditEvent`/`requireRealCustomer`/
+  `sanitizeOptionalReasonMessage`/`TerminalActorType`/the refund-disposition enum were already
+  channel-generic despite living in a "takeaway"-named file; they now live in a neutral
+  `orderLifecycle.ts` module, with `takeawayOrderLifecycle.ts` re-exporting the same old names as thin
+  aliases (byte-for-byte-verified — the five existing takeaway callables needed zero changes) and a new
+  `deliveryOrderLifecycle.ts` importing the generic pieces directly, declaring only delivery's own
+  (currently identical-valued, independently-evolvable) reason-code enums.
+- **Rule — actor permissions, extending `staffAuthorization.ts`'s existing permission architecture**:
+  three new closed permissions, structurally separate from their takeaway counterparts (never shared —
+  different operational teams) — `manageDeliveryOrders` (confirm/reject/advance/cancel-while-`confirmed`;
+  `staff`/`manager`/`admin`/`tenantOwner`), `manageDeliveryOrderCancellations`
+  (cancel while `preparing`/`ready`/`outForDelivery`; `manager`/`admin`/`tenantOwner` only), and
+  `manageDeliveryOrderRefunds` (`completed → refunded`; `manager`/`admin`/`tenantOwner` only).
+  **`courier` receives none of these** — courier-authoritative delivery completion is explicitly
+  deferred until a canonical courier assignment/lifecycle integration exists; every step including the
+  final `→ completed` transition requires staff-side `manageDeliveryOrders` today.
+- **Rule — no direct Loyalty mutation from any delivery lifecycle callable.** Exactly like takeaway
+  (`BR-LOYALTY-021`), every delivery lifecycle callable only ever writes the order's own `status` —
+  the already-existing, unmodified, channel-generic terminal outbox
+  (`onOrderTerminalFailureOrRefund.ts`) and its two independent consumers
+  (`loyaltyRedemptionRestore.ts`/`orderEarnReversal.ts`), plus the existing `onOrderCompleted` earning
+  chain (`LOYALTY_EARNING_ELIGIBLE_CHANNELS` already included `"delivery"`), activate automatically from
+  that single write — zero Loyalty-consumer code changed for this phase. The existing
+  completed-vs-refunded async earning race guard (`BR-LOYALTY-022`) is channel-agnostic by construction
+  and was verified, not redesigned, to also protect delivery.
+- **Rule — delivery checkout UI reuses `BoncukRedemptionCard` unchanged.** `DeliveryCheckoutScreen`
+  wires the identical widget, the identical `computeClientEstimatedMaxBoncuk` estimate function, and the
+  identical `loyaltySnapshotProvider` that `TakeawayCheckoutScreen` already uses — no
+  `DeliveryBoncukRedemptionCard`, no new state-management architecture; local
+  `_boncukUsageEnabled`/`_selectedBoncukAmount` screen state mirrors `TakeawayCheckoutScreen`'s own
+  exactly, including the "never silently substitute a smaller nonzero selection" invalidation rule
+  (`BR-LOYALTY-023`). The presentation basis is the screen's own already-displayed, delivery-channel-
+  resolved estimated subtotal (`ChannelPriceResolver` + `DeliveryChannelPricingPolicy`) — never a
+  duplicated server pricing engine. `OrderSuccessScreen`'s Boncuk summary gate was broadened from
+  takeaway-only to takeaway-OR-delivery (a new explicit `isDeliveryOrder` flag, since a delivery order
+  has no branch-name signal to reuse the way takeaway's own gate inferred channel) — every value shown
+  remains server-confirmed, re-read from the canonical order after submission, never the pre-submit
+  estimate.
+- **Known, disclosed blockers**: real payment-provider refund execution; partial refund; courier-
+  authoritative delivery-completion authority; Admin/POS/KDS delivery-lifecycle UI (these callables are
+  currently reachable only via direct function call, exercised by tests — no staff-facing screen calls
+  them yet, mirroring `BR-LOYALTY-021`'s own equivalent takeaway-era gap at the time it shipped).
+- **Owner Agent**: restaurant_domain / security_engineer / ui_ux_designer
+- **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-020, BR-LOYALTY-021,
+  BR-LOYALTY-022, BR-LOYALTY-023, BR-PRICE-002
 
 # Customer CRM & Loyalty Platform
 

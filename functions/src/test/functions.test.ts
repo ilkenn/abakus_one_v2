@@ -47,6 +47,51 @@ async function waitFor<T>(
   throw new Error("Timed out waiting for condition");
 }
 
+/**
+ * Root-cause fix (P5-B quality-gate correction, 2026-08-24) for a test that
+ * intermittently failed under full-suite load only. The document this
+ * resolves for (`orderEvents/{orderId}-completed`) is written once by
+ * `onOrderCompleted.ts` and is ALSO independently consumed, the moment it
+ * exists, by `onOrderEventCreatedForLoyaltyEarning`
+ * (`loyaltyOrderEarning.ts`) — for a guest order (`customerId: null`, this
+ * test's own fixture) that consumer's very first branch does a single,
+ * transaction-free `eventRef.set({ rewardsEvaluated: true }, { merge:
+ * true })`, the cheapest possible write it can perform. Polling with
+ * `.get()` (the previous `waitFor`-based approach) reads whatever the
+ * CURRENT state happens to be at the moment of each poll — a genuine race
+ * against that independent consumer, since nothing serializes "the poll
+ * observes the doc" ahead of "the consumer has already processed it." In
+ * isolation the poll reliably won (low background load, first poll fires
+ * fast); under the full ~1200-test suite the poll and the consumer both
+ * queue behind far more concurrent trigger/dispatch activity, and the race
+ * outcome flips — this reproduced deterministically (3/3) under full-suite
+ * load and never in isolation (23/23), confirming a genuine test race, not
+ * a production bug (`rewardsEvaluated` legitimately becoming `true` almost
+ * immediately for an ineligible guest order is exactly `loyaltyOrderEarning
+ * .ts`'s documented, correct behavior).
+ *
+ * The fix: a Firestore realtime listener's snapshots are delivered in
+ * strict write-commit order — the FIRST snapshot in which a just-created
+ * document `exists` is guaranteed, by Firestore's own API contract, to
+ * reflect that create alone, never merged with any later write, regardless
+ * of how much time elapses before or after. Attaching the listener BEFORE
+ * triggering the write (the caller's job) and resolving on that first
+ * `exists` snapshot observes the document's state deterministically AT
+ * CREATION — eliminating the race entirely rather than out-racing it.
+ */
+function firstExistingSnapshotData<T>(
+  ref: FirebaseFirestore.DocumentReference,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const unsubscribe = ref.onSnapshot((snap) => {
+      if (snap.exists) {
+        unsubscribe();
+        resolve(snap.data() as T);
+      }
+    }, reject);
+  });
+}
+
 test("onOrderCreated transitions a freshly created order to pendingConfirmation, server-side", async () => {
   const db = admin.firestore();
   const orderId = "test-order-created-1";
@@ -124,15 +169,16 @@ test("onOrderCompleted writes exactly one orderEvents outbox record when an orde
     restaurantId: "restaurant-1",
     customerId: null,
   });
-  await db.collection("orders").doc(orderId).update({ status: "completed" });
 
-  const eventData = await waitFor(async () => {
-    const snap = await db
-      .collection("orderEvents")
-      .doc(`${orderId}-completed`)
-      .get();
-    return snap.exists ? snap.data()! : null;
-  });
+  const eventRef = db.collection("orderEvents").doc(`${orderId}-completed`);
+  // Listener attached BEFORE the triggering write — see
+  // `firstExistingSnapshotData`'s own doc comment for why this observes
+  // the document's state deterministically at creation, immune to the
+  // independent `onOrderEventCreatedForLoyaltyEarning` consumer's own race
+  // to process the same document the instant it exists.
+  const firstSnapshot = firstExistingSnapshotData<Record<string, unknown>>(eventRef);
+  await db.collection("orders").doc(orderId).update({ status: "completed" });
+  const eventData = await firstSnapshot;
 
   assert.strictEqual(eventData.type, "order.completed");
   assert.strictEqual(eventData.orderId, orderId);

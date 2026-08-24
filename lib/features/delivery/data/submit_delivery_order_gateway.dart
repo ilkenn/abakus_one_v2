@@ -29,10 +29,38 @@ class SubmitDeliveryOrderException implements Exception {
   final String code;
   final String message;
 
-  const SubmitDeliveryOrderException(this.code, this.message);
+  /// Boncuk Loyalty Program P5-B (2026-08-24) — the stable, machine-readable
+  /// reason from `functions/src/boncukRedemptionErrors.ts`'s
+  /// `BONCUK_REDEMPTION_ERROR_REASONS` (e.g. `'boncuk/exceeds-max-usable'`),
+  /// carried through from the callable's `HttpsError.details.reason` — the
+  /// SAME shared vocabulary `SubmitTakeawayOrderException.boncukErrorReason`
+  /// uses, never inferred from [code] alone. `null` for every non-Boncuk
+  /// rejection, and for a Boncuk rejection whose `details` this gateway
+  /// could not parse (fails safe to `null`, never fabricates a reason).
+  final String? boncukErrorReason;
+
+  const SubmitDeliveryOrderException(
+    this.code,
+    this.message, {
+    this.boncukErrorReason,
+  });
 
   @override
-  String toString() => 'SubmitDeliveryOrderException($code): $message';
+  String toString() => 'SubmitDeliveryOrderException($code): $message'
+      '${boncukErrorReason != null ? ' [reason: $boncukErrorReason]' : ''}';
+}
+
+/// Extracts `error.details['reason']` defensively — mirrors
+/// `submit_takeaway_order_gateway.dart`'s own `_extractBoncukErrorReason`
+/// exactly; `details` is `dynamic` on
+/// [functions.FirebaseFunctionsException], so this never assumes a shape.
+String? _extractBoncukErrorReason(functions.FirebaseFunctionsException error) {
+  final details = error.details;
+  if (details is Map) {
+    final reason = details['reason'];
+    if (reason is String) return reason;
+  }
+  return null;
 }
 
 /// One line item in a delivery order submission — either a canonical menu
@@ -104,6 +132,16 @@ class DeliveryBowlItem extends DeliveryOrderItem {
 /// the caller already resolved, exactly like `SavedAddressRepository.save`
 /// does for the FRAUD-F.1 address-save candidate.
 abstract interface class SubmitDeliveryOrderGateway {
+  /// Boncuk Loyalty Program P5-B (2026-08-24) — [requestedBoncukAmount] is
+  /// the ONLY Boncuk-related value this method ever sends: a whole,
+  /// non-negative Boncuk COUNT the customer explicitly chose. Mirrors
+  /// `SubmitTakeawayOrderGateway.submitAuthenticatedOrder`'s own contract
+  /// exactly — there is structurally no parameter here for a monetary
+  /// value, a policy version, a max percentage, an available balance, or a
+  /// remaining payable amount; the server resolves and re-validates every
+  /// one of those itself (`functions/src/submitDeliveryOrder.ts`, P5-B).
+  /// `0` (the default) means "no Boncuk requested," identical in effect to
+  /// omitting the field entirely.
   Future<SubmitDeliveryOrderResult> submit({
     required String submissionKey,
     required String savedAddressId,
@@ -111,6 +149,7 @@ abstract interface class SubmitDeliveryOrderGateway {
     required List<DeliveryOrderItem> items,
     ClientLocationEvidence? deviceLocation,
     String? deviceLocationUnavailableReason,
+    int requestedBoncukAmount = 0,
   });
 }
 
@@ -125,6 +164,7 @@ class FirebaseSubmitDeliveryOrderGateway implements SubmitDeliveryOrderGateway {
     required List<DeliveryOrderItem> items,
     ClientLocationEvidence? deviceLocation,
     String? deviceLocationUnavailableReason,
+    int requestedBoncukAmount = 0,
   }) async {
     final callable = functions.FirebaseFunctions.instance.httpsCallable(
       'submitDeliveryOrder',
@@ -139,6 +179,12 @@ class FirebaseSubmitDeliveryOrderGateway implements SubmitDeliveryOrderGateway {
           deviceLocation,
           deviceLocationUnavailableReason,
         ),
+        // Boncuk Loyalty P5-B — sent ONLY when > 0, mirroring the server's
+        // own `sanitizeRequestedBoncukAmount`'s "absent == 0" contract
+        // exactly; omitting it for the common no-Boncuk case keeps the wire
+        // payload identical to every pre-P5-B call.
+        if (requestedBoncukAmount > 0)
+          'requestedBoncukAmount': requestedBoncukAmount,
       });
       final data = result.data;
       return SubmitDeliveryOrderResult(
@@ -150,6 +196,7 @@ class FirebaseSubmitDeliveryOrderGateway implements SubmitDeliveryOrderGateway {
       throw SubmitDeliveryOrderException(
         error.code,
         error.message ?? 'Sipariş gönderilemedi.',
+        boncukErrorReason: _extractBoncukErrorReason(error),
       );
     }
   }

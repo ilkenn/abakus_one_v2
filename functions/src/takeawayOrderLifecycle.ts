@@ -1,23 +1,36 @@
 import { HttpsError } from "firebase-functions/v2/https";
-import type { CallableRequest } from "firebase-functions/v2/https";
-import { Timestamp } from "firebase-admin/firestore";
-import type { Firestore, Transaction, DocumentData, DocumentReference } from "firebase-admin/firestore";
-import type { OrderStatus } from "./orderStatus";
+import {
+  requireOrderId,
+  sanitizeOptionalReasonMessage,
+  requireRealCustomer,
+  applyOrderLifecycleTransition,
+  writeOrderStatusChangeAuditEvent,
+  ORDER_REFUND_DISPOSITIONS,
+  type TerminalActorType,
+  type OrderRefundDisposition,
+  type ApplyOrderLifecycleTransitionParams,
+  type WriteOrderStatusChangeAuditEventParams,
+} from "./orderLifecycle";
 
 /**
- * `takeawayOrderLifecycle` — Boncuk Loyalty Program P4-C-C-B (2026-08-22).
+ * `takeawayOrderLifecycle` — Boncuk Loyalty Program P4-C-C-B (2026-08-22),
+ * refactored P5-B (2026-08-24).
  *
  * Shared building blocks for the five takeaway lifecycle callables
  * (`respondToTakeawayOrder`/`advanceTakeawayOrderStatus`/
  * `cancelTakeawayOrder`/`cancelTakeawayOrderForStaff`/`refundTakeawayOrder`,
  * the last added P4-D-B, 2026-08-22) — closed reason-code enums, input
- * sanitizers, and the two write-phase helpers every callable shares
- * (`applyTakeawayLifecycleTransition`/
- * `writeTakeawayOrderStatusChangeAuditEvent`). No Firestore reads happen
- * here — every function in this file is either pure validation or a
- * write-phase helper the CALLER invokes only after its own transaction has
- * already validated the current status (the actual idempotency gate lives
- * in each callable, not here).
+ * sanitizers, and the two write-phase helpers every callable shares.
+ *
+ * **P5-B: the actually-generic pieces of this file (the write-phase
+ * helpers, `requireRealCustomer`, `sanitizeOptionalReasonMessage`,
+ * `TerminalActorType`, the refund-disposition enum, and the plain
+ * `orderId` requirement) moved to the neutral `./orderLifecycle` module so
+ * `deliveryOrderLifecycle.ts` could reuse them — this file now re-exports
+ * every one of them under its ORIGINAL name as a thin alias, so nothing
+ * below changed behavior and none of the five takeaway callable files
+ * needed to change their own imports.** Only the genuinely takeaway-specific
+ * closed reason-code enums and their sanitizers are still implemented here.
  *
  * **Rejection vs. cancellation reason codes are deliberately two separate
  * closed enums, not one shared list** (P4-C-C-A §5/§6) — checked against
@@ -31,6 +44,20 @@ import type { OrderStatus } from "./orderStatus";
  * whose customer never arrived to collect it. Rejection happens before any
  * commitment (no meaningful "no-show" concept applies yet).
  */
+
+export type { TerminalActorType };
+export {
+  requireRealCustomer,
+  applyOrderLifecycleTransition as applyTakeawayLifecycleTransition,
+  writeOrderStatusChangeAuditEvent as writeTakeawayOrderStatusChangeAuditEvent,
+  sanitizeOptionalReasonMessage,
+};
+export type ApplyTakeawayLifecycleTransitionParams = ApplyOrderLifecycleTransitionParams;
+export type WriteTakeawayOrderStatusChangeAuditEventParams = WriteOrderStatusChangeAuditEventParams;
+
+export function requireTakeawayOrderId(raw: unknown): string {
+  return requireOrderId(raw);
+}
 
 export const TAKEAWAY_REJECTION_REASON_CODES = [
   "itemUnavailable",
@@ -72,50 +99,17 @@ export const TAKEAWAY_REFUND_REASON_CODES = [
 export type TakeawayRefundReasonCode = (typeof TAKEAWAY_REFUND_REASON_CODES)[number];
 
 /**
- * Boncuk Loyalty P4-D-B — deliberately separates the CANONICAL order
- * refund fact (`order.status == 'refunded'`, meaning the refund has
- * actually been completed/confirmed) from the PAYMENT-execution fact
- * (`refundDisposition`, meaning HOW the money was actually returned).
- * **`manualExternalRefundConfirmed` is the ONLY value this phase can ever
- * produce** — takeaway carries no payment-method record and no payment
- * provider is wired for any channel in this codebase (confirmed by audit,
- * P4-D-A) — an authorized manager/admin/tenantOwner is CERTIFYING that a
- * real monetary refund already happened externally/manually (cash, a
- * manual card terminal, or any other business-side process outside this
- * system's own visibility), never that this system itself moved money.
- * `providerRefundSucceeded` is reserved for a genuinely future phase, once
- * a real payment-provider refund execution path exists for takeaway — it
- * is declared here only so the type is forward-compatible, never written
- * by any code in this phase. There is deliberately NO
- * `providerRefundPending`/`providerRefundFailed` value at all: per the
- * locked design, a pending or failed provider refund must never cause
- * `order.status` to become `refunded` in the first place (the order stays
- * `completed` until a provider refund genuinely succeeds), so those two
- * outcomes could never legitimately coexist with this field regardless.
+ * Boncuk Loyalty P4-D-B — takeaway's own name for the channel-generic
+ * `ORDER_REFUND_DISPOSITIONS`/`OrderRefundDisposition` (moved to
+ * `./orderLifecycle` P5-B — see that module's doc comment for the full
+ * rationale). Re-exported under the original name so
+ * `refundTakeawayOrder.ts` and any future takeaway code need no changes.
  */
-export const TAKEAWAY_REFUND_DISPOSITIONS = [
-  "manualExternalRefundConfirmed",
-  "providerRefundSucceeded",
-] as const;
-export type TakeawayRefundDisposition = (typeof TAKEAWAY_REFUND_DISPOSITIONS)[number];
-
-/**
- * Closed, customer-safe actor category — the ONLY actor field ever written
- * to the customer-readable order document (`terminalActorType`). Never a
- * raw uid — see `applyTakeawayLifecycleTransition`'s own doc comment for
- * why `terminalActorUid` must never exist on that document at all.
- */
-export type TerminalActorType = "customer" | "staff" | "system";
+export const TAKEAWAY_REFUND_DISPOSITIONS = ORDER_REFUND_DISPOSITIONS;
+export type TakeawayRefundDisposition = OrderRefundDisposition;
 
 function invalid(message: string): never {
   throw new HttpsError("invalid-argument", message);
-}
-
-export function requireTakeawayOrderId(raw: unknown): string {
-  if (typeof raw !== "string" || raw.length === 0) {
-    invalid("orderId is required.");
-  }
-  return raw as string;
 }
 
 export function sanitizeRejectionReasonCode(raw: unknown): TakeawayRejectionReasonCode {
@@ -137,204 +131,4 @@ export function sanitizeRefundReasonCode(raw: unknown): TakeawayRefundReasonCode
     invalid(`reasonCode must be one of: ${TAKEAWAY_REFUND_REASON_CODES.join(", ")}.`);
   }
   return raw as TakeawayRefundReasonCode;
-}
-
-const MAX_REASON_MESSAGE_LENGTH = 500;
-
-/** `reasonMessage` is an INTERNAL staff note only — never written anywhere the customer can read it (see `writeTakeawayOrderStatusChangeAuditEvent`). */
-export function sanitizeOptionalReasonMessage(raw: unknown): string | null {
-  if (raw === undefined || raw === null) return null;
-  if (typeof raw !== "string") invalid("reasonMessage must be a string.");
-  const trimmed = (raw as string).trim();
-  if (trimmed.length === 0) return null;
-  if (trimmed.length > MAX_REASON_MESSAGE_LENGTH) invalid("reasonMessage is too long.");
-  return trimmed;
-}
-
-/** Real, phone-verified customer check — the same inline pattern used at 15+ call sites across this codebase (no shared helper exists repo-wide; introducing one is out of this phase's scope). */
-export function requireRealCustomer(request: CallableRequest): string {
-  if (!request.auth) {
-    throw new HttpsError("unauthenticated", "Sign-in is required.");
-  }
-  const isRealCustomer = request.auth.token?.firebase?.sign_in_provider === "phone";
-  if (!isRealCustomer) {
-    throw new HttpsError(
-      "permission-denied",
-      "This action requires a real, phone-verified customer identity.",
-    );
-  }
-  return request.auth.uid;
-}
-
-/** The `timestamps` slots `buildOrderDocument` (submitTakeawayOrder.ts) already provisions (always `null` until a real writer populates one) — `rejected` has no dedicated slot; `terminalAt` (set by `applyTakeawayLifecycleTransition` for every terminal transition) already covers it, so no new slot is added for it. */
-const TIMESTAMP_SLOT_FOR_STATUS: Partial<Record<OrderStatus, string>> = {
-  confirmed: "confirmed",
-  preparing: "preparing",
-  ready: "ready",
-  completed: "completed",
-  cancelled: "cancelled",
-};
-
-export interface ApplyTakeawayLifecycleTransitionParams {
-  tx: Transaction;
-  orderRef: DocumentReference<DocumentData>;
-  orderId: string;
-  order: DocumentData;
-  fromStatus: OrderStatus;
-  toStatus: OrderStatus;
-  actorType: TerminalActorType;
-  now: Timestamp;
-  /** Present only for a terminal (`rejected`/`cancelled`/`refunded`) transition; ignored otherwise. */
-  terminalReasonCode?: string | null;
-  /** Present ONLY for a `refunded` transition — see `TAKEAWAY_REFUND_DISPOSITIONS`'s own doc comment. Always passed explicitly by the caller (`refundTakeawayOrder.ts`), never defaulted here. */
-  refundDisposition?: TakeawayRefundDisposition | null;
-}
-
-/**
- * The WRITE phase of one canonical takeaway status transition — appends
- * exactly one `statusHistory` entry, populates the matching existing
- * `timestamps` slot (never a new, duplicate concept — P4-C-C-B §8), bumps
- * `version`, and — only for a terminal transition — stamps the
- * customer-safe terminal fields (`terminalReasonCode`/`terminalActorType`/
- * `terminalAt`).
- *
- * **`terminalActorUid` is deliberately never written here, on purpose, by
- * design — this document is customer-readable.** A staff member's uid is
- * internal operational data; it belongs only in `auditEvents` (via
- * `writeTakeawayOrderStatusChangeAuditEvent`), never on a document the
- * order's own customer can read.
- *
- * Callers are responsible for their OWN current-status precondition check
- * BEFORE calling this — this function performs no read and no idempotency
- * check of its own; it assumes the caller has already established that
- * `fromStatus -> toStatus` is a genuinely new transition for this order.
- */
-export function applyTakeawayLifecycleTransition(
-  params: ApplyTakeawayLifecycleTransitionParams,
-): void {
-  const {
-    tx,
-    orderRef,
-    orderId,
-    order,
-    fromStatus,
-    toStatus,
-    actorType,
-    now,
-    terminalReasonCode,
-    refundDisposition,
-  } = params;
-  const nowIso = now.toDate().toISOString();
-  const isTerminal = toStatus === "rejected" || toStatus === "cancelled" || toStatus === "refunded";
-
-  const statusHistory = Array.isArray(order.statusHistory) ? order.statusHistory : [];
-  const transitionId = `${orderId}-transition-${toStatus}`;
-
-  const update: Record<string, unknown> = {
-    status: toStatus,
-    statusHistory: [
-      ...statusHistory,
-      {
-        id: transitionId,
-        type: "statusChange",
-        description: `Status changed from ${fromStatus} to ${toStatus}`,
-        actor: actorType,
-        timestamp: nowIso,
-        previousValue: fromStatus,
-        newValue: toStatus,
-      },
-    ],
-  };
-
-  const timestampSlot = TIMESTAMP_SLOT_FOR_STATUS[toStatus];
-  if (timestampSlot) {
-    update[`timestamps.${timestampSlot}`] = nowIso;
-  }
-
-  if (isTerminal) {
-    update.terminalReasonCode = terminalReasonCode ?? null;
-    update.terminalActorType = actorType;
-    update.terminalAt = nowIso;
-  }
-  if (toStatus === "refunded") {
-    update.refundDisposition = refundDisposition ?? null;
-  }
-
-  tx.update(orderRef, update);
-}
-
-export interface WriteTakeawayOrderStatusChangeAuditEventParams {
-  tx: Transaction;
-  db: Firestore;
-  orderId: string;
-  organizationId: string;
-  branchId: string;
-  fromStatus: OrderStatus;
-  toStatus: OrderStatus;
-  actorType: TerminalActorType;
-  /** Internal-only — never written to the order document, only here. */
-  actorUid: string | null;
-  actorRoles?: readonly string[] | null;
-  reasonCode?: string | null;
-  /** Internal staff note only — never customer-readable. */
-  reasonMessage?: string | null;
-  now: Timestamp;
-}
-
-/**
- * Extends `auditEvents`' existing `type: "order.statusChanged"` shape
- * (already written by `onOrderCreated.ts`/`reservationPreorder.ts`,
- * confirmed by direct inspection before writing this — no parallel audit
- * collection introduced). `actor` is preserved as the existing coarse
- * string field (`"system"`/`"staff"`/`"customer"`, matching the shape
- * every prior writer already used); the new fields (`branchId`,
- * `actorType`, `actorUid`, `actorRoles`, `reasonCode`, `reasonMessage`) are
- * purely additive, mirroring this codebase's own established
- * backward-compatible-additive-field convention.
- *
- * Deterministic document id (`${orderId}-status-${fromStatus}-${toStatus}`)
- * — a given order can only ever make a specific `from -> to` transition
- * once (the state machine has no cycles), so this id can never legitimately
- * collide. `tx.set()`, not `tx.create()`: the true idempotency gate is each
- * callable's own current-status precondition check (re-verified inside the
- * SAME transaction as this write), which already guarantees this function
- * is only ever reached once per real transition — `tx.create()`'s
- * mid-transaction ALREADY_EXISTS failure mode cannot be gracefully caught
- * the way a standalone `.create()` (e.g. `onOrderCompleted.ts`'s own
- * outbox write) can be, so it is not used here.
- */
-export function writeTakeawayOrderStatusChangeAuditEvent(
-  params: WriteTakeawayOrderStatusChangeAuditEventParams,
-): void {
-  const {
-    tx,
-    db,
-    orderId,
-    organizationId,
-    branchId,
-    fromStatus,
-    toStatus,
-    actorType,
-    actorUid,
-    actorRoles,
-    reasonCode,
-    reasonMessage,
-    now,
-  } = params;
-  const eventId = `${orderId}-status-${fromStatus}-${toStatus}`;
-  tx.set(db.collection("auditEvents").doc(eventId), {
-    organizationId,
-    branchId,
-    type: "order.statusChanged",
-    orderId,
-    previousValue: fromStatus,
-    newValue: toStatus,
-    actor: actorType,
-    actorType,
-    actorUid: actorUid ?? null,
-    actorRoles: actorRoles ?? null,
-    reasonCode: reasonCode ?? null,
-    reasonMessage: reasonMessage ?? null,
-    timestamp: now.toDate().toISOString(),
-  });
 }

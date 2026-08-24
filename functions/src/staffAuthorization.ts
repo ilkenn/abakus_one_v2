@@ -39,7 +39,10 @@ export type StaffPermission =
   | "moderateCustomerPhotos"
   | "manageTakeawayOrders"
   | "manageTakeawayOrderCancellations"
-  | "manageTakeawayOrderRefunds";
+  | "manageTakeawayOrderRefunds"
+  | "manageDeliveryOrders"
+  | "manageDeliveryOrderCancellations"
+  | "manageDeliveryOrderRefunds";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -93,6 +96,29 @@ export type StaffPermission =
  *   less honest/auditable. `_managerTier`-and-above only — `staff` is
  *   deliberately NOT granted this one, same boundary as
  *   `manageTakeawayOrderCancellations`.
+ * - `manageDeliveryOrders` / `manageDeliveryOrderCancellations` /
+ *   `manageDeliveryOrderRefunds` (Boncuk Loyalty P5-B, 2026-08-24): the
+ *   DELIVERY-channel analogues of the three `manageTakeawayOrder*`
+ *   permissions above, same exact tiering rationale, deliberately three
+ *   SEPARATE permissions from their takeaway counterparts (never reused —
+ *   a staff member scoped to takeaway operations must not automatically
+ *   gain delivery lifecycle authority, and vice versa; the two channels
+ *   have genuinely different operational teams in a real restaurant).
+ *   `manageDeliveryOrders` covers confirm/reject/`confirmed -> preparing
+ *   -> ready -> outForDelivery -> completed`/`confirmed -> cancelled` —
+ *   granted to `staff` (day-to-day operational volume, same reasoning as
+ *   `manageTakeawayOrders`) and `manager`/`admin`/`tenantOwner`.
+ *   `manageDeliveryOrderCancellations` covers cancelling from
+ *   `preparing`/`ready`/`outForDelivery` (real kitchen/courier time
+ *   already committed) — `_managerTier`-and-above only, `staff`
+ *   deliberately excluded, same boundary as
+ *   `manageTakeawayOrderCancellations`. `manageDeliveryOrderRefunds`
+ *   covers `completed -> refunded` — `_managerTier`-and-above only, its
+ *   own dedicated permission for the same reason
+ *   `manageTakeawayOrderRefunds` is. `courier` is granted NONE of these
+ *   three in this phase — courier-authoritative delivery completion is
+ *   explicitly deferred until a canonical courier assignment/lifecycle
+ *   integration exists (P5-B's own locked scope).
  *
  * Role name strings match `StaffRole.name` / the custom-claims `roles` map
  * convention already established by `platformAuthorization.ts`/
@@ -104,7 +130,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
   // existing manager-tier permission — an ordinary staff member must never
   // gain `manageReservations`/`manageBranch`/etc. as an accidental side
   // effect of this addition.
-  staff: ["manageTakeawayOrders"],
+  staff: ["manageTakeawayOrders", "manageDeliveryOrders"],
   manager: [
     "manageReservations",
     "manageBranch",
@@ -114,6 +140,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageTakeawayOrders",
     "manageTakeawayOrderCancellations",
     "manageTakeawayOrderRefunds",
+    "manageDeliveryOrders",
+    "manageDeliveryOrderCancellations",
+    "manageDeliveryOrderRefunds",
   ],
   admin: [
     "manageReservations",
@@ -126,6 +155,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageTakeawayOrders",
     "manageTakeawayOrderCancellations",
     "manageTakeawayOrderRefunds",
+    "manageDeliveryOrders",
+    "manageDeliveryOrderCancellations",
+    "manageDeliveryOrderRefunds",
   ],
   tenantOwner: [
     "manageReservations",
@@ -138,10 +170,13 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageTakeawayOrders",
     "manageTakeawayOrderCancellations",
     "manageTakeawayOrderRefunds",
+    "manageDeliveryOrders",
+    "manageDeliveryOrderCancellations",
+    "manageDeliveryOrderRefunds",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must
-  // never gain takeaway lifecycle authority.
+  // never gain takeaway OR delivery lifecycle authority in this phase.
 };
 
 /**

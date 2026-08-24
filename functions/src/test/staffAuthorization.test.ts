@@ -143,8 +143,8 @@ const ALL_PRE_EXISTING_PERMISSIONS: readonly StaffPermission[] = [
   "moderateCustomerPhotos",
 ];
 
-test("staff role has EXACTLY manageTakeawayOrders and nothing else", () => {
-  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, ["manageTakeawayOrders"]);
+test("staff role has EXACTLY manageTakeawayOrders and manageDeliveryOrders — Boncuk Loyalty P5-B (2026-08-24) added manageDeliveryOrders to staff's default grant alongside its existing manageTakeawayOrders; this assertion was corrected in the same change (was previously ['manageTakeawayOrders'] only, before delivery lifecycle existed)", () => {
+  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, ["manageTakeawayOrders", "manageDeliveryOrders"]);
 });
 
 test("staff role does NOT have manageTakeawayOrderCancellations", () => {
@@ -190,8 +190,8 @@ test("staff role does NOT have manageTakeawayOrderRefunds", () => {
   assert.strictEqual(roleHasPermission("staff", "manageTakeawayOrderRefunds"), false);
 });
 
-test("staff role has EXACTLY manageTakeawayOrders and nothing else — re-asserted here to prove manageTakeawayOrderRefunds was not silently added to staff's grant", () => {
-  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, ["manageTakeawayOrders"]);
+test("staff role has EXACTLY manageTakeawayOrders and manageDeliveryOrders — re-asserted here to prove manageTakeawayOrderRefunds was not silently added to staff's grant (see P5-B correction above for why manageDeliveryOrders is now part of the expected set)", () => {
+  assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, ["manageTakeawayOrders", "manageDeliveryOrders"]);
 });
 
 test("manager/admin/tenantOwner all have manageTakeawayOrderRefunds under the default mapping", () => {
@@ -216,6 +216,95 @@ test("granting manageTakeawayOrderRefunds does not implicitly grant any pre-exis
       `staff must not have ${permission}`,
     );
   }
+});
+
+// =======================================================================
+// Boncuk Loyalty P5-B (2026-08-24) — manageDeliveryOrders /
+// manageDeliveryOrderCancellations / manageDeliveryOrderRefunds, the
+// delivery-channel analogues of the three manageTakeawayOrder* permissions
+// above, each its OWN separate permission (never reused from the takeaway
+// set). Mirrors the takeaway coverage above exactly, one channel over.
+// =======================================================================
+
+test("staff role HAS manageDeliveryOrders under the default mapping — day-to-day operational volume, same reasoning as manageTakeawayOrders", () => {
+  assert.strictEqual(roleHasPermission("staff", "manageDeliveryOrders"), true);
+});
+
+test("staff role does NOT have manageDeliveryOrderCancellations", () => {
+  assert.strictEqual(roleHasPermission("staff", "manageDeliveryOrderCancellations"), false);
+});
+
+test("staff role does NOT have manageDeliveryOrderRefunds", () => {
+  assert.strictEqual(roleHasPermission("staff", "manageDeliveryOrderRefunds"), false);
+});
+
+test("manageDeliveryOrders and manageTakeawayOrders are genuinely independent grants — a role granted only one via an explicit override does not implicitly gain the other (delivery/takeaway staff scoping must never leak into each other)", () => {
+  const deliveryOnly = {
+    ...DEFAULT_STAFF_ROLE_PERMISSIONS,
+    staff: ["manageDeliveryOrders"] as const,
+  };
+  assert.strictEqual(roleHasPermission("staff", "manageDeliveryOrders", deliveryOnly), true);
+  assert.strictEqual(roleHasPermission("staff", "manageTakeawayOrders", deliveryOnly), false);
+
+  const takeawayOnly = {
+    ...DEFAULT_STAFF_ROLE_PERMISSIONS,
+    staff: ["manageTakeawayOrders"] as const,
+  };
+  assert.strictEqual(roleHasPermission("staff", "manageTakeawayOrders", takeawayOnly), true);
+  assert.strictEqual(roleHasPermission("staff", "manageDeliveryOrders", takeawayOnly), false);
+});
+
+test("manager/admin/tenantOwner all have ALL THREE new delivery permissions under the default mapping", () => {
+  for (const role of ["manager", "admin", "tenantOwner"]) {
+    assert.strictEqual(roleHasPermission(role, "manageDeliveryOrders"), true, `${role} should have manageDeliveryOrders`);
+    assert.strictEqual(
+      roleHasPermission(role, "manageDeliveryOrderCancellations"),
+      true,
+      `${role} should have manageDeliveryOrderCancellations`,
+    );
+    assert.strictEqual(
+      roleHasPermission(role, "manageDeliveryOrderRefunds"),
+      true,
+      `${role} should have manageDeliveryOrderRefunds`,
+    );
+  }
+});
+
+test("courier role has NONE of the three new delivery permissions — deliberately deferred (courier-authoritative delivery completion is out of scope this phase)", () => {
+  assert.strictEqual(roleHasPermission("courier", "manageDeliveryOrders"), false);
+  assert.strictEqual(roleHasPermission("courier", "manageDeliveryOrderCancellations"), false);
+  assert.strictEqual(roleHasPermission("courier", "manageDeliveryOrderRefunds"), false);
+});
+
+test("granting the delivery permissions does not implicitly grant any pre-existing manager-tier permission, or any takeaway permission, to staff — no accidental cross-channel or cross-tier escalation", () => {
+  for (const permission of [
+    ...ALL_PRE_EXISTING_PERMISSIONS,
+    "manageTakeawayOrderCancellations" as const,
+    "manageTakeawayOrderRefunds" as const,
+    "manageDeliveryOrderCancellations" as const,
+    "manageDeliveryOrderRefunds" as const,
+  ]) {
+    assert.strictEqual(
+      roleHasPermission("staff", permission),
+      false,
+      `staff must not have ${permission}`,
+    );
+  }
+});
+
+test("requireStaffPermission: staff role WITH manageDeliveryOrders -> succeeds", () => {
+  const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["staff"] } } });
+  assert.doesNotThrow(() => requireStaffPermission(req, "org-1", "manageDeliveryOrders"));
+});
+
+test("requireStaffPermission: staff role lacks manageDeliveryOrderCancellations -> permission-denied", () => {
+  const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["staff"] } } });
+  throwsWithCode(() => requireStaffPermission(req, "org-1", "manageDeliveryOrderCancellations"), "permission-denied");
+});
+
+test("requireStaffPermission: manager role WITH manageDeliveryOrderRefunds -> succeeds", () => {
+  const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["manager"] } } });
+  assert.doesNotThrow(() => requireStaffPermission(req, "org-1", "manageDeliveryOrderRefunds"));
 });
 
 // -----------------------------------------------------------------------
