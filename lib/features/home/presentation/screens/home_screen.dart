@@ -7,7 +7,6 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../bowl_builder/presentation/screens/bowl_builder_screen.dart';
-import '../../../campaigns/presentation/screens/campaigns_screen.dart';
 import '../../../delivery/presentation/screens/delivery_address_selection_screen.dart';
 import '../../../navigation/presentation/providers/navigation_provider.dart';
 import '../../../notifications/presentation/screens/notifications_screen.dart';
@@ -98,15 +97,12 @@ class HomeScreen extends ConsumerWidget {
                         ),
                       ),
 
-                      // 2. Real 3-slide promo carousel (banner_01/02/04).
+                      // 2. Real promo carousel (banner_02/04) — P8-B.1
+                      // (2026-08-25): banner_01's campaign slide is
+                      // temporarily removed, see HomeHeroCarousel's own doc
+                      // comment.
                       const SizedBox(height: AppSpacing.xl),
                       HomeHeroCarousel(
-                        onCampaignTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const CampaignsScreen(),
-                          ),
-                        ),
                         onLoyaltyTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(

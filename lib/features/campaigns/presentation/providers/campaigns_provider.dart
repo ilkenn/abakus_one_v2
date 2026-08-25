@@ -1,74 +1,36 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../domain/models/campaign_model.dart';
 
-class CampaignsNotifier extends Notifier<List<CampaignModel>> {
-  @override
-  List<CampaignModel> build() {
-    return const [
-      CampaignModel(
-        id: 'camp_1',
-        title: 'Tüm Kaselerde %10 İndirim!',
-        description:
-            'Hafta içine özel tüm lezzetli bowl kaselerinde geçerli indirim fırsatı.',
-        endDate: '31.12.2026',
-        campaignType: CampaignType.percentage,
-        couponCode: 'ABAKUS10',
-        minimumOrderAmount: 0.0,
-        discountValue: 10.0,
-        isActive: true,
-        isClaimed: false,
-      ),
-      CampaignModel(
-        id: 'camp_2',
-        title: 'İlk Siparişe 100 TL Hediye',
-        description:
-            'Abaküs Bowl ailesine katılan herkesin ilk lezzet deneyimine bizden destek.',
-        endDate: '30.11.2026',
-        campaignType: CampaignType.amount,
-        couponCode: 'ILKSIPARIS',
-        minimumOrderAmount: 250.0,
-        discountValue: 100.0,
-        isActive: true,
-        isClaimed: false,
-      ),
-      CampaignModel(
-        id: 'camp_3',
-        title: 'Bedava Teslimat Ayrıcalığı',
-        description:
-            'Belirli tutarın üzerindeki tüm siparişlerinizde kurye ücretini sıfırlıyoruz.',
-        endDate: '15.10.2026',
-        campaignType: CampaignType.freeDelivery,
-        couponCode: 'UCRETSIZ',
-        minimumOrderAmount: 200.0,
-        discountValue: 29.0,
-        isActive: true,
-        isClaimed: false,
-      ),
-      CampaignModel(
-        id: 'camp_4',
-        title: 'Geçmiş Yaz Sonu Festivali',
-        description:
-            'Yaz aylarına veda ederken sepetini dolduranlara özel kaçırılmayacak fırsat.',
-        endDate: '01.06.2026',
-        campaignType: CampaignType.percentage,
-        couponCode: 'YAZBITTI',
-        minimumOrderAmount: 150.0,
-        discountValue: 15.0,
-        isActive: false,
-        isClaimed: false,
-      ),
-    ];
+import '../../../../core/services/logging/logging_provider.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../data/campaign_gateway.dart';
+import '../../domain/models/campaign.dart';
+
+/// Server-Authoritative Campaign Engine P8-B (2026-08-25) —
+/// dependency-injection seam for the real Campaign feature. Mirrors
+/// `loyaltyGatewayProvider`'s established gateway-provider convention.
+final campaignGatewayProvider = Provider<CampaignGateway>((ref) {
+  return FirebaseCampaignGateway(
+      loggingService: ref.watch(loggingServiceProvider));
+});
+
+/// The real, server-authoritative active-campaign list
+/// (`getCustomerActiveCampaigns`) — replaces the old `campaignsProvider`'s
+/// 4 hardcoded fake campaigns entirely. Returns an empty list, never mock
+/// data, whenever no real campaign has been created by a future Admin, or
+/// whenever no Firebase Auth session exists yet at all (the callable itself
+/// requires SOME session — real or anonymous — so this provider avoids an
+/// unauthenticated call rather than surfacing it as an error state).
+///
+/// Deliberately NOT gated on [isRealCustomer] — unlike
+/// [loyaltyRewardCatalogProvider], an anonymous table guest is also allowed
+/// to see active campaigns (locked P8-A/P8-B decision). `autoDispose` and
+/// re-fetch-on-`authProvider`-change mirror every other real-data provider
+/// in this codebase.
+final activeCampaignsProvider =
+    FutureProvider.autoDispose<List<Campaign>>((ref) async {
+  final authState = ref.watch(authProvider);
+  if (!authState.isAuthenticated) {
+    return const [];
   }
-
-  void claimCoupon(String id) {
-    state = [
-      for (final camp in state)
-        if (camp.id == id) camp.copyWith(isClaimed: true) else camp,
-    ];
-  }
-}
-
-final campaignsProvider =
-    NotifierProvider<CampaignsNotifier, List<CampaignModel>>(() {
-  return CampaignsNotifier();
+  return ref.read(campaignGatewayProvider).getActiveCampaigns();
 });

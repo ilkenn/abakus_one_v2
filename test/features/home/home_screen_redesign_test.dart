@@ -224,40 +224,57 @@ void main() {
   });
 
   group('3. hero carousel (H.2)', () {
-    testWidgets('tam olarak 3 slayt yapilandirilmistir', (tester) async {
+    // P8-B.1 (2026-08-25) — the former campaign slide (banner_01.png) was
+    // temporarily removed from this live carousel: its own artwork still
+    // has "İlk Siparişine 100 TL Bizden" baked into its pixels, a
+    // fabricated offer with no real backing campaign, which cannot be
+    // corrected via code. Only the two real, non-fake slides remain —
+    // Boncuk (banner_02) and Delivery (banner_04), now at indices 0/1.
+    testWidgets(
+        'tam olarak 2 slayt yapilandirilmistir (banner_01 gecici olarak kaldirilmistir)',
+        (tester) async {
       await pumpHome(tester);
 
       final indicator = find.descendant(
         of: find.byKey(const Key('heroCarouselIndicator')),
         matching: find.byType(AnimatedContainer),
       );
-      expect(indicator, findsNWidgets(3));
+      expect(indicator, findsNWidgets(2));
     });
 
-    testWidgets('banner_01 CTA hedefi CampaignsScreen\'i acar', (
-      tester,
-    ) async {
+    testWidgets(
+        'banner_01 (sahte ilk siparis kampanyasi) carousel icinde artik hic gorunmez',
+        (tester) async {
       await pumpHome(tester);
 
-      final cta = find.byKey(const Key('heroCta_banner_01.png'));
+      expect(find.byKey(const Key('heroCta_banner_01.png')), findsNothing);
+      expect(find.text('İlk Siparişine 100 TL Bizden'), findsNothing);
+      expect(find.text('Fırsatı Kullan'), findsNothing);
+      expect(find.text('Güncel Kampanyalar'), findsNothing);
+      expect(find.text('Kampanyaları Gör'), findsNothing);
+    });
+
+    testWidgets(
+        'CampaignsScreen icin artik hicbir gercek navigasyon giris noktasi yok',
+        (tester) async {
+      await pumpHome(tester);
+
+      expect(find.byType(CampaignsScreen), findsNothing);
+      // No widget anywhere in the real Home tree still offers a tap target
+      // into CampaignsScreen — confirmed by the absence of any
+      // heroCta_banner_01 key (the only entry point that used to exist).
+      expect(find.byKey(const Key('heroCta_banner_01.png')), findsNothing);
+    });
+
+    testWidgets(
+        'banner_02 (Boncuk) CTA hedefi LoyaltyScreen\'i acar — hala erisilebilir',
+        (tester) async {
+      await pumpHome(tester);
+
+      // banner_02 is now the FIRST slide (index 0) — no fling needed.
+      final cta = find.byKey(const Key('heroCta_banner_02.png'));
       await tester.ensureVisible(cta);
       await tester.pumpAndSettle();
-      await tester.tap(cta);
-      await tester.pumpAndSettle();
-
-      expect(find.byType(CampaignsScreen), findsOneWidget);
-    });
-
-    testWidgets('banner_02 CTA hedefi LoyaltyScreen\'i acar', (tester) async {
-      await pumpHome(tester);
-
-      final pageView = find.byKey(const Key('homeHeroCarousel'));
-      await tester.ensureVisible(pageView);
-      await tester.pumpAndSettle();
-      await tester.fling(pageView, const Offset(-400, 0), 800);
-      await tester.pumpAndSettle();
-
-      final cta = find.byKey(const Key('heroCta_banner_02.png'));
       expect(cta, findsOneWidget);
       await tester.tap(cta);
       await tester.pumpAndSettle();
@@ -265,15 +282,15 @@ void main() {
       expect(find.byType(LoyaltyScreen), findsOneWidget);
     });
 
-    testWidgets('banner_04 CTA hedefi DeliveryAddressSelectionScreen\'i acar',
+    testWidgets(
+        'banner_04 (Paket Servis) CTA hedefi DeliveryAddressSelectionScreen\'i acar — hala erisilebilir',
         (tester) async {
       await pumpHome(tester);
 
       final pageView = find.byKey(const Key('homeHeroCarousel'));
       await tester.ensureVisible(pageView);
       await tester.pumpAndSettle();
-      await tester.fling(pageView, const Offset(-400, 0), 800);
-      await tester.pumpAndSettle();
+      // banner_04 is now the SECOND slide (index 1) — exactly one fling.
       await tester.fling(pageView, const Offset(-400, 0), 800);
       await tester.pumpAndSettle();
 
@@ -286,25 +303,45 @@ void main() {
     });
 
     testWidgets(
-        'telefon genisliginde mobil kompozisyon kullanilir — gercek '
-        'Flutter baslik/CTA, tam boy sanat eseri yerine', (tester) async {
+        'telefon genisliginde mobil kompozisyon kullanilir — Boncuk slayti gercek '
+        'Flutter baslik/CTA gosterir, sahte kampanya metni artik yok',
+        (tester) async {
       tester.view.physicalSize = const Size(375, 900);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
       await pumpHome(tester);
 
-      // Real Flutter text — not baked into the artwork, so it can never
-      // render illegibly small or get clipped the way H.2's full-artwork
-      // scale-down did.
-      expect(find.text('İlk Siparişine 100 TL Bizden'), findsOneWidget);
-      expect(find.text('Fırsatı Kullan'), findsOneWidget);
+      // P8-B.1 — no fabricated first-order/campaign copy remains reachable
+      // anywhere in current production customer navigation.
+      expect(find.text('İlk Siparişine 100 TL Bizden'), findsNothing);
+      expect(find.text('Fırsatı Kullan'), findsNothing);
 
-      final cta = find.byKey(const Key('heroCta_banner_01.png'));
+      // The real Boncuk slide (now first) still renders its own real copy.
+      // Scoped to the carousel itself — "Boncuklarını Biriktirmeye Başla"
+      // also legitimately appears in the separate BoncukSection further
+      // down the real Home page, so an unscoped find would be ambiguous.
+      final carousel = find.byKey(const Key('homeHeroCarousel'));
+      expect(
+        find.descendant(
+          of: carousel,
+          matching: find.text('Boncuklarını Biriktirmeye Başla'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: carousel,
+          matching: find.text('Boncukları Keşfet'),
+        ),
+        findsWidgets,
+      );
+
+      final cta = find.byKey(const Key('heroCta_banner_02.png'));
       await tester.tap(cta);
       await tester.pumpAndSettle();
 
-      expect(find.byType(CampaignsScreen), findsOneWidget);
+      expect(find.byType(LoyaltyScreen), findsOneWidget);
     });
   });
 

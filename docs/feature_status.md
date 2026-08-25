@@ -4541,3 +4541,34 @@ as P7-D, 7 tests flipped in place); full-repo `flutter analyze` clean; `dart for
 (whitespace only); `flutter test` result recorded in the final P7-D.1 report. See
 `docs/business_rules.md`'s new `BR-LOYALTY-030`, and `docs/decisions.md`'s P7-D.1 entry for the full
 mechanism and files changed. No commit was made.
+
+**Server-Authoritative Campaign Engine P8-B (2026-08-25) — Foundation, CLOSED for this phase's own
+scope.** Preceded by a P8-A audit that found the entire prior "campaign" concept
+(`campaignsProvider`'s `ABAKUS10`/`ILKSIPARIS`/`UCRETSIZ`/`YAZBITTI` mock catalog) was 100% client-side
+and live-reachable from the real Home screen (hero banner CTA + a fake "you got a coupon" notification)
+— both are now removed, replaced with a real, empty-until-populated `getCustomerActiveCampaigns`-backed
+provider. New server foundation: `campaigns`/`campaignVersions` collections (live + immutable version
+history, mirroring the Reward Catalog's own proven two-collection pattern exactly), a `CampaignRule`
+engine unifying the six Admin-facing campaign types (`percentageDiscount`/`fixedAmountDiscount`/
+`freeProduct`/`buyXGetY`/`productDiscount`/`categoryDiscount`) onto four internal mechanics × three
+scopes, `oneTime`/`recurring` scheduling evaluated via the reservation system's own DST-correct
+timezone primitives, a pure line-level discount resolver with an exact integer minor-unit
+largest-remainder allocation (proven by test to never leak a rounding unit), and race-safe
+transactional usage-reservation primitives (proven by a genuine N-concurrent-reservations-against-a-
+limit-of-K test — exactly K succeed, never more). `SelectedBenefitType` gained a `"campaign"` member;
+a new shared `enforceBenefitExclusivity()` helper centralizes the "one benefit per order" rule across
+all three benefit types (Boncuk/catalogReward/campaign) — built as foundation, not yet called from any
+channel. Trusted Admin service primitives (create/update-with-new-version/active-toggle/archive/
+duplicate) exist as plain functions, mirroring the Reward Catalog admin service's own deliberate
+"no premature permission/Admin UI" shape — no new `StaffPermission`, no Admin UI. Product/category
+targeting is validated against real canonical `menuProducts` at Admin-write time, structurally
+rejecting any Bowl Builder-shaped fake id (no `menuCategories` collection exists anywhere in this
+codebase — a category "exists" exactly when a real product currently carries it). **Explicitly not
+built this phase**: checkout campaign redemption (no `submit*Order.ts` channel reads a
+`selectedCampaignId`), Admin UI, coupon-code redemption — all deliberately deferred to a future phase.
+Gates: Functions build clean; Functions FULL emulator suite (JDK 21) **1567/1567, 0 failed** (up from
+1450 — 117 new tests across 7 new test files); Firestore Rules FULL suite (JDK 21) **375/375, 0 failed**
+(up from 367 — 8 new deny-all tests for the 5 new collections); full-repo `flutter analyze` clean;
+`dart format` reformatted 8 files (whitespace only); `flutter test` result recorded in the final P8-B
+report. See `docs/business_rules.md`'s new `BR-PROMO-008` (and corrected `BR-PROMO-002`/`004`/`005`),
+and `docs/decisions.md`'s P8-B entry for the full mechanism and files changed. No commit was made.

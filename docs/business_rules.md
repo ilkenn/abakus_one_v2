@@ -625,10 +625,17 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Related Modules**: Loyalty
 
 ### BR-PROMO-002 — Coupon claiming UI
-- **Status**: VERIFIED (UI/mock-state only)
-- **Rule**: `CampaignDetailScreen` supports coupon claiming against mock campaign data.
+- **Status**: OBSOLETE — corrected P8-B (2026-08-25), was VERIFIED (UI/mock-state only)
+- **Rule**: This entry described `CampaignDetailScreen` supporting coupon claiming against
+  `campaignsProvider`'s own 4 hardcoded fake campaigns (`ABAKUS10`/`ILKSIPARIS`/`UCRETSIZ`/
+  `YAZBITTI` coupon codes) — that mock catalog and its "claim" flow have been removed entirely. The
+  real, server-authoritative Campaign Engine foundation (`BR-PROMO-008`) has no coupon-code concept
+  at all; `CampaignsScreen`/`CampaignDetailScreen` now read exclusively from
+  `getCustomerActiveCampaigns`, correctly showing the empty state until a future Admin creates a real
+  campaign. A separate, still-future, code-redemption "coupon" concept remains unimplemented and
+  unscoped — see `BR-PROMO-008`'s own note.
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Campaigns
+- **Related Modules**: Campaigns, BR-PROMO-008
 
 ### BR-PROMO-006 — `Discount` value objects and stacking abstraction (Phase 3 Sprint 3A)
 - **Status**: VERIFIED (value objects) — no campaign engine
@@ -651,17 +658,30 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Related Modules**: Loyalty, Campaigns, Orders
 
 ### BR-PROMO-004 — Multiple discount/campaign stacking
-- **Status**: UNRESOLVED
-- **Rule**: Whether multiple discounts or campaigns can stack on one order is undecided.
+- **Status**: DECIDED — RESOLVED P8-B (2026-08-25), was UNRESOLVED
+- **Rule**: ONE ORDER = MAXIMUM ONE BENEFIT, extended to a three-way rule: a campaign, a catalog
+  reward, and a Boncuk cash redemption can never stack with one another, and a campaign can never
+  stack with itself (one campaign per order). `SelectedBenefitType` (`functions/src/
+  boncukRedemptionErrors.ts`) gained a fourth member, `"campaign"`, alongside the existing `"none"`/
+  `"boncukRedemption"`/`"catalogReward"`. The shared `enforceBenefitExclusivity()` helper
+  (`functions/src/benefitExclusivity.ts`) is the one place this three-way check happens — built this
+  phase as foundation, not yet wired into any `submit*Order.ts` channel (checkout campaign redemption
+  itself is a future phase). See `BR-PROMO-008`.
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Campaigns, Orders
+- **Related Modules**: Campaigns, Orders, Loyalty, BR-LOYALTY-006, BR-PROMO-008
 
 ### BR-PROMO-005 — Campaign eligibility scope
-- **Status**: UNRESOLVED
-- **Rule**: Which channel(s), branch(es), and product(s) a given campaign applies to is not
-  explicitly defined anywhere.
+- **Status**: DECIDED — RESOLVED at the data-model level, P8-B (2026-08-25), was UNRESOLVED
+- **Rule**: A campaign's eligibility scope is now an explicit, locked, server-authoritative schema:
+  `eligibleChannels` (the same `CANONICAL_COMMERCIAL_CHANNELS` vocabulary the Reward Catalog already
+  uses — `dineIn`/`takeaway`/`delivery`/`reservationPreorder`, any combination), `eligibleProductIds`/
+  `eligibleCategoryIds` (optional, validated at Admin-write time against real canonical `menuProducts`
+  — never a fake Bowl Builder id), and `minimumBasketMinorUnits` (evaluated against the pre-campaign
+  basket amount). **Branch-level scoping is explicitly NOT part of this schema** — a campaign is
+  organization-scoped only this phase, not per-branch; multi-branch campaign targeting remains a
+  genuinely open question for a future phase. See `BR-PROMO-008`.
 - **Owner Agent**: restaurant_domain
-- **Related Modules**: Campaigns, Multi-Branch
+- **Related Modules**: Campaigns, Multi-Branch, BR-PROMO-008
 
 ### BR-PROMO-007 — Quick product discount and per-target discount collection (Phase 3 Sprint 3C)
 - **Status**: VERIFIED
@@ -679,6 +699,65 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   target, so future order-level discount UI needs no new model.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Campaigns, Orders, POS
+
+### BR-PROMO-008 — Server-Authoritative Campaign Engine foundation (P8-B, 2026-08-25)
+- **Status**: DECIDED — **IMPLEMENTED, foundation only.** No `submit*Order.ts` channel accepts a
+  campaign selection yet — checkout campaign redemption, Admin UI, and coupon-code redemption are all
+  explicitly out of scope this phase (P8-C+). This phase resolves the P8-A audit's own finding that
+  the entire prior "campaign" concept (`campaignsProvider`'s `ABAKUS10`/`ILKSIPARIS`/`UCRETSIZ`/
+  `YAZBITTI` mock catalog) was 100% client-side and, worse, live-reachable from the real Home screen
+  (hero banner + a fake "you got a coupon" notification) — both are now removed.
+- **Rule — six Admin-facing campaign types, one shared internal engine.** `percentageDiscount`,
+  `fixedAmountDiscount`, `freeProduct`, `buyXGetY`, `productDiscount`, `categoryDiscount` are the
+  literal `campaignType` values a future Admin will choose from, each mapped onto one of four internal
+  mechanics (`percentage`/`fixedAmount`/`freeProduct`/`buyXGetY`) crossed with a scope
+  (`order`/`product`/`category`) — `validateCampaignTypeRuleConsistency` (`functions/src/
+  campaignEngine.ts`) enforces the pairing is never mismatched, defensively re-checked even when
+  re-parsing a stored document.
+- **Rule — versioned exactly like the Reward Catalog, not a new pattern.** `campaigns/{campaignId}`
+  (live) + `campaignVersions/{campaignId}_{version}` (immutable history) mirrors `loyaltyRewardCatalog`
+  /`loyaltyRewardCatalogVersions` exactly — `active`/`archived`/`sortOrder` are excluded from what
+  constitutes a version; any rule-affecting field change creates a new immutable version. No
+  destructive delete — `archiveCampaign` forces `active:false, archived:true` permanently, the live
+  doc and every version remain stored forever.
+- **Rule — `eligibleChannels` reuses the Reward Catalog's own vocabulary verbatim.**
+  `CANONICAL_COMMERCIAL_CHANNELS` (`loyaltyRewardCatalog.ts`) was specifically pre-committed in an
+  earlier phase for exactly this reuse — no parallel channel vocabulary was invented.
+- **Rule — canonical pricing integration point, designed but not yet wired.** A campaign discount is
+  designed to apply at line-build time (`functions/src/campaignPricing.ts`'s pure
+  `resolveCampaignDiscount`), generalizing the exact mechanism `catalogReward`'s `freeUnitCount`
+  already uses — never a `grandTotal` patch. An order-wide percentage/fixed discount distributes
+  across every eligible line using an exact integer minor-unit largest-remainder allocation
+  (`allocateProportionally`) — proven by test to always sum to exactly the intended total discount,
+  with zero rounding leakage. Order-wide campaigns may discount Bowl Builder lines (no product-id
+  match required); product/category-scoped campaign types structurally cannot target a Bowl Builder
+  line, the same limitation `catalogReward` already has, since Bowl Builder items have no real
+  canonical product id.
+- **Rule — usage limits are race-safe by construction, not yet load-bearing.** `campaignUsageCounters`
+  /`campaignCustomerUsage`/`campaignUsageReservations` (`functions/src/campaignUsage.ts`) implement a
+  transactional reserve/release pair — deterministic ids, read-before-write, proven by a dedicated
+  concurrency test that N simultaneous reservations against a limit of K produce exactly K successes,
+  never more. Anonymous table guests are structurally excluded from `perCustomerUsageLimit` tracking
+  (`customerId: null` never creates a `campaignCustomerUsage` doc) — a caller wiring this into checkout
+  must independently enforce "guests may use a campaign only when `perCustomerUsageLimit == null`"
+  before ever reserving on a guest's behalf; this file does not re-derive that policy itself.
+- **Rule — customer-facing read path is open to anonymous guests, unlike the Reward Catalog.**
+  `getCustomerActiveCampaigns` allows any Firebase Auth session (real or anonymous) through — a table
+  guest must be able to see which campaigns exist even though redemption itself will later require
+  more. `organizationId` is still never client-supplied (Correction-A precedent). Returns an empty list
+  by construction whenever no real campaign has been created — never a mock fallback.
+- **Rule — Loyalty earning required zero new code.** `loyaltyOrderEarning.ts` already reads
+  `pricing.grandTotal.minorUnits` as its earning basis, and was explicitly designed (P4-A ADR) against
+  "eligible net spend after campaign/coupon discount" — since a campaign discount is designed to be
+  folded into line totals before `grandTotal` is computed, the exact same non-invasive mechanism that
+  already makes `catalogReward` earn-correctly today requires no campaign-specific earning logic.
+- **BLOCKER-note — checkout campaign redemption is a future phase, deliberately not started.** No
+  `submit*Order.ts` channel reads `selectedCampaignId`, computes a campaign discount, or reserves
+  campaign usage yet. `enforceBenefitExclusivity()` exists but is not called from any channel. This is
+  the explicit, reported scope boundary of P8-B, not an oversight.
+- **Owner Agent**: restaurant_domain / security_engineer / ui_ux_designer
+- **Related Modules**: Campaigns, Orders, Loyalty, Menu, BR-PROMO-002, BR-PROMO-003, BR-PROMO-004,
+  BR-PROMO-005, BR-PROMO-006, BR-PROMO-007, BR-LOYALTY-006
 
 # Boncuk Loyalty Program — Locked Production Rules (P0-A, 2026-08-20)
 

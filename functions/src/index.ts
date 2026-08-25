@@ -83,3 +83,7 @@ export { refundDeliveryOrder } from "./refundDeliveryOrder";
 export { submitDineInOrder } from "./submitDineInOrder";
 export { advanceDineInOrderStatus } from "./advanceDineInOrderStatus";
 export { refundDineInOrder } from "./refundDineInOrder";
+
+// Server-Authoritative Campaign Engine P8-B (2026-08-25) — foundation only,
+// not wired into any order-submission path yet. See campaignEngine.ts.
+export { getCustomerActiveCampaigns } from "./getCustomerActiveCampaigns";

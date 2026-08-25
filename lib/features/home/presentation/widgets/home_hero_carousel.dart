@@ -69,20 +69,31 @@ class HeroSlideData {
       (mobileCropY1 - mobileCropY0);
 }
 
-/// The real 3-slide promotional hero carousel — H.2/H.2.1. Auto-rotates,
-/// swipeable, infinite loop, resets its rotation timer after any user
-/// interaction. Carousel shell (timer/controller/indicator) is identical
-/// on phone and tablet/wide — only each slide's own content composition
-/// differs, per [HeroSlideData]'s class doc comment.
+/// The real promotional hero carousel — H.2/H.2.1. Auto-rotates, swipeable,
+/// infinite loop, resets its rotation timer after any user interaction.
+/// Carousel shell (timer/controller/indicator) is identical on phone and
+/// tablet/wide — only each slide's own content composition differs, per
+/// [HeroSlideData]'s class doc comment.
+///
+/// **Temporarily 2 slides, not 3 — P8-B.1 (2026-08-25).** The former
+/// campaign slide (`banner_01.png`) has been removed from this live
+/// carousel: the campaign navigation it pointed to was already neutralized
+/// in P8-B (no more fake `ABAKUS10`-style coupon catalog), but the artwork
+/// asset itself still has "İlk Siparişine 100 TL Bizden" baked into its
+/// pixels — a fabricated offer with no real backing campaign, which cannot
+/// be corrected via code. Removing the slide (never touching the asset
+/// file itself, which remains on disk unmodified) is the only way to stop
+/// showing that fabricated promise to real users until a real Campaign
+/// Engine customer flow exists to either replace this slide with honest
+/// copy or retire it for good. `onCampaignTap` was removed along with it —
+/// re-add both together when that future phase ships.
 class HomeHeroCarousel extends StatefulWidget {
   const HomeHeroCarousel({
     super.key,
-    required this.onCampaignTap,
     required this.onLoyaltyTap,
     required this.onDeliveryTap,
   });
 
-  final VoidCallback onCampaignTap;
   final VoidCallback onLoyaltyTap;
   final VoidCallback onDeliveryTap;
 
@@ -119,22 +130,6 @@ class _HomeHeroCarouselState extends State<HomeHeroCarousel> {
   void initState() {
     super.initState();
     _slides = [
-      HeroSlideData(
-        assetFileName: 'banner_01.png',
-        imageAspectRatio: 2172 / 724,
-        wideCtaRect: const Rect.fromLTRB(0.04, 0.68, 0.37, 0.85),
-        wideCtaSemanticsLabel: 'Fırsatı Kullan, ilk siparişe 100 TL indirim',
-        // Right side of the bowl (avocado/cabbage) — clears the "100 TL"
-        // badge (ends ~0.58) and the headline block entirely.
-        mobileCropX0: 0.62,
-        mobileCropX1: 0.903,
-        mobileCropY0: 0.0,
-        mobileCropY1: 1.0,
-        mobileHeadline: 'İlk Siparişine 100 TL Bizden',
-        mobileSupport: 'İlk siparişinde 100 TL avantaj seni bekliyor.',
-        mobileCtaLabel: 'Fırsatı Kullan',
-        onTap: widget.onCampaignTap,
-      ),
       HeroSlideData(
         assetFileName: 'banner_02.png',
         imageAspectRatio: 1672 / 941,

@@ -1,19 +1,30 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
-import '../../../../core/theme/app_radius.dart';
-import '../../domain/models/campaign_model.dart';
+import '../../../../shared/widgets/feedback/empty_view.dart';
+import '../../../../shared/widgets/feedback/error_view.dart';
+import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../domain/models/campaign.dart';
+import '../../domain/models/campaign_display.dart';
 import '../providers/campaigns_provider.dart';
 import 'campaign_detail_screen.dart';
 
+/// Server-Authoritative Campaign Engine P8-B (2026-08-25) — the real
+/// customer campaign listing. Sourced exclusively from
+/// [activeCampaignsProvider] (`getCustomerActiveCampaigns`) — no mock
+/// campaign source is reachable from here or anywhere downstream. Until a
+/// future Admin creates a real campaign, this correctly shows the empty
+/// state — never a fabricated fallback.
 class CampaignsScreen extends ConsumerWidget {
   const CampaignsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final campaigns = ref.watch(campaignsProvider);
+    final campaignsAsync = ref.watch(activeCampaignsProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -23,34 +34,49 @@ class CampaignsScreen extends ConsumerWidget {
         foregroundColor: AppColors.textPrimary,
       ),
       body: SafeArea(
-        child: campaigns.isEmpty
-            ? Center(
-                child: Text(
-                  'Şu anda aktif kampanya bulunmuyor.',
-                  style: AppTypography.titleMedium.copyWith(
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              )
-            : ListView.separated(
+        child: campaignsAsync.when(
+          loading: () =>
+              const LoadingView(message: 'Kampanyalar yükleniyor...'),
+          error: (error, stackTrace) => ErrorView(
+            message: 'Kampanyalar şu anda yüklenemedi.',
+            retryLabel: 'Tekrar Dene',
+            onRetry: () => ref.invalidate(activeCampaignsProvider),
+          ),
+          data: (campaigns) {
+            if (campaigns.isEmpty) {
+              return const EmptyView(
+                icon: Icons.campaign_outlined,
+                message: 'Şu anda aktif kampanya bulunmuyor.',
+              );
+            }
+            return RefreshIndicator(
+              onRefresh: () => ref.refresh(activeCampaignsProvider.future),
+              child: ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(AppSpacing.xl),
                 itemCount: campaigns.length,
                 separatorBuilder: (context, index) =>
                     const SizedBox(height: AppSpacing.xl),
                 itemBuilder: (context, index) {
                   final campaign = campaigns[index];
-                  return _CampaignCard(campaign: campaign);
+                  return _CampaignCard(
+                    key: Key('campaignCard-${campaign.campaignId}'),
+                    campaign: campaign,
+                  );
                 },
               ),
+            );
+          },
+        ),
       ),
     );
   }
 }
 
 class _CampaignCard extends StatelessWidget {
-  final CampaignModel campaign;
+  const _CampaignCard({super.key, required this.campaign});
 
-  const _CampaignCard({required this.campaign});
+  final Campaign campaign;
 
   @override
   Widget build(BuildContext context) {
@@ -77,57 +103,51 @@ class _CampaignCard extends StatelessWidget {
             ),
           ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(16),
-              ),
-              child: Container(
-                height: 180,
-                color: AppColors.surfaceVariant,
-                child: const Center(
-                  child: Icon(
-                    Icons.campaign_outlined,
-                    size: 48,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.xs,
+                ),
+                decoration: const BoxDecoration(
+                  color: AppColors.primaryExtraLight,
+                  borderRadius: AppRadius.kPill,
+                ),
+                child: Text(
+                  campaign.rule.summary,
+                  style: AppTypography.labelLarge.copyWith(
                     color: AppColors.primary,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.xl),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    campaign.title,
-                    style: AppTypography.titleLarge.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    campaign.description,
-                    style: AppTypography.bodyMedium.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  if (!campaign.isActive) ...[
-                    const SizedBox(height: AppSpacing.sm),
-                    Text(
-                      'Süresi Dolmuş',
-                      style: AppTypography.bodySmall.copyWith(
-                        color: Colors.red,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ],
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                campaign.title,
+                style: AppTypography.titleLarge.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                campaign.description,
+                style: AppTypography.bodyMedium.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                campaign.schedule.validitySummary,
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -15547,3 +15547,169 @@ was made, per this task's own explicit instruction (stated twice: "DO NOT commit
 Functions FULL suite (a re-stop of an emulator restarted moments earlier in this same continuous session,
 consistent with the already-disclosed and approved stop/rerun/restart pattern from the P7-D turn) and
 restarted afterward on the same project/ports; all three new dine-in functions confirmed loaded.
+
+## Server-Authoritative Campaign Engine P8-B — Foundation (2026-08-25)
+
+**Status**: Implemented, foundation only — matches the explicit scope of the task ("DO NOT implement
+checkout campaign redemption yet," "DO NOT implement Admin UI," "DO NOT implement coupon-code
+redemption"). Preceded by a dedicated P8-A audit + architecture plan (not itself written to this file —
+returned directly in-session) that classified every existing "campaign" artifact as reusable/obsolete/
+dangerous-mock/missing and proposed the exact data model this phase implements. See
+`docs/business_rules.md`'s new `BR-PROMO-008` for the full locked rule set.
+
+### 1. Data model — mirrors the Reward Catalog's own proven pattern, not a new one
+
+`functions/src/campaignEngine.ts` (pure domain module, no I/O) defines `CampaignDefinition`
+(`campaigns/{campaignId}`, live) and `CampaignVersionRecord` (`campaignVersions/{campaignId}_{version}`,
+immutable) — the exact two-collection "live doc + append-only version history" shape
+`loyaltyRewardCatalog.ts`/`loyaltyRewardCatalogVersions` already established, deliberately reused rather
+than redesigned. `active`/`archived`/`sortOrder` are excluded from the versioned definition, matching
+that same precedent. `CampaignRule` is a discriminated union of four mechanics (`percentage`/
+`fixedAmount`/`freeProduct`/`buyXGetY`) crossed with a scope (`order`/`product`/`category`);
+`validateCampaignTypeRuleConsistency` enforces that the six Admin-facing `campaignType` values
+(`percentageDiscount`/`fixedAmountDiscount`/`freeProduct`/`buyXGetY`/`productDiscount`/
+`categoryDiscount`) can only ever pair with the rule shape each is documented to mean.
+
+### 2. Scheduling — reuses the reservation system's own DST-correct timezone primitives
+
+`functions/src/campaignScheduling.ts` supports `oneTime` (date-range) and `recurring` (weekday +
+`HH:mm` time-of-day window) schedules, evaluated only against trusted server time and a trusted IANA
+timezone string — never client-supplied time. `branchLocalWeekday`/`branchLocalMinuteOfDay`
+(`reservationTimezone.ts`, already proven DST-correct via `Intl.DateTimeFormat`) are reused verbatim,
+not re-derived. `DEFAULT_ORGANIZATION_TIMEZONE` (`"Europe/Istanbul"`, matching `provisionBranch.ts`'s
+own fallback) exists only for the customer-listing callable, which has no specific branch context yet;
+the schedule-evaluation function itself always takes `timeZone` as an explicit parameter, so a future
+checkout-integration phase can pass the real branch's own `timezone` field with no redesign. A raw
+Firestore `Timestamp` is never returned to the Flutter client — `sanitizeCampaignScheduleForWire`
+converts to ISO strings, matching `getCustomerLoyaltyHistory.ts`'s own established convention (a bug
+caught and fixed during this phase's own implementation, before any test was written against it).
+
+### 3. Pricing — the exact `catalogReward` insertion point, generalized
+
+`functions/src/campaignPricing.ts` is a pure, no-I/O resolver (`resolveCampaignDiscount`) designed to
+apply at line-build time — the same insertion point `freeUnitCount` (catalogReward) already uses, never
+a `grandTotal` patch. `allocateProportionally` implements the largest-remainder method for exact
+integer minor-unit distribution of an order-wide discount across multiple lines (proven by test: the
+sum of allocated amounts always equals the total exactly, no rounding leakage, deterministic tie-break
+by ascending line index). Modifiers are included in the discountable base (locked decision); order-wide
+campaigns may discount Bowl Builder lines (no product-id match required, since `"order"` scope never
+filters by product); product/category-scoped mechanics structurally cannot target a Bowl Builder line,
+the same limitation `catalogReward` already has (no real canonical product id exists for a bowl).
+
+### 4. Usage limits — race-safe reserve/release, not yet wired into any order path
+
+`functions/src/campaignUsage.ts`'s `reserveCampaignUsage`/`releaseCampaignUsage` both accept an
+existing `Transaction` rather than managing their own (mirrors `loyaltyPolicy.ts`'s own
+transaction-scoped read/write pair) — designed to be composed into a future `submit*Order.ts`
+transaction (reserve) and a future terminal-lifecycle release consumer mirroring
+`loyaltyRedemptionRestore.ts`'s own trigger shape (release), atomic with order creation/terminal status
+exactly as the locked requirement demands. Race-safety is proven by a dedicated concurrency test: N
+simultaneous reservations against a global limit of K produce exactly K successes via
+`Promise.all(...)`, never more — the deterministic-id-plus-transactional-read-before-write pattern
+already proven by the Loyalty ledger's own idempotency discipline, never a bare `FieldValue.increment()`.
+Anonymous guests (`customerId: null`) never create a `campaignCustomerUsage` document — a caller wiring
+this into checkout must independently enforce "guests may use a campaign only when
+`perCustomerUsageLimit == null`" before ever reserving on a guest's behalf.
+
+### 5. Benefit exclusivity — one shared helper, not a fourth copy-paste
+
+`functions/src/benefitExclusivity.ts`'s `enforceBenefitExclusivity()` is the one place "ONE ORDER =
+MAXIMUM ONE BENEFIT" is checked across all three benefit types — `SelectedBenefitType`
+(`boncukRedemptionErrors.ts`) gained a fourth member, `"campaign"` (`"coupon"` remains reserved,
+unimplemented). This is a deliberate departure from the existing pattern (today's `requestedBoncukAmount
+> 0 && selectedRewardId !== null` check is hand-duplicated identically across all four `submit*Order.ts`
+files) — adding campaign the same copy-paste way would triple the existing duplication. Not yet called
+from any channel; a future checkout-integration phase is expected to replace each channel's own
+duplicated two-benefit check with one call to this helper.
+
+### 6. Admin service — plain trusted functions, no premature permission/UI scope
+
+`functions/src/campaignAdminService.ts` mirrors `loyaltyRewardCatalogAdminService.ts`'s own explicit,
+deliberate shape verbatim: plain directly-importable async functions (`createCampaign`,
+`updateCampaignByCreatingNextVersion`, `setCampaignActive`, `archiveCampaign`, `duplicateCampaign`),
+not `onCall` callables — no new `StaffPermission`, no Admin UI, matching that file's own P7-B reasoning
+that inventing a permission before any real Admin screen consumes it is premature scope. Product/
+category targeting is validated against real canonical `menuProducts` (existence + `organizationId`
+match) inside the same transaction — since no `menuCategories` collection exists anywhere in this
+codebase (confirmed by audit; `categoryId` is only ever a field on a product document), a category
+"exists" exactly when at least one real product currently carries it. This structurally rejects any
+Bowl Builder-shaped fake id for either products or categories (locked requirement).
+
+### 7. Customer read path — open to anonymous guests, unlike the Reward Catalog
+
+`functions/src/getCustomerActiveCampaigns.ts` mirrors `getCustomerLoyaltyRewardCatalog.ts`'s shape
+(callable-only read, `organizationId` resolved exclusively via `SINGLE_TENANT_ORGANIZATION_ID`, never
+client-supplied) with one deliberate difference: any Firebase Auth session (real or anonymous) is
+allowed through, since a table guest must be able to see which campaigns exist even before any checkout
+identity resolution happens. Phone-verified callers still require real `tenantCustomers` membership;
+anonymous callers skip that check entirely (a guest has no such record by design). Returns an empty
+list by construction whenever no real campaign exists — never a mock/fallback substitute.
+
+### 8. Removing the dangerous mock — Flutter
+
+`lib/features/campaigns/`'s entire mock stack (`CampaignModel`/`CampaignsNotifier`/`campaignsProvider`'s
+4 hardcoded fake campaigns with `ABAKUS10`/`ILKSIPARIS`/`UCRETSIZ`/`YAZBITTI` coupon codes) is replaced
+by a real `Campaign` domain model, `CampaignGateway`/`FirebaseCampaignGateway`
+(`getCustomerActiveCampaigns`), and an `activeCampaignsProvider` (`FutureProvider.autoDispose`,
+deliberately NOT gated on `isRealCustomer` — unlike `loyaltyRewardCatalogProvider` — since anonymous
+guests are allowed). `CampaignsScreen`/`CampaignDetailScreen` were rewritten against the real provider
+with proper loading/empty/error states (`LoadingView`/`EmptyView`/`ErrorView`, matching
+`RewardsScreen`'s own established pattern) — `CampaignDetailScreen` deliberately has NO "use this
+campaign" action, since checkout redemption doesn't exist yet and a CTA implying otherwise would itself
+be a form of the problem this phase fixes. The fake "Yeni Kupon Hesabınızda! 🌟 ... ABAKUS10 ..."
+notification entry was removed from `notifications_screen.dart`'s mock list (the other two, unrelated
+order-status mock notifications were left untouched — out of scope). The home hero carousel's slide-1
+copy (`home_hero_carousel.dart`) — previously "İlk Siparişine 100 TL Bizden" / "Fırsatı Kullan",
+advertising the now-removed fake coupon — was changed to a generic, honest "Güncel Kampanyalar" /
+"Kampanyaları Gör", still navigating to the now-real `CampaignsScreen`. **Known, disclosed limitation**:
+`banner_01.png`'s own artwork still has "İlk Siparişine 100 TL Bizden" baked into its pixels on the
+tablet/wide composition — this cannot be corrected via code and is flagged as a separate follow-up
+design/asset task, not fixed this phase. `FeaturedContentSection` (confirmed via audit to already be
+orphaned — deliberately omitted from `HomeScreen`'s own tree by an earlier phase) was updated to compile
+against the new provider type, left in place per the no-silent-deletion rule, not re-wired into Home.
+`lib/features/campaigns/domain/models/campaign_model.dart` (the old mock model) is now itself an
+orphaned file, left in place for the same reason — reported here, not deleted.
+
+### 9. Tests
+
+**New backend test files**: `campaignEngine.test.ts` (sanitizers, campaignType/rule consistency,
+parse/round-trip, customer DTO sanitization — pure, no emulator), `campaignScheduling.test.ts`
+(HH:mm parsing, oneTime/recurring evaluation including a genuine cross-timezone-changes-the-result
+case — pure), `campaignPricing.test.ts` (largest-remainder exactness, all four mechanics × three
+scopes, minimum-basket pre-discount evaluation, Bowl Builder inclusion/exclusion — pure),
+`benefitExclusivity.test.ts` (all pairwise + triple-stacking rejection — pure), `campaignAdminService
+.test.ts` (create idempotency, cross-tenant rejection, Bowl-Builder-fake-id rejection for both products
+and categories, immutable versioning, active/archive terminality, duplicate — emulator), `campaignUsage
+.test.ts` (reserve/release idempotency, global + per-customer limits, **the N-concurrent-reservations-
+against-limit-K race-safety proof**, guest-never-per-customer-tracked — emulator), `getCustomerActive
+Campaigns.test.ts` (anonymous-allowed vs. reward-catalog's real-customer-only, visibility filtering,
+sanitized DTO shape, sorting — emulator). **Extended**: `firestore-tests/rules.test.js` (new section,
+8 tests — deny-all proven for all 5 new collections). **Flutter**: `test/features/campaigns/
+campaigns_screen_test.dart` fully rewritten (loading/empty/error/data states, anonymous-vs-unauthenticated
+gating, detail navigation — fake `CampaignGateway`, no real Firebase touch), one text-assertion fix in
+`test/features/home/home_screen_redesign_test.dart` for the new honest carousel copy.
+
+**Files changed — backend**: new `functions/src/campaignEngine.ts`, `campaignScheduling.ts`,
+`campaignPricing.ts`, `campaignUsage.ts`, `benefitExclusivity.ts`, `campaignAdminService.ts`,
+`getCustomerActiveCampaigns.ts`, and their 7 new test files; modified `functions/src/
+boncukRedemptionErrors.ts` (`SelectedBenefitType` + new `"benefit/stacking-not-allowed"` reason),
+`functions/src/index.ts`. **Files changed — rules**: `firestore.rules` (5 new deny-all collection
+blocks), `firestore-tests/rules.test.js`. **Files changed — Flutter**: new `lib/features/campaigns/
+data/campaign_gateway.dart`, `domain/models/campaign.dart`, `domain/models/campaign_display.dart`;
+modified `lib/features/campaigns/presentation/{providers/campaigns_provider.dart,screens/
+campaigns_screen.dart,screens/campaign_detail_screen.dart}`, `lib/features/home/presentation/widgets/
+{featured_content_section.dart,home_hero_carousel.dart}`, `lib/features/notifications/presentation/
+screens/notifications_screen.dart`, and the two test files above. **Docs**: this entry,
+`docs/business_rules.md` (new `BR-PROMO-008`; `BR-PROMO-002`/`004`/`005` corrected/resolved),
+`docs/feature_status.md` (P8-B entry).
+
+**Exact gate totals**: Functions build (`tsc`) clean. Functions FULL emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`, JDK 21) — **1567/1567, 0 failed** (up from 1450 — 117 new tests).
+Firestore Rules FULL suite (JDK 21) — **375/375, 0 failed** (up from 367 — 8 new deny-all tests).
+`flutter analyze` — clean, no issues. `dart format` — 8 files reformatted (whitespace only). `flutter
+test` — result recorded in the final P8-B report. No commit was made, per this task's own explicit
+"DO NOT commit" instruction.
+
+**Operational note**: the persistent `abakus-one-dev` dev emulator was stopped to free ports for the
+Functions FULL suite and restarted afterward on the same project/ports; `getCustomerActiveCampaigns`
+confirmed loaded alongside every pre-existing function.

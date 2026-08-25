@@ -26,14 +26,6 @@ class NotificationsScreen extends ConsumerWidget {
         'isRead': false,
       },
       {
-        'id': 'notif_2',
-        'title': 'Yeni Kupon Hesabınızda! 🌟',
-        'body':
-            'Hafta sonuna özel %10 indirim kuponu ABAKUS10 profilinize tanımlandı.',
-        'time': '2 saat önce',
-        'isRead': false,
-      },
-      {
         'id': 'notif_3',
         'title': 'Siparişiniz Teslim Edildi',
         'body':

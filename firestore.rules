@@ -469,6 +469,47 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // Campaigns — Server-Authoritative Campaign Engine P8-B (2026-08-25).
+    // Mirrors the Reward Catalog block immediately above, exactly: no
+    // client, including an authenticated customer or a real staff member,
+    // ever reads a campaign document directly — `getCustomerActiveCampaigns`
+    // (Cloud Function) is the sole customer-facing read path, since it must
+    // apply real filtering (active/archived/schedule/tenant) a Firestore
+    // Rule would have to duplicate for no benefit. `campaignVersions` is a
+    // pure, permanent audit trail with no reader at all. `campaignUsage
+    // Counters`/`campaignCustomerUsage`/`campaignUsageReservations` are
+    // internal accounting state — never customer-facing, never client-
+    // writable; a forged usage-counter write is exactly the kind of
+    // "client authority over usage count" the locked P8-A requirement
+    // forbids. Trusted writers only: `campaignAdminService.ts`'s functions
+    // (Admin SDK), and — once a future checkout-integration phase wires
+    // redemption — the relevant `submit*Order.ts` transaction and its
+    // terminal-lifecycle release consumer (also Admin SDK). No client
+    // write path exists for any of these five collections, today or after
+    // that future phase, ever.
+    // ---------------------------------------------------------------------
+
+    match /campaigns/{campaignId} {
+      allow read, write: if false; // Cloud Function / Admin SDK only — see getCustomerActiveCampaigns.
+    }
+
+    match /campaignVersions/{versionId} {
+      allow read, write: if false; // Cloud Function / Admin SDK only — permanent audit trail, no client reader.
+    }
+
+    match /campaignUsageCounters/{counterId} {
+      allow read, write: if false; // Cloud Function / Admin SDK only — internal accounting state.
+    }
+
+    match /campaignCustomerUsage/{usageId} {
+      allow read, write: if false; // Cloud Function / Admin SDK only — internal accounting state.
+    }
+
+    match /campaignUsageReservations/{reservationId} {
+      allow read, write: if false; // Cloud Function / Admin SDK only — internal accounting state.
+    }
+
+    // ---------------------------------------------------------------------
     // Entitlements — "clients cannot write arbitrary entitlement grants."
     // ---------------------------------------------------------------------
 

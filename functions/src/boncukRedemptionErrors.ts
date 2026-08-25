@@ -46,6 +46,15 @@ export const BONCUK_REDEMPTION_ERROR_REASONS = [
   // eligible, but its own `eligibleChannels` does not include the real,
   // server-derived channel of THIS order (never the client's own claim).
   "catalogReward/channel-not-eligible",
+  // Server-Authoritative Campaign Engine P8-B (2026-08-25) — the new,
+  // channel-neutral stacking reason `enforceBenefitExclusivity`
+  // (`benefitExclusivity.ts`) uses when a request names more than one of
+  // {Boncuk redemption, catalog reward, campaign}. Deliberately NOT reusing
+  // `"catalogReward/benefit-stacking-not-allowed"` — that reason is
+  // channel-specific text already asserted on by existing tests for the
+  // two-benefit case; this is the neutral reason for the now-three-benefit
+  // check, added to the SAME shared vocabulary rather than a parallel one.
+  "benefit/stacking-not-allowed",
 ] as const;
 export type BoncukRedemptionErrorReason = (typeof BONCUK_REDEMPTION_ERROR_REASONS)[number];
 
@@ -67,8 +76,17 @@ export function boncukError(
  * on their own existing local unions this phase — widening THEIR type to
  * include a value they can never actually set would be misleading, not a
  * genuine duplication removal.
+ *
+ * **`"campaign"` added — Server-Authoritative Campaign Engine P8-B
+ * (2026-08-25).** Foundation only: no `submit*Order.ts` file sets this
+ * value yet (checkout campaign redemption is explicitly out of scope this
+ * phase) — the member exists so `campaignEngine.ts`'s types and
+ * `benefitExclusivity.ts`'s new shared helper have a real value to
+ * reference now, rather than a placeholder added later alongside the
+ * checkout wiring itself. `"coupon"` remains reserved and unimplemented,
+ * unchanged.
  */
-export type SelectedBenefitType = "none" | "boncukRedemption" | "catalogReward";
+export type SelectedBenefitType = "none" | "boncukRedemption" | "catalogReward" | "campaign";
 
 /**
  * `undefined`/`null` both mean "no reward selected" — collapses to `null`.

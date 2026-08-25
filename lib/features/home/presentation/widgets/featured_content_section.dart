@@ -10,17 +10,23 @@ import '../../../campaigns/presentation/screens/campaigns_screen.dart';
 import 'home_section_title.dart';
 
 /// Real content only — new products, chef's picks, seasonal items, or
-/// active campaigns (sourced from the real [campaignsProvider], never
-/// fabricated Home-only mock text). Renders nothing at all when there is no
-/// real content to show, per the explicit "do not display fake data just
-/// to fill space" requirement.
+/// active campaigns (sourced from the real [activeCampaignsProvider],
+/// never fabricated Home-only mock text). Renders nothing at all when there
+/// is no real content to show, per the explicit "do not display fake data
+/// just to fill space" requirement.
+///
+/// Server-Authoritative Campaign Engine P8-B (2026-08-25) — updated to the
+/// real `getCustomerActiveCampaigns`-backed provider (was the mock
+/// `campaignsProvider`). Still deliberately omitted from `HomeScreen`'s own
+/// tree (see that screen's own doc comment) — kept building only per the
+/// no-silent-deletion rule.
 class FeaturedContentSection extends ConsumerWidget {
   const FeaturedContentSection({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final activeCampaigns =
-        ref.watch(campaignsProvider).where((c) => c.isActive).toList();
+        ref.watch(activeCampaignsProvider).valueOrNull ?? const [];
 
     if (activeCampaigns.isEmpty) return const SizedBox.shrink();
 

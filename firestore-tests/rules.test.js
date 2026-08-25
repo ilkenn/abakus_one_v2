@@ -4397,3 +4397,149 @@ test('loyaltyRewardCatalogVersions: no client can create, update, or delete a ve
   );
   await assertFails(deleteDoc(doc(owner, 'loyaltyRewardCatalogVersions/icecek_1')));
 });
+
+// =========================================================================
+// Campaigns — Server-Authoritative Campaign Engine P8-B (2026-08-25).
+// campaigns / campaignVersions / campaignUsageCounters /
+// campaignCustomerUsage / campaignUsageReservations. Mirrors the Reward
+// Catalog section immediately above, exactly — no client, not even a
+// tenant-member customer, ever reads or writes any of these five
+// collections directly. Unconditional `allow read, write: if false` for
+// all five.
+// =========================================================================
+
+function campaignFixture(overrides = {}) {
+  return {
+    campaignId: 'hafta-ici-ogle',
+    organizationId: 'org-1',
+    title: 'Hafta İçi Öğle',
+    description: 'Test.',
+    campaignType: 'percentageDiscount',
+    rule: { mechanic: 'percentage', percentBasisPoints: 1500, scope: { kind: 'order' } },
+    eligibleChannels: ['dineIn', 'takeaway'],
+    eligibleProductIds: null,
+    eligibleCategoryIds: null,
+    minimumBasketMinorUnits: null,
+    schedule: { mode: 'oneTime', startAt: null, endAt: null },
+    usageLimit: null,
+    perCustomerUsageLimit: null,
+    active: true,
+    archived: false,
+    sortOrder: 0,
+    version: 1,
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+    ...overrides,
+  };
+}
+
+test('campaigns: a real, tenant-member customer cannot read a campaign document directly', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'campaigns/hafta-ici-ogle'), campaignFixture());
+    await seedMembership(db, 'campaign-owner-1', 'org-1');
+  });
+  const owner = customerContext('campaign-owner-1');
+
+  await assertFails(getDoc(doc(owner, 'campaigns/hafta-ici-ogle')));
+});
+
+test('campaigns: an unauthenticated caller cannot read a campaign document', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'campaigns/hafta-ici-ogle'), campaignFixture());
+  });
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  await assertFails(getDoc(doc(anon, 'campaigns/hafta-ici-ogle')));
+});
+
+test('campaigns: a list query is denied outright, for any authenticated identity', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'campaigns/hafta-ici-ogle'), campaignFixture());
+    await seedMembership(db, 'campaign-owner-1', 'org-1');
+  });
+  const owner = customerContext('campaign-owner-1');
+
+  await assertFails(
+    getDocs(query(collection(owner, 'campaigns'), where('organizationId', '==', 'org-1'))),
+  );
+});
+
+test('campaigns: no client can create, update, or delete a campaign document directly', async () => {
+  const owner = customerContext('campaign-owner-1');
+  await assertFails(setDoc(doc(owner, 'campaigns/hafta-ici-ogle'), campaignFixture()));
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'campaigns/hafta-ici-ogle'), campaignFixture());
+  });
+  await assertFails(updateDoc(doc(owner, 'campaigns/hafta-ici-ogle'), { active: false }));
+  await assertFails(deleteDoc(doc(owner, 'campaigns/hafta-ici-ogle')));
+});
+
+test('campaignVersions: no client can read, create, update, or delete a version document directly', async () => {
+  const versionFixture = { ...campaignFixture(), effectiveAt: Timestamp.now() };
+  const owner = customerContext('campaign-owner-1');
+  await assertFails(setDoc(doc(owner, 'campaignVersions/hafta-ici-ogle_1'), versionFixture));
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'campaignVersions/hafta-ici-ogle_1'), versionFixture);
+    await seedMembership(db, 'campaign-owner-1', 'org-1');
+  });
+  await assertFails(getDoc(doc(owner, 'campaignVersions/hafta-ici-ogle_1')));
+  await assertFails(updateDoc(doc(owner, 'campaignVersions/hafta-ici-ogle_1'), { title: 'Forged' }));
+  await assertFails(deleteDoc(doc(owner, 'campaignVersions/hafta-ici-ogle_1')));
+});
+
+test('campaignUsageCounters: no client can read or write a usage counter directly — never client authority over usage count', async () => {
+  const counterFixture = { organizationId: 'org-1', campaignId: 'hafta-ici-ogle', usageCount: 0 };
+  const owner = customerContext('campaign-owner-1');
+  await assertFails(
+    setDoc(doc(owner, 'campaignUsageCounters/org-1_hafta-ici-ogle'), counterFixture),
+  );
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'campaignUsageCounters/org-1_hafta-ici-ogle'), counterFixture);
+  });
+  await assertFails(getDoc(doc(owner, 'campaignUsageCounters/org-1_hafta-ici-ogle')));
+  await assertFails(
+    updateDoc(doc(owner, 'campaignUsageCounters/org-1_hafta-ici-ogle'), { usageCount: 999999 }),
+  );
+});
+
+test('campaignCustomerUsage: no client can read or write their own per-customer usage record directly', async () => {
+  const usageFixture = {
+    organizationId: 'org-1',
+    campaignId: 'hafta-ici-ogle',
+    customerId: 'campaign-owner-1',
+    usageCount: 0,
+  };
+  const owner = customerContext('campaign-owner-1');
+  await assertFails(
+    setDoc(doc(owner, 'campaignCustomerUsage/org-1_hafta-ici-ogle_campaign-owner-1'), usageFixture),
+  );
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'campaignCustomerUsage/org-1_hafta-ici-ogle_campaign-owner-1'), usageFixture);
+  });
+  await assertFails(getDoc(doc(owner, 'campaignCustomerUsage/org-1_hafta-ici-ogle_campaign-owner-1')));
+});
+
+test('campaignUsageReservations: no client can read or write a usage reservation directly', async () => {
+  const reservationFixture = {
+    organizationId: 'org-1',
+    campaignId: 'hafta-ici-ogle',
+    customerId: null,
+    orderId: 'order-1',
+    status: 'reserved',
+    reservedAt: Timestamp.now(),
+    releasedAt: null,
+  };
+  const owner = customerContext('campaign-owner-1');
+  await assertFails(
+    setDoc(doc(owner, 'campaignUsageReservations/org-1_hafta-ici-ogle_order-1'), reservationFixture),
+  );
+
+  await seed(async (db) => {
+    await setDoc(doc(db, 'campaignUsageReservations/org-1_hafta-ici-ogle_order-1'), reservationFixture);
+  });
+  await assertFails(getDoc(doc(owner, 'campaignUsageReservations/org-1_hafta-ici-ogle_order-1')));
+});
