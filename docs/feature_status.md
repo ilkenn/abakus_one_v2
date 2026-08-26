@@ -4725,3 +4725,62 @@ baseline; `git status` confirmed every changed file is Campaign-related or docum
 change. See `docs/business_rules.md`'s `BR-PROMO-008` closure bullet and `docs/decisions.md`'s P8-D
 entry for the full audit record. **Determination: CUSTOMER CAMPAIGN SYSTEM = CLOSED.** No commit was
 made.
+
+**Customer Side — Final Closure / Cleanup / Readiness Audit (2026-08-26), CLOSED.** Full-surface audit
+of the entire customer-facing app (auth, Home, Menu, Bowl Builder, Cart, Profile/Addresses, all four
+commercial channels, Order History/Detail, Loyalty, Reward Catalog, Campaign, Notifications, navigation,
+error mapping, security, rules, storage, docs) before Admin/POS development starts — the first audit in
+this project to cover the whole customer surface at once rather than one feature area. **Five real,
+production-reachable defects found and fixed** (three with new regression tests): (1) `NotificationsScreen`
+showed hardcoded fake order notifications with a hardcoded fake unread count — replaced with an honest
+empty state, `unreadNotificationsCountProvider` now honestly returns `0`; (2) the "Kişisel Verileri İndir"
+(download my data) flow claimed a fake archive was ready and downloaded, with a hardcoded already-past
+expiry date — collapsed to one honest "request received" state, no false completion claim; (3)
+`CustomerFeedbackScreen` showed a raw exception `toString()` on submit failure — routed through
+`ErrorMapper`, regression test added; (4) `OrderModel.fromCanonicalOrder` silently dropped
+`catalogReward`/`boncukRedemption` snapshot fields, so historical Order Detail couldn't show past reward/
+Boncuk usage even though the backend's immutable snapshot always carried it — fields added and rendered,
+3 regression tests added; (5) "Tekrarla" (reorder) matched a hardcoded order id against a mock product
+catalog and could silently add the wrong product to a customer's cart for every real order — the broken,
+mock-based feature was removed rather than hastily rebuilt (a correct implementation is a real feature,
+out of this audit's minimal-fix scope). **Seven stale documentation/comment findings corrected** (no
+behavior change): `loyaltyOrderEarning.ts`'s "no path ever completes an order" claim (four
+`advance*OrderStatus.ts` callables now do); `order_benefit_type.dart`'s "takeaway channel only" claim for
+`catalogReward`/`campaign` (both real on all four channels); `boncuk_balance_pill.dart`'s "used by 5+
+features" claim (actual: one caller, itself orphaned); `docs/business_rules.md`'s `BR-CHANNEL-002` (stale
+"four channels including external marketplace" framing), `BR-PRICE-002` (dine-in/delivery pricing
+enforcement wrongly still marked "ROADMAP"), `BR-DELIVERY-002` (wrongly marked "not yet live"), and
+`BR-LOYALTY-022`/`BR-LOYALTY-023` (both still listed delivery/reservation Boncuk redemption UI as
+unimplemented after both shipped). **Everything else audited came back clean**: pricing (takeaway 20 TL/
+drinks-excluded/bowl-once, delivery 140 TL/drinks-20TL/bowl-once, all confirmed current and correct),
+Loyalty/Reward (all P7 rules intact, no regression), Campaign (no regression from this cleanup), guest/
+customer identity boundaries (structurally enforced on every channel with a guest path — takeaway also
+has one, `submitGuestOrder`, not previously called out as clearly as dine-in's), broader security review
+(no client-forgeable pricing/identity field, cross-tenant isolation, duplicate-submission protection,
+photo-upload/address/reservation-capacity abuse vectors all checked, none open), navigation/deep-link
+(router guards fail-closed, both known-dead screens confirmed unreachable, QR entry always
+server-token-exchanged), error mapping (one gap, now fixed), empty/loading/error states (all present on
+the screens checked), four-channel architectural consistency (one canonical pipeline per channel, shared
+engine reuse, all nine reservation-specific behaviors confirmed correct), data contracts (enums
+consistent, one field-completeness gap now fixed), analytics/telemetry privacy (no real analytics SDK
+wired, redaction confirmed applied everywhere), Storage Rules (35/35, run fresh for the first time in a
+closure-audit context this session), and Admin/POS boundary readiness (canonical Orders shape and both
+admin service foundations ready to be consumed, one documentation-only gap noted for that future phase).
+**Orphaned/dead code — reported, not deleted**: the 3 files P8-D already flagged remain untouched;
+`checkout_screen.dart`'s own legacy chain is now known to be bigger than previously characterized (a real
+direct-client-Firestore-write path to `orders`, currently blocked only by `firestore.rules`' `isOrgMember`
+gate — existing rules-test coverage judged adequate, no new test added); plus
+`address_form_screen.dart`/`address_data_repository.dart` (transitively orphaned through
+`checkout_screen.dart`), a fully unwired `notification_service.dart` scaffold, the old `CampaignModel`/
+`LoyaltyCampaignModel`/`LoyaltyCampaignCard` duplicate models, and `campaign_carousel.dart`/
+`HomeMockData.campaigns` — all reported for a future human decision, none deleted. Bowl Builder's
+disclosed-placeholder ingredient pricing/nutrition is flagged as a **product decision** (ship as-is or
+wait for real data), not a code defect. Gates re-run fresh this phase: Functions build clean; Functions
+FULL emulator suite (JDK 21, isolated `firebase emulators:exec`) **1729/1729, 0 failed**; Firestore Rules
+FULL suite **375/375, 0 failed**; Storage Rules FULL suite **35/35, 0 failed**; `flutter analyze` clean;
+`flutter test` result recorded in this session's own final report. `git status` confirmed every changed
+file is either a fix from this audit or documentation — `firestore.rules`/`firestore.indexes.json`/
+`storage.rules` all untouched. See `docs/decisions.md`'s "Customer Side — Final Closure / Cleanup /
+Readiness Audit" entry for the full record, including the 5 defects' exact fixes and the process note on
+resolving a contradiction between two research agents via direct source verification. **Determination:
+CUSTOMER_SIDE_CLOSED = YES.** No commit was made.

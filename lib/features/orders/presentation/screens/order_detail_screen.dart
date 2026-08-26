@@ -386,6 +386,65 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       ),
                     ),
                   ],
+                  // Customer-side closure audit fix — same frozen-snapshot
+                  // discipline as the campaign block above, extended to the
+                  // other two benefit families so a customer can see what
+                  // they redeemed on a past order.
+                  if (freshOrder.catalogRewardTitle != null) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    Container(
+                      key: const Key('orderDetailCatalogRewardInfo'),
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: const BoxDecoration(
+                        color: AppColors.primaryExtraLight,
+                        borderRadius: AppRadius.kMedium,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.redeem_rounded,
+                              size: 18, color: AppColors.primary),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              '${freshOrder.catalogRewardTitle} ödülü kullanıldı',
+                              style: AppTypography.bodyMedium.copyWith(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (freshOrder.boncukRedemptionBoncukUsed != null) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    Container(
+                      key: const Key('orderDetailBoncukRedemptionInfo'),
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: const BoxDecoration(
+                        color: AppColors.primaryExtraLight,
+                        borderRadius: AppRadius.kMedium,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.savings_rounded,
+                              size: 18, color: AppColors.primary),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              '${freshOrder.boncukRedemptionBoncukUsed} Boncuk kullanıldı'
+                              '${freshOrder.boncukRedemptionValueMinorUnits != null ? ' · Değer: ${(freshOrder.boncukRedemptionValueMinorUnits! / 100).toStringAsFixed(freshOrder.boncukRedemptionValueMinorUnits! % 100 == 0 ? 0 : 2)} TL' : ''}',
+                              style: AppTypography.bodyMedium.copyWith(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   if (isCancelled) ...[
                     const SizedBox(height: AppSpacing.md),
                     Container(

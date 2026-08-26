@@ -76,6 +76,11 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Status**: DECIDED
 - **Rule**: Business-level ordering happens through four channels: table (dine-in), takeaway, Abaküs
   delivery, and external marketplace.
+- **Corrected (customer-side closure audit, 2026-08-26)**: this original planning-stage framing is
+  stale against what actually shipped. The four channels implemented and CLOSED today are dine-in,
+  takeaway, delivery, and **reservation preorder** — not "external marketplace," which was never built
+  (see `BR-CHANNEL-003`'s own "UNRESOLVED... real gap" note, still accurate) and has no `OrderChannel`
+  value. Preserved as the original planning record, not current guidance.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Orders, Marketplace
 
@@ -501,6 +506,13 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   remains **ROADMAP** — enforcement is not yet backend-verified for any of them, and this entry's
   original "no backend exists" caveat still applies to those. See BR-TAKEAWAY-003 for the
   takeaway-specific detail.
+  **Corrected (customer-side closure audit, 2026-08-26)**: this status line was never revisited after
+  2026-08-10 and is now stale for dine-in and delivery — both are fully server-authoritative today
+  (delivery: `submitDeliveryOrder.ts`, `BR-DELIVERY-007`, Faz P.3, 2026-08-16; dine-in:
+  `submitDineInOrder.ts`, `BR-LOYALTY-030`, P7-D.1, 2026-08-24 — the client direct-write branches were
+  removed from `firestore.rules`). Reservation preorder is server-authoritative as well
+  (`submitReservation.ts`/`reservationPreorder.ts`). Only staff-created `dineInStaff`/POS order creation
+  genuinely remains unenforced.
 - **Rule**: Prices, discounts, coupons, Boncuk, payment outcomes, stock, and order totals are always
   computed and confirmed server-side, never trusted from a client-submitted value.
 - **Owner Agent**: security_engineer (enforcement) / restaurant_domain (rule definition)
@@ -2094,7 +2106,11 @@ this design introduces.
   closure only.
 - **Blocker resolved (P4-E-B, 2026-08-22) — see `BR-LOYALTY-023`.** A real customer Boncuk checkout
   UI now exists for the takeaway channel only — delivery/reservation/dine-in-POS redemption UI remain
-  unimplemented.
+  unimplemented. **Corrected (customer-side closure audit, 2026-08-26)**: this line was never revisited
+  after P4-E-B. Delivery Boncuk redemption UI shipped P5-B (see `BR-LOYALTY-024`), reservation preorder
+  shipped P6-B (see `BR-LOYALTY-025`) — only dine-in-POS (staff-facing, out of this app's scope) and
+  dine-in customer cash Boncuk (permanently, deliberately disabled — `BR-LOYALTY-030`) remain
+  unimplemented/excluded.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-016, BR-LOYALTY-019, BR-LOYALTY-020,
   BR-LOYALTY-021, BR-LOYALTY-023, BR-REFUND-003
@@ -2153,10 +2169,14 @@ this design introduces.
   `ILKSIPARIS`/`UCRETSIZ` codes) was confirmed untouched and structurally isolated (different screen,
   different state class) — explicitly flagged as a do-not-replicate anti-pattern, not a precedent to
   extend.
-- **Known, disclosed blockers**: reservation/dine-in-POS Boncuk redemption UI; partial refund; real
+- **Known, disclosed blockers**: dine-in-POS Boncuk redemption UI; partial refund; real
   payment-provider execution; catalog rewards/wheel/tasks UI; Admin/POS/KDS UI. **Delivery Boncuk
   redemption + canonical delivery lifecycle are now implemented — see `BR-LOYALTY-024`** (this entry's
-  own "delivery ... remain unimplemented" line is superseded for that one channel).
+  own "delivery ... remain unimplemented" line is superseded for that one channel). **Reservation
+  preorder Boncuk redemption is also now implemented — see `BR-LOYALTY-025`** (corrected, customer-side
+  closure audit, 2026-08-26: "reservation ... Boncuk redemption UI" was left in the blocker list above
+  even after `BR-LOYALTY-025` shipped it, 2026-08-24 — reservation is no longer a blocker; dine-in cash
+  Boncuk remains permanently, deliberately disabled, not a blocker — see `BR-LOYALTY-030`).
 - **Owner Agent**: ui_ux_designer / restaurant_domain / security_engineer
 - **Related Modules**: Loyalty, Orders, BR-LOYALTY-004, BR-LOYALTY-019, BR-LOYALTY-022, BR-LOYALTY-024
 
@@ -2975,7 +2995,12 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Business Rule IDs**: see `docs/decisions.md` Faz P.1
 
 ### BR-DELIVERY-002 — Delivery channel pricing differential (Faz P.1, 2026-08-13)
-- **Status**: DECIDED — foundation configured, not yet live in any customer-facing UI
+- **Status**: DECIDED — **live** (corrected, customer-side closure audit, 2026-08-26; this status line
+  was never revisited after 2026-08-13). Faz P.3 (`BR-DELIVERY-007`/`BR-DELIVERY-009`, 2026-08-16)
+  shipped the real `submitDeliveryOrder` callable and `DeliveryCheckoutScreen`, which use exactly the
+  values this entry describes — confirmed current in code (`functions/src/test/deliveryPricing.test.ts`:
+  `channelDefaultAdjustments: { delivery: 14000 }`, `categoryOverrides: { delivery: { cat_icecekler:
+  2000 } }` — 140 TL default, 20 TL for drinks, matching this rule exactly).
 - **Rule**: Delivery (Paket Servis) is priced from the same canonical Masa Satış Fiyatı
   (`MenuProduct.basePrice`) as every other channel, via the existing, unmodified
   `ChannelPriceResolver`/`ChannelPricingPolicy` engine (BR-PRICE-004's same mechanism, extended to a
@@ -2994,7 +3019,10 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
   (`lib/features/menu/domain/pricing/delivery_channel_pricing_policy.dart`, backend mirror:
   `functions/src/deliveryPricing.test.ts`'s policy fixture, reusing `takeawayPricing.ts`'s
   channel-generic functions unmodified) — proven correct by tests against the same resolver every
-  other channel uses, ready for a future phase to wire into a real delivery checkout once one exists.
+  other channel uses. **Now wired into the real delivery checkout (Faz P.3, 2026-08-16)** via
+  `submitDeliveryOrder.ts`, which reuses `takeawayPricing.ts`'s channel-generic engine directly with
+  `channel: "delivery"` — the isolated-constant caveat above describes the P.1-era foundation state, not
+  the current one.
 - **Owner Agent**: restaurant_domain (decision) / flutter_architect (implementation, live-UI-safety
   finding)
 - **Related Modules**: Orders, Menu, Bowl Builder

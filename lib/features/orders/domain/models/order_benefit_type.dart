@@ -20,6 +20,14 @@
 /// campaign is a genuine price discount (see [CampaignSnapshot]'s own doc
 /// comment) — the same "already-applied reduction, not a settlement"
 /// relationship `catalogReward` already has with [Order.pricing].
+///
+/// **Corrected (customer-side closure audit, 2026-08-26)**: both
+/// "takeaway channel only this phase" statements above are now stale —
+/// preserved as an accurate historical record of P7-C/P8-C's own scope, not
+/// current guidance. `catalogReward` and `campaign` are both real on all
+/// four channels today (delivery P5-B/P8-C.1, reservation preorder
+/// P6-B/P8-C.2, dine-in P7-D.1/P8-C.3 — dine-in additionally excludes an
+/// anonymous table-QR guest from both, per `BR-LOYALTY-030`).
 enum OrderBenefitType { none, boncukRedemption, catalogReward, campaign }
 
 /// Parses `Order.selectedBenefitType`'s wire value.

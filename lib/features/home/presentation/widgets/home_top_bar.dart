@@ -161,11 +161,11 @@ class HomeTopBar extends ConsumerWidget {
             ),
             const SizedBox(width: AppSpacing.sm),
           ],
-          // Circular premium action, deliberately no numeric badge — the
-          // only unread-count source in this codebase
-          // (`unreadNotificationsCountProvider`) is a hardcoded mock value,
-          // and a badge tied to it would misrepresent real state rather
-          // than merely omit a nice-to-have.
+          // Circular premium action, deliberately no numeric badge — no
+          // real notification backend exists yet, so
+          // `unreadNotificationsCountProvider` is honestly always `0`
+          // (customer-side closure audit, 2026-08-26 — previously a
+          // hardcoded mock value). A badge would have nothing real to show.
           Semantics(
             button: true,
             label: 'Bildirimler',

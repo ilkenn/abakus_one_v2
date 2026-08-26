@@ -1,10 +1,15 @@
 import '../../../../core/account_deletion/domain/account_deletion_request.dart';
 
-enum DataExportStatus { none, preparing, ready, completed }
+/// `ready`/`completed` (a fake "your archive is ready, download it" step
+/// with no real archive ever produced) removed during the customer-side
+/// closure audit — no real data-export pipeline exists yet (Sprint 9G,
+/// `docs/decisions.md` ADR-026), so the UI must never claim one succeeded.
+/// `requested` is the honest terminal state: the request was received, a
+/// real archive is not produced by this app today.
+enum DataExportStatus { none, preparing, requested }
 
 class AccountDataModel {
   final DataExportStatus exportStatus;
-  final String? exportAvailableUntil;
 
   /// The signed-in user's own account-deletion request, if any — Sprint
   /// 9G (`docs/decisions.md` ADR-026). Replaces the old
@@ -14,18 +19,15 @@ class AccountDataModel {
 
   const AccountDataModel({
     this.exportStatus = DataExportStatus.none,
-    this.exportAvailableUntil,
     this.deletionRequest,
   });
 
   AccountDataModel copyWith({
     DataExportStatus? exportStatus,
-    String? exportAvailableUntil,
     AccountDeletionRequest? deletionRequest,
   }) {
     return AccountDataModel(
       exportStatus: exportStatus ?? this.exportStatus,
-      exportAvailableUntil: exportAvailableUntil ?? this.exportAvailableUntil,
       deletionRequest: deletionRequest ?? this.deletionRequest,
     );
   }

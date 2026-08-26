@@ -55,7 +55,8 @@ final notificationSettingsProvider =
   },
 );
 
-// Geriye dönük okunmamış bildirim merkezi senkronizasyonunun korunması
-final unreadNotificationsCountProvider = Provider<int>((ref) {
-  return 2; // Sabit mock okunmamış sayaç verisi korunmuştur
-});
+/// No real notification backend exists yet (push messaging remains dormant
+/// per CLAUDE.md §5 — no `firebase_messaging`, no server-side notification
+/// record). Always `0`, honestly, rather than a hardcoded placeholder count
+/// — never presented to the customer as a real unread number.
+final unreadNotificationsCountProvider = Provider<int>((ref) => 0);

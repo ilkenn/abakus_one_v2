@@ -20,7 +20,14 @@ import 'package:abakus_one_v2/features/orders/presentation/screens/order_detail_
 /// widget.order)` fallback renders the [OrderModel] passed in directly —
 /// exactly the same pattern this screen already documents for "still
 /// loading" display.
-OrderModel _order({String? campaignTitle, int? campaignDiscountMinorUnits}) {
+OrderModel _order({
+  String? campaignTitle,
+  int? campaignDiscountMinorUnits,
+  String? catalogRewardTitle,
+  int? catalogRewardCoveredValueMinorUnits,
+  int? boncukRedemptionBoncukUsed,
+  int? boncukRedemptionValueMinorUnits,
+}) {
   return OrderModel(
     id: 'order-1',
     date: '25.08.2026',
@@ -30,6 +37,10 @@ OrderModel _order({String? campaignTitle, int? campaignDiscountMinorUnits}) {
     lifecycleStatus: OrderStatus.preparing,
     campaignTitle: campaignTitle,
     campaignDiscountMinorUnits: campaignDiscountMinorUnits,
+    catalogRewardTitle: catalogRewardTitle,
+    catalogRewardCoveredValueMinorUnits: catalogRewardCoveredValueMinorUnits,
+    boncukRedemptionBoncukUsed: boncukRedemptionBoncukUsed,
+    boncukRedemptionValueMinorUnits: boncukRedemptionValueMinorUnits,
   );
 }
 
@@ -68,5 +79,74 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('orderDetailCampaignInfo')), findsNothing);
+  });
+
+  /// Customer-side closure audit fix — `OrderModel.fromCanonicalOrder`
+  /// previously dropped `Order.catalogReward`/`Order.boncukRedemption`
+  /// entirely (only `campaign` survived the projection), so a customer
+  /// could not see past Boncuk/reward usage on a historical order even
+  /// though the backend's immutable snapshot always carried it.
+  testWidgets(
+      'a catalog-reward redemption is reconstructed from the order snapshot '
+      'and shown in the detail screen', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: OrderDetailScreen(
+            order: _order(
+              catalogRewardTitle: 'Ücretsiz İçecek',
+              catalogRewardCoveredValueMinorUnits: 2000,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('orderDetailCatalogRewardInfo')),
+        findsOneWidget);
+    expect(find.textContaining('Ücretsiz İçecek ödülü kullanıldı'),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'a cash Boncuk redemption is reconstructed from the order snapshot '
+      'and shown in the detail screen', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: OrderDetailScreen(
+            order: _order(
+              boncukRedemptionBoncukUsed: 10,
+              boncukRedemptionValueMinorUnits: 2000,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('orderDetailBoncukRedemptionInfo')),
+        findsOneWidget);
+    expect(find.textContaining('10 Boncuk kullanıldı'), findsOneWidget);
+    expect(find.textContaining('Değer: 20 TL'), findsOneWidget);
+  });
+
+  testWidgets(
+      'an order with no catalog reward or Boncuk redemption shows neither info block',
+      (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: OrderDetailScreen(order: _order()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('orderDetailCatalogRewardInfo')),
+        findsNothing);
+    expect(find.byKey(const Key('orderDetailBoncukRedemptionInfo')),
+        findsNothing);
   });
 }

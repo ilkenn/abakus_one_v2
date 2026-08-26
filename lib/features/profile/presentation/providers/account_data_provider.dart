@@ -10,25 +10,22 @@ class AccountDataNotifier extends Notifier<AccountDataModel> {
     return const AccountDataModel();
   }
 
+  /// Records that the customer asked for their data — real data export
+  /// itself remains explicitly deferred (Sprint 9G, `docs/decisions.md`
+  /// ADR-026): assembling a real cross-feature JSON export is separate,
+  /// future work. This no longer claims an archive was produced or
+  /// downloaded — closure audit fix, customer-side closure/cleanup phase
+  /// (`docs/decisions.md`): the previous flow faked a "ready"/"downloaded"
+  /// outcome with a hardcoded, already-past expiry date, telling the
+  /// customer something happened when nothing did.
   void requestDataExport() {
     if (state.exportStatus != DataExportStatus.none) return;
 
     state = state.copyWith(exportStatus: DataExportStatus.preparing);
 
-    // Mock olarak durum güncelleme tetikleyicisi kurgulanmıştır — real
-    // data export remains explicitly deferred (Sprint 9G,
-    // `docs/decisions.md` ADR-026): assembling a real cross-feature JSON
-    // export is separate, future work, not attempted this sprint.
-    Future.delayed(const Duration(seconds: 4), () {
-      state = state.copyWith(
-        exportStatus: DataExportStatus.ready,
-        exportAvailableUntil: '25.07.2026',
-      );
+    Future.delayed(const Duration(seconds: 1), () {
+      state = state.copyWith(exportStatus: DataExportStatus.requested);
     });
-  }
-
-  void completeDataDownload() {
-    state = state.copyWith(exportStatus: DataExportStatus.completed);
   }
 
   void resetExportStatus() {

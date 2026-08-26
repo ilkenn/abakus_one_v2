@@ -140,6 +140,19 @@ class OrderModel {
   final String? campaignTitle;
   final int? campaignDiscountMinorUnits;
 
+  /// Customer-side closure audit fix — the same "frozen snapshot, never a
+  /// live re-lookup" contract [campaignTitle]/[campaignDiscountMinorUnits]
+  /// already have, extended to the other two benefit families so historical
+  /// Order Detail can show what a customer actually redeemed on a past
+  /// order (previously silently dropped by this projection even though the
+  /// backend snapshot always carried it — `Order.catalogReward`/
+  /// `Order.boncukRedemption`). `null`/`0` for every order that didn't use
+  /// that benefit.
+  final String? catalogRewardTitle;
+  final int? catalogRewardCoveredValueMinorUnits;
+  final int? boncukRedemptionBoncukUsed;
+  final int? boncukRedemptionValueMinorUnits;
+
   // --- Mevcut (legacy) alanlar: bu faz tarafından değiştirilmedi ---
 
   // FEATURE 28 Uyumlu Alanlar
@@ -205,6 +218,10 @@ class OrderModel {
     this.contactPhone,
     this.campaignTitle,
     this.campaignDiscountMinorUnits,
+    this.catalogRewardTitle,
+    this.catalogRewardCoveredValueMinorUnits,
+    this.boncukRedemptionBoncukUsed,
+    this.boncukRedemptionValueMinorUnits,
     this.orderNote = '',
     this.serviceMaterialsPreference = '',
     this.ringBell = true,
@@ -305,6 +322,11 @@ class OrderModel {
       contactPhone: order.contactPhone,
       campaignTitle: order.campaign?.title,
       campaignDiscountMinorUnits: order.campaign?.discountMinorUnits,
+      catalogRewardTitle: order.catalogReward?.title,
+      catalogRewardCoveredValueMinorUnits:
+          order.catalogReward?.coveredValueMinorUnits,
+      boncukRedemptionBoncukUsed: order.boncukRedemption?.boncukUsed,
+      boncukRedemptionValueMinorUnits: order.boncukRedemption?.valueMinorUnits,
       orderNote: order.customerNote,
     );
   }
@@ -338,6 +360,10 @@ class OrderModel {
     String? contactPhone,
     String? campaignTitle,
     int? campaignDiscountMinorUnits,
+    String? catalogRewardTitle,
+    int? catalogRewardCoveredValueMinorUnits,
+    int? boncukRedemptionBoncukUsed,
+    int? boncukRedemptionValueMinorUnits,
     String? orderNote,
     String? serviceMaterialsPreference,
     bool? ringBell,
@@ -394,6 +420,14 @@ class OrderModel {
       campaignTitle: campaignTitle ?? this.campaignTitle,
       campaignDiscountMinorUnits:
           campaignDiscountMinorUnits ?? this.campaignDiscountMinorUnits,
+      catalogRewardTitle: catalogRewardTitle ?? this.catalogRewardTitle,
+      catalogRewardCoveredValueMinorUnits:
+          catalogRewardCoveredValueMinorUnits ??
+              this.catalogRewardCoveredValueMinorUnits,
+      boncukRedemptionBoncukUsed:
+          boncukRedemptionBoncukUsed ?? this.boncukRedemptionBoncukUsed,
+      boncukRedemptionValueMinorUnits: boncukRedemptionValueMinorUnits ??
+          this.boncukRedemptionValueMinorUnits,
       orderNote: orderNote ?? this.orderNote,
       serviceMaterialsPreference:
           serviceMaterialsPreference ?? this.serviceMaterialsPreference,

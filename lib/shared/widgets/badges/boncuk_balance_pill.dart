@@ -6,14 +6,24 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../features/profile/presentation/providers/loyalty_provider.dart';
 
-/// The Boncuk (loyalty point) balance pill shown in the top bar of most
-/// screens (Home, Menu, Cart, Checkout, Order Tracking, Loyalty, Product
-/// Detail, ...). Reads [loyaltyProvider] directly so every screen shows the
-/// same live balance without threading it through as a parameter.
+/// A Boncuk (loyalty point) balance pill. Reads [loyaltyProvider] directly
+/// so any screen that mounts it shows the same balance without threading it
+/// through as a parameter.
 ///
-/// Shared because it's used by 5+ features — per the architecture bible's
-/// rule, a widget used by two or more features belongs in `shared/widgets`,
-/// not owned by whichever screen needed it first.
+/// **Stale-comment correction (customer-side closure audit, 2026-08-26)**:
+/// this doc comment previously claimed the pill is "shown in the top bar of
+/// most screens... used by 5+ features." That was never wired up — its only
+/// real caller today is the orphaned, zero-reference
+/// `features/profile/presentation/screens/loyalty_screen.dart` (the old
+/// mock balance/tiers/wheel screen `CLAUDE.md` §3 documents as superseded
+/// by `features/loyalty/`). [loyaltyProvider] itself is also unconditionally
+/// seeded/mock — every other Boncuk-showing widget in this codebase
+/// (`boncuk_section.dart`, `profile_loyalty_card.dart`,
+/// `profile_quick_actions.dart`, `home_top_bar.dart`) deliberately avoids
+/// both this widget and that provider for exactly that reason, reading the
+/// real server-authoritative snapshot instead. Left in place, unreachable
+/// from production, pending a decision on whether to wire it to the real
+/// loyalty snapshot or remove it — not touched further by this audit.
 class BoncukBalancePill extends ConsumerWidget {
   const BoncukBalancePill({super.key});
 

@@ -202,49 +202,8 @@ class _AccountDataScreenState extends ConsumerState<AccountDataScreen> {
                         ),
                       ],
                     )
-                  else if (accountState.exportStatus == DataExportStatus.ready)
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Veri arşiviniz hazır! (Son Tarih: ${accountState.exportAvailableUntil})',
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                icon: const Icon(
-                                  Icons.file_download_done_rounded,
-                                ),
-                                onPressed: () {
-                                  notifier.completeDataDownload();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        'Veri arşivi cihazınıza indirildi.',
-                                      ),
-                                    ),
-                                  );
-                                },
-                                label: const Text('İndir'),
-                              ),
-                            ),
-                            const SizedBox(width: AppSpacing.md),
-                            TextButton(
-                              onPressed: () => notifier.resetExportStatus(),
-                              child: const Text('Temizle'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    )
                   else if (accountState.exportStatus ==
-                      DataExportStatus.completed)
+                      DataExportStatus.requested)
                     Row(
                       children: [
                         const Icon(
@@ -252,11 +211,13 @@ class _AccountDataScreenState extends ConsumerState<AccountDataScreen> {
                           color: Colors.green,
                         ),
                         const SizedBox(width: AppSpacing.xs),
-                        const Text(
-                          'Talep Tamamlandı',
-                          style: TextStyle(fontWeight: FontWeight.bold),
+                        const Expanded(
+                          child: Text(
+                            'Talebiniz alındı. Verileriniz ekibimiz '
+                            'tarafından hazırlanıp size iletilecektir.',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                         ),
-                        const Spacer(),
                         TextButton(
                           onPressed: () => notifier.resetExportStatus(),
                           child: const Text('Yeni Talep'),

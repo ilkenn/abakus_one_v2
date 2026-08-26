@@ -100,12 +100,14 @@ import { applyBoncukCreditDebtFirst } from "./loyaltyAccounting";
  * `loyaltyReversalMath.ts`'s own doc comment for the O(1) formula and its
  * proof of equivalence to a full historical replay.
  *
- * **Known, disclosed limitation**: no currently shipping Cloud Function or
- * client write path ever transitions a real order to `status: "completed"`
- * — only test-harness code does. This consumer is real, fully tested
- * against the existing `orderEvents`/`onOrderCompleted.ts` contract, but
- * production execution is unreachable until a canonical server-side
- * order-completion transition exists (out of scope here).
+ * **STALE NOTE, corrected (customer-side closure audit, 2026-08-26)**: this
+ * paragraph previously claimed no shipping path ever transitions a real
+ * order to `status: "completed"`. That predates `advanceTakeawayOrderStatus
+ * .ts`/`advanceDeliveryOrderStatus.ts`/`advanceDineInOrderStatus.ts`/
+ * `advanceReservationPreorderOrderStatus.ts`, each of which defines a real,
+ * live `ready -> completed` transition (P4-C-C-A/P4-C-C-B/P5-B/P6-B). This
+ * consumer's own earning logic is reachable in production on every one of
+ * `LOYALTY_EARNING_ELIGIBLE_CHANNELS` today, not merely test-harness-only.
  *
  * **P4-C-B (2026-08-22) — debt-first math moved to a shared module.** The
  * `applyDebtFirst` function that used to live here is now

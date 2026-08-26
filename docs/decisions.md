@@ -16250,3 +16250,254 @@ explicit "NO COMMIT" instruction.
 **CUSTOMER CAMPAIGN SYSTEM = CLOSED.** All 27 audit items verified; the only defects found were
 documentation-only (four stale doc comments, now corrected) and orphaned-but-inert dead code (three
 files, reported not deleted). No production defect, no security gap, no architectural violation found.
+
+## Customer Side — Final Closure / Cleanup / Readiness Audit (2026-08-26)
+
+**Status**: CLOSED. Full-surface audit of the customer-facing app (auth, Home, Menu, Bowl Builder,
+Cart, Profile, Addresses, all four commercial channels, Order History/Detail, Loyalty, Reward Catalog,
+Campaign, Notifications, navigation, error mapping, security, rules, storage, docs) before Admin/POS
+development starts. Method: six parallel research agents each covering a cluster of the audit's 32
+sections, cross-checked against each other where they overlapped (one real contradiction between two
+agents' claims was caught and resolved by direct source verification — see item 6 below), plus direct
+verification of the highest-stakes findings before any fix was applied.
+
+### 1. Real defects found and fixed
+
+Five genuine, customer-facing defects were found reachable from real production navigation — more than
+the pure documentation-only findings P8-D turned up, because this audit's scope was the whole app, not
+just Campaigns. All five are now fixed; three shipped with a new regression test.
+
+1. **Fake notifications shown to real customers.** `NotificationsScreen` (reachable from Home's top
+   bar, no dev/debug gate) rendered two hardcoded fake order-status notifications referencing a fake
+   order id, and `unreadNotificationsCountProvider` always returned a hardcoded `2`. No real
+   notification backend exists (push messaging remains dormant per `CLAUDE.md` §5). **Fix**: removed
+   the fake list and the fake "mark all read" action, replaced with an honest `EmptyView`;
+   `unreadNotificationsCountProvider` now honestly returns `0`. `home_top_bar.dart`'s own comment
+   (explaining why no numeric badge is shown) updated to match.
+2. **Fake "your data was downloaded" claim in the KVKK/GDPR-style data-export flow.** "Kişisel Verileri
+   İndir" (Profile → Hesap ve Verilerim) simulated a `Future.delayed` "ready" state with a hardcoded,
+   already-past expiry date (`'25.07.2026'`) and an "İndir" button that only showed a snackbar claiming
+   the archive was downloaded — no real archive was ever produced (self-disclosed in the code's own
+   comment as deferred work, Sprint 9G ADR-026, but the UI never disclosed that to the customer). **Fix**:
+   collapsed `DataExportStatus.{ready,completed}` into one honest `requested` terminal state — the
+   customer sees "your request was received, we'll prepare and deliver your data" instead of a false
+   completion claim. Real export delivery remains explicitly deferred, unchanged.
+3. **Raw exception text reaching customer-facing UI.** `CustomerFeedbackScreen._submit()` caught any
+   thrown exception and rendered `e.toString()` directly — the one place in the customer-facing surface
+   this audit found violating the "never show a raw exception, always go through `ErrorMapper`" rule
+   every other checkout/auth screen follows. **Fix**: routed through `ErrorMapper.map(e).message`.
+   **Regression test added**: `customer_feedback_screen_test.dart` now overrides the feedback repository
+   with a throwing fake and asserts the mapped Turkish message renders, never `toString()`/`Instance of`.
+4. **Historical order detail silently dropped Boncuk/reward redemption info.**
+   `OrderModel.fromCanonicalOrder` carried `campaign` snapshot fields through to Order History/Detail
+   but had no fields at all for `Order.catalogReward`/`Order.boncukRedemption` — a customer who redeemed
+   a reward or cash Boncuk on a past order could see that a campaign applied (if any) but had no way to
+   see they'd used a reward or Boncuk on that same order, even though the immutable backend snapshot
+   always carried it (`OrderSuccessScreen`, the one-time post-submit screen, showed it correctly — only
+   the *historical* view had the gap). **Fix**: added `catalogRewardTitle`/
+   `catalogRewardCoveredValueMinorUnits`/`boncukRedemptionBoncukUsed`/`boncukRedemptionValueMinorUnits`
+   to `OrderModel`, threaded through `fromCanonicalOrder`/`copyWith`, and rendered in
+   `order_detail_screen.dart` mirroring the existing campaign-info block exactly (same frozen-snapshot
+   discipline, same visual treatment). **Regression tests added**: three new cases in
+   `order_detail_screen_test.dart` (reward shown, Boncuk shown, neither shown when absent).
+5. **Broken "Tekrarla" (reorder) could silently add the wrong product to a customer's cart.**
+   `OrdersScreen._handleReorder` pattern-matched on a hardcoded order id (`'ORD-2026-001'`) against
+   `HomeMockData.popularProducts` — a real order with any other id (i.e. every real order) fell through
+   to a generic "add the first mock product, quantity 2" branch, completely disconnected from what the
+   customer actually ordered. Building a correct reorder from an order's real product/bowl lines (bowl
+   modifier reconstruction in particular) is a genuine feature, not a minimal fix, and out of this
+   audit's "do not add speculative new customer features" scope. **Fix**: removed the button and the
+   broken `_handleReorder` method entirely — "Detaylar / Puanla" remains as the one action on an order
+   card. No existing test referenced "Tekrarla"/`_handleReorder`, so nothing needed updating.
+
+### 2. Stale documentation/comments corrected (no behavior change)
+
+Beyond the code fixes above, these were found stale enough to risk misleading a future engineer and
+were corrected in place (superseding note added, original text preserved per "never rewrite history"):
+
+- `functions/src/loyaltyOrderEarning.ts` — its own "no shipping path ever completes an order" doc
+  comment was stale; `advanceTakeawayOrderStatus.ts`/`advanceDeliveryOrderStatus.ts`/
+  `advanceDineInOrderStatus.ts`/`advanceReservationPreorderOrderStatus.ts` each define a real, live
+  `ready -> completed` transition (see item 6 below for how this was caught).
+- `lib/features/orders/domain/models/order_benefit_type.dart` — "real for the takeaway channel only
+  this phase" (P7-C/P8-C) is stale; `catalogReward`/`campaign` are both real on all four channels today.
+- `lib/shared/widgets/badges/boncuk_balance_pill.dart` — claimed "shown in most screens, used by 5+
+  features"; actually has exactly one caller, the orphaned `profile/loyalty_screen.dart`.
+- `docs/business_rules.md` `BR-CHANNEL-002` — original planning-stage "four channels including external
+  marketplace" framing never updated to match what shipped (dine-in/takeaway/delivery/reservation
+  preorder; marketplace was never built — `BR-CHANNEL-003` already flags this as unresolved).
+- `docs/business_rules.md` `BR-PRICE-002` — status line said dine-in/delivery pricing enforcement
+  remained "ROADMAP," never revisited since 2026-08-10; both are fully server-authoritative today.
+- `docs/business_rules.md` `BR-DELIVERY-002` — status line said "not yet live in any customer-facing
+  UI," never revisited since 2026-08-13; Faz P.3 shipped the real delivery checkout using exactly these
+  values two entries later in the same document.
+- `docs/business_rules.md` `BR-LOYALTY-022`/`BR-LOYALTY-023` — both carried a "delivery/reservation
+  Boncuk redemption UI remain unimplemented" blocker note; delivery shipped `BR-LOYALTY-024` (P5-B),
+  reservation shipped `BR-LOYALTY-025` (P6-B), neither note was updated when its own channel closed.
+
+### 3. Findings confirmed clean (no action needed)
+
+- **Pricing**: takeaway (20 TL/unit, drinks excluded, bowl +20 TL once) and delivery (140 TL/unit,
+  drinks 20 TL, bowl +140 TL once) confirmed current and correct in `takeawayPricing.ts`/test fixtures;
+  no duplicate pricing formula; no hardcoded stale price literal beyond the two documented,
+  display-only client estimate policies; server remains sole submission-time pricing authority
+  everywhere checked.
+- **Loyalty/Reward**: every P7 rule (server-authoritative exact-ratio earning with persistent
+  remainder, reward-catalog channel eligibility/one-unit/server-resolved cost, dine-in cash Boncuk fully
+  disabled, debt-first restore, rewarded value excluded from earning, guest isolation, immutable
+  historical snapshots) confirmed intact with current source evidence, no regression.
+- **Campaign**: re-confirmed no regression from this audit's own customer-side cleanup — four channels,
+  single shared engine, benefit exclusivity, LOCKED dine-in guest policy all unchanged.
+- **Identity/guest boundary**: takeaway also has a real anonymous-guest path (`submitGuestOrder`, Gel Al
+  QR) alongside dine-in — both reject guest campaign/reward/Boncuk with the same fail-closed,
+  pre-transaction guard pattern; delivery and reservation preorder have no guest path at all, by design.
+  Loyalty earning is structurally guest-gated (`if (!customerId) return "guest-order-no-customer"`), not
+  a policy check that could be misconfigured.
+- **Security**: no client-forgeable price/discount/campaign/reward/customerId/organizationId field in
+  any of the four submit callables; cross-tenant isolation checked everywhere a referenced entity
+  (campaign/reward/table/address) is used; duplicate-submission protection via deterministic-id +
+  fingerprint-mismatch-fails-closed in all four channels; profile-photo upload is grant-based,
+  single-use, path-scoped, size/type-validated with `allow delete: if false`; address save always
+  re-resolves server-side from a Google Places `placeId`, never trusts client lat/lng; reservation table
+  assignment is transactional and proven race-safe by a dedicated concurrency test.
+- **Navigation/deep-link**: router guards are a pure, fail-closed function of auth-state booleans; both
+  known-dead screens (`checkout_screen.dart`, `campaigns_screen.dart`) confirmed genuinely unreachable
+  from the router and from real `Navigator.push` call chains; Table QR and Takeaway QR both establish
+  identity via a real server-side token exchange, never a client-inferred route parameter; reservation
+  routes are auth-gated to real phone-verified customers only.
+- **Error mapping**: `ErrorMapper`/`Failure` is exhaustive and total; every checkout screen (dine-in,
+  takeaway, delivery) and reservation maps the shared reason-code vocabulary
+  (`boncuk/*`/`catalogReward/*`/`benefit/stacking-not-allowed`/`campaign/*`) to real Turkish copy with a
+  generic-but-still-Turkish fallback — the one gap found (item 1.3 above) is fixed.
+- **Empty/loading/error states**: Loyalty, Reward Catalog, Order History, and all four checkout screens
+  each have a real loading/empty/error+retry state; no fake fallback data shown during loading/error
+  anywhere checked (Notifications' fake-content issue was a live-state problem, not a loading/error-state
+  one — see item 1.1).
+- **Four-channel consistency**: exactly one canonical Flutter→callable pipeline per channel confirmed
+  (no duplicate legacy pipeline reachable); all four import the shared Campaign/Loyalty/
+  benefit-exclusivity engine rather than reimplementing it; one shared `OrderSuccessScreen`
+  (cart-based channels) and one shared `OrderDetailScreen` (all channels) confirmed; all terminal
+  cancel/refund paths funnel through the same shared `applyOrderLifecycleTransition`; channel-name
+  vocabulary is a deliberate, documented two-tier split (`Order.channel` vs. the coarser
+  `CanonicalCommercialChannel`), not an inconsistency; all nine reservation-specific requirements (30-min
+  minimum advance, area-only booking, restaurant approval, capacity check, counter-proposal, proposal
+  hold, `confirmedTime`/`kitchenReleaseAt`, 60-min KDS release rule, 20-min table-QR protection, no-show
+  path) confirmed implemented exactly as specified.
+- **Data contracts**: `order_firestore_mapper.dart`'s tolerant-parsing defaults are all genuinely
+  optional/additive fields, not masked corruption; `OrderStatus`/`OrderBenefitType`/`OrderChannel` enums
+  are consistent between Dart and TypeScript (the one real gap found is item 1.4 above).
+- **Analytics/telemetry privacy**: no real analytics SDK is wired (`NoOpAnalyticsService` confirmed the
+  sole implementation); `LogRedactor` confirmed applied at every logging/crash-reporting call site found;
+  no OTP/phone/address/token logged anywhere checked. One latent design gap noted for awareness, not
+  fixed (no current call site triggers it): `redactContext`'s by-key redaction matches English key-name
+  substrings only — a future Turkish-keyed context map would bypass it and rely solely on
+  `sanitizeText`'s shape-based patterns, which are not applied to context values.
+- **Storage/profile photo rules**: grant-based, single-use, path-scoped model confirmed;
+  `storage-tests/rules.test.js` (571 lines) confirmed comprehensive (valid/no-grant/wrong-uid/
+  cross-tenant/expired/already-consumed/path-mismatch/oversized/non-image all covered). Storage Rules
+  FULL suite re-run fresh this phase: 35/35 pass.
+- **Admin/POS boundary readiness**: all four channels write into one canonical `orders` collection with
+  a uniform read-rule shape; `campaignAdminService.ts`/`loyaltyRewardCatalogAdminService.ts` both
+  confirmed sound, unmodified, unimplemented-as-UI foundations (not wrapped in any `onCall`/Flutter
+  caller); tenant/identity resolution (`SINGLE_TENANT_ORGANIZATION_ID`) is uniform. One documentation
+  gap noted for the future Admin/POS phase, not a blocker: `Order.channel`'s 5 granular values
+  (`dineInQr`/`dineInStaff`/.../`reservationPreorder`) collapse into a separate, differently-spelled
+  4-value `CanonicalCommercialChannel` vocabulary for reward/campaign eligibility — already documented
+  in `loyaltyRewardCatalog.ts`'s own comment, but worth calling out explicitly before an Admin/POS
+  reporting feature assumes `Order.channel` is directly usable as a commercial-channel filter.
+
+### 4. Orphaned/dead code — reported, NOT deleted (per this task's own explicit instruction)
+
+The three files P8-D already reported (`checkout_screen.dart`, `featured_content_section.dart`,
+`campaigns_screen.dart`) remain untouched and unmodified by this audit. Newly surfaced in this pass,
+same "report only" treatment:
+
+- **`lib/features/cart/presentation/screens/checkout_screen.dart`'s own legacy chain is bigger than
+  previously characterized** — it isn't just dead UI with fake coupon logic. Its `_submitOrder()` calls
+  `SubmitCustomerOrder` (`lib/features/orders/application/use_cases/submit_customer_order.dart`) →
+  `FirestoreCanonicalOrderRepository.submitOrder()` → `OrderFirestoreClient.setOrder()` — a genuine
+  direct client Firestore write to the `orders` collection, with client-computed `deliveryFee`/
+  `discountAmount` and a nullable `customerId` (an unauthenticated/guest attempt is possible
+  client-side). **Confirmed currently blocked, not exploitable**: `firestore.rules`' `orders/{orderId}`
+  `create` rule has exactly one branch, requiring `isOrgMember(organizationId)` — no ordinary customer
+  or guest ever has that claim, regardless of channel value, so this path is denied at the rules layer
+  today. The existing rules test (`orders: an ordinary authenticated customer cannot directly create a
+  channel:"delivery" order in Firestore`) already exercises this exact customer-denial branch; since the
+  branch's `isOrgMember` check doesn't vary by channel, this one test is representative proof for any
+  channel a forged request might claim — **no new regression test was added**, this existing coverage
+  was judged adequate rather than scope-creeping a redundant one. Recommend the human decide whether to
+  delete this whole chain (`checkout_screen.dart` +
+  `submit_customer_order.dart`/`canonical_order_repository.dart`/`order_firestore_client.dart`'s
+  `setOrder` path) or at minimum correct `checkout_screen.dart`'s own doc comment, which inaccurately
+  claims it writes through "the legacy `OrderModel`/`orders_provider.dart`, not the canonical `Order`" —
+  the actual code routes through the canonical repository.
+- **`lib/features/profile/presentation/screens/address_form_screen.dart` +
+  `lib/features/profile/data/repositories/address_data_repository.dart`** (hardcoded
+  Kadıköy/Beşiktaş `MockZoneData`) — transitively orphaned: their only real caller is
+  `checkout_screen.dart`, itself unreachable. The real, canonical address flow
+  (`AddressesScreen`/`MapFirstAddressScreen`/`saveDeliveryAddress`) is unaffected and explicitly
+  documents never calling the legacy form.
+- **`lib/features/notifications/presentation/services/notification_service.dart` +
+  `local_notification_abstraction.dart`/`MockLocalNotificationService` +
+  `data/repositories/mock_notification_repository.dart`** — a fully unwired scaffold, zero callers in
+  production or test (distinct from the reachable fake-content problem fixed in item 1.1). Possibly
+  intended as a seam for a future real push-notification integration; recommend the human decide whether
+  to keep as forward scaffolding or delete.
+- **`lib/features/campaigns/domain/models/campaign_model.dart` (`CampaignModel`)** — the old
+  fake-coupon-era campaign model, fully superseded by the real `Campaign`
+  (`campaigns/domain/models/campaign.dart`), zero references outside its own file.
+- **`lib/features/profile/domain/models/loyalty_campaign_model.dart` +
+  `lib/shared/widgets/cards/loyalty_campaign_card.dart`** — same orphaned chain as
+  `profile/loyalty_screen.dart` (the old mock Boncuk screen `CLAUDE.md` §3 already documents as
+  superseded) — their only caller.
+- **`lib/features/home/presentation/widgets/campaign_carousel.dart` +
+  `HomeMockData.campaigns`** (in `mock_data.dart`) — zero call sites; not the same file/list as
+  `HomeMockData.categories`/`.popularProducts`, which remain genuinely live (used by
+  `favorites_screen.dart`/`orders_screen.dart` and others) — only the `campaigns` list and its one
+  consumer are dead.
+- **`home_hero_section.dart`/`build_bowl_banner.dart`** — already self-disclosed as superseded in
+  `home_screen.dart`'s own doc comment; re-confirmed still orphaned, no new finding.
+- **`LocalOrdersRepository`/`ordersRepositoryProvider`** — already disclosed in
+  `docs/phase9_final_report.md`; re-confirmed orphaned, no new finding.
+- **Bowl Builder placeholder economics** (`bowl_builder_catalog.dart:41-57`) — every ingredient
+  price/nutrition figure is explicitly disclosed in-code as a development placeholder, yet the catalog
+  is genuinely live in production. Not treated as a code defect (it's honestly disclosed, not silently
+  presented as real) — flagged as a **product decision** for the human: is shipping disclosed-placeholder
+  pricing/nutrition acceptable for `CUSTOMER_SIDE_CLOSED`, or does real data need to land first? Not
+  acted on either way in this audit (`Do NOT redesign CLOSED customer features`, and there is no
+  minimal-scope fix for "the numbers are wrong" other than getting real numbers).
+
+### 5. Gates (re-run fresh this phase)
+
+Functions build (`tsc`) clean. Functions FULL emulator suite (isolated `firebase emulators:exec`, JDK
+21) — **1729/1729, 0 failed**, identical to the P8-D baseline (no backend logic changed this phase, only
+two TS doc comments). Firestore Rules FULL suite — **375/375, 0 failed**. Storage Rules FULL suite (run
+for the first time as part of a closure audit in this session) — **35/35, 0 failed**. `flutter analyze`
+— clean (one transient unused-import warning from the notifications-screen fix, caught and corrected
+before the final run). `flutter test` FULL — result recorded in this session's own final report (grew
+from the P8-D baseline by the targeted regression tests added in items 1.3/1.4 above). `git status`
+confirmed every changed file is either a fix from this audit (Flutter UI/model files, two TS doc
+comments) or documentation (`docs/business_rules.md`/`docs/decisions.md`/`docs/feature_status.md`) — no
+unrelated change, `firestore.rules`/`firestore.indexes.json`/`storage.rules` all untouched. Nothing
+committed, per this task's own explicit instruction.
+
+### 6. One process note: two research agents contradicted each other, resolved by direct verification
+
+The pricing/loyalty audit agent and the four-channel consistency audit agent each independently
+evaluated `loyaltyOrderEarning.ts`'s "no shipping path ever completes an order" doc comment — one
+concluded it was still accurate, the other flagged it as stale. Rather than trusting either agent's
+claim, the actual `advance*OrderStatus.ts` files were read directly: all four define a real, live
+`ready -> completed` `onCall` transition, confirming the comment was indeed stale (see item 2 above).
+Recorded here as the reason this audit's own report does not treat "an agent said so" as sufficient
+evidence for a fix — every fix in this entry traces back to a direct source read, not solely a
+sub-agent's summary.
+
+### 7. Determination
+
+**CUSTOMER_SIDE_CLOSED = YES.** All 32 audit sections covered; five real defects found and fixed (three
+with new regression tests); documentation corrected everywhere a stale claim was found; every orphaned/
+dead-code finding reported, none deleted; no unresolved Critical/High security item; all four gates
+(Functions, Rules, Storage, Flutter) green. The customer-side architecture (canonical `orders`
+collection, existing Admin service foundations, uniform tenant/identity resolution) exposes no
+structural blocker that would force reopening customer code once Admin/POS development begins — the one
+noted gap (channel-vocabulary documentation) is a "write it down" item, not a design change.
