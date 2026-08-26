@@ -16501,3 +16501,268 @@ dead-code finding reported, none deleted; no unresolved Critical/High security i
 collection, existing Admin service foundations, uniform tenant/identity resolution) exposes no
 structural blocker that would force reopening customer code once Admin/POS development begins — the one
 noted gap (channel-vocabulary documentation) is a "write it down" item, not a design change.
+
+## AP-0 — Admin/POS Current-State Implementation + Decision Evidence Audit (2026-08-26)
+
+**Status**: COMPLETE, read-only. Full evidence-gathering audit of Admin/POS and adjacent operational
+modules across source code, tests, Firestore rules, and Cloud Functions — 27 scope areas, six parallel
+evidence-gathering passes, each finding independently cited with `file:line` where applicable. No code
+or documentation was changed by AP-0 itself.
+
+**Key findings** (full detail, per-area evidence, and the complete file inventory live in the AP-0 report
+delivered directly in-session, not duplicated here per this file's own "don't pad with restated findings"
+discipline): a large, well-tested `lib/features/pos/**` domain/UI layer exists, almost entirely in-memory
+and disconnected from both backend and navigation; a real, reachable `AdminShellScreen` exists with
+mostly hardcoded-tenant/in-memory data providers; real, tested, tenant/branch-scoped server-authoritative
+organization/staff/order/reservation Cloud Functions exist but are emulator-only and in several cases
+have zero Flutter callers (`advance*OrderStatus` specifically); Admin staff-management UI is disconnected
+from the real authorization backend; no trusted-device model exists; no table sub-account model exists;
+no per-product order accept/reject/counter-proposal exists; no real payment provider, YN ÖKC/GMP-3/PAX,
+or ESC/POS integration exists; KDS's real order-ticket source and its local preparation-state simulation
+are disconnected; stock/recipe domain logic exists with no product→recipe→order-lifecycle linkage;
+courier, staff-facing CRM, inventory, and most operational screens are in-memory; no production Firebase
+deployment has occurred. One process note: a background research agent violated its read-only
+instructions during this audit and wrote corrupted content into `lib/features/admin/domain/staff/
+staff_member.dart`; caught by the mandatory before/after `git status --short` check, reverted via `git
+checkout --`, verified restored — disclosed in the audit's own final report, not hidden.
+
+**Determination**: `ADMIN_POS_CURRENT_STATE_AUDIT_COMPLETE = YES`. Zero application code or documentation
+changed. This entry exists so the audit's occurrence and headline findings are part of the durable
+decision record, not only the in-session report.
+
+## AP-1 — Canonical Admin/POS Architecture Foundation (2026-08-26)
+
+**Status**: Documentation-only phase establishing six canonical Admin/POS architecture documents
+(`docs/admin_pos_architecture.md`, `docs/order_operations_architecture.md`, `docs/
+payment_cash_fiscal_architecture.md`, `docs/kds_printer_stock_architecture.md`, `docs/
+restaurant_operations_architecture.md`, `docs/saas_offline_observability_architecture.md`) plus
+governance synchronization across `docs/business_rules.md`, `docs/feature_status.md`, `docs/
+module_catalog.md`, `docs/master_roadmap.md`, `CLAUDE.md`, and five `.claude/agents/*.md` persona files.
+Directly built on AP-0's evidence — every "current state" claim in the six new documents traces to a
+specific AP-0 finding, not assumption. Zero application code was written.
+
+**Corrected authority order** (per explicit approval, superseding any prior implicit ordering): this
+Constitution → approved product/business requirements and `docs/business_rules.md` → approved ADRs in
+this file → the six AP-1 canonical documents → `docs/module_catalog.md`/`docs/master_roadmap.md`
+(scope/backlog authority) → `CLAUDE.md`/`.claude/agents/*.md` (working-method/tooling authority). A
+working-method document can never override a product rule, an ADR, or a canonical architecture decision —
+where AP-0 found one doing so implicitly (several `.claude/agents/*.md` personas describing a stale "no
+backend" state as though it were current architecture), the conflict is resolved by this order explicitly,
+not by silent precedence, and the specific stale passages are corrected in place (see the governance-sync
+entries below).
+
+### ADR-028 — Table & Customer Sub-Account Model (Locked)
+
+**Context**: AP-0 found no per-customer sub-account concept in the existing `Check`/`TableSession`
+domain — a `Check` only tags `guestSessionIds`; no mandatory guest-name-entry exists before a QR order.
+
+**Decision**: Every QR customer at a table gets a canonical `GuestSubAccount` (a per-customer sub-ledger
+within a `TableSession`), mandatory in the first production POS release. A guest must enter a name before
+ordering. An authenticated customer's submissions link via their canonical `customerId`. Staff-created
+anonymous/general table lines are held in a separate staff-created sub-account. Order lines carry the
+sub-account that ordered them. Boncuk is usable only against its owning sub-account's own eligible
+amount. Split by product/quantity, customer, headcount, and free amount are all required, along with
+audited merge and table transfer.
+
+**Alternatives considered**: a single shared check per table with no sub-account concept (simpler, but
+does not satisfy the locked per-customer-Boncuk and per-customer-billing requirements).
+
+**Trade-offs**: real schema and UI complexity in exchange for correct per-customer billing/benefit
+attribution.
+
+**Consequences**: `lib/features/pos/domain/models/check.dart` is extended, not replaced; full detail in
+`docs/order_operations_architecture.md`.
+
+**Status**: DECIDED, architecture only. Implementation: AP-3.
+
+### ADR-029 — Line-Level Order Approval & Counter-Proposal (Locked)
+
+**Context**: AP-0 found order approval real and server-authoritative but whole-order only; the only
+counter-proposal mechanism (`respondToProposedChange.ts`) is reservation-scoped exclusively.
+
+**Decision**: Every QR submission awaits cashier approval before canonical kitchen preparation begins.
+Approval is line-level (per-product accept/reject), and the cashier may propose a product change a
+customer must explicitly accept before it becomes part of the order. Partial acceptance/rejection is
+tracked per line, independently. All of the above is idempotent and audited.
+
+**Alternatives considered**: extending `respondToProposedChange.ts` itself to also cover orders (rejected
+— that function's own request shape and semantics are reservation-specific; a new, order-line-scoped
+sibling command is cleaner than overloading it).
+
+**Consequences**: a new `OrderLineStatus` state machine, orthogonal to the unchanged whole-order
+`OrderStatus`; full detail in `docs/order_operations_architecture.md`.
+
+**Status**: DECIDED, architecture only. Implementation: AP-3.
+
+### ADR-030 — Trusted Device Model (Locked)
+
+**Context**: AP-0 found no trusted-device model anywhere, not even a stub — POS authorization today is
+staff-session-based only.
+
+**Decision**: POS/KDS device-restricted operational modes require both a valid staff session AND an
+active, server-authorized `TrustedDeviceRegistration`, organization- and branch-scoped, with explicit
+capabilities (`POS`, `KDS`, `PRINTER_CONTROLLER`, at minimum), a five-state lifecycle (`pending, active,
+suspended, revoked, retired`), device identity never accepted as a client assertion (hardware-backed
+proof-of-possession where the platform supports it), App Check treated as defense-in-depth only,
+remote revocation, and offline operation only via a signed, scope-limited backend-issued lease. Platform
+Owner identity does not bypass device restriction.
+
+**Alternatives considered**: device-inventory-only (labels with no enforcement) — rejected as
+insufficient against the locked requirement that POS operational mode itself requires device trust, not
+merely a device record.
+
+**Consequences**: exact platform-specific key-storage APIs are recorded as `CONTROLLED_EXTERNAL_
+DEPENDENCY` (`docs/admin_pos_architecture.md` §21), not invented without vendor documentation.
+
+**Status**: DECIDED, architecture only. Implementation: AP-2.
+
+### ADR-031 — Remote Manager Approval Orchestration (Locked)
+
+**Context**: AP-0 found no manual manager adjustment capability and no escalation mechanism anywhere —
+only a reserved, never-written `adminAdjustment` Boncuk-ledger entry type.
+
+**Decision**: Remote approval is synchronous, blocking, and fail-closed — the underlying mutation never
+applies until an explicit approval is recorded. Self-approval is structurally forbidden. An unanswered
+request escalates to another eligible manager, then ultimately the Platform Owner, who still cannot
+bypass device restriction (ADR-030) for a device-restricted action. No double-approval; a stale-target
+(aggregate changed since the request) is rejected, not applied. Approve/reject/timeout/escalate/cancel
+are five distinct audit event types. No connectivity, no remote approval. Manual manager adjustment is
+kept structurally separate from automatic Campaign/Boncuk/Reward eligibility — it applies on top, with
+its own reason and financial-effect record, never silently substituting for the automatic path.
+
+**Alternatives considered**: asynchronous/non-blocking approval (the action proceeds provisionally,
+reconciles later) — rejected per the explicit "senkron, blocking ve fail-closed" instruction.
+
+**Consequences**: one shared primitive (`docs/admin_pos_architecture.md` §16) used by table/order
+comp/void/cancel (Doc B), cash reconciliation/adjustment (Doc C), and stock-count variance (Doc D) —
+never a bespoke per-domain approval mechanism.
+
+**Status**: DECIDED, architecture only. Implementation: AP-2 (primitive), consumed across AP-3/AP-4/AP-5.
+
+### ADR-032 — Fiscal Device Boundary: YN ÖKC / GMP-3 / PAX A910SF (Locked)
+
+**Context**: AP-0 confirmed a total absence of fiscal-device integration — zero code, stub, interface,
+domain model, or dependency anywhere, despite this being a mandatory Turkish POS regulatory requirement.
+
+**Decision**: YN ÖKC/GMP-3/PAX A910SF integration is mandatory scope for the first production POS
+release. This phase (AP-1) establishes architecture only — a `FiscalAdapter` port, a state machine
+(`pending → issued | UNKNOWN_RECONCILIATION_REQUIRED → issued(reconciled) | voided`), idempotency,
+timeout-never-auto-fails, no blind retry of an unknown outcome, an explicit reversal operation, and a
+one-to-one payment↔fiscal-document correlation — with zero vendor-specific command/response/protocol
+detail invented without official documentation in hand. Real provider/SDK implementation is deferred to
+a dedicated future payment/fiscal implementation phase (AP-4); real device acceptance testing is a hard
+production gate, not a recommendation.
+
+**Alternatives considered**: none — this is a regulatory requirement, not a design choice with genuine
+alternatives; the only real decision is how conservatively to scope this phase's own deliverable
+(architecture only, explicitly), which is what's recorded here.
+
+**Consequences**: `CONTROLLED_EXTERNAL_DEPENDENCY` entries recorded for the GMP-3 protocol spec and the
+PAX SDK (`docs/payment_cash_fiscal_architecture.md` §22) — real production POS opening is blocked on
+real hardware acceptance testing passing, not merely on this architecture existing.
+
+**Status**: DECIDED, architecture only. Implementation: AP-4.
+
+### ADR-033 — Refund Architecture: Real Execution, Partial, Mixed-Tender (Locked)
+
+**Context**: AP-0 found the existing `refund*Order.ts` Cloud Functions certify only that a refund
+happened externally — they never move money, are full-refund-only, and have no payment-instrument
+apportionment; a disconnected `RefundCalculator` domain model already implements the missing partial-
+refund math but is wired into nothing.
+
+**Decision**: Real provider-executed refund becomes the target for any provider whose API supports it;
+cash refunds are recorded with a physical cash movement and authorized-staff confirmation; a controlled
+external-certification fallback remains for providers with no refund API, explicitly labeled as such.
+Full and product/quantity-level partial refund are both supported. Mixed-tender refunds apportion the
+refunded amount across the original payment instruments in their original (or manager-overridden)
+proportion, with deterministic rounding. Double refund is prevented by a running refunded-amount tally
+checked transactionally. One instrument's failure never causes the whole refund to be reported as fully
+succeeded.
+
+**Alternatives considered**: keeping certification-only permanently (rejected — conflicts with the locked
+mixed-payment-refund requirement, which cannot be satisfied without real per-instrument execution
+visibility).
+
+**Consequences**: the existing, currently-unwired `RefundCalculator` becomes the real implementation
+basis rather than being reinvented; full detail in `docs/payment_cash_fiscal_architecture.md` §13.
+
+**Status**: DECIDED, architecture only. Implementation: AP-4.
+
+### ADR-034 — Staff-Facing CRM Unified with Canonical Customer Identity (Locked)
+
+**Context**: AP-0 found the staff-facing CRM (`lib/features/crm/**`) — real, reachable, tested UI — 
+operates against its own entirely separate, disconnected, in-memory `Customer` entity, distinct from the
+real, server-authoritative customer-facing Boncuk/Loyalty identity. Both are informally called "CRM"/
+"customer" in different parts of this codebase without distinction.
+
+**Decision**: No second/parallel customer identity is created. Staff-facing CRM is migrated to operate on
+the canonical `customer`/`tenantCustomers` identity, orders, reservations, Boncuk account, and Campaign
+usage — all already real and unchanged. Staff-only extension data (notes, segments, risk flags,
+time-limited restrictions, support cases, communication consent) remains a separate, tenant-scoped,
+staff-authorized layer referencing the canonical identity, never merged into the customer-facing profile
+and never independently addressable. No account-merging tool is introduced — the existing real guest-to-
+customer claim mechanism remains the only linking path.
+
+**Alternatives considered**: keeping the two systems separate with a translation layer (rejected — this
+was explicitly identified as the wrong pattern for anything touching real customer identity/financial
+value, and does not resolve the naming collision, only papers over it).
+
+**Consequences**: `lib/features/crm/**`'s real UI is retained; its data layer is migrated, not rebuilt.
+Full detail in `docs/restaurant_operations_architecture.md` §10.
+
+**Status**: DECIDED, architecture only. Implementation: AP-7.
+
+### ADR-035 — Marketplace Connector Architecture; Supersedes ADR-025's Provider-Integration Deferral (Locked)
+
+**Context**: ADR-025 (Phase 8, "Platform, Integrations & White-Label Ecosystem") deliberately deferred
+real marketplace provider integration, stating "do NOT integrate providers yet, only create
+provider-neutral architecture." AP-0 confirmed this deferral is still exactly reflected in current
+source: `lib/features/marketplace/**` is domain-model-only, not wired to any UI screen, with zero
+functional connector code to any real 3rd-party marketplace. That deferral, correct when made, now
+conflicts with the current production target of real marketplace connectivity.
+
+**Decision**: **ADR-025's provider-integration deferral is superseded.** ADR-025's own original text is
+preserved unedited in this file (see its entry above this one) — it is not rewritten, only marked
+superseded by this entry. The provider-neutral `IntegrationProviderAdapter` contract ADR-025 established
+is **preserved and reused**, not discarded. Real per-provider connectors (Yemeksepeti, GetirYemek,
+Trendyol Yemek, Migros Yemek) are now in scope, built behind that same contract, one at a time, each
+gated on that provider's own real API documentation. Every connector is distributed as either
+`GLOBAL_CATALOG` (built once by Abaküs, available to any opted-in tenant) or `TENANT_PRIVATE` (built for
+one tenant's own bespoke marketplace relationship). Connector development/publishing authority is
+restricted to the Abaküs team — a tenant may activate/configure a `TENANT_PRIVATE` connector (subject to
+entitlement) but never build or publish one.
+
+**Alternatives considered**: opening connector development to tenants/3rd parties directly (rejected —
+not requested, and inconsistent with the locked "yalnız Abaküs ekibine açık" publishing-authority
+requirement).
+
+**Consequences**: real marketplace connector implementation is scoped to AP-6, alongside courier (both
+share the same "large, separate, cross-device backend" sizing profile) — not compressed into AP-2/AP-3/
+AP-4/AP-5. Full detail in `docs/restaurant_operations_architecture.md` §9.
+
+**Status**: DECIDED, supersedes ADR-025's deferral specifically (ADR-025's other, non-deferral content is
+unaffected). Implementation: AP-6.
+
+### Governance Synchronization (recorded here for the durable record; the edits themselves live in each
+target file)
+
+Per this phase's own explicit instruction, the following existing documents received targeted, evidence-
+based corrections (never a rewrite, never deleting existing text) as part of AP-1: `docs/business_rules.md`
+(new BR-SUBACCOUNT/BR-ORDER/BR-DEVICE/BR-APPROVAL/BR-FISCAL/BR-REFUND/BR-CRM/BR-MKT/BR-COURIER entries,
+cross-referenced to ADR-028 through ADR-035), `docs/feature_status.md` (AP-0+AP-1 closure entry), `docs/
+module_catalog.md` (targeted status corrections at the specific lines AP-0 evidence contradicted — CRM-001,
+Kitchen Operations nuance, Courier/Marketplace/Entitlements/Reservation-staff-side), `docs/
+master_roadmap.md` (the AP-2…AP-8 phase structure recorded as the current near-term execution roadmap,
+existing Phase 0-18 content preserved as the longer-range backlog reference), `CLAUDE.md` (§2 dependency
+list and §5 Firebase-dormant framing corrected; `lib/core/theme/*` reaffirmed as the sole live design-
+token authority; the six AP-1 documents added to its doc-authority list), and five `.claude/agents/*.md`
+persona files (`firebase_engineer`, `flutter_architect`, `qa_engineer`, `restaurant_domain`,
+`security_engineer` — only their stale factual-baseline paragraphs corrected, methodology preserved).
+`docs/current_state_audit.md`, `docs/design_system.md`, `docs/project_tree.md`, and `docs/
+gemini_master_prompt.md` gained explicit `HISTORICAL` banners. `docs/table_qr_architecture.md` and `docs/
+order_lifecycle_architecture.md` gained a one-line pointer to `docs/order_operations_architecture.md` as
+their Admin/POS-relevant successor; `order_lifecycle_architecture.md`'s own stale `CartItemModel` claim
+was additionally corrected in place after direct source verification confirmed only `CartItem` remains.
+
+**Determination**: `AP1_CANONICAL_ARCHITECTURE_PACK_COMPLETE` and the full quality-gate/commit record are
+reported in this session's own final AP-1 report, not duplicated here.

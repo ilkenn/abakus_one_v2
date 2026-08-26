@@ -1,5 +1,11 @@
 # Abaküs — Gemini Master Prompt
 
+> **HISTORICAL (marked 2026-08-26, AP-1).** This document's mandatory-reading list (5 docs) predates
+> nearly every doc that now exists (`business_rules.md`, the `phase9_*` trio, `fraud_evidence_
+> architecture.md`, `module_catalog.md`, `domain_architecture.md`, the six AP-1 Admin/POS canonical
+> documents, and more). Do not use this document's reading list as current guidance for any agent,
+> Gemini or otherwise. Preserved below unedited as a historical record.
+
 Aşağıdaki metin her yeni Gemini kodlama oturumunun başında kullanılacaktır.
 
 ---

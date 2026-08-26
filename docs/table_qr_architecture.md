@@ -16,6 +16,11 @@
 > an active reservation's T-20 window — server-authoritative, `tableProtectionMinuteBuckets`) and a
 > server-generated `reservationContextId` snapshot on `GuestSession`/`Order`, both layered on top of
 > the exact flow §5/§6 describe, not a replacement for it.
+>
+> **Superseded for Admin/POS-relevant content (2026-08-26, AP-1) by `docs/
+> order_operations_architecture.md`** — table session, guest identity, and QR-order-approval
+> architecture going forward lives there, including the sub-account/mandatory-name-entry gaps this
+> document's original design did not anticipate.
 
 ## 1. Purpose
 

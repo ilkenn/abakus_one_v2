@@ -1,5 +1,12 @@
 # Abaküs One — Current State Audit
 
+> **HISTORICAL (marked 2026-08-26, AP-1).** This document's own §3/§5 explicitly state they were never
+> re-verified past Phase 1 (P1-014/015) — "treat as unconfirmed rather than re-audited." The codebase
+> has since gone through many more phases (Boncuk Loyalty, Server-Authoritative Campaign Engine,
+> Firebase integration, the AP-0 Admin/POS Current-State Audit). Do not use this document as a current-
+> state source — see `docs/decisions.md`'s AP-0 entry and the six AP-1 canonical Admin/POS architecture
+> documents for the current, evidence-backed picture. Preserved below unedited as a historical record.
+
 > Companion to `docs/master_roadmap.md`, `docs/domain_architecture.md`, `docs/module_catalog.md`.
 > This document is a factual snapshot of the repository as it exists today. It does not describe
 > aspiration or intent — only what is present in `lib/`, `test/`, and `pubspec.yaml` at the time of

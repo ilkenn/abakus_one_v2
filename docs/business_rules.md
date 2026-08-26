@@ -6562,6 +6562,292 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 - **Owner Agent**: security_engineer
 - **Related Modules**: Reservations, Notifications, Routing
 
+# Admin/POS Operations — AP-1 Locked Rules (2026-08-26)
+
+Established during AP-1 (Canonical Admin/POS Architecture Foundation), architecture-only phase. Every
+rule below is cross-referenced to its owning ADR (`docs/decisions.md`) and owning canonical document —
+neither restated in full here nor duplicated between the two.
+
+### BR-SUBACCOUNT-001 — Per-customer table sub-account, mandatory in V1
+- **Status**: DECIDED — architecture only, not yet implemented (AP-0 confirmed `NOT_FOUND` in source).
+- **Rule**: Every QR customer at a table has a canonical `GuestSubAccount` within the table's active
+  session. Mandatory in the first production POS release, not deferrable.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Orders, POS, Loyalty
+- **Business Rule IDs**: ADR-028, `docs/order_operations_architecture.md`
+
+### BR-SUBACCOUNT-002 — Mandatory guest name entry before QR ordering
+- **Status**: DECIDED — architecture only.
+- **Rule**: A table-QR guest must enter a name before placing an order; this name becomes the owning
+  `GuestSubAccount`'s `displayName`, enforced non-empty server-side.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, QR
+- **Business Rule IDs**: ADR-028
+
+### BR-SUBACCOUNT-003 — Authenticated customer linkage
+- **Status**: DECIDED — architecture only.
+- **Rule**: A signed-in customer's submissions link to their canonical `customerId`, not a bare display
+  name; subsequent submissions from the same identity within the same table session join the same
+  active sub-account.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, Customer Identity
+- **Business Rule IDs**: ADR-028
+
+### BR-SUBACCOUNT-004 — Staff-created general lines
+- **Status**: DECIDED — architecture only.
+- **Rule**: Order lines a cashier enters on behalf of the table generally (not attributable to one
+  specific guest) are held in a separate, explicitly staff-created sub-account, never silently attached
+  to an arbitrary guest's sub-account.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS
+- **Business Rule IDs**: ADR-028
+
+### BR-SUBACCOUNT-005 — Order line ownership visibility
+- **Status**: DECIDED — architecture only.
+- **Rule**: Every order line displays which sub-account ordered it.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS
+- **Business Rule IDs**: ADR-028
+
+### BR-SUBACCOUNT-006 — Boncuk scoped to owning sub-account
+- **Status**: DECIDED — architecture only.
+- **Rule**: Cash Boncuk redemption against a table order applies only to the requesting sub-account's own
+  eligible amount, never pooled across sub-accounts implicitly. Cross-reference: `BR-LOYALTY-019`
+  (dine-in Boncuk policy, unchanged).
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Orders, Loyalty
+- **Business Rule IDs**: ADR-028, BR-LOYALTY-019
+
+### BR-TABLE-009 — Split by product/quantity/customer/headcount/free amount; audited merge/transfer
+- **Status**: DECIDED — architecture only. Product/quantity split, merge, and transfer already exist as
+  real, tested, in-memory logic (AP-0); customer/headcount/free-amount split and real backend/audit are
+  net-new.
+- **Rule**: A table check may be split by product, quantity, customer, headcount, or a free entered
+  amount. Merge and table transfer are both supported and audited. A `submitted` (already-paid) check may
+  only be merged or transferred with remote manager approval.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS, Tables
+- **Business Rule IDs**: ADR-028, `docs/order_operations_architecture.md` §11
+
+### BR-ORDER-015 — Every QR submission awaits cashier approval
+- **Status**: DECIDED — **partially real** (whole-order approval is real and server-authoritative per
+  `submitDineInOrder.ts`/`advanceDineInOrderStatus.ts`, AP-0-confirmed); line-level detail below is new.
+- **Rule**: No canonical kitchen preparation begins for a QR submission until cashier approval.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, QR, KDS
+- **Business Rule IDs**: ADR-029
+
+### BR-ORDER-016 — Line-level accept/reject
+- **Status**: DECIDED — architecture only (AP-0 confirmed whole-order-only today).
+- **Rule**: The cashier disposition of a QR submission is per product line, not only whole-order.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS
+- **Business Rule IDs**: ADR-029
+
+### BR-ORDER-017 — Cashier counter-proposal requires customer acceptance
+- **Status**: DECIDED — architecture only (AP-0 confirmed no order-level counter-proposal exists;
+  `respondToProposedChange.ts` is reservation-scoped only).
+- **Rule**: A cashier-proposed product change never becomes part of the order until the submitting
+  customer explicitly accepts it.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS
+- **Business Rule IDs**: ADR-029
+
+### BR-ORDER-018 — Partial accept/reject tracked separately, idempotent, audited
+- **Status**: DECIDED — architecture only.
+- **Rule**: Within one submission batch, accepted and rejected lines are tracked independently; every
+  line-level and batch-level operation is idempotent and produces an audit event.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Orders, Audit
+- **Business Rule IDs**: ADR-029
+
+### BR-DEVICE-001 — Trusted device required for POS/KDS, alongside staff permission
+- **Status**: DECIDED — architecture only (AP-0 confirmed `NOT_FOUND`, no trusted-device concept exists
+  at all).
+- **Rule**: A device-restricted operational mode (POS, KDS) requires both a valid staff session and an
+  active, server-authorized trusted-device registration for that specific device — neither is sufficient
+  alone.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, KDS, Security
+- **Business Rule IDs**: ADR-030, `docs/admin_pos_architecture.md` §12
+
+### BR-DEVICE-002 — Device registration scope, capabilities, lifecycle
+- **Status**: DECIDED — architecture only.
+- **Rule**: A device registration is organization- and branch-scoped, carries explicit capabilities
+  (`POS`, `KDS`, `PRINTER_CONTROLLER` at minimum), and has a five-state lifecycle
+  (`pending, active, suspended, revoked, retired`). Activation is server-authoritative, gated on
+  manager/Admin/Platform Owner authorization.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Security
+- **Business Rule IDs**: ADR-030
+
+### BR-DEVICE-003 — Device identity never client-asserted
+- **Status**: DECIDED — architecture only; exact platform API is a `CONTROLLED_EXTERNAL_DEPENDENCY`.
+- **Rule**: Device identity is verified server-side via hardware-backed, non-exportable key
+  proof-of-possession where the target platform supports it; a bare client-supplied device id string is
+  never accepted as proof.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Security
+- **Business Rule IDs**: ADR-030, `docs/admin_pos_architecture.md` §21
+
+### BR-DEVICE-004 — App Check is defense-in-depth only, never device trust
+- **Status**: DECIDED — architecture only.
+- **Rule**: App Check enforcement (where enabled) never substitutes for the trusted-device check.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Security
+- **Business Rule IDs**: ADR-030
+
+### BR-DEVICE-005 — Remote device revocation
+- **Status**: DECIDED — architecture only.
+- **Rule**: A lost/compromised device is remotely revocable; a revoked device's session-issuing
+  capability is invalidated on its next server round-trip.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Security
+- **Business Rule IDs**: ADR-030
+
+### BR-DEVICE-006 — Offline operation only via signed, scope-limited lease
+- **Status**: DECIDED — architecture only (nearest real precedent: the orphaned courier-location offline
+  queue, AP-0-confirmed real-but-unwired).
+- **Rule**: A device may operate offline only under a short-lived, backend-issued, scope-limited lease
+  obtained while online — never a standing/unlimited offline capability.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Offline
+- **Business Rule IDs**: ADR-030, `docs/saas_offline_observability_architecture.md` §11
+
+### BR-APPROVAL-001 through BR-APPROVAL-006 — Remote Manager Approval Orchestration
+- **Status**: DECIDED — architecture only (AP-0 confirmed no escalation/manual-adjustment mechanism
+  exists anywhere; only a reserved, never-written `adminAdjustment` ledger-entry type).
+- **Rule (001)**: Remote approval is synchronous, blocking, and fail-closed — the underlying action never
+  applies before an explicit approval.
+- **Rule (002)**: Self-approval is structurally forbidden (mirrors `staffMembership.ts`'s existing
+  self-promotion block).
+- **Rule (003)**: An unanswered request escalates to another eligible manager, then ultimately the
+  Platform Owner.
+- **Rule (004)**: Platform Owner escalation never bypasses a device-restriction requirement (`BR-DEVICE-001`).
+- **Rule (005)**: No double-approval; a request whose target aggregate has changed since creation is
+  rejected as stale, not applied.
+- **Rule (006)**: Manual manager adjustment is kept structurally separate from automatic Campaign/Boncuk/
+  Reward eligibility (`BR-PROMO-008`, unchanged) — it applies on top, with its own reason and financial-
+  effect record, never silently substituting for the automatic path.
+- **Owner Agent**: security_engineer / restaurant_domain
+- **Related Modules**: POS, Cash, Orders, Loyalty, Audit
+- **Business Rule IDs**: ADR-031, `docs/admin_pos_architecture.md` §16, BR-PROMO-008
+
+### BR-FISCAL-001 — YN ÖKC/GMP-3/PAX A910SF mandatory for first production POS
+- **Status**: DECIDED — architecture only, this phase; real implementation is AP-4. AP-0 confirmed a
+  total absence in current source.
+- **Rule**: Fiscal-device integration is mandatory scope for the first production POS release, not an
+  optional later add-on.
+- **Owner Agent**: security_engineer / restaurant_domain
+- **Related Modules**: Payments, Fiscal, POS
+- **Business Rule IDs**: ADR-032, `docs/payment_cash_fiscal_architecture.md` §14
+
+### BR-FISCAL-002 — No protocol detail invented without vendor documentation
+- **Status**: DECIDED — governance rule, effective immediately.
+- **Rule**: No YN ÖKC/GMP-3/PAX command, response code, or protocol detail is written in any Abaküs
+  document or code without official vendor/regulator documentation in hand; unknown details are recorded
+  as `CONTROLLED_EXTERNAL_DEPENDENCY`.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Fiscal, Governance
+- **Business Rule IDs**: ADR-032
+
+### BR-FISCAL-003 — Payment/fiscal result never client-asserted
+- **Status**: DECIDED — architecture only.
+- **Rule**: A payment or fiscal-document outcome is set only by a server-verified provider callback or
+  device response, never a client-supplied value.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Payments, Fiscal
+- **Business Rule IDs**: ADR-032, ADR-033
+
+### BR-FISCAL-004 — Timeout enters a controlled unknown state, never auto-fails
+- **Status**: DECIDED — architecture only.
+- **Rule**: A payment or fiscal-device timeout enters `UNKNOWN_RECONCILIATION_REQUIRED`, requiring
+  explicit reconciliation before resolving either way; an unknown outcome is never blindly retried.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Payments, Fiscal
+- **Business Rule IDs**: ADR-032
+
+### BR-REFUND-009 — Full and partial (product/quantity) refund, provider-executed where available
+- **Status**: DECIDED — architecture only. Full refund is real today (certification-only, AP-0); partial
+  refund exists as an unwired domain model (`RefundCalculator`) to be wired in, not rebuilt.
+- **Rule**: Refund supports both full and product/quantity-level partial amounts; where a payment
+  provider's API supports real refund execution, the system executes it rather than merely certifying an
+  external event.
+- **Owner Agent**: security_engineer / restaurant_domain
+- **Related Modules**: Payments, Refunds
+- **Business Rule IDs**: ADR-033, BR-REFUND-003 (existing, unchanged for the certification-only fallback
+  case)
+
+### BR-REFUND-010 — Mixed-tender refund apportionment
+- **Status**: DECIDED — architecture only.
+- **Rule**: A refund against a mixed-payment order returns each payment instrument its own share, in the
+  original (or manager-overridden) proportion, with deterministic (never floating-point) rounding.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Payments, Refunds
+- **Business Rule IDs**: ADR-033
+
+### BR-REFUND-011 — Double-refund prevention; partial-instrument-failure isolation
+- **Status**: DECIDED — architecture only.
+- **Rule**: A refund already fully/partially succeeded for a given payment attempt cannot be
+  re-requested against the same refunded amount. One payment instrument's refund failure never causes
+  the whole refund to be reported as fully succeeded.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Payments, Refunds
+- **Business Rule IDs**: ADR-033
+
+### BR-CRM-011 — No second/parallel customer identity
+- **Status**: DECIDED — architecture only; migration target (AP-0 confirmed the staff-facing CRM
+  currently has its own disconnected in-memory `Customer` entity).
+- **Rule**: Staff-facing CRM tooling operates on the canonical `customer`/`tenantCustomers` identity only
+  — no second customer identity is ever created.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: CRM, Customer Identity
+- **Business Rule IDs**: ADR-034, `docs/restaurant_operations_architecture.md` §10
+
+### BR-CRM-012 — Staff-only CRM extensions remain tenant-scoped, layered on canonical identity
+- **Status**: DECIDED — architecture only.
+- **Rule**: Staff notes, segment membership, risk flags, time-limited restrictions, support cases, and
+  communication consent are a separate, tenant-scoped, staff-authorized layer referencing the canonical
+  customer identity — never merged into the customer-facing profile, never independently addressable, no
+  account-merging tool is introduced.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: CRM
+- **Business Rule IDs**: ADR-034
+
+### BR-MKT-005 — Marketplace deferral superseded; real connector implementation in scope
+- **Status**: DECIDED — supersedes ADR-025's deferral specifically. Implementation: AP-6.
+- **Rule**: Real marketplace provider connector implementation (Yemeksepeti, GetirYemek, Trendyol Yemek,
+  Migros Yemek) is in scope, behind the existing provider-neutral adapter contract, one provider at a
+  time, each gated on that provider's own real documentation.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Marketplace
+- **Business Rule IDs**: ADR-035 (supersedes ADR-025's deferral)
+
+### BR-MKT-006 — Connector distribution model
+- **Status**: DECIDED — architecture only.
+- **Rule**: Every connector is distributed as `GLOBAL_CATALOG` (built once, available to any opted-in
+  tenant) or `TENANT_PRIVATE` (built for one tenant's own bespoke relationship).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Marketplace, SaaS
+- **Business Rule IDs**: ADR-035
+
+### BR-MKT-007 — Connector development/publishing restricted to the Abaküs team
+- **Status**: DECIDED — architecture only.
+- **Rule**: A tenant may activate/configure a `TENANT_PRIVATE` connector (subject to entitlement) but
+  never build or publish a connector — publishing authority is platform-level, restricted to Abaküs.
+- **Owner Agent**: security_engineer / restaurant_domain
+- **Related Modules**: Marketplace, SaaS, Security
+- **Business Rule IDs**: ADR-035
+
+### BR-COURIER-055 — Courier fraud detection migrated into canonical `core/fraud`
+- **Status**: DECIDED — architecture only; migration target (AP-0 confirmed a currently separate,
+  unmigrated implementation with zero code relationship to the real customer-delivery fraud system).
+- **Rule**: Courier-side fraud signal detection is consolidated into `lib/core/fraud/` during AP-6,
+  ending the two-parallel-implementations state.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Courier, Fraud, Security
+- **Business Rule IDs**: ADR-035, `docs/restaurant_operations_architecture.md` §8
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a

@@ -19,13 +19,24 @@ configuration, kitchen process, courier operation, or discount interaction is op
 profitable, unambiguous, and consistent with the rest of the system — independent of how it gets
 implemented technically.
 
-**State of the domain today, honestly**: the order lifecycle state machine, order channels, table/QR
-ordering, menu/modifier/Bowl Builder domain models, and the customer-visible courier-visibility rule
-are real, verified, tested code. Kitchen operations, courier operations beyond visibility, staff/
-manager tooling, stock/recipe/inventory, and marketplace integration have **zero implementation** —
-they exist only as documentation (`docs/domain_architecture.md`, `docs/module_catalog.md`) or as
-rules stated directly to this agent by the user. You never blur this line: a roadmap item is never
-presented as a working feature, and a user-stated rule is never presented as something already
+**State of the domain today, honestly — corrected 2026-08-26 (AP-1) against the AP-0 Admin/POS
+Current-State Audit; the previous version of this paragraph substantially understated what exists.**
+The order lifecycle state machine, order channels, table/QR ordering, menu/modifier/Bowl Builder domain
+models, and the customer-visible courier-visibility rule are real, verified, tested code — unchanged.
+Beyond that: a real, tested, server-authoritative organization/staff/order/reservation Cloud Functions
+layer exists (`functions/src/{provisionOrganization,staffMembership,submitDineInOrder,
+assignReservationTable,...}.ts`) but is **emulator-only, not deployed to production**, and several
+functions (`advance*OrderStatus`) have zero Flutter callers. A real, live kitchen-ticket board reads the
+real `orders` collection, but the per-line preparation-status/station-routing layer on top of it is
+in-memory only. A large, well-tested `lib/features/pos/**` domain layer (cash, payment, checks, KDS work
+items) and staff/courier/CRM/inventory domain models are real code, not documentation — but are
+in-memory, disconnected from the real backend, and in several cases orphaned from navigation. Marketplace
+connector code, trusted-device support, fiscal-device (YN ÖKC/GMP-3/PAX) integration, and ESC/POS
+printer integration remain confirmed **zero implementation**. See `docs/admin_pos_architecture.md`
+(AP-1) for the full, evidence-backed reuse/gap map — use that document, not this paragraph's old
+blanket "zero implementation" framing, as the current-state source for Admin/POS work. You never blur
+this line: a roadmap item is never presented as a working feature, and a user-stated rule is never
+presented as something already
 recorded in project documentation when it isn't.
 
 ## Responsibilities
@@ -247,10 +258,12 @@ evaluating a table/QR-related request:
 
 ## Kitchen Operations
 
-**Future roadmap — zero implementation exists.** No `kitchen/` feature folder, no `KitchenTicket` code,
-no ticket-lifecycle logic exists anywhere in this codebase. `docs/module_catalog.md` describes the
-target `KitchenTicket` entity (`id, orderId, branchId, station, status, firedAt, readyAt`) and a
-real-time KDS (Kitchen Display System) module — this is design documentation, not a built feature.
+**Corrected 2026-08-26 (AP-1) — "zero implementation" was wrong.** A real, live, Firestore-backed
+`KitchenTicket` board (`lib/features/pos/data/firestore_kitchen_ticket_repository.dart`) reads the real
+`orders` collection and is reachable via the Admin shell. However, the per-line preparation-status/
+station-routing layer on top of it (`KitchenWorkItem`) is in-memory only and disconnected from the real
+order document — closed by design in `docs/kds_printer_stock_architecture.md` (AP-1), not yet built.
+Treat "the ticket source is real, the prep-state simulation is not yet real" as the accurate framing.
 
 Target ticket lifecycle this agent defines (Roadmap, for future implementation to build against):
 `fired` (order enters `preparing`) → `preparing` → `ready` (order enters `ready`), mirroring
@@ -291,9 +304,12 @@ directly by the user, not yet built or recorded:
 
 ## Staff and Manager Operations
 
-**Future roadmap — zero implementation exists** beyond the `OrderActor.staff` tag used in the audit/
-cancellation domain models. Operational boundaries this agent applies once staff/manager tooling is
-actually scoped:
+**Corrected 2026-08-26 (AP-1) — more exists than "beyond a tag."** A real, tested, server-authoritative
+staff identity/role/permission Cloud Functions layer exists (`functions/src/{staffMembership,
+staffAuthorization}.ts`) — emulator-only, not yet deployed. A real Admin staff-management UI exists but
+is **disconnected from that real backend**, writing instead to an in-memory roster (`docs/
+admin_pos_architecture.md` §4/§20, AP-1, closes this specific gap). Operational boundaries this agent
+applies once staff/manager tooling is fully wired:
 
 - Staff-initiated dine-in orders (`OrderChannel.dineInStaff`) move through the identical `OrderStatus`
   machine as QR orders — no separate POS-specific status model, per `docs/order_lifecycle_architecture.md`
@@ -361,9 +377,13 @@ tested. Five payment provider adapters exist (Edenred, Multinet, Ödeal, Pluxee,
 
 ## Marketplace Integration Rules
 
-**Future roadmap — zero implementation exists.** No `MarketplaceConnector` code exists; the concept is
-documented in `docs/domain_architecture.md` as a reference on the `Order` entity. Named candidate
-marketplaces from prior project documentation/discussion: Yemeksepeti, Getir Yemek, Trendyol Yemek,
+**Still zero real connector implementation as of 2026-08-26 (AP-0 confirmed) — but the deferral itself
+is superseded.** `lib/features/marketplace/**` remains domain-model-only, not wired to any UI screen,
+with no functional connector/adapter code to any real marketplace. However, ADR-025's original "do NOT
+integrate providers yet" deferral is **superseded by ADR-035** (`docs/decisions.md`, AP-1) — real
+per-provider connector implementation is now in scope, for a dedicated future phase (AP-6), not this
+agent's own unprompted initiative. Named candidate marketplaces from prior project documentation/
+discussion: Yemeksepeti, Getir Yemek, Trendyol Yemek,
 Migros Yemek, TruYemek — this agent treats this as the known candidate list, never inventing a
 different marketplace without it being named by the user or project docs.
 

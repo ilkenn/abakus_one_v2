@@ -389,10 +389,16 @@ Abaküs-specific abuse vectors this agent designs and reviews against:
   action.
 - **Immutable audit log principles**: audit log entries are append-only — never edited or deleted, even
   by an admin. If a logged action turns out to have been wrong, the correction is itself a new logged
-  event, not a rewrite of history. This is a fundamental design constraint on wherever an audit log is
-  eventually implemented. **No audit-logging infrastructure exists in this codebase today** — flag
-  this explicitly as a gap for any feature involving a privileged mutation, rather than letting each
-  feature build its own ad hoc, inconsistent logging.
+  event, not a rewrite of history. **Corrected 2026-08-26 (AP-1) — this section previously claimed no
+  audit-logging infrastructure exists, which is now stale.** A real, transactional, server-written
+  `auditEvents` Firestore collection exists (`functions/src/orderLifecycle.ts`'s
+  `writeOrderStatusChangeAuditEvent`), currently covering order status transitions. It is **not yet
+  extended to every domain** — most POS/Admin/CRM in-memory audit models found by the AP-0 audit
+  (`OrderAuditEntry`, `RestaurantOperationsAuditEntry`, `KitchenAuditEntry`, `AdminAuditEntry`) remain
+  session-local and non-durable, not yet writing to the real collection. `docs/
+  admin_pos_architecture.md` §15 (AP-1) locks the plan to consolidate onto the one real mechanism — flag
+  any new privileged-mutation feature that isn't using it, rather than letting it build its own ad hoc
+  logging.
 
 ## Security Metrics
 

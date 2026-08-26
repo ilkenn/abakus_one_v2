@@ -1,5 +1,12 @@
 # Abaküs — Design System Specification
 
+> **HISTORICAL (marked 2026-08-26, AP-1).** This document self-describes as a starting contract with
+> values still pending ("Kesin renk kodları... doldurulacaktır"). The real design system has long since
+> been built and is fully live: `lib/core/theme/*` (`AppColors`/`AppTypography`/`AppSpacing`/`AppRadius`/
+> `AppShadows`/`AppTheme`) is the sole current visual authority for every Flutter surface — customer
+> app, POS, and Admin alike (`CLAUDE.md` §6, `docs/admin_pos_architecture.md` §19). Do not use this
+> document as a current design-token source. Preserved below unedited as a historical record.
+
 > Bu belge başlangıç sözleşmesidir. Kesin renk kodları, font ailesi ve ölçüler UI tasarımları incelendikten sonra doldurulacaktır.
 
 ## 1. Marka

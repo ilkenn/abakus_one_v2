@@ -25,6 +25,45 @@
 
 ---
 
+## AP — Admin/POS Implementation Phases (recorded 2026-08-26, AP-1)
+
+**This section is the current, near-term execution roadmap for Admin/POS work specifically — it sits
+above the Phase 0-18 backlog below for prioritization purposes when the two disagree, without deleting
+or superseding that backlog's own longer-range detail.** Established after the AP-0 Current-State Audit
+and the AP-1 Canonical Admin/POS Architecture Foundation (`docs/decisions.md`); each phase below has a
+canonical architecture document already written (AP-1) before any implementation begins — no phase here
+starts with code, all start with an already-approved design.
+
+- **AP-2 — Secure Admin/POS Platform**: tenant/branch context, staff authorization, trusted devices,
+  entitlements, Admin shell backend wiring. Architecture: `docs/admin_pos_architecture.md`,
+  `docs/saas_offline_observability_architecture.md` (entitlement granting).
+- **AP-3 — Table & Order Operations**: table sessions, sub-accounts, QR approval, checks, split/merge/
+  transfer, campaign/Boncuk/manual adjustment. Architecture: `docs/order_operations_architecture.md`.
+- **AP-4 — Payment, Cash, Fiscal & Offline**: payment orchestration, cash, refunds, PAX/GMP-3/ÖKC,
+  printer controller, offline recovery. Architecture: `docs/payment_cash_fiscal_architecture.md`.
+  **Real fiscal-hardware acceptance testing is a hard production gate for this phase, not a
+  recommendation.**
+- **AP-5 — Kitchen, Stock, Staff & Reservation Operations**: KDS, station routing, printers, stock/
+  recipe/waste/cost, shifts, reservation/Host operations. Architecture: `docs/
+  kds_printer_stock_architecture.md`, `docs/restaurant_operations_architecture.md` (staff/reservation
+  sections).
+- **AP-6 — Courier, Delivery, Marketplace & Web Ordering**: courier pool, geography, fraud, marketplace
+  connectors (real implementation, per ADR-035's supersession of ADR-025's deferral), web ordering.
+  Architecture: `docs/restaurant_operations_architecture.md` (courier/marketplace sections).
+- **AP-7 — CRM, Reports, SaaS, Community & AI**: customer 360 (unified onto canonical identity per
+  ADR-034), finance/reporting, white-label, subscription controls, Community, read-only AI Manager.
+  Architecture: `docs/restaurant_operations_architecture.md` (CRM/reporting sections), `docs/
+  saas_offline_observability_architecture.md`.
+- **AP-8 — Production Hardening & GA**: real Firebase deploy, migration, security/adversarial review,
+  real device acceptance, load/recovery/DR, canary → second-tenant → GA rollout gates (`docs/
+  saas_offline_observability_architecture.md` §16).
+
+These are not subdivided into smaller phases; workstreams/sub-tasks within a phase are execution detail,
+not new phases. Do not treat the P0-P3/S-XL micro-item sizing convention below (Phase 0-18) as
+superseded by this section for non-Admin/POS work — it remains the operative planning format there.
+
+---
+
 ## Phase 0 — Foundation
 
 #### F-001 — Real Router & Navigation Architecture

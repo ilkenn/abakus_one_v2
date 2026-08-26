@@ -269,6 +269,7 @@
 - **Integration requirements**: Depends entirely on `POS`/`APP`/`QR`/`MKT` all producing `Order`s in the same shape.
 - **Minimum tests**: Real-time delivery latency tests, ticket-state-machine tests, duplicate-ticket prevention tests.
 - **Risks**: Real-time infrastructure (WebSocket at scale, reconnect handling) is new technical surface not present anywhere in the current stack.
+- **AP-0 update (2026-08-26, `docs/decisions.md` AP-0)**: corrected — `.claude/agents/restaurant_domain.md`'s "Kitchen Operations zero implementation" claim is inaccurate. A real, live, Firestore-backed kitchen ticket board (`FirestoreKitchenTicketRepository`, reading the real `orders` collection) exists and is reachable via the Admin shell. However, the per-line preparation-status layer on top of it (`KitchenWorkItem`) is entirely in-memory and disconnected from the real order document, and the real, tested `advance*OrderStatus` Cloud Functions that would advance the canonical order status have zero Flutter callers anywhere. See `docs/kds_printer_stock_architecture.md` (AP-1) for the closing design.
 
 ## COUR — Courier Management
 
@@ -284,6 +285,7 @@
 - **Integration requirements**: Feeds `APP`'s order tracking; may integrate with third-party courier marketplaces later (explicitly out of MVP scope, see §7 of the roadmap doc).
 - **Minimum tests**: Assignment-conflict tests, location-update reliability tests.
 - **Risks**: Third-party courier marketplace integration (Getir/Trendyol's own courier network) is a materially different, larger scope than in-house courier management — do not conflate the two when estimating.
+- **AP-0 update (2026-08-26, `docs/decisions.md` AP-0)**: an extensive, well-tested domain/UI layer already exists (`lib/features/courier/**`, 42 data files, 62 test files — dispatch, GPS, geofencing, live map, earnings) but is confirmed 100% same-process in-memory, with zero Cloud Functions and zero Firestore rules for any courier collection. Courier fraud detection (`lib/features/courier/domain/fraud/**`) is a separate, unmigrated implementation with no code relationship to the real, canonical `lib/core/fraud/`. Scoped to its own dedicated implementation phase (AP-6) — see `docs/restaurant_operations_architecture.md` §8.
 
 ## RES — Reservations
 
@@ -299,6 +301,14 @@
 - **Integration requirements**: Loose coupling with `QR` (table QR could link a reservation to an order).
 - **Minimum tests**: Double-booking race tests, cancellation/no-show state tests.
 - **Risks**: Low technical risk relative to the rest of the catalog; mainly a scheduling/UX problem, not an architecture one.
+- **AP-0 update (2026-08-26, `docs/decisions.md` AP-0)**: further along than this entry's original MVP
+  framing suggests. Both the customer-facing booking flow and the staff-side management functions
+  (`listReservationsForBranch.ts`, `assignReservationTable.ts`, `respondToReservation.ts`, etc.) are
+  real, tested, server-authoritative, tenant/branch-scoped, and reachable via `ReservationOperationsScreen`
+  in the Admin shell — double-booking prevention is a genuinely proven, transactional, concurrency-safe
+  design already, not an open risk. No distinct "Host mode" concept exists; the general Admin reservation
+  screen was evaluated (`docs/restaurant_operations_architecture.md` §7, AP-1) and found to cover the gap
+  without a separate screen.
 
 ## CRM — CRM, Loyalty & Campaigns
 
@@ -314,6 +324,17 @@
 - **Integration requirements**: Feeds `AUTO` (automation rules like "send a coupon after 3 orders") and `AI` (campaign suggestion tools).
 - **Minimum tests**: Server-side redemption-validation tests (double-spend prevention), segmentation query correctness tests.
 - **Risks**: The existing client-trusting prototype is the exact wrong pattern for real money-equivalent value — flag this explicitly so it isn't copy-pasted forward into the real implementation.
+- **AP-0 update (2026-08-26, `docs/decisions.md` AP-0) — corrects a stale entry, not a new regression**:
+  this entry's "points ledger is client-side and resettable" framing is now stale for the **customer-facing**
+  side — a real, server-authoritative Boncuk Loyalty ledger and Campaign engine were built and CLOSED
+  (`docs/decisions.md`'s Boncuk Loyalty Program and Server-Authoritative Campaign Engine entries), with
+  real `LoyaltyScreen`/`RewardsScreen`/`CampaignSelectionCard` UI already wired to it — the "re-wire
+  existing UI onto real backend" work described above is done. A **separate, newer, staff-facing** "CRM"
+  UI (`lib/features/crm/**` — customer segmentation, surveys, reward rules, notification campaigns,
+  Customer 360) was subsequently built with its own **disconnected, in-memory `Customer` entity**,
+  distinct from the canonical customer identity the real Loyalty system uses — a naming collision AP-0
+  found and AP-1 (`docs/restaurant_operations_architecture.md` §10, ADR-034) locks the resolution for:
+  unify onto canonical identity, no second customer identity.
 
 ## MKT — Marketplace Integrations & Platform Sync Engine
 
@@ -330,6 +351,13 @@
 - **Minimum tests**: Per-connector contract tests (ideally against sandbox/mock platform APIs), mapping-conflict resolution tests, unified-inbox aggregation tests.
 - **Risks**: Each platform's API is a separate integration project with its own quirks, rate limits, and breaking-change risk — do not estimate this as "one module," estimate each connector separately (reflected in the roadmap as separate items).
 - **Phase 8 update (2026-08-04, `docs/decisions.md` ADR-025)**: a provider-neutral foundation was built — `IntegrationProviderRegistry`/`IntegrationProviderAdapter` (shared with `PLAT`'s payment providers), a Marketplace Hub domain (`MarketplaceAccount` → `MarketplaceStore` → `VirtualRestaurant` → branch/menu/order mapping), and a credential/webhook foundation (`flutter_secure_storage`-backed, no real signature verification yet — no `crypto` dependency exists). This is explicitly **not** "the first third-party marketplace connector" this module's own roadmap item (Phase 10) describes — every adapter is `UnconfiguredIntegrationProviderAdapter`, no real Yemeksepeti/Getir Yemek/Trendyol Yemek/Migros Yemek/TruYemek API call exists anywhere. Treat this as the shared scaffolding Phase 10's per-connector work would build on, not as Phase 10 itself.
+- **AP-1 update (2026-08-26, ADR-035, `docs/decisions.md`)**: ADR-025's own deferral of real provider
+  integration is now **superseded** — the current production target requires real marketplace
+  connectivity. The provider-neutral `IntegrationProviderAdapter` contract described above is **preserved
+  and reused**, not discarded; real per-provider connectors are now in scope, distributed as
+  `GLOBAL_CATALOG` or `TENANT_PRIVATE`, connector development/publishing restricted to the Abaküs team,
+  scoped to a dedicated implementation phase (AP-6) alongside Courier. See `docs/
+  restaurant_operations_architecture.md` §9.
 
 ## FIN — Finance & Reporting
 
@@ -443,6 +471,12 @@
 - **Integration requirements**: Payment/billing provider (Stripe or regional equivalent), app store tooling for white-label builds.
 - **Minimum tests**: Entitlement-enforcement tests (disabled module truly inaccessible), billing-webhook correctness tests.
 - **Risks**: White-label build/release tooling (per-tenant app store listings) is an operational, not just technical, undertaking — budget for release engineering, not only backend work.
+- **AP-0 update (2026-08-26, `docs/decisions.md` AP-0)**: `lib/features/entitlements/**` is real and
+  reachable (`EntitlementAdminScreen`, wired into the Admin shell), and `firestore.rules` already has a
+  correct deny-all-writes stub for the `entitlements` collection — but no Cloud Function anywhere ever
+  writes to it; the rule is currently a dead end with no legitimate writer either. No grace-period status
+  and no white-label field/concept exist in the module yet. See `docs/
+  saas_offline_observability_architecture.md` (AP-1) for the closing design.
 - **Phase 8 update (2026-08-04, `docs/decisions.md` ADR-025)**: `EntitlementModule` extended from 11 to 21 purchasable modules, each checked by `CheckModuleAccess` through both a `FeatureFlagsKeys` toggle and a `PosAuthorizedAction` — real enforcement, not UI-hidden-only, satisfying this module's own "server-side only" requirement as far as this codebase's application layer goes. A `TenantBrandTheme`/`resolvedAppThemeProvider` white-label runtime-theming foundation was also built (color palette/typography/asset refs resolve at app-launch time). **Not done**: no `Subscription`/billing-provider integration (SAAS-001) exists at all, and no build-flavor/app-store release tooling for producing a second, differently-branded published app exists — `BuildReleaseReadinessSnapshot`/`BuildStoreComplianceSnapshot` (Phase 8P/8Q) enumerate these gaps explicitly rather than claiming them done.
 
 ## PLAT — API/Connector Marketplace, Security, Observability & Backup/DR

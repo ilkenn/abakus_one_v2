@@ -4784,3 +4784,44 @@ file is either a fix from this audit or documentation — `firestore.rules`/`fir
 Readiness Audit" entry for the full record, including the 5 defects' exact fixes and the process note on
 resolving a contradiction between two research agents via direct source verification. **Determination:
 CUSTOMER_SIDE_CLOSED = YES.** No commit was made.
+
+**AP-0 — Admin/POS Current-State Implementation + Decision Evidence Audit (2026-08-26), COMPLETE.**
+Read-only, evidence-only. 27 scope areas across `lib/features/**`, `functions/src/**`, tests,
+`firestore.rules`, `storage.rules`. Headline findings: a large, well-tested `lib/features/pos/**` domain/
+UI layer exists, almost entirely in-memory and disconnected from both backend and navigation; a real,
+reachable `AdminShellScreen` exists with mostly hardcoded-tenant/in-memory data providers; real, tested,
+tenant/branch-scoped server-authoritative organization/staff/order/reservation Cloud Functions exist but
+are emulator-only, and several (`advance*OrderStatus`) have zero Flutter callers; Admin staff-management
+UI is disconnected from the real authorization backend; no trusted-device model; no table sub-account
+model; no per-product order accept/reject/counter-proposal; no real payment provider, YN ÖKC/GMP-3/PAX,
+or ESC/POS integration; KDS's real order-ticket source and its local preparation-state simulation are
+disconnected; stock/recipe domain logic exists with no product→recipe→order-lifecycle linkage; courier,
+staff-facing CRM, inventory, and most operational screens are in-memory; zero production Firebase
+deployment. Zero application code or documentation changed by AP-0 itself. One disclosed process
+deviation: a background research agent violated its read-only instructions and wrote corrupted content
+into `lib/features/admin/domain/staff/staff_member.dart`; caught by the mandatory before/after
+`git status --short` check and reverted via `git checkout --`. See `docs/decisions.md`'s AP-0 entry.
+
+**AP-1 — Canonical Admin/POS Architecture Foundation (2026-08-26), CLOSED.** Documentation-only. Six
+canonical documents created (`docs/admin_pos_architecture.md`, `docs/order_operations_architecture.md`,
+`docs/payment_cash_fiscal_architecture.md`, `docs/kds_printer_stock_architecture.md`, `docs/
+restaurant_operations_architecture.md`, `docs/saas_offline_observability_architecture.md`), each built
+directly against AP-0 evidence, each carrying a requirements-traceability entry (full matrix in Doc A's
+appendix) so no locked decision is left without an owning document/section/ADR/rule. 8 new ADRs
+(ADR-028 through ADR-035) recorded in `docs/decisions.md`, including ADR-035's explicit supersession of
+ADR-025's marketplace-provider-integration deferral (ADR-025's own text preserved unedited, marked
+superseded, not rewritten). New BR-SUBACCOUNT/BR-ORDER/BR-DEVICE/BR-APPROVAL/BR-FISCAL/BR-REFUND/BR-CRM/
+BR-MKT/BR-COURIER rule entries recorded in `docs/business_rules.md`, each cross-referenced to its ADR
+and owning document, none duplicating either. Governance sync: targeted status corrections in
+`docs/module_catalog.md`; the AP-2…AP-8 phase structure recorded in `docs/master_roadmap.md` as the
+current near-term execution roadmap (existing Phase 0-18 content preserved as the longer-range backlog
+reference); `CLAUDE.md` §2/§5 corrected to match real `pubspec.yaml`/Firebase state, `lib/core/theme/*`
+reaffirmed as the sole live design-token authority; five `.claude/agents/*.md` persona files corrected
+at their specific stale factual-baseline paragraphs only, methodology preserved; `docs/
+current_state_audit.md`/`design_system.md`/`project_tree.md`/`gemini_master_prompt.md` gained explicit
+`HISTORICAL` banners; `docs/table_qr_architecture.md`/`order_lifecycle_architecture.md` gained a pointer
+to `docs/order_operations_architecture.md` as their Admin/POS-relevant successor (the latter's stale
+`CartItemModel` claim additionally corrected after direct source verification confirmed only `CartItem`
+remains). Zero application code changed. Full gate results, exact test counts, and the commit SHA are
+recorded in this session's own final AP-1 report and `docs/decisions.md`'s AP-1 entry. **Determination:
+see the final AP-1 report for `AP1_CANONICAL_ARCHITECTURE_PACK_COMPLETE`.**

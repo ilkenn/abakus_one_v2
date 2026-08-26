@@ -1,5 +1,22 @@
 # Order Lifecycle & Reliability Foundation
 
+> Status: domain foundation only, as originally written. **This status line is now stale** — a real,
+> server-authoritative order-lifecycle backend exists today (`functions/src/orderLifecycle.ts`,
+> `advance*OrderStatus.ts`, real `auditEvents` writes), far beyond what this document's own "no backend"
+> framing describes; left as an honest historical snapshot rather than silently rewritten, per the same
+> discipline `docs/table_qr_architecture.md` already established for itself.
+>
+> **Superseded for Admin/POS-relevant content (2026-08-26, AP-1) by `docs/
+> order_operations_architecture.md`** — see that document, `docs/admin_pos_architecture.md` §15, and
+> `docs/decisions.md`'s AP-0/AP-1 entries for the current, evidence-backed state.
+>
+> **§9's `CartItem`/`CartItemModel` claim corrected (2026-08-26, AP-1, direct source verification)**:
+> §9 below states the duplication is "still unresolved." Current source confirms only `CartItem`
+> (`lib/features/cart/domain/models/cart_item.dart`) exists — `CartItemModel` has zero remaining
+> references anywhere in `lib/`. `docs/menu_experience_architecture.md`'s "the duplicate was deleted"
+> claim is the accurate one; this document's own §9 claim is the stale one, corrected here rather than
+> silently rewritten below.
+
 > Status: domain foundation only. No backend, persistence, payment, or kitchen/POS integration
 > exists yet — see §7/§8 for what's explicitly deferred. This is the shared lifecycle model every
 > ordering channel (QR table orders, POS, takeaway, delivery, reservation preorders) is meant to

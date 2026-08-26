@@ -146,13 +146,19 @@ actual code.
 
 ## Routing Rules
 
-- **There is currently no router.** Every screen transition is a raw
-  `Navigator.push(MaterialPageRoute(...))`; `core/router/{app_router,app_routes,app_shell}.dart` are
-  empty placeholders. This is the current, accepted reality — do not "fix" it inline as a side effect
-  of an unrelated task.
-- Building a real named-route/guard-capable router is a tracked future item
-  (`docs/master_roadmap.md` F-001) and is an architecture change: it touches every screen, requires
-  its own plan, and must be explicitly approved before starting — never introduced piecemeal.
+- **Corrected 2026-08-26 (AP-1) against real source — the claim below was stale.** A real, guard-capable
+  `go_router` implementation exists (`core/router/{app_router,app_routes,app_route_guard}.dart`, P1-010)
+  driving the entry flow (Splash → Onboarding → Login → OTP → Main), including the Admin/POS-relevant
+  reservation and takeaway-guest routes. **However, every other in-app screen transition (menu, cart,
+  checkout, orders, profile, and — confirmed by the AP-0 Admin/POS audit — the entire Admin shell and
+  every POS screen) is still a raw `Navigator.push(MaterialPageRoute(...))`, not registered in
+  `go_router` at all.** Migrating the rest of the app onto `go_router`, and registering the Admin/POS
+  screens specifically, is still an architecture-change-sized, explicitly-approval-gated item (see
+  `docs/admin_pos_architecture.md`, AP-1) — do not extend it piecemeal as a side effect of an unrelated
+  task.
+- Registering the Admin/POS screens into `go_router` is now locked as part of the AP-2 implementation
+  phase (`docs/master_roadmap.md`'s AP section) — still an architecture change requiring its own plan and
+  explicit approval before starting, never introduced piecemeal.
 - Until that router exists, do not hardcode route name strings scattered across screens as a
   half-measure; if a task needs route-like structure, raise the router question rather than
   improvising a partial one.

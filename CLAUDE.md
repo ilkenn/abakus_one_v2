@@ -47,8 +47,13 @@ flutter run                            # run the app
 ```
 
 No code generation step (no `build_runner`/`freezed`/`json_serializable` in `pubspec.yaml`). Runtime
-deps: `flutter_riverpod`, `flutter_secure_storage`, `go_router` (ADR-006), and `firebase_core`
-(added, not yet initialized — see §5). Still minimal; never add one without a recorded reason.
+deps, **corrected 2026-08-26 (AP-1) against the real `pubspec.yaml`** — this list previously named only
+4 packages and described Firebase as merely "added, not yet initialized," which is stale: `flutter_riverpod`,
+`flutter_secure_storage`, `go_router` (ADR-006), `firebase_core`, `firebase_auth`, `cloud_firestore`,
+`cloud_functions`, `firebase_storage`, `firebase_app_check`, `firebase_crashlytics`, `firebase_messaging`,
+`firebase_remote_config`, `google_maps_flutter`, `flutter_map`, `mobile_scanner`, `geolocator`,
+`image_picker`, `connectivity_plus`, `battery_plus`, `latlong2`, `http`, `shared_preferences` — see §5,
+also corrected. Never add a new one without a recorded reason.
 
 ## 3. Architecture Principles
 
@@ -146,26 +151,29 @@ Full detail: [docs/architecture_bible.md](docs/architecture_bible.md) §5 (state
 
 ## 5. Firebase Standards
 
-A Firebase project exists (`firebase.json`, `lib/firebase_options.dart`, project `abakusone`) and
-`firebase_core` is an added dependency (P1-003), but Firebase is still **not integrated**: no
-`Firebase.initializeApp()` call anywhere in `main.dart`, no other `firebase_*` product package added,
-and iOS Firebase configuration (`GoogleService-Info.plist`) is incomplete. Treat Firebase as
-present-but-dormant, not available. Separate Firebase projects for development/staging/production
-are planned but **not yet provisioned** — only the single `abakusone` project exists today.
+**Corrected 2026-08-26 (AP-1) against real source — this section previously described Firebase as
+"not integrated"/"present-but-dormant," which is stale.** Three real, provisioned Firebase projects
+exist (`abakus-one-dev`, `abakus-one-staging`, `abakusone` — dev/staging/production, contradicting the
+old "only the single `abakusone` project exists" claim; see `ios/config/README.md` for confirmed
+per-environment `GoogleService-Info.plist` files). `Firebase.initializeApp()` genuinely runs
+(`lib/bootstrap/firebase_ready_provider.dart`), and real `firebase_auth`/`cloud_firestore`/
+`cloud_functions`/`firebase_storage`/`firebase_app_check`/`firebase_crashlytics`/`firebase_messaging`/
+`firebase_remote_config` packages are all real dependencies (§2). A large, tested Cloud Functions backend
+exists (`functions/src/**`, see `functions/README.md`) — **emulator-verified only, not yet deployed to
+any real Firebase project** (confirmed by the AP-0 Admin/POS Current-State Audit, `docs/decisions.md`).
+Treat "Firebase is real but not yet in production" as the accurate framing, not "Firebase is dormant."
 
-Analytics, crash reporting, remote config, feature flags, and logging each have a clean interface +
-`NoOp*`/local implementation wired through a Riverpod provider (`features/analytics/**`,
-`core/services/{crash_reporting,remote_config,feature_flags,logging}/**`) — for analytics/crash-
-reporting/remote-config specifically, the seam exists but no vendor SDK sits behind it and no event
-is ever actually sent anywhere today (crash reporting remains `NoOp`; remote config has no vendor
-implementation). `FeatureFlagsService` (P1-007) is the **sole** app-facing API for boolean feature
-availability — UI/routing/business logic must never read a flag from `RemoteConfigService` directly.
-`RemoteConfigService` is a generic remote-value source only; `RemoteConfigFeatureFlagsService`
-(P1-008) is the one adapter allowed to bridge the two. Feature flags have no real production values
-yet — every flag currently resolves through the `NoOp` chain. Logging (`LoggingService`, P1-013) is
-local-only (console in debug, silent in release) and redacts sensitive values from context, message,
-and rendered error text (`LogRedactor`) before anything is printed — it is not a reporting boundary;
-`CrashReportingService` remains that, unimplemented (`NoOp`).
+Crash reporting is genuinely, conditionally live: `crashReportingServiceProvider` resolves to
+`FirebaseCrashlyticsService` once `firebaseReadyProvider` is true, falling back to `NoOp` only when
+Firebase bootstrap hasn't succeeded (e.g. every `flutter test` run) — this corrects an earlier claim that
+crash reporting "remains `NoOp`" unconditionally. Analytics and remote config remain genuinely `NoOp` —
+that part of the original framing is still accurate. `FeatureFlagsService` (P1-007) remains the **sole**
+app-facing API for boolean feature availability — UI/routing/business logic must never read a flag from
+`RemoteConfigService` directly. `RemoteConfigService` is a generic remote-value source only;
+`RemoteConfigFeatureFlagsService` (P1-008) is the one adapter allowed to bridge the two. Feature flags
+have no real production values yet. Logging (`LoggingService`, P1-013) is local-only (console in debug,
+silent in release) and redacts sensitive values from context, message, and rendered error text
+(`LogRedactor`) before anything is printed.
 
 Wiring any real Firebase service (Auth, Firestore, Analytics, Crashlytics, Remote Config, App
 Hosting, etc.) is an **architecture change**: it must be raised explicitly and approved before
@@ -179,7 +187,13 @@ Design tokens are mandatory in UI code. Never hardcode `Color(...)`, font sizes,
 border radius in a screen/widget — use `AppColors`/`AppTypography`/`AppSpacing`/`AppRadius`/
 `AppShadows`/`AppTheme`. `core/theme/*` is the one part of `core/` that is fully built and
 consistently used across the app (Material 3, via `uses-material-design: true` and `AppTheme`) —
-treat it as the working example for what "done" looks like elsewhere in `core/`.
+treat it as the working example for what "done" looks like elsewhere in `core/`. **`core/theme/*` is
+the sole live visual authority for every Flutter surface — customer app, POS, and Admin alike**
+(confirmed/reaffirmed 2026-08-26, AP-1, `docs/admin_pos_architecture.md` §19, which also locks the
+shared Abaküs visual language across all three surfaces). `brand-production/00_docs/
+Abakus-One_Design-Bible_v1.0.md` is a physical-hardware industrial-design specification for a literal
+abacus object — unrelated to Flutter UI and explicitly excluded from this authority chain; never cite it
+for an app visual decision.
 
 Asset paths should go through a central `AssetPaths`-style class, not inline string literals
 (currently only loosely followed — `onboarding_screen.dart` references paths inline; don't extend
@@ -300,12 +314,24 @@ plan-first workflow.
 ## 13. Agent Responsibilities
 
 When multiple project documents appear to conflict, resolve by this authority order (higher
-overrides lower): **AI Development Constitution → PRD → ADR
-([docs/decisions.md](docs/decisions.md)) → Feature Specifications → Design System
-(`lib/core/theme/*`) → Screen Standards → UX Guidelines → Technical Implementation Guide → this file
-→ every other document.** A lower-ranked document can never override a higher one. This file
-(`CLAUDE.md`) governs day-to-day execution detail; it does not supersede an explicit product or
-architecture decision made at a higher level.
+overrides lower): **`ENGINEERING_CONSTITUTION.md` → PRD/approved product requirements and
+[docs/business_rules.md](docs/business_rules.md) → ADR ([docs/decisions.md](docs/decisions.md)) → the
+six AP-1 canonical Admin/POS architecture documents
+([docs/admin_pos_architecture.md](docs/admin_pos_architecture.md),
+[docs/order_operations_architecture.md](docs/order_operations_architecture.md),
+[docs/payment_cash_fiscal_architecture.md](docs/payment_cash_fiscal_architecture.md),
+[docs/kds_printer_stock_architecture.md](docs/kds_printer_stock_architecture.md),
+[docs/restaurant_operations_architecture.md](docs/restaurant_operations_architecture.md),
+[docs/saas_offline_observability_architecture.md](docs/saas_offline_observability_architecture.md)) →
+[docs/module_catalog.md](docs/module_catalog.md)/[docs/master_roadmap.md](docs/master_roadmap.md)
+(scope/backlog authority) → Design System (`lib/core/theme/*`) → Screen Standards → UX Guidelines →
+Technical Implementation Guide → this file and `.claude/agents/*.md` (working-method/tooling authority)
+→ every other document.** A lower-ranked document can never override a higher one — this file and any
+`.claude/agents/*.md` persona can never override a product rule, an ADR, or a canonical architecture
+decision (corrected 2026-08-26, AP-1: several persona files were found describing a stale project state
+as though it were current architecture; see `docs/decisions.md`'s AP-1 entry). `CLAUDE.md` governs
+day-to-day execution detail; it does not supersede an explicit product or architecture decision made at
+a higher level.
 
 **Reuse-first**: before writing new code, check whether an existing component, widget, service,
 repository, or provider already does the job — see §3's canonical-vs-obsolete list and

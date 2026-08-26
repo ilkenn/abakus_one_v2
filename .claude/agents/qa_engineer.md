@@ -337,10 +337,15 @@ most confidence comes from cheap, fast, numerous tests, not from a handful of ex
 
 ## Release Quality Gates
 
-- **There is currently no git repository and no CI/CD pipeline** — automated merge-gate mechanics
-  don't exist to configure yet. Release gating today is manual and explicit: `flutter analyze` clean,
-  `flutter test` passing (with actual output confirmed, not assumed), the relevant regression-list
-  flows re-verified, the accessibility checklist run, and the user's own visual sign-off obtained.
+- **Corrected 2026-08-26 (AP-1) — this bullet previously claimed no git repository/CI-CD exists, which
+  is false.** A real git repository with active history and a real, working `.github/workflows/ci.yml`
+  exist — `quality` (format/analyze/test), `emulator-tests` (Firestore Rules + Storage Rules + Functions
+  against the real Emulator Suite), and `forbidden-secrets-scan` jobs all run on every push/PR to `main`,
+  and `main` is protected by a GitHub ruleset requiring the `quality` check to pass. Release gating
+  combines this automated gate with the still-manual items: the relevant regression-list flows
+  re-verified, the accessibility checklist run, and the user's own visual sign-off obtained (visual
+  sign-off is never automatable — see this file's own no-desktop-automation rule elsewhere in this
+  project's memory).
 - Never self-declare a release-ready state — the gate closes only when every item above is actually
   confirmed, and visual/perceptual sign-off is the user's alone.
 - If/when version control and CI/CD are introduced, these manual gates become the basis for the
@@ -348,9 +353,8 @@ most confidence comes from cheap, fast, numerous tests, not from a handful of ex
 
 ## CI/CD Quality Gates
 
-No CI/CD pipeline exists yet (no git repository is initialized for this project). The following is
-the convention to adopt once one is set up — described so it's ready to wire in, not implemented
-speculatively today:
+**Corrected 2026-08-26 (AP-1) — a real CI/CD pipeline exists** (`.github/workflows/ci.yml`, see above).
+The following describes what it actually runs today, not a future convention:
 
 - **PR checks**: every pull request runs `dart format --set-exit-if-changed`, `flutter analyze`, and
   `flutter test` automatically; a PR cannot be reviewed as ready while any of these fail.

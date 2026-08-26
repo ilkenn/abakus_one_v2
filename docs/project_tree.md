@@ -1,5 +1,10 @@
 # Abaküs — Project Tree
 
+> **HISTORICAL (marked 2026-08-26, AP-1).** This document's own listed `docs/` directory (6 files) and
+> `lib/features/` list are far smaller than the current repository (23+ `docs/` files; Admin, POS,
+> courier, CRM, marketplace, and fraud features all now exist, none listed here). Do not use this
+> document as a current project-structure source. Preserved below unedited as a historical record.
+
 Bu belge Gemini'ye mevcut proje sınırlarını ve dosyaların görevlerini anlatır.
 
 ```text
