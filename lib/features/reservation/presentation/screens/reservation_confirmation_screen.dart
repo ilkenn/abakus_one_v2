@@ -216,7 +216,8 @@ class _ConfirmationBody extends ConsumerWidget {
               campaignTitle: reservation.preorder!.campaignTitle!,
               discountMinorUnits:
                   reservation.preorder!.campaignDiscountMinorUnits!,
-              newGrandTotalMinorUnits: reservation.preorder!.grandTotalMinorUnits,
+              newGrandTotalMinorUnits:
+                  reservation.preorder!.grandTotalMinorUnits,
             ),
           ],
           const SizedBox(height: AppSpacing.xl),

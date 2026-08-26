@@ -238,10 +238,11 @@ void main() {
       ),
     );
 
-    expect(find.byKey(const Key('orderSuccessCampaignSummary')),
-        findsOneWidget);
+    expect(
+        find.byKey(const Key('orderSuccessCampaignSummary')), findsOneWidget);
     expect(find.text('Yaz Kampanyası uygulandı'), findsOneWidget);
-    expect(find.text('36 TL'), findsOneWidget, reason: 'the discount, 3600 minor units');
+    expect(find.text('36 TL'), findsOneWidget,
+        reason: 'the discount, 3600 minor units');
     expect(find.text('204 TL'), findsOneWidget,
         reason: 'the new grand total, sourced from grandTotalMinorUnits '
             'directly, never re-derived from discountMinorUnits');

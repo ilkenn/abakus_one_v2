@@ -103,8 +103,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('orderDetailCatalogRewardInfo')),
-        findsOneWidget);
+    expect(
+        find.byKey(const Key('orderDetailCatalogRewardInfo')), findsOneWidget);
     expect(find.textContaining('Ücretsiz İçecek ödülü kullanıldı'),
         findsOneWidget);
   });
@@ -144,9 +144,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('orderDetailCatalogRewardInfo')),
-        findsNothing);
-    expect(find.byKey(const Key('orderDetailBoncukRedemptionInfo')),
-        findsNothing);
+    expect(find.byKey(const Key('orderDetailCatalogRewardInfo')), findsNothing);
+    expect(
+        find.byKey(const Key('orderDetailBoncukRedemptionInfo')), findsNothing);
   });
 }

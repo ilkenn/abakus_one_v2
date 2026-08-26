@@ -4825,3 +4825,20 @@ to `docs/order_operations_architecture.md` as their Admin/POS-relevant successor
 remains). Zero application code changed. Full gate results, exact test counts, and the commit SHA are
 recorded in this session's own final AP-1 report and `docs/decisions.md`'s AP-1 entry. **Determination:
 see the final AP-1 report for `AP1_CANONICAL_ARCHITECTURE_PACK_COMPLETE`.**
+
+**AP-2 format baseline correction (2026-08-26).** AP-1's non-mutating `dart format --output=none
+--set-exit-if-changed lib test` check found 7 pre-existing files carrying pure line-wrap/reflow
+formatting drift, unrelated to any AP-1 work and predating it — every AP-1/customer-side functional
+test suite already passed with this drift present (it is a formatting-gate finding only, never a
+correctness defect). Closed at the start of AP-2 Stage B, as its own scoped, format-only commit
+(`chore(format): restore clean source baseline`), before any AP-2 feature code: `lib/features/cart/
+presentation/screens/dine_in_checkout_screen.dart`, `lib/features/reservation/presentation/screens/
+reservation_confirmation_screen.dart`, `test/features/cart/presentation/screens/
+dine_in_checkout_screen_test.dart`, `test/features/feedback/presentation/
+customer_feedback_screen_test.dart`, `test/features/orders/presentation/screens/
+order_detail_screen_test.dart`, `test/features/reservation/presentation/screens/
+reservation_confirmation_screen_test.dart`, `test/features/reservation/presentation/screens/
+reservation_flow_screen_test.dart`. Each diff independently verified line-by-line (not just by tool
+exit code) to contain zero identifier/string/assertion/logic change — reflow only. Post-fix:
+`flutter analyze` clean, `flutter test` 3453 passed / 12 skipped / 0 failed — identical to the
+pre-existing baseline.

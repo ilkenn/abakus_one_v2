@@ -164,8 +164,8 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
     if (campaignId == null) return;
     final campaigns = ref.read(activeCampaignsProvider).valueOrNull;
     final stillListed = campaigns != null &&
-        campaigns.any(
-            (c) => c.campaignId == campaignId && c.isEligibleForChannel('dineIn'));
+        campaigns.any((c) =>
+            c.campaignId == campaignId && c.isEligibleForChannel('dineIn'));
     if (!stillListed) {
       setState(() => _selectedCampaignId = null);
     }

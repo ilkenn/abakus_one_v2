@@ -1293,8 +1293,7 @@ void main() {
   testWidgets(
       'P8-C.2 B: only campaigns eligible for reservationPreorder are shown '
       '(client-side best-effort filter); selecting one sends exactly its '
-      'campaignId and removes the Boncuk/catalog-reward cards',
-      (tester) async {
+      'campaignId and removes the Boncuk/catalog-reward cards', (tester) async {
     final gateway = _FakeReservationGateway()
       ..availabilitySlotsToReturn = [
         ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
@@ -1491,8 +1490,7 @@ void main() {
     );
     await _driveToReviewStepWithPreorder(tester, container);
 
-    expect(find.byKey(const Key('campaignSelectionCardError')),
-        findsOneWidget);
+    expect(find.byKey(const Key('campaignSelectionCardError')), findsOneWidget);
 
     await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
     await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');

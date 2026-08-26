@@ -768,8 +768,7 @@ void main() {
 
       expect(find.byKey(const Key('catalogRewardCard')), findsOneWidget);
       expect(find.byKey(const Key('campaignTile-eligible')), findsOneWidget);
-      expect(
-          find.byKey(const Key('campaignTile-delivery-only')), findsNothing);
+      expect(find.byKey(const Key('campaignTile-delivery-only')), findsNothing);
 
       await tester.tap(find.byKey(const Key('campaignTile-eligible')));
       await tester.pumpAndSettle();
@@ -806,7 +805,9 @@ void main() {
         ),
         signedInCustomer: signedInCustomer,
         loyaltyGateway: _FakeLoyaltyGateway(
-          rewards: [_catalogReward(rewardId: 'reward-1', eligibleProductIds: ['p1'])],
+          rewards: [
+            _catalogReward(rewardId: 'reward-1', eligibleProductIds: ['p1'])
+          ],
         ),
         campaignGateway: _FakeCampaignGateway(
           campaigns: [_testCampaign(campaignId: 'c1')],
@@ -916,8 +917,8 @@ void main() {
         ),
       );
 
-      expect(find.byKey(const Key('campaignSelectionCardError')),
-          findsOneWidget);
+      expect(
+          find.byKey(const Key('campaignSelectionCardError')), findsOneWidget);
 
       await tester.tap(
         find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),

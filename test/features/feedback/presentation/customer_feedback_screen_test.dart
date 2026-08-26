@@ -11,7 +11,8 @@ import '../../pos/test_support/fake_clock.dart';
 
 /// Always throws — used to prove a repository failure never reaches the UI
 /// as a raw exception `toString()` (customer-side closure audit finding).
-class _ThrowingCustomerFeedbackRepository implements CustomerFeedbackRepository {
+class _ThrowingCustomerFeedbackRepository
+    implements CustomerFeedbackRepository {
   @override
   Future<void> append(CustomerFeedback feedback) async {
     throw StateError('simulated repository failure');
