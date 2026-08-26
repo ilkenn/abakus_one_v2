@@ -28,6 +28,18 @@ abstract final class AppRoutes {
 
   static String takeawayGuest(String token) => '$takeawayGuestPrefix/$token';
 
+  /// AP-2 Stage B — the Admin/staff shell entry point. Staff/Platform
+  /// authorization is an entirely separate identity system from the
+  /// customer [authProvider]/[AppRouteGuard] stack (Firebase email/
+  /// password + custom claims vs. customer phone+OTP) — this route is
+  /// bypassed by the customer-facing guard exactly like
+  /// [takeawayGuestPrefix], and [AdminShellScreen] performs its own real,
+  /// internal `actorSessionProvider` check before rendering anything
+  /// (see its own `build()` — already real, not new this phase),
+  /// mirroring the screen-level "deny by default" pattern
+  /// `ModuleEntitlementGate` already established elsewhere.
+  static const String admin = '/admin';
+
   /// Faz R.2 — the customer reservation flow's entry route. Requires real
   /// phone-auth ([AppRouteGuard.resolve]'s own `isRealCustomer`-gated
   /// branch, stricter than the generic "signed in" concept the rest of

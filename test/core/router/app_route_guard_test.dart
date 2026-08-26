@@ -242,6 +242,68 @@ void main() {
   });
 
   group(
+      'AppRouteGuard.resolve — AP-2 Stage B: /admin is always bypassed, '
+      'regardless of customer session state', () {
+    test('not signed in: no redirect', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.admin,
+          isAuthenticated: false,
+          isGuest: false,
+          isOnboardingComplete: false,
+          isRealCustomer: false,
+        ),
+        isNull,
+      );
+    });
+
+    test(
+        'a real, authenticated customer is NOT bounced to /main — the one '
+        'case the blanket "signed in -> main" branch would otherwise '
+        'hijack', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.admin,
+          isAuthenticated: true,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: false,
+        ),
+        isNull,
+      );
+    });
+
+    test('an existing guest session does NOT get bounced to /main either', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.admin,
+          isAuthenticated: false,
+          isGuest: true,
+          isOnboardingComplete: true,
+          isRealCustomer: false,
+        ),
+        isNull,
+      );
+    });
+
+    test(
+        'a real customer needing profile completion is still not '
+        'redirected to /complete-profile from /admin', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.admin,
+          isAuthenticated: true,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: true,
+          needsProfileCompletion: true,
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group(
       'AppRouteGuard.resolve — Faz R.2 reservation routes require real phone-auth',
       () {
     test('a real, authenticated customer is not redirected', () {

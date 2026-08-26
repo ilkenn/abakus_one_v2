@@ -55,15 +55,34 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
       setState(() => _error = 'Yetki politikası tanımlı değil.');
       return;
     }
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
+    final nameController = TextEditingController();
+    final emailController = TextEditingController();
+    // AP-2 Stage B — email is now required: the real backend links a new
+    // membership to an EXISTING Firebase Auth account found by email
+    // (`registerStaffMember`'s own `getUserByEmail` lookup) — that account
+    // must already have been created out-of-band (e.g. via Firebase
+    // Console/Admin SDK) before this dialog can register it here.
+    final result = await showDialog<({String name, String email})>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Yeni Personel'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(labelText: 'Ad Soyad'),
-          autofocus: true,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: 'Ad Soyad'),
+              autofocus: true,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: emailController,
+              decoration: const InputDecoration(
+                labelText: 'E-posta (mevcut Firebase Auth hesabı)',
+              ),
+              keyboardType: TextInputType.emailAddress,
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -71,22 +90,29 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
             child: const Text('İptal'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
+            onPressed: () => Navigator.of(context).pop((
+              name: nameController.text,
+              email: emailController.text,
+            )),
             child: const Text('Oluştur'),
           ),
         ],
       ),
     );
-    if (name == null || name.trim().isEmpty) return;
+    if (result == null ||
+        result.name.trim().isEmpty ||
+        result.email.trim().isEmpty) {
+      return;
+    }
 
     try {
       await RegisterStaffMember(
         authorizationPolicy: policy,
-        idGenerator: ref.read(staffMemberIdGeneratorProvider),
         repository: ref.read(staffMemberRepositoryProvider),
         auditRepository: ref.read(adminAuditEntryRepositoryProvider),
       )(
-        displayName: name.trim(),
+        displayName: result.name.trim(),
+        email: result.email.trim(),
         performedByStaffId: widget.performedByStaffId,
         createdAt: DateTime.now(),
       );

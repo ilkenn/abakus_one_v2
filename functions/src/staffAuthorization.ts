@@ -44,7 +44,10 @@ export type StaffPermission =
   | "manageDeliveryOrderCancellations"
   | "manageDeliveryOrderRefunds"
   | "manageDineInOrders"
-  | "manageDineInOrderRefunds";
+  | "manageDineInOrderRefunds"
+  | "requestDeviceRegistration"
+  | "approveDeviceRegistration"
+  | "manageDevices";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -146,7 +149,17 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
   // existing manager-tier permission — an ordinary staff member must never
   // gain `manageReservations`/`manageBranch`/etc. as an accidental side
   // effect of this addition.
-  staff: ["manageTakeawayOrders", "manageDeliveryOrders", "manageDineInOrders"],
+  staff: [
+    "manageTakeawayOrders",
+    "manageDeliveryOrders",
+    "manageDineInOrders",
+    // AP-2 — a line staff member may request a device be registered (they
+    // are the one physically setting up a POS/KDS terminal), but may never
+    // approve their own request (`approveDeviceRegistration` below is
+    // manager-tier, and `respondToApprovalRequest` additionally forbids
+    // self-approval structurally, regardless of permission).
+    "requestDeviceRegistration",
+  ],
   manager: [
     "manageReservations",
     "manageBranch",
@@ -161,6 +174,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageDeliveryOrderRefunds",
     "manageDineInOrders",
     "manageDineInOrderRefunds",
+    "requestDeviceRegistration",
+    "approveDeviceRegistration",
+    "manageDevices",
   ],
   admin: [
     "manageReservations",
@@ -178,6 +194,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageDeliveryOrderRefunds",
     "manageDineInOrders",
     "manageDineInOrderRefunds",
+    "requestDeviceRegistration",
+    "approveDeviceRegistration",
+    "manageDevices",
   ],
   tenantOwner: [
     "manageReservations",
@@ -195,6 +214,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageDeliveryOrderRefunds",
     "manageDineInOrders",
     "manageDineInOrderRefunds",
+    "requestDeviceRegistration",
+    "approveDeviceRegistration",
+    "manageDevices",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must

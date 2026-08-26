@@ -56,6 +56,14 @@ interface MembershipDoc {
   status: MembershipStatus;
   createdAt: FirebaseFirestore.FieldValue | Date;
   updatedAt: FirebaseFirestore.FieldValue | Date;
+  /**
+   * AP-2 Stage B, Correction #1/#10 — a monotonically increasing counter,
+   * bumped on every mutation below. Lets a caller detect a stale read (the
+   * durable-permission-check equivalent of `staffPermissionOverrides.ts`'s
+   * own re-read-on-every-call discipline) without needing to diff the
+   * whole document. Starts at `1` on creation.
+   */
+  version: number;
 }
 
 const VALID_ROLES: readonly MembershipRole[] = ["staff", "manager", "admin", "tenantOwner", "courier"];
@@ -185,6 +193,7 @@ export const bootstrapFirstAdminAccount = onCall(
       status: "active",
       createdAt: now,
       updatedAt: now,
+      version: 1,
     };
     await db.collection("memberships").doc(membershipId(organizationId, uid)).set(doc);
     await resyncClaimsForUid(uid);
@@ -234,6 +243,7 @@ export const registerStaffMember = onCall(
       status: "active",
       createdAt: now,
       updatedAt: now,
+      version: 1,
     };
     await ref.set(doc);
 
@@ -285,7 +295,7 @@ export const assignStaffRole = onCall(
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
     const doc = (await ref.get()).data() as MembershipDoc;
     const roles = doc.roles.includes(role) ? doc.roles : [...doc.roles, role];
-    await ref.update({ roles, updatedAt: new Date() });
+    await ref.update({ roles, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
 
     return { organizationId, targetUid, role, granted: true };
@@ -315,7 +325,7 @@ export const revokeStaffRole = onCall(
       return { organizationId, targetUid, role, revoked: false };
     }
     const roles = doc.roles.filter((r) => r !== role);
-    await ref.update({ roles, updatedAt: new Date() });
+    await ref.update({ roles, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
 
     return { organizationId, targetUid, role, revoked: true };
@@ -339,7 +349,7 @@ export const grantStaffBranchAccess = onCall(
     const branchAccess = doc.branchAccess.includes(branchId)
       ? doc.branchAccess
       : [...doc.branchAccess, branchId];
-    await ref.update({ branchAccess, updatedAt: new Date() });
+    await ref.update({ branchAccess, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
 
     return { organizationId, targetUid, branchId, granted: true };
@@ -364,7 +374,7 @@ export const revokeStaffBranchAccess = onCall(
       return { organizationId, targetUid, branchId, revoked: false };
     }
     const branchAccess = doc.branchAccess.filter((b) => b !== branchId);
-    await ref.update({ branchAccess, updatedAt: new Date() });
+    await ref.update({ branchAccess, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
 
     return { organizationId, targetUid, branchId, revoked: true };
@@ -397,7 +407,7 @@ export const setStaffMemberStatus = onCall(
       throw new HttpsError("failed-precondition", "This membership is archived — its status can no longer change.");
     }
 
-    await ref.update({ status, updatedAt: new Date() });
+    await ref.update({ status, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
 
     return { organizationId, targetUid, status, updated: true };

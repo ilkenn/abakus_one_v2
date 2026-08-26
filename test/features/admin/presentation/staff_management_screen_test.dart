@@ -35,7 +35,11 @@ void main() {
 
     await tester.tap(find.byTooltip('Yeni Personel'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Ayşe Yılmaz');
+    // AP-2 Stage B — the dialog now collects both name and email (the real
+    // backend links a new membership to an existing Firebase Auth account
+    // found by email); both fields must be filled for "Oluştur" to submit.
+    await tester.enterText(find.byType(TextField).at(0), 'Ayşe Yılmaz');
+    await tester.enterText(find.byType(TextField).at(1), 'ayse@example.test');
     await tester.tap(find.text('Oluştur'));
     await tester.pumpAndSettle();
 
@@ -47,7 +51,8 @@ void main() {
     await pumpScreen(tester);
     await tester.tap(find.byTooltip('Yeni Personel'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Ayşe Yılmaz');
+    await tester.enterText(find.byType(TextField).at(0), 'Ayşe Yılmaz');
+    await tester.enterText(find.byType(TextField).at(1), 'ayse@example.test');
     await tester.tap(find.text('Oluştur'));
     await tester.pumpAndSettle();
 

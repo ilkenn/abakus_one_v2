@@ -1,9 +1,11 @@
+import 'package:cloud_functions/cloud_functions.dart' as functions;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/services/auth/email_password_auth_client.dart';
 import '../../../../core/services/auth/staff_claims_sync_client.dart';
+import '../../data/firebase_staff_member_repository.dart';
 import '../../../courier/presentation/providers/courier_core_dependencies_provider.dart';
 import '../../../pos/presentation/providers/kds_dependencies_provider.dart';
 import '../../../restaurant/presentation/providers/restaurant_operations_dependencies_provider.dart';
@@ -40,16 +42,22 @@ import '../../domain/organization/restaurant.dart';
 /// `crm_dependencies_provider.dart`'s shape (Phase 6, `docs/decisions.md`
 /// ADR-023).
 ///
-/// `kReleaseMode`-gated — Phase 8 closure sprint (`docs/decisions.md`
-/// ADR-025): "the roster itself must never be available in Release."
-/// Every reachable consumer of this provider (`StaffSignInScreen`'s
-/// enumeration, `StaffManagementScreen`/`StaffDetailScreen`) already
-/// requires a real `ActorSession`, which `staffAuthRepositoryProvider`'s
-/// own `kReleaseMode` gate makes impossible to obtain in a release
-/// build — this mirrors that same gate at the data layer instead of
-/// relying solely on "nothing can reach it," the same "never trust the
-/// caller" reasoning Phase 8's read-projection self-authorization uses.
+/// AP-2 Stage B — [firebaseReadyProvider] now selects the real,
+/// `listStaffMembersForOrganization`-backed [FirebaseStaffMemberRepository]
+/// (mirrors `staffAuthRepositoryProvider`'s own exact gate one tier up).
+/// `kReleaseMode` remains the fallback gate when Firebase isn't ready —
+/// Phase 8 closure sprint's (`docs/decisions.md` ADR-025) "the roster
+/// itself must never be available in Release" still holds: a release
+/// build with no healthy Firebase connection gets
+/// [ProductionUnavailableStaffMemberRepository], never the in-memory
+/// stand-in.
 final staffMemberRepositoryProvider = Provider<StaffMemberRepository>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) {
+    return FirebaseStaffMemberRepository(
+      organizationId: () => ref.read(currentOrganizationIdProvider),
+    );
+  }
   if (kReleaseMode) {
     return const ProductionUnavailableStaffMemberRepository();
   }
@@ -118,14 +126,44 @@ final organizationRepositoryProvider = Provider<OrganizationRepository>((ref) {
 });
 
 /// The tenant the currently running app instance serves — Phase 8
-/// (`docs/decisions.md` ADR-025). **A placeholder, not real tenant
-/// selection**: this app has no tenant-switching UI anywhere yet (no
-/// screen lets an actor pick which organization's build they're
+/// (`docs/decisions.md` ADR-025). **Still a placeholder default, not real
+/// tenant selection**: this app has no tenant-switching UI anywhere yet
+/// (no screen lets an actor pick which organization's build they're
 /// running), so this always resolves to the single seeded organization
 /// above — mirrors `currentBranchIdProvider`'s exact honest-placeholder
-/// pattern (`features/navigation`) for the same reason. Building real
-/// tenant selection/provisioning is separate, unrelated feature work.
+/// pattern (`features/navigation`) for the same reason. Building a real
+/// tenant-switcher UI remains separate, unrelated feature work.
+///
+/// **AP-2 Stage B — this is genuinely safe to leave as a client-side
+/// default now, in a way it wasn't before**: every AP-2 backend command
+/// this value ever gets passed into (`resolveVerifiedBranchContext` and
+/// everything built on it) treats it strictly as an untrusted LOCATOR,
+/// re-verified against the caller's own real durable membership
+/// server-side — a stale or wrong value here can only ever cause a
+/// `permission-denied`, never a cross-tenant authorization bypass. See
+/// [resolvedActorContextProvider] for the real, callable-backed
+/// enumeration a future context-switcher UI would build on.
 final currentOrganizationIdProvider = Provider<String>((ref) => 'org-1');
+
+/// AP-2 Stage B — the real, self-derived enumeration of every organization/
+/// branch/role the SIGNED-IN STAFF ACTOR's own active memberships actually
+/// grant (`resolveActorContext`, never client-supplied). Not yet consumed
+/// by any screen (no context-switcher UI exists yet — see
+/// [currentOrganizationIdProvider]'s own doc comment) — this provider
+/// exists so that UI is real, callable-backed work whenever it's built,
+/// rather than a second placeholder layered on top of the first.
+final resolvedActorContextProvider =
+    FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) return const [];
+  final callable =
+      functions.FirebaseFunctions.instance.httpsCallable('resolveActorContext');
+  final result = await callable.call<Map<String, dynamic>>();
+  return List<Map<String, dynamic>>.from(
+    (result.data['organizations'] as List)
+        .map((e) => Map<String, dynamic>.from(e as Map)),
+  );
+});
 
 final restaurantRepositoryProvider = Provider<RestaurantRepository>((ref) {
   return InMemoryRestaurantRepository(seed: [

@@ -4842,3 +4842,24 @@ reservation_flow_screen_test.dart`. Each diff independently verified line-by-lin
 exit code) to contain zero identifier/string/assertion/logic change — reflow only. Post-fix:
 `flutter analyze` clean, `flutter test` 3453 passed / 12 skipped / 0 failed — identical to the
 pre-existing baseline.
+
+**AP-2 — Secure Admin/POS Platform (2026-08-26).** Delivered across three waves in one continuous
+session: (1) canonical tenant/branch context resolution, corrected permission-override algorithm, real
+Platform Owner backend + out-of-band bootstrap script + break-glass runbook; (2) trusted-device online
+foundation (real Ed25519/RSA-SHA256 challenge-response, honest trust tiers, no faked hardware
+attestation), the remote approval engine with device activation as a working end-to-end reference
+action, the entitlement backend with the 3-day grace model, a staff-directory read model, and the
+implementation-readiness gate widget; (3) the Admin `go_router` migration, a real Firebase-backed
+staff repository (read + write-via-diff-dispatch), a real `register()` interface addition, the
+readiness gate actually deployed onto two confirmed-unwired destinations (kitchen/KDS, dispatch/
+courier), a PII/secret-leakage scan, and two self-caught-and-fixed regressions (a BR-ID collision with
+pre-existing Phase 8 rules; a permission-set exact-match test broken by this session's own intentional
+addition). Full detail in `docs/decisions.md`'s AP-2 entry (three dated sub-sections). **Explicitly,
+disclosed remaining scope, not silently left incomplete**: `stock`/`crm`/`marketplace` admin
+destinations were not wrapped in the readiness gate (insufficient session-verified confidence on which
+exact nav-item ids correspond to them); full multi-organization tenant-switcher UI (the backend
+`resolveActorContext`/`resolveVerifiedBranchContext` exist and are real and tested, but
+`currentOrganizationIdProvider` deliberately stays a single-tenant default — no switcher screen exists
+to consume anything else, and this app has no tenant-switching UI anywhere yet by long-standing
+design). See the final report for this session's exact gate results, complete file manifest, and
+commit SHA(s).

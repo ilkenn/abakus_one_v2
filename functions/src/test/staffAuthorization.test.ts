@@ -143,11 +143,16 @@ const ALL_PRE_EXISTING_PERMISSIONS: readonly StaffPermission[] = [
   "moderateCustomerPhotos",
 ];
 
-test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, and manageDineInOrders — Boncuk Loyalty P7-D.1 (2026-08-24) added manageDineInOrders to staff's default grant alongside its existing takeaway/delivery permissions (was previously ['manageTakeawayOrders', 'manageDeliveryOrders'] only, before the dine-in lifecycle existed)", () => {
+test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageDineInOrders, and requestDeviceRegistration — Boncuk Loyalty P7-D.1 (2026-08-24) added manageDineInOrders to staff's default grant alongside its existing takeaway/delivery permissions (was previously ['manageTakeawayOrders', 'manageDeliveryOrders'] only, before the dine-in lifecycle existed); AP-2 Stage B (2026-08-26) added requestDeviceRegistration", () => {
   assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, [
     "manageTakeawayOrders",
     "manageDeliveryOrders",
     "manageDineInOrders",
+    // AP-2 Stage B (2026-08-26) — a line staff member may request a device
+    // be registered (they physically set up POS/KDS terminals), but may
+    // never approve their own request; approveDeviceRegistration/
+    // manageDevices remain manager-tier-and-above only.
+    "requestDeviceRegistration",
   ]);
 });
 
@@ -194,11 +199,16 @@ test("staff role does NOT have manageTakeawayOrderRefunds", () => {
   assert.strictEqual(roleHasPermission("staff", "manageTakeawayOrderRefunds"), false);
 });
 
-test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, and manageDineInOrders — re-asserted here to prove manageTakeawayOrderRefunds was not silently added to staff's grant (see the P7-D.1 correction above for why manageDineInOrders is now part of the expected set)", () => {
+test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageDineInOrders, and requestDeviceRegistration — re-asserted here to prove manageTakeawayOrderRefunds was not silently added to staff's grant (see the P7-D.1/AP-2 corrections above for the expected set)", () => {
   assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, [
     "manageTakeawayOrders",
     "manageDeliveryOrders",
     "manageDineInOrders",
+    // AP-2 Stage B (2026-08-26) — a line staff member may request a device
+    // be registered (they physically set up POS/KDS terminals), but may
+    // never approve their own request; approveDeviceRegistration/
+    // manageDevices remain manager-tier-and-above only.
+    "requestDeviceRegistration",
   ]);
 });
 

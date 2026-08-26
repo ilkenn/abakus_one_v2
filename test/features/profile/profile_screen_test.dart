@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:abakus_one_v2/core/router/app_routes.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/development_local_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
@@ -189,7 +191,28 @@ void main() {
           if (authNotifierBuilder != null)
             authProvider.overrideWith(authNotifierBuilder),
         ],
-        child: const MaterialApp(home: ProfileScreen()),
+        // AP-2 Stage B — ProfileBusinessModeCard now navigates via the real
+        // `AppRoutes.admin` go_router route (`context.push`), so every test
+        // using this shared helper needs a real `GoRouter` in the tree,
+        // mirroring `app_router_test.dart`'s own pattern — a plain
+        // `MaterialApp` no longer suffices for the "İşletme Moduna Geç"
+        // scenario, and this router is a harmless superset for every other
+        // test that never taps that card.
+        child: MaterialApp.router(
+          routerConfig: GoRouter(
+            initialLocation: '/',
+            routes: [
+              GoRoute(
+                path: '/',
+                builder: (context, state) => const ProfileScreen(),
+              ),
+              GoRoute(
+                path: AppRoutes.admin,
+                builder: (context, state) => const AdminShellScreen(),
+              ),
+            ],
+          ),
+        ),
       ),
     );
     await tester.pumpAndSettle();

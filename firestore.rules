@@ -195,6 +195,62 @@ service cloud.firestore {
                               // is itself recorded as an auditEvents entry.
     }
 
+    // AP-2 Stage B — written only by the out-of-band
+    // functions/scripts/bootstrap_platform_owner.mjs script (Admin SDK,
+    // bypasses these rules entirely). Readable by any platform member so a
+    // later audit can see exactly when/for whom bootstrap ran.
+    match /platformBootstrapMarkers/{runId} {
+      allow read: if isPlatformMember();
+      allow write: if false;
+    }
+
+    // AP-2 Stage B — Trusted Device Lifecycle (Correction #5). Registration
+    // records are readable by org/branch staff (they need to see their own
+    // branch's device roster); challenges and sessions are NEVER
+    // client-readable or writable at all — Firestore Rules cannot express
+    // "this is a valid, unexpired, signature-verified session," so this
+    // does not pretend to: every device-restricted callable re-verifies a
+    // session server-side (`trustedDevice.ts`'s `requireActiveDeviceSession`),
+    // and a device only ever learns its own session from a direct callable
+    // response, never a Firestore read.
+    match /trustedDeviceRegistrations/{docId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false;
+    }
+    match /deviceChallenges/{challengeId} {
+      allow read, write: if false;
+    }
+    match /deviceSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    // AP-2 Stage B — Remote Approval Engine (Correction #10). The full
+    // canonical request payload is deliberately NOT exposed to ordinary
+    // branch staff via a direct query — "eligible approver" is a
+    // permission-derived set this rules language cannot safely re-derive
+    // without duplicating `staffAuthorization.ts`'s own logic, and a naive
+    // isOrgMember-only rule would leak every pending request to every
+    // staff member at the organization. No client read path exists yet;
+    // a sanitized, eligible-approver-scoped read model/callable is
+    // remaining AP-2 scope (see docs/decisions.md's AP-2 entry), not
+    // silently approximated here with a rule that promises more than it
+    // can actually enforce.
+    match /remoteApprovalRequests/{requestId} {
+      allow read, write: if false;
+    }
+    // Immutable approval history — minimum-data-principle fields only
+    // (no device public keys/payload details), same read shape as the
+    // existing auditEvents collection.
+    match /approvalEvents/{eventId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false;
+    }
+    // Backend-only delivery-tracking outbox — never end-user-facing.
+    match /notificationOutbox/{entryId} {
+      allow read, write: if false;
+    }
+
     // ---------------------------------------------------------------------
     // Tenant hierarchy
     // ---------------------------------------------------------------------

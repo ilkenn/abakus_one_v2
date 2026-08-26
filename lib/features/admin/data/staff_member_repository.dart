@@ -13,6 +13,18 @@ abstract interface class StaffMemberRepository {
   /// exactly like "member not found," never falling back to any other
   /// lookup.
   Future<StaffMember?> findByAuthUid(String authUid);
+
+  /// AP-2 Stage B — a dedicated create-with-credential-linkage operation,
+  /// separate from [save] (which only ever mutates an EXISTING record for
+  /// every real implementation of this interface — see
+  /// `FirebaseStaffMemberRepository`'s own doc comment for why creation
+  /// specifically needs [email]: the real backend links a new membership
+  /// to an *existing* Firebase Auth account found by email, something
+  /// [StaffMember] itself has no field for and [save] alone cannot express).
+  Future<StaffMember> register({
+    required String displayName,
+    required String email,
+  });
 }
 
 /// Selected in release builds — Phase 8 closure sprint
@@ -47,13 +59,40 @@ class ProductionUnavailableStaffMemberRepository
 
   @override
   Future<StaffMember?> findByAuthUid(String authUid) async => null;
+
+  @override
+  Future<StaffMember> register({
+    required String displayName,
+    required String email,
+  }) async {
+    throw StateError(
+      'StaffMemberRepository is unavailable in release builds — no real '
+      'backend exists yet.',
+    );
+  }
 }
 
 class InMemoryStaffMemberRepository implements StaffMemberRepository {
+  int _sequence = 0;
   final Map<String, StaffMember> _byId = {};
 
   @override
   Future<void> save(StaffMember member) async => _byId[member.id] = member;
+
+  @override
+  Future<StaffMember> register({
+    required String displayName,
+    required String email,
+  }) async {
+    final member = StaffMember(
+      id: 'staff-member-${++_sequence}',
+      displayName: displayName,
+      createdAt: DateTime.now(),
+      revision: 1,
+    );
+    _byId[member.id] = member;
+    return member;
+  }
 
   @override
   Future<StaffMember?> findById(String staffMemberId) async =>

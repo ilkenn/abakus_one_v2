@@ -32,6 +32,24 @@ export {
   revokeStaffBranchAccess,
   setStaffMemberStatus,
 } from "./staffMembership";
+export { setStaffPermissionOverride } from "./staffPermissionOverrides";
+export { listStaffMembersForOrganization } from "./staffDirectory";
+export { resolveActorContext } from "./tenantContext";
+export { syncOwnPlatformClaims, grantPlatformRole, revokePlatformRole } from "./platformMembership";
+export {
+  requestDeviceRegistration,
+  requestDeviceChallenge,
+  issueDeviceSession,
+  revokeTrustedDevice,
+} from "./trustedDevice";
+export { respondToApprovalRequest, sweepExpiredApprovalRequests } from "./remoteApproval";
+export {
+  grantEntitlement,
+  renewEntitlement,
+  suspendEntitlement,
+  revokeEntitlement,
+  sweepExpiredEntitlementGracePeriods,
+} from "./entitlementAdmin";
 export { updateBranchOperatingHours } from "./updateBranchOperatingHours";
 export { getBranchOperatingHours } from "./getBranchOperatingHours";
 export { listReservationsForBranch } from "./listReservationsForBranch";

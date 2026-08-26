@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/admin/presentation/screens/admin_shell_screen.dart';
 import '../../features/auth/presentation/providers/auth_provider.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/otp_screen.dart';
@@ -196,6 +197,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               reservationId: state.pathParameters['reservationId']!,
             ),
           );
+        },
+      ),
+      // AP-2 Stage B — bypassed by `redirect` above (see
+      // `AppRouteGuard.resolve`'s own admin-prefix bypass); `AdminShellScreen`
+      // performs its own real, internal staff-session authorization.
+      GoRoute(
+        path: AppRoutes.admin,
+        pageBuilder: (context, state) {
+          return _fadeTransitionPage(const AdminShellScreen());
         },
       ),
     ],

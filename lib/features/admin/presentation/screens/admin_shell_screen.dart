@@ -31,6 +31,7 @@ import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../../pos/presentation/widgets/role_gate.dart';
 import '../../../pos/presentation/screens/kitchen_display_board_screen.dart';
 import '../widgets/admin_coming_soon_view.dart';
+import '../widgets/module_readiness_gate.dart';
 import '../providers/admin_dependencies_provider.dart';
 import 'admin_overview_screen.dart';
 import 'admin_session_expired_screen.dart';
@@ -152,10 +153,13 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             },
             builder: (context, ref) => RoleGate.forRoles(
               const {StaffRole.staff, StaffRole.manager, StaffRole.admin},
-              child: KitchenDisplayBoardScreen(
-                branchId: branchId,
-                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
-                performedByStaffId: actorId,
+              child: ModuleReadinessGate(
+                moduleId: 'kds',
+                child: KitchenDisplayBoardScreen(
+                  branchId: branchId,
+                  authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                  performedByStaffId: actorId,
+                ),
               ),
             ),
           ),
@@ -182,10 +186,13 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             visibleToRoles: const {StaffRole.manager, StaffRole.admin},
             builder: (context, ref) => RoleGate.forRoles(
               const {StaffRole.manager, StaffRole.admin},
-              child: CourierDispatchDashboardScreen(
-                branchId: branchId,
-                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
-                performedByStaffId: actorId,
+              child: ModuleReadinessGate(
+                moduleId: 'courier',
+                child: CourierDispatchDashboardScreen(
+                  branchId: branchId,
+                  authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                  performedByStaffId: actorId,
+                ),
               ),
             ),
           ),

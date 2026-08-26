@@ -6848,11 +6848,81 @@ neither restated in full here nor duplicated between the two.
 - **Related Modules**: Courier, Fraud, Security
 - **Business Rule IDs**: ADR-035, `docs/restaurant_operations_architecture.md` §8
 
+### BR-STAFF-006 — Per-staff permission overrides: grant/deny, never XOR
+- **Status**: IMPLEMENTED — AP-2 Stage B (in progress), `functions/src/staffPermissionOverrides.ts`.
+- **Rule**: A staff member's effective permission set is
+  `(union(rolePermissions) + organizationGrants + branchGrants) - organizationDenies - branchDenies`.
+  An explicit deny always wins over any grant or role-derived permission, at either scope.
+  Organization-scoped and branch-scoped overrides carry independent state (a branch grant never
+  leaks to a different branch). Overriding an admin-tier permission (`manageStaffAdminRole`,
+  `manageStaffAccounts`) requires the caller to hold `manageStaffAdminRole` themselves; every other
+  permission requires `manageStaffRoles`. A caller can never grant a permission they do not
+  themselves effectively hold (checked via the same formula, not role tier alone) — denying/clearing
+  carries no such restriction. Self-override (grant or deny, on oneself) is structurally forbidden.
+  Overrides are stored only on the durable `memberships` document, never copied into Firebase Auth
+  custom claims (claims stay a small, bounded cache — `organizationAccess`/`roles`/`branchAccess`
+  only). `memberships.version` is bumped on every mutation (role/branch-access/override/status), and
+  every AP-2 sensitive command re-reads the durable membership document at call time rather than
+  trusting a cached claim, so a revoked membership or a newly-added deny takes effect immediately.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Admin, Staff Authorization
+- **Business Rule IDs**: `docs/admin_pos_architecture.md` §13 (Staff Operational Session)
+
+### BR-PLATFORM-003 — Platform Owner bootstrap is out-of-band, non-reusable
+- **Status**: IMPLEMENTED — AP-2 Stage B (in progress), `functions/scripts/bootstrap_platform_owner.mjs`.
+  *(Corrected same day: originally drafted as BR-PLATFORM-001, which collides with the pre-existing
+  Phase 8 rule of that id ("Development Login is kReleaseMode-gated") — renumbered before this ever
+  shipped in a commit; the uniqueness check that should have caught this before drafting was missed and
+  is flagged here rather than silently fixed.)*
+- **Rule**: The first Platform Owner account(s) are created only by a standalone Admin SDK script run
+  manually by a trusted operator holding real GCP project credentials — never a callable, never
+  reachable from the deployed app. The script structurally refuses to run if any `platformMembers`
+  document already holds an active `platformOwner` or `platformAdministrator` role; every subsequent
+  Platform Owner/Administrator grant must go through the real `grantPlatformRole` callable (itself
+  Platform-Owner-authorized, self-grant forbidden, `platformOwner` grants require the caller to
+  already hold `platformOwner`). No phone number or allowlist is hardcoded into source. Total loss of
+  every Platform Owner account is recovered via a documented GCP-IAM-based break-glass runbook
+  (`functions/README.md`), not an in-app backdoor.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Platform, Admin
+- **Business Rule IDs**: `docs/admin_pos_architecture.md` §16 (Remote Approval Orchestration's own
+  self-approval-forbidden precedent, applied one tier up)
+
+### BR-PLATFORM-004 — `platformMembers` is the sole durable Platform Owner authority; claims are a bounded cache
+- **Status**: IMPLEMENTED — AP-2 Stage B (in progress), `functions/src/platformMembership.ts`.
+  *(Corrected same day — see BR-PLATFORM-003's own note: originally drafted as BR-PLATFORM-002, which
+  collides with the pre-existing Phase 8 rule of that id; renumbered before shipping in any commit.)*
+- **Rule**: The pre-existing `platformMembers/{uid}` collection (`firestore.rules`, `allow write: if
+  false`) is the canonical Platform Owner/Administrator record — not a new parallel collection. The
+  `platformRole` custom claim carries only the single highest role name held, never the full `roles`
+  array or any derived permission set; `syncOwnPlatformClaims` rebuilds it from the durable document
+  on demand. `lib/features/platform/application/use_cases/
+  bootstrap_first_platform_owner_account.dart` (a pre-existing, in-app, email/password
+  self-registration flow gated only on "the repository is empty") is DO_NOT_USE for production wiring
+  as-is — it is exactly the reusable in-app backdoor shape BR-PLATFORM-003 forbids if ever pointed at
+  a real Firestore-backed repository; the real bootstrap path is BR-PLATFORM-003's script only.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Platform
+- **Business Rule IDs**: ADR-025, `docs/admin_pos_architecture.md` §7 (domain terminology)
+
 # Change History
 
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.23 — 2026-08-26
+- **Version**: 3.23
+- **Date**: 2026-08-26
+- **Summary**: AP-2 Stage B (in progress) — new `BR-STAFF-006` (per-staff permission overrides, grant/
+  deny union-minus-deny formula, never XOR), `BR-PLATFORM-003` (out-of-band, non-reusable Platform
+  Owner bootstrap), `BR-PLATFORM-004` (`platformMembers` as sole durable authority, claims as bounded
+  cache, existing in-app bootstrap use case flagged DO_NOT_USE for production) — **originally drafted
+  as BR-PLATFORM-001/002, which collide with the pre-existing Phase 8 rules of those ids; renumbered
+  the same day, before shipping in any commit; see BR-PLATFORM-003/004's own notes.** See
+  `docs/decisions.md`'s AP-2 entry for the full implementation report; AP-2 itself is NOT yet closed —
+  this entry covers only the tenant-context/permission-override/Platform-Owner slice delivered so far.
+- **Author**: Claude, at the user's direction (AP-2 Secure Admin/POS Platform, Stage B).
 
 ### v3.22 — 2026-08-24
 - **Version**: 3.22

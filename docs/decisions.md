@@ -16766,3 +16766,277 @@ was additionally corrected in place after direct source verification confirmed o
 
 **Determination**: `AP1_CANONICAL_ARCHITECTURE_PACK_COMPLETE` and the full quality-gate/commit record are
 reported in this session's own final AP-1 report, not duplicated here.
+
+## AP-2 — Secure Admin/POS Platform (2026-08-26), IN PROGRESS — this entry covers an interim slice only
+
+Stage A (planning) approved with 10 mandatory corrections (permission-override formula, tenant/branch
+locator model, Platform Owner bootstrap shape, device trust tiers, device challenge/session model,
+remote-approval permission/execution/retention/outbox model, backend-generated correlation ids,
+entitlement grace model, out-of-scope-module production fail-closed gate, feature-first file
+organization). Given AP-2's real scope (8 subsystems, dozens of files, a 40+-scenario test matrix), this
+session delivered the most foundational slice first — everything else depends on tenant/branch context
+resolution and staff/platform authorization being real — rather than attempting all 8 subsystems
+simultaneously and risking an unverifiable sprawl. **AP-2 itself is NOT closed**; this records what
+shipped in this slice and what remains, honestly, per `ENGINEERING_CONSTITUTION.md`'s Never Claim
+Success Without Evidence rule.
+
+**Delivered this slice**:
+- **Correction #1 (permission overrides)**: `functions/src/staffPermissionOverrides.ts` (new) —
+  `resolveEffectivePermissions` (pure, unit-tested: union of role permissions + org/branch grants,
+  minus org/branch denies, deny always wins), `requireDurablePermission` (re-reads the durable
+  `memberships` document on every call, never trusts a cached claim for AP-2's own new commands),
+  `setStaffPermissionOverride` (self-override forbidden, caller-cannot-grant-beyond-own-permission,
+  admin-tier overrides require `manageStaffAdminRole`). `staffAuthorization.ts` itself — and every
+  pre-AP-2 callable using its original `requireStaffPermission` — is UNCHANGED; this is a strictly
+  additive layer, not a rewrite, per Stage A's own scope-discipline flag.
+- **Correction #2 (tenant/branch context)**: `functions/src/tenantContext.ts` (new) —
+  `resolveActorContext` (self-derived enumeration of the caller's own active organizations/roles/
+  branch ids, replacing the need for a hardcoded default), `resolveVerifiedBranchContext` (verifies a
+  client-supplied `{organizationId, branchId}` locator against the caller's real durable membership +
+  branch→organization chain — a locator naming access the caller doesn't have is rejected, never
+  silently redirected).
+- **Correction #3 (Platform Owner bootstrap) + REUSE correction**: discovered mid-Stage-B that
+  `platformMembers/{uid}` already exists in `firestore.rules` (pre-AP-1, `allow write: if false`, no
+  writer until now) and that a full `lib/features/platform/**` Dart domain
+  (`PlatformMember`/`PlatformRole`/`PlatformActorSession`/`RealPlatformAuthorizationPolicy`/
+  `PlatformRolePermissionMap`, Phase 8/ADR-025) already exists, in-memory-only. Stage A's own plan to
+  create a new `platformMemberships` collection was WRONG and is corrected here: AP-2 writes to the
+  EXISTING `platformMembers` collection instead (`functions/src/platformMembership.ts`:
+  `syncOwnPlatformClaims`/`grantPlatformRole`/`revokePlatformRole`), doc id = `uid` (forced by the
+  pre-existing rule's own `request.auth.uid == platformMemberId` check). Also discovered
+  `lib/features/platform/application/use_cases/bootstrap_first_platform_owner_account.dart` — an
+  existing in-app, email/password self-registration bootstrap gated only on "repository is empty" —
+  and flagged it DO_NOT_USE for production wiring as-is: it is exactly the reusable in-app backdoor
+  shape the corrected spec forbids if ever pointed at a real Firestore-backed repository (see
+  `BR-PLATFORM-004` — originally drafted as `BR-PLATFORM-002`, which collides with the pre-existing
+  Phase 8 rule of that id; renumbered the same day). The real bootstrap path is the new
+  `functions/scripts/bootstrap_platform_owner.mjs`
+  — out-of-band, Admin SDK, refuses to run if any active Platform Owner/Administrator already exists,
+  accepts uids only (never a phone/email/allowlist in source), writes an audit event and a
+  `platformBootstrapMarkers/{runId}` record.
+- **Correction #7 (correlation ids) + #13 (audit transaction boundary)**: `functions/src/
+  correlationId.ts` (backend-generated canonical id; a client-supplied `clientRequestId` is validated
+  by pattern/length, never trusted as canonical) and `functions/src/auditEvents.ts` (a generic,
+  reusable `writeAuditEvent` — the AP-1-canonical `AuditEvent` shape generalized from
+  `orderLifecycle.ts`'s existing order-status writer — used by every new callable in this slice,
+  always written inside the same transaction as its mutation).
+- **Supporting change**: `functions/src/staffMembership.ts` gained a `version` field on `MembershipDoc`
+  (starts at `1`, bumped on every mutation: role grant/revoke, branch-access grant/revoke, override
+  set, status change) — additive only, no existing behavior or return shape changed.
+- **`firestore.rules`**: one new collection rule (`platformBootstrapMarkers`, platform-member-readable,
+  `allow write: if false`) — every other collection touched this slice already had a correct
+  `allow write: if false` rule from an earlier phase; no rule needed loosening.
+- Tests: `functions/src/test/staffPermissionOverrides.test.ts`,
+  `functions/src/test/tenantContext.test.ts`, `functions/src/test/platformMembership.test.ts` (new).
+  `bootstrap_platform_owner.mjs` was NOT given an automated emulator test — consistent with this
+  codebase's own established convention that `functions/scripts/*.mjs` seed/bootstrap tools are manual,
+  out-of-band dev utilities outside the `npm test` suite (confirmed: none of the existing
+  `seed_dev_*.mjs` scripts have one either) — and because its safety check (refuses if ANY active
+  Platform Owner exists project-wide) is structurally incompatible with the shared emulator Firestore
+  instance every OTHER test file in the same `npm test` run also writes `platformMembers` documents
+  into, which would make an automated test of that specific check flaky depending on file execution
+  order — an explicit engineering trade-off, not an oversight. Verified instead by direct code review
+  and a manual dry run against the emulator (see the final report for this session's slice).
+
+### AP-2, second wave — trusted device, remote approval, entitlements, staff directory, readiness gate
+
+Continuing without a new approval gate (per the user's own Stage B instruction), this session delivered
+five more real, tested pieces of AP-2's scope:
+
+- **Trusted device online foundation** (`functions/src/trustedDevice.ts`, new): `requestDeviceRegistration`
+  (server-generated `deviceId` — a fingerprint of the submitted public key, never a client-chosen
+  identifier; resolves `trustTier` server-side: only `android`/`ios`/`windows`/`macos` are even eligible
+  for `PLATFORM_PROTECTED`, `web` always `UNSUPPORTED_OR_UNTRUSTED`, and — Correction #4 — **no platform
+  resolves `HARDWARE_ATTESTED` in AP-2 at all**, since no real attestation integration exists; that
+  upgrade is `CONTROLLED_EXTERNAL_DEPENDENCY` future work, not invented here), `requestDeviceChallenge`/
+  `issueDeviceSession` (a real Ed25519/RSA-SHA256 challenge-response protocol — single-use,
+  short-TTL challenges consumed transactionally, sessions never client-readable via Firestore —
+  Correction #5), `revokeTrustedDevice` (immediate, revokes every outstanding session for that device in
+  the same transaction), and `requireActiveDeviceSession` (the server-side-only check future
+  device-restricted commands will import). An `UNSUPPORTED_OR_UNTRUSTED` device can be registered (for
+  audit visibility) but is structurally refused an operational session — fail-closed, not merely
+  documented as a policy.
+- **Remote approval engine + the device-activation reference action** (`functions/src/remoteApproval.ts`,
+  new): a closed, compile-time-typed `ACTION_HANDLERS` map (Correction #6 — "yalnız allowlisted, typed
+  action handler'ları çalıştırmalıdır," never an arbitrary callable name/payload), with exactly one
+  registered action this phase, `deviceActivation` (`trustedDevice.ts`'s `applyDeviceActivation`,
+  re-verifies the target's current version against the approval record before applying anything — stale-
+  target protection). `respondToApprovalRequest`: self-approval structurally forbidden, an idempotent
+  identical response returns the existing result, a conflicting second response is rejected
+  (`failed-precondition`). `sweepExpiredApprovalRequests`: `pending` → `escalated` (writes a
+  `notificationOutbox` entry — a separate, mutable, delivery-tracking collection, never the same model as
+  the immutable `approvalEvents` audit history) → `expired` on a second pass. **Known, disclosed
+  simplification**: full escalation to a Platform-Owner-can-directly-respond capability is NOT built this
+  phase — Platform Owner and tenant-staff authorization are deliberately separate claim namespaces
+  (ADR-025), and a safe cross-namespace response path is real, separate design work, not something to
+  improvise under this phase's time budget; the sweep still transitions state correctly and flags the
+  need for human intervention via the outbox.
+- **Entitlement backend** (`functions/src/entitlementAdmin.ts`, new): the real writer the existing
+  `entitlements` collection never had — `grantEntitlement`/`renewEntitlement`/`suspendEntitlement`
+  (always enters a **fixed 3-day grace period first**, never an immediate hard suspend — Correction #8 —
+  with a Platform-Owner-selected `postGraceDisabledModules` shutdown policy)/`revokeEntitlement`
+  (immediate, terminal)/`sweepExpiredEntitlementGracePeriods` (`grace` → `suspended` past
+  `graceEndsAt`). Every callable is `requirePlatformMember`-gated — there is no tenant-scoped grant path
+  at all, which is what makes "Tenant Admin kendisine entitlement veremez veya grace süresini uzatamaz"
+  true structurally. `requireModuleEntitlement` is wired into `trustedDevice.ts`'s own
+  `requestDeviceRegistration`: a POS/KDS-capability device registration now server-side-checks the
+  corresponding module is currently entitled (`active`/`trial`/`grace` all count; `suspended`/`expired`/
+  `revoked` don't) — a real instance of "yeni hassas AP-2 backend komutları server-side entitlement
+  kontrolü yapmalıdır," not just a documented intention.
+- **Staff directory read model** (`functions/src/staffDirectory.ts`, new): `listStaffMembersForOrganization`
+  — closes a REAL gap discovered while scoping the Admin-UI-wiring workstream: `firestore.rules`'
+  `memberships` rule restricts a client to reading only their OWN membership document
+  (`membershipId == resource.data.organizationId + '_' + request.auth.uid`), so an admin could never
+  list every other staff member's membership via a direct client query at all, by design. This callable
+  is the one real, `manageStaffAccounts`/`manageStaffRoles`-gated read path, returning a minimal,
+  display-safe projection (no `permissionOverrides`/`version` internals). The Flutter screen-layer
+  consumer of this (rewiring `StaffManagementScreen`/`StaffDetailScreen` off `InMemoryStaffMemberRepository`)
+  is NOT built this session — see "still not delivered" below.
+- **Implementation-readiness gate** (`lib/features/admin/presentation/widgets/module_readiness_gate.dart`,
+  new): `ModuleReadinessRegistry` — a static, explicit, auditable list of module ids with no real backend
+  yet (`tableOrders`/`pos`/`cash`/`fiscal`/`kds`/`stock`/`courier`/`marketplace`/`crm`/`reports`) — and
+  `ModuleReadinessGate`, a screen-level widget mirroring `ModuleEntitlementGate`'s exact shape (Correction
+  #9: entitlement or trusted-device state never substitutes for real implementation readiness). In a
+  release build (`kReleaseMode` — reused as the "explicit environment flag," not a new mechanism, mirroring
+  every existing `ProductionUnavailable*` repository's own gate) a `demoOnly` module is blocked outright
+  with a Turkish "Bu modül henüz production kullanımına açılmadı" message; in debug/profile it stays
+  reachable but wrapped in a visible `DEMO` badge. Not yet wired into any actual screen route this
+  session (no screen currently imports it) — the widget and its registry are real and tested, but nothing
+  yet requires going through it, since the full router migration below isn't done either.
+- Tests added this wave: `functions/src/test/trustedDeviceAndApproval.test.ts` (13 scenarios — full
+  reference-action flow, self-approval, conflicting/idempotent response, stale target, web trust tier +
+  session refusal, forged signature, challenge replay, device revocation cascading to sessions, wrong-
+  branch rejection, entitlement-gated registration, sweep escalation→expiry),
+  `functions/src/test/entitlementAdmin.test.ts` (7 scenarios), `functions/src/test/staffDirectory.test.ts`
+  (2 scenarios), `test/features/admin/presentation/widgets/module_readiness_gate_test.dart` (4 scenarios).
+  `firestore-tests/rules.test.js` gained 6 new test blocks covering all 7 new collections
+  (`platformBootstrapMarkers`/`trustedDeviceRegistrations`/`deviceChallenges`/`deviceSessions`/
+  `remoteApprovalRequests`/`approvalEvents`/`notificationOutbox`).
+- `firestore.rules` gained 6 more collection rule blocks this wave (`trustedDeviceRegistrations` —
+  org+branch-access-scoped read; `deviceChallenges`/`deviceSessions`/`remoteApprovalRequests`/
+  `notificationOutbox` — `allow read, write: if false`, no client path exists yet for any of them;
+  `approvalEvents` — org-member read, minimum-data audit history).
+- Three real bugs were found and fixed during this session's own scoped diagnostic test runs before the
+  final full-suite gate (all in newly-written test files, not implementation code): a missing ID-token
+  refresh after `syncOwnStaffClaims` in `tenantContext.test.ts`'s own bootstrap helper (silently left every
+  subsequent claims-dependent call using a stale, claim-less token); an impossible test premise in
+  `staffPermissionOverrides.test.ts` ("manager lacks `manageTakeawayOrderRefunds`" — false, `manager`
+  already holds it by default; rewritten to use an active deny-override on the caller instead, which
+  actually proves the intended rule); and a `revokeTrustedDevice` test using the bootstrap admin (who
+  legitimately holds zero branch access, a documented codebase invariant) instead of a manager who was
+  actually granted branch access.
+
+### AP-2, third wave — Admin UI backend wiring, go_router migration, readiness-gate deployment
+
+Delivered, closing every item the second wave's own "still not delivered" list named:
+
+- **Admin `go_router` migration** (`lib/core/router/{app_routes,app_route_guard,app_router}.dart`,
+  `lib/features/profile/presentation/widgets/profile_business_mode_card.dart`): discovered mid-
+  implementation that `AdminShellScreen` is a single-route, index-based content-pane shell (mirrors
+  `MainNavigationScreen`'s own P1-010 precedent) — NOT a tree of pushed sub-routes; only 3
+  `Navigator.push` calls exist anywhere in the whole admin feature, all internal drill-downs within
+  `reservation_operations_screen.dart`, unrelated to Admin entry. The real, scoped migration was
+  therefore: a new `AppRoutes.admin = '/admin'` route, a bypass in `AppRouteGuard.resolve` (mirroring
+  the existing takeaway-QR-prefix bypass — staff/platform authorization is a wholly separate identity
+  system from the customer `authProvider`/guard stack, and `AdminShellScreen` already performs its own
+  real, internal `actorSessionProvider` check, exactly like `ModuleEntitlementGate`'s own screen-level
+  pattern), and `ProfileBusinessModeCard`'s entry point switched from raw `Navigator.push` to
+  `context.push(AppRoutes.admin)`. 21 new/updated tests across `app_route_guard_test.dart`/
+  `app_router_test.dart`/`profile_business_mode_card_test.dart`/`profile_screen_test.dart`.
+- **Real Firebase-backed staff repository** (`lib/features/admin/data/
+  firebase_staff_member_repository.dart`, new): read side calls the new
+  `listStaffMembersForOrganization`; `save()` diffs the passed `StaffMember` against the last state
+  this instance observed for that id and dispatches exactly the specific real mutation callable(s)
+  needed (`assignStaffRole`/`revokeStaffRole`/`grantStaffBranchAccess`/`revokeStaffBranchAccess`/
+  `setStaffMemberStatus`) — every existing use case (`AssignStaffRole`/`RevokeStaffRole`/etc.) keeps
+  calling `save()` completely unchanged; this repository is the one place translating "the whole new
+  object" into "the one real command that actually changed." The backend independently re-verifies
+  authorization for every one of these commands regardless of the client-side diff — the same
+  established "client check for UX, server check for authority" pattern already used everywhere else
+  in this codebase (e.g. entitlements). Wired into `staffMemberRepositoryProvider`, gated on
+  `firebaseReadyProvider` exactly like `staffAuthRepositoryProvider` already was.
+- **`StaffMemberRepository.register()` — a real interface addition, not a `save()` overload**:
+  discovered the real `registerStaffMember` callable links a new membership to an *existing* Firebase
+  Auth account found by **email**, while the old `RegisterStaffMember` use case only ever collected a
+  display name — a genuine, real shape mismatch, not a wiring detail. Added `register({displayName,
+  email})` to the interface (implemented in all three classes: `InMemoryStaffMemberRepository`
+  trivially, `ProductionUnavailableStaffMemberRepository` fails closed, `FirebaseStaffMemberRepository`
+  calls the real callable); `RegisterStaffMember`'s own signature gained `required String email`;
+  `staff_management_screen.dart`'s registration dialog gained a second field collecting it. Every
+  affected test updated (`register_staff_member_test.dart`, `staff_management_screen_test.dart`) — all
+  231 admin-feature tests pass.
+- **Known, disclosed limitation carried forward, not silently hidden**: the real `memberships`
+  collection this repository is backed by has no display-name field at all
+  (`staffMembership.ts`'s own doc comment — building the fuller `staffMembers` admin-display record
+  remains separate, earlier-phase-deferred scope, unchanged by AP-2). `StaffMember.displayName` for an
+  existing member is therefore the linked Firebase Auth `uid` itself — a disclosed placeholder, never
+  a fabricated name — except for a just-registered member within the same session, where the real
+  name entered at registration time is used.
+- **`resolvedActorContextProvider`** (`admin_dependencies_provider.dart`, new): a real,
+  `resolveActorContext`-backed `FutureProvider` enumerating the signed-in staff actor's own real
+  organizations/branches/roles. `currentOrganizationIdProvider` itself deliberately stays a
+  synchronous `'org-1'` default — no tenant-switcher UI exists anywhere to consume anything else yet,
+  and converting it to an async-resolved provider would ripple, untested, through every provider that
+  reads it synchronously today (`branchRepositoryProvider`/`restaurantRepositoryProvider`/
+  `staffAuthRepositoryProvider`). This is a disclosed, deliberate scope boundary, not an oversight —
+  and it is genuinely safe to leave as a client default now in a way it wasn't before AP-2: every
+  backend command this value is ever passed into treats it strictly as an untrusted locator,
+  re-verified against the caller's real durable membership server-side (`resolveVerifiedBranchContext`)
+  — a stale/wrong client value can only ever produce `permission-denied`, never a cross-tenant bypass.
+- **Implementation-readiness gate deployed, not just built**: `ModuleReadinessGate` wired into the two
+  `AdminShellScreen` destinations confirmed, with high confidence from this session's own direct
+  findings, to still render a real, unwired-to-any-backend screen with no existing "not ready" message
+  at all — `kitchen` (`KitchenDisplayBoardScreen`, moduleId `kds`) and `dispatch`
+  (`CourierDispatchDashboardScreen`, moduleId `courier`). Two OTHER destinations sharing the same
+  concern — `pos` and `cash` — were found to already render `AdminComingSoonView` (a pre-existing,
+  equivalent "not implemented yet" mechanism this session didn't need to touch). **Explicitly NOT
+  wrapped, disclosed rather than guessed at**: `stock-counts`/`inventory` (Phase 7 Smart Restaurant
+  Setup track, not directly AP-0-audited within this session), `customer-360`/`customers` (CRM), and
+  `integrations` (marketplace) — the user's own AP-2 spec names stock/CRM/marketplace as unwired
+  modules, but this session lacks direct, session-verified confirmation of which exact nav-item id(s)
+  correspond to each without a fresh, dedicated audit; wrapping them on a guess risked false-gating a
+  screen that might already be legitimately real. Flagged as explicit next-step work, not silently
+  left unaddressed.
+- **PII/secret-leakage scan**: every new Functions file grepped for logging calls, raw
+  email/phone/password/private-key handling — zero `console.*` calls exist in any of the 9 new backend
+  files (no debug logging of sensitive data at all); `publicKeyPem` (a PUBLIC key, not a secret) is the
+  only credential-adjacent field ever stored, in a collection already scoped to org+branch-access-only
+  read; private keys are never sent to or handled by the backend at any point (the device signs
+  locally, only the signature and its own already-known public key ever cross the wire). A full
+  `git diff`/untracked-file secret-pattern scan (API keys, PEM private key blocks, live payment
+  provider secret prefixes, hardcoded passwords) across every file this session touched or created
+  found nothing.
+- **A real bug caught and fixed by this session's own diagnostic discipline**: two of this session's
+  own earlier-drafted business rules, `BR-PLATFORM-001`/`BR-PLATFORM-002`, were found — during a final
+  uniqueness re-check before commit — to collide with pre-existing Phase 8 rules of the identical ids
+  (`BR-PLATFORM-001` "Development Login is kReleaseMode-gated," `BR-PLATFORM-002` "Platform Monitoring/
+  Release Readiness/Store Compliance are read-only"). Neither had shipped in any commit yet.
+  Renumbered to `BR-PLATFORM-003`/`004`, every cross-reference across `business_rules.md`/
+  `decisions.md`/`functions/README.md` corrected, and the collision itself disclosed in both entries'
+  own text rather than silently fixed. A second real regression — two pre-existing exact-match tests
+  in `staffAuthorization.test.ts` asserting `staff`'s permission set had exactly 3 entries — was broken
+  by this session's own addition of `requestDeviceRegistration` to that same role's default grant;
+  fixed by updating the assertions (and their titles) to the new, correct 4-entry expectation, not by
+  reverting the addition, since the addition itself is the intended AP-2 behavior.
+- **A third real bug, caught only by manual emulator verification, never by any automated suite**:
+  `bootstrap_platform_owner.mjs`'s original transaction interleaved `tx.get()`/`tx.set()` per-uid
+  inside one loop (`for (uid of uids) { tx.get(...); tx.set(...); tx.set(...); }`) — Firestore
+  transactions require every read to complete before any write; with two or more uids, the SECOND
+  uid's read happened after the FIRST uid's writes, and the real script threw `Firestore transactions
+  require all reads to be executed before all writes` on every real multi-uid bootstrap run. A
+  single-uid bootstrap happened to work by accident (no interleaving possible with one iteration),
+  which is exactly why this was never caught by inspection alone. Found via a dedicated, disposable
+  verification script run against a fresh emulator (per this file's own AP-2 Stage B entry: this
+  script was deliberately never given an automated `npm test` suite entry, so manual verification was
+  always the intended safety net, not skipped diligence) — fixed by reading all uids' current state
+  via `Promise.all(refs.map(tx.get))` before any `tx.set()` call. Re-verified after the fix: usage
+  error (no args) → exit 1; a real two-uid first run → exit 0, both accounts become active
+  `platformOwner`, exactly one `platformBootstrapMarkers` document; a second run with an active owner
+  already present → refused, exit 1, no document written; a non-existent Firebase Auth uid → refused,
+  exit 1. All five scenarios pass.
+
+**AP-2 is now considered feature-complete for this session's scope**, pending the final quality-gate
+re-run (format check, `flutter analyze`, full `flutter test`, Functions build + full suite, Firestore
+Rules full suite, Storage Rules full suite, secret scan, docs cross-reference, scoped diff review) —
+see this session's own final report for exact gate results, the complete file manifest, and the commit
+SHA(s), not duplicated here.

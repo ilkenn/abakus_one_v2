@@ -6,7 +6,6 @@ import '../../data/staff_member_repository.dart';
 import '../../domain/audit/admin_audit_entry.dart';
 import '../../domain/audit/admin_audit_event_type.dart';
 import '../../domain/staff/staff_member.dart';
-import '../identity/staff_member_id_generator.dart';
 
 /// An administrator registers a new [StaffMember] — admin-only
 /// (`PosAuthorizedAction.manageStaffAccounts`). Starts with **no roles at
@@ -14,24 +13,32 @@ import '../identity/staff_member_id_generator.dart';
 /// member can sign in (`DevelopmentStaffAuthRepository.signIn` denies an
 /// empty-roles member), so account creation and role granting are always
 /// two distinct, separately-audited actions.
+///
+/// **AP-2 Stage B**: [email] is now required — the real backend
+/// (`registerStaffMember` Cloud Function) links a new membership to an
+/// *existing* Firebase Auth account found by email; a display name alone
+/// is no longer sufficient to create a real, sign-in-capable account. See
+/// [StaffMemberRepository.register]'s own doc comment. `idGenerator` is no
+/// longer a constructor dependency of this use case — id assignment moved
+/// into [StaffMemberRepository.register] itself (each real implementation
+/// derives its own id: `InMemoryStaffMemberRepository` sequentially,
+/// `FirebaseStaffMemberRepository` from the linked Firebase Auth uid).
 class RegisterStaffMember {
   const RegisterStaffMember({
     required PosAuthorizationPolicy authorizationPolicy,
-    required StaffMemberIdGenerator idGenerator,
     required StaffMemberRepository repository,
     required AdminAuditEntryRepository auditRepository,
   })  : _authorizationPolicy = authorizationPolicy,
-        _idGenerator = idGenerator,
         _repository = repository,
         _auditRepository = auditRepository;
 
   final PosAuthorizationPolicy _authorizationPolicy;
-  final StaffMemberIdGenerator _idGenerator;
   final StaffMemberRepository _repository;
   final AdminAuditEntryRepository _auditRepository;
 
   Future<StaffMember> call({
     required String displayName,
+    required String email,
     required String performedByStaffId,
     required DateTime createdAt,
   }) async {
@@ -44,13 +51,10 @@ class RegisterStaffMember {
       throw AuthorizationDeniedViolation(actionName: action.name);
     }
 
-    final member = StaffMember(
-      id: _idGenerator.nextStaffMemberId(),
+    final member = await _repository.register(
       displayName: displayName,
-      createdAt: createdAt,
-      revision: 1,
+      email: email,
     );
-    await _repository.save(member);
 
     await _auditRepository.appendEvent(AdminAuditEntry(
       id: '${member.id}-audit-registered',

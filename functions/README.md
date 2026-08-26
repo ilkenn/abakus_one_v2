@@ -708,3 +708,36 @@ Firebase-recommended pattern for an emulator-only project, which can never resol
 project even if real credentials were somehow present locally. `src/test/functions.test.ts` uses the
 same id explicitly so the test process's Firestore writes land in the same emulated project namespace
 the Functions emulator is watching.
+
+## Platform Owner bootstrap and break-glass recovery (AP-2)
+
+The very first Platform Owner account(s) are created by `scripts/bootstrap_platform_owner.mjs`, run
+manually against a real project by an operator holding real GCP credentials — never a Cloud Function,
+never reachable from the deployed app:
+
+```
+cd functions
+GCLOUD_PROJECT=<real-project-id> node scripts/bootstrap_platform_owner.mjs <uid1> [uid2] [...]
+```
+
+It refuses to run a second time once any `platformMembers` document already holds an active
+`platformOwner`/`platformAdministrator` role — every subsequent grant goes through the real
+`grantPlatformRole` callable instead (itself Platform-Owner-authorized, self-grant forbidden).
+
+**Break-glass recovery — if every Platform Owner account is ever lost** (all accounts deleted/
+compromised/inaccessible): this script's own refusal check means it will NOT run again while any
+`platformMembers` document still claims an active owner/administrator role, even one nobody can sign
+into anymore. Recovery is a GCP-IAM operation, not an application feature:
+
+1. A trusted operator is granted temporary `roles/datastore.user` (or an equivalent scoped Firestore
+   read/write role) on the real GCP project via GCP IAM — outside this application entirely.
+2. Using that access, the operator sets every existing `platformMembers` document's `status` to
+   `"archived"` (or deletes the stuck documents) via the Firebase Console or `gcloud`/Admin SDK — a
+   manual, audited, one-time action, not a code path this repository ships.
+3. `bootstrap_platform_owner.mjs`'s refusal check now passes (no active owner/administrator remains),
+   and it is run again for the new trusted uid(s).
+4. The operator's elevated IAM role is revoked immediately after.
+
+This is deliberately NOT implemented as an in-app "recovery mode" or a second bootstrap mechanism —
+doing so would recreate exactly the reusable backdoor risk the real bootstrap script's own refusal
+check exists to prevent (`BR-PLATFORM-003`). The GCP IAM layer is the actual break-glass boundary.

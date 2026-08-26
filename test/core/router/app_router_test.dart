@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/core/router/app_router.dart';
+import 'package:abakus_one_v2/core/router/app_routes.dart';
+import 'package:abakus_one_v2/features/admin/presentation/screens/admin_shell_screen.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/development_local_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
@@ -261,6 +263,37 @@ void main() {
 
         expect(find.byType(LoginScreen), findsOneWidget);
         expect(find.byType(OnboardingScreen), findsNothing);
+        expect(find.byType(MainNavigationScreen), findsNothing);
+      },
+    );
+  });
+
+  group('appRouterProvider — AP-2 Stage B: /admin route', () {
+    testWidgets(
+      '/admin resolves to AdminShellScreen even for a signed-out customer '
+      '— never redirected to /login (staff auth is a separate identity '
+      'system; AdminShellScreen performs its own internal gate)',
+      (tester) async {
+        await _pumpAt(tester, AppRoutes.admin);
+
+        expect(find.byType(AdminShellScreen), findsOneWidget);
+        expect(find.byType(LoginScreen), findsNothing);
+        expect(find.byType(OnboardingScreen), findsNothing);
+      },
+    );
+
+    testWidgets(
+      '/admin resolves to AdminShellScreen for an already-signed-in '
+      'customer too — never hijacked by the blanket "signed in -> main" '
+      'branch the way every other unlisted signed-in route would be',
+      (tester) async {
+        await _pumpAt(
+          tester,
+          AppRoutes.admin,
+          overrides: [authProvider.overrideWith(_GuestAuthNotifier.new)],
+        );
+
+        expect(find.byType(AdminShellScreen), findsOneWidget);
         expect(find.byType(MainNavigationScreen), findsNothing);
       },
     );

@@ -4543,3 +4543,155 @@ test('campaignUsageReservations: no client can read or write a usage reservation
   });
   await assertFails(getDoc(doc(owner, 'campaignUsageReservations/org-1_hafta-ici-ogle_order-1')));
 });
+
+// ===========================================================================
+// AP-2 Stage B — Trusted Device / Remote Approval / Platform Bootstrap rules
+// ===========================================================================
+
+test('platformBootstrapMarkers: readable by a platform member, never by tenant staff, never client-writable', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'platformBootstrapMarkers/run-1'), {
+      runId: 'run-1',
+      uids: ['owner-uid-1'],
+      role: 'platformOwner',
+      executedAt: Timestamp.now(),
+    });
+  });
+  const platformOwner = testEnv
+    .authenticatedContext('platform-1', { platformRole: 'platformOwner' })
+    .firestore();
+  const tenantOwner = testEnv
+    .authenticatedContext('owner-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['tenantOwner'] } })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(platformOwner, 'platformBootstrapMarkers/run-1')));
+  await assertFails(getDoc(doc(tenantOwner, 'platformBootstrapMarkers/run-1')));
+  await assertFails(setDoc(doc(platformOwner, 'platformBootstrapMarkers/run-2'), { runId: 'run-2' }));
+});
+
+test('trustedDeviceRegistrations: readable only by staff with real org membership AND branch access for that exact branch; never client-writable', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'trustedDeviceRegistrations/org-1_branch-1_device-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      deviceId: 'device-1',
+      status: 'active',
+    });
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-1', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['staff'] },
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+  const orgOnlyNoAccess = testEnv
+    .authenticatedContext('staff-2', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['staff'] },
+      branchAccess: { 'org-1': ['branch-2'] },
+    })
+    .firestore();
+  const outsider = testEnv
+    .authenticatedContext('staff-3', {
+      organizationAccess: ['org-2'],
+      roles: { 'org-2': ['admin'] },
+      branchAccess: { 'org-2': ['branch-9'] },
+    })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(branchStaff, 'trustedDeviceRegistrations/org-1_branch-1_device-1')));
+  await assertFails(getDoc(doc(orgOnlyNoAccess, 'trustedDeviceRegistrations/org-1_branch-1_device-1')));
+  await assertFails(getDoc(doc(outsider, 'trustedDeviceRegistrations/org-1_branch-1_device-1')));
+  await assertFails(
+    setDoc(doc(branchStaff, 'trustedDeviceRegistrations/org-1_branch-1_device-2'), {
+      organizationId: 'org-1', branchId: 'branch-1', deviceId: 'device-2', status: 'pending',
+    }),
+  );
+});
+
+test('deviceChallenges and deviceSessions: no client read or write at all, for anyone, at any permission level', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'deviceChallenges/challenge-1'), { deviceId: 'device-1', nonce: 'abc' });
+    await setDoc(doc(db, 'deviceSessions/session-1'), { deviceId: 'device-1', status: 'active' });
+  });
+  const platformOwner = testEnv
+    .authenticatedContext('platform-1', { platformRole: 'platformOwner' })
+    .firestore();
+  const branchStaff = testEnv
+    .authenticatedContext('staff-1', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['admin'] },
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  for (const ctx of [platformOwner, branchStaff]) {
+    await assertFails(getDoc(doc(ctx, 'deviceChallenges/challenge-1')));
+    await assertFails(getDoc(doc(ctx, 'deviceSessions/session-1')));
+  }
+  await assertFails(setDoc(doc(branchStaff, 'deviceChallenges/challenge-2'), { deviceId: 'x' }));
+  await assertFails(setDoc(doc(branchStaff, 'deviceSessions/session-2'), { deviceId: 'x' }));
+});
+
+test('remoteApprovalRequests: no direct client read path exists yet — not even the requester or an org admin can read the canonical payload', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'remoteApprovalRequests/approval-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      actionType: 'deviceActivation',
+      requestedByActorUid: 'staff-1',
+      status: 'pending',
+    });
+  });
+  const requester = testEnv
+    .authenticatedContext('staff-1', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['staff'] },
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+  const orgAdmin = testEnv
+    .authenticatedContext('admin-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['admin'] } })
+    .firestore();
+
+  await assertFails(getDoc(doc(requester, 'remoteApprovalRequests/approval-1')));
+  await assertFails(getDoc(doc(orgAdmin, 'remoteApprovalRequests/approval-1')));
+  await assertFails(setDoc(doc(orgAdmin, 'remoteApprovalRequests/approval-2'), { status: 'pending' }));
+});
+
+test('approvalEvents: readable by any real org member (minimum-data audit history), never client-writable', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'approvalEvents/event-1'), {
+      requestId: 'approval-1',
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      eventType: 'approval.approved',
+    });
+  });
+  const orgMember = testEnv
+    .authenticatedContext('staff-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['staff'] } })
+    .firestore();
+  const outsider = testEnv
+    .authenticatedContext('staff-2', { organizationAccess: ['org-2'], roles: { 'org-2': ['admin'] } })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(orgMember, 'approvalEvents/event-1')));
+  await assertFails(getDoc(doc(outsider, 'approvalEvents/event-1')));
+  await assertFails(setDoc(doc(orgMember, 'approvalEvents/event-2'), { requestId: 'x' }));
+});
+
+test('notificationOutbox: never end-user readable or writable, for anyone', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'notificationOutbox/entry-1'), { organizationId: 'org-1', type: 'approval.escalationNeeded' });
+  });
+  const platformOwner = testEnv
+    .authenticatedContext('platform-1', { platformRole: 'platformOwner' })
+    .firestore();
+  const orgAdmin = testEnv
+    .authenticatedContext('admin-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['admin'] } })
+    .firestore();
+
+  await assertFails(getDoc(doc(platformOwner, 'notificationOutbox/entry-1')));
+  await assertFails(getDoc(doc(orgAdmin, 'notificationOutbox/entry-1')));
+});

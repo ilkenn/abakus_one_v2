@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_shadows.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
-import '../../../admin/presentation/screens/admin_shell_screen.dart';
 
 /// "İşletme Moduna Geç" — P.3 (2026-08-19). A mode switch, not another
 /// customer settings row: solid `AppColors.primary` background (rather
@@ -15,10 +16,11 @@ import '../../../admin/presentation/screens/admin_shell_screen.dart';
 /// this widget when `actorSessionProvider?.roles.isNotEmpty == true` —
 /// this widget itself does not re-check authorization, matching the
 /// locked P.3 rule that unauthorized/guest customers must never see this
-/// card at all (not even a disabled/hidden variant of it). Tapping always
-/// goes straight to the real [AdminShellScreen] — Profile no longer routes
-/// to `StaffSignInScreen` from here (that fallback belonged to the old
-/// "Yönetici Paneli" row, which this replaces).
+/// card at all (not even a disabled/hidden variant of it). Tapping goes
+/// through the canonical [AppRoutes.admin] `go_router` route (AP-2 Stage
+/// B) rather than a raw `Navigator.push` — the destination screen
+/// (`AdminShellScreen`) is the same real screen either way, resolved
+/// through the router rather than imported/constructed directly here.
 class ProfileBusinessModeCard extends StatelessWidget {
   const ProfileBusinessModeCard({super.key});
 
@@ -28,10 +30,7 @@ class ProfileBusinessModeCard extends StatelessWidget {
       button: true,
       label: 'İşletme Moduna Geç, personel ve yönetim araçlarına geç',
       child: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const AdminShellScreen()),
-        ),
+        onTap: () => context.push(AppRoutes.admin),
         child: Container(
           key: const Key('profileBusinessModeCard'),
           padding: const EdgeInsets.all(AppSpacing.lg),

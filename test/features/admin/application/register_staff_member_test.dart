@@ -1,5 +1,4 @@
 import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
-import 'package:abakus_one_v2/features/admin/application/identity/staff_member_id_generator.dart';
 import 'package:abakus_one_v2/features/admin/application/use_cases/register_staff_member.dart';
 import 'package:abakus_one_v2/features/admin/data/admin_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/admin/data/staff_member_repository.dart';
@@ -14,13 +13,13 @@ void main() {
       final repository = InMemoryStaffMemberRepository();
       final useCase = RegisterStaffMember(
         authorizationPolicy: const AllowAllAdminPolicy(),
-        idGenerator: SequentialStaffMemberIdGenerator(),
         repository: repository,
         auditRepository: InMemoryAdminAuditEntryRepository(),
       );
 
       final member = await useCase(
         displayName: 'Ayşe Yılmaz',
+        email: 'ayse@example.test',
         performedByStaffId: 'admin-1',
         createdAt: DateTime(2026, 1, 1),
       );
@@ -33,7 +32,6 @@ void main() {
     test('an unauthorized actor cannot register a staff member', () async {
       final useCase = RegisterStaffMember(
         authorizationPolicy: const DenyAllAdminPolicy(),
-        idGenerator: SequentialStaffMemberIdGenerator(),
         repository: InMemoryStaffMemberRepository(),
         auditRepository: InMemoryAdminAuditEntryRepository(),
       );
@@ -41,6 +39,7 @@ void main() {
       expect(
         () => useCase(
           displayName: 'Ayşe Yılmaz',
+          email: 'ayse@example.test',
           performedByStaffId: 'staff-1',
           createdAt: DateTime(2026, 1, 1),
         ),
@@ -52,13 +51,13 @@ void main() {
       final auditRepository = InMemoryAdminAuditEntryRepository();
       final useCase = RegisterStaffMember(
         authorizationPolicy: const AllowAllAdminPolicy(),
-        idGenerator: SequentialStaffMemberIdGenerator(),
         repository: InMemoryStaffMemberRepository(),
         auditRepository: auditRepository,
       );
 
       final member = await useCase(
         displayName: 'Ayşe Yılmaz',
+        email: 'ayse@example.test',
         performedByStaffId: 'admin-1',
         createdAt: DateTime(2026, 1, 1),
       );

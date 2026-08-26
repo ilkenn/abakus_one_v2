@@ -68,6 +68,17 @@ abstract final class AppRouteGuard {
     // bounced straight past the QR flow into the main app shell instead.
     if (location.startsWith(AppRoutes.takeawayGuestPrefix)) return null;
 
+    // AP-2 Stage B — Admin/staff authorization is a wholly separate
+    // identity system from the customer signed-in/guest concept this
+    // guard otherwise governs (mirrors [AppRoutes.admin]'s own doc
+    // comment). Bypassed here for the same reason the takeaway QR prefix
+    // is: [AdminShellScreen] performs its own real, internal staff-session
+    // check and redirects to `StaffSignInScreen`/`AdminUnauthorizedScreen`
+    // itself — this guard must never intercept that with an unrelated
+    // customer-session redirect (a signed-out customer opening `/admin`
+    // must reach the real staff sign-in flow, not `/login`).
+    if (location.startsWith(AppRoutes.admin)) return null;
+
     // Faz R.2 — reservation routes need REAL phone-auth specifically,
     // stricter than the generic "signedIn" (authenticated OR guest)
     // concept the rest of this guard uses for reaching [AppRoutes.main].
