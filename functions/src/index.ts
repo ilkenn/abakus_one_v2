@@ -87,3 +87,8 @@ export { refundDineInOrder } from "./refundDineInOrder";
 // Server-Authoritative Campaign Engine P8-B (2026-08-25) — foundation only,
 // not wired into any order-submission path yet. See campaignEngine.ts.
 export { getCustomerActiveCampaigns } from "./getCustomerActiveCampaigns";
+// Server-Authoritative Campaign Engine P8-C (2026-08-25) — takeaway campaign
+// redemption: reservation is wired into submitTakeawayOrder.ts itself
+// (below); this is the terminal-release consumer, the campaign sibling of
+// onOrderEventCreatedForLoyaltyRedemptionRestore above.
+export { onOrderEventCreatedForCampaignUsageRelease } from "./campaignUsageRestore";

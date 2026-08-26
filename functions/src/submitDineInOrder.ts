@@ -30,6 +30,7 @@ import type { LoyaltyAccountData } from "./getCustomerLoyaltySnapshot";
 import {
   boncukError,
   sanitizeSelectedRewardId,
+  sanitizeSelectedCampaignId,
   type SelectedBenefitType,
 } from "./boncukRedemptionErrors";
 import {
@@ -43,6 +44,16 @@ import {
   type CanonicalCommercialChannel,
 } from "./loyaltyRewardCatalog";
 import { isTableGuestSessionActive } from "./tableGuestSessionConfig";
+import { enforceBenefitExclusivity } from "./benefitExclusivity";
+import {
+  CAMPAIGNS_COLLECTION,
+  parseCampaignDefinition,
+  type CampaignDefinition,
+  type CampaignOrderSnapshot,
+} from "./campaignEngine";
+import { isCampaignScheduleCurrentlyOpen, DEFAULT_ORGANIZATION_TIMEZONE } from "./campaignScheduling";
+import { resolveCampaignDiscount, type CampaignPriceableLine } from "./campaignPricing";
+import { reserveCampaignUsage } from "./campaignUsage";
 
 /**
  * `submitDineInOrder` — Boncuk Loyalty Program P7-D.1 (2026-08-24).
@@ -136,21 +147,43 @@ interface PendingCatalogRewardRedemption {
   orderSnapshot: CatalogRewardOrderSnapshot;
 }
 
+/**
+ * Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) —
+ * `campaignLineDiscounts` (line index -> resolved minor-unit discount) is
+ * threaded through to each line's own `buildProductLine`/`buildBowlLine`
+ * call (both already accept a trailing `campaignDiscountMinorUnits`
+ * parameter, added in P8-C and reused verbatim by every channel since —
+ * zero changes needed to either function for dine-in), and every built
+ * line's real, channel-priced info is ALSO captured into `campaignLines`
+ * (`campaignPricing.ts`'s own input shape), piggybacking on data already
+ * fetched for the line — no extra Firestore reads. Mirrors
+ * `submitTakeawayOrder.ts`'s own `buildLines`/`submitDeliveryOrder.ts`'s own
+ * `buildDeliveryLines` two-pass pattern exactly (the shared campaign engine
+ * reused verbatim, never re-implemented for this channel).
+ * `campaignLineDiscounts: null` (the default) means "no campaign discount
+ * to apply this call," so every pre-P8-C.3 caller behaves identically to
+ * before.
+ */
 async function buildLines(
   db: Firestore,
   rawItems: RawItem[],
   scope: { restaurantId: string },
   policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy,
   rewardedProductId: string | null,
+  campaignLineDiscounts: Map<number, number> | null = null,
 ): Promise<{
   lines: ComputedOrderLine[];
   normalizedItems: unknown[];
   rewardAppliedLineIndex: number | null;
+  campaignLines: CampaignPriceableLine[];
 }> {
   const lines: ComputedOrderLine[] = [];
   const normalizedItems: unknown[] = [];
+  const campaignLines: CampaignPriceableLine[] = [];
   let rewardAppliedLineIndex: number | null = null;
   for (const item of rawItems) {
+    const lineIndex = lines.length;
+    const campaignDiscountForLine = campaignLineDiscounts?.get(lineIndex) ?? 0;
     if (item.kind === "product") {
       const isRewardedLine =
         rewardAppliedLineIndex === null &&
@@ -164,8 +197,9 @@ async function buildLines(
         policy,
         undefined,
         isRewardedLine ? 1 : 0,
+        campaignDiscountForLine,
       );
-      if (isRewardedLine) rewardAppliedLineIndex = lines.length;
+      if (isRewardedLine) rewardAppliedLineIndex = lineIndex;
       lines.push(line);
       normalizedItems.push({
         kind: "product",
@@ -174,8 +208,24 @@ async function buildLines(
         selectedModifiers: item.selectedModifiers ?? [],
         note: item.note ?? "",
       });
+      campaignLines.push({
+        lineIndex,
+        productId: line.productId,
+        categoryId: line.categoryId,
+        quantity: line.quantity,
+        unitBaseMinorUnits: line.unitPriceMinorUnits + line.modifierTotalMinorUnits,
+      });
     } else {
-      const line = await buildBowlLine(db, item, scope, DINE_IN_COMMERCIAL_CHANNEL, policy);
+      const line = await buildBowlLine(
+        db,
+        item,
+        scope,
+        DINE_IN_COMMERCIAL_CHANNEL,
+        policy,
+        undefined,
+        0,
+        campaignDiscountForLine,
+      );
       lines.push(line);
       normalizedItems.push({
         kind: "bowl",
@@ -183,9 +233,19 @@ async function buildLines(
         ingredientIds: item.ingredientIds,
         note: item.note ?? "",
       });
+      // A Bowl Builder line has no real canonical product/category id —
+      // structurally ineligible for any product/category-scoped campaign,
+      // never a fake id standing in for one.
+      campaignLines.push({
+        lineIndex,
+        productId: null,
+        categoryId: null,
+        quantity: line.quantity,
+        unitBaseMinorUnits: line.unitPriceMinorUnits + line.modifierTotalMinorUnits,
+      });
     }
   }
-  return { lines, normalizedItems, rewardAppliedLineIndex };
+  return { lines, normalizedItems, rewardAppliedLineIndex, campaignLines };
 }
 
 function buildDineInOrderDocument(params: {
@@ -206,6 +266,21 @@ function buildDineInOrderDocument(params: {
   fingerprint: string;
   selectedBenefitType: SelectedBenefitType;
   catalogReward: CatalogRewardOrderSnapshot | null;
+  /**
+   * Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — the
+   * immutable per-order campaign snapshot when `selectedBenefitType ===
+   * "campaign"`; `null` otherwise, including every pre-P8-C.3 order. Never
+   * re-read from the live `campaigns` document by any future consumer —
+   * mirrors `submitDeliveryOrder.ts`'s own `buildDeliveryOrderDocument`
+   * extension exactly.
+   */
+  campaign: CampaignOrderSnapshot | null;
+  /**
+   * The EXACT total campaign discount already baked into `pricing`'s own
+   * `grandTotal`/line `lineDiscount`s above — `0` for every order without a
+   * campaign (preserves the pre-P8-C.3 hardcoded-zero behavior).
+   */
+  discountMinorUnits: number;
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -253,7 +328,7 @@ function buildDineInOrderDocument(params: {
     })),
     pricing: {
       grossSubtotal: moneyField(params.pricing.grossSubtotalMinorUnits),
-      discount: moneyField(0),
+      discount: moneyField(params.discountMinorUnits),
       taxableBase: moneyField(params.pricing.taxableBaseMinorUnits),
       vatAmount: moneyField(params.pricing.vatAmountMinorUnits),
       serviceFee: moneyField(0),
@@ -265,6 +340,10 @@ function buildDineInOrderDocument(params: {
     selectedBenefitType: params.selectedBenefitType,
     boncukRedemption: null,
     catalogReward: params.catalogReward,
+    // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — same
+    // discipline: `pricing` above already reflects the campaign discount
+    // baked in; `campaign` is the read-only immutable audit snapshot.
+    campaign: params.campaign,
     statusHistory: [
       {
         id: `${params.orderId}-transition-1`,
@@ -309,6 +388,10 @@ export const submitDineInOrder = onCall(
     const customerNote = sanitizeCustomerNote(data.customerNote);
     const requestedBoncukAmount = sanitizeRequestedBoncukAmountShapeOnly(data.requestedBoncukAmount);
     const selectedRewardId = sanitizeSelectedRewardId(data.selectedRewardId);
+    // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — the ONLY
+    // campaign-related value this callable ever accepts; the server
+    // resolves and re-validates everything else itself.
+    const selectedCampaignId = sanitizeSelectedCampaignId(data.selectedCampaignId);
 
     // Locked rule (BR-LOYALTY-019, unchanged by this phase) — dine-in cash
     // Boncuk redemption was never an approved product rule; this pipeline
@@ -322,16 +405,17 @@ export const submitDineInOrder = onCall(
         "boncuk/redemption-not-allowed",
       );
     }
-    // Same static stacking guard every other channel applies — kept even
-    // though the boncuk branch above already always rejects on its own,
-    // so a request sending BOTH gets the more specific stacking reason.
-    if (requestedBoncukAmount > 0 && selectedRewardId !== null) {
-      boncukError(
-        "invalid-argument",
-        "requestedBoncukAmount and selectedRewardId cannot both be set — exactly one benefit per order.",
-        "catalogReward/benefit-stacking-not-allowed",
-      );
-    }
+    // Server-Authoritative Campaign Engine P8-C.3 — the shared, three-way
+    // "at most one benefit per order" check (`benefitExclusivity.ts`, P8-B),
+    // replacing this file's own previous hand-rolled two-way
+    // (`requestedBoncukAmount`/`selectedRewardId`) stacking check — the same
+    // upgrade P8-C/P8-C.1/P8-C.2 already made on takeaway/delivery/
+    // reservation preorder. The `requestedBoncukAmount > 0` branch above
+    // already unconditionally rejects on its own for dine-in, so this can
+    // only ever additionally catch `selectedRewardId !== null &&
+    // selectedCampaignId !== null` here — but reuses the ONE shared check
+    // rather than a dine-in-specific duplicate.
+    enforceBenefitExclusivity({ requestedBoncukAmount, selectedRewardId, selectedCampaignId });
     // Anonymous table guests can never redeem a catalog reward — rejected
     // fail-closed BEFORE the transaction opens, so no Loyalty account read
     // of any kind ever happens for a guest request.
@@ -340,6 +424,21 @@ export const submitDineInOrder = onCall(
         "permission-denied",
         "Catalog reward redemption requires a real, phone-verified customer identity.",
         { reason: "catalogReward/reward-not-currently-valid" },
+      );
+    }
+    // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — LOCKED
+    // Abaküs One policy: anonymous/table-QR guests cannot use Campaigns,
+    // mirroring the identical, already-shipped guest exclusion above for
+    // catalog-reward redemption (and the existing dine-in-wide cash-Boncuk
+    // exclusion) exactly — never a new/parallel guest policy. Rejected
+    // fail-closed BEFORE the transaction opens, so no campaign document is
+    // ever read for a guest request. See `docs/business_rules.md`
+    // BR-LOYALTY-019/BR-PROMO-008 for the locked rule.
+    if (selectedCampaignId !== null && !isRealCustomer) {
+      throw new HttpsError(
+        "permission-denied",
+        "Campaign redemption requires a real, phone-verified customer identity.",
+        { reason: "campaign/requires-customer-identity" },
       );
     }
 
@@ -432,14 +531,142 @@ export const submitDineInOrder = onCall(
         catalogRewardPreCheck = { reward, redeemedProductId };
       }
 
+      // -------------------------------------------------------------
+      // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — campaign
+      // PRE-resolution (existence/tenant/active/archived/channel/schedule).
+      // Real customer only — the guest rejection above already guarantees
+      // `selectedCampaignId` is null for any anonymous caller reaching this
+      // point. Deliberately BEFORE `buildLines`: these checks need no
+      // pricing at all. Minimum-basket/targeting/rule-satisfaction checks DO
+      // need priced lines — resolved just below, after `buildLines`'s first
+      // pass. Mutually exclusive with catalogReward (enforced pre-
+      // transaction by `enforceBenefitExclusivity`), so at most one of
+      // `catalogRewardPreCheck`/`campaignPreCheck` is ever non-null. Mirrors
+      // `submitTakeawayOrder.ts`'s own placement/shape exactly, reusing the
+      // shared engine verbatim — no dine-in-specific duplicate eligibility
+      // logic.
+      // -------------------------------------------------------------
+      let campaignPreCheck: CampaignDefinition | null = null;
+      if (selectedCampaignId !== null) {
+        const campaignSnap = await tx.get(db.collection(CAMPAIGNS_COLLECTION).doc(selectedCampaignId));
+        const campaign = parseCampaignDefinition(campaignSnap.exists ? campaignSnap.data() : undefined);
+        if (!campaign || campaign.organizationId !== organizationId) {
+          boncukError("invalid-argument", "The selected campaign does not exist.", "campaign/not-found");
+        }
+        if (!campaign.active) {
+          boncukError("failed-precondition", "The selected campaign is no longer active.", "campaign/inactive");
+        }
+        if (campaign.archived) {
+          boncukError("failed-precondition", "The selected campaign is no longer available.", "campaign/archived");
+        }
+        if (!campaign.eligibleChannels.includes(DINE_IN_COMMERCIAL_CHANNEL)) {
+          boncukError(
+            "failed-precondition",
+            "The selected campaign is not available for dine-in (Masa) orders.",
+            "campaign/channel-not-eligible",
+          );
+        }
+
+        // Trusted branch timezone — never the client's clock, never a
+        // hardcoded default when the branch has its own real value. Mirrors
+        // `submitTakeawayOrder.ts`'s own branch-timezone lookup exactly —
+        // dine-in has no already-loaded policy/timezone value to reuse the
+        // way reservation preorder does, so this is one extra read, exactly
+        // like takeaway/delivery each also needed.
+        const branchSnap = await tx.get(db.collection("branches").doc(branchId));
+        const branchTimeZone =
+          branchSnap.exists && typeof branchSnap.data()!.timezone === "string"
+            ? (branchSnap.data()!.timezone as string)
+            : DEFAULT_ORGANIZATION_TIMEZONE;
+
+        if (!isCampaignScheduleCurrentlyOpen(campaign.schedule, Timestamp.now(), branchTimeZone)) {
+          boncukError(
+            "failed-precondition",
+            "The selected campaign is not currently within its scheduled window.",
+            "campaign/schedule-not-open",
+          );
+        }
+
+        campaignPreCheck = campaign;
+      }
+
       const pricingPolicy = await loadCanonicalChannelPricingPolicy(db, restaurantId);
-      const { lines, normalizedItems, rewardAppliedLineIndex } = await buildLines(
+      const pass1 = await buildLines(
         db,
         rawItems,
         { restaurantId },
         pricingPolicy,
         catalogRewardPreCheck?.redeemedProductId ?? null,
       );
+      let lines = pass1.lines;
+      const normalizedItems = pass1.normalizedItems;
+      const rewardAppliedLineIndex = pass1.rewardAppliedLineIndex;
+
+      // -------------------------------------------------------------
+      // Server-Authoritative Campaign Engine P8-C.3 — discount resolution +
+      // PASS 2 rebuild. `resolveCampaignDiscount` (campaignPricing.ts) is
+      // the exact same pure, shared resolver every other channel uses —
+      // never a dine-in-specific reimplementation. Minimum-basket is
+      // evaluated by that resolver itself against PASS 1's own (pre-
+      // discount) line subtotals — dine-in has no separate restaurant-
+      // operational minimum-order check to preserve (unlike delivery's
+      // `area.minimumOrderMinorUnits`), so PASS 1's own pricing is the
+      // canonical pre-discount basket.
+      // -------------------------------------------------------------
+      let selectedBenefitType: SelectedBenefitType = "none";
+      let campaignDiscountMinorUnits = 0;
+      let campaignOrderSnapshot: CampaignOrderSnapshot | null = null;
+      if (campaignPreCheck !== null) {
+        const campaign = campaignPreCheck;
+        const discountResult = resolveCampaignDiscount(campaign, pass1.campaignLines);
+        if (discountResult.status === "minimum-basket-not-met") {
+          boncukError(
+            "failed-precondition",
+            "This order does not meet the selected campaign's minimum basket requirement.",
+            "campaign/minimum-basket-not-met",
+          );
+        }
+        if (discountResult.status === "trigger-quantity-not-met") {
+          boncukError(
+            "failed-precondition",
+            "This order does not meet the selected campaign's required purchase quantity.",
+            "campaign/trigger-quantity-not-met",
+          );
+        }
+        if (discountResult.status === "no-eligible-line") {
+          boncukError(
+            "invalid-argument",
+            "None of the items in this order are eligible for the selected campaign.",
+            "campaign/no-eligible-line",
+          );
+        }
+        const lineDiscounts = new Map(
+          discountResult.lineDiscounts.map((d) => [d.lineIndex, d.discountMinorUnits]),
+        );
+        // PASS 2 — rebuild lines with the resolved per-line campaign
+        // discount applied. `rewardedProductId: null` — campaign and
+        // catalogReward are mutually exclusive, so this pass never needs
+        // `freeUnitCount` too.
+        const pass2 = await buildLines(db, rawItems, { restaurantId }, pricingPolicy, null, lineDiscounts);
+        lines = pass2.lines;
+
+        selectedBenefitType = "campaign";
+        campaignDiscountMinorUnits = discountResult.totalDiscountMinorUnits;
+        campaignOrderSnapshot = {
+          campaignId: campaign.campaignId,
+          campaignVersion: campaign.version,
+          title: campaign.title,
+          campaignType: campaign.campaignType,
+          appliedRule: campaign.rule,
+          appliedValue: discountResult.appliedValue,
+          discountMinorUnits: discountResult.totalDiscountMinorUnits,
+          orderChannel: DINE_IN_COMMERCIAL_CHANNEL,
+        };
+      }
+
+      // Never patch grandTotal afterward — `pricing` is derived exactly
+      // once, from whichever `lines` (pass1, or pass2 if a campaign
+      // discount was applied) are final at this point.
       const pricing = computeOrderPriceBreakdown(lines);
 
       const normalizedForFingerprint = {
@@ -447,6 +674,11 @@ export const submitDineInOrder = onCall(
         items: normalizedItems,
         customerNote,
         selectedRewardId,
+        // Server-Authoritative Campaign Engine P8-C.3 — same reasoning, for
+        // the mutually exclusive campaign selection: a retry that reuses
+        // the same submissionKey but changes selectedCampaignId is "a
+        // different order payload," never silently accepted.
+        selectedCampaignId,
       };
       const fingerprint = computeRequestFingerprint(normalizedForFingerprint);
 
@@ -463,7 +695,12 @@ export const submitDineInOrder = onCall(
         return { orderId, orderNumber: existingData.orderNumber, duplicate: true };
       }
 
-      let selectedBenefitType: SelectedBenefitType = "none";
+      // `selectedBenefitType` was already declared above (Server-
+      // Authoritative Campaign Engine P8-C.3's own two-pass block) — reused
+      // here, never redeclared; a campaign selection guarantees
+      // `selectedRewardId === null` (`enforceBenefitExclusivity`), so the
+      // catalogReward block below never overwrites an already-`"campaign"`
+      // value.
       let pendingCatalogReward: PendingCatalogRewardRedemption | null = null;
 
       if (catalogRewardPreCheck !== null) {
@@ -592,7 +829,52 @@ export const submitDineInOrder = onCall(
       // Write phase — every tx.get() this transaction will ever perform
       // has already happened above.
       // ---------------------------------------------------------------
+      // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — usage
+      // reservation is the FIRST write-phase statement, mirroring
+      // `submitTakeawayOrder.ts`'s own placement exactly.
+      // `reserveCampaignUsage` (the shared `campaignUsage.ts` primitive,
+      // reused verbatim) performs its OWN internal reads (counter/
+      // reservation existence) THEN writes atomically — calling it here
+      // guarantees ALL of its reads happen before ANY write in this ENTIRE
+      // transaction. `customerId: uid` here is always a real, phone-
+      // verified customer — campaign selection is rejected for guest
+      // dine-in orders before this transaction is ever opened (see the
+      // guest rejection above), so there is no "campaign-on-guest" case to
+      // separately handle here.
+      // ---------------------------------------------------------------
       const now = new Date();
+
+      if (campaignPreCheck !== null) {
+        const reserveResult = await reserveCampaignUsage(db, tx, {
+          organizationId,
+          campaignId: campaignPreCheck.campaignId,
+          customerId: uid,
+          orderId,
+          usageLimit: campaignPreCheck.usageLimit,
+          perCustomerUsageLimit: campaignPreCheck.perCustomerUsageLimit,
+        });
+        if (reserveResult.status === "global-limit-reached") {
+          boncukError(
+            "failed-precondition",
+            "The selected campaign has reached its usage limit.",
+            "campaign/usage-limit-reached",
+          );
+        }
+        if (reserveResult.status === "customer-limit-reached") {
+          boncukError(
+            "failed-precondition",
+            "You have already used the selected campaign the maximum number of times.",
+            "campaign/customer-usage-limit-reached",
+          );
+        }
+        if (reserveResult.status === "already-reserved") {
+          boncukError(
+            "failed-precondition",
+            "A campaign usage reservation already exists for this order.",
+            "campaign/reservation-conflict",
+          );
+        }
+      }
 
       if (pendingCatalogReward) {
         tx.set(pendingCatalogReward.accountRef, {
@@ -628,6 +910,8 @@ export const submitDineInOrder = onCall(
           fingerprint,
           selectedBenefitType,
           catalogReward: pendingCatalogReward ? pendingCatalogReward.orderSnapshot : null,
+          campaign: campaignOrderSnapshot,
+          discountMinorUnits: campaignDiscountMinorUnits,
         }),
       );
 

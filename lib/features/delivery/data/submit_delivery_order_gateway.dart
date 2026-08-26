@@ -151,6 +151,17 @@ abstract interface class SubmitDeliveryOrderGateway {
   /// itself (`functions/src/submitDeliveryOrder.ts`, P7-D). Mutually
   /// exclusive with [requestedBoncukAmount] > 0 — the server rejects a
   /// request that sets both.
+  ///
+  /// Server-Authoritative Campaign Engine P8-C.1 (2026-08-25) —
+  /// [selectedCampaignId] is the ONLY campaign-related value this method
+  /// ever sends: which campaign the customer picked. There is structurally
+  /// no parameter here for its discount amount/percentage, rule, version,
+  /// organizationId, channel, eligibility, or usage count — the server
+  /// resolves and re-validates every one of those itself
+  /// (`functions/src/submitDeliveryOrder.ts`, P8-C.1). `null` (the
+  /// default) means "no campaign requested." Mutually exclusive with
+  /// [requestedBoncukAmount] > 0 and [selectedRewardId] != null — sending
+  /// more than one is rejected server-side (one order = one benefit).
   Future<SubmitDeliveryOrderResult> submit({
     required String submissionKey,
     required String savedAddressId,
@@ -160,6 +171,7 @@ abstract interface class SubmitDeliveryOrderGateway {
     String? deviceLocationUnavailableReason,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   });
 }
 
@@ -176,6 +188,7 @@ class FirebaseSubmitDeliveryOrderGateway implements SubmitDeliveryOrderGateway {
     String? deviceLocationUnavailableReason,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) async {
     final callable = functions.FirebaseFunctions.instance.httpsCallable(
       'submitDeliveryOrder',
@@ -199,6 +212,11 @@ class FirebaseSubmitDeliveryOrderGateway implements SubmitDeliveryOrderGateway {
         // Boncuk Loyalty P7-D — sent ONLY when set, mirroring
         // `sanitizeSelectedRewardId`'s own "absent/null == no reward" contract.
         if (selectedRewardId != null) 'selectedRewardId': selectedRewardId,
+        // Server-Authoritative Campaign Engine P8-C.1 — sent ONLY when
+        // non-null, mirroring the server's own `sanitizeSelectedCampaignId`'s
+        // "absent == null" contract exactly.
+        if (selectedCampaignId != null)
+          'selectedCampaignId': selectedCampaignId,
       });
       final data = result.data;
       return SubmitDeliveryOrderResult(

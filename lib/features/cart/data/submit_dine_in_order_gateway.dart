@@ -125,12 +125,27 @@ abstract interface class SubmitDineInOrderGateway {
   /// behavior (`functions/src/submitDineInOrder.ts`'s own doc comment,
   /// BR-LOYALTY-019) — this gateway has structurally nothing to send for
   /// it, never a silently-ignored field.
+  ///
+  /// Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) —
+  /// [selectedCampaignId] is the ONLY campaign-related value this method
+  /// ever sends: which campaign the customer picked. There is structurally
+  /// no parameter here for its discount amount/percentage, rule, version,
+  /// or channel — the server resolves and re-validates every one of those
+  /// itself (`functions/src/submitDineInOrder.ts`, P8-C.3). `null` (the
+  /// default) means "no campaign requested." Mutually exclusive with
+  /// [selectedRewardId] != null — sending both is rejected server-side (one
+  /// order = one benefit). **LOCKED policy**: anonymous table guests can
+  /// never use a campaign (mirrors the identical, already-existing guest
+  /// exclusion on [selectedRewardId] above and the structural absence of
+  /// any cash-Boncuk parameter) — the server rejects fail-closed for any
+  /// non-phone-verified caller, regardless of this value.
   Future<SubmitDineInOrderResult> submit({
     required String submissionKey,
     required String tableSessionId,
     required List<DineInOrderItem> items,
     String customerNote = '',
     String? selectedRewardId,
+    String? selectedCampaignId,
   });
 }
 
@@ -144,6 +159,7 @@ class FirebaseSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     required List<DineInOrderItem> items,
     String customerNote = '',
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) async {
     final callable = functions.FirebaseFunctions.instance.httpsCallable(
       'submitDineInOrder',
@@ -155,6 +171,11 @@ class FirebaseSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
         'items': [for (final item in items) item.toJson()],
         'customerNote': customerNote,
         if (selectedRewardId != null) 'selectedRewardId': selectedRewardId,
+        // Server-Authoritative Campaign Engine P8-C.3 — sent ONLY when
+        // non-null, mirroring the server's own `sanitizeSelectedCampaignId`'s
+        // "absent == null" contract exactly.
+        if (selectedCampaignId != null)
+          'selectedCampaignId': selectedCampaignId,
       });
       final data = result.data;
       return SubmitDineInOrderResult(

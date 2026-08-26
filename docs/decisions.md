@@ -15611,6 +15611,14 @@ Anonymous guests (`customerId: null`) never create a `campaignCustomerUsage` doc
 this into checkout must independently enforce "guests may use a campaign only when
 `perCustomerUsageLimit == null`" before ever reserving on a guest's behalf.
 
+> **SUPERSEDED (P8-C.3, 2026-08-25).** This P8-B design ("guests may use a campaign only when
+> `perCustomerUsageLimit == null`") was never actually wired into any checkout path and is no longer
+> the current rule. When dine-in later became the one channel to actually integrate campaigns with a
+> real anonymous-guest identity, the product owner locked a stricter policy instead: anonymous/table-QR
+> guests cannot use Campaigns at all. This paragraph is preserved as an accurate historical record of
+> what P8-B designed, not as current guidance — see the P8-C.3 entry below and `docs/business_rules.md`
+> `BR-LOYALTY-030` for the LOCKED final rule.
+
 ### 5. Benefit exclusivity — one shared helper, not a fourth copy-paste
 
 `functions/src/benefitExclusivity.ts`'s `enforceBenefitExclusivity()` is the one place "ONE ORDER =
@@ -15713,3 +15721,532 @@ test` — result recorded in the final P8-B report. No commit was made, per this
 **Operational note**: the persistent `abakus-one-dev` dev emulator was stopped to free ports for the
 Functions FULL suite and restarted afterward on the same project/ports; `getCustomerActiveCampaigns`
 confirmed loaded alongside every pre-existing function.
+
+## Server-Authoritative Campaign Engine P8-C — Takeaway checkout integration, and P8-C.1 — Delivery
+checkout integration (2026-08-25)
+
+**Status**: Implemented for two channels — takeaway (P8-C) and delivery (P8-C.1) — matching each
+task's own explicit scope ("takeaway only," then "delivery only, reuse P8-C's shared mechanism, do not
+build a duplicate campaign engine"). Neither phase's own report was previously written to this file
+(both were returned directly in-session per their own tasks' RETURN-tag report format); this entry
+closes that gap for both together, since P8-C.1 is a direct, mechanical continuation of P8-C's own
+design. `reservationPreorder.ts`/`submitDineInOrder.ts` campaign redemption, Admin UI, and coupon-code
+redemption remain explicitly out of scope. See `docs/business_rules.md`'s updated `BR-PROMO-008` for
+the full locked rule set.
+
+### 1. Reuse discipline — zero changes to the shared engine, only per-channel glue
+
+`campaignEngine.ts`, `campaignScheduling.ts`, `campaignPricing.ts`, `campaignUsage.ts`,
+`benefitExclusivity.ts` were all built as foundation-only, unused modules in P8-B; P8-C wires them into
+`submitTakeawayOrder.ts`, and P8-C.1 wires the exact same modules — unmodified — into
+`submitDeliveryOrder.ts`. Each channel only adds its own per-channel glue: an eligibility PRE-check
+block (existence/tenant/active/archived/channel/schedule), a two-pass line-building flow (pass 1 prices
+lines at full price to gather `CampaignPriceableLine[]`; `resolveCampaignDiscount` computes the
+discount; pass 2 rebuilds the final discounted lines), and campaign-snapshot construction — mirroring
+this codebase's own pre-existing "mirror the per-channel glue, share the actual engine" convention
+(the same relationship `submitDeliveryOrder.ts`'s `buildDeliveryLines`/`buildDeliveryOrderDocument`
+already had with `submitTakeawayOrder.ts`'s `buildLines`/`buildOrderDocument` before campaigns
+existed). `buildOrderLine`/`buildProductLine`/`buildBowlLine` (`takeawayPricing.ts`/
+`submitTakeawayOrder.ts`, already shared/exported and reused by delivery pre-P8-C) needed exactly one
+additive change — a trailing `campaignDiscountMinorUnits` parameter, defaulting to `0` — to serve both
+channels' two-pass flows with no duplication.
+
+`enforceBenefitExclusivity()` (built unused in P8-B) now replaces each channel's own previously-
+hand-rolled `requestedBoncukAmount > 0 && selectedRewardId !== null` stacking check. This is a
+deliberate behavior change: the shared rejection reason for the pre-existing boncuk+catalogReward
+stacking case changed from `catalogReward/benefit-stacking-not-allowed` to the new shared
+`benefit/stacking-not-allowed` for BOTH channels — required a corresponding one-line fix in each
+channel's own pre-existing `submitTakeawayOrderCatalogReward.test.ts`/
+`submitDeliveryOrderCatalogReward.test.ts`.
+
+`campaignUsageRestore.ts` (P8-C's own new terminal-release consumer, `onOrderEventCreatedForCampaignUsageRelease`)
+and `onOrderTerminalFailureOrRefund.ts`'s unconditional `campaignUsageReleaseEvaluated: false` stamp
+were both built channel-agnostic in P8-C — reacting to `selectedBenefitType === "campaign"` on the
+order document itself, never to `channel`. **P8-C.1 required zero changes to either file** — the
+consumer activated automatically for delivery orders the moment `submitDeliveryOrder.ts` started
+setting that field, exactly as P8-C's own doc comments predicted. Same story for
+`loyaltyOrderEarning.ts`: already reads `pricing.grandTotal.minorUnits` as its earning basis
+channel-agnostically, so a post-campaign delivery order earns correctly with zero campaign-specific
+code — proven, not just designed, by both channels' own dedicated earning tests.
+
+### 2. A genuine P8-B latent bug found and fixed via P8-C's own testing
+
+`parseCampaignDefinition` was reusing the write-side `sanitizeCampaignSchedule` (expects raw `"HH:mm"`
+strings) to re-parse ALREADY-STORED recurring-schedule data (normalized `startMinute`/`endMinute`
+integers) — every recurring-schedule campaign was permanently unreadable (`campaign/not-found`),
+undetected by P8-B's own tests because they only ever fixture-tested `oneTime` mode (format-symmetric
+between raw input and stored shape, unlike `recurring`). Fixed with a genuine read-side parser
+(`parseStoredCampaignSchedule`/`parseStoredRecurringWindow` in `campaignScheduling.ts`). A pre-existing
+P8-B test fixture (`getCustomerActiveCampaigns.test.ts`) was itself seeding the wrong raw shape for its
+own recurring-schedule tests (coincidentally "working" only because of the same bug) and was corrected
+to match real stored data as part of the same fix.
+
+### 3. Delivery-specific design notes (P8-C.1)
+
+Delivery has no guest/anonymous ordering path at all (`submitDeliveryOrder.ts`'s own long-standing doc
+comment) — unlike takeaway, there is no "campaign selected by a guest" case to reject; `reserveCampaignUsage`
+is always called with a real, phone-verified `customerId`. Delivery's own pre-existing
+`area.minimumOrderMinorUnits` restaurant-operational-minimum check is evaluated against PASS 1 (the
+pre-campaign-discount subtotal) — the same "pre-discount canonical basket" reasoning
+`resolveCampaignDiscount` already applies to the campaign's own `minimumBasketMinorUnits`, so a
+discount can never retroactively make an order that met the minimum "not meet" it. Branch timezone for
+schedule evaluation is resolved from `area.branchId` (delivery's own service-area resolution already
+determines the branch server-side, before the campaign pre-check ever runs), mirroring takeaway's own
+`branches/{branchId}.timezone` lookup exactly.
+
+### 4. Flutter — one shared `CampaignSelectionCard`, a real cross-channel reuse bug found and fixed
+
+A single `CampaignSelectionCard` widget (`lib/features/cart/presentation/widgets/campaign_selection_card.dart`)
+is reused verbatim by `TakeawayCheckoutScreen` and `DeliveryCheckoutScreen` — mirroring `CatalogRewardCard`'s/
+`BoncukRedemptionCard`'s own established shared-widget-per-benefit convention, never a duplicate
+delivery-specific card. **Found and fixed during this phase's own Flutter test run**: the widget's
+first version hardcoded its channel-eligibility filter to `"takeaway"` internally, silently filtering
+out every delivery-eligible campaign the moment it was reused on `DeliveryCheckoutScreen` — 7 of the
+new delivery checkout tests failed with "campaign card not found," which traced directly to this. Fixed
+by adding a required `commercialChannel` constructor parameter, supplied by each caller
+(`'takeaway'`/`'delivery'`) rather than hardcoded inside the widget. `OrderSuccessScreen`'s own
+`_hasCampaignSummary` render gate was broadened from `_isTakeaway && _hasCampaignSummary` to
+`(_isTakeaway || isDeliveryOrder) && _hasCampaignSummary`, mirroring the Boncuk/catalogReward summary
+gates' own established `(_isTakeaway || isDeliveryOrder || _isDineIn)` pattern.
+
+**Files changed — backend**: modified `functions/src/{boncukRedemptionErrors.ts,campaignEngine.ts,
+campaignScheduling.ts,index.ts,onOrderTerminalFailureOrRefund.ts,submitDeliveryOrder.ts,
+submitTakeawayOrder.ts,takeawayPricing.ts}`; new `functions/src/campaignUsageRestore.ts`; modified
+tests `functions/src/test/{getCustomerActiveCampaigns.test.ts,submitDeliveryOrderCatalogReward.test.ts,
+submitTakeawayOrderCatalogReward.test.ts}`; new tests `functions/src/test/
+{submitDeliveryOrderCampaign.test.ts,submitTakeawayOrderCampaign.test.ts}`. **Files changed —
+Flutter**: modified `lib/features/{campaigns/data/campaign_gateway.dart,campaigns/domain/models/
+campaign.dart,cart/presentation/screens/order_success_screen.dart,cart/presentation/screens/
+takeaway_checkout_screen.dart,delivery/data/submit_delivery_order_gateway.dart,delivery/presentation/
+screens/delivery_checkout_screen.dart,orders/data/order_firestore_mapper.dart,orders/domain/models/
+{order.dart,order_benefit_type.dart,order_model.dart},orders/presentation/screens/
+order_detail_screen.dart,takeaway/data/submit_takeaway_order_gateway.dart}`; new `lib/features/cart/
+presentation/widgets/campaign_selection_card.dart`, `lib/features/orders/domain/models/
+campaign_snapshot.dart`; modified tests `test/features/cart/presentation/screens/
+{takeaway_checkout_screen_test.dart,takeaway_guest_checkout_screen_test.dart}`, `test/features/
+delivery/presentation/screens/delivery_checkout_screen_test.dart`; new test
+`test/features/orders/presentation/screens/order_detail_screen_test.dart`. **Docs**: this entry,
+`docs/business_rules.md` (`BR-PROMO-008` updated to reflect checkout integration), `docs/feature_status.md`
+(P8-C/P8-C.1 entry).
+
+**Exact gate totals**: Functions build (`tsc`) clean for both phases. Functions FULL emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`, JDK 21) — **1647/1647, 0 failed** (up from the P8-B baseline of
+1567 — 43 new takeaway-campaign tests + 37 new delivery-campaign tests). Firestore Rules — not run;
+`firestore.rules`/`firestore.indexes.json` untouched by either phase (confirmed via `git status` — zero
+diff), so the "Rules FULL if rules touched" gate condition was never triggered. `flutter analyze` —
+clean, no issues, both phases. `flutter test` — result recorded in the final P8-C.1 report. No commit
+was made in either phase, per each task's own explicit "DO NOT COMMIT" instruction.
+
+**Operational note**: the persistent `abakus-one-dev` dev emulator was stopped twice more (once per
+phase) to free ports for isolated/full Functions suite runs, each time with explicit permission
+established earlier in this session, and restarted afterward on the same project/ports both times.
+
+## Server-Authoritative Campaign Engine P8-C.2 — Reservation preorder checkout integration
+(2026-08-25)
+
+**Status**: Implemented — the third and, per the P8-A/P8-B/P8-C family's own stated scope, final
+customer-checkout channel (`submitDineInOrder.ts` remains explicitly deferred). Reuses every shared
+module from `campaignEngine.ts`/`campaignScheduling.ts`/`campaignPricing.ts`/`campaignUsage.ts`/
+`benefitExclusivity.ts`/`campaignUsageRestore.ts` verbatim — zero changes to any of them — matching the
+task's own explicit "do not write a Reservation-specific Campaign Engine" instruction. See
+`docs/business_rules.md`'s updated `BR-PROMO-008` for the full locked rule set, including reservation
+preorder's own terminal-release mapping and the `confirmedTime`-never-reprices guarantee.
+
+### 1. Why reservation preorder needed real, structural pre-work audit before writing any code
+
+Reservation preorder's lifecycle (restaurant approval, alternative-time proposals, capacity holds, a
+response-timeout sweep, a proposal-expiry sweep, KDS release timing) is genuinely more complex than
+takeaway/delivery's own linear confirm→prepare→ready→complete flow, and the task explicitly required
+"STOP AND REPORT if Reservation architecture has a structural blocker" rather than inventing a
+workaround. A dedicated audit (a subagent read of all 8 reservation lifecycle files, cross-checked
+against the existing `submitReservationCatalogReward.test.ts` end-to-end tests) confirmed **no
+structural blocker exists**: `onOrderTerminalFailureOrRefund.ts` (P8-C's own channel-agnostic Firestore
+trigger, `onDocumentUpdated("orders/{orderId}", ...)`) already fires correctly for every genuine
+reservation-preorder Order terminal transition — its own doc comment, written in an earlier phase,
+explicitly already documented this. Combined with `campaignUsageRestore.ts` (also channel-agnostic,
+reacting to `selectedBenefitType === "campaign"` on the Order, never to `channel`), this meant the
+ENTIRE release side required **zero new backend wiring** — only new tests to prove it, plus the
+creation-time campaign logic in `submitReservation.ts`/`reservationPreorder.ts`.
+
+### 2. Application point — one instant, one place, never re-evaluated
+
+A campaign is resolved, priced, and its usage reserved exactly once: inside `submitReservation.ts`'s
+existing `if (parsedPreorder)` block, at reservation-CREATION time, in the same transaction as the
+Reservation and its linked preorder Order. `reservationPreorder.ts`'s `buildPreorderLines` gained the
+identical two-pass shape `buildLines`/`buildDeliveryLines` already use (pass 1 prices at full price to
+gather `CampaignPriceableLine[]`; `resolveCampaignDiscount` computes the discount; pass 2 rebuilds the
+discounted lines), and `buildPreorderOrderDocument` gained the same `campaign`/`discountMinorUnits`
+params `buildDeliveryOrderDocument` already has. `buildPreorderProductLine`/`buildPreorderBowlLine` each
+gained the same additive trailing `campaignDiscountMinorUnits = 0` parameter `buildOrderLine` already
+threads through for the other two channels — and, as a genuine incidental fix, `buildPreorderProductLine`
+now also passes `categoryId` into `buildOrderLine` (previously omitted entirely, since category-scoped
+campaigns didn't exist when that function was first written) so category-scoped campaigns can actually
+resolve against a reservation preorder line.
+
+**Two simplifications genuinely unique to this channel, confirmed via source, not assumed:**
+`ReservationPolicy.timezone` is already resolved earlier in the same transaction by
+`resolveActiveReservationBranch` — the campaign schedule check reuses it directly, needing **no extra
+`branches/{branchId}` read** the way takeaway/delivery both needed. Reservation preorder has **no
+channel surcharge at all** (`reservationPreorder.ts`'s own §1 doc comment) and **no separate
+restaurant-operational minimum-order threshold** the way delivery's `area.minimumOrderMinorUnits` is —
+so `minimumBasketMinorUnits` is evaluated directly against PASS 1's own canonical basket, with no second
+minimum-order check to reconcile against.
+
+### 3. Terminal-release mapping — audited exhaustively before any release test was written
+
+Campaign usage is an Order benefit; Reservation state never directly mutates campaign counters — only
+the linked preorder Order's own terminal status write does, through the same generic trigger chain.
+Confirmed terminalizing paths (usage released): `respondToReservation` reject; `cancelReservation`
+customer self-cancel while still `pendingConfirmation`; `cancelReservationPreorderOrderForStaff`
+(post-release staff cancel); `markReservationNoShow` (both pre- and post-kitchen-release);
+`refundReservationPreorderOrder`; `reservationSweep`'s `runReservationResponseTimeoutSweep`. Confirmed
+NON-terminalizing paths (usage stays reserved — tests exist proving this explicitly, per the task's own
+"do not invent a release" instruction): `respondToProposedChange` decline; `reservationSweep`'s
+`runReservationProposalExpirySweep` (verified via source read — only returns the Reservation to
+`pendingRestaurantApproval`, no `buildPreorderCancellationPatch` call exists in that path at all);
+`cancelReservation` staff-cancel while the preorder is ALREADY released (`cancelReservation.ts`'s own
+documented behavior — staff must use the dedicated order-scoped callable instead); `respondToReservation`
+confirm / `respondToProposedChange` accept (both release TO the kitchen, not a terminal state).
+
+`confirmedTime` changes (via `respondToProposedChange` accept) never re-price an already-applied
+campaign discount — `buildPreorderConfirmationPatch`'s own patch shape has no `pricing`/`campaign` field
+at all, only `status`/`kitchenReleaseAt`/`version`/`timestamps`/`statusHistory` — proven end-to-end by a
+dedicated test asserting byte-for-byte snapshot/pricing equality across a propose→accept round trip.
+
+### 4. `enforceBenefitExclusivity()` replaces reservation preorder's own hand-rolled stacking check
+
+`reservationPreorder.ts`'s `parsePreorderRequest` previously hand-rolled its own two-benefit
+(`requestedBoncukAmount`/`selectedRewardId`) stacking check — replaced with a call to the shared
+`enforceBenefitExclusivity()` (built unused in P8-B, already reused by takeaway/P8-C and delivery/
+P8-C.1). Same deliberate behavior change as those two phases: the rejection reason for the
+boncuk+catalogReward stacking case changed from `catalogReward/benefit-stacking-not-allowed` to the
+shared `benefit/stacking-not-allowed` — required a corresponding one-line fix in the pre-existing
+`submitReservationCatalogReward.test.ts`.
+
+### 5. Flutter — the same shared `CampaignSelectionCard`, correct exclusivity gating this time
+
+`ReservationFlowScreen` reuses `CampaignSelectionCard` (`commercialChannel: 'reservationPreorder'`, never
+hardcoded to another channel — the exact bug P8-C.1 found and fixed on `DeliveryCheckoutScreen`, not
+repeated here) and the same `CampaignSuccessSummary`/campaign-chip display conventions
+`OrderSuccessScreen`/`order_detail_screen.dart` already established, applied to
+`ReservationConfirmationScreen`/`_PreorderStatusCard` (`reservation_detail_screen.dart`) instead, sourced
+from `ReservationPreorderSummary`'s two new fields (`campaignTitle`/`campaignDiscountMinorUnits`/
+`hasCampaignSummary`), parsed in `FirestoreReservationRepository._mapPreorder` from the same `campaign`
+Firestore field `buildPreorderOrderDocument` writes. Getting the three-way exclusivity gating fully
+correct on the FIRST pass (not a second bug this phase had to find and fix) required checking
+`TakeawayCheckoutScreen`'s own established pattern directly rather than inferring it: selecting a
+campaign hides the `BoncukRedemptionCard` entirely (`if (_selectedRewardId == null && _selectedCampaignId
+== null)`, not merely disables it) and sets `CatalogRewardCard.boncukCashRedemptionActive:
+_boncukUsageEnabled || _selectedCampaignId != null` — an initial draft of this file's own edit missed
+both of these and was corrected before running tests, by reading the takeaway precedent line-by-line
+rather than improvising the reservation-specific wiring.
+
+**Files changed — backend**: modified `functions/src/{reservationPreorder.ts,submitReservation.ts}`;
+modified test `functions/src/test/submitReservationCatalogReward.test.ts` (one reason-string fix); new
+test `functions/src/test/submitReservationCampaign.test.ts` (42 tests). **Files changed — Flutter**:
+modified `lib/features/reservation/{data/reservation_gateway.dart,data/reservation_repository.dart,
+domain/models/reservation_summary.dart,domain/reservation_error_messages.dart,presentation/screens/
+reservation_confirmation_screen.dart,presentation/screens/reservation_detail_screen.dart,
+presentation/screens/reservation_flow_screen.dart}`; modified tests `test/features/reservation/
+presentation/screens/{reservation_confirmation_screen_test.dart,reservation_detail_screen_test.dart,
+reservation_flow_screen_test.dart}` (10 new tests total: 6 flow-screen wiring, 2 confirmation-screen
+summary, 2 detail-screen historical chip). **Docs**: this entry, `docs/business_rules.md` (`BR-PROMO-008`
+updated with reservation preorder's own application-point/terminal-release/no-reprice rules),
+`docs/feature_status.md` (P8-C.2 entry).
+
+**Exact gate totals**: Functions build (`tsc`) clean. Functions FULL emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`, JDK 21) — **1689/1689, 0 failed** (up from the P8-C/P8-C.1 baseline
+of 1647 — 42 new reservation-campaign tests). The first full-suite run of this phase showed one failure
+(`campaignUsage.test.ts`'s pre-existing "N concurrent reservations for the SAME customer against a
+per-customer limit" test, untouched by P8-C.2's own reservation-preorder changes) — root-caused in a
+dedicated final-gate cleanup pass (same day) to a genuine gRPC transport failure, `3 INVALID_ARGUMENT:
+Transaction is invalid or closed`, already diagnosed and fixed once before in this codebase
+(`orderEarnReversal.test.ts`'s own `withTransientEmulatorTransportRetry`, P5-B): the bundled Firestore
+emulator reports an expired/invalidated transaction handle with different wording than production Cloud
+Firestore, which the Admin SDK's own `isRetryableTransactionError` (`@google-cloud/firestore`) doesn't
+recognize, so it fails closed instead of transparently retrying. Fixed by applying the SAME established,
+narrowly-scoped retry helper to this file's own two N-concurrent-transaction tests (the file's own
+highest-contention race-safety proofs, hence the ones actually exposed to this SDK/emulator wording
+gap) — never a skip, an assertion loosening, or a masked business-logic failure; a genuine business
+assertion still fails the test unchanged. Re-verified 3/3 clean in isolation (14/14 each) and confirmed
+by a clean full-suite re-run. Firestore Rules — not run; `firestore.rules`/`firestore.indexes.json`
+untouched (confirmed via `git diff --stat` — zero output), so the "Rules FULL if rules touched" gate
+condition was never triggered. `flutter analyze` — clean, 0 issues. `flutter test` — **3444 passed, 12
+skipped, 0 failed** (up from the P8-C.1-era baseline of 3434 passed + 12 skipped — the 10 new
+reservation-campaign tests). No commit was made, per the task's own explicit "DO NOT COMMIT" instruction.
+
+**Operational note**: the persistent `abakus-one-dev` dev emulator was stopped to free ports for the
+isolated and full Functions suite runs, and restarted afterward on the same project/ports.
+
+## Server-Authoritative Campaign Engine P8-C.3 — Dine-in checkout integration (2026-08-25)
+
+**Status**: Implemented — the fourth and, per this task family's own stated scope, final customer-
+facing commercial channel (Admin UI and coupon-code redemption remain the only deliberately-deferred
+Campaign Engine work). Reuses every shared module from `campaignEngine.ts`/`campaignScheduling.ts`/
+`campaignPricing.ts`/`campaignUsage.ts`/`benefitExclusivity.ts`/`campaignUsageRestore.ts` verbatim —
+zero changes to any of them — matching the task's own explicit "do not write a dine-in-specific
+Campaign Engine" instruction. See `docs/business_rules.md`'s updated `BR-PROMO-008` and `BR-LOYALTY-030`
+for the full locked rule set, including the guest-policy resolution below.
+
+### 1. A genuine policy conflict, surfaced and resolved BEFORE writing any code
+
+Dine-in is the one channel with a real anonymous-guest identity to reason about for campaigns (table-QR
+guests). The audit found two conflicting prior artifacts: `campaignUsage.ts`'s own P8-B doc comment had
+designed — but never actually wired into any order-submission code — a permissive rule ("anonymous
+guests may use a campaign ONLY when `perCustomerUsageLimit == null`"). Separately,
+`submitTakeawayOrder.ts`'s own real, SHIPPED P8-C guest path had already chosen a stricter rule instead:
+guest orders are blocked from campaigns entirely, mirroring that same guest path's own pre-existing
+blanket exclusion of cash Boncuk and catalog-reward redemption. Rather than silently picking one, this
+was surfaced explicitly to the product owner as a locked-policy decision before any implementation
+began. **Confirmed choice: the stricter, already-shipped precedent — anonymous/table-QR guests cannot
+use Campaigns, cash Boncuk redemption, or Catalog Rewards, and never earn Loyalty, full stop.** This is
+now the single LOCKED Abaküs One policy across every channel; the permissive P8-B doc-comment-only
+design is superseded and should not be resurrected by a future phase without an equally explicit
+re-confirmation.
+
+### 2. Why this required no structural blocker despite the guest complexity
+
+Once the guest policy was locked, dine-in's own campaign wiring turned out to be the simplest of the
+four channels: `getCustomerActiveCampaigns` (P8-B) already serves both identity types unchanged (the
+listing is, and remains, a best-effort hint — a guest may see a campaign they can never actually redeem,
+exactly like the pre-existing category-scoped-eligibility best-effort limitation every channel's own
+`CampaignSelectionCard` already has); `submitDineInOrder.ts` only needed ONE new guest-specific check
+(`selectedCampaignId !== null && !isRealCustomer` → reject fail-closed, before the transaction opens,
+mirroring the file's own pre-existing catalog-reward guest rejection verbatim). Dine-in's terminal
+lifecycle is also genuinely simpler than reservation preorder's (no separate reservation aggregate, no
+proposal/timeout sweeps — a single Order document through a linear staff-driven status machine:
+`pendingConfirmation → confirmed → preparing → ready → served → completed`, plus `pendingConfirmation →
+rejected` and `{confirmed..served} → cancelled` both via the ONE `advanceDineInOrderStatus` callable,
+`completed → refunded` via `refundDineInOrder`) — all writing `status` through the SAME generic
+`applyOrderLifecycleTransition` helper every channel already uses, so terminal-release required ZERO new
+backend wiring, exactly like P8-C.2's own reservation-preorder finding.
+
+### 3. Application point and reuse discipline
+
+Campaign pre-check/two-pass line-building/`reserveCampaignUsage`/snapshot construction were added to
+`submitDineInOrder.ts`'s own single order-creation transaction, mirroring `submitTakeawayOrder.ts`'s
+authenticated-path template almost line-for-line. `buildProductLine`/`buildBowlLine`
+(`submitTakeawayOrder.ts`, already shared/exported) needed ZERO changes — both already carry the
+trailing `campaignDiscountMinorUnits` parameter added in P8-C and reused by every channel since; only
+dine-in's own local `buildLines` helper gained the two-pass shape (`campaignLineDiscounts` parameter,
+`campaignLines` return value), identical in structure to takeaway's/delivery's own `buildLines`/
+`buildDeliveryLines`. Two genuine per-channel specifics, confirmed via source, not assumed: dine-in has
+no already-loaded branch/policy timezone to reuse (unlike reservation preorder's own shortcut) — one
+fresh `branches/{branchId}` read was added, same as takeaway/delivery each needed; dine-in has no
+separate restaurant-operational minimum-order check to reconcile against `minimumBasketMinorUnits`
+(same simplicity as reservation preorder), so PASS 1's own canonical basket is used directly.
+`enforceBenefitExclusivity()` (P8-B) now replaces this file's own previously-hand-rolled two-benefit
+(`requestedBoncukAmount`/`selectedRewardId`) stacking check — same deliberate reason-string change
+(`catalogReward/benefit-stacking-not-allowed` → `benefit/stacking-not-allowed`) as the three prior
+phases. Dine-in's own PRE-EXISTING, UNCHANGED "cash Boncuk always rejected" check still runs BEFORE
+`enforceBenefitExclusivity` in source order, so a request combining `requestedBoncukAmount > 0` with a
+campaign still surfaces the original `boncuk/redemption-not-allowed` reason, not the generic stacking
+one — proven by a dedicated test (item 20) that this did not silently change.
+
+### 4. A genuine, root-caused test-environment latency finding (not a code defect)
+
+The new `submitDineInOrderCampaign.test.ts` file's first terminal-release test failed with a `waitFor`
+timeout under its own full 40-test run (reproduced 2/2), yet passed cleanly and quickly (under 1s) every
+time it was run in isolation. Root-caused via a temporary 60000ms diagnostic run rather than assumed: the
+async release chain (`advanceDineInOrderStatus`'s status write → `onOrderTerminalFailureOrRefund` → an
+`orderEvents` create → `onOrderEventCreatedForCampaignUsageRelease` → `releaseCampaignUsage`)
+deterministically completes every time — observed completion times 22.2s-28.7s across 3 consecutive
+full-file runs, never stuck — genuinely slower under this file's own heavier real-phone-auth fixture load
+(36 of 40 tests call `createRealPhoneUser`, each three sequential real HTTP round trips to the local Auth
+emulator, since campaign redemption requires a real customer identity for nearly every scenario except
+the dedicated guest-rejection tests) than the other three channels' own campaign test files, which call
+it far less densely. Fixed by raising this ONE file's own `waitFor` default timeout to 30000ms (comfortable
+margin over the observed worst case) — never a skip, a loosened assertion, or a masked correctness
+issue; the exact same shared `campaignUsage.ts`/`campaignUsageRestore.ts` modules every other channel
+already proved correct are unmodified.
+
+### 5. Flutter — the same shared widgets, guest exclusion mirrored exactly
+
+`DineInCheckoutScreen` reuses `CampaignSelectionCard` (`commercialChannel: 'dineIn'`, never hardcoded to
+another channel) and `OrderSuccessScreen`'s existing `CampaignSuccessSummary`/`_hasCampaignSummary` gate
+(broadened from `(_isTakeaway || isDeliveryOrder)` to `(_isTakeaway || isDeliveryOrder || _isDineIn)` —
+reusing the ALREADY-EXISTING `_isDineIn` getter, since `_hasCatalogRewardSummary`'s own gate already
+included it; a one-line, zero-risk addition). The campaign control is shown ONLY when
+`isRealCustomerSession` is true — mirroring `CatalogRewardCard`'s own identical, already-established
+guest exclusion in this exact file verbatim; an anonymous table guest never sees a campaign control at
+all, not even a disabled one. `order_detail_screen.dart`'s historical campaign display required ZERO
+changes — confirmed via audit to already be gated purely on `freshOrder.campaignTitle != null`,
+channel-agnostic since the day it was built.
+
+**Files changed — backend**: modified `functions/src/{boncukRedemptionErrors.ts,submitDineInOrder.ts}`;
+new test `functions/src/test/submitDineInOrderCampaign.test.ts` (40 tests); modified tests (final-gate
+flaky-test fixes, §6) `functions/src/test/{deliveryOrderLifecycle.test.ts,functions.test.ts,
+submitReservationCampaign.test.ts}`. **Files changed — Flutter**:
+modified `lib/features/cart/{data/submit_dine_in_order_gateway.dart,presentation/screens/
+dine_in_checkout_screen.dart,presentation/screens/order_success_screen.dart}`; modified test
+`test/features/cart/presentation/screens/dine_in_checkout_screen_test.dart` (5 new tests). **Docs**: this
+entry, `docs/business_rules.md` (`BR-PROMO-008` and `BR-LOYALTY-030` updated with dine-in's own
+application-point/terminal-release/LOCKED-guest-policy rules), `docs/feature_status.md` (P8-C.3 entry).
+
+**Exact gate totals**: Functions build (`tsc`) clean. Functions FULL emulator suite
+(`GOOGLE_MAPS_PROVIDER_MODE=fixture`, JDK 21) — **1729/1729, 0 failed** (up from the P8-C.2 baseline of
+1689 — 40 new dine-in-campaign tests). The first full-suite run of this phase surfaced 2 failures, and a
+second run (after fixing those) surfaced 1 more — all three in PRE-EXISTING files unrelated to dine-in/
+campaign logic (`deliveryOrderLifecycle.test.ts`, `functions.test.ts`, and this phase's own
+`submitReservationCampaign.test.ts` from P8-C.2), each confirmed via isolation re-runs (0 failures every
+time) to be genuine test-environment/test-isolation artifacts exposed only by the suite's continued
+growth (now 1729 tests), never a stuck/incorrect state and never a production defect. Root-caused and
+fixed individually — see §6 below for the exact mechanism of each — rather than skipped, retried-until-
+green, or assertion-loosened. Firestore Rules — not run; `firestore.rules`/`firestore.indexes.json`
+untouched (confirmed via `git diff --stat` — zero output), so the "Rules FULL if rules touched" gate
+condition was never triggered. `flutter analyze` — clean, 0 issues. `flutter test` — **3449 passed, 12
+skipped, 0 failed** (up from the P8-C.2-era baseline of 3444 passed + 12 skipped — the 5 new dine-in-
+campaign tests). No commit was made, per the task's own explicit "DO NOT COMMIT" instruction.
+
+### 6. Three unrelated, pre-existing flaky tests found and fixed during this phase's own final gate
+
+None of the three touch dine-in, campaigns, or any file this phase's own feature work modified — each
+is a distinct, genuine root cause, confirmed (not guessed) before fixing:
+
+1. **`deliveryOrderLifecycle.test.ts`** — a `waitFor` polling helper's 15000ms default timeout was too
+   tight for its own async trigger chain under the suite's current size; the chain always completes
+   correctly, just needs more real wall-clock margin. Fixed by raising the timeout to 30000ms — the same
+   category of fix already applied to `submitDineInOrderCampaign.test.ts` earlier in this same phase and
+   to `campaignUsage.test.ts` in the P8-C.2 final-gate cleanup.
+2. **`functions.test.ts`** — a DEEPER, previously only partially-fixed race (the file's own doc comment
+   already documented one earlier occurrence, P5-B). The existing `firstExistingSnapshotData` helper
+   attached a Firestore realtime listener and immediately triggered the write it was watching for, but
+   attaching a listener only REGISTERS it locally — establishing the server-side watch target is its own
+   network round trip, which a fast trigger chain can outrace under heavy load, so the "first" snapshot
+   the listener ever receives can already reflect a later write. Fixed properly this time: the helper
+   (renamed `watchFirstExistingSnapshot`) now exposes a separate `ready` promise, resolved on the
+   listener's own first callback (which Firestore guarantees fires immediately once the watch is
+   genuinely live) — the caller now awaits `ready` BEFORE issuing the triggering write, closing the
+   actual race window instead of merely hoping the write loses it.
+3. **`submitReservationCampaign.test.ts`** (this phase's own P8-C.2 predecessor test file) — test 28's
+   single call to `runReservationResponseTimeoutSweep` assumed it would always include that one specific
+   reservation. The sweep is a genuinely GLOBAL, cross-tenant batch query (`limit(50)`, Firestore's own
+   implicit ascending order on the inequality-filtered `responseDeadlineAt`) — exactly matching real
+   production semantics, where the actual Cloud Scheduler invokes it repeatedly until caught up. Deep
+   into a 1700+-test suite sharing one Firestore emulator instance, enough OTHER tests' own leftover
+   `pendingRestaurantApproval` reservations (with an earlier `responseDeadlineAt` than this specific
+   test's artificially-future sweep instant) can fill an entire 50-document batch, excluding this test's
+   own reservation from that one call. Fixed by calling the sweep repeatedly (bounded, up to 50 attempts)
+   until this specific reservation resolves or the query is provably exhausted — mirroring the real
+   scheduler's own repeated-invocation contract instead of a single-call assumption.
+
+All three re-verified clean (0 failures) both in targeted isolation and in a subsequent clean full-suite
+run.
+
+**Operational note**: the persistent `abakus-one-dev` dev emulator was stopped to free ports for the
+isolated and full Functions suite runs, and restarted afterward on the same project/ports.
+
+## Server-Authoritative Campaign Engine P8-D — Final Closure Audit (2026-08-26)
+
+**Status**: CLOSED. This was an audit-only task by its own explicit instruction ("do NOT add new
+Campaign features") — no functional/business-logic code was changed. Scope: verify, end-to-end across
+all four commercial channels together (takeaway P8-C, delivery P8-C.1, reservation preorder P8-C.2,
+dine-in P8-C.3), everything each prior phase's own report only proved per-channel in isolation.
+
+### 1. What was re-verified (all confirmed, no regressions)
+
+- **Single shared engine, zero duplication**: `campaignEngine.ts`/`campaignScheduling.ts`/
+  `campaignPricing.ts`/`campaignUsage.ts`/`benefitExclusivity.ts`/`campaignUsageRestore.ts` each have
+  exactly one definition site repo-wide (confirmed by grep for their exported symbols); all four
+  `submit*Order.ts` files (takeaway, delivery, dine-in directly; reservation via
+  `submitReservation.ts` + `reservationPreorder.ts`) import, never reimplement, every one of them.
+  `minimumBasketMinorUnits` enforcement in particular lives solely in `campaignPricing.ts`'s
+  `resolveCampaignDiscount` — no channel hand-rolls its own basket-minimum math.
+- **Server authority**: definition/version (`campaignAdminService.ts`, Admin-SDK-only, immutable
+  versioning), eligibility/channel/schedule (`campaignEngine.ts`/`campaignScheduling.ts`,
+  server-timestamp + branch-timezone evaluated, never client-supplied), basket/discount/usage/pricing
+  (`campaignPricing.ts`/`campaignUsage.ts`) — all server-side only, confirmed via source read of each
+  channel's own pre-check + two-pass line-building block.
+- **Benefit exclusivity**: all four channels call the one shared `enforceBenefitExclusivity()` (grep
+  confirmed 4 real call sites, none reimplementing the three-way stacking check locally). ONE ORDER =
+  MAXIMUM ONE BENEFIT confirmed structurally, not just by prior tests.
+- **Terminal restore**: `campaignUsageRestore.ts`'s `onOrderEventCreatedForCampaignUsageRelease` reacts
+  only to `orderData.selectedBenefitType === "campaign"`, never to `channel` — confirmed genuinely
+  channel-agnostic by re-reading the consumer itself, not merely trusting its own doc comment (which
+  was itself stale — see §2 below). Never subscribes to `order.completed` — a campaign's reserved usage
+  is structurally permanent once an order completes, confirmed by the `TERMINAL_EVENT_TYPE_TO_ORDER_STATUS`
+  map having no `order.completed` key.
+- **Immutable snapshot + historical UI**: `order_detail_screen.dart` — the one shared order-detail
+  screen every channel's orders render through — reads only `freshOrder.campaignTitle`/
+  `campaignDiscountMinorUnits` (both frozen from `Order.campaign` at read time), never a live campaign
+  re-lookup, confirmed by direct source read.
+- **Tenant/branch isolation**: `CampaignDefinition` has no `branchId` field at all — campaigns are
+  organization-scoped by design, not branch-scoped; every channel checks
+  `campaign.organizationId !== organizationId` before use.
+- **No direct client writes to usage counters**: `firestore.rules` (read only, NOT modified) confirmed
+  all 5 campaign collections (`campaigns`, `campaignVersions`, `campaignUsageCounters`,
+  `campaignCustomerUsage`, `campaignUsageReservations`) remain `allow read, write: if false`.
+- **Admin/POS foundation compatibility**: `campaignAdminService.ts` re-read in full — trusted,
+  transactional `createCampaign`/`updateCampaignByCreatingNextVersion`/`setCampaignActive`/
+  `archiveCampaign`/`duplicateCampaign` operations, org-scoped, canonical-product/category validated,
+  immutable versioning, non-destructive archive-only delete — remains a sound foundation for a future
+  Admin/POS phase to wrap in an `onCall` authorization layer. Confirmed unmodified and NOT wrapped in
+  any UI or callable this phase, per the task's own explicit "do NOT implement it" instruction.
+- **LOCKED dine-in guest policy**: re-confirmed via source read of `submitDineInOrder.ts`'s
+  `selectedCampaignId !== null && !isRealCustomer` fail-closed rejection (pre-transaction) and via
+  `submitDineInOrderCampaign.test.ts`'s own section G (tests 22-26).
+
+### 2. Two genuine documentation defects found and fixed (comment-only, no behavior change)
+
+A stale, more-permissive P8-B guest-campaign design ("anonymous guests may use a campaign ONLY when
+`perCustomerUsageLimit == null`") was still presented as current guidance in two source-code doc
+comments, even though P8-C.3 locked a stricter policy months (in-repo-dating) later. Left uncorrected,
+either comment could mislead a future engineer into resurrecting the superseded design. Fixed:
+- `functions/src/campaignUsage.ts`'s `ReserveCampaignUsageParams` doc comment.
+- `functions/src/getCustomerActiveCampaigns.ts`'s own top-of-file doc comment.
+
+Both now carry an explicit "SUPERSEDED (P8-C.3)" correction, quoting the old text for context, stating
+the LOCKED rule, and pointing at `docs/business_rules.md`'s `BR-LOYALTY-030`. `docs/decisions.md`'s own
+original P8-B ADR paragraph (this file, "guests may use a campaign only when `perCustomerUsageLimit ==
+null`") was left historically intact (never rewrite history) but received an added blockquoted
+correction directly beneath it, same treatment. All 7 remaining `getCustomerActiveCampaigns` mentions
+elsewhere in this file (grepped and individually inspected) were already accurate — no further
+contradiction found. Two lower-severity stale "not yet wired into any channel" doc comments
+(`campaignUsageRestore.ts`, `benefitExclusivity.ts` — both accurate when written in P8-B/P8-C, stale
+once every channel adopted them) were also corrected for the same reason.
+
+### 3. Dead/orphaned code found — reported only, NOT deleted (per this task's own instruction)
+
+- `lib/features/cart/presentation/screens/checkout_screen.dart` — contains hardcoded fake coupon logic
+  (`ABAKUS10`/`ILKSIPARIS`/`UCRETSIZ`), confirmed zero real callers anywhere in `lib/` (its own
+  constructor is never invoked outside its own file) — `CartScreen`'s real navigation dispatch routes
+  exclusively to `DineInCheckoutScreen`/`TakeawayGuestCheckoutScreen`/`TakeawayCheckoutScreen`/
+  `DeliveryCheckoutScreen`. Not currently reachable from production, but the highest-severity of the
+  three findings since it's the one that still contains fake/mock discount logic.
+- `lib/features/home/presentation/widgets/featured_content_section.dart` and
+  `lib/features/campaigns/presentation/screens/campaigns_screen.dart` — both use the real
+  `activeCampaignsProvider`, zero mock data, proper loading/empty/error states — but are unmounted from
+  any reachable navigation tree (confirmed via grep: only self- or mutually-referenced).
+- `lib/features/home/presentation/widgets/home_hero_carousel.dart`'s own doc comment explicitly
+  anticipated "a real Campaign Engine customer flow" as the trigger to reconsider its removed fake
+  campaign slide — that flow has now shipped (P8-C through P8-C.3). Not actioned here (`Do NOT redesign
+  Home` is a hard constraint on this task) — flagged as a legitimate follow-up opportunity for a future,
+  explicitly-scoped phase only.
+
+### 4. Findings that were clean (no action needed)
+
+TODO/FIXME/HACK search related to Campaign: zero findings. Duplicate reason strings/enums/inconsistent
+channel-name search: zero findings (`BONCUK_REDEMPTION_ERROR_REASONS` is one array; channel-name
+strings are consistent across backend and Flutter). No mock/fake campaign source reachable from
+production navigation (the only fake-coupon file, `checkout_screen.dart`, is itself unreachable — see
+§3). No fake campaign banner/coupon/social-proof copy reachable from `HomeScreen`'s real tree.
+
+### 5. Gates (re-run fresh this phase, not cited from a prior phase's own numbers)
+
+Functions build (`tsc`) — clean. Functions FULL emulator suite (`GOOGLE_MAPS_PROVIDER_MODE=fixture`,
+against the persistent `abakus-one-dev` emulator) and `flutter analyze` + `flutter test` FULL suite —
+exact counts recorded in this session's own final report (delivered directly, per this task's own
+RETURN-tag format, rather than duplicated here). `firestore.rules`/`firestore.indexes.json` confirmed
+byte-identical to the pre-audit baseline (`git diff --stat` empty for both). `git status` confirmed
+every changed file is either Campaign-related (`functions/src/campaign*.ts`,
+`functions/src/{submit*,benefitExclusivity,onOrderTerminalFailureOrRefund,boncukRedemptionErrors,
+getCustomerActiveCampaigns,index,takeawayPricing}.ts` and their tests — all already-uncommitted from
+P8-B through P8-C.3) or documentation (`docs/business_rules.md`, `docs/decisions.md`,
+`docs/feature_status.md`) — no unrelated/accidental change. Nothing committed, per this task's own
+explicit "NO COMMIT" instruction.
+
+### 6. Determination
+
+**CUSTOMER CAMPAIGN SYSTEM = CLOSED.** All 27 audit items verified; the only defects found were
+documentation-only (four stale doc comments, now corrected) and orphaned-but-inert dead code (three
+files, reported not deleted). No production defect, no security gap, no architectural violation found.

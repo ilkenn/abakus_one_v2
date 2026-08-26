@@ -7,6 +7,8 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../domain/models/cart_item.dart';
+import '../../../campaigns/domain/models/campaign.dart';
+import '../../../campaigns/presentation/providers/campaigns_provider.dart';
 import '../../../loyalty/domain/models/loyalty_reward.dart';
 import '../../../loyalty/presentation/providers/loyalty_providers.dart';
 import '../../../orders/domain/models/order_id.dart';
@@ -18,6 +20,7 @@ import '../../../qr/presentation/widgets/table_context_badge.dart';
 import '../../data/submit_dine_in_order_gateway.dart';
 import '../providers/cart_provider.dart';
 import '../providers/dine_in_order_dependencies_provider.dart';
+import '../widgets/campaign_selection_card.dart';
 import '../widgets/catalog_reward_card.dart';
 import 'order_success_screen.dart';
 
@@ -63,6 +66,15 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
   late final String _submissionKey;
   String? _selectedPaymentMethod;
   String? _selectedRewardId;
+
+  /// Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — mirrors
+  /// `DeliveryCheckoutScreen._selectedCampaignId`/
+  /// `ReservationFlowScreen._selectedCampaignId` exactly: mutually
+  /// exclusive with a catalog reward above. Only ever meaningful for a
+  /// real, phone-verified customer — the LOCKED guest policy means this is
+  /// never even set for an anonymous table guest (no campaign control is
+  /// ever shown to one, see [build]'s own `isRealCustomerSession` gate).
+  String? _selectedCampaignId;
   bool _isSubmitting = false;
   String? _submitError;
 
@@ -109,6 +121,20 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
   void _onRewardSelect(String? rewardId) {
     setState(() {
       _selectedRewardId = rewardId;
+      // Server-Authoritative Campaign Engine P8-C.3 — mutual exclusivity
+      // with an active campaign selection.
+      if (rewardId != null) _selectedCampaignId = null;
+      _submitError = null;
+    });
+  }
+
+  /// Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — mirrors
+  /// `DeliveryCheckoutScreen._onCampaignSelect`/
+  /// `ReservationFlowScreen._onCampaignSelect` exactly.
+  void _onCampaignSelect(String? campaignId) {
+    setState(() {
+      _selectedCampaignId = campaignId;
+      if (campaignId != null) _selectedRewardId = null;
       _submitError = null;
     });
   }
@@ -127,6 +153,21 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
         .toSet();
     if (reward == null || !reward.isEligibleForCart(cartProductIds)) {
       setState(() => _selectedRewardId = null);
+    }
+  }
+
+  /// Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — mirrors
+  /// `DeliveryCheckoutScreen._handleCampaignListMightHaveInvalidatedSelection`
+  /// exactly.
+  void _handleCampaignListMightHaveInvalidatedSelection() {
+    final campaignId = _selectedCampaignId;
+    if (campaignId == null) return;
+    final campaigns = ref.read(activeCampaignsProvider).valueOrNull;
+    final stillListed = campaigns != null &&
+        campaigns.any(
+            (c) => c.campaignId == campaignId && c.isEligibleForChannel('dineIn'));
+    if (!stillListed) {
+      setState(() => _selectedCampaignId = null);
     }
   }
 
@@ -151,12 +192,46 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
           return 'Boncuk hesabına şu anda ulaşılamıyor. Tekrar deneyebilir '
               'veya ödül kullanmadan devam edebilirsin.';
         case 'catalogReward/benefit-stacking-not-allowed':
+        case 'benefit/stacking-not-allowed':
           return 'Aynı anda birden fazla avantaj kullanılamaz.';
         case 'catalogReward/channel-not-eligible':
           return 'Seçtiğin ödül Masa siparişleri için kullanılamıyor. '
               'Lütfen tekrar seçim yap veya ödül kullanmadan devam et.';
         case 'boncuk/redemption-not-allowed':
           return 'Boncuk Masa siparişlerinde şu anda kullanılamıyor.';
+        // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) —
+        // campaign-specific reasons, same shared `boncukErrorReason`
+        // field/namespace. Mirrors `DeliveryCheckoutScreen`'s own copy,
+        // adapted to this screen's tense.
+        case 'campaign/not-found':
+          return 'Seçtiğin kampanya artık bulunamıyor. Lütfen tekrar seçim '
+              'yap veya kampanya kullanmadan devam et.';
+        case 'campaign/inactive':
+        case 'campaign/archived':
+          return 'Seçtiğin kampanya artık geçerli değil. Lütfen tekrar '
+              'seçim yap veya kampanya kullanmadan devam et.';
+        case 'campaign/channel-not-eligible':
+          return 'Seçtiğin kampanya Masa siparişlerinde geçerli değil.';
+        case 'campaign/schedule-not-open':
+          return 'Seçtiğin kampanya şu anda geçerli saatlerde değil.';
+        case 'campaign/minimum-basket-not-met':
+          return 'Bu kampanya için sepet tutarın yeterli değil.';
+        case 'campaign/no-eligible-line':
+        case 'campaign/trigger-quantity-not-met':
+          return 'Sepetinde bu kampanyaya uygun bir ürün yok.';
+        case 'campaign/usage-limit-reached':
+        case 'campaign/customer-usage-limit-reached':
+          return 'Bu kampanyanın kullanım hakkı doldu.';
+        case 'campaign/reservation-conflict':
+          return 'Kampanya şu anda kullanılamıyor. Lütfen tekrar dene.';
+        // Server-Authoritative Campaign Engine P8-C.3 — LOCKED guest
+        // policy: this screen never shows a campaign control to an
+        // anonymous guest, so this branch should be structurally
+        // unreachable from the UI — kept only as a safe, honest fallback
+        // message if the server is ever reached with a stale/forged
+        // selection some other way.
+        case 'campaign/requires-customer-identity':
+          return 'Kampanya kullanmak için telefon numaranla giriş yapmalısın.';
       }
     }
     return error.message;
@@ -217,6 +292,7 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
         items: _buildOrderItems(cartItems),
         customerNote: _noteController.text.trim(),
         selectedRewardId: _selectedRewardId,
+        selectedCampaignId: _selectedCampaignId,
       );
 
       final order = await ref
@@ -254,6 +330,13 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
         ref.invalidate(loyaltySnapshotProvider);
         ref.invalidate(loyaltyRewardCatalogProvider);
       }
+      // Server-Authoritative Campaign Engine P8-C.3 — a campaign redemption
+      // consumes usage server-side, so the customer's active-campaign list
+      // is refreshed identically (mirrors DeliveryCheckoutScreen/
+      // ReservationFlowScreen).
+      if (order.campaign != null) {
+        ref.invalidate(activeCampaignsProvider);
+      }
 
       if (!mounted) return;
       final catalogReward = order.catalogReward;
@@ -263,6 +346,7 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
               .firstWhere(
                   (line) => line.productId == catalogReward.redeemedProductId)
               .productName;
+      final campaign = order.campaign;
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
@@ -275,6 +359,14 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
             catalogRewardRedeemedProductName: catalogRewardProductName,
             catalogRewardCoveredValueMinorUnits:
                 catalogReward?.coveredValueMinorUnits,
+            // Server-Authoritative Campaign Engine P8-C.3 — server-
+            // confirmed only, sourced straight from the canonical re-read
+            // Order, same discipline as catalogReward above; never the
+            // pre-submit local estimate/eligibility hint.
+            campaignTitle: campaign?.title,
+            campaignDiscountMinorUnits: campaign?.discountMinorUnits,
+            campaignNewGrandTotalMinorUnits:
+                campaign == null ? null : order.pricing.grandTotal.minorUnits,
           ),
         ),
         (route) => route.isFirst,
@@ -286,14 +378,19 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
         _isSubmitting = false;
         _submitError = _errorMessageFor(error);
         if (isBoncukError) {
-          // CRITICAL — never auto-resubmit without the reward (mirrors
-          // DeliveryCheckoutScreen/TakeawayCheckoutScreen exactly).
+          // CRITICAL — never auto-resubmit without the reward/campaign
+          // (mirrors DeliveryCheckoutScreen/TakeawayCheckoutScreen
+          // exactly). Server-Authoritative Campaign Engine P8-C.3 — the
+          // same reset covers a campaign rejection too (shared
+          // `boncukErrorReason` namespace/signal).
           _selectedRewardId = null;
+          _selectedCampaignId = null;
         }
       });
       if (isBoncukError) {
         ref.invalidate(loyaltySnapshotProvider);
         ref.invalidate(loyaltyRewardCatalogProvider);
+        ref.invalidate(activeCampaignsProvider);
       }
     } catch (_) {
       if (!mounted) return;
@@ -319,6 +416,18 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
           (previous, next) {
         _handleCartMightHaveInvalidatedReward();
       });
+      // Server-Authoritative Campaign Engine P8-C.3 — same reasoning, for a
+      // cart change or a refreshed active-campaign list potentially
+      // invalidating the current campaign selection. Real customer only —
+      // mirrors the LOCKED guest policy: an anonymous guest never has a
+      // campaign selection to invalidate in the first place.
+      ref.listen<List<CartItem>>(cartProvider, (previous, next) {
+        _handleCampaignListMightHaveInvalidatedSelection();
+      });
+      ref.listen<AsyncValue<List<Campaign>>>(activeCampaignsProvider,
+          (previous, next) {
+        _handleCampaignListMightHaveInvalidatedSelection();
+      });
     }
 
     final cartProductIds = cartItems
@@ -327,6 +436,8 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
         .toSet();
     final rewardsAsync =
         isRealCustomerSession ? ref.watch(loyaltyRewardCatalogProvider) : null;
+    final campaignsAsync =
+        isRealCustomerSession ? ref.watch(activeCampaignsProvider) : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -408,11 +519,40 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
                       rewardsAsync: rewardsAsync,
                       cartProductIds: cartProductIds,
                       selectedRewardId: _selectedRewardId,
-                      boncukCashRedemptionActive: false,
+                      // Server-Authoritative Campaign Engine P8-C.3 — this
+                      // flag literally means "another benefit is active,
+                      // hide myself"; an active campaign selection reuses
+                      // it (no cash Boncuk exists on this channel at all,
+                      // so this was always `false` pre-campaign).
+                      boncukCashRedemptionActive: _selectedCampaignId != null,
                       controlsFrozen: _isSubmitting,
                       onSelect: _onRewardSelect,
                       onRetry: () =>
                           ref.invalidate(loyaltyRewardCatalogProvider),
+                    ),
+                  ],
+                  // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25)
+                  // — mirrors `DeliveryCheckoutScreen`/`ReservationFlowScreen`
+                  // exactly: real, server-authoritative active-campaign
+                  // list, `commercialChannel: 'dineIn'` (never hardcoded to
+                  // another channel — the exact P8-C.1-fixed bug this file
+                  // must not repeat). **LOCKED guest policy**: shown ONLY
+                  // for a real, phone-verified customer
+                  // (`isRealCustomerSession`) — an anonymous table guest
+                  // never sees this control at all, not even a disabled
+                  // one, mirroring the catalog-reward card's own identical
+                  // guest exclusion immediately above.
+                  if (isRealCustomerSession && campaignsAsync != null) ...[
+                    CampaignSelectionCard(
+                      campaignsAsync: campaignsAsync,
+                      commercialChannel: 'dineIn',
+                      cartProductIds: cartProductIds,
+                      cartTotalPriceTl: totalPrice,
+                      selectedCampaignId: _selectedCampaignId,
+                      otherBenefitActive: _selectedRewardId != null,
+                      controlsFrozen: _isSubmitting,
+                      onSelect: _onCampaignSelect,
+                      onRetry: () => ref.invalidate(activeCampaignsProvider),
                     ),
                   ],
                   const SizedBox(height: AppSpacing.lg),

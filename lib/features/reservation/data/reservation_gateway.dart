@@ -163,6 +163,18 @@ abstract interface class ReservationGateway {
     /// reason. Mutually exclusive with [requestedBoncukAmount] > 0 — the
     /// server rejects a request that sets both.
     String? selectedRewardId,
+
+    /// Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — the
+    /// customer's optional campaign selection, mirroring
+    /// [selectedRewardId]'s own nesting/exclusivity contract exactly:
+    /// only ever meaningful when [preorderItems] is non-empty, and
+    /// mutually exclusive with both [requestedBoncukAmount] > 0 and
+    /// [selectedRewardId] != null — the server rejects a request that sets
+    /// more than one benefit. There is structurally no parameter here for
+    /// the campaign's discount amount/percentage, rule, version, or
+    /// channel — the server resolves and re-validates every one of those
+    /// itself (`functions/src/submitReservation.ts`, P8-C.2).
+    String? selectedCampaignId,
   });
 
   Future<void> respondToProposedChange({
@@ -212,6 +224,7 @@ class FirebaseReservationGateway implements ReservationGateway {
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) async {
     final callable =
         functions.FirebaseFunctions.instance.httpsCallable('submitReservation');
@@ -238,6 +251,10 @@ class FirebaseReservationGateway implements ReservationGateway {
             // Boncuk Loyalty P7-D — same nesting reasoning, for the
             // mutually exclusive catalog-reward selection.
             if (selectedRewardId != null) 'selectedRewardId': selectedRewardId,
+            // Server-Authoritative Campaign Engine P8-C.2 — same nesting
+            // reasoning, for the mutually exclusive campaign selection.
+            if (selectedCampaignId != null)
+              'selectedCampaignId': selectedCampaignId,
           },
       });
       final data = result.data;

@@ -198,6 +198,27 @@ class _ConfirmationBody extends ConsumerWidget {
                   reservation.preorder!.catalogRewardCoveredValueMinorUnits!,
             ),
           ],
+          // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — the
+          // campaign sibling of the two summaries above, mirroring their
+          // exact reasoning: server-confirmed only, reusing the same
+          // `CampaignSuccessSummary` widget `TakeawayCheckoutScreen`/
+          // `DeliveryCheckoutScreen` already use — no second component.
+          // Every value here comes from the canonical preorder order's own
+          // immutable `campaign` snapshot, re-read live via
+          // `ReservationRepository` — never a pre-submit estimate, and
+          // never re-priced when `confirmedTime` later changes (Faz R.2's
+          // proposal-accept path only patches the order's `status`/
+          // `kitchenReleaseAt`/`timestamps` fields, never `pricing`/
+          // `campaign`).
+          if (reservation.preorder?.hasCampaignSummary ?? false) ...[
+            const SizedBox(height: AppSpacing.md),
+            CampaignSuccessSummary(
+              campaignTitle: reservation.preorder!.campaignTitle!,
+              discountMinorUnits:
+                  reservation.preorder!.campaignDiscountMinorUnits!,
+              newGrandTotalMinorUnits: reservation.preorder!.grandTotalMinorUnits,
+            ),
+          ],
           const SizedBox(height: AppSpacing.xl),
           ElevatedButton(
             onPressed: () =>

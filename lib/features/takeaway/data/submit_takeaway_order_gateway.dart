@@ -167,6 +167,17 @@ abstract interface class SubmitTakeawayOrderGateway {
   /// (`functions/src/submitTakeawayOrder.ts`, P7-C). `null` (the default)
   /// means "no reward requested." Mutually exclusive with
   /// [requestedBoncukAmount] > 0 — sending both is rejected server-side.
+  ///
+  /// Server-Authoritative Campaign Engine P8-C (2026-08-25) —
+  /// [selectedCampaignId] is the ONLY campaign-related value this method
+  /// ever sends: which campaign the customer picked. There is structurally
+  /// no parameter here for its discount amount/percentage, rule, version,
+  /// organizationId, channel, eligibility, or usage count — the server
+  /// resolves and re-validates every one of those itself
+  /// (`functions/src/submitTakeawayOrder.ts`, P8-C). `null` (the default)
+  /// means "no campaign requested." Mutually exclusive with
+  /// [requestedBoncukAmount] > 0 and [selectedRewardId] != null — sending
+  /// more than one is rejected server-side (one order = one benefit).
   Future<SubmitTakeawayOrderResult> submitAuthenticatedOrder({
     required String submissionKey,
     required String restaurantId,
@@ -178,6 +189,7 @@ abstract interface class SubmitTakeawayOrderGateway {
     required String contactPhone,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   });
 
   /// The QR-guest scenario (Faz D.2/D.4) — [takeawaySessionId] is the
@@ -213,6 +225,7 @@ class FirebaseSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
     required String contactPhone,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) async {
     final callable = functions.FirebaseFunctions.instance
         .httpsCallable('submitTakeawayOrder');
@@ -237,6 +250,12 @@ class FirebaseSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
         // server's own `sanitizeSelectedRewardId`'s "absent == null"
         // contract exactly.
         if (selectedRewardId != null) 'selectedRewardId': selectedRewardId,
+        // Server-Authoritative Campaign Engine P8-C — sent ONLY when
+        // non-null, mirroring the server's own `sanitizeSelectedCampaignId`'s
+        // "absent == null" contract exactly. This is the ONLY campaign
+        // field ever sent — see this method's own doc comment.
+        if (selectedCampaignId != null)
+          'selectedCampaignId': selectedCampaignId,
       });
       final data = result.data;
       return SubmitTakeawayOrderResult(

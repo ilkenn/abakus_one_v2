@@ -246,7 +246,16 @@ test("a recurring campaign covering today (all-day, Europe/Istanbul) IS returned
   const campaignId = nextId("camp");
   const today = istanbulWeekdayNumber(new Date());
   await seedCampaign(campaignId, {
-    schedule: { mode: "recurring", recurringWindows: [{ weekdays: [today], startTime: "00:00", endTime: "23:59" }] },
+    // Stored shape, not raw admin-input shape — mirrors exactly what
+    // sanitizeCampaignSchedule (campaignAdminService.ts's createCampaign)
+    // normalizes "00:00"/"23:59" into and persists. This fixture writes
+    // directly via the Admin SDK, bypassing that normalization, so it must
+    // seed the already-normalized shape itself (P8-C: previously seeded the
+    // raw startTime/endTime shape, which only "worked" because the old,
+    // buggy parseCampaignDefinition reused the write-side sanitizer to
+    // re-parse stored data — see campaignScheduling.ts's
+    // parseStoredCampaignSchedule doc comment for the full bug writeup).
+    schedule: { mode: "recurring", recurringWindows: [{ weekdays: [today], startMinute: 0, endMinute: 1439 }] },
   });
 
   const { body } = await callCallable(CAMPAIGNS_URL, {}, idToken);
@@ -259,9 +268,10 @@ test("a recurring campaign that deliberately excludes today (all other weekdays,
   const today = istanbulWeekdayNumber(new Date());
   const otherWeekdays = [0, 1, 2, 3, 4, 5, 6].filter((d) => d !== today);
   await seedCampaign(campaignId, {
+    // Stored shape — see the comment on the "covering today" test above.
     schedule: {
       mode: "recurring",
-      recurringWindows: [{ weekdays: otherWeekdays, startTime: "00:00", endTime: "23:59" }],
+      recurringWindows: [{ weekdays: otherWeekdays, startMinute: 0, endMinute: 1439 }],
     },
   });
 

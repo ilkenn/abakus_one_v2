@@ -104,6 +104,7 @@ class _FakeDetailGateway implements ReservationGateway {
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) {
     throw UnimplementedError();
   }
@@ -417,6 +418,50 @@ void main() {
       await tester.pump();
 
       expect(find.textContaining('ödülü kullanıldı'), findsNothing);
+    });
+
+    testWidgets(
+        'Server-Authoritative Campaign Engine P8-C.2 (2026-08-25): a '
+        'completed preorder carrying a server-confirmed campaign discount '
+        "shows the historical campaign chip, sourced only from THIS "
+        "preorder's own immutable snapshot fields", (tester) async {
+      final repository = await _pumpDetail(tester);
+      repository.emit(_baseReservation(
+        status: ReservationStatus.completed,
+        preorder: const ReservationPreorderSummary(
+          orderId: 'order-1',
+          status: ReservationPreorderStatus.completed,
+          kitchenReleaseAt: null,
+          lines: [],
+          grandTotalMinorUnits: 20400,
+          campaignTitle: 'Yaz Kampanyası',
+          campaignDiscountMinorUnits: 3600,
+        ),
+      ));
+      await tester.pump();
+
+      expect(find.text('Yaz Kampanyası uygulandı (-36 TL)'), findsOneWidget);
+    });
+
+    testWidgets(
+        'a later edit to the LIVE campaign never changes the historical '
+        'chip — a preorder without a campaign snapshot shows no chip at '
+        'all, regardless of what the live campaign list offers today',
+        (tester) async {
+      final repository = await _pumpDetail(tester);
+      repository.emit(_baseReservation(
+        status: ReservationStatus.completed,
+        preorder: const ReservationPreorderSummary(
+          orderId: 'order-1',
+          status: ReservationPreorderStatus.completed,
+          kitchenReleaseAt: null,
+          lines: [],
+          grandTotalMinorUnits: 24000,
+        ),
+      ));
+      await tester.pump();
+
+      expect(find.textContaining('uygulandı ('), findsNothing);
     });
   });
 

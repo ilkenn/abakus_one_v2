@@ -57,7 +57,21 @@ async function callCallable(url: string, data: Record<string, unknown>, idToken?
   return { httpStatus: response.status, body };
 }
 
-async function waitFor<T>(fn2: () => Promise<T | null>, timeoutMs = 15000): Promise<T> {
+/**
+ * P8-C.3 final-gate correction (2026-08-25) — bumped from the prior 15000ms
+ * default after this file's own "reaching ready/outForDelivery must never
+ * emit a completed event" test timed out waiting for the real completed
+ * transition's `orderEvents` outbox record under the current, larger full
+ * Functions suite (now 1729 tests, up from the ~1200-1700 range earlier
+ * quality-gate corrections in this codebase were tuned against) — while
+ * passing cleanly in isolation (0/39 failures re-running this file
+ * together with the other affected file). The async release/outbox chain
+ * genuinely completes every time; it is simply slower under this suite's
+ * own continued growth, the same root-cause class already diagnosed for
+ * `campaignUsage.test.ts` (P8-C.2) and `submitDineInOrderCampaign.test.ts`
+ * (P8-C.3) — never a stuck/incorrect state, never a loosened assertion.
+ */
+async function waitFor<T>(fn2: () => Promise<T | null>, timeoutMs = 30000): Promise<T> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const result = await fn2();

@@ -131,6 +131,15 @@ class OrderModel {
   final String? contactLastName;
   final String? contactPhone;
 
+  /// Server-Authoritative Campaign Engine P8-C (2026-08-25) — the frozen
+  /// campaign-redemption summary for order-history/detail display, sourced
+  /// straight from `Order.campaign` (never re-derived or re-resolved from a
+  /// live campaign). `null`/`0` for every order that didn't apply a
+  /// campaign, including every pre-P8-C order — a purely additive field,
+  /// same backward-compatibility contract as [tableId]/[pickupMode] above.
+  final String? campaignTitle;
+  final int? campaignDiscountMinorUnits;
+
   // --- Mevcut (legacy) alanlar: bu faz tarafından değiştirilmedi ---
 
   // FEATURE 28 Uyumlu Alanlar
@@ -194,6 +203,8 @@ class OrderModel {
     this.contactFirstName,
     this.contactLastName,
     this.contactPhone,
+    this.campaignTitle,
+    this.campaignDiscountMinorUnits,
     this.orderNote = '',
     this.serviceMaterialsPreference = '',
     this.ringBell = true,
@@ -292,6 +303,8 @@ class OrderModel {
       contactFirstName: order.contactFirstName,
       contactLastName: order.contactLastName,
       contactPhone: order.contactPhone,
+      campaignTitle: order.campaign?.title,
+      campaignDiscountMinorUnits: order.campaign?.discountMinorUnits,
       orderNote: order.customerNote,
     );
   }
@@ -323,6 +336,8 @@ class OrderModel {
     String? contactFirstName,
     String? contactLastName,
     String? contactPhone,
+    String? campaignTitle,
+    int? campaignDiscountMinorUnits,
     String? orderNote,
     String? serviceMaterialsPreference,
     bool? ringBell,
@@ -376,6 +391,9 @@ class OrderModel {
       contactFirstName: contactFirstName ?? this.contactFirstName,
       contactLastName: contactLastName ?? this.contactLastName,
       contactPhone: contactPhone ?? this.contactPhone,
+      campaignTitle: campaignTitle ?? this.campaignTitle,
+      campaignDiscountMinorUnits:
+          campaignDiscountMinorUnits ?? this.campaignDiscountMinorUnits,
       orderNote: orderNote ?? this.orderNote,
       serviceMaterialsPreference:
           serviceMaterialsPreference ?? this.serviceMaterialsPreference,

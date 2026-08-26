@@ -19,12 +19,15 @@ import { canTransition } from "./orderStatus";
 import { PREORDER_KITCHEN_RELEASE_LEAD_MINUTES } from "./reservationConfig";
 import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "./orderPricingAuthority";
 import {
-  boncukError,
   sanitizeRequestedBoncukAmount,
   sanitizeSelectedRewardId,
+  sanitizeSelectedCampaignId,
   type SelectedBenefitType,
 } from "./boncukRedemptionErrors";
 import type { CatalogRewardOrderSnapshot } from "./submitTakeawayOrder";
+import { enforceBenefitExclusivity } from "./benefitExclusivity";
+import type { CampaignOrderSnapshot } from "./campaignEngine";
+import type { CampaignPriceableLine } from "./campaignPricing";
 
 /**
  * Optional reservation preorder — Faz R.1D.1 (`docs/decisions.md` ADR-027
@@ -132,6 +135,18 @@ export interface ParsedPreorderRequest {
    * here, at parse time, since both fields are parsed together.
    */
   selectedRewardId: string | null;
+  /**
+   * Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — the
+   * customer's optional campaign selection, nested inside `preorder` for
+   * the identical reason `requestedBoncukAmount`/`selectedRewardId` are:
+   * only meaningful when a preorder exists (a campaign discount applies
+   * against the preorder's own basket, never a table-only booking).
+   * Mutually exclusive with both fields above — enforced right here, at
+   * parse time, via the shared `enforceBenefitExclusivity()` (reused
+   * verbatim from `submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`, never
+   * a reservation-specific duplicate of this check).
+   */
+  selectedCampaignId: string | null;
 }
 
 /**
@@ -171,18 +186,19 @@ export function parsePreorderRequest(raw: unknown): ParsedPreorderRequest | null
   });
   const requestedBoncukAmount = sanitizeRequestedBoncukAmount(data.requestedBoncukAmount);
   const selectedRewardId = sanitizeSelectedRewardId(data.selectedRewardId);
-  // Boncuk Loyalty P7-D — locked rule, identical to `submitTakeawayOrder.ts`'s
-  // own: cash Boncuk redemption and a catalog reward are mutually exclusive,
-  // exactly one benefit per order. Static, data-independent — checked here,
-  // at parse time, before any Firestore work.
-  if (requestedBoncukAmount > 0 && selectedRewardId !== null) {
-    boncukError(
-      "invalid-argument",
-      "preorder.requestedBoncukAmount and preorder.selectedRewardId cannot both be set — exactly one benefit per order.",
-      "catalogReward/benefit-stacking-not-allowed",
-    );
-  }
-  return { items, requestedBoncukAmount, selectedRewardId };
+  // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — the ONLY
+  // campaign-related value ever accepted; the server resolves and
+  // re-validates everything else itself.
+  const selectedCampaignId = sanitizeSelectedCampaignId(data.selectedCampaignId);
+  // Boncuk Loyalty P7-D / Server-Authoritative Campaign Engine P8-C.2 —
+  // locked rule, identical to `submitTakeawayOrder.ts`'s own: cash Boncuk
+  // redemption, a catalog reward, and a campaign are all mutually
+  // exclusive, exactly one benefit per order. Static, data-independent —
+  // checked here, at parse time, before any Firestore work. Reuses the one
+  // shared exclusivity enforcement point rather than a reservation-specific
+  // duplicate of this check.
+  enforceBenefitExclusivity({ requestedBoncukAmount, selectedRewardId, selectedCampaignId });
+  return { items, requestedBoncukAmount, selectedRewardId, selectedCampaignId };
 }
 
 function requireValidQuantity(raw: unknown, context: string): number {
@@ -245,6 +261,7 @@ async function buildPreorderProductLine(
   scope: { restaurantId: string },
   policy: CanonicalChannelPricingPolicy,
   freeUnitCount = 0,
+  campaignDiscountMinorUnits = 0,
 ): Promise<ComputedOrderLine> {
   if (typeof item.productId !== "string" || item.productId.length === 0) {
     invalid("each preorder product item requires a productId.");
@@ -274,12 +291,14 @@ async function buildPreorderProductLine(
   return buildOrderLine({
     productId: product!.id,
     productName: product!.name,
+    categoryId: product!.categoryId,
     modifiers,
     quantity,
     unitPriceMinorUnits,
     taxBasisPoints: PREORDER_TAX_BASIS_POINTS,
     customerNote: note,
     freeUnitCount,
+    campaignDiscountMinorUnits,
   });
 }
 
@@ -289,6 +308,7 @@ async function buildPreorderBowlLine(
   item: RawBowlItem,
   scope: { restaurantId: string },
   policy: CanonicalChannelPricingPolicy,
+  campaignDiscountMinorUnits = 0,
 ): Promise<ComputedOrderLine> {
   const quantity = requireValidQuantity(item.quantity, "bowl item");
   if (!Array.isArray(item.ingredientIds) || item.ingredientIds.length === 0) {
@@ -324,11 +344,13 @@ async function buildPreorderBowlLine(
   return buildOrderLine({
     productId: "custom_bowl",
     productName: "Kendi Bowlun",
+    categoryId: null,
     modifiers,
     quantity,
     unitPriceMinorUnits,
     taxBasisPoints: PREORDER_TAX_BASIS_POINTS,
     customerNote: note,
+    campaignDiscountMinorUnits,
   });
 }
 
@@ -364,6 +386,19 @@ export function normalizePreorderItems(rawItems: RawItem[]): unknown[] {
  * every `tx.get()` this performs still lands before `submitReservation.ts`
  * ever calls `tx.set`, because this function itself is only ever awaited
  * from that transaction's own read phase, before any of its writes.
+ *
+ * Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) —
+ * `campaignLineDiscounts` (line index -> resolved minor-unit discount) is
+ * threaded through to each line's own `buildOrderLine` call, and every
+ * built line's real, priced info is ALSO captured into `campaignLines`
+ * (`campaignPricing.ts`'s own input shape), piggybacking on data already
+ * fetched for the line — no extra Firestore reads. Mirrors
+ * `submitTakeawayOrder.ts`'s own `buildLines`/`submitDeliveryOrder.ts`'s own
+ * `buildDeliveryLines` two-pass pattern exactly (the shared campaign engine
+ * reused verbatim, never re-implemented for this channel).
+ * `campaignLineDiscounts: null` (the default) means "no campaign discount
+ * to apply this call," so every pre-P8-C.2 caller behaves identically to
+ * before.
  */
 export async function buildPreorderLines(
   tx: Transaction,
@@ -372,14 +407,19 @@ export async function buildPreorderLines(
   scope: { restaurantId: string },
   policy: CanonicalChannelPricingPolicy,
   rewardedProductId: string | null = null,
+  campaignLineDiscounts: Map<number, number> | null = null,
 ): Promise<{
   lines: ComputedOrderLine[];
   normalizedItems: unknown[];
   rewardAppliedLineIndex: number | null;
+  campaignLines: CampaignPriceableLine[];
 }> {
   const lines: ComputedOrderLine[] = [];
+  const campaignLines: CampaignPriceableLine[] = [];
   let rewardAppliedLineIndex: number | null = null;
   for (const item of rawItems) {
+    const lineIndex = lines.length;
+    const campaignDiscountForLine = campaignLineDiscounts?.get(lineIndex) ?? 0;
     if (item.kind === "product") {
       // Only the FIRST matching line ever receives the free unit — mirrors
       // `submitTakeawayOrder.ts`'s own `buildLines` tie-break exactly.
@@ -394,14 +434,38 @@ export async function buildPreorderLines(
         scope,
         policy,
         isRewardedLine ? 1 : 0,
+        campaignDiscountForLine,
       );
-      if (isRewardedLine) rewardAppliedLineIndex = lines.length;
+      if (isRewardedLine) rewardAppliedLineIndex = lineIndex;
       lines.push(line);
+      campaignLines.push({
+        lineIndex,
+        productId: line.productId,
+        categoryId: line.categoryId,
+        quantity: line.quantity,
+        unitBaseMinorUnits: line.unitPriceMinorUnits + line.modifierTotalMinorUnits,
+      });
     } else {
-      lines.push(await buildPreorderBowlLine(tx, db, item, scope, policy));
+      const line = await buildPreorderBowlLine(tx, db, item, scope, policy, campaignDiscountForLine);
+      lines.push(line);
+      campaignLines.push({
+        lineIndex,
+        // A Bowl Builder line has no real canonical product/category id —
+        // structurally ineligible for any product/category-scoped campaign,
+        // never a fake id standing in for one.
+        productId: null,
+        categoryId: null,
+        quantity: line.quantity,
+        unitBaseMinorUnits: line.unitPriceMinorUnits + line.modifierTotalMinorUnits,
+      });
     }
   }
-  return { lines, normalizedItems: normalizePreorderItems(rawItems), rewardAppliedLineIndex };
+  return {
+    lines,
+    normalizedItems: normalizePreorderItems(rawItems),
+    rewardAppliedLineIndex,
+    campaignLines,
+  };
 }
 
 export function computePreorderPriceBreakdown(lines: ComputedOrderLine[]): ComputedPriceBreakdown {
@@ -457,6 +521,21 @@ export function buildPreorderOrderDocument(params: {
   } | null;
   /** Boncuk Loyalty P7-D (2026-08-24) — a catalog reward genuinely changes `pricing` above (the rewarded line's own `lineDiscount`); this is a read-only audit snapshot of what was redeemed, never a second, independently-applied discount. Mirrors `submitTakeawayOrder.ts`'s own `buildOrderDocument` exactly. */
   catalogReward: CatalogRewardOrderSnapshot | null;
+  /**
+   * Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — the
+   * immutable per-order campaign snapshot when `selectedBenefitType ===
+   * "campaign"`; `null` otherwise, including every pre-P8-C.2 order. Never
+   * re-read from the live `campaigns` document by any future consumer —
+   * mirrors `submitDeliveryOrder.ts`'s own `buildDeliveryOrderDocument`
+   * extension exactly.
+   */
+  campaign: CampaignOrderSnapshot | null;
+  /**
+   * The EXACT total campaign discount already baked into `pricing`'s own
+   * `grandTotal`/line `lineDiscount`s above — `0` for every order without a
+   * campaign (preserves the pre-P8-C.2 hardcoded-zero behavior).
+   */
+  discountMinorUnits: number;
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -521,7 +600,7 @@ export function buildPreorderOrderDocument(params: {
     })),
     pricing: {
       grossSubtotal: moneyField(params.pricing.grossSubtotalMinorUnits),
-      discount: moneyField(0),
+      discount: moneyField(params.discountMinorUnits),
       taxableBase: moneyField(params.pricing.taxableBaseMinorUnits),
       vatAmount: moneyField(params.pricing.vatAmountMinorUnits),
       serviceFee: moneyField(0),
@@ -544,6 +623,10 @@ export function buildPreorderOrderDocument(params: {
     selectedBenefitType: params.selectedBenefitType,
     boncukRedemption: params.boncukRedemption,
     catalogReward: params.catalogReward,
+    // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — same
+    // discipline: `pricing` above already reflects the campaign discount
+    // baked in; `campaign` is the read-only immutable audit snapshot.
+    campaign: params.campaign,
     statusHistory: [
       {
         id: `${params.orderId}-transition-1`,

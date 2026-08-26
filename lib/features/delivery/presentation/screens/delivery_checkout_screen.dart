@@ -20,7 +20,10 @@ import '../../../cart/presentation/screens/order_success_screen.dart';
 import '../../../cart/presentation/screens/takeaway_checkout_screen.dart'
     show computeClientEstimatedMaxBoncuk;
 import '../../../cart/presentation/widgets/boncuk_redemption_card.dart';
+import '../../../cart/presentation/widgets/campaign_selection_card.dart';
 import '../../../cart/presentation/widgets/catalog_reward_card.dart';
+import '../../../campaigns/domain/models/campaign.dart';
+import '../../../campaigns/presentation/providers/campaigns_provider.dart';
 import '../../../loyalty/domain/models/loyalty_account_snapshot.dart';
 import '../../../loyalty/domain/models/loyalty_reward.dart';
 import '../../../loyalty/presentation/providers/loyalty_providers.dart';
@@ -98,6 +101,11 @@ class _DeliveryCheckoutScreenState
   /// `TakeawayCheckoutScreen._selectedRewardId` exactly: mutually exclusive
   /// with cash Boncuk redemption above (selecting one clears the other).
   String? _selectedRewardId;
+
+  /// Server-Authoritative Campaign Engine P8-C.1 (2026-08-25) — mirrors
+  /// `TakeawayCheckoutScreen._selectedCampaignId` exactly: mutually
+  /// exclusive with both cash Boncuk redemption and a catalog reward above.
+  String? _selectedCampaignId;
 
   /// FRAUD-F.2 — captured at most ONCE per submission attempt and reused
   /// across retries of the same [_submissionKey] (Architect Correction
@@ -253,7 +261,12 @@ class _DeliveryCheckoutScreenState
           value ? (_selectedBoncukAmount > 0 ? _selectedBoncukAmount : 1) : 0;
       // Boncuk Loyalty P7-D — mutual exclusivity: turning cash redemption
       // on clears any catalog-reward selection.
-      if (value) _selectedRewardId = null;
+      // Server-Authoritative Campaign Engine P8-C.1 — same exclusivity
+      // with any active campaign selection.
+      if (value) {
+        _selectedRewardId = null;
+        _selectedCampaignId = null;
+      }
       _submitError = null;
     });
   }
@@ -266,6 +279,23 @@ class _DeliveryCheckoutScreenState
       if (rewardId != null) {
         _boncukUsageEnabled = false;
         _selectedBoncukAmount = 0;
+        // Server-Authoritative Campaign Engine P8-C.1 — mutual exclusivity
+        // with any active campaign selection.
+        _selectedCampaignId = null;
+      }
+      _submitError = null;
+    });
+  }
+
+  /// Server-Authoritative Campaign Engine P8-C.1 (2026-08-25) — mirrors
+  /// `TakeawayCheckoutScreen._onCampaignSelect` exactly.
+  void _onCampaignSelect(String? campaignId) {
+    setState(() {
+      _selectedCampaignId = campaignId;
+      if (campaignId != null) {
+        _boncukUsageEnabled = false;
+        _selectedBoncukAmount = 0;
+        _selectedRewardId = null;
       }
       _submitError = null;
     });
@@ -331,6 +361,21 @@ class _DeliveryCheckoutScreenState
     }
   }
 
+  /// Server-Authoritative Campaign Engine P8-C.1 (2026-08-25) — mirrors
+  /// `TakeawayCheckoutScreen._handleCampaignListMightHaveInvalidatedSelection`
+  /// exactly.
+  void _handleCampaignListMightHaveInvalidatedSelection() {
+    final campaignId = _selectedCampaignId;
+    if (campaignId == null) return;
+    final campaigns = ref.read(activeCampaignsProvider).valueOrNull;
+    final stillListed = campaigns != null &&
+        campaigns.any((c) =>
+            c.campaignId == campaignId && c.isEligibleForChannel('delivery'));
+    if (!stillListed) {
+      setState(() => _selectedCampaignId = null);
+    }
+  }
+
   bool get _canSubmit {
     return _selectedAddress != null &&
         _selectedAddress!.isDeliveryAuthorized &&
@@ -373,11 +418,37 @@ class _DeliveryCheckoutScreenState
           return 'Boncuk hesabına şu anda ulaşılamıyor. Tekrar deneyebilir '
               'veya ödül kullanmadan devam edebilirsin.';
         case 'catalogReward/benefit-stacking-not-allowed':
-          return 'Aynı anda hem Boncuk hem ödül kullanılamaz. Lütfen '
+        case 'benefit/stacking-not-allowed':
+          return 'Aynı anda birden fazla avantaj kullanılamaz. Lütfen '
               'birini seç.';
         case 'catalogReward/channel-not-eligible':
           return 'Seçtiğin ödül Paket Servis için kullanılamıyor. Lütfen '
               'tekrar seçim yap veya ödül kullanmadan devam et.';
+        // Server-Authoritative Campaign Engine P8-C.1 (2026-08-25) —
+        // campaign-specific reasons, same shared `boncukErrorReason`
+        // field/namespace.
+        case 'campaign/not-found':
+          return 'Seçtiğin kampanya artık bulunamıyor. Lütfen tekrar seçim '
+              'yap veya kampanya kullanmadan devam et.';
+        case 'campaign/inactive':
+        case 'campaign/archived':
+          return 'Seçtiğin kampanya artık geçerli değil. Lütfen tekrar '
+              'seçim yap veya kampanya kullanmadan devam et.';
+        case 'campaign/channel-not-eligible':
+          return 'Seçtiğin kampanya Paket Servis siparişlerinde geçerli '
+              'değil.';
+        case 'campaign/schedule-not-open':
+          return 'Seçtiğin kampanya şu anda geçerli saatlerde değil.';
+        case 'campaign/minimum-basket-not-met':
+          return 'Bu kampanya için sepet tutarın yeterli değil.';
+        case 'campaign/no-eligible-line':
+        case 'campaign/trigger-quantity-not-met':
+          return 'Sepetinde bu kampanyaya uygun bir ürün yok.';
+        case 'campaign/usage-limit-reached':
+        case 'campaign/customer-usage-limit-reached':
+          return 'Bu kampanyanın kullanım hakkı doldu.';
+        case 'campaign/reservation-conflict':
+          return 'Kampanya şu anda kullanılamıyor. Lütfen tekrar dene.';
         default:
           return 'Boncuk kullanılırken bir sorun oluştu. Boncuk kullanmadan '
               'devam edebilirsin.';
@@ -448,6 +519,21 @@ class _DeliveryCheckoutScreenState
       }
     }
 
+    // Server-Authoritative Campaign Engine P8-C.1 — the same defense-in-
+    // depth discipline for a campaign selection, mirroring
+    // TakeawayCheckoutScreen exactly.
+    if (_selectedCampaignId != null) {
+      final campaigns = ref.read(activeCampaignsProvider).valueOrNull;
+      final stillListed = campaigns != null &&
+          campaigns.any((c) =>
+              c.campaignId == _selectedCampaignId &&
+              c.isEligibleForChannel('delivery'));
+      if (!stillListed) {
+        setState(() => _selectedCampaignId = null);
+        return;
+      }
+    }
+
     final address = _selectedAddress;
     final paymentMethodId = _selectedPaymentMethodId;
     if (address == null || paymentMethodId == null) return;
@@ -501,6 +587,7 @@ class _DeliveryCheckoutScreenState
             requestedBoncukAmount:
                 _boncukUsageEnabled ? _selectedBoncukAmount : 0,
             selectedRewardId: _selectedRewardId,
+            selectedCampaignId: _selectedCampaignId,
           );
 
       final order = await ref
@@ -529,10 +616,17 @@ class _DeliveryCheckoutScreenState
       if (order.catalogReward != null) {
         ref.invalidate(loyaltyRewardCatalogProvider);
       }
+      // Server-Authoritative Campaign Engine P8-C.1 — a campaign redemption
+      // consumes a usage slot, so refresh the customer's displayed active
+      // campaigns now rather than waiting for a later screen to re-fetch.
+      if (order.campaign != null) {
+        ref.invalidate(activeCampaignsProvider);
+      }
 
       if (!mounted) return;
       final boncukRedemption = order.boncukRedemption;
       final catalogReward = order.catalogReward;
+      final campaign = order.campaign;
       // Server-confirmed only (P7-D) — cross-referenced from the SAME
       // canonical order's own `lines`, never a separate catalog lookup.
       final catalogRewardProductName = catalogReward == null
@@ -557,6 +651,14 @@ class _DeliveryCheckoutScreenState
             catalogRewardRedeemedProductName: catalogRewardProductName,
             catalogRewardCoveredValueMinorUnits:
                 catalogReward?.coveredValueMinorUnits,
+            // Server-Authoritative Campaign Engine P8-C.1 — server-
+            // confirmed only, sourced straight from the canonical re-read
+            // Order, same discipline as boncukRedemption/catalogReward
+            // above; never the pre-submit local estimate/eligibility hint.
+            campaignTitle: campaign?.title,
+            campaignDiscountMinorUnits: campaign?.discountMinorUnits,
+            campaignNewGrandTotalMinorUnits:
+                campaign == null ? null : order.pricing.grandTotal.minorUnits,
           ),
         ),
         (route) => route.isFirst,
@@ -573,14 +675,18 @@ class _DeliveryCheckoutScreenState
           // screen immediately submittable again WITHOUT Boncuk, but the
           // customer must tap "Siparişi Ver" themselves. Boncuk Loyalty
           // P7-D — the same reset covers a catalog-reward rejection too.
+          // Server-Authoritative Campaign Engine P8-C.1 — and a campaign
+          // rejection, same shared namespace/signal.
           _boncukUsageEnabled = false;
           _selectedBoncukAmount = 0;
           _selectedRewardId = null;
+          _selectedCampaignId = null;
         }
       });
       if (isBoncukError) {
         ref.invalidate(loyaltySnapshotProvider);
         ref.invalidate(loyaltyRewardCatalogProvider);
+        ref.invalidate(activeCampaignsProvider);
       }
     } catch (_) {
       if (!mounted) return;
@@ -627,6 +733,7 @@ class _DeliveryCheckoutScreenState
     final catalog = ref.watch(menuProductsProvider);
     final loyaltySnapshotAsync = ref.watch(loyaltySnapshotProvider);
     final rewardsAsync = ref.watch(loyaltyRewardCatalogProvider);
+    final campaignsAsync = ref.watch(activeCampaignsProvider);
     const currency = Currency.tryLira;
 
     // Boncuk Loyalty P5-B — react to a cart change or loyalty snapshot
@@ -647,6 +754,12 @@ class _DeliveryCheckoutScreenState
     ref.listen<AsyncValue<List<LoyaltyReward>>>(loyaltyRewardCatalogProvider,
         (previous, next) {
       _handleCartMightHaveInvalidatedReward();
+    });
+    // Server-Authoritative Campaign Engine P8-C.1 — same reasoning, for a
+    // campaign selection the active-campaign list itself can invalidate.
+    ref.listen<AsyncValue<List<Campaign>>>(activeCampaignsProvider,
+        (previous, next) {
+      _handleCampaignListMightHaveInvalidatedSelection();
     });
 
     final cartProductIds = cartItems
@@ -804,7 +917,9 @@ class _DeliveryCheckoutScreenState
             // catalog-reward card below: selecting a reward REMOVES this
             // card entirely (never just visually disables it), mirroring
             // TakeawayCheckoutScreen exactly.
-            if (_selectedRewardId == null)
+            // Server-Authoritative Campaign Engine P8-C.1 (2026-08-25) —
+            // same exclusivity extended to an active campaign selection.
+            if (_selectedRewardId == null && _selectedCampaignId == null)
               BoncukRedemptionCard(
                 snapshotAsync: loyaltySnapshotAsync,
                 enabled: _boncukUsageEnabled,
@@ -823,10 +938,28 @@ class _DeliveryCheckoutScreenState
               rewardsAsync: rewardsAsync,
               cartProductIds: cartProductIds,
               selectedRewardId: _selectedRewardId,
-              boncukCashRedemptionActive: _boncukUsageEnabled,
+              // Server-Authoritative Campaign Engine P8-C.1 — this flag
+              // literally means "another benefit is active, hide myself";
+              // an active campaign selection reuses it rather than adding
+              // a second, near-duplicate param to an otherwise-unrelated
+              // P7-D widget.
+              boncukCashRedemptionActive:
+                  _boncukUsageEnabled || _selectedCampaignId != null,
               controlsFrozen: _isSubmitting,
               onSelect: _onRewardSelect,
               onRetry: () => ref.invalidate(loyaltyRewardCatalogProvider),
+            ),
+            CampaignSelectionCard(
+              campaignsAsync: campaignsAsync,
+              commercialChannel: 'delivery',
+              cartProductIds: cartProductIds,
+              cartTotalPriceTl: subtotalTl,
+              selectedCampaignId: _selectedCampaignId,
+              otherBenefitActive:
+                  _boncukUsageEnabled || _selectedRewardId != null,
+              controlsFrozen: _isSubmitting,
+              onSelect: _onCampaignSelect,
+              onRetry: () => ref.invalidate(activeCampaignsProvider),
             ),
             if (_submitError != null) ...[
               const SizedBox(height: AppSpacing.lg),

@@ -22,16 +22,31 @@ import { DEFAULT_ORGANIZATION_TIMEZONE } from "./campaignScheduling";
  *
  * **Deliberately open to BOTH real, phone-verified customers AND anonymous
  * table guests — unlike the Reward Catalog, which is real-customer-only.**
- * Locked decision: "Anonymous table guests may use campaigns ONLY when
- * perCustomerUsageLimit == null." A guest cannot be told a campaign exists
- * only to be denied it at checkout, so the LISTING itself must already be
- * visible to a guest identity — some Firebase Auth session (real or
- * anonymous) is still required (matching the "no unauthenticated callable
- * access anywhere" convention this codebase otherwise holds everywhere),
- * but phone-verification and `tenantCustomers` membership are only checked
- * for a REAL customer identity; an anonymous caller skips both (a guest
- * cannot have a `tenantCustomers` membership record at all — that
- * collection is for registered customers only).
+ * Some Firebase Auth session (real or anonymous) is still required
+ * (matching the "no unauthenticated callable access anywhere" convention
+ * this codebase otherwise holds everywhere), but phone-verification and
+ * `tenantCustomers` membership are only checked for a REAL customer
+ * identity; an anonymous caller skips both (a guest cannot have a
+ * `tenantCustomers` membership record at all — that collection is for
+ * registered customers only). This LISTING stays open to a guest identity
+ * deliberately, as a best-effort hint only — mirroring the same
+ * client-side best-effort discipline `CampaignSelectionCard` already
+ * applies to category-scoped eligibility — final redemption eligibility is
+ * always decided at submission time, never here.
+ *
+ * **Guest redemption policy — LOCKED (P8-C.3, 2026-08-25), corrected from
+ * this file's own original P8-B design.** This doc comment previously
+ * stated the locked decision as "anonymous table guests may use campaigns
+ * ONLY when `perCustomerUsageLimit == null`" — that permissive design was
+ * never actually wired into any checkout path. Once dine-in (the one
+ * channel with a real anonymous-guest identity) integrated campaigns, the
+ * product owner confirmed a STRICTER policy instead: anonymous/table-QR
+ * guests cannot use Campaigns at all, mirroring their existing cash-Boncuk/
+ * catalog-reward exclusion on that channel. This callable's own behavior
+ * is unaffected by that correction (the listing was always, and remains,
+ * open to both identity types) — only `submitDineInOrder.ts`'s own
+ * submission-time enforcement changed. See `docs/business_rules.md`
+ * `BR-LOYALTY-030` for the current LOCKED rule.
  *
  * **Until a real campaign exists, this always returns an empty list** — by
  * construction, not as a special case: the query simply finds no matching

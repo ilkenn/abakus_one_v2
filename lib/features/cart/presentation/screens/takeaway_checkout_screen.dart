@@ -8,6 +8,8 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../auth/domain/phone_number.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../campaigns/domain/models/campaign.dart';
+import '../../../campaigns/presentation/providers/campaigns_provider.dart';
 import '../../../loyalty/domain/models/loyalty_account_snapshot.dart';
 import '../../../loyalty/domain/models/loyalty_reward.dart';
 import '../../../loyalty/presentation/providers/loyalty_providers.dart';
@@ -22,6 +24,7 @@ import '../../domain/models/cart_item.dart';
 import '../providers/cart_provider.dart';
 import '../providers/shopping_channel_provider.dart';
 import '../widgets/boncuk_redemption_card.dart';
+import '../widgets/campaign_selection_card.dart';
 import '../widgets/catalog_reward_card.dart';
 import 'order_success_screen.dart';
 
@@ -124,6 +127,16 @@ class _TakeawayCheckoutScreenState
   /// stacking rejection.
   String? _selectedRewardId;
 
+  /// Server-Authoritative Campaign Engine P8-C (2026-08-25) — the
+  /// customer's own explicit campaign choice, `null` meaning none. Mutually
+  /// exclusive with [_boncukUsageEnabled]/[_selectedRewardId] by
+  /// construction: [_onBoncukToggle]/[_onRewardSelect] clear this when
+  /// turning on their own benefit; [_onCampaignSelect] clears both of
+  /// theirs when a campaign is picked — never more than one set at once,
+  /// matching the server's own fail-closed `enforceBenefitExclusivity()`
+  /// rejection.
+  String? _selectedCampaignId;
+
   /// Idempotency (Faz D.3.1): generated once, on screen init, then reused
   /// on every retry within this screen's lifetime — the backend's own
   /// `sha256(actorUid|submissionKey)` derivation (`docs/decisions.md`
@@ -208,7 +221,12 @@ class _TakeawayCheckoutScreenState
           value ? (_selectedBoncukAmount > 0 ? _selectedBoncukAmount : 1) : 0;
       // Boncuk Loyalty P7-C — mutual exclusivity: turning cash redemption
       // on clears any catalog-reward selection.
-      if (value) _selectedRewardId = null;
+      // Server-Authoritative Campaign Engine P8-C — same exclusivity with
+      // any active campaign selection.
+      if (value) {
+        _selectedRewardId = null;
+        _selectedCampaignId = null;
+      }
       _submitError = null;
     });
   }
@@ -222,6 +240,26 @@ class _TakeawayCheckoutScreenState
       if (rewardId != null) {
         _boncukUsageEnabled = false;
         _selectedBoncukAmount = 0;
+        // Server-Authoritative Campaign Engine P8-C — mutual exclusivity
+        // with any active campaign selection.
+        _selectedCampaignId = null;
+      }
+      _submitError = null;
+    });
+  }
+
+  /// Server-Authoritative Campaign Engine P8-C (2026-08-25) — the
+  /// customer picking (or un-picking) a campaign. Mutual exclusivity:
+  /// selecting a campaign clears both cash-Boncuk redemption and any
+  /// catalog-reward selection, mirroring [_onBoncukToggle]/
+  /// [_onRewardSelect]'s own exact discipline.
+  void _onCampaignSelect(String? campaignId) {
+    setState(() {
+      _selectedCampaignId = campaignId;
+      if (campaignId != null) {
+        _boncukUsageEnabled = false;
+        _selectedBoncukAmount = 0;
+        _selectedRewardId = null;
       }
       _submitError = null;
     });
@@ -295,6 +333,27 @@ class _TakeawayCheckoutScreenState
         .toSet();
     if (reward == null || !reward.isEligibleForCart(cartProductIds)) {
       setState(() => _selectedRewardId = null);
+    }
+  }
+
+  /// Server-Authoritative Campaign Engine P8-C (2026-08-25) — the campaign
+  /// sibling of [_handleCartMightHaveInvalidatedReward]: if the currently
+  /// active-campaign list no longer contains the selected campaign (e.g. it
+  /// stopped being takeaway-eligible, or the list simply refreshed without
+  /// it), there is no stepper/MAX recovery for a campaign pick the way
+  /// there is for a Boncuk amount, so the only correct behavior is to clear
+  /// the now-impossible selection outright — this is a best-effort client
+  /// hint only; the server re-validates everything again regardless (see
+  /// [CampaignSelectionCard]'s own doc comment).
+  void _handleCampaignListMightHaveInvalidatedSelection() {
+    final campaignId = _selectedCampaignId;
+    if (campaignId == null) return;
+    final campaigns = ref.read(activeCampaignsProvider).valueOrNull;
+    final stillListed = campaigns != null &&
+        campaigns.any((c) =>
+            c.campaignId == campaignId && c.isEligibleForChannel('takeaway'));
+    if (!stillListed) {
+      setState(() => _selectedCampaignId = null);
     }
   }
 
@@ -386,8 +445,33 @@ class _TakeawayCheckoutScreenState
           return 'Boncuk hesabına şu anda ulaşılamıyor. Tekrar deneyebilir '
               'veya ödül kullanmadan devam edebilirsin.';
         case 'catalogReward/benefit-stacking-not-allowed':
-          return 'Aynı anda hem Boncuk hem ödül kullanılamaz. Lütfen '
+        case 'benefit/stacking-not-allowed':
+          return 'Aynı anda birden fazla avantaj kullanılamaz. Lütfen '
               'birini seç.';
+        // Server-Authoritative Campaign Engine P8-C (2026-08-25) —
+        // campaign-specific reasons, same shared `boncukErrorReason`
+        // field/namespace.
+        case 'campaign/not-found':
+          return 'Seçtiğin kampanya artık bulunamıyor. Lütfen tekrar seçim '
+              'yap veya kampanya kullanmadan devam et.';
+        case 'campaign/inactive':
+        case 'campaign/archived':
+          return 'Seçtiğin kampanya artık geçerli değil. Lütfen tekrar '
+              'seçim yap veya kampanya kullanmadan devam et.';
+        case 'campaign/channel-not-eligible':
+          return 'Seçtiğin kampanya Gel Al siparişlerinde geçerli değil.';
+        case 'campaign/schedule-not-open':
+          return 'Seçtiğin kampanya şu anda geçerli saatlerde değil.';
+        case 'campaign/minimum-basket-not-met':
+          return 'Bu kampanya için sepet tutarın yeterli değil.';
+        case 'campaign/no-eligible-line':
+        case 'campaign/trigger-quantity-not-met':
+          return 'Sepetinde bu kampanyaya uygun bir ürün yok.';
+        case 'campaign/usage-limit-reached':
+        case 'campaign/customer-usage-limit-reached':
+          return 'Bu kampanyanın kullanım hakkı doldu.';
+        case 'campaign/reservation-conflict':
+          return 'Kampanya şu anda kullanılamıyor. Lütfen tekrar dene.';
         default:
           return 'Boncuk kullanılırken bir sorun oluştu. Boncuk kullanmadan '
               'devam edebilirsin.';
@@ -452,6 +536,23 @@ class _TakeawayCheckoutScreenState
       }
     }
 
+    // Server-Authoritative Campaign Engine P8-C — the same defense-in-depth
+    // discipline for a campaign selection: re-verify against the freshest
+    // active-campaign list right before sending. The server re-validates
+    // everything again regardless; this only prevents sending an obviously
+    // stale selection.
+    if (_selectedCampaignId != null) {
+      final campaigns = ref.read(activeCampaignsProvider).valueOrNull;
+      final stillListed = campaigns != null &&
+          campaigns.any((c) =>
+              c.campaignId == _selectedCampaignId &&
+              c.isEligibleForChannel('takeaway'));
+      if (!stillListed) {
+        setState(() => _selectedCampaignId = null);
+        return;
+      }
+    }
+
     final channelContext = ref.read(shoppingChannelProvider);
     final branchId = channelContext.branchId;
     final restaurantId = channelContext.restaurantId;
@@ -505,6 +606,7 @@ class _TakeawayCheckoutScreenState
             requestedBoncukAmount:
                 _boncukUsageEnabled ? _selectedBoncukAmount : 0,
             selectedRewardId: _selectedRewardId,
+            selectedCampaignId: _selectedCampaignId,
           );
 
       // The backend's own canonical order is the single source of truth
@@ -539,10 +641,17 @@ class _TakeawayCheckoutScreenState
       if (order.catalogReward != null) {
         ref.invalidate(loyaltyRewardCatalogProvider);
       }
+      // Server-Authoritative Campaign Engine P8-C — a campaign redemption
+      // consumes a usage slot, so refresh the customer's displayed active
+      // campaigns now rather than waiting for a later screen to re-fetch.
+      if (order.campaign != null) {
+        ref.invalidate(activeCampaignsProvider);
+      }
 
       if (!mounted) return;
       final boncukRedemption = order.boncukRedemption;
       final catalogReward = order.catalogReward;
+      final campaign = order.campaign;
       // Server-confirmed only (P7-C) — cross-referenced from the SAME
       // canonical order's own `lines`, never a separate catalog lookup and
       // never the pre-submit cart's own product name.
@@ -569,6 +678,14 @@ class _TakeawayCheckoutScreenState
             catalogRewardRedeemedProductName: catalogRewardProductName,
             catalogRewardCoveredValueMinorUnits:
                 catalogReward?.coveredValueMinorUnits,
+            // Server-Authoritative Campaign Engine P8-C — server-confirmed
+            // only, sourced straight from the canonical re-read Order, same
+            // discipline as boncukRedemption/catalogReward above; never the
+            // pre-submit local estimate/eligibility hint.
+            campaignTitle: campaign?.title,
+            campaignDiscountMinorUnits: campaign?.discountMinorUnits,
+            campaignNewGrandTotalMinorUnits:
+                campaign == null ? null : order.pricing.grandTotal.minorUnits,
           ),
         ),
         (route) => route.isFirst,
@@ -586,14 +703,18 @@ class _TakeawayCheckoutScreenState
           // Ver" themselves; nothing here resubmits on their behalf.
           // Boncuk Loyalty P7-C — the same reset covers a catalog-reward
           // rejection too (shared `boncukErrorReason` namespace/signal).
+          // Server-Authoritative Campaign Engine P8-C — and a campaign
+          // rejection, same shared namespace/signal.
           _boncukUsageEnabled = false;
           _selectedBoncukAmount = 0;
           _selectedRewardId = null;
+          _selectedCampaignId = null;
         }
       });
       if (isBoncukError) {
         ref.invalidate(loyaltySnapshotProvider);
         ref.invalidate(loyaltyRewardCatalogProvider);
+        ref.invalidate(activeCampaignsProvider);
       }
     } catch (_) {
       if (!mounted) return;
@@ -612,6 +733,7 @@ class _TakeawayCheckoutScreenState
     final totalPrice = ref.watch(cartTotalPriceProvider);
     final loyaltySnapshotAsync = ref.watch(loyaltySnapshotProvider);
     final rewardsAsync = ref.watch(loyaltyRewardCatalogProvider);
+    final campaignsAsync = ref.watch(activeCampaignsProvider);
 
     // Boncuk Loyalty P4-E-B §9/§10 — react to a cart-total or loyalty
     // snapshot change while Boncuk usage is on. `ref.listen` (not
@@ -633,6 +755,12 @@ class _TakeawayCheckoutScreenState
     ref.listen<AsyncValue<List<LoyaltyReward>>>(loyaltyRewardCatalogProvider,
         (previous, next) {
       _handleCartMightHaveInvalidatedReward();
+    });
+    // Server-Authoritative Campaign Engine P8-C — same reasoning, for a
+    // campaign selection the active-campaign list itself can invalidate.
+    ref.listen<AsyncValue<List<Campaign>>>(activeCampaignsProvider,
+        (previous, next) {
+      _handleCampaignListMightHaveInvalidatedSelection();
     });
 
     final cartProductIds = cartItems
@@ -806,7 +934,9 @@ class _TakeawayCheckoutScreenState
             // `BoncukRedemptionCard` itself is unchanged — also shared by
             // `DeliveryCheckoutScreen`, so no new required param was added
             // to it for this takeaway-only phase.
-            if (_selectedRewardId == null)
+            // Server-Authoritative Campaign Engine P8-C (2026-08-25) — same
+            // exclusivity extended to an active campaign selection.
+            if (_selectedRewardId == null && _selectedCampaignId == null)
               BoncukRedemptionCard(
                 snapshotAsync: loyaltySnapshotAsync,
                 enabled: _boncukUsageEnabled,
@@ -825,10 +955,31 @@ class _TakeawayCheckoutScreenState
               rewardsAsync: rewardsAsync,
               cartProductIds: cartProductIds,
               selectedRewardId: _selectedRewardId,
-              boncukCashRedemptionActive: _boncukUsageEnabled,
+              // Server-Authoritative Campaign Engine P8-C — this flag
+              // literally means "another benefit is active, hide myself";
+              // an active campaign selection reuses it rather than adding a
+              // second, near-duplicate param to an otherwise-unrelated
+              // P7-C widget.
+              boncukCashRedemptionActive:
+                  _boncukUsageEnabled || _selectedCampaignId != null,
               controlsFrozen: _isSubmitting,
               onSelect: _onRewardSelect,
               onRetry: () => ref.invalidate(loyaltyRewardCatalogProvider),
+            ),
+            // No SizedBox here — `CampaignSelectionCard` contains its own
+            // leading gap (see its `_LeadingGap` doc comment) so a truly
+            // empty campaign list adds zero extra layout height.
+            CampaignSelectionCard(
+              campaignsAsync: campaignsAsync,
+              commercialChannel: 'takeaway',
+              cartProductIds: cartProductIds,
+              cartTotalPriceTl: totalPrice,
+              selectedCampaignId: _selectedCampaignId,
+              otherBenefitActive:
+                  _boncukUsageEnabled || _selectedRewardId != null,
+              controlsFrozen: _isSubmitting,
+              onSelect: _onCampaignSelect,
+              onRetry: () => ref.invalidate(activeCampaignsProvider),
             ),
             if (_submitError != null) ...[
               const SizedBox(height: AppSpacing.lg),

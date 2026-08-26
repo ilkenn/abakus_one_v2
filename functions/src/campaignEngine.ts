@@ -7,7 +7,7 @@ import {
   type CanonicalCommercialChannel,
 } from "./loyaltyRewardCatalog";
 import {
-  sanitizeCampaignSchedule,
+  parseStoredCampaignSchedule,
   sanitizeCampaignScheduleForWire,
   isCampaignScheduleCurrentlyOpen,
   type CampaignSchedule,
@@ -521,7 +521,12 @@ export function parseCampaignDefinition(raw: FirebaseFirestore.DocumentData | un
     const eligibleProductIds = sanitizeOptionalEligibleProductIds(raw.eligibleProductIds);
     const eligibleCategoryIds = sanitizeOptionalEligibleCategoryIds(raw.eligibleCategoryIds);
     const minimumBasketMinorUnits = sanitizeOptionalMinimumBasketMinorUnits(raw.minimumBasketMinorUnits);
-    const schedule = sanitizeCampaignSchedule(raw.schedule);
+    // parseStoredCampaignSchedule — NOT sanitizeCampaignSchedule. This is
+    // re-parsing an ALREADY-STORED document (startMinute/endMinute
+    // integers), never raw Admin input (HH:mm strings) — see
+    // parseStoredCampaignSchedule's own doc comment for the P8-C bug this
+    // fixes.
+    const schedule = parseStoredCampaignSchedule(raw.schedule);
     const usageLimit = sanitizeOptionalUsageLimit(raw.usageLimit, "usageLimit");
     const perCustomerUsageLimit = sanitizeOptionalUsageLimit(raw.perCustomerUsageLimit, "perCustomerUsageLimit");
     const sortOrder = sanitizeSortOrder(raw.sortOrder);

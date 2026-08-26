@@ -14,15 +14,18 @@ import { boncukError } from "./boncukRedemptionErrors";
  * stacking combinations hand-duplicated four times — this module exists so
  * that never has to happen: one call, one place, one rule.
  *
- * **Not yet wired into any `submit*Order.ts` file (P8-B is foundation
- * only).** This phase does not touch checkout/order-submission code at
- * all — the existing four files keep their own existing (already-tested,
- * already-correct) two-benefit checks unchanged. A future
- * checkout-integration phase (P8-C+), when it adds `selectedCampaignId` as
- * a real request field to a channel, is expected to REPLACE that channel's
- * own duplicated check with a single call to [enforceBenefitExclusivity]
- * rather than hand-adding a third `if` — but that replacement is itself
- * deferred to that phase, not performed here.
+ * **Wired into all four channels as of P8-C.3 (2026-08-25).** Written as
+ * foundation-only in P8-B (no channel called it yet, each kept its own
+ * duplicated two-benefit `if`). Each channel's own campaign-integration
+ * phase then replaced that duplicated check with a single call to
+ * [enforceBenefitExclusivity] as this comment originally predicted:
+ * `submitTakeawayOrder.ts` (P8-C), `submitDeliveryOrder.ts` (P8-C.1),
+ * `reservationPreorder.ts` (P8-C.2, called from `parsePreorderRequest` where
+ * the preorder's three benefit fields are parsed together — not from
+ * `submitReservation.ts` directly), and `submitDineInOrder.ts` (P8-C.3).
+ * All four now enforce the same three-way (Boncuk / catalog reward /
+ * campaign) exclusivity through this one function — no channel hand-rolls
+ * its own stacking check anymore.
  *
  * **Fails closed, never silently prioritizes.** If a request names more
  * than one benefit, the whole request is rejected before any pricing,

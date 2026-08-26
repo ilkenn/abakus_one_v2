@@ -40,11 +40,38 @@ String reservationErrorMessage(ReservationException error) {
         return 'Boncuk hesabınıza şu anda ulaşılamıyor. Tekrar deneyebilir '
             'veya ödül kullanmadan devam edebilirsiniz.';
       case 'catalogReward/benefit-stacking-not-allowed':
-        return 'Aynı anda hem Boncuk hem ödül kullanılamaz. Lütfen '
+      case 'benefit/stacking-not-allowed':
+        return 'Aynı anda birden fazla avantaj kullanılamaz. Lütfen '
             'birini seçin.';
       case 'catalogReward/channel-not-eligible':
         return 'Seçtiğiniz ödül Rezervasyon Ön Sipariş için kullanılamıyor. '
             'Lütfen tekrar seçim yapın veya ödül kullanmadan devam edin.';
+      // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) —
+      // campaign-specific reasons, same shared `boncukErrorReason`
+      // field/namespace. Mirrors `delivery_checkout_screen.dart`'s own
+      // copy, adapted to this screen's formal tense.
+      case 'campaign/not-found':
+        return 'Seçtiğiniz kampanya artık bulunamıyor. Lütfen tekrar seçim '
+            'yapın veya kampanya kullanmadan devam edin.';
+      case 'campaign/inactive':
+      case 'campaign/archived':
+        return 'Seçtiğiniz kampanya artık geçerli değil. Lütfen tekrar '
+            'seçim yapın veya kampanya kullanmadan devam edin.';
+      case 'campaign/channel-not-eligible':
+        return 'Seçtiğiniz kampanya Rezervasyon Ön Sipariş için geçerli '
+            'değil.';
+      case 'campaign/schedule-not-open':
+        return 'Seçtiğiniz kampanya şu anda geçerli saatlerde değil.';
+      case 'campaign/minimum-basket-not-met':
+        return 'Bu kampanya için ön sipariş tutarınız yeterli değil.';
+      case 'campaign/no-eligible-line':
+      case 'campaign/trigger-quantity-not-met':
+        return 'Ön siparişinizde bu kampanyaya uygun bir ürün yok.';
+      case 'campaign/usage-limit-reached':
+      case 'campaign/customer-usage-limit-reached':
+        return 'Bu kampanyanın kullanım hakkı doldu.';
+      case 'campaign/reservation-conflict':
+        return 'Kampanya şu anda kullanılamıyor. Lütfen tekrar deneyin.';
       default:
         return 'Boncuk kullanılırken bir sorun oluştu. Boncuk kullanmadan '
             'devam edebilirsiniz.';

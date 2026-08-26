@@ -156,6 +156,65 @@ export function sanitizeCampaignSchedule(raw: unknown): CampaignSchedule {
   throw new RangeError('schedule.mode must be one of: "oneTime", "recurring".');
 }
 
+function parseStoredRecurringWindow(raw: unknown): CampaignRecurringWindow {
+  if (typeof raw !== "object" || raw === null) {
+    throw new RangeError("recurringWindows entries must be objects.");
+  }
+  const data = raw as Record<string, unknown>;
+  const weekdays = sanitizeWeekdays(data.weekdays);
+  const startMinute = data.startMinute;
+  const endMinute = data.endMinute;
+  if (typeof startMinute !== "number" || !Number.isInteger(startMinute) || startMinute < 0 || startMinute > 1439) {
+    throw new RangeError("recurringWindows[].startMinute must be an integer 0-1439.");
+  }
+  if (typeof endMinute !== "number" || !Number.isInteger(endMinute) || endMinute <= startMinute || endMinute > 1440) {
+    throw new RangeError("recurringWindows[].endMinute must be an integer greater than startMinute, at most 1440.");
+  }
+  return { weekdays, startMinute, endMinute };
+}
+
+/**
+ * Re-parses a schedule ALREADY STORED in Firestore (i.e. the output of
+ * [sanitizeCampaignSchedule], not raw Admin input) — the read-side
+ * counterpart [sanitizeCampaignSchedule] is not safe to reuse for this,
+ * despite looking similar. **Bug found and fixed during P8-C's own
+ * end-to-end testing**: [sanitizeCampaignSchedule]'s recurring branch
+ * expects raw `"HH:mm"` strings (`startTime`/`endTime`, the shape a caller
+ * SUBMITS), but the STORED shape already has normalized integer
+ * `startMinute`/`endMinute` fields (the shape [sanitizeCampaignSchedule]
+ * itself PRODUCES) — calling the write-side sanitizer again on already-
+ * normalized data always threw (no `startTime` field to parse), which
+ * `parseCampaignDefinition`'s own fail-closed-by-exclusion `catch` turned
+ * into a silent `null` — every recurring-schedule campaign was
+ * unconditionally unreadable. `oneTime` mode never had this bug (its
+ * stored `startAt`/`endAt` Timestamps are format-symmetric with raw input,
+ * so the same function safely handles both directions) — only `recurring`
+ * needed a genuinely separate read-side parser.
+ */
+export function parseStoredCampaignSchedule(raw: unknown): CampaignSchedule {
+  if (typeof raw !== "object" || raw === null) {
+    throw new RangeError("schedule must be an object.");
+  }
+  const data = raw as Record<string, unknown>;
+  if (data.mode === "oneTime") {
+    const startAt = sanitizeOptionalTimestamp(data.startAt, "schedule.startAt");
+    const endAt = sanitizeOptionalTimestamp(data.endAt, "schedule.endAt");
+    validateValidityWindow(startAt, endAt);
+    return { mode: "oneTime", startAt, endAt };
+  }
+  if (data.mode === "recurring") {
+    if (!Array.isArray(data.recurringWindows) || data.recurringWindows.length === 0) {
+      throw new RangeError("schedule.recurringWindows must be a non-empty array when mode is \"recurring\".");
+    }
+    if (data.recurringWindows.length > MAX_RECURRING_WINDOWS) {
+      throw new RangeError("schedule.recurringWindows has too many entries.");
+    }
+    const recurringWindows = data.recurringWindows.map(parseStoredRecurringWindow);
+    return { mode: "recurring", recurringWindows };
+  }
+  throw new RangeError('schedule.mode must be one of: "oneTime", "recurring".');
+}
+
 /**
  * Trusted server-time + trusted-timezone evaluation of whether [schedule]
  * is CURRENTLY open — the one function every eligibility check (customer

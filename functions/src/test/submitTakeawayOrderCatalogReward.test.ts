@@ -474,7 +474,7 @@ test("catalog reward: insufficient spendableBalance is rejected", async () => {
   assert.strictEqual(account?.spendableBalance, 50, "untouched");
 });
 
-test("catalog reward: requestedBoncukAmount > 0 AND selectedRewardId together is rejected fail-closed, stable reason, no order created", async () => {
+test("catalog reward: requestedBoncukAmount > 0 AND selectedRewardId together is rejected fail-closed, stable reason, no order created — P8-C: reason is now the shared enforceBenefitExclusivity() reason, not the old catalogReward-specific one", async () => {
   const chain = await seedValidChain();
   const productId = nextId("product");
   await seedMenuProduct(productId, chain.restaurantId, chain.organizationId);
@@ -494,7 +494,7 @@ test("catalog reward: requestedBoncukAmount > 0 AND selectedRewardId together is
     idToken,
   );
   assert.strictEqual(httpStatus, 400);
-  assert.strictEqual(body.error?.details?.reason, "catalogReward/benefit-stacking-not-allowed");
+  assert.strictEqual(body.error?.details?.reason, "benefit/stacking-not-allowed");
   const account = await loyaltyAccountDoc(chain.organizationId, uid);
   assert.strictEqual(account?.spendableBalance, 500, "no debit — nothing was created");
 });

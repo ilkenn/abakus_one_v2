@@ -351,6 +351,41 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       ],
                     ),
                   ),
+                  // Server-Authoritative Campaign Engine P8-C (2026-08-25) —
+                  // historical reconstruction of a campaign redemption,
+                  // sourced entirely from `OrderModel.campaignTitle`/
+                  // `campaignDiscountMinorUnits` (themselves frozen from
+                  // `Order.campaign` at read time) — never a live campaign
+                  // re-lookup, so a later edit to the live campaign never
+                  // rewrites this order's own history.
+                  if (freshOrder.campaignTitle != null) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    Container(
+                      key: const Key('orderDetailCampaignInfo'),
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: const BoxDecoration(
+                        color: AppColors.primaryExtraLight,
+                        borderRadius: AppRadius.kMedium,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.local_offer_rounded,
+                              size: 18, color: AppColors.primary),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              '${freshOrder.campaignTitle} uygulandı'
+                              '${freshOrder.campaignDiscountMinorUnits != null ? ' · İndirim: ${(freshOrder.campaignDiscountMinorUnits! / 100).toStringAsFixed(freshOrder.campaignDiscountMinorUnits! % 100 == 0 ? 0 : 2)} TL' : ''}',
+                              style: AppTypography.bodyMedium.copyWith(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   if (isCancelled) ...[
                     const SizedBox(height: AppSpacing.md),
                     Container(

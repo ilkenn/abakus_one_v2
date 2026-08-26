@@ -78,18 +78,51 @@ async function waitFor<T>(
  * triggering the write (the caller's job) and resolving on that first
  * `exists` snapshot observes the document's state deterministically AT
  * CREATION — eliminating the race entirely rather than out-racing it.
+ *
+ * **P8-C.3 final-gate correction (2026-08-25) — the P5-B fix above closed
+ * ONE race but left a second, subtler one open, which reproduced under this
+ * suite's own continued growth (0/23 under P5-B's own isolation re-runs,
+ * 0/39 in an isolated re-run just now, but 1/1 under the current, larger
+ * full-suite run).** Calling `ref.onSnapshot(...)` only REGISTERS a
+ * listener locally and returns immediately — actually establishing the
+ * server-side watch target is its own asynchronous network round trip.
+ * The caller's own "attach listener, THEN issue the triggering write"
+ * ordering in JS source does not guarantee that round trip completes
+ * before the write's own trigger chain (`onOrderCompleted` create ->
+ * `onOrderEventCreatedForLoyaltyEarning`'s near-instant merge) does — under
+ * enough concurrent load, the write chain can finish before this NEW
+ * watch is actually live server-side, so the first snapshot the listener
+ * ever receives already reflects the merged, post-consumer state instead
+ * of the pure create. Firestore listeners are documented to fire an
+ * immediate FIRST callback the moment the watch target actually goes live
+ * (with `exists: false` if the document does not exist yet) — this is
+ * used here as an explicit "the watch is now truly live" synchronization
+ * signal: [watchFirstExistingSnapshot] resolves a separate `ready` promise
+ * on that very first callback, and the caller now awaits it BEFORE issuing
+ * the triggering write, closing the actual race window instead of merely
+ * hoping the write loses it.
  */
-function firstExistingSnapshotData<T>(
+function watchFirstExistingSnapshot<T>(
   ref: FirebaseFirestore.DocumentReference,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
+): { ready: Promise<void>; data: Promise<T> } {
+  let resolveReady: () => void;
+  const ready = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
+  let watchIsLive = false;
+  const data = new Promise<T>((resolve, reject) => {
     const unsubscribe = ref.onSnapshot((snap) => {
+      if (!watchIsLive) {
+        watchIsLive = true;
+        resolveReady();
+      }
       if (snap.exists) {
         unsubscribe();
         resolve(snap.data() as T);
       }
     }, reject);
   });
+  return { ready, data };
 }
 
 test("onOrderCreated transitions a freshly created order to pendingConfirmation, server-side", async () => {
@@ -171,14 +204,15 @@ test("onOrderCompleted writes exactly one orderEvents outbox record when an orde
   });
 
   const eventRef = db.collection("orderEvents").doc(`${orderId}-completed`);
-  // Listener attached BEFORE the triggering write — see
-  // `firstExistingSnapshotData`'s own doc comment for why this observes
-  // the document's state deterministically at creation, immune to the
+  // Watch established and CONFIRMED LIVE (awaited via `watch.ready`) before
+  // the triggering write — see `watchFirstExistingSnapshot`'s own doc
+  // comment for why this is now genuinely race-free, immune to the
   // independent `onOrderEventCreatedForLoyaltyEarning` consumer's own race
   // to process the same document the instant it exists.
-  const firstSnapshot = firstExistingSnapshotData<Record<string, unknown>>(eventRef);
+  const watch = watchFirstExistingSnapshot<Record<string, unknown>>(eventRef);
+  await watch.ready;
   await db.collection("orders").doc(orderId).update({ status: "completed" });
-  const eventData = await firstSnapshot;
+  const eventData = await watch.data;
 
   assert.strictEqual(eventData.type, "order.completed");
   assert.strictEqual(eventData.orderId, orderId);

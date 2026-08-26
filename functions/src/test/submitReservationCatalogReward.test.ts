@@ -379,7 +379,14 @@ test("catalog reward: requestedBoncukAmount and selectedRewardId together on the
     idToken,
   );
   assert.strictEqual(httpStatus, 400);
-  assert.strictEqual(body.error?.details?.reason, "catalogReward/benefit-stacking-not-allowed");
+  // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — the old
+  // reservation-local hand-rolled stacking check (reason
+  // "catalogReward/benefit-stacking-not-allowed") was replaced by the one
+  // shared `enforceBenefitExclusivity()` (`benefitExclusivity.ts`), which
+  // every other channel (takeaway/delivery) already used from P8-B onward.
+  // The reason string changed accordingly; the behavior (fail closed, no
+  // reservation/order created) did not.
+  assert.strictEqual(body.error?.details?.reason, "benefit/stacking-not-allowed");
 });
 
 test("catalog reward: insufficient balance is rejected, the WHOLE reservation transaction rolls back", async () => {

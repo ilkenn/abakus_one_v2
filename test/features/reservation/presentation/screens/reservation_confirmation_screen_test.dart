@@ -70,6 +70,7 @@ class _FakeReservationGateway implements ReservationGateway {
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) =>
       throw UnimplementedError();
 
@@ -215,5 +216,58 @@ void main() {
     // No Boncuk cash-redemption summary alongside it — the two are mutually
     // exclusive server-confirmed states, never shown together.
     expect(find.byKey(const Key('orderSuccessBoncukSummary')), findsNothing);
+  });
+
+  testWidgets(
+      'Server-Authoritative Campaign Engine P8-C.2 (2026-08-25): a preorder '
+      'with a server-confirmed campaign discount -> the reused '
+      'CampaignSuccessSummary is shown with exactly the immutable snapshot '
+      "values, never a client-recomputed figure", (tester) async {
+    await _pumpConfirmation(
+      tester,
+      _summaryWith(
+        preorder: const ReservationPreorderSummary(
+          orderId: 'order-1',
+          status: ReservationPreorderStatus.pendingConfirmation,
+          kitchenReleaseAt: null,
+          lines: [],
+          grandTotalMinorUnits: 20400,
+          campaignTitle: 'Yaz Kampanyası',
+          campaignDiscountMinorUnits: 3600,
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('orderSuccessCampaignSummary')),
+        findsOneWidget);
+    expect(find.text('Yaz Kampanyası uygulandı'), findsOneWidget);
+    expect(find.text('36 TL'), findsOneWidget, reason: 'the discount, 3600 minor units');
+    expect(find.text('204 TL'), findsOneWidget,
+        reason: 'the new grand total, sourced from grandTotalMinorUnits '
+            'directly, never re-derived from discountMinorUnits');
+    // Mutually exclusive with the other two server-confirmed summaries —
+    // never shown together (one order = one benefit).
+    expect(find.byKey(const Key('orderSuccessBoncukSummary')), findsNothing);
+    expect(find.byKey(const Key('orderSuccessCatalogRewardSummary')),
+        findsNothing);
+  });
+
+  testWidgets(
+      'Server-Authoritative Campaign Engine P8-C.2: a preorder with no '
+      'campaign applied -> no campaign summary, no crash', (tester) async {
+    await _pumpConfirmation(
+      tester,
+      _summaryWith(
+        preorder: const ReservationPreorderSummary(
+          orderId: 'order-1',
+          status: ReservationPreorderStatus.pendingConfirmation,
+          kitchenReleaseAt: null,
+          lines: [],
+          grandTotalMinorUnits: 24000,
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('orderSuccessCampaignSummary')), findsNothing);
   });
 }

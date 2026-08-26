@@ -89,6 +89,38 @@ class CampaignRule {
   final int? triggerQuantity;
   final String? rewardProductId;
   final int? rewardQuantity;
+
+  /// Parses a raw `rule` map — shared by [CampaignGateway] (the customer
+  /// campaign list) and, from Server-Authoritative Campaign Engine P8-C
+  /// (2026-08-25) onward, `OrderFirestoreMapper` (an order's frozen
+  /// `campaign.appliedRule` snapshot) — both sourced from the exact same
+  /// backend `CampaignRule` shape
+  /// (`functions/src/campaignEngine.ts`), so one parser serves both call
+  /// sites rather than two near-duplicates drifting apart.
+  factory CampaignRule.fromMap(Map<String, dynamic> data) {
+    final mechanic = data['mechanic'];
+    if (mechanic is! String) {
+      throw FormatException(
+          'CampaignRule: mechanic must be a string, got ${mechanic.runtimeType}');
+    }
+    final scopeRaw = data['scope'];
+    final scope = scopeRaw is Map ? Map<String, dynamic>.from(scopeRaw) : null;
+    int? asInt(dynamic value) => value == null ? null : (value as num).toInt();
+
+    return CampaignRule(
+      mechanic: mechanic,
+      scopeKind: scope?['kind'] as String?,
+      scopeProductId: scope?['productId'] as String?,
+      scopeCategoryId: scope?['categoryId'] as String?,
+      percentBasisPoints: asInt(data['percentBasisPoints']),
+      amountMinorUnits: asInt(data['amountMinorUnits']),
+      freeProductId: data['freeProductId'] as String?,
+      triggerProductId: data['triggerProductId'] as String?,
+      triggerQuantity: asInt(data['triggerQuantity']),
+      rewardProductId: data['rewardProductId'] as String?,
+      rewardQuantity: asInt(data['rewardQuantity']),
+    );
+  }
 }
 
 class CampaignSchedule {

@@ -79,6 +79,8 @@ class ReservationPreorderSummary {
     this.catalogRewardBoncukCost,
     this.catalogRewardRedeemedProductId,
     this.catalogRewardCoveredValueMinorUnits,
+    this.campaignTitle,
+    this.campaignDiscountMinorUnits,
   });
 
   final String orderId;
@@ -133,6 +135,20 @@ class ReservationPreorderSummary {
     }
     return null;
   }
+
+  /// Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — the
+  /// campaign sibling of the Boncuk/catalog-reward summaries above, sourced
+  /// directly from the canonical preorder order's own immutable `campaign`
+  /// snapshot — never re-derived from the current live Campaign document,
+  /// so a later campaign edit (title/version) can never rewrite this
+  /// preorder's own history. `null` means no campaign was applied to this
+  /// preorder. Mutually exclusive with [hasBoncukSummary]/
+  /// [hasCatalogRewardSummary] (one order = one benefit).
+  final String? campaignTitle;
+  final int? campaignDiscountMinorUnits;
+
+  bool get hasCampaignSummary =>
+      campaignTitle != null && campaignDiscountMinorUnits != null;
 }
 
 /// The customer-facing read model for their own reservation — sourced

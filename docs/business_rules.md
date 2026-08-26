@@ -701,12 +701,22 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Related Modules**: Campaigns, Orders, POS
 
 ### BR-PROMO-008 — Server-Authoritative Campaign Engine foundation (P8-B, 2026-08-25)
-- **Status**: DECIDED — **IMPLEMENTED, foundation only.** No `submit*Order.ts` channel accepts a
-  campaign selection yet — checkout campaign redemption, Admin UI, and coupon-code redemption are all
-  explicitly out of scope this phase (P8-C+). This phase resolves the P8-A audit's own finding that
-  the entire prior "campaign" concept (`campaignsProvider`'s `ABAKUS10`/`ILKSIPARIS`/`UCRETSIZ`/
-  `YAZBITTI` mock catalog) was 100% client-side and, worse, live-reachable from the real Home screen
-  (hero banner + a fake "you got a coupon" notification) — both are now removed.
+- **Status**: DECIDED — **foundation IMPLEMENTED (P8-B)**; checkout campaign redemption is now
+  **IMPLEMENTED for all four customer-facing commercial channels**: takeaway (P8-C, 2026-08-25),
+  delivery (P8-C.1, 2026-08-25), reservation preorder (P8-C.2, 2026-08-25), and dine-in (P8-C.3,
+  2026-08-25). `submitTakeawayOrder.ts`/`submitDeliveryOrder.ts`/`submitReservation.ts` (via
+  `reservationPreorder.ts`'s shared line-building helpers)/`submitDineInOrder.ts` all accept a real
+  `selectedCampaignId`, resolve the discount server-side via the shared `campaignPricing.ts` resolver,
+  reserve global/per-customer usage atomically with order creation, and release it exactly once on a
+  qualifying terminal event via the shared, channel-agnostic `campaignUsageRestore.ts` consumer — see
+  this rule's own P8-C/P8-C.1 update below for the full mechanism, the P8-C.2 bullet for reservation
+  preorder's own terminal-event mapping, and `BR-LOYALTY-030`'s own new P8-C.3 bullets for dine-in's
+  own wiring and its LOCKED guest-exclusion policy (dine-in is the one channel with a genuine anonymous-
+  guest identity to reason about). **Still explicitly out of scope**: Admin UI and coupon-code
+  redemption. This phase family resolves the P8-A audit's own finding that the entire prior "campaign"
+  concept (`campaignsProvider`'s `ABAKUS10`/`ILKSIPARIS`/`UCRETSIZ`/`YAZBITTI` mock catalog) was 100%
+  client-side and, worse, live-reachable from the real Home screen (hero banner + a fake "you got a
+  coupon" notification) — both are now removed.
 - **Rule — six Admin-facing campaign types, one shared internal engine.** `percentageDiscount`,
   `fixedAmountDiscount`, `freeProduct`, `buyXGetY`, `productDiscount`, `categoryDiscount` are the
   literal `campaignType` values a future Admin will choose from, each mapped onto one of four internal
@@ -723,38 +733,133 @@ handling) and **Related Modules** (the feature areas it touches, by name).
 - **Rule — `eligibleChannels` reuses the Reward Catalog's own vocabulary verbatim.**
   `CANONICAL_COMMERCIAL_CHANNELS` (`loyaltyRewardCatalog.ts`) was specifically pre-committed in an
   earlier phase for exactly this reuse — no parallel channel vocabulary was invented.
-- **Rule — canonical pricing integration point, designed but not yet wired.** A campaign discount is
-  designed to apply at line-build time (`functions/src/campaignPricing.ts`'s pure
-  `resolveCampaignDiscount`), generalizing the exact mechanism `catalogReward`'s `freeUnitCount`
-  already uses — never a `grandTotal` patch. An order-wide percentage/fixed discount distributes
+- **Rule — canonical pricing integration point, WIRED (P8-C/P8-C.1).** A campaign discount applies at
+  line-build time via a two-pass build (`buildLines`/`buildDeliveryLines`): pass 1 prices lines at full
+  price to gather `campaignPricing.ts`'s own `CampaignPriceableLine[]` input; `resolveCampaignDiscount`
+  (pure, channel-agnostic) computes the per-line discount from that; pass 2 rebuilds the final,
+  discounted lines — never a `grandTotal` patch. An order-wide percentage/fixed discount distributes
   across every eligible line using an exact integer minor-unit largest-remainder allocation
   (`allocateProportionally`) — proven by test to always sum to exactly the intended total discount,
   with zero rounding leakage. Order-wide campaigns may discount Bowl Builder lines (no product-id
   match required); product/category-scoped campaign types structurally cannot target a Bowl Builder
   line, the same limitation `catalogReward` already has, since Bowl Builder items have no real
-  canonical product id.
-- **Rule — usage limits are race-safe by construction, not yet load-bearing.** `campaignUsageCounters`
+  canonical product id. `pricing.discount` on the persisted order document now equals the campaign's
+  own total discount exactly (was hardcoded to `0` pre-P8-C/P8-C.1).
+- **Rule — usage limits are race-safe AND now load-bearing (P8-C/P8-C.1).** `campaignUsageCounters`
   /`campaignCustomerUsage`/`campaignUsageReservations` (`functions/src/campaignUsage.ts`) implement a
   transactional reserve/release pair — deterministic ids, read-before-write, proven by a dedicated
   concurrency test that N simultaneous reservations against a limit of K produce exactly K successes,
-  never more. Anonymous table guests are structurally excluded from `perCustomerUsageLimit` tracking
-  (`customerId: null` never creates a `campaignCustomerUsage` doc) — a caller wiring this into checkout
-  must independently enforce "guests may use a campaign only when `perCustomerUsageLimit == null`"
-  before ever reserving on a guest's behalf; this file does not re-derive that policy itself.
+  never more (re-proven per-channel by `submitTakeawayOrderCampaign.test.ts`/
+  `submitDeliveryOrderCampaign.test.ts`'s own concurrency tests). `reserveCampaignUsage` is called as
+  the FIRST statement of each channel's write phase (its own internal reads-then-writes shape
+  guarantees "no reads after writes" for the whole transaction); `releaseCampaignUsage` is invoked
+  exactly once, idempotently, by the single shared, channel-agnostic `campaignUsageRestore.ts` consumer
+  on a qualifying terminal event (rejected/cancelled/refunded) — never on successful completion.
+  Takeaway explicitly rejects `selectedCampaignId` for a guest order before the transaction even opens
+  (no guest identity is durable enough for per-customer tracking); delivery has no guest path to begin
+  with, so no analogous check was needed there.
 - **Rule — customer-facing read path is open to anonymous guests, unlike the Reward Catalog.**
   `getCustomerActiveCampaigns` allows any Firebase Auth session (real or anonymous) through — a table
   guest must be able to see which campaigns exist even though redemption itself will later require
   more. `organizationId` is still never client-supplied (Correction-A precedent). Returns an empty list
   by construction whenever no real campaign has been created — never a mock fallback.
-- **Rule — Loyalty earning required zero new code.** `loyaltyOrderEarning.ts` already reads
-  `pricing.grandTotal.minorUnits` as its earning basis, and was explicitly designed (P4-A ADR) against
-  "eligible net spend after campaign/coupon discount" — since a campaign discount is designed to be
-  folded into line totals before `grandTotal` is computed, the exact same non-invasive mechanism that
-  already makes `catalogReward` earn-correctly today requires no campaign-specific earning logic.
-- **BLOCKER-note — checkout campaign redemption is a future phase, deliberately not started.** No
-  `submit*Order.ts` channel reads `selectedCampaignId`, computes a campaign discount, or reserves
-  campaign usage yet. `enforceBenefitExclusivity()` exists but is not called from any channel. This is
-  the explicit, reported scope boundary of P8-B, not an oversight.
+- **Rule — Loyalty earning required zero new code, confirmed (P8-C/P8-C.1).** `loyaltyOrderEarning.ts`
+  already reads `pricing.grandTotal.minorUnits` as its earning basis and needed no campaign-aware
+  change: since a campaign discount is folded into line totals before `grandTotal` is computed, the
+  exact same non-invasive mechanism that already makes `catalogReward` earn-correctly earns correctly
+  post-campaign too — proven, not just designed, by both channels' own dedicated earning tests
+  (discounted amount excludes from earning; the remaining paid amount earns normally).
+- **Rule — one shared reuse discipline across channels, no duplicate campaign engine.**
+  `campaignEngine.ts`/`campaignPricing.ts`/`campaignScheduling.ts`/`campaignUsage.ts`/
+  `benefitExclusivity.ts`/`campaignUsageRestore.ts` are unmodified, channel-agnostic modules imported
+  verbatim by both `submitTakeawayOrder.ts` (P8-C) and `submitDeliveryOrder.ts` (P8-C.1) — each
+  channel only adds its own per-channel glue (eligibility pre-check block, two-pass line building,
+  snapshot construction), mirroring this codebase's own pre-existing "mirror the per-channel glue,
+  share the actual engine" convention (the same relationship `submitDeliveryOrder.ts`'s
+  `buildDeliveryLines`/`buildDeliveryOrderDocument` already had with `submitTakeawayOrder.ts`'s
+  `buildLines`/`buildOrderDocument` before campaigns existed). `enforceBenefitExclusivity()` (built
+  unused in P8-B) now replaces each channel's own previously-hand-rolled two-benefit stacking check —
+  the shared rejection reason changed from `catalogReward/benefit-stacking-not-allowed` to
+  `benefit/stacking-not-allowed` for both channels as a result.
+- **BLOCKER-note — a real, latent P8-B bug found and fixed via P8-C's own testing.**
+  `parseCampaignDefinition` was reusing the write-side `sanitizeCampaignSchedule` (expects raw
+  `"HH:mm"` strings) to re-parse ALREADY-STORED recurring-schedule data (normalized `startMinute`/
+  `endMinute` integers) — every recurring-schedule campaign was permanently unreadable
+  (`campaign/not-found`). Fixed with a genuine read-side parser (`parseStoredCampaignSchedule`/
+  `parseStoredRecurringWindow` in `campaignScheduling.ts`); `oneTime` mode was never affected (its
+  stored/input shapes are format-symmetric). A pre-existing P8-B test fixture
+  (`getCustomerActiveCampaigns.test.ts`) was seeding the wrong raw shape for its own recurring-schedule
+  tests and was corrected to match real stored data as part of the same fix.
+- **Rule — reservation preorder campaign application point and schedule-evaluation instant, WIRED
+  (P8-C.2).** A campaign is resolved and priced exactly once, inside `submitReservation.ts`'s existing
+  `if (parsedPreorder)` block, at reservation-CREATION time — never re-evaluated at
+  `respondToReservation` confirm, `respondToProposedChange` accept, or `reservationSweep`'s own KDS-
+  release scheduling. Schedule eligibility (`isCampaignScheduleCurrentlyOpen`) uses trusted server time
+  plus `ReservationPolicy.timezone` — already resolved earlier in the same transaction by
+  `resolveActiveReservationBranch`, so unlike takeaway/delivery this channel needed **no extra
+  `branches/{branchId}` read** for its own schedule check, a genuine simplification. Reservation
+  preorder has **no channel surcharge at all** (`reservationPreorder.ts`'s own §1) and **no separate
+  restaurant-operational minimum-order threshold** the way delivery's `area.minimumOrderMinorUnits`
+  is — `minimumBasketMinorUnits` is therefore evaluated directly against PASS 1's own canonical
+  pre-discount preorder basket, with no second minimum to reconcile.
+- **Rule — reservation preorder terminal-release mapping, audited exhaustively before any release
+  test was written (P8-C.2).** Campaign usage is an Order benefit, never a Reservation-state benefit —
+  Reservation status changes never directly mutate campaign counters; only the LINKED preorder Order's
+  own terminal status transition does, via the same unmodified, channel-agnostic
+  `onOrderTerminalFailureOrRefund.ts` trigger + `campaignUsageRestore.ts` consumer P8-C/P8-C.1 already
+  built (confirmed to require **zero new backend wiring** for reservation preorder — a genuine reuse
+  win). Terminalizes the linked Order (usage IS released): `respondToReservation` reject;
+  `cancelReservation` customer self-cancel while the preorder is still `pendingConfirmation`;
+  `cancelReservationPreorderOrderForStaff` (post-release staff cancel); `markReservationNoShow` (both
+  pre- and post-kitchen-release); `refundReservationPreorderOrder`; `reservationSweep`'s own
+  `runReservationResponseTimeoutSweep`. Does NOT terminalize the linked Order (usage stays reserved,
+  by design): `respondToProposedChange` decline; `reservationSweep`'s own
+  `runReservationProposalExpirySweep` (only returns the Reservation to `pendingRestaurantApproval`,
+  never touches the Order — confirmed via source read, not assumed); `cancelReservation` staff-cancel
+  while the preorder is ALREADY released to the kitchen (`cancelReservation.ts`'s own documented
+  behavior: staff must use `cancelReservationPreorderOrderForStaff` instead — this reservation-scoped
+  callable deliberately leaves a released preorder untouched, for either actor); `respondToReservation`
+  confirm / `respondToProposedChange` accept (release TO the kitchen is not a terminal state).
+- **Rule — `confirmedTime` changes never re-price an already-applied campaign discount (P8-C.2).**
+  `buildPreorderConfirmationPatch` (invoked by both `respondToReservation` confirm and
+  `respondToProposedChange` accept) only ever patches `status`/`kitchenReleaseAt`/`version`/
+  `timestamps`/`statusHistory` — it has no `pricing`/`campaign` field in its own patch shape at all, so
+  a later confirmed-time change is structurally incapable of touching the immutable campaign snapshot,
+  proven end-to-end by a dedicated propose-change-accept test asserting byte-for-byte snapshot/pricing
+  equality before and after.
+- **Remaining scope, deliberately not started**: Admin UI, coupon-code redemption. All four
+  customer-facing commercial channels now support checkout campaign redemption (see this rule's own
+  Status line).
+- **CLOSED — P8-D Final Closure Audit (2026-08-26).** A dedicated end-to-end audit re-verified, across
+  all four channels together (not per-channel in isolation): single shared engine with zero duplicated
+  logic; server authority over definition/version/eligibility/channel/schedule/branch-timezone/
+  minimum-basket/discount/usage-limits/final pricing; atomic and concurrency-safe global and
+  per-customer usage reservation; the immutable order-level campaign snapshot, confirmed read
+  everywhere historical UI renders it (`order_detail_screen.dart`'s `freshOrder.campaignTitle`/
+  `campaignDiscountMinorUnits`, never a live campaign re-lookup, for every channel's orders); ONE
+  ORDER = MAXIMUM ONE BENEFIT via the one shared `enforceBenefitExclusivity()` call site per channel;
+  post-campaign-value Loyalty earning; the shared, channel-agnostic, idempotent
+  `campaignUsageRestore.ts` terminal-release consumer (never fires on successful completion); the
+  LOCKED dine-in guest-exclusion policy; org-scoped tenant isolation (no `branchId` on
+  `CampaignDefinition` — campaigns are organization-wide by design, confirmed via `campaignEngine.ts`);
+  all 5 campaign Firestore collections remain `allow read, write: if false` (Admin SDK/Cloud Function
+  only — `firestore.rules` untouched by this audit); `campaignAdminService.ts`'s trusted
+  create/version/activate/archive/duplicate operations remain a sound, unimplemented-as-UI foundation
+  for a future Admin/POS phase. **Two stale documentation contradictions found and fixed** (comment-only,
+  no behavior change): `campaignUsage.ts`'s and `getCustomerActiveCampaigns.ts`'s own doc comments still
+  described the superseded P8-B permissive guest-campaign design as current; both now carry an explicit
+  "SUPERSEDED (P8-C.3)" correction pointing at this rule and `BR-LOYALTY-030`. Two further stale
+  "not yet wired" doc comments (`campaignUsageRestore.ts`, `benefitExclusivity.ts` — both written
+  in P8-B/P8-C before every channel had adopted them) were also corrected to reflect all-four-channels
+  adoption. **Three orphaned/dead files reported, not deleted** (no live/reachable path uses them):
+  `lib/features/cart/presentation/screens/checkout_screen.dart` (a zero-reference legacy screen still
+  containing hardcoded fake `ABAKUS10`/`ILKSIPARIS`/`UCRETSIZ` coupon logic — real navigation never
+  routes here); `lib/features/home/presentation/widgets/featured_content_section.dart` and
+  `lib/features/campaigns/presentation/screens/campaigns_screen.dart` (both use the real
+  `activeCampaignsProvider`, no mock data, but are unmounted from any reachable navigation tree). Zero
+  TODO/FIXME/HACK related to Campaign found. Zero duplicate reason strings/enums/inconsistent channel
+  names found. No further documentation contradictions found beyond the ones fixed. **Determination:
+  CUSTOMER CAMPAIGN SYSTEM = CLOSED.**
 - **Owner Agent**: restaurant_domain / security_engineer / ui_ux_designer
 - **Related Modules**: Campaigns, Orders, Loyalty, Menu, BR-PROMO-002, BR-PROMO-003, BR-PROMO-004,
   BR-PROMO-005, BR-PROMO-006, BR-PROMO-007, BR-LOYALTY-006
@@ -1219,8 +1324,10 @@ this design introduces.
 - **Status**: DECIDED — **IMPLEMENTED (P7-D.1, 2026-08-24)**, backend + Flutter. Resolves the exact
   structural blocker `BR-LOYALTY-029` reported (no server-authoritative order pipeline existed for
   dine-in) by introducing one, then reuses it to extend catalog-reward redemption to dine-in for
-  phone-verified customers. Campaign Engine, POS/Admin/KDS, and table-QR architecture changes remain
-  explicitly out of scope, per this task's own instruction.
+  phone-verified customers. **Campaign Engine checkout integration is now also IMPLEMENTED (P8-C.3,
+  2026-08-25)** — see this rule's own new bullet below for the full mechanism, including the LOCKED
+  guest-exclusion policy. POS/Admin/KDS and table-QR architecture changes remain explicitly out of
+  scope.
 - **Rule — one canonical server transaction replaces the customer direct-write path.** New callable
   `submitDineInOrder.ts` is now the sole customer-facing writer of `dineInQr` orders — validates
   auth/technical identity, validates the table guest session (`isTableGuestSessionActive`, previously an
@@ -1283,6 +1390,48 @@ this design introduces.
   chain (`orders/{id}` update → `onOrderCompleted`/`onOrderTerminalFailureOrRefund` → `orderEvents` create
   → the loyalty consumers) to fire, proven end-to-end by test (staff confirm→complete chain earns exactly
   once; reject/refund restores a redeemed catalog reward exactly once; refund also claws back earning).
+- **Rule — Campaign checkout integration, WIRED (P8-C.3, 2026-08-25), reusing the shared engine
+  verbatim — no dine-in-specific Campaign Engine.** `submitDineInOrder.ts` gained the same
+  `selectedCampaignId`/eligibility-pre-check/two-pass-line-building/`reserveCampaignUsage`/immutable-
+  snapshot wiring `submitTakeawayOrder.ts` (P8-C)/`submitDeliveryOrder.ts` (P8-C.1)/`submitReservation
+  .ts` (P8-C.2) already established, importing `campaignEngine.ts`/`campaignScheduling.ts`/
+  `campaignPricing.ts`/`campaignUsage.ts`/`benefitExclusivity.ts` unmodified. All six Admin-facing
+  campaign types work on dine-in (no channel surcharge to reason about, identical to reservation
+  preorder); `minimumBasketMinorUnits` evaluates against the PRE-discount PASS-1 basket (no separate
+  restaurant-operational minimum-order check exists for dine-in to reconcile against, same as
+  reservation preorder); branch timezone is read fresh from `branches/{branchId}` for the schedule
+  check (dine-in has no already-loaded policy/timezone value to reuse, unlike reservation preorder —
+  one extra read, same as takeaway/delivery). `enforceBenefitExclusivity()` now replaces this file's
+  own previously-hand-rolled two-benefit stacking check too — the shared rejection reason changed from
+  `catalogReward/benefit-stacking-not-allowed` to `benefit/stacking-not-allowed` for the
+  campaign+catalogReward case; the PRE-EXISTING, UNCHANGED `boncuk/redemption-not-allowed` rejection
+  (below) still fires first and wins whenever `requestedBoncukAmount > 0`, campaign or no campaign —
+  cash Boncuk redemption is NOT enabled by this phase. Terminal-release required ZERO new backend
+  wiring — `advanceDineInOrderStatus.ts`'s reject/cancel and `refundDineInOrder.ts`'s refund all write
+  `status` through the same generic `applyOrderLifecycleTransition` helper every channel already uses,
+  which the already-built, channel-agnostic `onOrderTerminalFailureOrRefund.ts` +
+  `campaignUsageRestore.ts` consumer pair (P8-C) picks up automatically; successful `completed` keeps
+  the reserved usage permanently, exactly like every other channel.
+- **Rule — LOCKED Abaküs One guest policy (P8-C.3, 2026-08-25), confirmed explicitly before
+  implementation, not inferred from prior design-only doc comments.** Anonymous/table-QR guests cannot
+  use Campaigns, mirroring the identical, already-established blanket guest exclusion this same rule's
+  own bullets above already apply to catalog-reward redemption and cash Boncuk on this channel — never
+  a new/parallel guest policy. `submitDineInOrder.ts` rejects any `selectedCampaignId` fail-closed
+  (`permission-denied`, reason `campaign/requires-customer-identity`) BEFORE its transaction ever opens
+  whenever the caller is not a real, phone-verified customer — no campaign document is ever read for a
+  guest request, and no `campaignUsageCounters`/`campaignCustomerUsage`/`campaignUsageReservations`
+  document is ever written. `getCustomerActiveCampaigns` (P8-B) remains deliberately open to both
+  identity types unchanged — the listing is a best-effort hint (a guest MAY see a campaign in the list
+  they cannot actually redeem, exactly like the existing category-scoped-eligibility best-effort
+  pattern every channel's own `CampaignSelectionCard` already has), submission is the sole final
+  authority. This closes a genuine discrepancy discovered during this phase's own audit: `campaignUsage
+  .ts`'s own P8-B doc comment had designed (but never implemented anywhere) a more permissive rule
+  ("guests may use a campaign when `perCustomerUsageLimit == null`"); `submitTakeawayOrder.ts`'s own
+  real, shipped P8-C guest path had already chosen the stricter blanket exclusion instead. Confirmed
+  explicitly with the product owner before implementation — the stricter, already-shipped precedent is
+  now the single, LOCKED policy across every channel; the permissive design-only doc comment is
+  superseded. A guest's ordinary (no-campaign) order, and a guest's own existing catalog-reward/cash-
+  Boncuk exclusions, are completely unaffected — proven unchanged by test.
 - **Rule — `firestore.rules` denies any customer attempt to bypass the callable.** After the new submit
   path existed, the customer direct-create branches for `dineInQr` were removed, not merely hardened —
   proven by flipping the corresponding `rules.test.js` positive-control tests (previously asserting a

@@ -5,6 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
+import 'package:abakus_one_v2/features/campaigns/data/campaign_gateway.dart';
+import 'package:abakus_one_v2/features/campaigns/domain/models/campaign.dart';
+import 'package:abakus_one_v2/features/campaigns/presentation/providers/campaigns_provider.dart';
 import 'package:abakus_one_v2/features/cart/data/submit_dine_in_order_gateway.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/dine_in_order_dependencies_provider.dart';
@@ -18,6 +21,7 @@ import 'package:abakus_one_v2/features/loyalty/presentation/providers/loyalty_pr
 import 'package:abakus_one_v2/features/orders/data/canonical_order_repository.dart';
 import 'package:abakus_one_v2/features/orders/domain/identity/order_identity.dart';
 import 'package:abakus_one_v2/features/orders/domain/mappers/cart_to_order_mapper.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/campaign_snapshot.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/catalog_reward_snapshot.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_actor.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_benefit_type.dart';
@@ -58,11 +62,15 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
   int callCount = 0;
   String? lastTableSessionId;
   String? lastSelectedRewardId;
+  String? lastSelectedCampaignId;
   List<Map<String, dynamic>>? lastRequestItems;
 
   String catalogRewardTitleToReturn = 'Test Ödülü';
   int catalogRewardBoncukCostToReturn = 100;
   int catalogRewardCoveredValueMinorUnitsToReturn = 12000;
+
+  String campaignTitleToReturn = 'Test Kampanya';
+  int campaignDiscountMinorUnitsToReturn = 2000;
 
   SubmitDineInOrderException? errorToThrow;
   SubmitDineInOrderException? throwOnNextSubmit;
@@ -75,10 +83,12 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     required List<DineInOrderItem> items,
     String customerNote = '',
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) async {
     callCount += 1;
     lastTableSessionId = tableSessionId;
     lastSelectedRewardId = selectedRewardId;
+    lastSelectedCampaignId = selectedCampaignId;
     lastRequestItems = [for (final item in items) item.toJson()];
 
     final pendingHold = holdUntil;
@@ -141,6 +151,28 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
           redeemedQuantity: 1,
           coveredValueMinorUnits: catalogRewardCoveredValueMinorUnitsToReturn,
           rewardCatalogVersionId: '${selectedRewardId}_1',
+        ),
+      );
+    }
+    // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — mirrors
+    // the catalog-reward branch above exactly, a server-confirmed campaign
+    // snapshot the real `submitDineInOrder.ts` would have written.
+    if (selectedCampaignId != null) {
+      order = order.copyWith(
+        selectedBenefitType: OrderBenefitType.campaign,
+        campaign: CampaignSnapshot(
+          campaignId: selectedCampaignId,
+          campaignVersion: 1,
+          title: campaignTitleToReturn,
+          campaignType: 'percentageDiscount',
+          appliedRule: const CampaignRule(
+            mechanic: 'percentage',
+            scopeKind: 'order',
+            percentBasisPoints: 1000,
+          ),
+          appliedValue: 1000,
+          discountMinorUnits: campaignDiscountMinorUnitsToReturn,
+          orderChannel: 'dineIn',
         ),
       );
     }
@@ -211,6 +243,56 @@ LoyaltyReward _catalogReward({
   );
 }
 
+/// Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — mirrors
+/// `delivery_checkout_screen_test.dart`'s/`reservation_flow_screen_test.dart`'s
+/// own `_FakeCampaignGateway` exactly.
+class _FakeCampaignGateway implements CampaignGateway {
+  _FakeCampaignGateway({this.campaigns = const [], this.error});
+
+  List<Campaign> campaigns;
+  CampaignGatewayException? error;
+  int calls = 0;
+
+  @override
+  Future<List<Campaign>> getActiveCampaigns() async {
+    calls += 1;
+    if (error != null) throw error!;
+    return campaigns;
+  }
+}
+
+/// A well-formed, dineIn-eligible [Campaign] for checkout tests — mirrors
+/// `delivery_checkout_screen_test.dart`'s own `_testCampaign` exactly,
+/// default channel adapted to this screen's own.
+Campaign _testCampaign({
+  String campaignId = 'camp-1',
+  String title = 'Test Kampanya',
+  String description = 'Bir test kampanyası.',
+  List<String> eligibleChannels = const ['dineIn'],
+  int? minimumBasketMinorUnits,
+  List<String>? eligibleProductIds,
+  int sortOrder = 0,
+}) {
+  return Campaign(
+    campaignId: campaignId,
+    title: title,
+    description: description,
+    campaignType: 'percentageDiscount',
+    rule: const CampaignRule(
+      mechanic: 'percentage',
+      scopeKind: 'order',
+      percentBasisPoints: 1000,
+    ),
+    eligibleChannels: eligibleChannels,
+    eligibleProductIds: eligibleProductIds,
+    eligibleCategoryIds: null,
+    minimumBasketMinorUnits: minimumBasketMinorUnits,
+    schedule: const CampaignSchedule(mode: 'oneTime'),
+    sortOrder: sortOrder,
+    version: 1,
+  );
+}
+
 ActiveTableContext _context({
   String sessionId = 'tgs-1',
   String branchId = 'branch-1',
@@ -261,6 +343,8 @@ void main() {
     AuthSession? signedInCustomer,
     // ignore: library_private_types_in_public_api
     _FakeLoyaltyGateway? loyaltyGateway,
+    // ignore: library_private_types_in_public_api
+    _FakeCampaignGateway? campaignGateway,
   }) async {
     // The CatalogRewardCard adds substantial height for a real-customer
     // scenario — the default test surface is too short for the ListView's
@@ -294,6 +378,8 @@ void main() {
         submitDineInOrderGatewayProvider.overrideWithValue(gateway),
         loyaltyGatewayProvider
             .overrideWithValue(loyaltyGateway ?? _FakeLoyaltyGateway()),
+        campaignGatewayProvider
+            .overrideWithValue(campaignGateway ?? _FakeCampaignGateway()),
         if (signedInCustomer != null)
           authProvider.overrideWith(
             () => SeededAuthNotifier(
@@ -617,6 +703,228 @@ void main() {
       await tester.pumpAndSettle();
       expect(pumped.gateway.callCount, 2);
       expect(pumped.gateway.lastSelectedRewardId, isNull);
+      expect(find.byType(OrderSuccessScreen), findsOneWidget);
+    },
+  );
+
+  // =========================================================================
+  // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — the dine-in
+  // campaign checkout wiring: [CampaignSelectionCard], mutual exclusivity
+  // with a catalog reward. **LOCKED guest policy**: an anonymous table
+  // guest never sees a campaign control at all, mirroring the identical,
+  // already-established catalog-reward guest exclusion in this same file —
+  // this file's job is the WIRING only; the server-confirmed success
+  // summary itself is proven via `order_success_screen_test.dart`.
+  // =========================================================================
+
+  testWidgets(
+    'P8-C.3 A: anonim misafir: kampanya karti hic gosterilmez (devre disi bile degil)',
+    (tester) async {
+      await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        campaignGateway: _FakeCampaignGateway(
+          campaigns: [_testCampaign(campaignId: 'c1')],
+        ),
+      );
+
+      expect(find.byKey(const Key('campaignSelectionCard')), findsNothing);
+      expect(find.textContaining('Kampanya'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'P8-C.3 B: gercek musteri: sadece dineIn-uygun kampanyalar gosterilir (client-side best-effort filtre); secim gateway\'e selectedCampaignId ile gonderilir, odul karti gizlenir',
+    (tester) async {
+      final signedInCustomer = AuthSession(
+        uid: 'real-customer-uid',
+        phoneNumber: '+905551234567',
+        createdAt: DateTime(2026, 8, 1),
+        expiresAt: DateTime(2027, 8, 1),
+      );
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        signedInCustomer: signedInCustomer,
+        loyaltyGateway: _FakeLoyaltyGateway(
+          rewards: [_catalogReward(rewardId: 'reward-1')],
+        ),
+        campaignGateway: _FakeCampaignGateway(campaigns: [
+          _testCampaign(campaignId: 'eligible'),
+          _testCampaign(
+            campaignId: 'delivery-only',
+            eligibleChannels: const ['delivery'],
+          ),
+        ]),
+      );
+
+      expect(find.byKey(const Key('catalogRewardCard')), findsOneWidget);
+      expect(find.byKey(const Key('campaignTile-eligible')), findsOneWidget);
+      expect(
+          find.byKey(const Key('campaignTile-delivery-only')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('campaignTile-eligible')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.lastSelectedCampaignId, 'eligible');
+      expect(pumped.gateway.lastSelectedRewardId, isNull);
+      expect(find.byType(OrderSuccessScreen), findsOneWidget);
+      expect(
+          find.byKey(const Key('orderSuccessCampaignSummary')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'P8-C.3 C: bir odul secmek aktif kampanya secimini kaldirir (karsilikli disarida birakma)',
+    (tester) async {
+      final signedInCustomer = AuthSession(
+        uid: 'real-customer-uid',
+        phoneNumber: '+905551234567',
+        createdAt: DateTime(2026, 8, 1),
+        expiresAt: DateTime(2027, 8, 1),
+      );
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        signedInCustomer: signedInCustomer,
+        loyaltyGateway: _FakeLoyaltyGateway(
+          rewards: [_catalogReward(rewardId: 'reward-1', eligibleProductIds: ['p1'])],
+        ),
+        campaignGateway: _FakeCampaignGateway(
+          campaigns: [_testCampaign(campaignId: 'c1')],
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('campaignTile-c1')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+
+      // Deselect the campaign to bring the reward card back, then select
+      // the reward — proving the reverse direction of the exclusivity too.
+      await tester.tap(find.byKey(const Key('campaignTile-c1')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('catalogRewardCard')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('campaignSelectionCard')), findsNothing,
+          reason: 'otherBenefitActive hides the campaign card entirely '
+              'while a catalog reward is selected');
+
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+      );
+      await tester.pumpAndSettle();
+      expect(pumped.gateway.lastSelectedCampaignId, isNull);
+      expect(pumped.gateway.lastSelectedRewardId, 'reward-1');
+    },
+  );
+
+  testWidgets(
+    'P8-C.3 D: kampanya-spesifik sunucu reddi secimi sifirlar, gateway hatasiz tekrar cagrilabilir',
+    (tester) async {
+      final signedInCustomer = AuthSession(
+        uid: 'real-customer-uid',
+        phoneNumber: '+905551234567',
+        createdAt: DateTime(2026, 8, 1),
+        expiresAt: DateTime(2027, 8, 1),
+      );
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        signedInCustomer: signedInCustomer,
+        campaignGateway: _FakeCampaignGateway(
+          campaigns: [_testCampaign(campaignId: 'c1')],
+        ),
+      );
+      await tester.tap(find.byKey(const Key('campaignTile-c1')));
+      await tester.pumpAndSettle();
+
+      pumped.gateway.throwOnNextSubmit = const SubmitDineInOrderException(
+        'failed-precondition',
+        'The selected campaign has reached its usage limit.',
+        boncukErrorReason: 'campaign/usage-limit-reached',
+      );
+
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.callCount, 1);
+      expect(find.byType(OrderSuccessScreen), findsNothing);
+      expect(
+        find.textContaining('Bu kampanyanın kullanım hakkı doldu',
+            skipOffstage: false),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('campaignTile-c1')), findsOneWidget);
+
+      pumped.gateway.throwOnNextSubmit = null;
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+      );
+      await tester.pumpAndSettle();
+      expect(pumped.gateway.callCount, 2);
+      expect(pumped.gateway.lastSelectedCampaignId, isNull);
+      expect(find.byType(OrderSuccessScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'P8-C.3 E: kampanya yukleme hatasi normal siparisi hic engellemez — kampanya karti sadece gosterilmez',
+    (tester) async {
+      final signedInCustomer = AuthSession(
+        uid: 'real-customer-uid',
+        phoneNumber: '+905551234567',
+        createdAt: DateTime(2026, 8, 1),
+        expiresAt: DateTime(2027, 8, 1),
+      );
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        signedInCustomer: signedInCustomer,
+        campaignGateway: _FakeCampaignGateway(
+          error: const CampaignGatewayException(
+              'internal', 'Kampanyalar yüklenemedi.'),
+        ),
+      );
+
+      expect(find.byKey(const Key('campaignSelectionCardError')),
+          findsOneWidget);
+
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.lastSelectedCampaignId, isNull);
       expect(find.byType(OrderSuccessScreen), findsOneWidget);
     },
   );

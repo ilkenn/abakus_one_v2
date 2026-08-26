@@ -559,6 +559,44 @@ class _PreorderStatusCard extends StatelessWidget {
                     ),
                   ),
                 ],
+                // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25)
+                // — the campaign sibling of the catalog-reward chip above,
+                // reconstructed exclusively from THIS preorder's own
+                // immutable, already-parsed `campaign` snapshot fields
+                // (sourced from the canonical order document, never the
+                // current live Campaign) — a later edit to the live
+                // campaign's title/version can never rewrite what this
+                // specific order actually applied.
+                if (preorder.hasCampaignSummary) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.sm,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: const BoxDecoration(
+                      color: AppColors.primaryExtraLight,
+                      borderRadius: AppRadius.kSmall,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.local_offer_rounded,
+                            size: 14, color: AppColors.primary),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            '${preorder.campaignTitle} uygulandı '
+                            '(-${preorder.campaignDiscountMinorUnits! ~/ 100} TL)',
+                            style: AppTypography.caption
+                                .copyWith(color: AppColors.primary),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

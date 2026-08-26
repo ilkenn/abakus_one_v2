@@ -44,6 +44,63 @@ async function releaseOnce(params: Parameters<typeof releaseCampaignUsage>[2]) {
   return db().runTransaction((tx) => releaseCampaignUsage(db(), tx, params));
 }
 
+/**
+ * P8-C.2 final-gate root-cause fix (2026-08-25) for this file's own two
+ * N-concurrent-transaction tests below, which reproduced the exact same
+ * genuine gRPC transport failure already diagnosed and fixed once before in
+ * this codebase — `orderEarnReversal.test.ts`'s own `withTransientEmulatorTransportRetry`
+ * (P5-B quality-gate correction) — `3 INVALID_ARGUMENT: Transaction is
+ * invalid or closed`, deterministically only under the full ~1689-test
+ * suite (never in isolation, confirmed 2/2 re-runs). Root cause: these
+ * tests fire N (8-10) concurrent `runTransaction` calls against the SAME
+ * counter document with no synchronization between them — an intentional,
+ * maximal transaction race, the exact thing this file exists to prove is
+ * race-safe. Under the cumulative Firestore-emulator load of the full
+ * suite, an in-flight transaction handle can apparently be reaped/expired
+ * by the emulator before one of the racing calls reaches commit; the
+ * Admin SDK's own `isRetryableTransactionError` (`@google-cloud/firestore`'s
+ * `transaction.js`) DOES already auto-retry this exact condition in
+ * production — but only when the error message matches
+ * `/transaction has expired/`, which is production Cloud Firestore's own
+ * wording. The bundled Firestore EMULATOR reports the identical condition
+ * with different wording ("Transaction is invalid or closed"), which
+ * doesn't match that regex, so the SDK (correctly, per its own narrow
+ * contract) treats it as non-retryable and rejects immediately instead of
+ * transparently retrying with a fresh transaction the way it would against
+ * real Cloud Firestore.
+ *
+ * `reserveCampaignUsage`/`releaseCampaignUsage` are both read-before-write
+ * and idempotent via their own deterministic reservation-document
+ * existence check (see `campaignUsage.ts`'s own doc comments) — this exact
+ * error means the SDK never reached commit at all for that attempt, so
+ * retrying the WHOLE `runTransaction` call is safe and proves nothing
+ * different than the SDK's own built-in retry would have, had the
+ * emulator used production's wording. Scoped to this ONE exact transient-
+ * transport error message — a genuine business-logic throw (e.g. an
+ * assertion failure) propagates unchanged and still fails the test; this
+ * never retries an assertion, never loosens what any test checks, and
+ * never silently skips.
+ */
+async function withTransientEmulatorTransportRetry<T>(
+  fn: () => Promise<T>,
+  attempts = 3,
+): Promise<T> {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isKnownTransientEmulatorTransportFailure = message.includes(
+        "Transaction is invalid or closed",
+      );
+      if (!isKnownTransientEmulatorTransportFailure || attempt === attempts) {
+        throw error;
+      }
+    }
+  }
+  throw new Error("unreachable");
+}
+
 async function counterCount(organizationId: string, campaignId: string): Promise<number> {
   const snap = await db()
     .collection(CAMPAIGN_USAGE_COUNTERS_COLLECTION)
@@ -238,14 +295,16 @@ test("reserveCampaignUsage: N concurrent reservations against a global limit of 
 
   const results = await Promise.all(
     Array.from({ length: attempts }, () =>
-      reserveOnce({
-        organizationId,
-        campaignId,
-        customerId: null,
-        orderId: nextId("order"),
-        usageLimit,
-        perCustomerUsageLimit: null,
-      }),
+      withTransientEmulatorTransportRetry(() =>
+        reserveOnce({
+          organizationId,
+          campaignId,
+          customerId: null,
+          orderId: nextId("order"),
+          usageLimit,
+          perCustomerUsageLimit: null,
+        }),
+      ),
     ),
   );
 
@@ -265,14 +324,16 @@ test("reserveCampaignUsage: N concurrent reservations for the SAME customer agai
 
   const results = await Promise.all(
     Array.from({ length: attempts }, () =>
-      reserveOnce({
-        organizationId,
-        campaignId,
-        customerId,
-        orderId: nextId("order"),
-        usageLimit: null,
-        perCustomerUsageLimit,
-      }),
+      withTransientEmulatorTransportRetry(() =>
+        reserveOnce({
+          organizationId,
+          campaignId,
+          customerId,
+          orderId: nextId("order"),
+          usageLimit: null,
+          perCustomerUsageLimit,
+        }),
+      ),
     ),
   );
 

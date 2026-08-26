@@ -37,8 +37,10 @@ import {
   boncukError,
   sanitizeRequestedBoncukAmount,
   sanitizeSelectedRewardId,
+  sanitizeSelectedCampaignId,
   type SelectedBenefitType,
 } from "./boncukRedemptionErrors";
+import { enforceBenefitExclusivity } from "./benefitExclusivity";
 import {
   loadLoyaltyRewardForRedemption,
   resolveCatalogRewardRedemption,
@@ -49,6 +51,18 @@ import {
   type LoyaltyRewardCatalogEntry,
   type CanonicalCommercialChannel,
 } from "./loyaltyRewardCatalog";
+import {
+  CAMPAIGNS_COLLECTION,
+  parseCampaignDefinition,
+  type CampaignDefinition,
+  type CampaignOrderSnapshot,
+} from "./campaignEngine";
+import { isCampaignScheduleCurrentlyOpen, DEFAULT_ORGANIZATION_TIMEZONE } from "./campaignScheduling";
+import {
+  resolveCampaignDiscount,
+  type CampaignPriceableLine,
+} from "./campaignPricing";
+import { reserveCampaignUsage } from "./campaignUsage";
 
 /**
  * Boncuk Loyalty P7-C.1 (2026-08-24) — the real, server-derived commercial
@@ -267,6 +281,7 @@ export async function buildProductLine(
   policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy,
   tx?: import("firebase-admin/firestore").Transaction,
   freeUnitCount = 0,
+  campaignDiscountMinorUnits = 0,
 ): Promise<ComputedOrderLine> {
   if (typeof item.productId !== "string" || item.productId.length === 0) {
     invalid("each product item requires a productId.");
@@ -297,12 +312,14 @@ export async function buildProductLine(
   return buildOrderLine({
     productId: product!.id,
     productName: product!.name,
+    categoryId: product!.categoryId,
     modifiers,
     quantity,
     unitPriceMinorUnits,
     taxBasisPoints: TAKEAWAY_TAX_BASIS_POINTS,
     customerNote: note,
     freeUnitCount,
+    campaignDiscountMinorUnits,
   });
 }
 
@@ -314,6 +331,7 @@ export async function buildBowlLine(
   policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy,
   tx?: import("firebase-admin/firestore").Transaction,
   freeUnitCount = 0,
+  campaignDiscountMinorUnits = 0,
 ): Promise<ComputedOrderLine> {
   const quantity = requireValidQuantity(item.quantity, "bowl item");
   if (!Array.isArray(item.ingredientIds) || item.ingredientIds.length === 0) {
@@ -355,12 +373,14 @@ export async function buildBowlLine(
   return buildOrderLine({
     productId: "custom_bowl",
     productName: "Kendi Bowlun",
+    categoryId: null,
     modifiers,
     quantity,
     unitPriceMinorUnits,
     taxBasisPoints: TAKEAWAY_TAX_BASIS_POINTS,
     customerNote: note,
     freeUnitCount,
+    campaignDiscountMinorUnits,
   });
 }
 
@@ -407,20 +427,21 @@ export const submitTakeawayOrder = onCall(
     const contactPhone = sanitizePhone(data.contactPhone);
     const requestedBoncukAmount = sanitizeRequestedBoncukAmount(data.requestedBoncukAmount);
     const selectedRewardId = sanitizeSelectedRewardId(data.selectedRewardId);
+    // Server-Authoritative Campaign Engine P8-C (2026-08-25) — the ONLY
+    // campaign-related value ever sent by the client. Shape-only validation
+    // here; real eligibility is resolved transactionally below.
+    const selectedCampaignId = sanitizeSelectedCampaignId(data.selectedCampaignId);
 
-    // Boncuk Loyalty P7-C (2026-08-24) — locked rule: cash Boncuk redemption
-    // and a catalog reward are mutually exclusive, exactly one benefit per
-    // order. A static, data-independent check — applies uniformly to both
-    // the guest and authenticated dispatch paths below, before either has a
-    // chance to independently reject just one of the two fields (which
-    // would produce a less specific error for a request that sent both).
-    if (requestedBoncukAmount > 0 && selectedRewardId !== null) {
-      boncukError(
-        "invalid-argument",
-        "requestedBoncukAmount and selectedRewardId cannot both be set — exactly one benefit per order.",
-        "catalogReward/benefit-stacking-not-allowed",
-      );
-    }
+    // Boncuk Loyalty P7-C (2026-08-24) / Campaign Engine P8-C (2026-08-25) —
+    // locked rule: cash Boncuk redemption, a catalog reward, and a campaign
+    // are mutually exclusive, exactly one benefit per order. A static,
+    // data-independent check — applies uniformly to both the guest and
+    // authenticated dispatch paths below, before either has a chance to
+    // independently reject just one of the fields (which would produce a
+    // less specific error for a request that sent more than one). Uses the
+    // shared `enforceBenefitExclusivity()` helper (P8-B) rather than a
+    // fourth hand-rolled pairwise check.
+    enforceBenefitExclusivity({ requestedBoncukAmount, selectedRewardId, selectedCampaignId });
 
     const hasGuestField = typeof data.takeawaySessionId === "string";
     const hasAuthenticatedFields =
@@ -466,6 +487,7 @@ export const submitTakeawayOrder = onCall(
         takeawaySessionId: data.takeawaySessionId as string,
         requestedBoncukAmount,
         selectedRewardId,
+        selectedCampaignId,
       });
     }
 
@@ -494,6 +516,7 @@ export const submitTakeawayOrder = onCall(
       pickupTime: data.pickupTime,
       requestedBoncukAmount,
       selectedRewardId,
+      selectedCampaignId,
     });
   },
 );
@@ -514,6 +537,7 @@ async function submitGuestOrder(
     takeawaySessionId: string;
     requestedBoncukAmount: number;
     selectedRewardId: string | null;
+    selectedCampaignId: string | null;
   },
 ) {
   const { uid, submissionKey, rawItems, contactFirstName, contactLastName, contactPhone } =
@@ -535,6 +559,18 @@ async function submitGuestOrder(
     throw new HttpsError(
       "permission-denied",
       "Guest takeaway orders cannot redeem a catalog reward — this requires a real, phone-verified customer identity.",
+    );
+  }
+  // Server-Authoritative Campaign Engine P8-C (2026-08-25) — the identical
+  // rule extended to campaigns: campaign usage reservation requires a
+  // durable, real customer identity (both for `perCustomerUsageLimit`
+  // tracking and because a guest's own technical uid is not a meaningful
+  // "customer" for accounting purposes — mirrors the Boncuk/catalogReward
+  // guest exclusion exactly, not a new policy).
+  if (params.selectedCampaignId !== null) {
+    throw new HttpsError(
+      "permission-denied",
+      "Guest takeaway orders cannot use a campaign — this requires a real, phone-verified customer identity.",
     );
   }
 
@@ -616,6 +652,8 @@ async function submitGuestOrder(
         selectedBenefitType: "none",
         boncukRedemption: null,
         catalogReward: null,
+        campaign: null,
+        discountMinorUnits: 0,
       }),
     );
 
@@ -693,6 +731,7 @@ async function submitAuthenticatedOrder(
     pickupTime: unknown;
     requestedBoncukAmount: number;
     selectedRewardId: string | null;
+    selectedCampaignId: string | null;
   },
 ) {
   const { uid, submissionKey, rawItems, contactFirstName, contactLastName, contactPhone } =
@@ -797,14 +836,144 @@ async function submitAuthenticatedOrder(
       catalogRewardPreCheck = { reward, redeemedProductId };
     }
 
+    // -------------------------------------------------------------
+    // Server-Authoritative Campaign Engine P8-C (2026-08-25) — campaign
+    // PRE-resolution (existence/tenant/active/archived/channel/schedule).
+    // Deliberately BEFORE `buildLines`: these checks need no pricing at
+    // all. Minimum-basket/targeting/rule-satisfaction checks DO need
+    // priced lines — resolved just below, after `buildLines`'s first pass.
+    // Mutually exclusive with catalogReward (enforced pre-transaction by
+    // `enforceBenefitExclusivity`), so at most one of
+    // `catalogRewardPreCheck`/`campaignPreCheck` is ever non-null.
+    // -------------------------------------------------------------
+    let campaignPreCheck: CampaignDefinition | null = null;
+    if (params.selectedCampaignId !== null) {
+      const campaignSnap = await tx.get(db.collection(CAMPAIGNS_COLLECTION).doc(params.selectedCampaignId));
+      const campaign = parseCampaignDefinition(campaignSnap.exists ? campaignSnap.data() : undefined);
+      if (!campaign || campaign.organizationId !== organizationId) {
+        boncukError("invalid-argument", "The selected campaign does not exist.", "campaign/not-found");
+      }
+      if (!campaign.active) {
+        boncukError(
+          "failed-precondition",
+          "The selected campaign is not currently active.",
+          "campaign/inactive",
+        );
+      }
+      if (campaign.archived) {
+        boncukError(
+          "failed-precondition",
+          "The selected campaign has been archived.",
+          "campaign/archived",
+        );
+      }
+      if (!campaign.eligibleChannels.includes(TAKEAWAY_COMMERCIAL_CHANNEL)) {
+        boncukError(
+          "failed-precondition",
+          "The selected campaign is not available for the Gel Al (Takeaway) channel.",
+          "campaign/channel-not-eligible",
+        );
+      }
+
+      // Trusted branch timezone — never the client's clock, never a
+      // hardcoded default when the branch has its own real value. Falls
+      // back to the same single-tenant default `getCustomerActiveCampaigns
+      // .ts` uses only when the branch document is missing a `timezone`
+      // field (should not happen for a real branch, but never crashes).
+      const branchSnap = await tx.get(db.collection("branches").doc(branchId));
+      const branchTimeZone =
+        branchSnap.exists && typeof branchSnap.data()!.timezone === "string"
+          ? (branchSnap.data()!.timezone as string)
+          : DEFAULT_ORGANIZATION_TIMEZONE;
+
+      if (!isCampaignScheduleCurrentlyOpen(campaign.schedule, Timestamp.now(), branchTimeZone)) {
+        boncukError(
+          "failed-precondition",
+          "The selected campaign is not currently within its scheduled window.",
+          "campaign/schedule-not-open",
+        );
+      }
+
+      campaignPreCheck = campaign;
+    }
+
     const pricingPolicy = await loadCanonicalChannelPricingPolicy(db, restaurantId);
-    const { lines, normalizedItems, rewardAppliedLineIndex } = await buildLines(
+    const pass1 = await buildLines(
       db,
       rawItems,
       { restaurantId },
       pricingPolicy,
       catalogRewardPreCheck?.redeemedProductId ?? null,
     );
+
+    let lines = pass1.lines;
+    const rewardAppliedLineIndex = pass1.rewardAppliedLineIndex;
+    let selectedBenefitType: SelectedBenefitType = "none";
+    let campaignDiscountMinorUnits = 0;
+    let campaignOrderSnapshot: CampaignOrderSnapshot | null = null;
+
+    // -------------------------------------------------------------
+    // Server-Authoritative Campaign Engine P8-C (2026-08-25) — campaign
+    // discount resolution against REAL, channel-priced lines (this is why
+    // a campaign needs a first `buildLines` pass — unlike catalogReward's
+    // `freeUnitCount`, a percentage/fixed-amount/product/category discount
+    // cannot be determined before real unit prices are known). Minimum
+    // basket is evaluated against the PRE-CAMPAIGN basket (§ locked rule)
+    // — `resolveCampaignDiscount` computes that internally from `pass1`'s
+    // own un-discounted lines, never from a client-supplied amount.
+    // -------------------------------------------------------------
+    if (campaignPreCheck !== null) {
+      const campaign = campaignPreCheck;
+      const discountResult = resolveCampaignDiscount(campaign, pass1.campaignLines);
+      if (discountResult.status === "minimum-basket-not-met") {
+        boncukError(
+          "failed-precondition",
+          "This order does not meet the selected campaign's minimum basket requirement.",
+          "campaign/minimum-basket-not-met",
+        );
+      }
+      if (discountResult.status === "trigger-quantity-not-met") {
+        boncukError(
+          "failed-precondition",
+          "This order does not meet the selected campaign's required purchase quantity.",
+          "campaign/trigger-quantity-not-met",
+        );
+      }
+      if (discountResult.status === "no-eligible-line") {
+        boncukError(
+          "invalid-argument",
+          "None of the items in this order are eligible for the selected campaign.",
+          "campaign/no-eligible-line",
+        );
+      }
+
+      // discountResult.status === "applied" from here on.
+      const lineDiscounts = new Map(
+        discountResult.lineDiscounts.map((d) => [d.lineIndex, d.discountMinorUnits]),
+      );
+      // PASS 2 — rebuild lines with the resolved per-line campaign discount
+      // applied. `rewardedProductId: null` — campaign and catalogReward are
+      // mutually exclusive, so this pass never needs `freeUnitCount` too.
+      const pass2 = await buildLines(db, rawItems, { restaurantId }, pricingPolicy, null, lineDiscounts);
+      lines = pass2.lines;
+
+      selectedBenefitType = "campaign";
+      campaignDiscountMinorUnits = discountResult.totalDiscountMinorUnits;
+      campaignOrderSnapshot = {
+        campaignId: campaign.campaignId,
+        campaignVersion: campaign.version,
+        title: campaign.title,
+        campaignType: campaign.campaignType,
+        appliedRule: campaign.rule,
+        appliedValue: discountResult.appliedValue,
+        discountMinorUnits: discountResult.totalDiscountMinorUnits,
+        orderChannel: TAKEAWAY_COMMERCIAL_CHANNEL,
+      };
+    }
+
+    // Never patch grandTotal afterward — `pricing` is derived exactly once,
+    // from whichever `lines` (pass1, or pass2 if a campaign discount was
+    // applied) are final at this point.
     const pricing = computeOrderPriceBreakdown(lines);
 
     const normalizedForFingerprint = {
@@ -813,7 +982,7 @@ async function submitAuthenticatedOrder(
       branchId,
       pickupMode: "scheduled",
       pickupTime: pickupTime.toISOString(),
-      items: normalizedItems,
+      items: pass1.normalizedItems,
       contactFirstName,
       contactLastName,
       contactPhone,
@@ -827,6 +996,9 @@ async function submitAuthenticatedOrder(
       // Boncuk Loyalty P7-C — same reasoning, for the mutually exclusive
       // catalog-reward selection.
       selectedRewardId: params.selectedRewardId,
+      // Server-Authoritative Campaign Engine P8-C — same reasoning, for the
+      // mutually exclusive campaign selection.
+      selectedCampaignId: params.selectedCampaignId,
     };
     const fingerprint = computeRequestFingerprint(normalizedForFingerprint);
 
@@ -857,7 +1029,6 @@ async function submitAuthenticatedOrder(
     // additional branch is needed; this comment documents the existing
     // invariant this code relies on.
     // -------------------------------------------------------------
-    let selectedBenefitType: SelectedBenefitType = "none";
     let pendingRedemption: PendingBoncukRedemption | null = null;
     let pendingCatalogReward: PendingCatalogRewardRedemption | null = null;
 
@@ -1140,10 +1311,56 @@ async function submitAuthenticatedOrder(
     }
 
     // -------------------------------------------------------------
-    // Write phase — every tx.get() this transaction will ever perform has
-    // already happened above.
+    // Write phase — every tx.get() THIS TRANSACTION has performed so far
+    // happened above. `reserveCampaignUsage` below still performs its OWN
+    // reads (usage counters, reservation existence) before its own writes
+    // — called here, as the very first statement of this phase, so those
+    // reads are still safely ordered ahead of every tx.set()/tx.create()
+    // in the entire transaction, including its own and the order-creation
+    // write below (Server-Authoritative Campaign Engine P8-C, 2026-08-25).
     // -------------------------------------------------------------
     const now = new Date();
+
+    if (campaignPreCheck !== null) {
+      const reserveResult = await reserveCampaignUsage(db, tx, {
+        organizationId,
+        campaignId: campaignPreCheck.campaignId,
+        // Always a real, phone-verified customer here — campaign selection
+        // is rejected for guest takeaway orders before this function is
+        // ever reached (see `submitGuestOrder`'s own rejection above).
+        customerId: uid,
+        orderId,
+        usageLimit: campaignPreCheck.usageLimit,
+        perCustomerUsageLimit: campaignPreCheck.perCustomerUsageLimit,
+      });
+      if (reserveResult.status === "global-limit-reached") {
+        boncukError(
+          "failed-precondition",
+          "The selected campaign has reached its usage limit.",
+          "campaign/usage-limit-reached",
+        );
+      }
+      if (reserveResult.status === "customer-limit-reached") {
+        boncukError(
+          "failed-precondition",
+          "You have already used the selected campaign the maximum number of times.",
+          "campaign/customer-usage-limit-reached",
+        );
+      }
+      if (reserveResult.status === "already-reserved") {
+        // Defense-in-depth only, mirrors the existing ledger-entry-exists
+        // checks elsewhere in this file — the order-level dedupe check
+        // above already guarantees this transaction only reaches here for
+        // a genuinely new order, so a reservation for this exact orderId
+        // should never already exist. Fail closed rather than silently
+        // proceeding.
+        boncukError(
+          "failed-precondition",
+          "A campaign usage reservation already exists for this order.",
+          "campaign/reservation-conflict",
+        );
+      }
+    }
 
     if (pendingRedemption) {
       if (pendingRedemption.policyNeedsProvisioning) {
@@ -1200,6 +1417,8 @@ async function submitAuthenticatedOrder(
         selectedBenefitType,
         boncukRedemption: pendingRedemption ? pendingRedemption.orderSnapshot : null,
         catalogReward: pendingCatalogReward ? pendingCatalogReward.orderSnapshot : null,
+        campaign: campaignOrderSnapshot,
+        discountMinorUnits: campaignDiscountMinorUnits,
       }),
     );
 
@@ -1235,21 +1454,40 @@ export function findFirstEligibleCartProductId(
   return null;
 }
 
+/**
+ * Server-Authoritative Campaign Engine P8-C (2026-08-25) —
+ * `campaignLineDiscounts` (line index -> resolved minor-unit discount) is
+ * threaded through to each line's own `buildOrderLine` call, and every
+ * built line's real, channel-priced info is ALSO captured into
+ * `campaignLines` (a `CampaignPriceableLine[]`, `campaignPricing.ts`'s own
+ * input shape) — piggybacking on data already fetched for the line, no
+ * extra Firestore reads. `campaignLineDiscounts: null` (the default) means
+ * "no campaign discount to apply this call" — every pre-P8-C caller
+ * behaves identically to before. A bowl line's own `productId`/`categoryId`
+ * are always `null` in `campaignLines` — it has no real canonical product
+ * id, so it can never match a product/category-scoped campaign rule (the
+ * same structural limitation `catalogReward` already has).
+ */
 async function buildLines(
   db: Firestore,
   rawItems: RawItem[],
   scope: { restaurantId: string },
   policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy,
   rewardedProductId: string | null = null,
+  campaignLineDiscounts: Map<number, number> | null = null,
 ): Promise<{
   lines: ComputedOrderLine[];
   normalizedItems: unknown[];
   rewardAppliedLineIndex: number | null;
+  campaignLines: CampaignPriceableLine[];
 }> {
   const lines: ComputedOrderLine[] = [];
   const normalizedItems: unknown[] = [];
+  const campaignLines: CampaignPriceableLine[] = [];
   let rewardAppliedLineIndex: number | null = null;
   for (const item of rawItems) {
+    const lineIndex = lines.length;
+    const campaignDiscountForLine = campaignLineDiscounts?.get(lineIndex) ?? 0;
     if (item.kind === "product") {
       // Only the FIRST matching line ever receives the free unit — mirrors
       // findFirstEligibleCartProductId's own tie-break exactly, so the
@@ -1267,9 +1505,17 @@ async function buildLines(
         policy,
         undefined,
         isRewardedLine ? 1 : 0,
+        campaignDiscountForLine,
       );
-      if (isRewardedLine) rewardAppliedLineIndex = lines.length;
+      if (isRewardedLine) rewardAppliedLineIndex = lineIndex;
       lines.push(line);
+      campaignLines.push({
+        lineIndex,
+        productId: line.productId,
+        categoryId: line.categoryId,
+        quantity: line.quantity,
+        unitBaseMinorUnits: line.unitPriceMinorUnits + line.modifierTotalMinorUnits,
+      });
       normalizedItems.push({
         kind: "product",
         productId: item.productId,
@@ -1278,8 +1524,27 @@ async function buildLines(
         note: item.note ?? "",
       });
     } else {
-      const line = await buildBowlLine(db, item, scope, "takeaway", policy);
+      const line = await buildBowlLine(
+        db,
+        item,
+        scope,
+        "takeaway",
+        policy,
+        undefined,
+        0,
+        campaignDiscountForLine,
+      );
       lines.push(line);
+      campaignLines.push({
+        lineIndex,
+        // A Bowl Builder line has no real canonical product/category id —
+        // structurally ineligible for any product/category-scoped campaign,
+        // never a fake id standing in for one.
+        productId: null,
+        categoryId: null,
+        quantity: line.quantity,
+        unitBaseMinorUnits: line.unitPriceMinorUnits + line.modifierTotalMinorUnits,
+      });
       normalizedItems.push({
         kind: "bowl",
         quantity: item.quantity,
@@ -1288,7 +1553,7 @@ async function buildLines(
       });
     }
   }
-  return { lines, normalizedItems, rewardAppliedLineIndex };
+  return { lines, normalizedItems, rewardAppliedLineIndex, campaignLines };
 }
 
 function buildOrderDocument(params: {
@@ -1320,6 +1585,24 @@ function buildOrderDocument(params: {
     loyaltyPolicyVersion: number;
   } | null;
   catalogReward: CatalogRewardOrderSnapshot | null;
+  /**
+   * Server-Authoritative Campaign Engine P8-C (2026-08-25) — the immutable
+   * per-order campaign snapshot when `selectedBenefitType === "campaign"`;
+   * `null` otherwise, including every pre-P8-C order. Never re-read from
+   * the live `campaigns` document by any future consumer — this snapshot
+   * is the sole source of historical truth for what was applied.
+   */
+  campaign: CampaignOrderSnapshot | null;
+  /**
+   * The EXACT total campaign discount already baked into `pricing`'s own
+   * `grossSubtotal`/`grandTotal` via the discounted lines above — `0` for
+   * every order without a campaign (preserves `pricing.discount:
+   * moneyField(0)`'s exact pre-P8-C behavior for the no-campaign/
+   * boncukRedemption/catalogReward cases). Locked requirement:
+   * `pricing.discount` must equal the exact campaign discount applied,
+   * never a separately-computed or approximated figure.
+   */
+  discountMinorUnits: number;
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -1370,7 +1653,7 @@ function buildOrderDocument(params: {
     })),
     pricing: {
       grossSubtotal: moneyField(params.pricing.grossSubtotalMinorUnits),
-      discount: moneyField(0),
+      discount: moneyField(params.discountMinorUnits),
       taxableBase: moneyField(params.pricing.taxableBaseMinorUnits),
       vatAmount: moneyField(params.pricing.vatAmountMinorUnits),
       serviceFee: moneyField(0),
@@ -1398,6 +1681,12 @@ function buildOrderDocument(params: {
     selectedBenefitType: params.selectedBenefitType,
     boncukRedemption: params.boncukRedemption,
     catalogReward: params.catalogReward,
+    // Server-Authoritative Campaign Engine P8-C (2026-08-24) — genuinely
+    // changes `pricing` above (like `catalogReward`, unlike
+    // `boncukRedemption`'s settlement-not-discount model) via the
+    // already-discounted lines; this is a read-only AUDIT snapshot of what
+    // was applied, never re-derived or re-applied from this field.
+    campaign: params.campaign,
     statusHistory: [
       {
         id: `${params.orderId}-transition-1`,

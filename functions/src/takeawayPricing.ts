@@ -96,6 +96,15 @@ export interface OrderLineModifierInput {
 export interface ComputedOrderLine {
   productId: string;
   productName: string;
+  /**
+   * Server-Authoritative Campaign Engine P8-C (2026-08-25) — `null` for a
+   * Bowl Builder line (no real canonical category), additive/optional so
+   * every pre-P8-C caller/test that never set it keeps working unchanged.
+   * In-memory only — never mapped into the persisted order document
+   * (`buildOrderDocument`'s own line projection deliberately omits it, same
+   * as every channel's existing narrow line shape).
+   */
+  categoryId: string | null;
   modifiers: OrderLineModifierInput[];
   quantity: number;
   unitPriceMinorUnits: number;
@@ -139,10 +148,26 @@ export interface ComputedOrderLine {
  * extracted from `lineTotalMinorUnits` (i.e. AFTER the discount), exactly
  * as before — a free unit correctly owes no VAT, since VAT is only ever
  * due on money actually collected.
+ *
+ * **Server-Authoritative Campaign Engine P8-C (2026-08-25) —
+ * `campaignDiscountMinorUnits`, an arbitrary additional minor-unit discount
+ * layered on top of `freeUnitCount`'s own whole-unit discount.** Needed
+ * because a percentage/fixed-amount/productDiscount/categoryDiscount
+ * campaign cannot be expressed as a whole number of free units — it's an
+ * arbitrary minor-unit amount, already resolved by `campaignPricing.ts`'s
+ * `resolveCampaignDiscount` against this exact line's own
+ * `(unitPrice + modifierTotal)` base before this function is ever called.
+ * Defaults to `0`, so every pre-P8-C caller keeps computing
+ * `lineDiscountMinorUnits` identically. `freeUnitCount` and
+ * `campaignDiscountMinorUnits` are never both non-zero on the same line in
+ * practice (catalogReward and campaign are mutually exclusive per order),
+ * but the formula below adds them unconditionally rather than assuming
+ * that invariant — correct either way.
  */
 export function buildOrderLine(params: {
   productId: string;
   productName: string;
+  categoryId?: string | null;
   modifiers: OrderLineModifierInput[];
   quantity: number;
   unitPriceMinorUnits: number;
@@ -150,10 +175,12 @@ export function buildOrderLine(params: {
   kitchenNote?: string;
   customerNote?: string;
   freeUnitCount?: number;
+  campaignDiscountMinorUnits?: number;
 }): ComputedOrderLine {
   const { productId, productName, modifiers, quantity, unitPriceMinorUnits, taxBasisPoints } =
     params;
   const freeUnitCount = params.freeUnitCount ?? 0;
+  const campaignDiscountMinorUnits = params.campaignDiscountMinorUnits ?? 0;
 
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new NegativeAmountError(
@@ -165,13 +192,19 @@ export function buildOrderLine(params: {
       `freeUnitCount for product "${productId}" must be a non-negative integer no greater than quantity`,
     );
   }
+  if (!Number.isInteger(campaignDiscountMinorUnits) || campaignDiscountMinorUnits < 0) {
+    throw new NegativeAmountError(
+      `campaignDiscountMinorUnits for product "${productId}" must be a non-negative integer`,
+    );
+  }
 
   const modifierTotalMinorUnits = modifiers.reduce(
     (sum, m) => sum + m.unitExtraPriceMinorUnits * m.quantity,
     0,
   );
   const lineSubtotalMinorUnits = (unitPriceMinorUnits + modifierTotalMinorUnits) * quantity;
-  const lineDiscountMinorUnits = (unitPriceMinorUnits + modifierTotalMinorUnits) * freeUnitCount;
+  const lineDiscountMinorUnits =
+    (unitPriceMinorUnits + modifierTotalMinorUnits) * freeUnitCount + campaignDiscountMinorUnits;
   const lineTotalMinorUnits = lineSubtotalMinorUnits - lineDiscountMinorUnits;
   if (lineTotalMinorUnits < 0) {
     throw new NegativeAmountError(`computed lineTotal for product "${productId}" is negative`);
@@ -183,6 +216,7 @@ export function buildOrderLine(params: {
   return {
     productId,
     productName,
+    categoryId: params.categoryId ?? null,
     modifiers,
     quantity,
     unitPriceMinorUnits,

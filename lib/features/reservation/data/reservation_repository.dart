@@ -105,6 +105,12 @@ class FirestoreReservationRepository implements ReservationRepository {
     // Boncuk Loyalty P7-D (2026-08-24) — same additive-optional shape, for
     // the mutually exclusive catalog-reward redemption.
     final catalogReward = data['catalogReward'] as Map<String, dynamic>?;
+    // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — same
+    // additive-optional shape, for the mutually exclusive campaign
+    // discount. `null` when no campaign was applied (the `campaign` map is
+    // `null` on the canonical order in that case, matching every other
+    // channel's schema).
+    final campaign = data['campaign'] as Map<String, dynamic>?;
 
     return ReservationPreorderSummary(
       orderId: orderId,
@@ -122,6 +128,8 @@ class FirestoreReservationRepository implements ReservationRepository {
           catalogReward?['redeemedProductId'] as String?,
       catalogRewardCoveredValueMinorUnits:
           catalogReward?['coveredValueMinorUnits'] as int?,
+      campaignTitle: campaign?['title'] as String?,
+      campaignDiscountMinorUnits: campaign?['discountMinorUnits'] as int?,
     );
   }
 

@@ -46,7 +46,25 @@ import {
   isRewardCurrentlyValid,
   loyaltyRewardCatalogVersionDocId,
   type LoyaltyRewardCatalogEntry,
+  type CanonicalCommercialChannel,
 } from "./loyaltyRewardCatalog";
+import {
+  CAMPAIGNS_COLLECTION,
+  parseCampaignDefinition,
+  type CampaignDefinition,
+  type CampaignOrderSnapshot,
+} from "./campaignEngine";
+import { isCampaignScheduleCurrentlyOpen } from "./campaignScheduling";
+import { resolveCampaignDiscount } from "./campaignPricing";
+import { reserveCampaignUsage } from "./campaignUsage";
+
+/**
+ * Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — the real,
+ * server-derived commercial channel of every preorder Order this callable
+ * ever creates. Mirrors `submitDeliveryOrder.ts`'s own
+ * `DELIVERY_COMMERCIAL_CHANNEL` exactly.
+ */
+const RESERVATION_PREORDER_COMMERCIAL_CHANNEL: CanonicalCommercialChannel = "reservationPreorder";
 
 /**
  * Server-authoritative reservation creation — Faz R.1A implementation of
@@ -319,6 +337,9 @@ export const submitReservation = onCall(
               // Boncuk Loyalty P7-D — same reasoning, for the mutually
               // exclusive catalog-reward selection.
               selectedRewardId: parsedPreorder.selectedRewardId,
+              // Server-Authoritative Campaign Engine P8-C.2 — same
+              // reasoning, for the mutually exclusive campaign selection.
+              selectedCampaignId: parsedPreorder.selectedCampaignId,
             }
           : null,
       };
@@ -463,6 +484,11 @@ export const submitReservation = onCall(
       let preorderOrderDocument: Record<string, unknown> | null = null;
       let pendingRedemption: PendingBoncukRedemption | null = null;
       let pendingCatalogReward: PendingCatalogRewardRedemption | null = null;
+      // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — declared
+      // at this outer scope (mirroring the three declarations above) so the
+      // write-phase `reserveCampaignUsage` call below can still read it
+      // after the `if (parsedPreorder)` block that resolves it has closed.
+      let campaignPreCheck: CampaignDefinition | null = null;
       if (parsedPreorder) {
         const organizationId = scope.organizationId!;
 
@@ -506,8 +532,55 @@ export const submitReservation = onCall(
           catalogRewardPreCheck = { reward, redeemedProductId };
         }
 
+        // -----------------------------------------------------------
+        // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) —
+        // campaign PRE-check. Mirrors `submitDeliveryOrder.ts`'s own
+        // placement/shape exactly, reusing the shared engine
+        // (`campaignEngine.ts`/`campaignScheduling.ts`) verbatim — no
+        // reservation-specific duplicate eligibility logic. Trusted server
+        // state only: existence, tenant match, active/non-archived,
+        // `eligibleChannels` includes `"reservationPreorder"`, and
+        // currently within the campaign's own schedule (trusted server
+        // time + `policy.timezone` — already resolved above by
+        // `resolveActiveReservationBranch`, so unlike takeaway/delivery no
+        // extra `branches/{branchId}` read is needed here). This is the
+        // ONE canonical instant campaign schedule eligibility is ever
+        // evaluated for a reservation preorder — never re-evaluated at
+        // confirm/accept/KDS-release time (see §18/§19 of the P8-C.2 spec).
+        // -----------------------------------------------------------
+        if (parsedPreorder.selectedCampaignId !== null) {
+          const campaignSnap = await tx.get(
+            db.collection(CAMPAIGNS_COLLECTION).doc(parsedPreorder.selectedCampaignId),
+          );
+          const campaign = parseCampaignDefinition(campaignSnap.exists ? campaignSnap.data() : undefined);
+          if (!campaign || campaign.organizationId !== organizationId) {
+            boncukError("invalid-argument", "The selected campaign does not exist.", "campaign/not-found");
+          }
+          if (!campaign.active) {
+            boncukError("failed-precondition", "The selected campaign is no longer active.", "campaign/inactive");
+          }
+          if (campaign.archived) {
+            boncukError("failed-precondition", "The selected campaign is no longer available.", "campaign/archived");
+          }
+          if (!campaign.eligibleChannels.includes(RESERVATION_PREORDER_COMMERCIAL_CHANNEL)) {
+            boncukError(
+              "failed-precondition",
+              "The selected campaign is not available for the Rezervasyon Ön Sipariş channel.",
+              "campaign/channel-not-eligible",
+            );
+          }
+          if (!isCampaignScheduleCurrentlyOpen(campaign.schedule, Timestamp.now(), policy.timezone)) {
+            boncukError(
+              "failed-precondition",
+              "The selected campaign is not currently within its scheduled window.",
+              "campaign/schedule-not-open",
+            );
+          }
+          campaignPreCheck = campaign;
+        }
+
         const pricingPolicy = await loadCanonicalChannelPricingPolicy(db, restaurantId, tx);
-        const { lines, rewardAppliedLineIndex } = await buildPreorderLines(
+        const pass1 = await buildPreorderLines(
           tx,
           db,
           parsedPreorder.items,
@@ -515,8 +588,77 @@ export const submitReservation = onCall(
           pricingPolicy,
           catalogRewardPreCheck?.redeemedProductId ?? null,
         );
-        const pricing = computePreorderPriceBreakdown(lines);
+        let lines = pass1.lines;
+        const rewardAppliedLineIndex = pass1.rewardAppliedLineIndex;
+        let pricing = computePreorderPriceBreakdown(lines);
         preorderOrderId = derivePreorderOrderId(reservationId);
+
+        // -----------------------------------------------------------
+        // Server-Authoritative Campaign Engine P8-C.2 — discount
+        // resolution + PASS 2 rebuild. `resolveCampaignDiscount`
+        // (campaignPricing.ts) is the exact same pure, shared resolver
+        // every other channel uses — never a reservation-specific
+        // reimplementation. Minimum-basket is evaluated by that resolver
+        // itself against PASS 1's own (pre-discount) line subtotals —
+        // reservation preorder has no separate restaurant-operational
+        // minimum-order check to preserve (unlike delivery's
+        // `area.minimumOrderMinorUnits`), so PASS 1's own pricing is the
+        // canonical pre-discount basket, satisfying requirement §5 as-is.
+        // -----------------------------------------------------------
+        let selectedBenefitType: SelectedBenefitType = "none";
+        let campaignDiscountMinorUnits = 0;
+        let campaignOrderSnapshot: CampaignOrderSnapshot | null = null;
+        if (campaignPreCheck !== null) {
+          const campaign = campaignPreCheck;
+          const discountResult = resolveCampaignDiscount(campaign, pass1.campaignLines);
+          if (discountResult.status === "minimum-basket-not-met") {
+            boncukError(
+              "failed-precondition",
+              "This preorder does not meet the selected campaign's minimum basket requirement.",
+              "campaign/minimum-basket-not-met",
+            );
+          }
+          if (discountResult.status === "trigger-quantity-not-met") {
+            boncukError(
+              "invalid-argument",
+              "This preorder does not meet the selected campaign's trigger quantity requirement.",
+              "campaign/trigger-quantity-not-met",
+            );
+          }
+          if (discountResult.status === "no-eligible-line") {
+            boncukError(
+              "invalid-argument",
+              "None of the items in this preorder are eligible for the selected campaign.",
+              "campaign/no-eligible-line",
+            );
+          }
+          const lineDiscounts = new Map(
+            discountResult.lineDiscounts.map((d) => [d.lineIndex, d.discountMinorUnits]),
+          );
+          const pass2 = await buildPreorderLines(
+            tx,
+            db,
+            parsedPreorder.items,
+            { restaurantId },
+            pricingPolicy,
+            null,
+            lineDiscounts,
+          );
+          lines = pass2.lines;
+          pricing = computePreorderPriceBreakdown(lines);
+          selectedBenefitType = "campaign";
+          campaignDiscountMinorUnits = discountResult.totalDiscountMinorUnits;
+          campaignOrderSnapshot = {
+            campaignId: campaign.campaignId,
+            campaignVersion: campaign.version,
+            title: campaign.title,
+            campaignType: campaign.campaignType,
+            appliedRule: campaign.rule,
+            appliedValue: discountResult.appliedValue,
+            discountMinorUnits: discountResult.totalDiscountMinorUnits,
+            orderChannel: RESERVATION_PREORDER_COMMERCIAL_CHANNEL,
+          };
+        }
 
         // -----------------------------------------------------------
         // Boncuk Loyalty P6-B (2026-08-24) — redemption resolution (reads
@@ -532,8 +674,14 @@ export const submitReservation = onCall(
         // basis, same simplicity as delivery). Real-phone-customer identity
         // is already unconditionally required above (submitReservation
         // never has a guest path), so no additional check is needed here.
+        // `selectedBenefitType` was already declared above (Server-
+        // Authoritative Campaign Engine P8-C.2's own two-pass block) —
+        // reused here, never redeclared; a campaign selection guarantees
+        // `requestedBoncukAmount === 0` and `catalogRewardPreCheck ===
+        // null` (`enforceBenefitExclusivity`, enforced inside
+        // `parsePreorderRequest`), so neither branch below ever overwrites
+        // an already-`"campaign"` value.
         // -----------------------------------------------------------
-        let selectedBenefitType: SelectedBenefitType = "none";
         if (parsedPreorder.requestedBoncukAmount > 0) {
           const boncukEligibleOrderAmountMinorUnits = pricing.grandTotalMinorUnits;
           if (boncukEligibleOrderAmountMinorUnits < 0) {
@@ -813,6 +961,8 @@ export const submitReservation = onCall(
           selectedBenefitType,
           boncukRedemption: pendingRedemption ? pendingRedemption.orderSnapshot : null,
           catalogReward: pendingCatalogReward ? pendingCatalogReward.orderSnapshot : null,
+          campaign: campaignOrderSnapshot,
+          discountMinorUnits: campaignDiscountMinorUnits,
         });
       }
 
@@ -822,6 +972,50 @@ export const submitReservation = onCall(
       // redemption was requested — loyaltyAccounts/loyaltyPolicies/ledger)
       // has already happened above.
       // ---------------------------------------------------------------
+      // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — usage
+      // reservation is the FIRST write-phase statement, mirroring
+      // `submitDeliveryOrder.ts`'s own placement exactly.
+      // `reserveCampaignUsage` (the shared `campaignUsage.ts` primitive,
+      // reused verbatim) performs its OWN internal reads (counter/
+      // reservation existence) THEN writes atomically — calling it here
+      // guarantees ALL of its reads happen before ANY write in this ENTIRE
+      // transaction, satisfying "no reads after writes" without a manual
+      // read/write split. `customerId` is always the real, authenticated
+      // `uid` — submitReservation has no guest/anonymous path at all (a
+      // real, phone-verified customer is required unconditionally above),
+      // so there is no "campaign-on-guest" case to separately reject here.
+      if (campaignPreCheck !== null) {
+        const reserveResult = await reserveCampaignUsage(db, tx, {
+          organizationId: scope.organizationId!,
+          campaignId: campaignPreCheck.campaignId,
+          customerId: uid,
+          orderId: preorderOrderId!,
+          usageLimit: campaignPreCheck.usageLimit,
+          perCustomerUsageLimit: campaignPreCheck.perCustomerUsageLimit,
+        });
+        if (reserveResult.status === "global-limit-reached") {
+          boncukError(
+            "failed-precondition",
+            "The selected campaign has reached its usage limit.",
+            "campaign/usage-limit-reached",
+          );
+        }
+        if (reserveResult.status === "customer-limit-reached") {
+          boncukError(
+            "failed-precondition",
+            "You have already reached your usage limit for the selected campaign.",
+            "campaign/customer-usage-limit-reached",
+          );
+        }
+        if (reserveResult.status === "already-reserved") {
+          boncukError(
+            "failed-precondition",
+            "This campaign usage was already reserved for this order.",
+            "campaign/reservation-conflict",
+          );
+        }
+      }
+
       if (pendingRedemption) {
         if (pendingRedemption.policyNeedsProvisioning) {
           writeDefaultLoyaltyPolicyInTransaction(tx, db, pendingRedemption.policy);

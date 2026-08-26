@@ -107,6 +107,12 @@ export const onOrderTerminalFailureOrRefund = onDocumentUpdated(
     if (terminalStatus === "refunded") {
       doc.earnReversalEvaluated = false;
     }
+    // Server-Authoritative Campaign Engine P8-C (2026-08-25) — the campaign
+    // sibling of `boncukRedemptionRestoreEvaluated` above, mirroring the
+    // exact same "honest, disclosed marker" discipline. Flipped to `true`
+    // only by `campaignUsageRestore.ts`, and only on a genuine
+    // release-or-no-op — never on an anomaly.
+    doc.campaignUsageReleaseEvaluated = false;
 
     try {
       await db.collection("orderEvents").doc(eventId).create(doc);

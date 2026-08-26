@@ -8,6 +8,9 @@ import 'package:go_router/go_router.dart';
 import 'package:abakus_one_v2/core/router/app_routes.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
+import 'package:abakus_one_v2/features/campaigns/data/campaign_gateway.dart';
+import 'package:abakus_one_v2/features/campaigns/domain/models/campaign.dart';
+import 'package:abakus_one_v2/features/campaigns/presentation/providers/campaigns_provider.dart';
 import 'package:abakus_one_v2/features/cart/presentation/screens/takeaway_checkout_screen.dart'
     show computeClientEstimatedMaxBoncuk;
 import 'package:abakus_one_v2/features/loyalty/data/loyalty_gateway.dart';
@@ -67,6 +70,7 @@ class _FakeReservationGateway implements ReservationGateway {
   final List<Map<String, dynamic>> submitCalls = [];
   int? lastRequestedBoncukAmount;
   String? lastSelectedRewardId;
+  String? lastSelectedCampaignId;
 
   @override
   Future<ReservationBranchInfo> getReservationBranchInfo({
@@ -102,10 +106,12 @@ class _FakeReservationGateway implements ReservationGateway {
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) async {
     submitCallCount++;
     lastRequestedBoncukAmount = requestedBoncukAmount;
     lastSelectedRewardId = selectedRewardId;
+    lastSelectedCampaignId = selectedCampaignId;
     submitCalls.add({
       'restaurantId': restaurantId,
       'branchId': branchId,
@@ -117,6 +123,7 @@ class _FakeReservationGateway implements ReservationGateway {
       'preorderItems': preorderItems,
       'requestedBoncukAmount': requestedBoncukAmount,
       'selectedRewardId': selectedRewardId,
+      'selectedCampaignId': selectedCampaignId,
     });
     if (submitGate != null) await submitGate!.future;
     if (submitError != null) throw submitError!;
@@ -267,6 +274,55 @@ LoyaltyReward _catalogReward({
   );
 }
 
+/// Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — mirrors
+/// `delivery_checkout_screen_test.dart`'s own `_FakeCampaignGateway` exactly.
+class _FakeCampaignGateway implements CampaignGateway {
+  _FakeCampaignGateway({this.campaigns = const [], this.error});
+
+  List<Campaign> campaigns;
+  CampaignGatewayException? error;
+  int calls = 0;
+
+  @override
+  Future<List<Campaign>> getActiveCampaigns() async {
+    calls += 1;
+    if (error != null) throw error!;
+    return campaigns;
+  }
+}
+
+/// A well-formed, reservationPreorder-eligible [Campaign] for checkout
+/// tests — mirrors `delivery_checkout_screen_test.dart`'s own
+/// `_testCampaign` exactly, default channel adapted to this screen's own.
+Campaign _testCampaign({
+  String campaignId = 'camp-1',
+  String title = 'Test Kampanya',
+  String description = 'Bir test kampanyası.',
+  List<String> eligibleChannels = const ['reservationPreorder'],
+  int? minimumBasketMinorUnits,
+  List<String>? eligibleProductIds,
+  int sortOrder = 0,
+}) {
+  return Campaign(
+    campaignId: campaignId,
+    title: title,
+    description: description,
+    campaignType: 'percentageDiscount',
+    rule: const CampaignRule(
+      mechanic: 'percentage',
+      scopeKind: 'order',
+      percentBasisPoints: 1000,
+    ),
+    eligibleChannels: eligibleChannels,
+    eligibleProductIds: eligibleProductIds,
+    eligibleCategoryIds: null,
+    minimumBasketMinorUnits: minimumBasketMinorUnits,
+    schedule: const CampaignSchedule(mode: 'oneTime'),
+    sortOrder: sortOrder,
+    version: 1,
+  );
+}
+
 String? _lastConfirmationReservationId;
 
 Future<ProviderContainer> _pumpFlow(
@@ -275,6 +331,8 @@ Future<ProviderContainer> _pumpFlow(
   AuthNotifier Function()? authNotifierBuilder,
   // ignore: library_private_types_in_public_api
   _FakeLoyaltyGateway? loyaltyGateway,
+  // ignore: library_private_types_in_public_api
+  _FakeCampaignGateway? campaignGateway,
 }) async {
   _lastConfirmationReservationId = null;
   final router = GoRouter(
@@ -316,6 +374,8 @@ Future<ProviderContainer> _pumpFlow(
             authNotifierBuilder ?? _FakeRealCustomerAuthNotifier.new),
         if (loyaltyGateway != null)
           loyaltyGatewayProvider.overrideWithValue(loyaltyGateway),
+        campaignGatewayProvider
+            .overrideWithValue(campaignGateway ?? _FakeCampaignGateway()),
       ],
       child: Builder(builder: (context) {
         container = ProviderScope.containerOf(context, listen: false);
@@ -1200,6 +1260,249 @@ void main() {
     expect(gateway.lastSelectedRewardId, isNull);
     expect(_lastConfirmationReservationId, 'reservation-reward-3');
   });
+
+  // =========================================================================
+  // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — the
+  // reservation preorder campaign checkout wiring: [CampaignSelectionCard],
+  // mutual exclusivity with cash Boncuk redemption AND a catalog reward.
+  // The server-confirmed success summary itself is proven in
+  // `reservation_confirmation_screen_test.dart`; the historical snapshot
+  // display is proven in `reservation_detail_screen_test.dart` — this
+  // file's job, per its own established P6-B/P7-D-section convention
+  // above, is the WIRING only.
+  // =========================================================================
+
+  testWidgets(
+      'P8-C.2 A: no preorder in cart -> the campaign card never appears',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ];
+    await _pumpFlow(
+      tester,
+      gateway: gateway,
+      campaignGateway:
+          _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]),
+    );
+    await _driveToReviewStep(tester);
+
+    expect(find.byKey(const Key('campaignSelectionCard')), findsNothing);
+  });
+
+  testWidgets(
+      'P8-C.2 B: only campaigns eligible for reservationPreorder are shown '
+      '(client-side best-effort filter); selecting one sends exactly its '
+      'campaignId and removes the Boncuk/catalog-reward cards',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-campaign-1',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-campaign-1',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(snapshot: _boncukSnapshot()),
+      campaignGateway: _FakeCampaignGateway(campaigns: [
+        _testCampaign(campaignId: 'eligible'),
+        _testCampaign(
+          campaignId: 'delivery-only',
+          eligibleChannels: const ['delivery'],
+        ),
+      ]),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsOneWidget);
+    expect(find.byKey(const Key('campaignTile-eligible')), findsOneWidget);
+    expect(find.byKey(const Key('campaignTile-delivery-only')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('campaignTile-eligible')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsNothing);
+    expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.lastSelectedCampaignId, 'eligible');
+    expect(gateway.lastRequestedBoncukAmount, 0);
+    expect(gateway.lastSelectedRewardId, isNull);
+  });
+
+  testWidgets(
+      'P8-C.2 C: turning cash Boncuk redemption on while a campaign is '
+      'selected turns the campaign selection off (mutual exclusivity, '
+      'Boncuk wins)', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ];
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(snapshot: _boncukSnapshot()),
+      campaignGateway: _FakeCampaignGateway(
+        campaigns: [_testCampaign(campaignId: 'c1')],
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsNothing);
+
+    // Deselect the campaign to bring the Boncuk card back, then toggle it —
+    // mirrors the reservation-scoped equivalent of
+    // `DeliveryCheckoutScreen`'s own C test, adapted since this card is
+    // hidden (not merely disabled) while a campaign is active.
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('1 Boncuk'), findsOneWidget);
+    expect(find.byKey(const Key('campaignSelectionCard')), findsNothing,
+        reason: 'otherBenefitActive hides the campaign card entirely while '
+            'Boncuk cash redemption is on');
+  });
+
+  testWidgets(
+      'P8-C.2 D: tapping an already-selected campaign deselects it, and the '
+      'Boncuk/catalog-reward cards reappear', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-campaign-2',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-campaign-2',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      loyaltyGateway: _FakeLoyaltyGateway(snapshot: _boncukSnapshot()),
+      campaignGateway: _FakeCampaignGateway(
+        campaigns: [_testCampaign(campaignId: 'c1')],
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukRedemptionCard')), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+    expect(gateway.lastSelectedCampaignId, isNull);
+  });
+
+  testWidgets(
+      'P8-C.2 E: a campaign-specific server rejection resets the '
+      'selection, ordinary submission (no campaign) remains possible',
+      (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-campaign-3',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-campaign-3',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      campaignGateway: _FakeCampaignGateway(
+        campaigns: [_testCampaign(campaignId: 'c1')],
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+
+    gateway.submitError = const ReservationException(
+      'failed-precondition',
+      'The selected campaign has reached its usage limit.',
+      boncukErrorReason: 'campaign/usage-limit-reached',
+    );
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.submitCallCount, 1);
+    expect(_lastConfirmationReservationId, isNull);
+    expect(find.text('Bu kampanyanın kullanım hakkı doldu.'), findsOneWidget);
+    // The campaign's tile is back — selection was reset, not merely hidden.
+    expect(find.byKey(const Key('campaignTile-c1')), findsOneWidget);
+
+    gateway.submitError = null;
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+    expect(gateway.submitCallCount, 2);
+    expect(gateway.lastSelectedCampaignId, isNull);
+    expect(_lastConfirmationReservationId, 'reservation-campaign-3');
+  });
+
+  testWidgets(
+      'P8-C.2 F: a campaign load failure never blocks ordinary reservation '
+      'submission — the campaign card is simply absent', (tester) async {
+    final gateway = _FakeReservationGateway()
+      ..availabilitySlotsToReturn = [
+        ReservationAvailabilitySlot(time: _fakeSlotTime, available: true),
+      ]
+      ..submitResultToReturn = const SubmitReservationResult(
+        reservationId: 'reservation-campaign-error',
+        status: 'pendingRestaurantApproval',
+        requestedAvailabilityAtSubmission: 'available',
+        preorderOrderId: 'order-campaign-error',
+        duplicate: false,
+      );
+    final container = await _pumpFlow(
+      tester,
+      gateway: gateway,
+      campaignGateway: _FakeCampaignGateway(
+        error: const CampaignGatewayException(
+            'internal', 'Kampanyalar yüklenemedi.'),
+      ),
+    );
+    await _driveToReviewStepWithPreorder(tester, container);
+
+    expect(find.byKey(const Key('campaignSelectionCardError')),
+        findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Yılmaz');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rezervasyon Talebini Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.lastSelectedCampaignId, isNull);
+    expect(_lastConfirmationReservationId, 'reservation-campaign-error');
+  });
 }
 
 class _DelayedBranchInfoGateway implements ReservationGateway {
@@ -1238,6 +1541,7 @@ class _DelayedBranchInfoGateway implements ReservationGateway {
     List<ReservationPreorderItem>? preorderItems,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) {
     throw UnimplementedError();
   }

@@ -435,24 +435,28 @@ test("catalog reward: insufficient balance is rejected", async () => {
   assert.strictEqual(body.error?.details?.reason, "catalogReward/insufficient-balance");
 });
 
-test("catalog reward: requestedBoncukAmount and selectedRewardId together is rejected fail-closed", async () => {
-  const fixture = await seedFullValidFixture();
-  await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 500 });
-  const rewardId = await seedReward(fixture.chain.organizationId, fixture.standardProductId, { boncukCost: 100 });
+test(
+  "catalog reward: requestedBoncukAmount and selectedRewardId together is rejected fail-closed, stable reason " +
+    "— P8-C.1: reason is now the shared enforceBenefitExclusivity() reason, not the old catalogReward-specific one",
+  async () => {
+    const fixture = await seedFullValidFixture();
+    await seedLoyaltyAccount(fixture.chain.organizationId, fixture.uid, { spendableBalance: 500 });
+    const rewardId = await seedReward(fixture.chain.organizationId, fixture.standardProductId, { boncukCost: 100 });
 
-  const { httpStatus, body } = await callCallable(
-    SUBMIT_URL,
-    validSubmission({
-      savedAddressId: fixture.savedAddressId,
-      items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
-      selectedRewardId: rewardId,
-      requestedBoncukAmount: 10,
-    }),
-    fixture.idToken,
-  );
-  assert.strictEqual(httpStatus, 400);
-  assert.strictEqual(body.error?.details?.reason, "catalogReward/benefit-stacking-not-allowed");
-});
+    const { httpStatus, body } = await callCallable(
+      SUBMIT_URL,
+      validSubmission({
+        savedAddressId: fixture.savedAddressId,
+        items: [{ kind: "product", productId: fixture.standardProductId, quantity: 1 }],
+        selectedRewardId: rewardId,
+        requestedBoncukAmount: 10,
+      }),
+      fixture.idToken,
+    );
+    assert.strictEqual(httpStatus, 400);
+    assert.strictEqual(body.error?.details?.reason, "benefit/stacking-not-allowed");
+  },
+);
 
 test("catalog reward: two concurrent redemption attempts against a balance covering only ONE must not both succeed", async () => {
   const fixture = await seedFullValidFixture();

@@ -3,7 +3,9 @@ import '../../../shared/models/money.dart';
 import '../../payment/domain/models/payment_method_reporting_category.dart';
 import '../../payment/domain/models/payment_method_snapshot.dart';
 import '../../payment/domain/models/payment_provider_id.dart';
+import '../../campaigns/domain/models/campaign.dart';
 import '../domain/models/boncuk_redemption_snapshot.dart';
+import '../domain/models/campaign_snapshot.dart';
 import '../domain/models/catalog_reward_snapshot.dart';
 import '../domain/models/courier_visibility.dart';
 import '../domain/models/delivery_address_snapshot.dart';
@@ -172,6 +174,13 @@ abstract final class OrderFirestoreMapper {
           ? null
           : _catalogRewardSnapshotFromFirestore(
               Map<String, dynamic>.from(data['catalogReward'] as Map)),
+      // Server-Authoritative Campaign Engine P8-C (2026-08-25) — same
+      // additive/nullable backward-compatibility contract as
+      // boncukRedemption/catalogReward above.
+      campaign: data['campaign'] == null
+          ? null
+          : _campaignSnapshotFromFirestore(
+              Map<String, dynamic>.from(data['campaign'] as Map)),
     );
   }
 
@@ -199,6 +208,21 @@ abstract final class OrderFirestoreMapper {
       redeemedQuantity: data['redeemedQuantity'] as int,
       coveredValueMinorUnits: data['coveredValueMinorUnits'] as int,
       rewardCatalogVersionId: data['rewardCatalogVersionId'] as String,
+    );
+  }
+
+  static CampaignSnapshot _campaignSnapshotFromFirestore(
+      Map<String, dynamic> data) {
+    return CampaignSnapshot(
+      campaignId: data['campaignId'] as String,
+      campaignVersion: data['campaignVersion'] as int,
+      title: data['title'] as String,
+      campaignType: data['campaignType'] as String,
+      appliedRule: CampaignRule.fromMap(
+          Map<String, dynamic>.from(data['appliedRule'] as Map)),
+      appliedValue: data['appliedValue'] as int,
+      discountMinorUnits: data['discountMinorUnits'] as int,
+      orderChannel: data['orderChannel'] as String,
     );
   }
 

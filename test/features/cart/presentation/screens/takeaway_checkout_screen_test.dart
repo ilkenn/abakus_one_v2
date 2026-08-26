@@ -24,12 +24,18 @@ import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/boncuk_redemption_snapshot.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/campaign_snapshot.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/catalog_reward_snapshot.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/pickup_mode.dart';
+import 'package:abakus_one_v2/features/orders/domain/pricing/price_breakdown.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/order_identity_provider.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
+import 'package:abakus_one_v2/features/campaigns/domain/models/campaign.dart';
+import 'package:abakus_one_v2/features/campaigns/data/campaign_gateway.dart';
+import 'package:abakus_one_v2/features/campaigns/presentation/providers/campaigns_provider.dart';
 import 'package:abakus_one_v2/features/takeaway/data/submit_takeaway_order_gateway.dart';
 import 'package:abakus_one_v2/features/takeaway/presentation/providers/takeaway_dependencies_provider.dart';
+import 'package:abakus_one_v2/shared/models/money.dart';
 
 /// Faz D.3.1 migration: `TakeawayCheckoutScreen` no longer builds an
 /// `Order`/writes to `CanonicalOrderRepository` directly — it calls
@@ -70,6 +76,7 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
   /// already makes anything else structurally impossible to send).
   int? lastRequestedBoncukAmount;
   String? lastSelectedRewardId;
+  String? lastSelectedCampaignId;
 
   /// Boncuk Loyalty P7-C (2026-08-24) — the fake's own stand-in for the
   /// server's resolved reward snapshot, returned on the order whenever
@@ -80,6 +87,15 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
   String catalogRewardTitleToReturn = 'Test Ödülü';
   int catalogRewardBoncukCostToReturn = 100;
   int catalogRewardCoveredValueMinorUnitsToReturn = 12000;
+
+  /// Server-Authoritative Campaign Engine P8-C (2026-08-25) — the fake's
+  /// own stand-in for the server's resolved campaign snapshot, returned on
+  /// the order whenever [submitAuthenticatedOrder] is called with a
+  /// non-null `selectedCampaignId`. A test can override these to prove the
+  /// success/detail screens read them from the canonical re-read `Order`,
+  /// never from a pre-submit client estimate.
+  String campaignTitleToReturn = 'Test Kampanya';
+  int campaignDiscountMinorUnitsToReturn = 500;
 
   /// When set, the next [submitAuthenticatedOrder] call throws this
   /// instead of succeeding — simulates a real backend rejection (e.g. a
@@ -104,6 +120,7 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
     required String contactPhone,
     int requestedBoncukAmount = 0,
     String? selectedRewardId,
+    String? selectedCampaignId,
   }) async {
     callCount += 1;
     lastRequestItems = [for (final item in items) item.toJson()];
@@ -116,6 +133,7 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
     lastPickupTime = pickupTime;
     lastRequestedBoncukAmount = requestedBoncukAmount;
     lastSelectedRewardId = selectedRewardId;
+    lastSelectedCampaignId = selectedCampaignId;
 
     final pendingThrow = throwOnNextSubmit;
     if (pendingThrow != null) {
@@ -203,6 +221,48 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
           rewardCatalogVersionId: '${selectedRewardId}_1',
         ),
       );
+    } else if (selectedCampaignId != null) {
+      // Simulates the SERVER's own resolved campaign snapshot (P8-C) —
+      // never re-implementing the real campaign-discount pricing mechanism
+      // here (that's covered server-side by
+      // `submitTakeawayOrderCampaign.test.ts`); this fake only needs to
+      // prove the SCREEN reads `order.campaign`/`selectedBenefitType` from
+      // the canonical re-read order, exactly like the boncukRedemption/
+      // catalogReward branches above.
+      final discountedGrandTotal = Money(
+        order.pricing.grandTotal.minorUnits -
+            campaignDiscountMinorUnitsToReturn,
+        order.pricing.grandTotal.currency,
+      );
+      order = order.copyWith(
+        selectedBenefitType: OrderBenefitType.campaign,
+        pricing: PriceBreakdown(
+          grossSubtotal: order.pricing.grossSubtotal,
+          discount: Money(campaignDiscountMinorUnitsToReturn,
+              order.pricing.discount.currency),
+          taxableBase: order.pricing.taxableBase,
+          vatAmount: order.pricing.vatAmount,
+          serviceFee: order.pricing.serviceFee,
+          deliveryFee: order.pricing.deliveryFee,
+          packagingFee: order.pricing.packagingFee,
+          tip: order.pricing.tip,
+          grandTotal: discountedGrandTotal,
+        ),
+        campaign: CampaignSnapshot(
+          campaignId: selectedCampaignId,
+          campaignVersion: 1,
+          title: campaignTitleToReturn,
+          campaignType: 'percentageDiscount',
+          appliedRule: const CampaignRule(
+            mechanic: 'percentage',
+            scopeKind: 'order',
+            percentBasisPoints: 1000,
+          ),
+          appliedValue: 1000,
+          discountMinorUnits: campaignDiscountMinorUnitsToReturn,
+          orderChannel: 'takeaway',
+        ),
+      );
     }
     await repository.submitOrder(order);
 
@@ -279,6 +339,56 @@ class _FakeLoyaltyGateway implements LoyaltyGateway {
   }
 }
 
+/// Server-Authoritative Campaign Engine P8-C (2026-08-25) — mirrors
+/// `_FakeLoyaltyGateway`'s exact per-file test-double convention.
+/// `const []` (the default) mirrors "no active campaigns," matching every
+/// pre-P8-C test's own behavior exactly (the campaign card renders
+/// nothing).
+class _FakeCampaignGateway implements CampaignGateway {
+  _FakeCampaignGateway({this.campaigns = const [], this.error});
+
+  List<Campaign> campaigns;
+  CampaignGatewayException? error;
+  int calls = 0;
+
+  @override
+  Future<List<Campaign>> getActiveCampaigns() async {
+    calls += 1;
+    if (error != null) throw error!;
+    return campaigns;
+  }
+}
+
+/// A well-formed, takeaway-eligible [Campaign] for checkout tests.
+Campaign _testCampaign({
+  String campaignId = 'camp-1',
+  String title = 'Test Kampanya',
+  String description = 'Bir test kampanyası.',
+  List<String> eligibleChannels = const ['takeaway'],
+  int? minimumBasketMinorUnits,
+  List<String>? eligibleProductIds,
+  int sortOrder = 0,
+}) {
+  return Campaign(
+    campaignId: campaignId,
+    title: title,
+    description: description,
+    campaignType: 'percentageDiscount',
+    rule: const CampaignRule(
+      mechanic: 'percentage',
+      scopeKind: 'order',
+      percentBasisPoints: 1000,
+    ),
+    eligibleChannels: eligibleChannels,
+    eligibleProductIds: eligibleProductIds,
+    eligibleCategoryIds: null,
+    minimumBasketMinorUnits: minimumBasketMinorUnits,
+    schedule: const CampaignSchedule(mode: 'oneTime'),
+    sortOrder: sortOrder,
+    version: 1,
+  );
+}
+
 /// A well-formed, non-default snapshot for Boncuk checkout tests — a
 /// non-default redemption rate/cap deliberately (P4-E-B §20 F/G: "policy
 /// value not hardcoded" / "max percentage not hardcoded" — using the
@@ -349,11 +459,14 @@ Future<
       ProviderContainer container,
       _FakeSubmitTakeawayOrderGateway gateway,
       _FakeLoyaltyGateway loyaltyGateway,
+      _FakeCampaignGateway campaignGateway,
     })> pumpCheckout(
   WidgetTester tester, {
   AuthState? authState,
   // ignore: library_private_types_in_public_api
   _FakeLoyaltyGateway? loyaltyGateway,
+  // ignore: library_private_types_in_public_api
+  _FakeCampaignGateway? campaignGateway,
 }) async {
   // A tall viewport so every section (Şube/Teslim Alma Zamanı/İletişim
   // Bilgileri/Ürünler/submit button) is actually laid out and mounted —
@@ -385,6 +498,7 @@ Future<
     resolveCustomerId: () => container.read(authProvider).session!.uid,
   );
   final resolvedLoyaltyGateway = loyaltyGateway ?? _FakeLoyaltyGateway();
+  final resolvedCampaignGateway = campaignGateway ?? _FakeCampaignGateway();
 
   container = ProviderContainer(
     overrides: [
@@ -393,6 +507,7 @@ Future<
       orderIdentityProvider.overrideWithValue(gateway.identityProvider),
       submitTakeawayOrderGatewayProvider.overrideWithValue(gateway),
       loyaltyGatewayProvider.overrideWithValue(resolvedLoyaltyGateway),
+      campaignGatewayProvider.overrideWithValue(resolvedCampaignGateway),
     ],
   );
   addTearDown(container.dispose);
@@ -422,6 +537,7 @@ Future<
     container: container,
     gateway: gateway,
     loyaltyGateway: resolvedLoyaltyGateway,
+    campaignGateway: resolvedCampaignGateway,
   );
 }
 
@@ -1429,6 +1545,331 @@ void main() {
     expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
     expect(find.byKey(const Key('catalogRewardCardSkeleton')), findsNothing);
     expect(find.byKey(const Key('catalogRewardCardError')), findsNothing);
+  });
+
+  // =========================================================================
+  // Server-Authoritative Campaign Engine P8-C (2026-08-25) — Takeaway
+  // checkout card. Every campaign shown comes from the real
+  // `activeCampaignsProvider`/`CampaignGateway` (via [_FakeCampaignGateway],
+  // simulating only the server's observable *response*, never inventing
+  // eligibility logic client-side) — no mock/hardcoded campaign data is
+  // read from anywhere else in this flow.
+  // =========================================================================
+
+  testWidgets(
+      'P8-C A: an ordinary checkout with no active campaign renders '
+      'no campaign card at all', (tester) async {
+    await pumpCheckout(tester);
+
+    expect(find.byKey(const Key('campaignSelectionCard')), findsNothing);
+  });
+
+  testWidgets(
+      'P8-C B: a real, takeaway-eligible campaign is shown, selectable, and '
+      'sent as selectedCampaignId on submit — the only campaign field ever '
+      'sent', (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      campaignGateway:
+          _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]),
+    );
+
+    expect(find.byKey(const Key('campaignSelectionCard')), findsOneWidget);
+    expect(find.byKey(const Key('campaignTile-c1')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    await setUpValidForm(tester);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(pumped.gateway.lastSelectedCampaignId, 'c1');
+    expect(pumped.gateway.lastRequestedBoncukAmount, 0);
+    expect(pumped.gateway.lastSelectedRewardId, isNull);
+    expect(find.byType(OrderSuccessScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'P8-C C: a campaign not eligible for the takeaway channel is never '
+      'shown', (tester) async {
+    await pumpCheckout(
+      tester,
+      campaignGateway: _FakeCampaignGateway(campaigns: [
+        _testCampaign(campaignId: 'c-delivery-only', eligibleChannels: const [
+          'delivery',
+        ]),
+      ]),
+    );
+
+    expect(find.byKey(const Key('campaignSelectionCard')), findsNothing);
+  });
+
+  testWidgets(
+      'P8-C D: a campaign below the cart\'s current minimum-basket estimate '
+      'shows a best-effort unavailable reason and cannot be tapped',
+      (tester) async {
+    // Cart total from `pumpCheckout` is 2x120 = 240 TL = 24000 minor units.
+    await pumpCheckout(
+      tester,
+      campaignGateway: _FakeCampaignGateway(campaigns: [
+        _testCampaign(campaignId: 'c-min', minimumBasketMinorUnits: 100000),
+      ]),
+    );
+
+    expect(find.byKey(const Key('campaignTile-c-min')), findsOneWidget);
+    expect(
+      find.textContaining('sepet tutarın en az'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('campaignTile-c-min')));
+    await tester.pumpAndSettle();
+    // Never became selected — the tile stayed unselectable.
+    expect(find.byIcon(Icons.check_circle_rounded), findsNothing);
+  });
+
+  testWidgets(
+      'P8-C E: selecting a campaign clears an active Boncuk cash selection, '
+      'and removes the Boncuk card entirely (never just visually disabled)',
+      (tester) async {
+    await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(snapshot: _boncukSnapshot()),
+      campaignGateway:
+          _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]),
+    );
+
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('campaignSelectionCard')), findsNothing);
+
+    // Turning Boncuk off again brings the campaign card back.
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('campaignSelectionCard')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+
+    // The Boncuk card is gone entirely now that a campaign is selected.
+    expect(find.byKey(const Key('boncukToggle')), findsNothing);
+  });
+
+  testWidgets(
+      'P8-C F: selecting a campaign clears an active catalog-reward '
+      'selection, and the catalog-reward card hides itself', (tester) async {
+    await pumpCheckout(
+      tester,
+      loyaltyGateway:
+          _FakeLoyaltyGateway(rewards: [_catalogReward(rewardId: 'reward-1')]),
+      campaignGateway:
+          _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]),
+    );
+
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('campaignSelectionCard')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('catalogRewardTile-reward-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('catalogRewardCard')), findsNothing);
+  });
+
+  testWidgets(
+      'P8-C G: turning Boncuk cash on clears an active campaign selection '
+      '— the campaign card removes itself, and a subsequent submit sends '
+      'no selectedCampaignId', (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      loyaltyGateway: _FakeLoyaltyGateway(snapshot: _boncukSnapshot()),
+      campaignGateway:
+          _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]),
+    );
+
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukToggle')), findsNothing);
+
+    // Selecting the campaign removed the Boncuk card entirely — deselect
+    // the campaign to bring it back, then toggle Boncuk on.
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('boncukToggle')), findsOneWidget);
+    expect(find.byKey(const Key('campaignSelectionCard')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('boncukToggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('campaignSelectionCard')), findsNothing);
+
+    await setUpValidForm(tester);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(pumped.gateway.lastSelectedCampaignId, isNull);
+    expect(pumped.gateway.lastRequestedBoncukAmount, greaterThan(0));
+  });
+
+  testWidgets(
+      'P8-C H: the server-confirmed success screen shows the campaign '
+      'summary sourced from the canonical re-read Order, never a pre-submit '
+      'estimate', (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      campaignGateway:
+          _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]),
+    );
+    pumped.gateway.campaignTitleToReturn = 'Yaz İndirimi';
+    pumped.gateway.campaignDiscountMinorUnitsToReturn = 1500;
+
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    await setUpValidForm(tester);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(OrderSuccessScreen), findsOneWidget);
+    expect(
+        find.byKey(const Key('orderSuccessCampaignSummary')), findsOneWidget);
+    expect(find.textContaining('Yaz İndirimi uygulandı'), findsOneWidget);
+    expect(find.textContaining('15'), findsWidgets);
+  });
+
+  testWidgets(
+      'P8-C I: a campaign-specific server rejection resets the selection '
+      'and never auto-resubmits without the campaign — the customer must '
+      'explicitly tap submit again', (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      campaignGateway:
+          _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]),
+    );
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    await setUpValidForm(tester);
+
+    pumped.gateway.throwOnNextSubmit = const SubmitTakeawayOrderException(
+      'failed-precondition',
+      'The selected campaign is no longer valid.',
+      boncukErrorReason: 'campaign/usage-limit-reached',
+    );
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(pumped.gateway.callCount, 1);
+    expect(find.byType(OrderSuccessScreen), findsNothing);
+    expect(
+      find.textContaining('kullanım hakkı doldu'),
+      findsOneWidget,
+    );
+    // The campaign's card is back — selection was reset, not merely hidden.
+    expect(find.byKey(const Key('campaignTile-c1')), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+    expect(pumped.gateway.callCount, 2);
+    expect(pumped.gateway.lastSelectedCampaignId, isNull);
+    expect(find.byType(OrderSuccessScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'P8-C J: a shared benefit-stacking rejection (defense-in-depth — the '
+      'UI itself never allows sending two benefits at once) also resets the '
+      'campaign selection', (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      campaignGateway:
+          _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]),
+    );
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    await setUpValidForm(tester);
+
+    pumped.gateway.throwOnNextSubmit = const SubmitTakeawayOrderException(
+      'failed-precondition',
+      'Only one benefit may be used per order.',
+      boncukErrorReason: 'benefit/stacking-not-allowed',
+    );
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('birden fazla avantaj kullanılamaz'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('campaignTile-c1')), findsOneWidget);
+  });
+
+  testWidgets(
+      'P8-C K: a campaign no longer present in a refreshed active-campaign '
+      'list clears the now-impossible selection automatically', (tester) async {
+    final campaignGateway =
+        _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]);
+    final pumped = await pumpCheckout(tester, campaignGateway: campaignGateway);
+    await tester.tap(find.byKey(const Key('campaignTile-c1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('campaignTile-c1')), findsOneWidget);
+
+    final scope = tester.widget<UncontrolledProviderScope>(
+        find.byType(UncontrolledProviderScope));
+    campaignGateway.campaigns = const [];
+    scope.container.invalidate(activeCampaignsProvider);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('campaignSelectionCard')), findsNothing);
+
+    // Proves the selection was genuinely cleared, not merely hidden while
+    // still "selected" underneath.
+    await setUpValidForm(tester);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+    expect(pumped.gateway.lastSelectedCampaignId, isNull);
+  });
+
+  testWidgets(
+      'P8-C L: no campaign selected — ordinary checkout sends no '
+      'selectedCampaignId and existing checkout behavior is unchanged',
+      (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      campaignGateway:
+          _FakeCampaignGateway(campaigns: [_testCampaign(campaignId: 'c1')]),
+    );
+    await setUpValidForm(tester);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(pumped.gateway.lastSelectedCampaignId, isNull);
+    expect(find.byType(OrderSuccessScreen), findsOneWidget);
+    expect(find.byKey(const Key('orderSuccessCampaignSummary')), findsNothing);
+  });
+
+  testWidgets(
+      'P8-C M: campaign list load failure shows a scoped retry card; '
+      'ordinary checkout (without a campaign) remains fully usable',
+      (tester) async {
+    final pumped = await pumpCheckout(
+      tester,
+      campaignGateway: _FakeCampaignGateway(
+        error: const CampaignGatewayException(
+          'internal',
+          'Kampanyalara şu anda ulaşılamıyor.',
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('campaignSelectionCardError')), findsOneWidget);
+
+    await setUpValidForm(tester);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Ver'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(OrderSuccessScreen), findsOneWidget);
+    expect(pumped.gateway.lastSelectedCampaignId, isNull);
   });
 }
 

@@ -73,11 +73,24 @@ function reservationDocId(organizationId: string, campaignId: string, orderId: s
  * meaningful cross-visit "per customer" count). When `customerId` is
  * `null`, no `campaignCustomerUsage` document is ever read or written —
  * `perCustomerUsageLimit` is therefore only ever enforceable for a real,
- * phone-verified customer identity. A caller wiring this into checkout
- * must independently enforce the locked rule "anonymous guests may use a
- * campaign ONLY when `perCustomerUsageLimit == null`" BEFORE ever calling
- * this function with `customerId: null` — this function itself does not
- * re-derive that policy; it only reserves what it's asked to reserve.
+ * phone-verified customer identity.
+ *
+ * **SUPERSEDED (P8-C.3, 2026-08-25) — this paragraph previously read
+ * "anonymous guests may use a campaign ONLY when `perCustomerUsageLimit ==
+ * null`."** That P8-B design was never actually wired into any checkout
+ * path. When dine-in (the one channel with a real anonymous-guest identity)
+ * actually integrated campaigns, the product owner locked a stricter policy
+ * instead, confirmed explicitly: **anonymous/table-QR guests cannot use
+ * Campaigns at all**, mirroring their existing cash-Boncuk/catalog-reward
+ * exclusion on that channel. `submitDineInOrder.ts` now rejects any guest
+ * `selectedCampaignId` fail-closed BEFORE its transaction ever opens — this
+ * function is never called with `customerId: null` for a campaign
+ * reservation in production, on any channel. This function's own
+ * `customerId: string | null` parameter shape is left as-is (harmless,
+ * generically correct, and avoids a type change with no real caller), but
+ * no caller should treat `customerId: null` as an invitation to build a
+ * guest-campaign path — see `docs/business_rules.md` `BR-LOYALTY-030` for
+ * the current LOCKED rule.
  */
 export interface ReserveCampaignUsageParams {
   organizationId: string;

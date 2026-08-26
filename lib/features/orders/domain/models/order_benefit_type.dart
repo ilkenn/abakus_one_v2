@@ -12,7 +12,15 @@
 /// **Boncuk Loyalty P7-C (2026-08-24) — `catalogReward` added.** Real for
 /// the takeaway channel only this phase (`submitTakeawayOrder.ts`); every
 /// other channel still only ever produces `none`/`boncukRedemption`.
-enum OrderBenefitType { none, boncukRedemption, catalogReward }
+///
+/// **Server-Authoritative Campaign Engine P8-C (2026-08-25) — `campaign`
+/// added.** Real for the takeaway channel only this phase
+/// (`submitTakeawayOrder.ts`); every other channel still only ever produces
+/// `none`/`boncukRedemption`/`catalogReward`. Unlike `boncukRedemption`, a
+/// campaign is a genuine price discount (see [CampaignSnapshot]'s own doc
+/// comment) — the same "already-applied reduction, not a settlement"
+/// relationship `catalogReward` already has with [Order.pricing].
+enum OrderBenefitType { none, boncukRedemption, catalogReward, campaign }
 
 /// Parses `Order.selectedBenefitType`'s wire value.
 ///
@@ -31,6 +39,8 @@ OrderBenefitType orderBenefitTypeFromWire(String? raw) {
       return OrderBenefitType.boncukRedemption;
     case 'catalogReward':
       return OrderBenefitType.catalogReward;
+    case 'campaign':
+      return OrderBenefitType.campaign;
     default:
       return OrderBenefitType.none;
   }
@@ -45,6 +55,8 @@ String orderBenefitTypeToWire(OrderBenefitType value) {
       return 'boncukRedemption';
     case OrderBenefitType.catalogReward:
       return 'catalogReward';
+    case OrderBenefitType.campaign:
+      return 'campaign';
     case OrderBenefitType.none:
       return 'none';
   }

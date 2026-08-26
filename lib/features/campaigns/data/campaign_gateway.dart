@@ -97,28 +97,12 @@ CampaignSchedule _parseSchedule(Map<String, dynamic> data) {
 }
 
 CampaignRule _parseRule(Map<String, dynamic> data) {
-  final mechanic = data['mechanic'];
-  if (mechanic is! String) {
-    throw const FormatException(
-        'getCustomerActiveCampaigns response: rule.mechanic must be a string');
+  try {
+    return CampaignRule.fromMap(data);
+  } on FormatException catch (error) {
+    throw FormatException(
+        'getCustomerActiveCampaigns response: ${error.message}');
   }
-  final scopeRaw = data['scope'];
-  final scope = scopeRaw is Map ? Map<String, dynamic>.from(scopeRaw) : null;
-  int? asInt(dynamic value) => value == null ? null : (value as num).toInt();
-
-  return CampaignRule(
-    mechanic: mechanic,
-    scopeKind: scope?['kind'] as String?,
-    scopeProductId: scope?['productId'] as String?,
-    scopeCategoryId: scope?['categoryId'] as String?,
-    percentBasisPoints: asInt(data['percentBasisPoints']),
-    amountMinorUnits: asInt(data['amountMinorUnits']),
-    freeProductId: data['freeProductId'] as String?,
-    triggerProductId: data['triggerProductId'] as String?,
-    triggerQuantity: asInt(data['triggerQuantity']),
-    rewardProductId: data['rewardProductId'] as String?,
-    rewardQuantity: asInt(data['rewardQuantity']),
-  );
 }
 
 Campaign _parseCampaign(Map<String, dynamic> data) {

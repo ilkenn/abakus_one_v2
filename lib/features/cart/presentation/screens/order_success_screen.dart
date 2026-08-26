@@ -71,6 +71,20 @@ class OrderSuccessScreen extends StatelessWidget {
   final String? catalogRewardRedeemedProductName;
   final int? catalogRewardCoveredValueMinorUnits;
 
+  /// Server-Authoritative Campaign Engine P8-C (2026-08-25) — additive,
+  /// optional server-confirmed campaign summary. Every value here comes
+  /// straight from the canonical `Order` re-read from Firestore after
+  /// submission (`TakeawayCheckoutScreen._submitOrder`) — [campaignTitle]/
+  /// [campaignDiscountMinorUnits] from `Order.campaign` directly,
+  /// [campaignNewGrandTotalMinorUnits] from `Order.pricing.grandTotal` —
+  /// never from any pre-submit local estimate. Mutually exclusive with the
+  /// Boncuk-cash-redemption/catalog-reward summaries above (one order = one
+  /// benefit). Takeaway (P8-C), delivery (P8-C.1), and dine-in (P8-C.3,
+  /// 2026-08-25) so far.
+  final String? campaignTitle;
+  final int? campaignDiscountMinorUnits;
+  final int? campaignNewGrandTotalMinorUnits;
+
   const OrderSuccessScreen({
     super.key,
     required this.orderId,
@@ -87,6 +101,9 @@ class OrderSuccessScreen extends StatelessWidget {
     this.catalogRewardBoncukCost,
     this.catalogRewardRedeemedProductName,
     this.catalogRewardCoveredValueMinorUnits,
+    this.campaignTitle,
+    this.campaignDiscountMinorUnits,
+    this.campaignNewGrandTotalMinorUnits,
   });
 
   bool get _isDineIn => dineInBranchName != null && dineInTableName != null;
@@ -104,6 +121,11 @@ class OrderSuccessScreen extends StatelessWidget {
       catalogRewardBoncukCost != null &&
       catalogRewardRedeemedProductName != null &&
       catalogRewardCoveredValueMinorUnits != null;
+
+  bool get _hasCampaignSummary =>
+      campaignTitle != null &&
+      campaignDiscountMinorUnits != null &&
+      campaignNewGrandTotalMinorUnits != null;
 
   @override
   Widget build(BuildContext context) {
@@ -246,6 +268,25 @@ class OrderSuccessScreen extends StatelessWidget {
                   boncukCost: catalogRewardBoncukCost!,
                   redeemedProductName: catalogRewardRedeemedProductName!,
                   coveredValueMinorUnits: catalogRewardCoveredValueMinorUnits!,
+                ),
+              ],
+              // Server-Authoritative Campaign Engine P8-C (2026-08-25,
+              // takeaway) / P8-C.1 (2026-08-25, delivery) / P8-C.3
+              // (2026-08-25, dine-in) — only when a real campaign
+              // redemption happened. Mutually exclusive with the Boncuk-
+              // cash-redemption/catalog-reward summaries above by
+              // construction (one benefit per order). Reuses `_isDineIn`
+              // (already defined above for the branch/table copy switch)
+              // rather than a third dedicated bool flag — mirrors the
+              // `_hasCatalogRewardSummary` gate's own identical `_isDineIn`
+              // inclusion exactly.
+              if ((_isTakeaway || isDeliveryOrder || _isDineIn) &&
+                  _hasCampaignSummary) ...[
+                const SizedBox(height: AppSpacing.md),
+                CampaignSuccessSummary(
+                  campaignTitle: campaignTitle!,
+                  discountMinorUnits: campaignDiscountMinorUnits!,
+                  newGrandTotalMinorUnits: campaignNewGrandTotalMinorUnits!,
                 ),
               ],
               const Spacer(),
@@ -427,6 +468,76 @@ class CatalogRewardSuccessSummary extends StatelessWidget {
           _SummaryRow(
             label: 'Karşılanan tutar',
             value: '${_formatMinorUnitsTl(coveredValueMinorUnits)} TL',
+            emphasized: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The compact, server-confirmed campaign summary shown on a successful
+/// takeaway order that applied a campaign discount — Server-Authoritative
+/// Campaign Engine P8-C (2026-08-25). Every figure is a plain,
+/// already-resolved value passed in by the caller (sourced from the
+/// canonical re-read `Order`, never a pre-submit estimate — the task's own
+/// locked requirement: "Do NOT use the pre-submit local estimate as
+/// final").
+class CampaignSuccessSummary extends StatelessWidget {
+  const CampaignSuccessSummary({
+    super.key,
+    required this.campaignTitle,
+    required this.discountMinorUnits,
+    required this.newGrandTotalMinorUnits,
+  });
+
+  final String campaignTitle;
+  final int discountMinorUnits;
+  final int newGrandTotalMinorUnits;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('orderSuccessCampaignSummary'),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      decoration: const BoxDecoration(
+        color: AppColors.primaryExtraLight,
+        borderRadius: AppRadius.kMedium,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            label: '$campaignTitle uygulandı',
+            excludeSemantics: true,
+            child: Row(
+              children: [
+                const Icon(Icons.local_offer_rounded,
+                    size: 18, color: AppColors.primary),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    '$campaignTitle uygulandı',
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          _SummaryRow(
+            label: 'İndirim',
+            value: '${_formatMinorUnitsTl(discountMinorUnits)} TL',
+          ),
+          _SummaryRow(
+            label: 'Yeni toplam',
+            value: '${_formatMinorUnitsTl(newGrandTotalMinorUnits)} TL',
             emphasized: true,
           ),
         ],

@@ -16,7 +16,10 @@ import '../../../cart/domain/models/cart_item.dart';
 import '../../../cart/presentation/screens/takeaway_checkout_screen.dart'
     show computeClientEstimatedMaxBoncuk;
 import '../../../cart/presentation/widgets/boncuk_redemption_card.dart';
+import '../../../cart/presentation/widgets/campaign_selection_card.dart';
 import '../../../cart/presentation/widgets/catalog_reward_card.dart';
+import '../../../campaigns/domain/models/campaign.dart';
+import '../../../campaigns/presentation/providers/campaigns_provider.dart';
 import '../../../loyalty/domain/models/loyalty_account_snapshot.dart';
 import '../../../loyalty/domain/models/loyalty_reward.dart';
 import '../../../loyalty/presentation/providers/loyalty_providers.dart';
@@ -77,6 +80,14 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
   /// meaningful alongside a preorder, same as [_boncukUsageEnabled].
   String? _selectedRewardId;
 
+  /// Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — mirrors
+  /// `TakeawayCheckoutScreen._selectedCampaignId`/
+  /// `DeliveryCheckoutScreen._selectedCampaignId` exactly: mutually
+  /// exclusive with both cash Boncuk redemption and a catalog reward
+  /// above. Only ever meaningful alongside a preorder, same as
+  /// [_boncukUsageEnabled]/[_selectedRewardId].
+  String? _selectedCampaignId;
+
   bool _isBowlCartItem(CartItem item) => item.id.startsWith('custom_bowl_');
 
   @override
@@ -114,7 +125,12 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
           value ? (_selectedBoncukAmount > 0 ? _selectedBoncukAmount : 1) : 0;
       // Boncuk Loyalty P7-D — mutual exclusivity: turning cash redemption
       // on clears any catalog-reward selection.
-      if (value) _selectedRewardId = null;
+      // Server-Authoritative Campaign Engine P8-C.2 — same exclusivity
+      // with any active campaign selection.
+      if (value) {
+        _selectedRewardId = null;
+        _selectedCampaignId = null;
+      }
       _submitError = null;
     });
   }
@@ -127,6 +143,24 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
       if (rewardId != null) {
         _boncukUsageEnabled = false;
         _selectedBoncukAmount = 0;
+        // Server-Authoritative Campaign Engine P8-C.2 — mutual exclusivity
+        // with any active campaign selection.
+        _selectedCampaignId = null;
+      }
+      _submitError = null;
+    });
+  }
+
+  /// Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — mirrors
+  /// `TakeawayCheckoutScreen._onCampaignSelect`/
+  /// `DeliveryCheckoutScreen._onCampaignSelect` exactly.
+  void _onCampaignSelect(String? campaignId) {
+    setState(() {
+      _selectedCampaignId = campaignId;
+      if (campaignId != null) {
+        _boncukUsageEnabled = false;
+        _selectedBoncukAmount = 0;
+        _selectedRewardId = null;
       }
       _submitError = null;
     });
@@ -190,6 +224,22 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
         .toSet();
     if (reward == null || !reward.isEligibleForCart(cartProductIds)) {
       setState(() => _selectedRewardId = null);
+    }
+  }
+
+  /// Server-Authoritative Campaign Engine P8-C.2 (2026-08-25) — mirrors
+  /// `TakeawayCheckoutScreen._handleCampaignListMightHaveInvalidatedSelection`
+  /// exactly, against the preorder cart.
+  void _handleCampaignListMightHaveInvalidatedSelection() {
+    final campaignId = _selectedCampaignId;
+    if (campaignId == null) return;
+    final campaigns = ref.read(activeCampaignsProvider).valueOrNull;
+    final stillListed = campaigns != null &&
+        campaigns.any((c) =>
+            c.campaignId == campaignId &&
+            c.isEligibleForChannel('reservationPreorder'));
+    if (!stillListed) {
+      setState(() => _selectedCampaignId = null);
     }
   }
 
@@ -270,6 +320,8 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
             ? _selectedBoncukAmount
             : 0,
         selectedRewardId: preorderItems.isNotEmpty ? _selectedRewardId : null,
+        selectedCampaignId:
+            preorderItems.isNotEmpty ? _selectedCampaignId : null,
       );
 
       if (!mounted) return;
@@ -283,6 +335,13 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
       // refreshed identically (mirrors TakeawayCheckoutScreen exactly).
       if (_selectedRewardId != null && preorderItems.isNotEmpty) {
         ref.invalidate(loyaltyRewardCatalogProvider);
+      }
+      // Server-Authoritative Campaign Engine P8-C.2 — a campaign
+      // redemption consumes usage server-side, so the customer's active-
+      // campaign list is refreshed identically (mirrors
+      // TakeawayCheckoutScreen/DeliveryCheckoutScreen).
+      if (_selectedCampaignId != null && preorderItems.isNotEmpty) {
+        ref.invalidate(activeCampaignsProvider);
       }
       // `context.go` kicks off go_router's own (internally async)
       // route-matching pipeline rather than swapping the tree
@@ -311,14 +370,18 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
           // WITHOUT Boncuk, but the customer must tap submit themselves.
           // Boncuk Loyalty P7-D — the same reset covers a catalog-reward
           // rejection too.
+          // Server-Authoritative Campaign Engine P8-C.2 — and a campaign
+          // rejection, same shared namespace/signal.
           _boncukUsageEnabled = false;
           _selectedBoncukAmount = 0;
           _selectedRewardId = null;
+          _selectedCampaignId = null;
         }
       });
       if (isBoncukError) {
         ref.invalidate(loyaltySnapshotProvider);
         ref.invalidate(loyaltyRewardCatalogProvider);
+        ref.invalidate(activeCampaignsProvider);
       }
     }
   }
@@ -343,6 +406,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
     final branchInfoAsync = ref.watch(reservationBranchInfoProvider);
     final loyaltySnapshotAsync = ref.watch(loyaltySnapshotProvider);
     final rewardsAsync = ref.watch(loyaltyRewardCatalogProvider);
+    final campaignsAsync = ref.watch(activeCampaignsProvider);
 
     // Boncuk Loyalty P6-B — react to a preorder-cart or loyalty snapshot
     // change while Boncuk usage is on (mirrors TakeawayCheckoutScreen's own
@@ -362,6 +426,16 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
     ref.listen<AsyncValue<List<LoyaltyReward>>>(loyaltyRewardCatalogProvider,
         (previous, next) {
       _handleCartMightHaveInvalidatedReward();
+    });
+    // Server-Authoritative Campaign Engine P8-C.2 — same reasoning, for a
+    // preorder-cart change or a refreshed active-campaign list potentially
+    // invalidating the current campaign selection.
+    ref.listen<List<CartItem>>(preorderCartProvider, (previous, next) {
+      _handleCampaignListMightHaveInvalidatedSelection();
+    });
+    ref.listen<AsyncValue<List<Campaign>>>(activeCampaignsProvider,
+        (previous, next) {
+      _handleCampaignListMightHaveInvalidatedSelection();
     });
 
     return Scaffold(
@@ -414,6 +488,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
                     authState: authState,
                     loyaltySnapshotAsync: loyaltySnapshotAsync,
                     rewardsAsync: rewardsAsync,
+                    campaignsAsync: campaignsAsync,
                   ),
                 ),
               ],
@@ -433,6 +508,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
     required AuthState authState,
     required AsyncValue<LoyaltyAccountSnapshot> loyaltySnapshotAsync,
     required AsyncValue<List<LoyaltyReward>> rewardsAsync,
+    required AsyncValue<List<Campaign>> campaignsAsync,
   }) {
     switch (_stepIndex) {
       case 0:
@@ -549,8 +625,10 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
                 // Boncuk Loyalty P7-D (2026-08-24) — mutual exclusivity with
                 // the catalog-reward card below: selecting a reward REMOVES
                 // this card entirely, mirroring TakeawayCheckoutScreen
-                // exactly.
-                if (_selectedRewardId == null)
+                // exactly. Server-Authoritative Campaign Engine P8-C.2 —
+                // same exclusivity extended to an active campaign
+                // selection.
+                if (_selectedRewardId == null && _selectedCampaignId == null)
                   BoncukRedemptionCard(
                     snapshotAsync: loyaltySnapshotAsync,
                     enabled: _boncukUsageEnabled,
@@ -572,10 +650,40 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
                       .map((item) => item.id)
                       .toSet(),
                   selectedRewardId: _selectedRewardId,
-                  boncukCashRedemptionActive: _boncukUsageEnabled,
+                  // Server-Authoritative Campaign Engine P8-C.2 — this flag
+                  // literally means "another benefit is active, hide
+                  // myself"; an active campaign selection reuses it rather
+                  // than adding a second, near-duplicate param.
+                  boncukCashRedemptionActive:
+                      _boncukUsageEnabled || _selectedCampaignId != null,
                   controlsFrozen: _isSubmitting,
                   onSelect: _onRewardSelect,
                   onRetry: () => ref.invalidate(loyaltyRewardCatalogProvider),
+                ),
+                // Server-Authoritative Campaign Engine P8-C.2 (2026-08-25)
+                // — mirrors `TakeawayCheckoutScreen`/`DeliveryCheckoutScreen`
+                // exactly: real, server-authoritative active-campaign list,
+                // `commercialChannel: 'reservationPreorder'` (never
+                // hardcoded to another channel — the exact P8-C.1-fixed
+                // bug this file must not repeat), disabled outright
+                // whenever cash Boncuk or a catalog reward is already the
+                // active selection (`otherBenefitActive`). Client-side
+                // eligibility hints here are best-effort only — the server
+                // (`submitReservation.ts`) is the final authority.
+                CampaignSelectionCard(
+                  campaignsAsync: campaignsAsync,
+                  commercialChannel: 'reservationPreorder',
+                  cartProductIds: preorderItems
+                      .where((item) => !_isBowlCartItem(item))
+                      .map((item) => item.id)
+                      .toSet(),
+                  cartTotalPriceTl: preorderTotalTl,
+                  selectedCampaignId: _selectedCampaignId,
+                  otherBenefitActive:
+                      _boncukUsageEnabled || _selectedRewardId != null,
+                  controlsFrozen: _isSubmitting,
+                  onSelect: _onCampaignSelect,
+                  onRetry: () => ref.invalidate(activeCampaignsProvider),
                 ),
               ],
               if (_submitError != null) ...[

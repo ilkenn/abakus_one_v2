@@ -2,6 +2,7 @@ import '../../../../core/errors/business_rule_violation.dart';
 import '../../../payment/domain/models/payment_method_snapshot.dart';
 import '../pricing/price_breakdown.dart';
 import 'boncuk_redemption_snapshot.dart';
+import 'campaign_snapshot.dart';
 import 'catalog_reward_snapshot.dart';
 import 'courier_visibility.dart';
 import 'delivery_address_snapshot.dart';
@@ -67,6 +68,7 @@ class Order {
     this.selectedBenefitType = OrderBenefitType.none,
     this.boncukRedemption,
     this.catalogReward,
+    this.campaign,
   }) : assert(
           pickupMode != PickupMode.scheduled || pickupTime != null,
           'pickupMode == PickupMode.scheduled requires a non-null pickupTime',
@@ -268,6 +270,15 @@ class Order {
   /// total.
   final CatalogRewardSnapshot? catalogReward;
 
+  /// The server-computed Campaign redemption snapshot when
+  /// [selectedBenefitType] is [OrderBenefitType.campaign]; `null`
+  /// otherwise, including every pre-P8-C order (additive/nullable, same
+  /// backward-compatibility contract as [boncukRedemption]/[catalogReward]).
+  /// See [CampaignSnapshot]'s own doc comment — like [catalogReward], this
+  /// reflects a genuine, already-applied price reduction, not a settlement
+  /// layered on top of an unchanged total.
+  final CampaignSnapshot? campaign;
+
   /// Moves this order from [status] to [newStatus], appending a new
   /// [OrderAuditEntry.statusChange] to [statusHistory] and recording the
   /// timestamp via [OrderTimestamps.recordedAt].
@@ -338,6 +349,7 @@ class Order {
     OrderBenefitType? selectedBenefitType,
     BoncukRedemptionSnapshot? boncukRedemption,
     CatalogRewardSnapshot? catalogReward,
+    CampaignSnapshot? campaign,
   }) {
     return Order(
       id: id ?? this.id,
@@ -374,6 +386,7 @@ class Order {
       selectedBenefitType: selectedBenefitType ?? this.selectedBenefitType,
       boncukRedemption: boncukRedemption ?? this.boncukRedemption,
       catalogReward: catalogReward ?? this.catalogReward,
+      campaign: campaign ?? this.campaign,
     );
   }
 }

@@ -55,6 +55,28 @@ export const BONCUK_REDEMPTION_ERROR_REASONS = [
   // two-benefit case; this is the neutral reason for the now-three-benefit
   // check, added to the SAME shared vocabulary rather than a parallel one.
   "benefit/stacking-not-allowed",
+  // Server-Authoritative Campaign Engine P8-C (2026-08-25) — takeaway
+  // campaign-redemption-specific reasons, same shared vocabulary/namespace
+  // as catalogReward's own reasons above.
+  "campaign/not-found",
+  "campaign/inactive",
+  "campaign/archived",
+  "campaign/channel-not-eligible",
+  "campaign/schedule-not-open",
+  "campaign/minimum-basket-not-met",
+  "campaign/no-eligible-line",
+  "campaign/trigger-quantity-not-met",
+  "campaign/usage-limit-reached",
+  "campaign/customer-usage-limit-reached",
+  "campaign/reservation-conflict",
+  // Server-Authoritative Campaign Engine P8-C.3 (2026-08-25) — dine-in's
+  // own locked guest policy (mirrors the existing, already-shipped guest
+  // exclusion for cash Boncuk and catalog-reward redemption on this same
+  // channel): an anonymous table-QR guest identity can never select a
+  // campaign at all, regardless of that campaign's own eligibility rules.
+  // Distinct from `campaign/channel-not-eligible` (about the CAMPAIGN's own
+  // `eligibleChannels`, not the caller's identity type).
+  "campaign/requires-customer-identity",
 ] as const;
 export type BoncukRedemptionErrorReason = (typeof BONCUK_REDEMPTION_ERROR_REASONS)[number];
 
@@ -99,6 +121,22 @@ export function sanitizeSelectedRewardId(raw: unknown): string | null {
   if (raw === undefined || raw === null) return null;
   if (typeof raw !== "string" || raw.trim().length === 0) {
     throw new HttpsError("invalid-argument", "selectedRewardId must be a non-empty string.");
+  }
+  return raw;
+}
+
+/**
+ * Server-Authoritative Campaign Engine P8-C (2026-08-25) — the ONLY
+ * campaign-related value a client ever sends: which campaign the customer
+ * picked. Mirrors [sanitizeSelectedRewardId] exactly: shape-only validation,
+ * `undefined`/`null` both mean "no campaign selected." Real
+ * existence/tenant/active/archived/schedule/channel/basket/targeting/usage-
+ * limit validation happens transactionally against `campaigns` — never here.
+ */
+export function sanitizeSelectedCampaignId(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "selectedCampaignId must be a non-empty string.");
   }
   return raw;
 }
