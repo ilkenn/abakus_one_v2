@@ -5031,3 +5031,52 @@ test('notificationOutbox: never end-user readable or writable, for anyone', asyn
   await assertFails(getDoc(doc(platformOwner, 'notificationOutbox/entry-1')));
   await assertFails(getDoc(doc(orgAdmin, 'notificationOutbox/entry-1')));
 });
+
+// ---------------------------------------------------------------------
+// AP-3 Wave 3 — Customer Directory (corrected report §4/§5/§7). Every
+// projection/restriction collection is callable-only, no direct client
+// read at all, for ANY actor including a Platform Owner or a full-claims
+// org admin — the read APIs (`customerDirectory.ts`) are the sole path.
+// ---------------------------------------------------------------------
+
+test('platformCustomerDirectoryEntries: no direct client read, not even by a Platform Owner or a tenant admin', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'platformCustomerDirectoryEntries/uid-1'), {
+      uid: 'uid-1', displayName: 'Test Customer', phoneNumber: '+15551234567', phoneSearchHash: 'abc',
+      registrationDate: new Date(), accountState: 'active',
+    });
+  });
+  const platformOwner = testEnv.authenticatedContext('platform-directory-1', { platformRole: 'platformOwner' }).firestore();
+  const orgAdmin = testEnv.authenticatedContext('admin-directory-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['admin'] } }).firestore();
+
+  await assertFails(getDoc(doc(platformOwner, 'platformCustomerDirectoryEntries/uid-1')));
+  await assertFails(getDoc(doc(orgAdmin, 'platformCustomerDirectoryEntries/uid-1')));
+  await assertFails(setDoc(doc(platformOwner, 'platformCustomerDirectoryEntries/uid-2'), { uid: 'uid-2' }));
+});
+
+test('customerDirectoryEntries: no direct client read, not even by full org+branch staff claims', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'customerDirectoryEntries/org-1_uid-1'), {
+      organizationId: 'org-1', customerId: 'uid-1', displayName: 'Test Customer', phoneNumber: '+15551234567', phoneSearchHash: 'abc',
+      registrationDate: new Date(), lastActivityAt: new Date(), accountState: 'active', relatedBranchIds: ['branch-1'], lastOrderAt: null, totalOrderCount: 0,
+    });
+  });
+  const branchStaff = testEnv.authenticatedContext('staff-directory-1', { organizationAccess: ['org-1'], branchAccess: { 'org-1': ['branch-1'] } }).firestore();
+
+  await assertFails(getDoc(doc(branchStaff, 'customerDirectoryEntries/org-1_uid-1')));
+  await assertFails(setDoc(doc(branchStaff, 'customerDirectoryEntries/org-1_uid-2'), { organizationId: 'org-1' }));
+});
+
+test('tenantCustomerRestrictions / platformCustomerRestrictions: no direct client read or write for anyone', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'tenantCustomerRestrictions/org-1_uid-1'), { organizationId: 'org-1', customerId: 'uid-1', status: 'active' });
+    await setDoc(doc(db, 'platformCustomerRestrictions/uid-1'), { uid: 'uid-1', status: 'active' });
+  });
+  const manager = testEnv.authenticatedContext('manager-restriction-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['manager'] } }).firestore();
+  const platformOwner = testEnv.authenticatedContext('platform-restriction-1', { platformRole: 'platformOwner' }).firestore();
+
+  await assertFails(getDoc(doc(manager, 'tenantCustomerRestrictions/org-1_uid-1')));
+  await assertFails(getDoc(doc(platformOwner, 'platformCustomerRestrictions/uid-1')));
+  await assertFails(setDoc(doc(manager, 'tenantCustomerRestrictions/org-1_uid-2'), { organizationId: 'org-1' }));
+  await assertFails(setDoc(doc(platformOwner, 'platformCustomerRestrictions/uid-2'), { uid: 'uid-2' }));
+});

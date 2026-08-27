@@ -25,7 +25,14 @@ import type { CallableRequest } from "firebase-functions/v2/https";
  * `request.auth.token`, exactly like `requirePlatformMember`.
  */
 
-export type PlatformCapability = "fraudEvidence.readPrecise";
+export type PlatformCapability =
+  | "fraudEvidence.readPrecise"
+  // AP-3 Wave 3 — Customer Directory (corrected report §5, Stage B
+  // refinement #4/#10). Each is its own narrow capability, never a bare
+  // "platformOwner can do everything" shortcut.
+  | "customerDirectory.listAllRegistered"
+  | "customerDirectory.globalRestriction"
+  | "customerDirectory.revealFullAddressBook";
 
 type KnownPlatformRole = "platformOwner" | "platformAdministrator";
 
@@ -40,7 +47,12 @@ const CAPABILITIES_BY_PLATFORM_ROLE: Record<
   KnownPlatformRole,
   ReadonlySet<PlatformCapability>
 > = {
-  platformOwner: new Set<PlatformCapability>(["fraudEvidence.readPrecise"]),
+  platformOwner: new Set<PlatformCapability>([
+    "fraudEvidence.readPrecise",
+    "customerDirectory.listAllRegistered",
+    "customerDirectory.globalRestriction",
+    "customerDirectory.revealFullAddressBook",
+  ]),
   platformAdministrator: new Set<PlatformCapability>(),
 };
 

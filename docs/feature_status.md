@@ -4969,3 +4969,47 @@ file touched). **Explicitly deferred to the next AP-3 continuation** (not silent
 ADR-037): table session transfer/merge, the replacement/counter-proposal backend, both customer-
 directory projections + backfill, and every Flutter surface (POS workspace, customer QR flow, Admin
 Customers, Platform Owner directory). AP-3 remains OPEN.
+
+**AP-3 CONTINUATION — Table Transfer/Merge, Counter-Proposal Backend, POS Branch Overview, Customer
+Directory Backend (2026-08-27, IN PROGRESS — backend-complete checkpoint, not AP-3 closure; `docs/
+decisions.md` ADR-038).** Closes every backend item ADR-037 deferred except the two projection backfill
+scripts (still explicitly deferred — disclosed, no real production data exists yet to backfill against).
+
+**Physical table transfer/merge**: `transferTableSession`/`mergeTableSessions`
+(`functions/src/tableSessionTransfer.ts`) — distinct from `checkOperations.ts`'s own money-moving
+`mergeChecks`/`transferCheckAllocation`. Target-session conflict, live-reservation conflict, and
+idempotent replay are all real and tested; every referencing document (guest sessions, sub-accounts,
+checks, allocations) moves consistently inside one transaction, bounded defensively against Firestore's
+own transactional write limit.
+
+**QR replacement/counter-proposal backend**: `proposeDineInLineReplacement`/
+`respondToDineInCounterProposal`/`sweepExpiredDineInCounterProposals`
+(`functions/src/dineInCounterProposal.ts`) — canonical-pricing-pipeline-resolved immutable snapshot,
+owner-only accept/reject, stale-catalog fail-closed, expiry (reactive and swept), idempotent-replay-safe.
+Product lines only this pass (Bowl Builder line replacement disclosed as deferred). No Flutter UI
+consumes this yet — a backend callable without a reachable customer UI does not by itself satisfy this
+feature, per the original corrected design's own standard.
+
+**POS branch operational overview**: `getPosBranchTableOverview`
+(`functions/src/posOperationalView.ts`) joins the existing per-table `getPosTableOperationalView` — same
+permission + branch + trusted-device gate, cursor-paginated, polling-friendly (`version`/
+`ifNoneMatchVersion` short-circuit).
+
+**Customer Directory backend**: `platformCustomerDirectoryEntries`/`customerDirectoryEntries`
+(`functions/src/customerDirectoryConfig.ts`/`customerDirectory.ts`), `completeCustomerProfile.ts`
+extended to populate both correctly-scoped projections, HMAC-keyed phone search
+(`defineSecret`), normalized name-prefix search, tenant/platform restriction collections kept
+structurally separate from each other and from the canonical global `customers/{uid}` record, address
+visibility corrected (tenant staff see only that org's own delivery-order snapshots; full address-book
+reveal is Platform-capability-gated, reason-required, audited), marketing consent shown honestly as
+`"notCaptured"`. Full read-API surface: `listPlatformCustomers`/`searchPlatformCustomersByPhone`/
+`getPlatformCustomerDetail`/`revealCustomerFullAddressBook`/`setPlatformCustomerRestriction`/
+`listTenantCustomers`/`searchCustomersForPos`/`getTenantCustomerDetail`/`setTenantCustomerRestriction`.
+
+Full backend regression rerun fresh after this continuation (exact counts in the closure report). Three
+self-found-and-fixed defects during this pass: a broken name-prefix query upper bound (returned zero
+results always, caught by the test suite itself), and two intentionally-updated exact-permission-set
+tests for `staff`'s new `viewTenantCustomerDirectory` grant. **Explicitly still deferred**: both
+projections' backfill scripts, and the ENTIRE Flutter/UI wave (POS workspace, customer QR flow, Admin
+Customers rewire, Platform Owner directory) plus real visual acceptance screenshots — AP-3 cannot close
+without these. AP-3 remains OPEN.

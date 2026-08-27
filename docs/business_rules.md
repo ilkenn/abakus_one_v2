@@ -6832,6 +6832,47 @@ neither restated in full here nor duplicated between the two.
 - **Related Modules**: Orders, POS, Loyalty, Audit
 - **Business Rule IDs**: ADR-031, BR-APPROVAL-001..006, BR-LOYALTY-019 (unchanged)
 
+### BR-TABLE-011 — Physical table transfer/merge, distinct from Check-level transfer/merge (AP-3 continuation)
+- **Status**: IMPLEMENTED (2026-08-27) — `functions/src/tableSessionTransfer.ts`
+  (`transferTableSession`/`mergeTableSessions`), emulator-tested including a real live-reservation-
+  conflict case and idempotent-replay.
+- **Rule**: Moving or combining a `TableSession` to/with a different physical table is a distinct
+  operation from `checkOperations.ts`'s own `mergeChecks`/`transferCheckAllocation` (which reallocate
+  MONEY between check documents, never a physical location). An ordinary transfer to a target table
+  that already has a different active session fails closed, directing staff to the explicit merge
+  command instead. A merge requires BOTH tables to already have an active session. Every referencing
+  document (`tableGuestSessions`, `guestSubAccounts`, `checks`, `checkAllocations`) is updated inside
+  the same transaction; the source `TableSession` is closed (never deleted — immutable history), and
+  its table's lock is cleared. A live reservation context on the target table fails the operation
+  closed. Bounded defensively (400 writes) against Firestore's own transactional limit — a table
+  session this large has no real precedent in this codebase and is out of this pass's scope,
+  disclosed.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Orders, POS, Tables
+- **Business Rule IDs**: ADR-028, ADR-038, `docs/order_operations_architecture.md` §6
+
+### BR-DIRECTORY-001 — Two structurally separate Customer Directory projections (AP-3 continuation)
+- **Status**: IMPLEMENTED (2026-08-27) — `functions/src/customerDirectoryConfig.ts`/
+  `customerDirectory.ts`/`completeCustomerProfile.ts`, emulator-tested (platform de-duplication,
+  tenant isolation, phone-hash non-disclosure, address-leakage denial, restriction separation).
+  Backfill scripts for pre-existing customers are explicitly deferred (disclosed) — the event-driven
+  triggers correctly populate every customer/order/reservation going forward.
+- **Rule**: `platformCustomerDirectoryEntries/{uid}` (exactly one entry per registered customer,
+  including one with no tenant relationship at all, populated immediately at profile completion) and
+  `customerDirectoryEntries/{organizationId}_{uid}` (created only from a verified tenant relationship)
+  are two structurally separate collections — neither substitutes for the other. Phone search uses a
+  server-only HMAC-SHA256 keyed hash (`defineSecret`, never a bare unkeyed normalized duplicate); the
+  hash and the raw phone number are never returned by any read API. Tenant/branch staff address
+  visibility is limited to that organization's own past `orders.deliveryAddressSnapshot` values; only a
+  Platform-capability-gated, reason-required, always-audited callable
+  (`revealCustomerFullAddressBook`) may read `customerAddresses` directly. A tenant restriction
+  (`tenantCustomerRestrictions`) never mutates the canonical global `customers/{uid}` document; a
+  platform restriction (`platformCustomerRestrictions`) requires its own separate capability. Neither
+  projection nor either restriction collection is ever directly client-readable.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: CRM, POS, Platform, Audit
+- **Business Rule IDs**: ADR-034, ADR-038, `docs/restaurant_operations_architecture.md` §10
+
 ### BR-ORDER-019 — Accepted-line cancellation is a distinct, remote-approval-gated void state (AP-3 Wave 2)
 - **Status**: IMPLEMENTED (2026-08-27) — `functions/src/checkFinancialAdjustments.ts`
   (`requestAcceptedLineCancellation`/`applyAcceptedLineCancellation`), emulator-tested. AP-5's own
@@ -6875,7 +6916,15 @@ neither restated in full here nor duplicated between the two.
 
 ### BR-ORDER-017 — Cashier counter-proposal requires customer acceptance
 - **Status**: DECIDED — architecture only (AP-0 confirmed no order-level counter-proposal exists;
-  `respondToProposedChange.ts` is reservation-scoped only).
+  `respondToProposedChange.ts` is reservation-scoped only). **AP-3 continuation update (2026-08-27,
+  ADR-038)**: real, implemented — `functions/src/dineInCounterProposal.ts`
+  (`proposeDineInLineReplacement`/`respondToDineInCounterProposal`). The proposal is a canonical-
+  pricing-pipeline-resolved immutable snapshot (product/modifiers/quantity/price difference/reason/
+  version/expiry); on accept, EXACTLY the snapshotted values are applied, never a freshly-recomputed
+  price, and only after a stale-catalog/availability re-check that fails closed rather than silently
+  substituting. Only the order's own owner may respond; a `staffEntry`-mode order is structurally
+  excluded. **Product lines only this pass** — Bowl Builder line replacement is explicitly deferred,
+  disclosed. No customer-facing Flutter UI consumes this yet.
 - **Rule**: A cashier-proposed product change never becomes part of the order until the submitting
   customer explicitly accepts it.
 - **Owner Agent**: restaurant_domain

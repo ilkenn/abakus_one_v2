@@ -1,6 +1,30 @@
 {
   "indexes": [
     {
+      "collectionGroup": "customerDirectoryEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "displayNameNormalized", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "customerDirectoryEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "lastActivityAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "customerDirectoryEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "phoneSearchHash", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "reservations",
       "queryScope": "COLLECTION",
       "fields": [
@@ -47,6 +71,14 @@
       "fields": [
         { "fieldPath": "branchId", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "hasPendingProposal", "order": "ASCENDING" },
+        { "fieldPath": "earliestPendingProposalExpiresAt", "order": "ASCENDING" }
       ]
     },
     {

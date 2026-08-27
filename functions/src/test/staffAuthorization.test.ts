@@ -153,6 +153,13 @@ test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageD
     // never approve their own request; approveDeviceRegistration/
     // manageDevices remain manager-tier-and-above only.
     "requestDeviceRegistration",
+    // AP-3 continuation (Customer Directory) — day-to-day operational
+    // lookup (list/detail/POS search), same reasoning as
+    // `manageDineInOrders` itself; the MUTATION permission
+    // (`manageTenantCustomerRestriction`) remains manager-tier-and-above
+    // only, mirroring `requestDeviceRegistration`/`approveDeviceRegistration`'s
+    // own request-vs-approve split.
+    "viewTenantCustomerDirectory",
   ]);
 });
 
@@ -209,6 +216,13 @@ test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageD
     // never approve their own request; approveDeviceRegistration/
     // manageDevices remain manager-tier-and-above only.
     "requestDeviceRegistration",
+    // AP-3 continuation (Customer Directory) — day-to-day operational
+    // lookup (list/detail/POS search), same reasoning as
+    // `manageDineInOrders` itself; the MUTATION permission
+    // (`manageTenantCustomerRestriction`) remains manager-tier-and-above
+    // only, mirroring `requestDeviceRegistration`/`approveDeviceRegistration`'s
+    // own request-vs-approve split.
+    "viewTenantCustomerDirectory",
   ]);
 });
 

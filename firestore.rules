@@ -738,6 +738,29 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
+    // AP-3 Wave 3 — Customer Directory (corrected report §4/§5/§7). Neither
+    // projection, nor either restriction collection, is ever directly
+    // client-readable — every read API is a permission/capability-gated
+    // callable (`customerDirectory.ts`) that returns a minimized
+    // projection, never the raw document (which carries `phoneNumber`/
+    // `phoneSearchHash`, neither ever exposed to any client).
+    match /platformCustomerDirectoryEntries/{uid} {
+      allow read: if false;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /customerDirectoryEntries/{entryId} {
+      allow read: if false;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /tenantCustomerRestrictions/{restrictionId} {
+      allow read: if false;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /platformCustomerRestrictions/{uid} {
+      allow read: if false;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
     // Boncuk Loyalty P7-D.1 (2026-08-24) — `isActiveTableGuestSession`/
     // `tableGuestSessionMatchesOrderScope`/`reservationContextIsOrderable`
     // (Phase 3/Faz R.3B) REMOVED. They existed only to validate the two

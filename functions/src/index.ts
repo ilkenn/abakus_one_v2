@@ -108,7 +108,7 @@ export { refundDineInOrder } from "./refundDineInOrder";
 // AP-3 Wave 1 SECURITY CORRECTION — the sole staff/POS read path for
 // tableSessions/guestSubAccounts/checks/checkAllocations (all four are
 // `allow read: if false` in firestore.rules for every staff actor).
-export { getPosTableOperationalView } from "./posOperationalView";
+export { getPosTableOperationalView, getPosBranchTableOverview } from "./posOperationalView";
 
 // AP-3 Wave 2 — money-safe Check/allocation model.
 export {
@@ -132,6 +132,30 @@ export {
   requestAcceptedLineCancellation,
   requestBoncukBalanceCorrection,
 } from "./checkFinancialAdjustments";
+
+// AP-3 Wave 2 remainder — physical table transfer/merge.
+export { transferTableSession, mergeTableSessions } from "./tableSessionTransfer";
+
+// AP-3 Wave 2 remainder — QR replacement/counter-proposal backend.
+export {
+  proposeDineInLineReplacement,
+  respondToDineInCounterProposal,
+  sweepExpiredDineInCounterProposals,
+} from "./dineInCounterProposal";
+
+// AP-3 Wave 3 — Customer Directory (platform + tenant projections, search, restrictions).
+export {
+  onOrderCreatedForCustomerDirectory,
+  listPlatformCustomers,
+  searchPlatformCustomersByPhone,
+  getPlatformCustomerDetail,
+  revealCustomerFullAddressBook,
+  setPlatformCustomerRestriction,
+  listTenantCustomers,
+  searchCustomersForPos,
+  getTenantCustomerDetail,
+  setTenantCustomerRestriction,
+} from "./customerDirectory";
 
 // Server-Authoritative Campaign Engine P8-B (2026-08-25) — foundation only,
 // not wired into any order-submission path yet. See campaignEngine.ts.

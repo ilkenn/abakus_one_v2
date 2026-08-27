@@ -2,6 +2,14 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
+import {
+  PLATFORM_CUSTOMER_DIRECTORY_COLLECTION,
+  CUSTOMER_DIRECTORY_ENTRIES_COLLECTION,
+  phoneSearchHmacSecret,
+  normalizeDisplayName,
+  normalizePhoneForSearch,
+  computePhoneSearchHash,
+} from "./customerDirectoryConfig";
 
 /**
  * `completeCustomerProfile` — Customer Registration CR.1 (2026-08-19).
@@ -328,7 +336,7 @@ interface CompleteCustomerProfileResult {
 }
 
 export const completeCustomerProfile = onCall(
-  { enforceAppCheck: shouldEnforceAppCheck() },
+  { enforceAppCheck: shouldEnforceAppCheck(), secrets: [phoneSearchHmacSecret] },
   async (request): Promise<CompleteCustomerProfileResult> => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Sign-in is required.");
@@ -412,12 +420,62 @@ export const completeCustomerProfile = onCall(
         } else {
           tx.set(customerRef, { ...patch, accountStatus: "active", createdAt: now });
         }
+
+        // AP-3 Wave 3 (corrected report §7, Stage B refinement #1) —
+        // populate the PLATFORM projection immediately, the moment a real
+        // canonical identity exists — never inventing an organization
+        // relationship (that's the SEPARATE tenant-projection write below,
+        // gated on `!membershipAlreadyExists`). `.set({merge:true})`, not
+        // `.create()`: a (C)-repair call must be able to refresh this
+        // projection's own denormalized fields too, exactly like it
+        // refreshes `customers/{uid}` itself.
+        tx.set(
+          db.collection(PLATFORM_CUSTOMER_DIRECTORY_COLLECTION).doc(uid),
+          {
+            uid,
+            displayName,
+            displayNameNormalized: normalizeDisplayName(displayName),
+            phoneNumber,
+            phoneSearchHash: computePhoneSearchHash(normalizePhoneForSearch(phoneNumber)),
+            registrationDate: customerSnap.exists ? (customerSnap.data()!.createdAt ?? now) : now,
+            accountState: "active",
+            updatedAt: now,
+            version: 1,
+          },
+          { merge: true },
+        );
       }
 
       if (!membershipAlreadyExists) {
         // (A)/(B) — create the missing membership, independent of
         // whichever branch above did or didn't run.
         tx.set(membershipRef, { organizationId, uid, createdAt: now });
+
+        // AP-3 Wave 3 — the TENANT projection is created ONLY here, from a
+        // verified tenant relationship (this exact membership write) —
+        // never speculatively alongside the platform projection above,
+        // which has no organization concept at all. Uses whichever
+        // customer fields are now known (either just-written above, or
+        // already-complete from a prior call).
+        const customerData = customerSnap.exists ? customerSnap.data()! : undefined;
+        const resolvedDisplayName = customerAlreadyComplete && customerData
+          ? (customerData.displayName as string)
+          : deriveDisplayName(input.firstName, input.lastName);
+        tx.set(db.collection(CUSTOMER_DIRECTORY_ENTRIES_COLLECTION).doc(`${organizationId}_${uid}`), {
+          organizationId, customerId: uid,
+          displayName: resolvedDisplayName,
+          displayNameNormalized: normalizeDisplayName(resolvedDisplayName),
+          phoneNumber,
+          phoneSearchHash: computePhoneSearchHash(normalizePhoneForSearch(phoneNumber)),
+          registrationDate: now,
+          lastActivityAt: now,
+          accountState: "active",
+          relatedBranchIds: [],
+          lastOrderAt: null,
+          totalOrderCount: 0,
+          updatedAt: now,
+          version: 1,
+        });
       }
 
       return { alreadyCompleted: false, organizationId };

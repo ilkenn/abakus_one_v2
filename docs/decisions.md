@@ -16866,6 +16866,121 @@ transfer/merge, replacement proposals) and Wave 3+ (customer directory, POS/QR F
 **Status**: IMPLEMENTED (2026-08-27), emulator-tested. AP-3 overall: OPEN. Implementation: AP-3
 (continuing).
 
+### ADR-038 — AP-3 Table Transfer/Merge, Counter-Proposal Backend, POS Branch Overview, Customer Directory Backend (Locked)
+
+**Context**: continuing directly from ADR-037's checkpoint (money-safe Check/allocation model, async
+approval actions). Four items remained open in the corrected AP-3 Stage A design: physical table
+transfer/merge (distinct from the already-real Check-level merge/transfer), the QR replacement/
+counter-proposal backend, a device-gated branch-wide operational overview (per-table detail already
+existed via `getPosTableOperationalView`), and the two-projection Customer Directory backend.
+
+**Decision**:
+1. **Physical table transfer/merge**: `transferTableSession`/`mergeTableSessions`
+   (`functions/src/tableSessionTransfer.ts`), deliberately reusing `checks`/`checkAllocations`'
+   existing `tableSessionId` foreign key rather than touching check/allocation documents' money math at
+   all — a transfer/merge only ever updates which physical table a `tableSessionId` and its
+   `tableGuestSessions`/`guestSubAccounts`/`checks`/`checkAllocations` currently belong to.
+   `transferTableSession` rejects a target table with a different active session (`targetSessionConflict`,
+   directing the caller to `mergeTableSessions` instead) and fails closed on a live foreign reservation
+   context, mirroring `openReservationTable`'s own established hard-conflict check. `mergeTableSessions`
+   requires BOTH tables to already have an active session, moves every referencing document's
+   `tableSessionId` (and, for `tableGuestSessions`, `tableId` too), closes the source `TableSession`
+   (`status: "closed"`, immutable history preserved — never deleted), and clears the source table's lock.
+   Both commands are defensively bounded (`MAX_SAFE_TRANSACTION_WRITES = 400`, well under Firestore's own
+   500-write transactional limit) and fail closed rather than attempt a partial multi-step move if a
+   table session's own document fan-out ever approached that limit — a real multi-step recoverable
+   operation-aggregate for that pathological case is explicitly out of this pass's scope (disclosed; no
+   real table session in this codebase's own test data has ever approached this size). Idempotent replay
+   is proven directly: a repeated `transferTableSession` call after a successful transfer reports
+   `alreadyTransferred: true` rather than erroring.
+2. **QR replacement/counter-proposal backend**: `proposeDineInLineReplacement`/
+   `respondToDineInCounterProposal`/`sweepExpiredDineInCounterProposals`
+   (`functions/src/dineInCounterProposal.ts`). The proposed replacement is resolved through the exact
+   same canonical pricing pipeline `submitDineInOrder` itself uses (`buildProductLine`, reused verbatim,
+   never a hand-rolled recompute) and stored as an immutable snapshot on the order line
+   (`counterProposal`), with its own `proposalVersion`/expiry/status lifecycle. On accept, the snapshot's
+   values are applied EXACTLY as resolved at propose time — never recomputed fresh — after a mandatory
+   stale-catalog/availability re-check (`loadCanonicalMenuProduct`) that fails closed
+   (`proposal/stale`) rather than silently substituting a different price/product. Only the order's own
+   owner (`customerId`/`guestAuthUid` match) may respond; a `staffEntry`-mode order (already-accepted
+   lines) is structurally excluded. Expiry is enforced both reactively (a late response fails closed,
+   `proposal/expired`) and proactively (`sweepExpiredDineInCounterProposals`, mirroring
+   `reservationSweep.ts`'s own established sweep-function shape) via a denormalized top-level
+   `orders.earliestPendingProposalExpiresAt` field — nested-array Firestore queries aren't possible, so
+   this mirrors this codebase's own established "denormalize the field a sweep actually needs to query
+   on" convention. **Product lines only this pass** — Bowl Builder line replacement is explicitly
+   deferred, disclosed, not silently dropped.
+3. **POS branch operational overview**: `getPosTableOperationalView` (Wave 1's own security-correction
+   callable) is joined by `getPosBranchTableOverview` (`functions/src/posOperationalView.ts`) — same
+   `requireStaffPermission` + `requireBranchAccess` + `requireActiveDeviceSession` bar, cursor-paginated,
+   returning each table's derived status, active-session id, and a pending-QR-line count (bounded to the
+   occupied subset of the current page only, never an unbounded branch-wide scan). A
+   `version`/`ifNoneMatchVersion` short-circuit (a sha256 hash of the returned table summary) lets the
+   intended Flutter client's own bounded-interval polling loop skip re-rendering when nothing changed —
+   the deliberate, already-documented trade-off against a live `.snapshots()` stream for this specific,
+   high-stakes surface (corrected report §10.3).
+4. **Customer Directory backend**: two structurally separate projections
+   (`platformCustomerDirectoryEntries/{uid}`, `customerDirectoryEntries/{organizationId}_{uid}`,
+   `functions/src/customerDirectoryConfig.ts`/`customerDirectory.ts`). `completeCustomerProfile.ts` is
+   extended to populate the PLATFORM projection immediately on every real profile-completion write (never
+   inventing an organization relationship) and the TENANT projection only from the real membership write
+   (`!membershipAlreadyExists`) — the two writes are independently gated, exactly mirroring the function's
+   own pre-existing (A)/(B)/(C)/(D) idempotency branches. Phone search uses a real HMAC-SHA256
+   (`defineSecret("CUSTOMER_PHONE_SEARCH_HMAC_SECRET")`, Firebase Functions v2's own real secret-binding
+   mechanism, never a bare `process.env` read) — `computePhoneSearchHash` fails closed
+   (`failed-precondition`) if the secret is missing or implausibly short, never silently falling back to
+   an unkeyed hash; the raw normalized phone number is never stored as a second, unkeyed search field, and
+   `phoneSearchHash`/the raw phone number are never returned by any read API. Name search uses a real
+   normalized-prefix range query. New `PlatformCapability`s (`customerDirectory.listAllRegistered`/
+   `customerDirectory.globalRestriction`/`customerDirectory.revealFullAddressBook`, all `platformOwner`-
+   only, never `platformAdministrator`) and new `StaffPermission`s (`viewTenantCustomerDirectory`,
+   staff-tier; `manageTenantCustomerRestriction`, manager+-tier) — never a role-name check inlined
+   anywhere. Address visibility is corrected per the original design: a tenant-facing detail read returns
+   ONLY that organization's own past `orders.deliveryAddressSnapshot` values, NEVER `customerAddresses`
+   directly; only `revealCustomerFullAddressBook` (Platform-capability-gated, mandatory reason, always
+   audited via `auditEvents`) reads `customerAddresses`. `setTenantCustomerRestriction` writes only
+   `tenantCustomerRestrictions/{organizationId}_{uid}`, proven never to touch the canonical global
+   `customers/{uid}` document (a direct before/after byte-equality test). `setPlatformCustomerRestriction`
+   requires the separate `customerDirectory.globalRestriction` capability. Marketing consent is returned
+   honestly as the literal string `"notCaptured"` everywhere — no capture UI or mutation path exists this
+   phase (AP-7 scope, per the original corrected design).
+
+**Explicitly deferred to the next AP-3 continuation** (not silently dropped): resumable/idempotent
+backfill scripts for both Customer Directory projections (the event-driven triggers correctly populate
+every NEW customer/order/reservation going forward; a backfill is needed only for customers who
+registered before this backend existed — and per `docs/decisions.md`'s own repeated framing, nothing in
+this codebase is deployed to a real Firebase project yet, so there is no real pre-existing production
+data to backfill against today). Every Flutter/UI surface (POS workspace, customer QR flow, Admin
+Customers rewire, Platform Owner directory) and real visual acceptance evidence (screenshots).
+
+**Self-found defects, disclosed and fixed** (not silent): (a) `writeAuditEvent`'s eventId construction
+already had the `/`-sanitization fix from ADR-037; a NEW instance of the same class of bug did not
+recur here since `auditCheckEvent`'s helper was reused. (b) `ActionHandlerParams` needed no further
+change here — no new handler required the responder's uid. (c) The three name-prefix range queries
+(`listPlatformCustomers`/`listTenantCustomers`/`searchCustomersForPos`) initially used a broken upper
+bound (`< namePrefix` instead of `< namePrefix + ""`), which is contradictory and always returns
+zero results — found via the test suite itself (not by inspection), fixed, and covered by the merge
+tests' own passing assertions. (d) `staffAuthorization.test.ts`'s two exact-permission-set assertions
+for the `staff` role were updated to include the newly, intentionally added `viewTenantCustomerDirectory`
+— an expected test update for an intentional grant, not a regression (mirrors AP-2's own precedent for
+this exact situation).
+
+**Alternatives considered**: reusing `checkOperations.ts`'s own `mergeChecks`/`transferCheckAllocation`
+for the physical table-level operation (rejected — those move MONEY between check documents; a physical
+table transfer/merge moves an entire `TableSession`'s real-world location and every document that
+references it, a structurally different operation that happens to share a name). Keeping the Bowl
+Builder line-replacement gap silently unaddressed rather than disclosing it (rejected — matches this
+codebase's own "TODOs only for explicitly approved future work, never as a stand-in for unfinished code
+presented as complete" standing rule).
+
+**Consequences**: AP-3's entire server-authoritative backend is now real and tested end-to-end through
+`readyForPayment`, including table operations, the money-safe check/allocation model, async approval
+actions, and both customer-directory projections. AP-3 remains open pending the Flutter/UI wave and real
+visual acceptance evidence — no UI surface described in the corrected Stage A report has been built yet.
+
+**Status**: IMPLEMENTED (2026-08-27), emulator-tested. AP-3 overall: OPEN (backend complete, Flutter/UI
+pending). Implementation: AP-3 (continuing).
+
 ### Governance Synchronization (recorded here for the durable record; the edits themselves live in each
 target file)
 

@@ -56,7 +56,16 @@ export type StaffPermission =
   // `manageDineInOrders` (already staff-tier); approving is not.
   | "approveCheckFinancialAdjustment"
   | "approveAcceptedLineCancellation"
-  | "approveBoncukBalanceCorrection";
+  | "approveBoncukBalanceCorrection"
+  // AP-3 Wave 3 — Customer Directory (corrected report §4). Manager-tier,
+  // not admin-only (corrected report's own explicit fix) — tenant-scoped
+  // only, never the canonical global `customers/{uid}` record.
+  | "manageTenantCustomerRestriction"
+  // AP-3 Wave 3 — read access to the tenant Customer Directory itself
+  // (list/detail/POS search). Staff-tier (day-to-day operational lookup,
+  // same reasoning as `manageDineInOrders`), distinct from the
+  // restriction-mutation permission above.
+  | "viewTenantCustomerDirectory";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -168,6 +177,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     // manager-tier, and `respondToApprovalRequest` additionally forbids
     // self-approval structurally, regardless of permission).
     "requestDeviceRegistration",
+    "viewTenantCustomerDirectory",
   ],
   manager: [
     "manageReservations",
@@ -189,6 +199,8 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveCheckFinancialAdjustment",
     "approveAcceptedLineCancellation",
     "approveBoncukBalanceCorrection",
+    "viewTenantCustomerDirectory",
+    "manageTenantCustomerRestriction",
   ],
   admin: [
     "manageReservations",
@@ -212,6 +224,8 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveCheckFinancialAdjustment",
     "approveAcceptedLineCancellation",
     "approveBoncukBalanceCorrection",
+    "viewTenantCustomerDirectory",
+    "manageTenantCustomerRestriction",
   ],
   tenantOwner: [
     "manageReservations",
@@ -235,6 +249,8 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveCheckFinancialAdjustment",
     "approveAcceptedLineCancellation",
     "approveBoncukBalanceCorrection",
+    "viewTenantCustomerDirectory",
+    "manageTenantCustomerRestriction",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must
