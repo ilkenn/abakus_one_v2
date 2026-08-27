@@ -4,6 +4,22 @@
 entry point for all Admin/POS architecture — every other AP-1 document cross-references this one for
 identity, scope, device, and command/audit primitives rather than restating them.
 
+**AP-2 implementation status (2026-08-27, append-only)**: canonical tenant/branch context resolution
+(§10/§11), the trusted-device online foundation (§12), remote approval orchestration (§16), and staff
+operational sessions (§13) are now real, implemented, tested backend (see `docs/decisions.md`'s AP-2
+entry for the full three-wave build). Two requirements this document's own scope implies but does not
+spell out as separately-named deliverables are also now real: (1) a centrally-registered,
+fail-closed-by-default **implementation-readiness gate** covering all 31 real `AdminShellScreen`
+destinations (`lib/features/admin/presentation/widgets/module_readiness_gate.dart`) — every destination
+without a real backend fails closed in a release build, never merely hidden from the nav list; and (2) a
+real **multi-organization/multi-branch context switcher**
+(`lib/features/admin/presentation/{providers/admin_context_provider.dart,
+widgets/admin_context_gate.dart}`) consuming §10's own `resolveActorContext`/
+`resolveVerifiedBranchContext` primitives — auto-selecting when exactly one organization/branch is
+accessible, requiring explicit choice otherwise, and re-deriving fresh (never trusting a cached
+selection) on every gate evaluation. Full destination-by-destination evidence table, trust-tier detail,
+and gate results are in this session's own AP-2 closure report, not duplicated here.
+
 ## 1. Purpose
 
 Defines the foundational architecture every Admin/POS document and future implementation phase builds

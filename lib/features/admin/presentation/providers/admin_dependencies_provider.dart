@@ -126,24 +126,21 @@ final organizationRepositoryProvider = Provider<OrganizationRepository>((ref) {
 });
 
 /// The tenant the currently running app instance serves — Phase 8
-/// (`docs/decisions.md` ADR-025). **Still a placeholder default, not real
-/// tenant selection**: this app has no tenant-switching UI anywhere yet
-/// (no screen lets an actor pick which organization's build they're
-/// running), so this always resolves to the single seeded organization
-/// above — mirrors `currentBranchIdProvider`'s exact honest-placeholder
-/// pattern (`features/navigation`) for the same reason. Building a real
-/// tenant-switcher UI remains separate, unrelated feature work.
+/// (`docs/decisions.md` ADR-025), upgraded to real switchable state by
+/// AP-2's Admin context switcher (`admin_context_provider.dart` —
+/// `AdminContextController`). Defaults to `'org-1'` until the switcher's
+/// own auto-select (exactly one accessible organization) or explicit user
+/// choice (more than one) overwrites it.
 ///
-/// **AP-2 Stage B — this is genuinely safe to leave as a client-side
-/// default now, in a way it wasn't before**: every AP-2 backend command
-/// this value ever gets passed into (`resolveVerifiedBranchContext` and
-/// everything built on it) treats it strictly as an untrusted LOCATOR,
+/// **This is genuinely safe as a client-side value**: every AP-2 backend
+/// command this value ever gets passed into (`resolveVerifiedBranchContext`
+/// and everything built on it) treats it strictly as an untrusted LOCATOR,
 /// re-verified against the caller's own real durable membership
 /// server-side — a stale or wrong value here can only ever cause a
 /// `permission-denied`, never a cross-tenant authorization bypass. See
 /// [resolvedActorContextProvider] for the real, callable-backed
-/// enumeration a future context-switcher UI would build on.
-final currentOrganizationIdProvider = Provider<String>((ref) => 'org-1');
+/// enumeration the context switcher is built on.
+final currentOrganizationIdProvider = StateProvider<String>((ref) => 'org-1');
 
 /// AP-2 Stage B — the real, self-derived enumeration of every organization/
 /// branch/role the SIGNED-IN STAFF ACTOR's own active memberships actually

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../courier/presentation/screens/courier_dispatch_dashboard_screen.dart';
@@ -31,6 +32,7 @@ import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../../pos/presentation/widgets/role_gate.dart';
 import '../../../pos/presentation/screens/kitchen_display_board_screen.dart';
 import '../widgets/admin_coming_soon_view.dart';
+import '../widgets/admin_context_gate.dart';
 import '../widgets/module_readiness_gate.dart';
 import '../providers/admin_dependencies_provider.dart';
 import 'admin_overview_screen.dart';
@@ -153,13 +155,10 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             },
             builder: (context, ref) => RoleGate.forRoles(
               const {StaffRole.staff, StaffRole.manager, StaffRole.admin},
-              child: ModuleReadinessGate(
-                moduleId: 'kds',
-                child: KitchenDisplayBoardScreen(
-                  branchId: branchId,
-                  authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
-                  performedByStaffId: actorId,
-                ),
+              child: KitchenDisplayBoardScreen(
+                branchId: branchId,
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
               ),
             ),
           ),
@@ -186,13 +185,10 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             visibleToRoles: const {StaffRole.manager, StaffRole.admin},
             builder: (context, ref) => RoleGate.forRoles(
               const {StaffRole.manager, StaffRole.admin},
-              child: ModuleReadinessGate(
-                moduleId: 'courier',
-                child: CourierDispatchDashboardScreen(
-                  branchId: branchId,
-                  authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
-                  performedByStaffId: actorId,
-                ),
+              child: CourierDispatchDashboardScreen(
+                branchId: branchId,
+                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
+                performedByStaffId: actorId,
               ),
             ),
           ),
@@ -643,35 +639,48 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
       );
     }
 
-    final branchId = ref.watch(currentBranchIdProvider);
-    final groups = _groups(branchId, session.actorId)
-        .map((g) => _AdminNavGroup(
-              label: g.label,
-              icon: g.icon,
-              items: g.items
-                  .where(
-                      (item) => session.roles.any(item.visibleToRoles.contains))
-                  .toList(),
-            ))
-        .where((g) => g.items.isNotEmpty)
-        .toList();
+    // AP-2 closure correction — the real multi-org/multi-branch context
+    // gate. Runs AFTER the staff-session check above (a session, even a
+    // valid one, says nothing about WHICH organization/branch it should
+    // operate against) and BEFORE any destination content ever renders —
+    // see `AdminContextGate`'s own doc comment for the full revoked-
+    // access/auto-select/explicit-picker behavior.
+    return AdminContextGate(
+      child: Builder(
+        builder: (context) {
+          final branchId = ref.watch(currentBranchIdProvider);
+          final groups = _groups(branchId, session.actorId)
+              .map((g) => _AdminNavGroup(
+                    label: g.label,
+                    icon: g.icon,
+                    items: g.items
+                        .where((item) =>
+                            session.roles.any(item.visibleToRoles.contains))
+                        .toList(),
+                  ))
+              .where((g) => g.items.isNotEmpty)
+              .toList();
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        if (width >= 1000) {
-          return _DesktopShell(groups: groups, session: session, ref: ref);
-        }
-        if (width >= 600) {
-          return _TabletShell(groups: groups, session: session, ref: ref);
-        }
-        return _MobileShell(groups: groups, session: session, ref: ref);
-      },
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              if (width >= 1000) {
+                return _DesktopShell(
+                    groups: groups, session: session, ref: ref);
+              }
+              if (width >= 600) {
+                return _TabletShell(groups: groups, session: session, ref: ref);
+              }
+              return _MobileShell(groups: groups, session: session, ref: ref);
+            },
+          );
+        },
+      ),
     );
   }
 }
 
-class _TopBar extends StatelessWidget implements PreferredSizeWidget {
+class _TopBar extends ConsumerWidget implements PreferredSizeWidget {
   const _TopBar({
     required this.title,
     required this.actorId,
@@ -686,7 +695,16 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final organizationId = ref.watch(currentOrganizationIdProvider);
+    final branchId = ref.watch(currentBranchIdProvider);
+    // Mobile-width AppBars have no room for both the full context label
+    // and the decorative notification/search icons (neither has an
+    // `onTap` — they are unwired placeholders) — on narrow screens the
+    // real, functional context switcher wins the space; the placeholders
+    // are hidden entirely rather than truncated illegibly.
+    final isNarrow = MediaQuery.sizeOf(context).width < 600;
+
     return AppBar(
       leading: leading,
       title: Text(title),
@@ -694,11 +712,45 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
       foregroundColor: AppColors.textPrimary,
       elevation: 0,
       actions: [
-        const Icon(Icons.notifications_none_outlined,
-            color: AppColors.textSecondary),
-        const SizedBox(width: AppSpacing.md),
-        const Icon(Icons.search_outlined, color: AppColors.textSecondary),
-        const SizedBox(width: AppSpacing.md),
+        // AP-2 closure correction — explicit, on-demand organization/
+        // branch switching (not only the automatic revoked-access
+        // detection `AdminContextGate` performs). Semantics/tooltip make
+        // this keyboard/screen-reader reachable, not only a bare icon tap.
+        Tooltip(
+          message: 'İşletme/şube değiştir',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.small),
+            onTap: () => showAdminContextSwitcherSheet(context),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.sm,
+                vertical: AppSpacing.xs,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.storefront_outlined,
+                      size: 18, color: AppColors.textSecondary),
+                  if (!isNarrow) ...[
+                    const SizedBox(width: AppSpacing.xs),
+                    Text('$organizationId · $branchId',
+                        style: AppTypography.bodySmall),
+                  ],
+                  const Icon(Icons.expand_more_rounded,
+                      size: 18, color: AppColors.textSecondary),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        if (!isNarrow) ...[
+          const Icon(Icons.notifications_none_outlined,
+              color: AppColors.textSecondary),
+          const SizedBox(width: AppSpacing.md),
+          const Icon(Icons.search_outlined, color: AppColors.textSecondary),
+          const SizedBox(width: AppSpacing.md),
+        ],
         Padding(
           padding: const EdgeInsets.only(right: AppSpacing.lg),
           child: Row(
@@ -709,8 +761,10 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
                 child:
                     Icon(Icons.person_outline, size: 16, color: Colors.white),
               ),
-              const SizedBox(width: AppSpacing.xs),
-              Text(actorId, style: AppTypography.bodySmall),
+              if (!isNarrow) ...[
+                const SizedBox(width: AppSpacing.xs),
+                Text(actorId, style: AppTypography.bodySmall),
+              ],
             ],
           ),
         ),
@@ -721,6 +775,18 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
 
 /// Shared, breakpoint-agnostic content pane: renders [selectedId]'s
 /// destination, or an empty state when nothing is selected yet.
+///
+/// AP-2 closure correction — every destination is wrapped in
+/// [ModuleReadinessGate] HERE, centrally, keyed by the destination's own
+/// `item.id` (the exact `_AdminNavItem(id: '...')` literal each group
+/// declares — never a second, parallel naming scheme). This is the single
+/// enforcement point for every possible way a destination's content could
+/// ever render (nav click, initial-selection, or any future deep-link/
+/// state-restoration path this shell adds) — nav-item hiding
+/// (`session.roles.any(item.visibleToRoles.contains)` in `build()` above)
+/// is a UX convenience only, never the sole gate, exactly like `RoleGate`'s
+/// own "individually wrapped at push time" precedent this file's own class
+/// doc comment already documents one layer up.
 class _ContentPane extends StatelessWidget {
   const _ContentPane({
     required this.groups,
@@ -742,7 +808,10 @@ class _ContentPane extends StatelessWidget {
     for (final group in groups) {
       for (final item in group.items) {
         if (item.id == selectedId) {
-          return Builder(builder: (context) => item.builder(context, ref));
+          return ModuleReadinessGate(
+            moduleId: item.id,
+            child: Builder(builder: (context) => item.builder(context, ref)),
+          );
         }
       }
     }

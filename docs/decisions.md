@@ -17040,3 +17040,125 @@ re-run (format check, `flutter analyze`, full `flutter test`, Functions build + 
 Rules full suite, Storage Rules full suite, secret scan, docs cross-reference, scoped diff review) —
 see this session's own final report for exact gate results, the complete file manifest, and the commit
 SHA(s), not duplicated here.
+
+## AP-2 CLOSURE CORRECTION (2026-08-27) — readiness coverage + multi-org UI completed within the same AP-2
+
+The first AP-2 closure report (2026-08-26) incorrectly deferred two requirements that were part of
+AP-2's own approved scope: (1) exhaustive implementation-readiness gating across every Admin
+destination (only 2 of 31 were gated); (2) a real multi-organization/multi-branch context switcher
+(the backend existed — `resolveActorContext`/`resolveVerifiedBranchContext` — but no Flutter consumer
+did). **This is not a new phase (not "AP-2.1") — it is the same AP-2, completed.** The original closure
+report's own text, and the `AP1_CANONICAL_ARCHITECTURE_PACK_COMPLETE`/gate-result history it recorded,
+are preserved unedited above; this entry is append-only, closing the gap it left open.
+
+### Exhaustive Admin destination audit — every real `AdminShellScreen` nav-item id, source-verified
+
+Read directly from `admin_shell_screen.dart`'s own `_groups()` (never guessed); each screen's real
+provider/repository chain traced to its own dependency-provider file (not inferred from a sibling
+screen or feature name):
+
+| Nav ID | Group | Screen | Provider chain (verified) | Classification |
+|---|---|---|---|---|
+| `overview` | Genel Bakış | `AdminOverviewScreen` | 6 in-memory repos (branch/courier/feedback/survey/campaign/audit) | `demoOnly` |
+| `kitchen` | Operasyonlar | `KitchenDisplayBoardScreen` | `kds_dependencies_provider.dart` — 12 in-memory, 0 Firebase | `demoOnly` |
+| `reservations` | Operasyonlar | `ReservationOperationsScreen` | `admin_reservation_dependencies_provider.dart` — `FirebaseAdminReservationGateway`/`FirestoreAdminReservationRepository`, real | **`productionReady`** |
+| `dispatch` | Operasyonlar | `CourierDispatchDashboardScreen` | `courier_dispatch_dependencies_provider.dart` — 4 in-memory, 0 Firebase | `demoOnly` |
+| `orders` | Operasyonlar | `AdminComingSoonView` | no screen exists | `notImplemented` |
+| `pos` | Operasyonlar | `AdminComingSoonView` | no screen exists | `notImplemented` |
+| `cash` | Operasyonlar | `AdminComingSoonView` | no screen exists | `notImplemented` |
+| `customer-360` | Müşteri & Sadakat | `CustomerManagementScreen` | `customerAdminNoteRepositoryProvider` — in-memory | `demoOnly` |
+| `photo-moderation` | Müşteri & Sadakat | `CustomerPhotoModerationScreen` | `customerPhotoRepositoryProvider` — in-memory; **real `moderateCustomerPhoto` Cloud Function exists separately, unwired to this screen** | **`partiallyImplementedUnsafe`** |
+| `customers` | Müşteri & Sadakat | `CustomerSegmentationAdminScreen` | `crm_dependencies_provider.dart` — 8 in-memory, 0 Firebase | `demoOnly` |
+| `loyalty` | Müşteri & Sadakat | `VisitRewardRulesAdminScreen` | `crm_dependencies_provider.dart` — in-memory | `demoOnly` |
+| `campaigns` | Müşteri & Sadakat | `CustomerNotificationCampaignsAdminScreen` | `crm_dependencies_provider.dart` — in-memory | `demoOnly` |
+| `surveys` | Müşteri & Sadakat | `SurveyAdminScreen` | `crm_dependencies_provider.dart` — in-memory | `demoOnly` |
+| `feedback` | Müşteri & Sadakat | `FeedbackAdminScreen` | `feedback_dependencies_provider.dart` — 3 in-memory, 0 Firebase | `demoOnly` |
+| `menu` | Yapılandırma | `AdminComingSoonView` | no screen exists | `notImplemented` |
+| `staff` | Yapılandırma | `StaffManagementScreen` | `staffMemberRepositoryProvider` → `FirebaseStaffMemberRepository`, real (AP-2 second wave) | **`productionReady`** |
+| `branches` | Yapılandırma | `BranchAdminScreen` | `branchRepositoryProvider` — in-memory | `demoOnly` |
+| `devices` | Yapılandırma | `DeviceRegistryScreen` | `adminDeviceRegistrationRepositoryProvider` — in-memory (a Phase 6L device-inventory concept); **real `trustedDeviceRegistrations` backend exists separately (AP-2 second wave), unwired to this screen** | **`partiallyImplementedUnsafe`** |
+| `setup-templates` | Akıllı Kurulum & Stok | `SetupTemplatesScreen` | `restaurant_setup_dependencies_provider.dart` — 3 in-memory, 0 Firebase | `demoOnly` |
+| `menu-import` | Akıllı Kurulum & Stok | `ImportJobsScreen` | `smart_import_dependencies_provider.dart` — 5 in-memory, 0 Firebase | `demoOnly` |
+| `ingredient-catalog` | Akıllı Kurulum & Stok | `IngredientCatalogScreen` | `inventory_dependencies_provider.dart` — 15 in-memory, 0 Firebase | `demoOnly` |
+| `inventory` (**stock**) | Akıllı Kurulum & Stok | `InventoryScreen` | `inventory_dependencies_provider.dart` — in-memory | `demoOnly` |
+| `stock-counts` (**stock**) | Akıllı Kurulum & Stok | `StockCountsScreen` | `inventory_dependencies_provider.dart` — in-memory | `demoOnly` |
+| `recipes` | Akıllı Kurulum & Stok | `RecipesScreen` | `recipe_dependencies_provider.dart` — 7 in-memory, 0 Firebase | `demoOnly` |
+| `suppliers` | Akıllı Kurulum & Stok | `SuppliersScreen` | `purchasing_dependencies_provider.dart` — 10 in-memory, 0 Firebase | `demoOnly` |
+| `reports` | Sistem | `AdminComingSoonView` | no screen exists | `notImplemented` |
+| `audit` | Sistem | `AuditCenterScreen` | `adminAuditEntryRepositoryProvider` — in-memory; **real `auditEvents` collection exists separately, written by every AP-2 Cloud Function, unwired to this screen** | **`partiallyImplementedUnsafe`** |
+| `localization` | Sistem | `LocalizationAdminScreen` | `localizationConfigRepositoryProvider`/`translationEntryRepositoryProvider` — in-memory | `demoOnly` |
+| `settings` | Sistem | `SystemHealthAdminScreen` | `maintenanceModeStateRepositoryProvider` — in-memory | `demoOnly` |
+| `entitlements` | Sistem | `EntitlementAdminScreen` | `entitlement_dependencies_provider.dart` — 2 in-memory, 0 Firebase; **real `entitlementAdmin.ts` backend exists separately (AP-2 second wave), unwired to this screen** | **`partiallyImplementedUnsafe`** |
+| `integrations` (**marketplace**) | Sistem | `TenantIntegrationHubScreen` | `integration_dependencies_provider.dart` — 4 in-memory, 0 Firebase | `demoOnly` |
+
+**Result**: `staff` and `reservations` are the only two `productionReady` destinations. Every other
+destination — 29 of 31 — fails closed in a release build. `photo-moderation`/`devices`/`audit`/
+`entitlements` are the most dangerous category: a real backend exists for each of these exact domains
+(three of them built by AP-2 itself), but the Admin screen was never wired to it — a staff member has
+no way to tell the screen is stale/simulated just by looking at it. Wiring these four screens to their
+already-real backends is valuable, concretely-scoped follow-up work, explicitly NOT attempted in this
+correction (would expand scope well beyond "close the two named gaps") — they are gated closed exactly
+like every other non-`productionReady` destination in the meantime, which is what actually matters for
+release safety.
+
+### Implementation delivered
+
+- **Central readiness registry** (`lib/features/admin/presentation/widgets/module_readiness_gate.dart`,
+  rewritten): `ModuleReadinessClassification` (5-value: `productionReady`/`emulatorBackendReady`/
+  `demoOnly`/`notImplemented`/`partiallyImplementedUnsafe`) for documentation/audit/test use;
+  `ModuleReadinessRegistry.statusOf` collapses to the gate's own binary decision. An unregistered id
+  fails closed to `notImplemented`/`demoOnly` by construction — a future destination that forgets to
+  register itself is gated, never silently visible.
+- **Single enforcement point** — the gate moved from manual per-destination wrapping (which is exactly
+  how 27 of 31 destinations were missed the first time) to `_ContentPane`'s own `build()`, the one
+  place every destination's content ever renders regardless of how it was reached (nav click, initial
+  selection, or any future state-restoration path).
+- **Multi-org/multi-branch context switcher** (`admin_context_provider.dart` — `ActorOrganizationAccess`
+  typed model, `typedActorContextProvider`, `deviceBoundBranchIdProvider`; `admin_context_gate.dart` —
+  `AdminContextGate`, `showAdminContextSwitcherSheet`): `currentOrganizationIdProvider`/
+  `currentBranchIdProvider` upgraded from placeholder `Provider<String>` to real, switchable
+  `StateProvider<String>` — every existing `ref.watch`/`ref.read` call site across courier/CRM/
+  feedback/restaurant/admin keeps working completely unchanged. `AdminContextGate` re-derives fresh
+  from `resolveActorContext` on every evaluation (never a cached value); auto-selects when exactly one
+  organization/branch is accessible; forces an explicit picker otherwise; detects a revoked
+  organization/branch (no longer in a fresh response) and corrects the same way, never leaving stale
+  data on screen. Skips its own real-backend resolution entirely when Firebase isn't ready (every
+  `flutter test` run; local dev without the emulator) — falls through to the existing, already-correct
+  `ActorSession`/custom-claims-derived behavior rather than showing a false "no access" state for a
+  condition that has nothing to do with the actor's real access.
+- **Three real bugs found and fixed via the test suite this correction itself wrote** (not by
+  inspection alone): (1) `AdminContextGate`'s original auto-select path called
+  `ref.read(provider.notifier).state = ...` synchronously inside `build()` — Riverpod structurally
+  forbids mutating a provider mid-build (two widgets watching the same provider could otherwise observe
+  inconsistent state); fixed by deferring via `WidgetsBinding.instance.addPostFrameCallback`, mirroring
+  `ModuleEntitlementGate`'s own established pattern for this exact class of side effect. (2) The
+  error-state "Tekrar Dene" retry button invalidated `typedActorContextProvider` (the derived provider)
+  instead of `resolvedActorContextProvider` (the one actually holding the cached error) — a retry
+  silently did nothing; fixed by invalidating the real underlying provider, which Riverpod's own
+  dependency tracking then correctly cascades to the derived one. (3) The new context-switcher header
+  control caused a 129px `RenderFlex` overflow on mobile-width AppBars; fixed by hiding the
+  (pre-existing, always-unwired, purely decorative) notification/search icons on narrow viewports so
+  the real, functional switcher wins the space instead of a placeholder.
+
+### Test matrix added
+
+`module_readiness_gate_test.dart` (rewritten, 13 tests): full-coverage assertion (every real nav-item
+id has a registry entry, and vice versa), source-verified classification per destination group,
+unregistered-id fail-closed default, gate widget behavior for `productionReady`/`demoOnly`/unregistered.
+`admin_context_gate_test.dart` (new, 10 tests): Firebase-not-ready fallthrough, loading/error/empty
+states with a working retry, single-option auto-select, multi-org picker, multi-branch picker, revoked
+organization auto-correction, revoked branch forcing an explicit re-pick, cross-tenant-leakage
+(a forged/stale client-side org id is corrected to the caller's real access before any content renders,
+never trusted). Full admin/router/profile/navigation regression suite re-run after every change: 453
+tests, 0 failures.
+
+### Documentation
+
+`docs/admin_pos_architecture.md` gained an append-only AP-2-implementation-status note (its own
+existing §10-§13/§16 content unedited). `docs/business_rules.md` gained `BR-ADMIN-006` (readiness
+gating) and `BR-ADMIN-007` (context switcher) — checked for id collision before writing (none found);
+`docs/feature_status.md` gained a matching closure-correction entry. No prior entry in any of these
+documents was rewritten or deleted.
+
+**Determination**: `AP2_SECURE_PLATFORM_COMPLETE=YES`. Full gate results, the exact file manifest, and
+the closure commit SHA are in this session's own final closure-correction report, not duplicated here.

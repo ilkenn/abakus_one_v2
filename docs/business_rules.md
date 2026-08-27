@@ -4456,6 +4456,58 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Owner Agent**: security_engineer
 - **Related Modules**: Staff/Admin, Courier, POS, Restaurant Operations, CRM
 
+### BR-ADMIN-006 — Every Admin destination fails closed by default; readiness is centrally registered, never inferred
+- **Status**: IMPLEMENTED — AP-2 closure correction (2026-08-27),
+  `lib/features/admin/presentation/widgets/module_readiness_gate.dart`.
+- **Rule**: Every real `AdminShellScreen` nav-item id (currently 31) has an explicit entry in
+  `ModuleReadinessRegistry`, classified `productionReady`/`emulatorBackendReady`/`demoOnly`/
+  `notImplemented`/`partiallyImplementedUnsafe` against its own real, source-verified provider/
+  repository chain — never a screen's visual polish, test coverage, or entitlement status. An
+  unregistered id fails closed to the strictest classification (`notImplemented`) rather than
+  defaulting to visible — a destination added later and never registered is gated by construction, not
+  by a maintainer remembering to add it. The gate is applied ONCE, centrally, in `_ContentPane` (the
+  single rendering point for every destination regardless of how it was reached), never per-item —
+  closing the exact gap where 2 of 31 destinations were gated in an earlier pass and 29 were not.
+  Entitlement grant, an active trusted-device session, and Platform Owner status each independently
+  authorize their own axis only — none of them, singly or combined, ever substitutes for implementation
+  readiness. A `demoOnly`/`notImplemented`/`partiallyImplementedUnsafe` destination is blocked outright
+  in a release build (a Turkish "Bu modül henüz production kullanımına açılmadı" message, never a raw
+  error or a silently-working stale simulation); in a debug/profile build it remains reachable with a
+  visible `DEMO` badge. `staff` and `reservations` are, as of this correction, the only two
+  `productionReady` destinations; `photo-moderation`/`devices`/`audit`/`entitlements` are the most
+  dangerous category (`partiallyImplementedUnsafe`) — a real backend exists elsewhere in this codebase
+  for each of these exact domains, but the specific Admin screen was never wired to it, so a staff
+  member has no way to tell the screen is stale/simulated just by looking at it.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin, Entitlements, Platform
+
+### BR-ADMIN-007 — Multi-organization/multi-branch context is real, backend-verified, and re-derived fresh on every check
+- **Status**: IMPLEMENTED — AP-2 closure correction (2026-08-27),
+  `lib/features/admin/presentation/{providers/admin_context_provider.dart,
+  widgets/admin_context_gate.dart}`.
+- **Rule**: `AdminContextGate` sits between `AdminShellScreen`'s own staff-session check and the
+  shell's actual content, consuming `resolveActorContext` (`docs/admin_pos_architecture.md` §10) fresh
+  on every evaluation — never a value read once and held. Exactly one accessible organization/branch
+  auto-selects; more than one requires an explicit user choice (`_OrganizationPickerScreen`/
+  `_BranchPickerScreen`); zero shows a clear "no accessible organization" state, never a silent fallback
+  to a stale default. A previously-active organization or branch no longer present in a fresh
+  `resolveActorContext` response (membership/branch-access revoked since the last check) is detected
+  and corrected the same way — auto-switch if exactly one option remains, otherwise force an explicit
+  re-pick — never left showing data for access that no longer exists. `currentOrganizationIdProvider`/
+  `currentBranchIdProvider` (`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`,
+  `lib/features/navigation/presentation/providers/current_branch_provider.dart`) remain genuinely safe
+  as plain, client-writable Riverpod state specifically BECAUSE every AP-2 backend command that ever
+  consumes them (`resolveVerifiedBranchContext` and everything built on it) re-verifies the pair against
+  the caller's own real durable membership server-side — a forged, stale, or simply wrong client value
+  can only ever produce `permission-denied`, never a cross-tenant read. An `AdminShellScreen` header
+  control (`_TopBar`'s context indicator) allows an explicit, voluntary switch at any time, independent
+  of the automatic revoked-access correction. When a trusted device is active and bound to a specific
+  branch (`deviceBoundBranchIdProvider` — the guard exists and is tested; the Flutter-side trusted-device
+  session UI that would ever populate it with a real value is later, disclosed work, not built this
+  phase), switching to any other branch is disabled in both picker surfaces.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin, Platform
+
 ### BR-STAFF-003 — Approval thresholds
 - **Status**: UNRESOLVED
 - **Rule**: Which refunds, voids, comps, and manual price overrides require manager approval, and the
@@ -6910,6 +6962,18 @@ neither restated in full here nor duplicated between the two.
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.24 — 2026-08-27
+- **Version**: 3.24
+- **Date**: 2026-08-27
+- **Summary**: AP-2 closure correction — the first AP-2 closure report incorrectly deferred two
+  in-scope requirements (exhaustive Admin destination readiness gating; a real multi-org/multi-branch
+  context switcher). New `BR-ADMIN-006` (centrally-registered, fail-closed-by-default implementation
+  readiness for all 31 real `AdminShellScreen` destinations) and `BR-ADMIN-007` (real, backend-verified,
+  freshly-re-derived multi-organization/multi-branch context, replacing the single-tenant placeholder).
+  See `docs/decisions.md`'s AP-2 closure-correction entry for the full destination-by-destination
+  evidence table and gate results. AP-2 is now CLOSED.
+- **Author**: Claude, at the user's direction (AP-2 closure correction).
 
 ### v3.23 — 2026-08-26
 - **Version**: 3.23

@@ -4863,3 +4863,25 @@ exact nav-item ids correspond to them); full multi-organization tenant-switcher 
 to consume anything else, and this app has no tenant-switching UI anywhere yet by long-standing
 design). See the final report for this session's exact gate results, complete file manifest, and
 commit SHA(s).
+
+**AP-2 CLOSURE CORRECTION (2026-08-27).** The paragraph directly above deferred two items that were
+actually in AP-2's own approved scope: exhaustive readiness gating (only 2 of 31 real Admin destinations
+were gated) and a real multi-org/multi-branch switcher UI. This is the same AP-2, closed properly, not a
+new phase. All 31 real `AdminShellScreen` nav-item ids were read directly from source and independently
+classified by tracing each screen's own dependency-provider file: `staff` and `reservations` are the
+only two `productionReady`; `photo-moderation`/`devices`/`audit`/`entitlements` are
+`partiallyImplementedUnsafe` (a real backend exists for each — three built earlier in this same AP-2 —
+but the screen was never wired to it, left explicitly gated and disclosed rather than wired in this
+correction); every other destination, including `stock`/`crm`/`marketplace`, is `demoOnly` or
+`notImplemented` and now release-gated by a single central enforcement point
+(`ModuleReadinessGate`/`ModuleReadinessRegistry`, moved to `_ContentPane`'s own `build()` in
+`admin_shell_screen.dart` rather than manual per-destination wrapping). The multi-org/multi-branch
+switcher (`AdminContextGate`, `admin_context_provider.dart`) is now a real, backend-verified Flutter
+consumer of `resolveActorContext`: auto-selects on a single accessible org/branch, forces an explicit
+picker otherwise, detects and corrects a revoked org/branch on every fresh resolution (never a cached
+value), and skips its own resolution when Firebase isn't ready so the entire pre-existing test suite is
+unaffected. `currentOrganizationIdProvider`/`currentBranchIdProvider` upgraded from placeholder
+`Provider<String>` to real `StateProvider<String>` — source-compatible with every existing call site.
+Full classification table, the three bugs found and fixed via this correction's own new test suite, and
+the complete test matrix are in `docs/decisions.md`'s AP-2 CLOSURE CORRECTION entry. See the final
+closure-correction report for exact gate results, complete file manifest, and the closure commit SHA.
