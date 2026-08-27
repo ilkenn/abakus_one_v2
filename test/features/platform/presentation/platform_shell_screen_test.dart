@@ -30,8 +30,8 @@ void main() {
   });
 
   testWidgets(
-      'a platformOwner session sees the 3-tab shell with Monitoring as '
-      'the default tab', (tester) async {
+      'a platformOwner session sees the 4-tab shell (AP-2 final wiring '
+      'added Abonelikler) with Monitoring as the default tab', (tester) async {
     await pumpShell(
       tester,
       session: const PlatformActorSession(
@@ -45,7 +45,28 @@ void main() {
     expect(find.text('İzleme'), findsOneWidget);
     expect(find.text('Yayın Hazırlığı'), findsOneWidget);
     expect(find.text('Mağaza Uyumluluğu'), findsOneWidget);
+    expect(find.text('Abonelikler'), findsOneWidget);
     expect(find.text('Kiracı Organizasyon'), findsOneWidget);
+  });
+
+  testWidgets(
+      'switching to the Abonelikler tab shows the real entitlement console '
+      '(backend-unavailable error state under flutter test, never a crash)',
+      (tester) async {
+    await pumpShell(
+      tester,
+      session: const PlatformActorSession(
+        actorId: 'platform-1',
+        roles: {PlatformRole.platformOwner},
+        activeRole: PlatformRole.platformOwner,
+      ),
+    );
+
+    await tester.tap(find.text('Abonelikler'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Abonelik Yönetimi'), findsOneWidget);
+    expect(find.text('İşletme dizinine ulaşılamadı.'), findsOneWidget);
   });
 
   testWidgets('switching to the Release Readiness tab shows real criteria',

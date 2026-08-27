@@ -225,19 +225,43 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // AP-2 Stage B — Remote Approval Engine (Correction #10). The full
-    // canonical request payload is deliberately NOT exposed to ordinary
-    // branch staff via a direct query — "eligible approver" is a
+    // AP-2 final wiring — Remote Approval Engine (Correction #10),
+    // completing the gap the prior comment (preserved below) explicitly
+    // deferred. The record itself carries no secrets (a payload HASH, a
+    // target document PATH, actor uids — never a device public key,
+    // nonce, or signature), so a scoped read here is a genuinely sanitized
+    // projection, not the "full canonical payload opened to every branch
+    // staff member" the prior comment warned against. Two disjoint,
+    // narrow read paths only:
+    //   1. The requester may read their own request (own status tracking).
+    //   2. A branch-scoped staff member holding the exact response
+    //      permission for this request's actionType may read it (the
+    //      eligible-approver set). This mirrors
+    //      `remoteApproval.ts`'s own `RESPONSE_PERMISSION_BY_ACTION` map
+    //      role-for-role (today: `deviceActivation` -> `approveDeviceRegistration`
+    //      -> manager/admin/tenantOwner, per `staffAuthorization.ts`) — a
+    //      closed mirror, not a re-derivation. Adding a second
+    //      `ApprovalActionType` in AP-3+ means adding its matching role
+    //      set here too, exactly as that file's own top comment already
+    //      requires for its `ACTION_HANDLERS`/`RESPONSE_PERMISSION_BY_ACTION`
+    //      maps — never widened to a bare isOrgMember/hasBranchAccess check.
+    //
+    // (Prior comment, preserved for history — the gap it named is now closed:)
+    // "The full canonical request payload is deliberately NOT exposed to
+    // ordinary branch staff via a direct query — 'eligible approver' is a
     // permission-derived set this rules language cannot safely re-derive
-    // without duplicating `staffAuthorization.ts`'s own logic, and a naive
+    // without duplicating staffAuthorization.ts's own logic, and a naive
     // isOrgMember-only rule would leak every pending request to every
-    // staff member at the organization. No client read path exists yet;
-    // a sanitized, eligible-approver-scoped read model/callable is
-    // remaining AP-2 scope (see docs/decisions.md's AP-2 entry), not
-    // silently approximated here with a rule that promises more than it
-    // can actually enforce.
+    // staff member at the organization."
     match /remoteApprovalRequests/{requestId} {
-      allow read, write: if false;
+      allow read: if (isSignedIn() && request.auth.uid == resource.data.requestedByActorUid) ||
+        (
+          hasBranchAccess(resource.data.organizationId, resource.data.branchId) &&
+          (hasRole(resource.data.organizationId, 'manager') ||
+           hasRole(resource.data.organizationId, 'admin') ||
+           hasRole(resource.data.organizationId, 'tenantOwner'))
+        );
+      allow write: if false;
     }
     // Immutable approval history — minimum-data-principle fields only
     // (no device public keys/payload details), same read shape as the
@@ -255,8 +279,19 @@ service cloud.firestore {
     // Tenant hierarchy
     // ---------------------------------------------------------------------
 
+    // AP-2 final wiring — a Platform Owner console needs a real tenant
+    // picker. Deliberately narrow: ONLY this collection (name/status —
+    // low-sensitivity, needed for any tenant-selection UI to function at
+    // all) gets blanket platform-member read; `canReadOrg` itself is left
+    // untouched below, so `restaurants`/`branches`/`staffMembers` (every
+    // OTHER collection gated by it) still require a real, reasoned,
+    // time-limited `supportGrants` document for a platform member to read
+    // — this does not quietly widen that existing, audited mechanism.
+    // Deeper tenant drill-down from the console (branches/staff) is a
+    // deliberate scope boundary this phase, disclosed in docs, not solved
+    // by loosening this shared helper.
     match /organizations/{organizationId} {
-      allow read: if canReadOrg(organizationId);
+      allow read: if canReadOrg(organizationId) || isPlatformMember();
       allow write: if false; // Cloud Function only — clients cannot assign
                               // themselves an organization.
     }
@@ -569,8 +604,16 @@ service cloud.firestore {
     // Entitlements — "clients cannot write arbitrary entitlement grants."
     // ---------------------------------------------------------------------
 
+    // AP-2 final wiring — a Platform Owner grants/renews/suspends/revokes
+    // through `entitlementAdmin.ts`'s callables (all `requirePlatformMember`
+    // -gated already), but needs a direct read of current state first to
+    // render the console (what's already granted, current status/grace
+    // window) before choosing an action — the callables themselves have no
+    // "read" variant. `isPlatformMember()` here is read-only and mirrors
+    // this file's own `organizations` narrow-scope precedent, not a general
+    // widening: every mutation still goes exclusively through the callables.
     match /entitlements/{entitlementId} {
-      allow read: if isOrgMember(resource.data.organizationId);
+      allow read: if isOrgMember(resource.data.organizationId) || isPlatformMember();
       allow write: if false; // Cloud Function only.
     }
 

@@ -1556,21 +1556,21 @@ test('CR.1.1: a customer cannot directly set or change birthDate via the client 
   );
 });
 
-test('a platform member without an active support grant cannot read tenant data outside their own scope', async () => {
+test('a platform member without an active support grant cannot read tenant data outside their own scope (restaurants/branches/staffMembers — everything still gated by canReadOrg alone)', async () => {
   await seed(async (db) => {
-    await setDoc(doc(db, 'organizations/org-1'), { name: 'Abaküs' });
+    await setDoc(doc(db, 'restaurants/restaurant-1'), { organizationId: 'org-1', name: 'Merkez' });
   });
   const platformAdmin = testEnv
     .authenticatedContext('platform-1', { platformRole: 'platformAdministrator' })
     .firestore();
 
-  await assertFails(getDoc(doc(platformAdmin, 'organizations/org-1')));
+  await assertFails(getDoc(doc(platformAdmin, 'restaurants/restaurant-1')));
 });
 
 test('a platform member WITH an active, non-expired support grant can read that tenant\'s data', async () => {
   const future = new Date(Date.now() + 60 * 60 * 1000);
   await seed(async (db) => {
-    await setDoc(doc(db, 'organizations/org-1'), { name: 'Abaküs' });
+    await setDoc(doc(db, 'restaurants/restaurant-1'), { organizationId: 'org-1', name: 'Merkez' });
     await setDoc(doc(db, 'supportGrants/org-1_platform-1'), {
       organizationId: 'org-1',
       platformMemberId: 'platform-1',
@@ -1582,13 +1582,13 @@ test('a platform member WITH an active, non-expired support grant can read that 
     .authenticatedContext('platform-1', { platformRole: 'platformAdministrator' })
     .firestore();
 
-  await assertSucceeds(getDoc(doc(platformAdmin, 'organizations/org-1')));
+  await assertSucceeds(getDoc(doc(platformAdmin, 'restaurants/restaurant-1')));
 });
 
 test('an EXPIRED support grant no longer grants access — time-limited, not permanent', async () => {
   const past = new Date(Date.now() - 60 * 60 * 1000);
   await seed(async (db) => {
-    await setDoc(doc(db, 'organizations/org-1'), { name: 'Abaküs' });
+    await setDoc(doc(db, 'restaurants/restaurant-1'), { organizationId: 'org-1', name: 'Merkez' });
     await setDoc(doc(db, 'supportGrants/org-1_platform-1'), {
       organizationId: 'org-1',
       platformMemberId: 'platform-1',
@@ -1600,7 +1600,47 @@ test('an EXPIRED support grant no longer grants access — time-limited, not per
     .authenticatedContext('platform-1', { platformRole: 'platformAdministrator' })
     .firestore();
 
-  await assertFails(getDoc(doc(platformAdmin, 'organizations/org-1')));
+  await assertFails(getDoc(doc(platformAdmin, 'restaurants/restaurant-1')));
+});
+
+test('AP-2 final wiring — organizations (narrow exception, tenant-picker need): any platform member can read directly, no support grant required; a tenant staff member never gains cross-org read from this', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'organizations/org-1'), { name: 'Abaküs' });
+  });
+  const platformAdmin = testEnv
+    .authenticatedContext('platform-1', { platformRole: 'platformAdministrator' })
+    .firestore();
+  const platformOwner = testEnv
+    .authenticatedContext('platform-2', { platformRole: 'platformOwner' })
+    .firestore();
+  const outsiderStaff = testEnv
+    .authenticatedContext('staff-9', { organizationAccess: ['org-2'], roles: { 'org-2': ['admin'] } })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(platformAdmin, 'organizations/org-1')));
+  await assertSucceeds(getDoc(doc(platformOwner, 'organizations/org-1')));
+  await assertFails(getDoc(doc(outsiderStaff, 'organizations/org-1')));
+  await assertFails(setDoc(doc(platformAdmin, 'organizations/org-1'), { name: 'Hijacked' }));
+});
+
+test('AP-2 final wiring — entitlements: a platform member can read any tenant\'s entitlement docs directly (needed to render the grant/renew/suspend/revoke console before acting), but still cannot write any of them client-side', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'entitlements/org-1_organization_org-1_pos'), {
+      organizationId: 'org-1', scopeType: 'organization', scopeId: 'org-1', module: 'pos', status: 'active', version: 1,
+    });
+  });
+  const platformOwner = testEnv
+    .authenticatedContext('platform-1', { platformRole: 'platformOwner' })
+    .firestore();
+  const outsiderStaff = testEnv
+    .authenticatedContext('staff-9', { organizationAccess: ['org-2'], roles: { 'org-2': ['admin'] } })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(platformOwner, 'entitlements/org-1_organization_org-1_pos')));
+  await assertFails(getDoc(doc(outsiderStaff, 'entitlements/org-1_organization_org-1_pos')));
+  await assertFails(
+    setDoc(doc(platformOwner, 'entitlements/org-1_organization_org-1_pos'), { status: 'revoked' }),
+  );
 });
 
 test('a tenant role claim never grants a platform action, and vice versa — the two claim namespaces never cross', async () => {
@@ -4634,7 +4674,7 @@ test('deviceChallenges and deviceSessions: no client read or write at all, for a
   await assertFails(setDoc(doc(branchStaff, 'deviceSessions/session-2'), { deviceId: 'x' }));
 });
 
-test('remoteApprovalRequests: no direct client read path exists yet — not even the requester or an org admin can read the canonical payload', async () => {
+test('remoteApprovalRequests: AP-2 final wiring — readable by the requester themselves, and by a branch-scoped eligible responder (manager/admin/tenantOwner); never by an unrelated org member, an org member without branch access, or an org-admin without branch access; never client-writable', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'remoteApprovalRequests/approval-1'), {
       organizationId: 'org-1',
@@ -4651,13 +4691,45 @@ test('remoteApprovalRequests: no direct client read path exists yet — not even
       branchAccess: { 'org-1': ['branch-1'] },
     })
     .firestore();
-  const orgAdmin = testEnv
-    .authenticatedContext('admin-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['admin'] } })
+  // A different staff member on the SAME branch — not the requester, and
+  // "staff" is not in RESPONSE_PERMISSION_BY_ACTION's role set — must stay denied.
+  const uninvolvedBranchStaff = testEnv
+    .authenticatedContext('staff-2', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['staff'] },
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+  const eligibleManager = testEnv
+    .authenticatedContext('manager-1', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['manager'] },
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+  // Admin role, but not granted access to THIS branch — must stay denied
+  // (branch scope is required in addition to the response-permission role).
+  const adminWrongBranch = testEnv
+    .authenticatedContext('admin-1', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['admin'] },
+      branchAccess: { 'org-1': ['branch-2'] },
+    })
+    .firestore();
+  const outsider = testEnv
+    .authenticatedContext('staff-3', {
+      organizationAccess: ['org-2'],
+      roles: { 'org-2': ['admin'] },
+      branchAccess: { 'org-2': ['branch-9'] },
+    })
     .firestore();
 
-  await assertFails(getDoc(doc(requester, 'remoteApprovalRequests/approval-1')));
-  await assertFails(getDoc(doc(orgAdmin, 'remoteApprovalRequests/approval-1')));
-  await assertFails(setDoc(doc(orgAdmin, 'remoteApprovalRequests/approval-2'), { status: 'pending' }));
+  await assertSucceeds(getDoc(doc(requester, 'remoteApprovalRequests/approval-1')));
+  await assertSucceeds(getDoc(doc(eligibleManager, 'remoteApprovalRequests/approval-1')));
+  await assertFails(getDoc(doc(uninvolvedBranchStaff, 'remoteApprovalRequests/approval-1')));
+  await assertFails(getDoc(doc(adminWrongBranch, 'remoteApprovalRequests/approval-1')));
+  await assertFails(getDoc(doc(outsider, 'remoteApprovalRequests/approval-1')));
+  await assertFails(setDoc(doc(eligibleManager, 'remoteApprovalRequests/approval-2'), { status: 'pending' }));
 });
 
 test('approvalEvents: readable by any real org member (minimum-data audit history), never client-writable', async () => {

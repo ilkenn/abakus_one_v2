@@ -741,3 +741,39 @@ into anymore. Recovery is a GCP-IAM operation, not an application feature:
 This is deliberately NOT implemented as an in-app "recovery mode" or a second bootstrap mechanism —
 doing so would recreate exactly the reusable backdoor risk the real bootstrap script's own refusal
 check exists to prevent (`BR-PLATFORM-003`). The GCP IAM layer is the actual break-glass boundary.
+
+## AP-2 final wiring (2026-08-27) — new callables, Platform Owner sign-in gap closed
+
+Three new/extended callables, all exported from `src/index.ts`:
+
+- `suspendTrustedDevice`/`retireTrustedDevice` (`src/trustedDevice.ts`) — `manageDevices`-permission-
+  gated, alongside the pre-existing `revokeTrustedDevice`. Neither has a matching "un-suspend"/
+  "un-retire" callable this phase, mirroring `revokeTrustedDevice`'s own long-standing lack of an
+  "un-revoke."
+- `respondToApprovalRequest` (`src/remoteApproval.ts`) — gained an optional `reasonMessage` string,
+  sanitized (`sanitizeReasonMessage`) and stored on the `approvalEvents` entry. Kept optional at this
+  layer specifically so every pre-existing, already-tested call site (`trustedDeviceAndApproval.test.ts`)
+  keeps working unchanged — the Flutter Approval Inbox enforces "mandatory reason" at its own client
+  boundary instead.
+- `firestore.rules`'s `remoteApprovalRequests` collection gained its first-ever client read path: the
+  requester's own request, or a branch-scoped eligible responder whose role matches
+  `RESPONSE_PERMISSION_BY_ACTION[actionType]` (today: `deviceActivation` -> `approveDeviceRegistration`
+  -> manager/admin/tenantOwner). This mirrors the backend's own closed-allowlist map in the rules
+  language — a second `ApprovalActionType` in AP-3+ needs a matching rules update, not a wider "any org
+  member" fallback.
+
+**A real, pre-existing gap closed, not new scope**: `FirebasePlatformAuthRepository.signIn`
+(`lib/features/platform/data/platform_auth_repository.dart`, built well before this pass) already called
+`platformMemberRepository.findByAuthUid(result.uid)` against a real Firebase Auth sign-in result — but
+no Firestore-backed `PlatformMemberRepository` implementation existed anywhere in `lib/`, so a real
+Platform Owner sign-in could never actually succeed against a deployed backend. `lib/features/platform/
+data/firebase_platform_member_repository.dart` closes this: it reads `platformMembers/{uid}` directly
+(that collection's own rule already required `isPlatformMember()`, itself requiring a synced
+`platformRole` custom claim — `syncOwnPlatformClaims` is called first on every lookup to resolve that
+ordering, mirroring `StaffClaimsSyncClient`'s identical role for the tenant-staff stack one tier down).
+
+No new Cloud Function was needed for the Platform Owner console's tenant picker or the entitlement
+console's pre-mutation read — both use direct Firestore reads (`firestore.rules`'s `organizations` and
+`entitlements` collections each gained a narrow, read-only `isPlatformMember()` exception, additive to
+their existing rules, never replacing the existing `isOrgMember`/`hasActiveSupportGrant` paths for
+tenant-side/support-grant readers).

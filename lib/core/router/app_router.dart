@@ -12,6 +12,7 @@ import '../../features/customer_registration/presentation/screens/complete_profi
 import '../../features/navigation/presentation/screens/main_navigation_screen.dart';
 import '../../features/onboarding/presentation/provider/onboarding_provider.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
+import '../../features/platform/presentation/screens/platform_shell_screen.dart';
 import '../../features/reservation/presentation/screens/reservation_confirmation_screen.dart';
 import '../../features/reservation/presentation/screens/reservation_detail_screen.dart';
 import '../../features/reservation/presentation/screens/reservation_flow_screen.dart';
@@ -206,6 +207,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.admin,
         pageBuilder: (context, state) {
           return _fadeTransitionPage(const AdminShellScreen());
+        },
+      ),
+      // AP-2 final wiring — bypassed by `redirect` above (see
+      // `AppRouteGuard.resolve`'s own platform-prefix bypass);
+      // `PlatformShellScreen` performs its own real, internal
+      // `platformActorSessionProvider` authorization. Deliberately never
+      // linked to from anywhere in the customer or tenant-Admin UI — see
+      // `AppRoutes.platform`'s own doc comment.
+      GoRoute(
+        path: AppRoutes.platform,
+        pageBuilder: (context, state) {
+          return _fadeTransitionPage(const PlatformShellScreen());
         },
       ),
     ],

@@ -17162,3 +17162,216 @@ documents was rewritten or deleted.
 
 **Determination**: `AP2_SECURE_PLATFORM_COMPLETE=YES`. Full gate results, the exact file manifest, and
 the closure commit SHA are in this session's own final closure-correction report, not duplicated here.
+
+## AP-2 FINAL WIRING (2026-08-27) — devices/approvals/entitlements production Admin wiring completed within the same AP-2
+
+The closure-correction entry immediately above closed the readiness-gate and context-switcher gaps, but
+its own final report still explicitly disclosed three remaining production-UI wiring gaps: `devices`
+and `entitlements` were gated closed but never connected to their real backends, and no accessible
+Remote Approval UI existed at all (only a rules-level "no client read path yet" placeholder). AP-2's own
+approved scope was real backend **and** real Admin wiring — this entry closes that gap. **Not a new
+phase** — the same AP-2, completed further. The two prior entries' own text is preserved unedited above.
+
+### 1. Trusted-device Admin UI
+
+**Backend** (`functions/src/trustedDevice.ts`): added `suspendTrustedDevice`/`retireTrustedDevice`,
+mirroring `revokeTrustedDevice`'s exact transaction shape (permission: `manageDevices`; real branch
+access; non-empty reason; revokes every active `deviceSessions` entry for the device in the same
+transaction; writes an audit event). Idempotent (no-op with `changed: false`) once already at/past the
+target state. Neither introduces an "un-suspend"/"un-retire" path this phase, matching
+`revokeTrustedDevice`'s own precedent.
+
+**Flutter**: `lib/features/admin/domain/trusted_device/trusted_device.dart` (new domain model —
+deliberately carries no `publicKeyPem`/`fingerprint` field at all, so "no sensitive key material in the
+UI" is structural, not discipline-based), `lib/features/admin/data/trusted_device_{repository,gateway}
+.dart` (direct Firestore stream read — `trustedDeviceRegistrations`' rule already permitted
+`isOrgMember && hasBranchAccess`, unchanged this pass — plus a callable-backed mutation gateway).
+`DeviceRegistryScreen` gained a real second tab, "Güvenilir Cihazlar" — live device roster, status/
+trust-tier/capability display, suspend/revoke/retire actions each requiring a typed reason. The
+pre-existing "Cihaz Envanteri" tab (Phase 6L/ADR-023's POS/printer/payment-terminal registry — a
+genuinely different bounded context from AP-2's Ed25519 device-identity backend) is untouched,
+still in-memory, now carrying an explicit in-UI "demo data" disclosure banner rather than being silently
+conflated with the newly-real tab next to it. Device *registration* is never initiated from this screen
+(the physical device itself calls `requestDeviceRegistration` during its own onboarding); device
+*activation* is never a direct mutation here either — a pending device links out to the Approval Inbox,
+the only path to `respondToApprovalRequest`.
+
+### 2. Remote Approval UI
+
+**Backend**: `firestore.rules`'s `remoteApprovalRequests` collection gained its first-ever client read
+path — previously `allow read, write: if false` outright (the prior AP-2 wave's own explicitly disclosed
+remaining scope). Two disjoint branches: the requester reading their own request, or a branch-scoped
+staff member whose role is in `RESPONSE_PERMISSION_BY_ACTION[actionType]`'s real set (today:
+`deviceActivation` -> `approveDeviceRegistration` -> manager/admin/tenantOwner) — a closed mirror of the
+backend's own map, not a re-derivation, and never widened to a bare `isOrgMember` check (which the prior
+wave's own rules comment correctly identified as a leak). The record itself carries no secrets (a
+payload hash, a target path, actor uids — never a device key/nonce/signature), so this is a genuinely
+sanitized read, not "the full canonical payload opened to every branch staff member." `respondToApprovalRequest`
+gained an optional, sanitized `reasonMessage` (stored on `approvalEvents`) — kept optional server-side
+so the 8 pre-existing tested call sites needed no change; the Flutter client enforces "mandatory reason"
+at its own boundary.
+
+**Flutter**: `lib/features/admin/domain/approval/approval_request.dart`,
+`lib/features/admin/data/approval_{repository,gateway}.dart` (two separate Firestore-stream queries —
+`watchEligibleApprovals`/`watchMyRequests` — each independently provable safe against the rule's two
+disjoint branches; a single combined query could not be), new `ApprovalInboxScreen` (two tabs: eligible-
+responder inbox with approve/reject + mandatory reason + self-approval UI-level disclosure, and a
+requester "Taleplerim" status feed). Reachable from the Admin shell header's notification-bell icon
+(previously purely decorative, now real and functional — the still-decorative search icon next to it is
+untouched) and from the Trusted Devices tab's pending-device shortcut. Deliberately NOT one of
+`AdminShellScreen`'s 31 registered nav-item destinations — a header-launched screen structurally
+bypasses `ModuleReadinessGate`, which is correct here since this screen genuinely is real and needs no
+gating of its own; the 31/31 registered-destination count is unchanged by this pass.
+
+### 3. Entitlement Admin UI
+
+**Flutter only** (all four backend callables — `grantEntitlement`/`renewEntitlement`/
+`suspendEntitlement`/`revokeEntitlement` — already existed, real, `requirePlatformMember`-gated, built
+in an earlier AP-2 wave; this pass gave them their first real Flutter consumer).
+`EntitlementStatus` extended from 4 to the real backend's full 6-value set (`grace`/`suspended` added;
+`isCurrentlyEntitled` updated to count `grace` as entitled, mirroring `requireModuleEntitlement`'s own
+"grace still works, by design"). `lib/features/entitlements/data/firebase_entitlement_grant_repository.dart`
+— direct Firestore read (`entitlements`' rule already permitted `isOrgMember`; gained an additional
+narrow `isPlatformMember()` read exception this pass, write-blocked either way) — deliberately
+**read-only**: `save()` always throws, a structural guarantee a Tenant Admin screen built on this
+repository cannot be turned into a mutation path by accident. `EntitlementAdminScreen` now branches on
+`firebaseReadyProvider`: real backend -> genuine real-time read-only viewer (no grant/renew/grace/
+suspend/revoke control anywhere on the screen — those buttons were removed entirely, not merely
+disabled, since a Tenant Admin calling those callables would always be denied `requirePlatformMember`
+server-side); no real backend (every `flutter test` run, local dev without the emulator) -> the
+pre-existing in-memory, mutable, branch-scoped dev view is completely unchanged, so no existing test
+needed to change. **Deliberately NOT wired to `checkModuleAccessProvider`/`ModuleEntitlementGate`** —
+that provider backs every OTHER module gate across the whole Admin app; swapping it to the real
+(today, empty for most orgs) `entitlements` collection the moment Firebase is ready would have hidden
+already-visible features app-wide with no real grants seeded yet, a much wider blast radius than "wire
+the Entitlement Admin screen" calls for. A dedicated, separate
+`entitlementGrantReadRepositoryProvider` seam exists specifically so this stays scoped.
+
+The actual mutation surface: new `lib/features/platform/presentation/screens/
+platform_entitlement_console_screen.dart` inside the Platform Owner console — tenant picker (backed by
+a new `FirestorePlatformOrganizationRepository`, reading `organizations` unfiltered; provably safe
+because the new `isPlatformMember()` rule exception doesn't depend on `resource.data` at all, so every
+possible result document satisfies it), per-module trial/direct-activate/renew/suspend/revoke, each
+mutation routed through a new `EntitlementAdminGateway` calling the four real callables directly. No
+true optimistic-concurrency conflict UI exists (the callables don't accept a client-supplied expected
+version) — the current revision number is displayed for visibility, and double-submit is blocked via a
+simple in-flight busy flag; disclosed as a real, deliberate scope boundary rather than a fabricated
+"stale-write protection" the backend contract doesn't actually support yet.
+
+### 4. Platform Owner console
+
+**A real, pre-existing gap closed, not new scope**: `FirebasePlatformAuthRepository.signIn`
+(built in an earlier wave) already called `platformMemberRepository.findByAuthUid(result.uid)` against a
+real Firebase Auth result — but `platformMemberRepositoryProvider` only ever resolved to
+`InMemoryPlatformMemberRepository`/`ProductionUnavailablePlatformMemberRepository`; no Firestore-backed
+implementation existed anywhere in `lib/`, so a real Platform Owner sign-in could never actually
+succeed. New `lib/features/platform/data/firebase_platform_member_repository.dart` closes this: reads
+`platformMembers/{uid}` directly, first calling a new `PlatformClaimsSyncClient.syncAndRefresh()`
+(`syncOwnPlatformClaims` + force-refresh, mirroring `StaffClaimsSyncClient`'s identical role one tier
+down) to resolve the chicken-and-egg the collection's own rule creates (`isPlatformMember()` requires
+the token claim; the claim is set by a callable that runs Admin-SDK-side, bypassing the rule).
+
+**Route**: new `AppRoutes.platform` (`/platform`) — a real `go_router` route, bypassed by
+`AppRouteGuard.resolve` exactly like `/admin` (mirrors that bypass's own reasoning one tier up:
+`PlatformShellScreen` performs its own real, internal authorization check). Deliberately never linked
+from anywhere in the customer or tenant-Admin UI — no button, no nav item — satisfying "yapısal ayrım"
+(structural separation) and "Initial bootstrap UI içinde yer almamalıdır" via omission rather than an
+explicit block (there is nothing to click from the ordinary app that would ever reach it). `PlatformShellScreen`
+gained a 4th tab ("Abonelikler," the entitlement console above) and a header "Kiracı Admin Paneline Geç"
+link — a plain navigation shortcut, not a privilege bridge: it grants nothing, and only reaches real
+tenant data if the signed-in account *also* independently holds real staff membership there, since
+platform and tenant-staff authorization remain two structurally separate claim namespaces server-side
+(ADR-025) with no cross-namespace bypass introduced anywhere in this pass. No dedicated device/approval
+management duplicate was built inside the console itself — no backend capability lets a pure Platform
+Owner call `requireStaffPermission`/`requireBranchAccess`-gated commands directly, so building a second,
+parallel, backend-unsupported UI for that would have been misleading; disclosed as a real scope boundary
+instead.
+
+### Two-axis implementation-readiness model
+
+`ModuleReadinessClassification` (single-axis: `productionReady`/`emulatorBackendReady`/`demoOnly`/
+`notImplemented`/`partiallyImplementedUnsafe`) replaced with two independent axes,
+`ModuleImplementationMaturity` (`notImplemented`/`demoOnly`/`partiallyImplementedUnsafe`/
+`backendWiredEmulatorVerified`/`implementationComplete`) and `ModuleDeploymentAvailability`
+(`disabled`/`development`/`staging`/`production`) — the prior single `productionReady` label conflated
+"is this screen's code actually real" with "has this been deployed to a real production Firebase
+project," and the latter was never true for anything in this app (`CLAUDE.md` §5). `staff`/`reservations`
+reclassified `implementationComplete` (renamed from `productionReady` — the label change itself, not
+just an added axis, since "production" specifically implied deployment); `devices`/`entitlements`
+reached `backendWiredEmulatorVerified` this pass (real, wired, tested — not yet the full operational
+polish `implementationComplete` implies, since `devices`' own second tab is still fake, disclosed
+above). Every destination's `ModuleDeploymentAvailability` is `disabled` or `development` — never
+`production` — so `ModuleReadiness.status` (the gate's binary release decision) resolves
+`demoOnly`/release-gated for **every** destination today, including the two `implementationComplete`
+ones: a real release build hard-blocks everything until AP-8 actually deploys somewhere, matching "AP-8'den
+önce hiçbir modül gerçek production deployment yapılmış gibi gösterilmez" exactly. The dev/profile-build
+`DEMO`-badge decision is driven by maturity alone (deployment is irrelevant to a developer working
+entirely against the Local Emulator Suite). 31/31 destination coverage is unchanged — no destination was
+added or removed, only two reclassified.
+
+### Three real bugs found and fixed via this pass's own new test suite
+
+1. **Eager Firebase resolution in repository constructors**: `FirestoreTrustedDeviceRepository`/
+   `FirestoreApprovalRepository`/`FirestoreEntitlementGrantRepository`/`FirebasePlatformMemberRepository`
+   all initially resolved `FirebaseFirestore.instance` in their constructor's field initializer (copied
+   from `FirestoreAdminReservationRepository`'s own precedent) — this meant merely *constructing* one of
+   these repositories (e.g. a provider-resolution test overriding `firebaseReadyProvider: true` without
+   a real `Firebase.initializeApp()`) threw `[core/no-app]` even when no method was ever called. Fixed by
+   making the Firestore instance a lazily-resolved getter in all four, mirroring
+   `FirebaseStaffMemberRepository`'s own established `_callable` getter pattern exactly — caught by
+   `platform_auth_repository_provider_test.dart`'s pre-existing "resolves to FirebasePlatformAuthRepository
+   when Firebase is ready" test, which started failing the moment `platformMemberRepositoryProvider`
+   began constructing the new real repository.
+2. **Dead confirmation-dialog buttons**: three separate "enter a reason, then confirm" dialogs (device
+   suspend/revoke/retire, approval respond, entitlement suspend/revoke) each disabled their confirm
+   button based on `controller.text.trim().isEmpty` evaluated once at dialog-build time — but the dialog
+   was a plain `AlertDialog`/`TextField` with no `StatefulBuilder`, so it never rebuilt on keystrokes,
+   meaning the confirm button stayed permanently disabled even after real text was typed. Found by the
+   new `device_registry_screen_test.dart`'s suspend-flow test (`gateway.lastAction` stayed `null` after
+   a full type-and-tap sequence). Fixed in all three call sites by removing the live-text-based disabled
+   state entirely and relying on the already-present post-`Navigator.pop` blank-input check instead.
+3. **A wrong test assumption, not a code bug**: an early draft of the same test suite assumed a
+   `pending` device should not offer a "suspend" action; direct evidence showed the real backend
+   callable's status-transition guard permits suspending a `pending` device (only `suspended`/
+   `revoked`/`retired` are excluded) — the test was corrected to match verified backend behavior instead
+   of the code being changed to match an unverified assumption.
+
+### Test matrix added
+
+Backend (`functions/src/test/trustedDeviceAndApproval.test.ts`, extended): `suspendTrustedDevice`
+(manager-only, idempotent, blocks a subsequent challenge, staff denied), `retireTrustedDevice`
+(idempotent, revokes active sessions), `respondToApprovalRequest`'s `reasonMessage` (sanitized,
+persisted, blank stored as `null` never `""`). Firestore Rules (`firestore-tests/rules.test.js`,
+extended/replaced): `remoteApprovalRequests` — requester succeeds, eligible branch-scoped manager
+succeeds, uninvolved same-branch staff denied, admin-with-wrong-branch denied, cross-org outsider
+denied, all writes denied; `organizations`/`entitlements` — platform member succeeds without a support
+grant (the new narrow exception), non-platform outsider still denied, writes still denied;
+`restaurants`/`branches`/`staffMembers` (still gated by the unmodified `canReadOrg` helper) re-verified
+unchanged — a platform member without a support grant is still denied there, proving the new exception
+didn't silently widen the existing `hasActiveSupportGrant` model. Flutter (`module_readiness_gate_test.dart`
+rewritten for the two-axis model; three new files — `device_registry_screen_test.dart` (9 cases: real
+data rendering, pending-device approval shortcut, no key/session leakage, suspend calls the gateway with
+exact params, terminal-state button availability, backend-unavailable error state, empty state,
+cross-branch isolation, context-switch re-query), `approval_inbox_screen_test.dart` (9 cases: eligible
+responder can approve with reason, non-eligible role sees only a permission notice, self-request hides
+action buttons, resolved/expired requests show no re-actionable buttons, no raw payload/path rendered,
+requester tab scoping, no-session state, backend-unavailable state), `platform_entitlement_console_screen_test.dart`
+(7 cases: tenant picker + module list, trial-grant call, granted-module renew/suspend/revoke incl. a
+disabled-not-absent terminal-state check, grace display, empty tenant directory, backend-unavailable
+state) — plus updates to `platform_shell_screen_test.dart` (4-tab assertion) and `app_router_test.dart`
+(new `/platform` route-resolution group, mirroring `/admin`'s exactly). Full repo-wide `flutter test`
+re-run after every change; exact final count is in this session's own final report, not duplicated here.
+
+### Documentation
+
+`docs/feature_status.md`, `docs/admin_pos_architecture.md`, and `docs/saas_offline_observability_architecture.md`
+each gained an append-only AP-2-final-wiring status paragraph (all pre-existing content, including this
+document's own two prior AP-2 entries, left unedited). `docs/business_rules.md` gained `BR-ADMIN-008`
+(trusted-device lifecycle), `BR-ADMIN-009` (entitlement mutation is Platform-Owner-only), `BR-ADMIN-010`
+(Platform Owner console structural separation), plus a `v3.25` Change History entry — checked for
+ID/version collision before writing (none found; highest prior was `BR-ADMIN-007`/`v3.24`).
+`functions/README.md` gained a matching section naming the new callables and the Platform Owner
+sign-in gap this pass closed.
+
+**Determination**: `AP2_SECURE_PLATFORM_COMPLETE=YES`. Full gate results, the exact file manifest, and
+the closure commit SHA are in this session's own final report, not duplicated here.

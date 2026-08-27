@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
+import '../../../../shared/widgets/feedback/empty_view.dart';
+import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../application/use_cases/grant_module_entitlement.dart';
 import '../../application/use_cases/set_entitlement_status.dart';
@@ -40,11 +44,22 @@ const _moduleLabels = {
   EntitlementModule.ai: 'Yapay Zeka',
 };
 
-/// Manages which Phase 7 modules a scope (here: the current branch) has
-/// purchased — admin-only (`PosAuthorizedAction.manageEntitlements`).
-/// "No payment/subscription billing in this phase" — every action here
-/// records a subscription *decision*, never processes a payment.
-class EntitlementAdminScreen extends ConsumerStatefulWidget {
+/// AP-2 final wiring — the real entitlement backend
+/// (`entitlementAdmin.ts`) is `requirePlatformMember`-gated for every
+/// mutation; a Tenant Admin can only ever legitimately READ their own
+/// organization's entitlement state (`firestore.rules`'s `entitlements`
+/// rule: `isOrgMember(...) || isPlatformMember()` — no client write path
+/// exists for anyone). This screen therefore branches on
+/// [firebaseReadyProvider]: once a real backend is available, it becomes
+/// a genuine, read-only, real-time-refreshable viewer — no
+/// grant/renew/grace/suspend/revoke control exists here at all (those
+/// move to the Platform Owner console, `platform_entitlement_console_screen
+/// .dart`, matching the real backend's own authorization exactly). When
+/// Firebase isn't ready (every `flutter test` run, and local dev without
+/// the emulator), the pre-existing in-memory, mutable, branch-scoped dev
+/// view below is entirely unchanged — "no payment/subscription billing in
+/// this phase" still holds for that fallback path.
+class EntitlementAdminScreen extends ConsumerWidget {
   const EntitlementAdminScreen({
     super.key,
     required this.branchId,
@@ -57,12 +72,145 @@ class EntitlementAdminScreen extends ConsumerStatefulWidget {
   final String performedByStaffId;
 
   @override
-  ConsumerState<EntitlementAdminScreen> createState() =>
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isFirebaseReady = ref.watch(firebaseReadyProvider);
+    if (isFirebaseReady) {
+      return const _RealReadOnlyEntitlementView();
+    }
+    return _DevMutableEntitlementScreen(
+      branchId: branchId,
+      authorizationPolicy: authorizationPolicy,
+      performedByStaffId: performedByStaffId,
+    );
+  }
+}
+
+const _statusLabels = {
+  EntitlementStatus.trial: 'Deneme',
+  EntitlementStatus.active: 'Aktif',
+  EntitlementStatus.grace: 'Ödeme Bekleniyor (Ek Süre)',
+  EntitlementStatus.suspended: 'Askıya Alındı',
+  EntitlementStatus.expired: 'Süresi Doldu',
+  EntitlementStatus.revoked: 'İptal Edildi',
+};
+
+final _organizationEntitlementsProvider =
+    FutureProvider.family<List<EntitlementGrant>, String>(
+        (ref, organizationId) {
+  return ref
+      .watch(entitlementGrantReadRepositoryProvider)
+      .findByScope(EntitlementScopeType.organization, organizationId);
+});
+
+class _RealReadOnlyEntitlementView extends ConsumerWidget {
+  const _RealReadOnlyEntitlementView();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final organizationId = ref.watch(currentOrganizationIdProvider);
+    final grantsAsync =
+        ref.watch(_organizationEntitlementsProvider(organizationId));
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        title: const Text('Modül Abonelikleri'),
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 0,
+      ),
+      body: SafeArea(
+        child: grantsAsync.when(
+          loading: () =>
+              const LoadingView(message: 'Abonelikler yükleniyor...'),
+          error: (error, stackTrace) => ErrorView(
+            message: 'Abonelik backend\'ine ulaşılamadı.',
+            retryLabel: 'Tekrar Dene',
+            onRetry: () => ref
+                .invalidate(_organizationEntitlementsProvider(organizationId)),
+          ),
+          data: (grants) {
+            if (grants.isEmpty) {
+              return const EmptyView(
+                icon: Icons.workspace_premium_outlined,
+                message: 'Bu işletme için henüz tanımlı bir modül aboneliği '
+                    'yok.',
+              );
+            }
+            return ListView(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              children: [
+                for (final grant in grants)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                    child: AppCard(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(_moduleLabels[grant.module]!,
+                                    style: AppTypography.bodyLarge),
+                              ),
+                              Text(_statusLabels[grant.status]!,
+                                  style: AppTypography.bodySmall.copyWith(
+                                      color: grant.status ==
+                                                  EntitlementStatus.active ||
+                                              grant.status ==
+                                                  EntitlementStatus.trial
+                                          ? AppColors.success
+                                          : grant.status ==
+                                                  EntitlementStatus.grace
+                                              ? AppColors.warning
+                                              : AppColors.error)),
+                            ],
+                          ),
+                          if (grant.status == EntitlementStatus.grace &&
+                              grant.graceEndsAt != null)
+                            Text(
+                              'Ek süre bitiş: ${grant.graceEndsAt}',
+                              style: AppTypography.bodySmall
+                                  .copyWith(color: AppColors.textSecondary),
+                            ),
+                          if (grant.expiresAt != null)
+                            Text(
+                              'Sözleşme bitiş: ${grant.expiresAt}',
+                              style: AppTypography.bodySmall
+                                  .copyWith(color: AppColors.textSecondary),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _DevMutableEntitlementScreen extends ConsumerStatefulWidget {
+  const _DevMutableEntitlementScreen({
+    required this.branchId,
+    this.authorizationPolicy,
+    this.performedByStaffId = '',
+  });
+
+  final String branchId;
+  final PosAuthorizationPolicy? authorizationPolicy;
+  final String performedByStaffId;
+
+  @override
+  ConsumerState<_DevMutableEntitlementScreen> createState() =>
       _EntitlementAdminScreenState();
 }
 
 class _EntitlementAdminScreenState
-    extends ConsumerState<EntitlementAdminScreen> {
+    extends ConsumerState<_DevMutableEntitlementScreen> {
   List<EntitlementGrant>? _grants;
   String? _error;
 

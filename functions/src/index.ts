@@ -41,6 +41,8 @@ export {
   requestDeviceChallenge,
   issueDeviceSession,
   revokeTrustedDevice,
+  suspendTrustedDevice,
+  retireTrustedDevice,
 } from "./trustedDevice";
 export { respondToApprovalRequest, sweepExpiredApprovalRequests } from "./remoteApproval";
 export {

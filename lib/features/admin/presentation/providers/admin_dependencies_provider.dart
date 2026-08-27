@@ -32,8 +32,12 @@ import '../../data/organization_repository.dart';
 import '../../data/restaurant_repository.dart';
 import '../../data/staff_auth_repository.dart';
 import '../../data/staff_member_repository.dart';
+import '../../data/approval_gateway.dart';
+import '../../data/approval_repository.dart';
 import '../../data/staff_role_change_event_repository.dart';
 import '../../data/translation_entry_repository.dart';
+import '../../data/trusted_device_gateway.dart';
+import '../../data/trusted_device_repository.dart';
 import '../../domain/organization/branch.dart';
 import '../../domain/organization/organization.dart';
 import '../../domain/organization/restaurant.dart';
@@ -67,6 +71,48 @@ final staffMemberRepositoryProvider = Provider<StaffMemberRepository>((ref) {
 final staffRoleChangeEventRepositoryProvider =
     Provider<StaffRoleChangeEventRepository>((ref) {
   return InMemoryStaffRoleChangeEventRepository();
+});
+
+/// AP-2 final wiring — the real trusted-device backend
+/// (`trustedDeviceRegistrations`, direct Firestore read; suspend/revoke/
+/// retire via callables). Mirrors [staffMemberRepositoryProvider]'s exact
+/// gate shape: no in-memory fallback when Firebase isn't ready — an
+/// explicit "unavailable" implementation instead, so a missing backend
+/// connection surfaces as an honest error state, never a silently-empty
+/// device roster or a mutation that quietly no-ops.
+final trustedDeviceRepositoryProvider =
+    Provider<TrustedDeviceRepository>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) {
+    return FirestoreTrustedDeviceRepository();
+  }
+  return const UnavailableTrustedDeviceRepository();
+});
+
+final trustedDeviceGatewayProvider = Provider<TrustedDeviceGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) {
+    return const FirebaseTrustedDeviceGateway();
+  }
+  return const UnavailableTrustedDeviceGateway();
+});
+
+/// AP-2 final wiring — the real remote-approval engine consumer. Same
+/// gate shape as [trustedDeviceRepositoryProvider]/[trustedDeviceGatewayProvider].
+final approvalRepositoryProvider = Provider<ApprovalRepository>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) {
+    return FirestoreApprovalRepository();
+  }
+  return const UnavailableApprovalRepository();
+});
+
+final approvalGatewayProvider = Provider<ApprovalGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) {
+    return const FirebaseApprovalGateway();
+  }
+  return const UnavailableApprovalGateway();
 });
 
 final adminAuditEntryRepositoryProvider =

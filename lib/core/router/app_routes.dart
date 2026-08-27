@@ -40,6 +40,20 @@ abstract final class AppRoutes {
   /// `ModuleEntitlementGate` already established elsewhere.
   static const String admin = '/admin';
 
+  /// AP-2 final wiring — the Platform Owner console entry point.
+  /// Deliberately NOT linked from anywhere in the ordinary customer or
+  /// tenant-Admin UI — no button, no nav item, nothing in
+  /// [AdminShellScreen] or the onboarding/login flow references this
+  /// constant. A real deep link/typed URL is the only way in, matching
+  /// this console's own "structural separation from ordinary tenant
+  /// Admin" requirement: Platform Owner authorization is a wholly
+  /// separate identity system (ADR-025) that must never be discoverable
+  /// from, or confusable with, the tenant-facing surface. Bypassed by
+  /// [AppRouteGuard.resolve] exactly like [admin] — [PlatformShellScreen]
+  /// performs its own real, internal `platformActorSessionProvider` check
+  /// and redirects to [PlatformSignInScreen] itself.
+  static const String platform = '/platform';
+
   /// Faz R.2 — the customer reservation flow's entry route. Requires real
   /// phone-auth ([AppRouteGuard.resolve]'s own `isRealCustomer`-gated
   /// branch, stricter than the generic "signed in" concept the rest of

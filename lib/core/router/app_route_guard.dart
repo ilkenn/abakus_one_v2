@@ -79,6 +79,11 @@ abstract final class AppRouteGuard {
     // must reach the real staff sign-in flow, not `/login`).
     if (location.startsWith(AppRoutes.admin)) return null;
 
+    // AP-2 final wiring — same reasoning as [AppRoutes.admin] immediately
+    // above, one tier up: Platform Owner authorization is a wholly
+    // separate identity system this guard must never intercept.
+    if (location.startsWith(AppRoutes.platform)) return null;
+
     // Faz R.2 — reservation routes need REAL phone-auth specifically,
     // stricter than the generic "signedIn" (authenticated OR guest)
     // concept the rest of this guard uses for reaching [AppRoutes.main].

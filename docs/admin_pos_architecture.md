@@ -20,6 +20,19 @@ accessible, requiring explicit choice otherwise, and re-deriving fresh (never tr
 selection) on every gate evaluation. Full destination-by-destination evidence table, trust-tier detail,
 and gate results are in this session's own AP-2 closure report, not duplicated here.
 
+**AP-2 final wiring (2026-08-27, append-only)**: the readiness-gate paragraph above still left three
+named UI gaps disclosed but unwired — `devices`/`entitlements` gated closed but not backend-connected,
+and no accessible Remote Approval UI. This pass closes all three (`docs/decisions.md`'s AP-2 FINAL
+WIRING entry has the full evidence table): §12's trusted-device lifecycle gained real `suspend`/`retire`
+callables alongside the pre-existing `revoke`/registration/activation-via-approval, now consumed by a
+real second tab on the Admin Devices screen; §16's remote approval engine gained a real, narrowly-scoped
+client read path (`firestore.rules`, mirroring `RESPONSE_PERMISSION_BY_ACTION` role-for-role, never
+widened to a bare org/branch check) and an `ApprovalInboxScreen`, reachable from the Admin shell header;
+the entitlement backend (§ not separately numbered in this document — see `docs/decisions.md`'s original
+Phase 7/8 ADRs) gained its first real Flutter consumers, a read-only Tenant Admin viewer and a real
+Platform-Owner-only mutation console at a new `AppRoutes.platform` route, structurally separated from
+tenant Admin and never bootstrap-linked.
+
 ## 1. Purpose
 
 Defines the foundational architecture every Admin/POS document and future implementation phase builds

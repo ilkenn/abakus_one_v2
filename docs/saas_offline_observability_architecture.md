@@ -47,6 +47,22 @@ document's entitlement layer gates `TENANT_PRIVATE` connector activation), `docs
   placeholder entitlement enum value exist (AP-0).
 - No production Firebase deployment has occurred for any environment (AP-0).
 
+**AP-2 update (2026-08-27, append-only — corrects the two entitlement bullets above, which were an
+accurate AP-0 snapshot at the time but are now stale)**: `functions/src/entitlementAdmin.ts` now exists
+— `grantEntitlement`/`renewEntitlement`/`suspendEntitlement`/`revokeEntitlement`, all
+`requirePlatformMember`-gated, matching this section's own §9/§10 target design closely (a real writer
+now stands behind the `entitlements` rule this document itself once called "a dead end"). `EntitlementStatus`
+now carries the full `trial/active/grace/suspended/expired/revoked` set this section's own §7 target
+design specified — `grace` is a real, fixed 72-hour window (`suspendEntitlement`'s
+`GRACE_PERIOD_DAYS = 3`), automatically swept to `suspended` by `sweepExpiredEntitlementGracePeriods`.
+`whiteLabel`/`ConfigureWhiteLabel` remain genuinely `NOT_FOUND`, unchanged by this pass — not silently
+implied to exist by the entitlement-backend update above. `EntitlementAdminScreen` is now real-time-
+read-only once Firebase is ready (no mutation control); the actual mutation console is new,
+`lib/features/platform/presentation/screens/platform_entitlement_console_screen.dart`, matching §11's
+"Platform-Owner-authority-gated, tenant Admin can never self-grant" rule exactly, server-side and
+client-side both. Offline queue, observability, incident/backup/DR, and Web Ordering/Community/AI
+Manager sections remain exactly as evidenced above — untouched by this pass.
+
 ## 5. Target Architecture
 
 Per Doc A §5.

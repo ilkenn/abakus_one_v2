@@ -38,6 +38,7 @@ import '../providers/admin_dependencies_provider.dart';
 import 'admin_overview_screen.dart';
 import 'admin_session_expired_screen.dart';
 import 'admin_unauthorized_screen.dart';
+import 'approval_inbox_screen.dart';
 import 'audit_center_screen.dart';
 import 'branch_admin_screen.dart';
 import 'customer_management_screen.dart';
@@ -744,10 +745,20 @@ class _TopBar extends ConsumerWidget implements PreferredSizeWidget {
           ),
         ),
         const SizedBox(width: AppSpacing.sm),
-        if (!isNarrow) ...[
-          const Icon(Icons.notifications_none_outlined,
+        // AP-2 final wiring — the Approval Inbox is real and backend-wired
+        // this pass; unlike the still-decorative search icon (hidden on
+        // narrow screens, no `onTap`), this stays visible and tappable at
+        // every width — it is a genuine, functional destination, not a
+        // placeholder.
+        IconButton(
+          icon: const Icon(Icons.notifications_none_outlined,
               color: AppColors.textSecondary),
-          const SizedBox(width: AppSpacing.md),
+          tooltip: 'Onay Kutusu',
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const ApprovalInboxScreen()),
+          ),
+        ),
+        if (!isNarrow) ...[
           const Icon(Icons.search_outlined, color: AppColors.textSecondary),
           const SizedBox(width: AppSpacing.md),
         ],

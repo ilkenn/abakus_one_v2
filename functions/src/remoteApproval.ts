@@ -94,6 +94,21 @@ function requireNonEmptyString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0) invalid(`${field} is required.`);
   return value as string;
 }
+/**
+ * AP-2 final wiring — optional, sanitized responder rationale. Kept
+ * OPTIONAL at this backend layer (unlike `revokeTrustedDevice`'s required
+ * `reason`) so the existing, already-tested `respondToApprovalRequest`
+ * call sites that predate this field keep working unchanged; the Flutter
+ * Approval Inbox UI enforces "mandatory reason" at the client boundary
+ * instead. `null` (not stored) rather than an empty string when absent or
+ * invalid — mirrors [sanitizeClientRequestId]'s own null-on-invalid shape.
+ */
+function sanitizeReasonMessage(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 500) return null;
+  return trimmed;
+}
 
 /**
  * Creates (or idempotently returns) a pending approval request. Deterministic
@@ -188,6 +203,7 @@ export const respondToApprovalRequest = onCall(
 
     const correlationId = generateCorrelationId();
     const clientRequestId = sanitizeClientRequestId(data.clientRequestId);
+    const reasonMessage = sanitizeReasonMessage(data.reasonMessage);
 
     const result = await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
@@ -227,6 +243,7 @@ export const respondToApprovalRequest = onCall(
         actionType: current.actionType,
         eventType: decision === "approved" ? "approval.approved" : "approval.rejected",
         respondedByActorUid: request.auth!.uid,
+        reasonMessage,
         correlationId,
         clientRequestId,
         timestamp: now.toDate().toISOString(),
@@ -244,6 +261,7 @@ export const respondToApprovalRequest = onCall(
         newValue,
         actorType: "staff",
         actorUid: request.auth!.uid,
+        reasonMessage: reasonMessage ?? undefined,
         correlationId,
         clientRequestId,
         now,

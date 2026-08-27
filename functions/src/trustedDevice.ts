@@ -494,3 +494,141 @@ export const revokeTrustedDevice = onCall(
     return { deviceId, revoked: true, alreadyRevoked: false, correlationId };
   },
 );
+
+/**
+ * AP-2 final wiring — Manager+ (`manageDevices`) — temporary status. Unlike
+ * `revokeTrustedDevice`, this is not terminal: the device record simply
+ * carries `status: "suspended"` (a value the type already declared but no
+ * code path wrote until now). There is deliberately no `reactivate`
+ * callable this phase — a suspended device that needs to resume must be
+ * re-registered by a manager decision, mirroring how `revokeTrustedDevice`
+ * has never had an "un-revoke" either. Idempotent (no-op if already
+ * suspended/revoked/retired).
+ */
+export const suspendTrustedDevice = onCall(
+  { enforceAppCheck: shouldEnforceAppCheck() },
+  async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
+    const data = (request.data ?? {}) as Record<string, unknown>;
+    const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
+    const branchId = requireNonEmptyString(data.branchId, "branchId");
+    const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
+    const reason = requireNonEmptyString(data.reason, "reason");
+
+    requireStaffPermission(request, organizationId, "manageDevices");
+    requireBranchAccess(request, organizationId, branchId);
+
+    const db = getFirestore();
+    const { ref, data: device } = await loadDeviceRegistration(db, organizationId, branchId, deviceId);
+    if (device.status === "suspended" || device.status === "revoked" || device.status === "retired") {
+      return { deviceId, status: device.status, changed: false };
+    }
+
+    const correlationId = generateCorrelationId();
+    const now = Timestamp.now();
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const current = snap.data() as DeviceRegistrationDoc;
+      tx.update(ref, {
+        status: "suspended" as DeviceStatus,
+        version: current.version + 1,
+      });
+
+      const sessionsSnap = await db
+        .collection("deviceSessions")
+        .where("deviceId", "==", deviceId)
+        .where("status", "==", "active")
+        .get();
+      for (const sessionDoc of sessionsSnap.docs) {
+        tx.update(sessionDoc.ref, { status: "revoked" });
+      }
+
+      writeAuditEvent({
+        tx,
+        db,
+        eventId: `${deviceId}-suspended-v${current.version + 1}`,
+        organizationId,
+        branchId,
+        type: "device.suspended",
+        targetRef: ref.path,
+        previousValue: current.status,
+        newValue: "suspended",
+        actorType: "staff",
+        actorUid: request.auth!.uid,
+        reasonMessage: reason,
+        correlationId,
+        now,
+      });
+    });
+
+    return { deviceId, status: "suspended", changed: true, correlationId };
+  },
+);
+
+/**
+ * AP-2 final wiring — Manager+ (`manageDevices`) — permanent end-of-life,
+ * reachable from any non-retired status (including `pending`, unlike
+ * suspend/revoke which both assume a device that at least completed
+ * registration meaningfully). Idempotent (no-op if already retired).
+ */
+export const retireTrustedDevice = onCall(
+  { enforceAppCheck: shouldEnforceAppCheck() },
+  async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
+    const data = (request.data ?? {}) as Record<string, unknown>;
+    const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
+    const branchId = requireNonEmptyString(data.branchId, "branchId");
+    const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
+    const reason = requireNonEmptyString(data.reason, "reason");
+
+    requireStaffPermission(request, organizationId, "manageDevices");
+    requireBranchAccess(request, organizationId, branchId);
+
+    const db = getFirestore();
+    const { ref, data: device } = await loadDeviceRegistration(db, organizationId, branchId, deviceId);
+    if (device.status === "retired") {
+      return { deviceId, status: "retired", changed: false };
+    }
+
+    const correlationId = generateCorrelationId();
+    const now = Timestamp.now();
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const current = snap.data() as DeviceRegistrationDoc;
+      tx.update(ref, {
+        status: "retired" as DeviceStatus,
+        version: current.version + 1,
+      });
+
+      const sessionsSnap = await db
+        .collection("deviceSessions")
+        .where("deviceId", "==", deviceId)
+        .where("status", "==", "active")
+        .get();
+      for (const sessionDoc of sessionsSnap.docs) {
+        tx.update(sessionDoc.ref, { status: "revoked" });
+      }
+
+      writeAuditEvent({
+        tx,
+        db,
+        eventId: `${deviceId}-retired-v${current.version + 1}`,
+        organizationId,
+        branchId,
+        type: "device.retired",
+        targetRef: ref.path,
+        previousValue: current.status,
+        newValue: "retired",
+        actorType: "staff",
+        actorUid: request.auth!.uid,
+        reasonMessage: reason,
+        correlationId,
+        now,
+      });
+    });
+
+    return { deviceId, status: "retired", changed: true, correlationId };
+  },
+);

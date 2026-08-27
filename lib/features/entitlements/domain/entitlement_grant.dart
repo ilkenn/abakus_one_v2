@@ -19,6 +19,8 @@ class EntitlementGrant {
     this.status = EntitlementStatus.trial,
     this.startsAt,
     this.expiresAt,
+    this.graceEndsAt,
+    this.postGraceDisabledModules = const [],
     required this.grantedByStaffId,
     required this.grantedAt,
     required this.revision,
@@ -39,19 +41,35 @@ class EntitlementGrant {
   /// [isCurrentlyEntitled].
   final DateTime? expiresAt;
 
+  /// AP-2 final wiring — mirrors `entitlementAdmin.ts`'s `graceEndsAt`:
+  /// non-null only while [status] is [EntitlementStatus.grace], the exact
+  /// moment `sweepExpiredEntitlementGracePeriods` will transition this
+  /// grant to [EntitlementStatus.suspended].
+  final DateTime? graceEndsAt;
+
+  /// AP-2 final wiring — mirrors `entitlementAdmin.ts`'s
+  /// `postGraceDisabledModules`. Data-only today on both the real backend
+  /// and here — nothing enforces it yet (see that file's own doc comment);
+  /// carried through purely for accurate display.
+  final List<EntitlementModule> postGraceDisabledModules;
+
   final String grantedByStaffId;
   final DateTime grantedAt;
   final int revision;
 
   /// Whether this grant makes the tenant entitled *at* [at] — `status`
-  /// must be [EntitlementStatus.active]/[EntitlementStatus.trial], and
+  /// must be [EntitlementStatus.active]/[EntitlementStatus.trial]/
+  /// [EntitlementStatus.grace] (mirrors `requireModuleEntitlement`'s own
+  /// entitled-status set exactly — grace still works, by design), and
   /// [at] must fall within `[startsAt, expiresAt]` where either bound is
-  /// set (an unset bound never constrains that side). Deny-by-default:
-  /// an [EntitlementStatus.expired]/[EntitlementStatus.revoked] grant is
-  /// never entitled regardless of date range.
+  /// set (an unset bound never constrains that side). Deny-by-default: an
+  /// [EntitlementStatus.suspended]/[EntitlementStatus.expired]/
+  /// [EntitlementStatus.revoked] grant is never entitled regardless of
+  /// date range.
   bool isCurrentlyEntitled(DateTime at) {
-    final statusOk =
-        status == EntitlementStatus.active || status == EntitlementStatus.trial;
+    final statusOk = status == EntitlementStatus.active ||
+        status == EntitlementStatus.trial ||
+        status == EntitlementStatus.grace;
     if (!statusOk) return false;
     if (startsAt != null && at.isBefore(startsAt!)) return false;
     if (expiresAt != null && at.isAfter(expiresAt!)) return false;

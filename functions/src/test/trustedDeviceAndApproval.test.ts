@@ -24,6 +24,8 @@ const REQUEST_DEVICE_REGISTRATION_URL = fn("requestDeviceRegistration");
 const REQUEST_CHALLENGE_URL = fn("requestDeviceChallenge");
 const ISSUE_SESSION_URL = fn("issueDeviceSession");
 const REVOKE_DEVICE_URL = fn("revokeTrustedDevice");
+const SUSPEND_DEVICE_URL = fn("suspendTrustedDevice");
+const RETIRE_DEVICE_URL = fn("retireTrustedDevice");
 const RESPOND_APPROVAL_URL = fn("respondToApprovalRequest");
 const SWEEP_APPROVAL_URL = fn("sweepExpiredApprovalRequests");
 
@@ -353,6 +355,96 @@ test("wrong-branch device: a device registered for one branch cannot be operated
     staffOnBranchB.idToken,
   );
   assert.strictEqual(challenge.httpStatus, 404, JSON.stringify(challenge.body)); // no such registration under that branch
+});
+
+test("suspendTrustedDevice: manager suspends an active device, idempotent on a second call, blocks a subsequent challenge, and requires manageDevices (staff cannot)", async () => {
+  const { organizationId, branchId } = await seedTenant();
+  const admin1 = await bootstrapRealAdmin(organizationId);
+  const staff = await newStaffMember(organizationId, branchId, admin1.idToken, "staff");
+  const manager = await newStaffMember(organizationId, branchId, admin1.idToken, "manager");
+  const { deviceId } = await registerAndActivateDevice(organizationId, branchId, staff, admin1);
+
+  const staffAttempt = await callCallable(
+    SUSPEND_DEVICE_URL,
+    { organizationId, branchId, deviceId, reason: "staff attempting a manager-only action" },
+    staff.idToken,
+  );
+  assert.strictEqual(staffAttempt.httpStatus, 403, JSON.stringify(staffAttempt.body));
+
+  const suspend = await callCallable(SUSPEND_DEVICE_URL, { organizationId, branchId, deviceId, reason: "routine check" }, manager.idToken);
+  assert.strictEqual(suspend.httpStatus, 200, JSON.stringify(suspend.body));
+  assert.strictEqual(suspend.body.result?.status, "suspended");
+  assert.strictEqual(suspend.body.result?.changed, true);
+
+  const suspendAgain = await callCallable(SUSPEND_DEVICE_URL, { organizationId, branchId, deviceId, reason: "again" }, manager.idToken);
+  assert.strictEqual(suspendAgain.httpStatus, 200, JSON.stringify(suspendAgain.body));
+  assert.strictEqual(suspendAgain.body.result?.changed, false);
+
+  const challenge = await callCallable(REQUEST_CHALLENGE_URL, { organizationId, branchId, deviceId, purpose: "issue" }, staff.idToken);
+  assert.strictEqual(challenge.httpStatus, 400, JSON.stringify(challenge.body)); // device not active
+});
+
+test("retireTrustedDevice: manager retires a device from any non-retired status, idempotent on a second call, revokes its active sessions", async () => {
+  const { organizationId, branchId } = await seedTenant();
+  const admin1 = await bootstrapRealAdmin(organizationId);
+  const staff = await newStaffMember(organizationId, branchId, admin1.idToken, "staff");
+  const manager = await newStaffMember(organizationId, branchId, admin1.idToken, "manager");
+  const { deviceId, device } = await registerAndActivateDevice(organizationId, branchId, staff, admin1);
+
+  const challenge = await callCallable(REQUEST_CHALLENGE_URL, { organizationId, branchId, deviceId, purpose: "issue" }, staff.idToken);
+  const session = await callCallable(
+    ISSUE_SESSION_URL,
+    { organizationId, branchId, deviceId, challengeId: challenge.body.result?.challengeId, signature: device.sign(challenge.body.result?.nonce as string) },
+    staff.idToken,
+  );
+  const sessionId = session.body.result?.sessionId as string;
+
+  const retire = await callCallable(RETIRE_DEVICE_URL, { organizationId, branchId, deviceId, reason: "hardware end of life" }, manager.idToken);
+  assert.strictEqual(retire.httpStatus, 200, JSON.stringify(retire.body));
+  assert.strictEqual(retire.body.result?.status, "retired");
+  assert.strictEqual(retire.body.result?.changed, true);
+
+  const sessionDoc = await admin.firestore().collection("deviceSessions").doc(sessionId).get();
+  assert.strictEqual(sessionDoc.data()?.status, "revoked");
+
+  const retireAgain = await callCallable(RETIRE_DEVICE_URL, { organizationId, branchId, deviceId, reason: "already retired" }, manager.idToken);
+  assert.strictEqual(retireAgain.httpStatus, 200, JSON.stringify(retireAgain.body));
+  assert.strictEqual(retireAgain.body.result?.changed, false);
+});
+
+test("respondToApprovalRequest: an optional reasonMessage is sanitized and persisted on the approvalEvents entry; absent/blank never stored as an empty string", async () => {
+  const { organizationId, branchId } = await seedTenant();
+  const admin1 = await bootstrapRealAdmin(organizationId);
+  const staff = await newStaffMember(organizationId, branchId, admin1.idToken, "staff");
+  const manager = await newStaffMember(organizationId, branchId, admin1.idToken, "manager");
+
+  const device = generateDeviceKeyPair();
+  const reg = await callCallable(
+    REQUEST_DEVICE_REGISTRATION_URL,
+    { organizationId, branchId, platform: "android", publicKeyPem: device.publicKeyPem, signatureAlgorithm: "ed25519", capabilities: ["POS"] },
+    staff.idToken,
+  );
+  const requestId = reg.body.result?.approvalRequestId as string;
+
+  const approve = await callCallable(RESPOND_APPROVAL_URL, { requestId, decision: "approved", reasonMessage: "  verified with branch manager on call  " }, manager.idToken);
+  assert.strictEqual(approve.httpStatus, 200, JSON.stringify(approve.body));
+
+  const events = await admin.firestore().collection("approvalEvents").where("requestId", "==", requestId).get();
+  assert.strictEqual(events.size, 1);
+  assert.strictEqual(events.docs[0].data().reasonMessage, "verified with branch manager on call");
+
+  // A second, independent request with a blank reasonMessage stores null, never "".
+  const device2 = generateDeviceKeyPair();
+  const reg2 = await callCallable(
+    REQUEST_DEVICE_REGISTRATION_URL,
+    { organizationId, branchId, platform: "android", publicKeyPem: device2.publicKeyPem, signatureAlgorithm: "ed25519", capabilities: ["POS"] },
+    staff.idToken,
+  );
+  const requestId2 = reg2.body.result?.approvalRequestId as string;
+  const approve2 = await callCallable(RESPOND_APPROVAL_URL, { requestId: requestId2, decision: "approved", reasonMessage: "   " }, manager.idToken);
+  assert.strictEqual(approve2.httpStatus, 200, JSON.stringify(approve2.body));
+  const events2 = await admin.firestore().collection("approvalEvents").where("requestId", "==", requestId2).get();
+  assert.strictEqual(events2.docs[0].data().reasonMessage, null);
 });
 
 test("sweepExpiredApprovalRequests: a pending request past its expiry is escalated, then expired on a later sweep", async () => {

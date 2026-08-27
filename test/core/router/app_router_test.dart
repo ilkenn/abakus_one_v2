@@ -15,6 +15,8 @@ import 'package:abakus_one_v2/features/customer_registration/presentation/provid
 import 'package:abakus_one_v2/features/navigation/presentation/screens/main_navigation_screen.dart';
 import 'package:abakus_one_v2/features/onboarding/presentation/provider/onboarding_provider.dart';
 import 'package:abakus_one_v2/features/onboarding/presentation/screens/onboarding_screen.dart';
+import 'package:abakus_one_v2/features/platform/presentation/screens/platform_shell_screen.dart';
+import 'package:abakus_one_v2/features/platform/presentation/screens/platform_sign_in_screen.dart';
 
 class _FakeSessionStorage implements SessionStorage {
   AuthSession? stored;
@@ -294,6 +296,39 @@ void main() {
         );
 
         expect(find.byType(AdminShellScreen), findsOneWidget);
+        expect(find.byType(MainNavigationScreen), findsNothing);
+      },
+    );
+  });
+
+  group('appRouterProvider — AP-2 final wiring: /platform route', () {
+    testWidgets(
+      '/platform resolves to PlatformShellScreen (which falls back to its '
+      'own PlatformSignInScreen with no platform session) even for a '
+      'signed-out customer — never redirected to /login, mirroring '
+      '/admin\'s exact bypass one tier up',
+      (tester) async {
+        await _pumpAt(tester, AppRoutes.platform);
+
+        expect(find.byType(PlatformShellScreen), findsOneWidget);
+        expect(find.byType(PlatformSignInScreen), findsOneWidget);
+        expect(find.byType(LoginScreen), findsNothing);
+        expect(find.byType(OnboardingScreen), findsNothing);
+      },
+    );
+
+    testWidgets(
+      '/platform resolves to PlatformShellScreen for an already-signed-in '
+      'customer too — never hijacked by the blanket "signed in -> main" '
+      'branch, mirroring /admin\'s exact bypass one tier up',
+      (tester) async {
+        await _pumpAt(
+          tester,
+          AppRoutes.platform,
+          overrides: [authProvider.overrideWith(_GuestAuthNotifier.new)],
+        );
+
+        expect(find.byType(PlatformShellScreen), findsOneWidget);
         expect(find.byType(MainNavigationScreen), findsNothing);
       },
     );

@@ -4508,6 +4508,71 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Owner Agent**: security_engineer
 - **Related Modules**: Staff/Admin, Platform
 
+### BR-ADMIN-008 — Trusted-device lifecycle actions are staff-authorized, reasoned, and never bypass the remote approval engine for activation
+- **Status**: IMPLEMENTED — AP-2 final wiring (2026-08-27),
+  `functions/src/trustedDevice.ts` (`suspendTrustedDevice`/`retireTrustedDevice`, new this pass;
+  `revokeTrustedDevice`/`requestDeviceRegistration`/`respondToApprovalRequest` already real),
+  `lib/features/admin/{data/trusted_device_{gateway,repository}.dart,
+  presentation/screens/device_registry_screen.dart}`.
+- **Rule**: A device's lifecycle has exactly two real backend-driven transitions client Admin UI can
+  ever trigger: (1) `pending -> active`, ONLY through `respondToApprovalRequest` (never a direct client
+  mutation — see BR-ADMIN-006's own "no bypass" list, extended here to cover device activation
+  specifically); (2) `* -> suspended`/`* -> revoked`/`* -> retired`, each requiring `manageDevices`
+  permission (manager/admin/tenantOwner tier), real branch access, and a non-empty reason, all
+  independently re-verified server-side regardless of what the client UI enforces. `suspendTrustedDevice`
+  is reversible in spirit (no backend "un-suspend" callable exists yet, matching `revokeTrustedDevice`'s
+  own long-standing lack of an "un-revoke"); `retireTrustedDevice` is reachable from any non-retired
+  status including `pending`. All three status-changing callables revoke every active `deviceSessions`
+  entry for that device in the same transaction — a device can never keep operating on an
+  already-issued session once suspended/revoked/retired. The Admin UI's Trusted Devices tab
+  (`device_registry_screen.dart`) never reads or renders `publicKeyPem`/`nonce`/`signature`/`sessionId`
+  — the client-side `TrustedDevice` domain model has no such field at all, a structural guarantee, not a
+  UI-discipline one.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin
+
+### BR-ADMIN-009 — Entitlement mutation is Platform-Owner-only; a Tenant Admin can only ever read
+- **Status**: IMPLEMENTED — AP-2 final wiring (2026-08-27),
+  `functions/src/entitlementAdmin.ts` (`grantEntitlement`/`renewEntitlement`/`suspendEntitlement`/
+  `revokeEntitlement`, all pre-existing and unchanged; `requirePlatformMember`-gated),
+  `lib/features/entitlements/{data/firebase_entitlement_grant_repository.dart,
+  presentation/screens/entitlement_admin_screen.dart}`,
+  `lib/features/platform/{data/entitlement_admin_gateway.dart,
+  presentation/screens/platform_entitlement_console_screen.dart}`.
+- **Rule**: The real `entitlements` Firestore collection is directly readable by any org member OR any
+  platform member (`firestore.rules`), but writable only through the four Cloud Functions above, all
+  `requirePlatformMember`-gated — no client write path exists for anyone, tenant or platform.
+  `EntitlementAdminScreen` (the Tenant-Admin-facing screen) is a genuine, real-time-refreshable,
+  **read-only** viewer once a real backend is available — no grant/renew/grace/suspend/revoke control
+  exists on that screen at all; a Tenant Admin has no UI path to attempt a self-grant, and would be
+  denied server-side even if one existed. The one real mutation surface for entitlements anywhere in
+  this app is `PlatformEntitlementConsoleScreen`, reachable only via `AppRoutes.platform`, never linked
+  from the tenant-facing Admin shell. `EntitlementStatus` now carries the real backend's full 6-value set
+  (`trial`/`active`/`grace`/`suspended`/`expired`/`revoked`) — `grace` is still counted entitled
+  (`isCurrentlyEntitled`), mirroring `requireModuleEntitlement`'s own "grace still works, by design"
+  server-side semantics exactly; `suspended` never is.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Staff/Admin, Platform
+
+### BR-ADMIN-010 — The Platform Owner console is structurally separated from tenant Admin, never bootstrap-linked, and never mixes claim namespaces
+- **Status**: IMPLEMENTED — AP-2 final wiring (2026-08-27), `lib/core/router/{app_routes.dart,
+  app_router.dart,app_route_guard.dart}` (`AppRoutes.platform`), `lib/features/platform/
+  presentation/screens/platform_shell_screen.dart`.
+- **Rule**: `AppRoutes.platform` (`/platform`) is a real `go_router` route, bypassed by the customer
+  route guard exactly like `AppRoutes.admin` — but unlike `/admin`, no button, nav item, or link
+  anywhere in the customer or tenant-Admin UI ever references it; the only way in is a direct deep
+  link/typed URL, and it is never part of the onboarding/bootstrap flow. `PlatformShellScreen` performs
+  its own real, internal `platformActorSessionProvider` check independent of this routing decision —
+  the route bypass and the screen's own authorization are two separate, both-required layers, mirroring
+  `/admin`'s own established two-layer shape. The console's one tenant-scoped affordance (a
+  "Kiracı Admin Paneline Geç" header link) is a plain navigation shortcut, never a privilege bridge — it
+  grants nothing; it only succeeds in reaching real tenant data if the signed-in account *also*
+  independently holds real staff membership there, since platform membership and tenant staff
+  membership remain two structurally separate claim namespaces server-side (ADR-025) with no
+  cross-namespace bypass anywhere in this pass.
+- **Owner Agent**: security_engineer
+- **Related Modules**: Platform, Staff/Admin
+
 ### BR-STAFF-003 — Approval thresholds
 - **Status**: UNRESOLVED
 - **Rule**: Which refunds, voids, comps, and manual price overrides require manager approval, and the
@@ -6962,6 +7027,18 @@ neither restated in full here nor duplicated between the two.
 Every future change to this document is recorded here — a new entry per change, never an edit to a
 prior entry (mirrors `ENGINEERING_CONSTITUTION.md`'s Decisions Are Recorded / immutable-log
 principles).
+
+### v3.25 — 2026-08-27
+- **Version**: 3.25
+- **Date**: 2026-08-27
+- **Summary**: AP-2 final wiring — the v3.24 closure correction's own report still deferred three
+  named production-UI wiring gaps (`devices`/`entitlements` screens not connected to their real
+  backends; no accessible Remote Approval UI). New `BR-ADMIN-008` (trusted-device lifecycle actions —
+  suspend/retire added to the backend this pass, alongside the pre-existing revoke/activation-via-
+  approval), `BR-ADMIN-009` (entitlement mutation is Platform-Owner-only; Tenant Admin is read-only),
+  `BR-ADMIN-010` (Platform Owner console structural separation, real `/platform` route). See
+  `docs/decisions.md`'s AP-2 final-wiring entry for the full evidence and gate results.
+- **Author**: Claude, at the user's direction (AP-2 final wiring).
 
 ### v3.24 — 2026-08-27
 - **Version**: 3.24

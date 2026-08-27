@@ -4885,3 +4885,33 @@ unaffected. `currentOrganizationIdProvider`/`currentBranchIdProvider` upgraded f
 Full classification table, the three bugs found and fixed via this correction's own new test suite, and
 the complete test matrix are in `docs/decisions.md`'s AP-2 CLOSURE CORRECTION entry. See the final
 closure-correction report for exact gate results, complete file manifest, and the closure commit SHA.
+
+**AP-2 FINAL WIRING (2026-08-27).** The closure-correction paragraph directly above still deferred
+three named production-UI gaps its own report disclosed: `devices`/`entitlements` screens gated closed
+but never wired to their real backends, and no accessible Remote Approval UI at all. This pass closes
+all three, within the same AP-2. **Trusted devices**: `functions/src/trustedDevice.ts` gained
+`suspendTrustedDevice`/`retireTrustedDevice` (alongside the pre-existing `revokeTrustedDevice`/
+`requestDeviceRegistration`/`respondToApprovalRequest`); `DeviceRegistryScreen` gained a real second
+tab ("Güvenilir Cihazlar") — a live Firestore stream of the branch's device roster plus real suspend/
+revoke/retire actions — while the pre-existing device-inventory tab (Phase 6L/ADR-023, POS/printer/
+payment-terminal registry) stays exactly as it was, in-memory, disclosed as a separate, still-fake
+concern. **Remote approval**: `firestore.rules`'s `remoteApprovalRequests` gained a real, narrowly-
+scoped read path (the requester themselves, or a branch-scoped eligible responder matching
+`RESPONSE_PERMISSION_BY_ACTION` role-for-role) and `respondToApprovalRequest` gained an optional
+`reasonMessage`; a new `ApprovalInboxScreen` (approver + requester tabs) is reachable from the Admin
+shell header's bell icon (now real, no longer decorative) and from the Trusted Devices tab. **Entitlements**:
+`EntitlementStatus` extended to the real backend's full 6-value set (`grace`/`suspended` added);
+`EntitlementAdminScreen` became a genuine real-time read-only viewer once Firebase is ready (no
+grant/renew/suspend/revoke control — those are `requirePlatformMember`-gated server-side); the one real
+mutation surface moved to a new `PlatformEntitlementConsoleScreen` inside the Platform Owner console.
+**Platform Owner console**: `FirebasePlatformMemberRepository` (the real backend gap the audit found —
+`FirebasePlatformAuthRepository.signIn` already called `findByAuthUid` against nothing real) plus a real
+`AppRoutes.platform` (`/platform`) `go_router` route, bypassed by the customer guard like `/admin` but
+never linked from anywhere in the customer/tenant-Admin UI. `firestore.rules` also gained two narrowly-
+scoped platform-member read exceptions (`organizations` for tenant selection; `entitlements` for the
+console to render current state before mutating) — each scoped to exactly the collection needed, not a
+blanket widening of the existing `hasActiveSupportGrant` support-grant model. A real dead-button bug
+(three confirmation dialogs whose confirm action never re-enabled after typing a reason, since a plain
+`TextField` inside a non-`StatefulBuilder` dialog never rebuilds on keystrokes) was found and fixed via
+this pass's own new widget test suite. Full evidence, file manifest, and gate results are in
+`docs/decisions.md`'s AP-2 FINAL WIRING entry.

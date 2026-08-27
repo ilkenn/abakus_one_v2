@@ -1,0 +1,93 @@
+/// AP-2 final wiring — mirrors `functions/src/remoteApproval.ts`'s
+/// `ApprovalRequestRecord` field-for-field. `payloadHash` is deliberately
+/// never carried into this client model — it has no legitimate UI use and
+/// this is the structural way "no sensitive payload in the UI" is kept
+/// true even as this domain evolves.
+library;
+
+enum ApprovalActionType { deviceActivation }
+
+enum ApprovalStatus {
+  pending,
+  approved,
+  rejected,
+  expired,
+  escalated,
+  cancelled
+}
+
+ApprovalActionType approvalActionTypeFromWire(String value) {
+  switch (value) {
+    case 'deviceActivation':
+      return ApprovalActionType.deviceActivation;
+    default:
+      throw ArgumentError('Unknown approval action type: $value');
+  }
+}
+
+ApprovalStatus approvalStatusFromWire(String value) {
+  switch (value) {
+    case 'pending':
+      return ApprovalStatus.pending;
+    case 'approved':
+      return ApprovalStatus.approved;
+    case 'rejected':
+      return ApprovalStatus.rejected;
+    case 'expired':
+      return ApprovalStatus.expired;
+    case 'escalated':
+      return ApprovalStatus.escalated;
+    case 'cancelled':
+      return ApprovalStatus.cancelled;
+    default:
+      throw ArgumentError('Unknown approval status: $value');
+  }
+}
+
+class ApprovalRequest {
+  const ApprovalRequest({
+    required this.requestId,
+    required this.organizationId,
+    required this.branchId,
+    required this.actionType,
+    required this.requestedByActorUid,
+    required this.targetAggregateRef,
+    required this.status,
+    this.respondedByActorUid,
+    this.respondedAt,
+    this.escalatedTo,
+    required this.createdAt,
+    required this.expiresAt,
+    required this.version,
+  });
+
+  final String requestId;
+  final String organizationId;
+  final String branchId;
+  final ApprovalActionType actionType;
+  final String requestedByActorUid;
+  final String targetAggregateRef;
+  final ApprovalStatus status;
+  final String? respondedByActorUid;
+  final DateTime? respondedAt;
+  final String? escalatedTo;
+  final DateTime createdAt;
+  final DateTime expiresAt;
+  final int version;
+
+  bool get isRespondable => status == ApprovalStatus.pending;
+
+  /// A safe, non-sensitive summary derived purely from the target's own
+  /// Firestore path — no need to fetch the target document just to show
+  /// which device this request concerns. Falls back to the raw ref if the
+  /// path doesn't match the expected `trustedDeviceRegistrations/{docId}`
+  /// shape (forward-compatible with a future action type).
+  String get targetDeviceId {
+    final parts = targetAggregateRef.split('/');
+    if (parts.length == 2 && parts[0] == 'trustedDeviceRegistrations') {
+      final docIdParts = parts[1].split('_');
+      if (docIdParts.length >= 3) return docIdParts.last;
+    }
+    return targetAggregateRef;
+  }
+}
