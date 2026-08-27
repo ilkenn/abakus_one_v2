@@ -615,7 +615,18 @@ test('a client can never directly update their own table guest session — e.g. 
 // against an already-seeded document.
 // ---------------------------------------------------------------------
 
-test('tableSessions: a branch-scoped staff member (org + branch access) can read; org access alone is not enough', async () => {
+// AP-3 Wave 1 SECURITY CORRECTION (2026-08-27) — the original Wave 1 rule
+// granted staff read on `isOrgMember && hasBranchAccess` alone, which
+// cannot verify AP-2's trusted-device session (a Rule has no way to
+// re-derive the challenge-response proof `requireActiveDeviceSession`
+// checks server-side). Corrected: NO staff read path exists in Rules at
+// all for `tableSessions`/`guestSubAccounts`/`checks`/`checkAllocations`/
+// `orderLineAllocationLedgers` — the sole staff read path is the new
+// `getPosTableOperationalView` callable, tested separately against the
+// Functions emulator (`functions/src/test/posOperationalView.test.ts`),
+// not here (this file only exercises direct client Firestore access).
+
+test('tableSessions: a branch-scoped staff member with full org+branch claims CANNOT read directly — membership/branch alone can never substitute for the trusted-device proof', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'tableSessions/ts-1'), {
       organizationId: 'org-1',
@@ -635,11 +646,11 @@ test('tableSessions: a branch-scoped staff member (org + branch access) can read
     .authenticatedContext('staff-org-only', { organizationAccess: ['org-1'] })
     .firestore();
 
-  await assertSucceeds(getDoc(doc(branchStaff, 'tableSessions/ts-1')));
+  await assertFails(getDoc(doc(branchStaff, 'tableSessions/ts-1')));
   await assertFails(getDoc(doc(orgOnlyStaff, 'tableSessions/ts-1')));
 });
 
-test('tableSessions: a different organization\'s staff member cannot read — tenant isolation', async () => {
+test('tableSessions: a different organization\'s staff member cannot read either — tenant isolation, doubly enforced (fails closed regardless) — same commit', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'tableSessions/ts-2'), {
       organizationId: 'org-1',
@@ -712,7 +723,7 @@ test('guestSubAccounts: a DIFFERENT guest cannot read someone else\'s sub-accoun
   await assertFails(getDoc(doc(attacker, 'guestSubAccounts/sub-2')));
 });
 
-test('guestSubAccounts: a staffGeneral/namedWalkIn sub-account with ownerAuthUid: null is never readable by any signed-in customer, only by branch staff', async () => {
+test('guestSubAccounts: a staffGeneral/namedWalkIn sub-account with ownerAuthUid: null is never directly readable by ANYONE via Rules — no customer owns it, and staff has no direct Rules read path at all (getPosTableOperationalView only)', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'guestSubAccounts/sub-3'), {
       organizationId: 'org-1',
@@ -733,10 +744,10 @@ test('guestSubAccounts: a staffGeneral/namedWalkIn sub-account with ownerAuthUid
     .firestore();
 
   await assertFails(getDoc(doc(randomCustomer, 'guestSubAccounts/sub-3')));
-  await assertSucceeds(getDoc(doc(branchStaff, 'guestSubAccounts/sub-3')));
+  await assertFails(getDoc(doc(branchStaff, 'guestSubAccounts/sub-3')));
 });
 
-test('guestSubAccounts: branch staff (org + branch access) can read any sub-account in their branch; org access alone is not enough', async () => {
+test('guestSubAccounts: branch staff with full org+branch claims CANNOT read another guest\'s sub-account directly — the Wave 1 security correction, verified against a real guestSession-owned doc', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'guestSubAccounts/sub-4'), {
       organizationId: 'org-1',
@@ -751,8 +762,97 @@ test('guestSubAccounts: branch staff (org + branch access) can read any sub-acco
   const orgOnlyStaff = testEnv
     .authenticatedContext('staff-org-only-sub', { organizationAccess: ['org-1'] })
     .firestore();
+  const branchStaff = testEnv
+    .authenticatedContext('staff-branch-full-sub', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
 
   await assertFails(getDoc(doc(orgOnlyStaff, 'guestSubAccounts/sub-4')));
+  await assertFails(getDoc(doc(branchStaff, 'guestSubAccounts/sub-4')));
+});
+
+// ---------------------------------------------------------------------
+// AP-3 Wave 2 — checks/checkAllocations/checkFinancialAdjustments/
+// orderLineAllocationLedgers: no direct client read path at all, for
+// anyone (staff or customer) — same fail-closed discipline as
+// `tableSessions` above, `getPosTableOperationalView` is the sole staff
+// read path, and no customer-facing UI reads any of these this phase.
+// ---------------------------------------------------------------------
+
+test('checks: no client — staff (even full org+branch claims) or customer — may read directly', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'checks/check-1'), {
+      organizationId: 'org-1', branchId: 'branch-1', tableSessionId: 'ts-1',
+      status: 'open', paymentActivityStarted: false, computedTotalMinorUnits: 0, currencyCode: 'TRY',
+    });
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-checks', { organizationAccess: ['org-1'], branchAccess: { 'org-1': ['branch-1'] } })
+    .firestore();
+  const customer = testEnv.authenticatedContext('some-customer-checks').firestore();
+
+  await assertFails(getDoc(doc(branchStaff, 'checks/check-1')));
+  await assertFails(getDoc(doc(customer, 'checks/check-1')));
+});
+
+test('checks: no client may ever write directly — Cloud Function (Admin SDK) only', async () => {
+  const branchStaff = testEnv
+    .authenticatedContext('staff-checks-write', { organizationAccess: ['org-1'], branchAccess: { 'org-1': ['branch-1'] } })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(branchStaff, 'checks/check-2'), {
+      organizationId: 'org-1', branchId: 'branch-1', tableSessionId: 'ts-1',
+      status: 'open', paymentActivityStarted: false, computedTotalMinorUnits: 0, currencyCode: 'TRY',
+    }),
+  );
+});
+
+test('checkAllocations: no client may read or write directly, even full org+branch staff claims', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'checkAllocations/alloc-1'), {
+      checkId: 'check-1', organizationId: 'org-1', branchId: 'branch-1', tableSessionId: 'ts-1',
+      subAccountId: 'sub-1', splitMethod: 'product', sourceComposition: [], allocatedAmountMinorUnits: 1000,
+      currencyCode: 'TRY', status: 'active',
+    });
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-alloc', { organizationAccess: ['org-1'], branchAccess: { 'org-1': ['branch-1'] } })
+    .firestore();
+
+  await assertFails(getDoc(doc(branchStaff, 'checkAllocations/alloc-1')));
+  await assertFails(setDoc(doc(branchStaff, 'checkAllocations/alloc-2'), { checkId: 'check-1', status: 'active' }));
+});
+
+test('checkFinancialAdjustments: no client may read or write directly', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'checkFinancialAdjustments/adj-1'), {
+      checkId: 'check-1', organizationId: 'org-1', branchId: 'branch-1', status: 'active',
+    });
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-adj', { organizationAccess: ['org-1'], branchAccess: { 'org-1': ['branch-1'] } })
+    .firestore();
+
+  await assertFails(getDoc(doc(branchStaff, 'checkFinancialAdjustments/adj-1')));
+  await assertFails(setDoc(doc(branchStaff, 'checkFinancialAdjustments/adj-2'), { checkId: 'check-1', status: 'active' }));
+});
+
+test('orderLineAllocationLedgers: no client may read or write directly — internal accounting only', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orderLineAllocationLedgers/order-1_0'), {
+      organizationId: 'org-1', branchId: 'branch-1', tableSessionId: 'ts-1',
+      sourceOrderId: 'order-1', sourceLineIndex: 0, remainingQuantity: 1, remainingValueMinorUnits: 1000,
+    });
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-ledger', { organizationAccess: ['org-1'], branchAccess: { 'org-1': ['branch-1'] } })
+    .firestore();
+
+  await assertFails(getDoc(doc(branchStaff, 'orderLineAllocationLedgers/order-1_0')));
+  await assertFails(setDoc(doc(branchStaff, 'orderLineAllocationLedgers/order-1_1'), { sourceOrderId: 'order-1' }));
 });
 
 test('guestSubAccounts: no client may ever write directly — Cloud Function (Admin SDK) only', async () => {

@@ -6783,6 +6783,73 @@ neither restated in full here nor duplicated between the two.
 - **Related Modules**: Orders, POS, Tables
 - **Business Rule IDs**: ADR-028, ADR-030 (Trusted Device Model), `docs/order_operations_architecture.md` §10
 
+### BR-SUBACCOUNT-008 — No staff/POS direct Firestore read of table-session-scoped data — device-gated callable only (AP-3 Wave 1 security correction)
+- **Status**: IMPLEMENTED (2026-08-27) — `firestore.rules` (`tableSessions`/`guestSubAccounts`/
+  `checks`/`checkAllocations`/`checkFinancialAdjustments`/`orderLineAllocationLedgers` all
+  `allow read: if false` for every staff actor, no exception), `functions/src/posOperationalView.ts`
+  (`getPosTableOperationalView`), emulator-tested (Rules suite + Functions suite).
+- **Rule**: A Firestore Security Rule cannot verify AP-2's trusted-device challenge-response proof
+  (`requireActiveDeviceSession` is Admin-SDK-only, server-side) — therefore no Security Rule may ever
+  grant staff read access to a POS-operational, table-session-scoped collection on
+  `isOrgMember`/`hasBranchAccess` membership claims alone. The sole staff read path for this data is a
+  backend-mediated callable that independently re-verifies BOTH `requireStaffPermission` AND
+  `requireActiveDeviceSession` before returning anything. Self-correcting this codebase's own Wave 1
+  first-draft rule, which granted exactly the bypass this rule now forbids.
+- **Owner Agent**: security_engineer
+- **Related Modules**: POS, Tables, Orders, Devices
+- **Business Rule IDs**: ADR-030 (Trusted Device Model), ADR-036, `docs/order_operations_architecture.md` §10.3
+
+### BR-CHECK-001 — Money-safe Check/allocation model: every allocation traces to real source-line composition (AP-3 Wave 2)
+- **Status**: IMPLEMENTED (2026-08-27) — `functions/src/checkAllocationConfig.ts`/`checkOperations.ts`,
+  emulator-tested (conservation, split→merge exact round trip, concurrent double-allocation rejection).
+- **Rule**: A `checkAllocations` document — regardless of split method (product/quantity/customer/
+  headcount/freeAmount) — always carries an explicit `sourceComposition` array identifying exactly
+  which accepted order line(s) and how much money was drawn from each; an unreferenced bare amount is
+  never valid. Each accepted line's own remaining quantity/value is tracked by a real, transaction-
+  participating ledger document (`orderLineAllocationLedgers`) that IS the concurrency lock — never a
+  query-returns-nothing assumption. A check's own total is always recomputed, transactionally, from
+  its own active allocations. Split/merge/transfer only ever move or recompose existing value; they
+  never create or destroy it (proven by the split→merge exact-round-trip test). AP-3 ends a check's
+  life at `readyForPayment`; it never claims `paid`/`settled` — that boundary belongs entirely to AP-4.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Orders, POS, Tables, Payments (AP-4 boundary)
+- **Business Rule IDs**: ADR-028, `docs/order_operations_architecture.md` §11, `docs/payment_cash_fiscal_architecture.md`
+
+### BR-CHECK-002 — Financial adjustments are structurally separate from the Boncuk ledger (AP-3 Wave 2)
+- **Status**: IMPLEMENTED (2026-08-27) — `functions/src/checkFinancialAdjustments.ts`, emulator-tested.
+- **Rule**: `checkFinancialAdjustments` (complimentary/percentage/fixedAmount, scoped to a product
+  allocation/sub-account/whole check) and the Boncuk `loyaltyLedgerEntries`/`loyaltyAccounts` ledger
+  are two structurally separate write paths with no shared code — only
+  `requestBoncukBalanceCorrection`'s own typed handler may ever write a loyalty `adminAdjustment`
+  entry; no check-financial-adjustment code path touches loyalty collections, and vice versa. Every
+  adjustment carries its scope, reason, `approvalRequestRef`, and a `calculationSnapshot`; the amount
+  actually applied is always recomputed fresh against LIVE state inside the approval handler's own
+  transaction (never trusted from the request-time snapshot), is expressed via integer basis points
+  for percentage adjustments, is capped so a check's total can never fall below zero or an adjustment
+  exceed its own eligible base, and a reversal is always a NEW immutable compensating record, never a
+  destructive edit of the original.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Orders, POS, Loyalty, Audit
+- **Business Rule IDs**: ADR-031, BR-APPROVAL-001..006, BR-LOYALTY-019 (unchanged)
+
+### BR-ORDER-019 — Accepted-line cancellation is a distinct, remote-approval-gated void state (AP-3 Wave 2)
+- **Status**: IMPLEMENTED (2026-08-27) — `functions/src/checkFinancialAdjustments.ts`
+  (`requestAcceptedLineCancellation`/`applyAcceptedLineCancellation`), emulator-tested. AP-5's own
+  stock/waste/fire consumer of the downstream event is explicitly NOT built here.
+- **Rule**: Only a line already in `accepted` status may be cancelled through this flow — a still-
+  `pendingApproval`/`rejected`/`proposedChange` line is not eligible (those already have their own,
+  separate disposition path). Cancellation requires a typed remote-approval request
+  (`acceptedLineCancellation`), never applies provisionally, and on approval transitions the line to a
+  distinct terminal status (`cancelledAfterAcceptance` — never reusing plain `rejected`), recording the
+  original state, requester, approver, reason, `approvalRequestRef`, and timestamp directly on the
+  line. An idempotent downstream event (`orderLineCancellationEvents/{orderId}_{lineIndex}`,
+  deterministic id, `.set()` not `.create()`) records whether kitchen preparation had already started
+  — AP-5's own future stock/waste/fire reconciliation consumer, not built or implied by this rule.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Orders, POS, KDS (AP-5 boundary), Stock (AP-5 boundary)
+- **Business Rule IDs**: ADR-029, ADR-031, `docs/order_operations_architecture.md` §12,
+  `docs/kds_printer_stock_architecture.md` (AP-5 consumer boundary)
+
 ### BR-ORDER-015 — Every QR submission awaits cashier approval
 - **Status**: DECIDED — **partially real** (whole-order approval is real and server-authoritative per
   `submitDineInOrder.ts`/`advanceDineInOrderStatus.ts`, AP-0-confirmed); line-level detail below is new.
@@ -6878,9 +6945,21 @@ neither restated in full here nor duplicated between the two.
 
 ### BR-APPROVAL-001 through BR-APPROVAL-006 — Remote Manager Approval Orchestration
 - **Status**: DECIDED — architecture only (AP-0 confirmed no escalation/manual-adjustment mechanism
-  exists anywhere; only a reserved, never-written `adminAdjustment` ledger-entry type).
-- **Rule (001)**: Remote approval is synchronous, blocking, and fail-closed — the underlying action never
-  applies before an explicit approval.
+  exists anywhere; only a reserved, never-written `adminAdjustment` ledger-entry type). **AP-2/AP-3
+  correction (2026-08-27)**: this row's original Rule (001) text ("synchronous, blocking") does not
+  match, and was never intended to match, the actual implementation — `remoteApproval.ts` (AP-2) and
+  every AP-3 Wave 2 typed action built on it (`checkFinancialAdjustment`/`acceptedLineCancellation`/
+  `boncukBalanceCorrection`) are genuinely ASYNCHRONOUS: a Cloud Function never blocks waiting for a
+  manager. Rule (001) below is corrected in place to describe what "fail-closed, no provisional
+  effect" actually means in an async model.
+- **Rule (001)**: Remote approval is ASYNCHRONOUS and fail-closed — a request becomes `pending`
+  immediately; the underlying action's monetary/state effect is applied only when an eligible
+  responder later approves it (never provisionally, never while a Function is still running/blocking).
+  Real, tested implementation as of AP-3 Wave 2: `requestCheckFinancialAdjustment`/
+  `requestAcceptedLineCancellation`/`requestBoncukBalanceCorrection` each create a `pendingApproval`
+  record with zero effect on the target; `respondToApprovalRequest`'s own closed handler registry
+  (`checkFinancialAdjustment`/`acceptedLineCancellation`/`boncukBalanceCorrection`, alongside the
+  pre-existing `deviceActivation`) applies the effect exactly once, only on `approved`.
 - **Rule (002)**: Self-approval is structurally forbidden (mirrors `staffMembership.ts`'s existing
   self-promotion block).
 - **Rule (003)**: An unanswered request escalates to another eligible manager, then ultimately the

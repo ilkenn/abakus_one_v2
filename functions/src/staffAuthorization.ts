@@ -47,7 +47,16 @@ export type StaffPermission =
   | "manageDineInOrderRefunds"
   | "requestDeviceRegistration"
   | "approveDeviceRegistration"
-  | "manageDevices";
+  | "manageDevices"
+  // AP-3 Wave 2 — the manager+-tier response permission for each new typed
+  // remote-approval action (corrected report §3/§F: "manager approval
+  // required for value-changing/post-acceptance/payment-sensitive ops").
+  // `staff` never holds any of these three, mirroring
+  // `manageDineInOrderRefunds`'s own boundary exactly — requesting is
+  // `manageDineInOrders` (already staff-tier); approving is not.
+  | "approveCheckFinancialAdjustment"
+  | "approveAcceptedLineCancellation"
+  | "approveBoncukBalanceCorrection";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -177,6 +186,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "requestDeviceRegistration",
     "approveDeviceRegistration",
     "manageDevices",
+    "approveCheckFinancialAdjustment",
+    "approveAcceptedLineCancellation",
+    "approveBoncukBalanceCorrection",
   ],
   admin: [
     "manageReservations",
@@ -197,6 +209,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "requestDeviceRegistration",
     "approveDeviceRegistration",
     "manageDevices",
+    "approveCheckFinancialAdjustment",
+    "approveAcceptedLineCancellation",
+    "approveBoncukBalanceCorrection",
   ],
   tenantOwner: [
     "manageReservations",
@@ -217,6 +232,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "requestDeviceRegistration",
     "approveDeviceRegistration",
     "manageDevices",
+    "approveCheckFinancialAdjustment",
+    "approveAcceptedLineCancellation",
+    "approveBoncukBalanceCorrection",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must

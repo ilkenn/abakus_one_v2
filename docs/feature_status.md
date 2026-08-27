@@ -4937,3 +4937,35 @@ read models, the three-pane POS Flutter workspace, the customer-facing QR orderi
 canonical Admin Customers destination, and the Platform Owner global customer directory — none of these
 exist yet. No customer-facing or staff-facing UI consumes any of Wave 1's backend work yet. AP-3 remains
 OPEN; this is a scoped, tested, committed checkpoint within it, not its completion.
+
+**AP-3 WAVE 1 SECURITY CORRECTION + WAVE 2 — Money-Safe Check/Allocation Model + Async Approval Actions
+(2026-08-27, IN PROGRESS — checkpoint, not AP-3 closure; `docs/decisions.md` ADR-037).** Two parts, both
+backend-only:
+
+**Security correction (mandatory, done first)**: Wave 1's own `firestore.rules` granted staff read
+access to `tableSessions`/`guestSubAccounts` on membership/branch claims alone — insufficient, since a
+Security Rule cannot verify AP-2's trusted-device proof. Corrected to `allow read: if false` for every
+staff actor across `tableSessions`/`guestSubAccounts`/`checks`/`checkAllocations`/
+`checkFinancialAdjustments`/`orderLineAllocationLedgers`; the sole staff read path is the new
+`getPosTableOperationalView` callable (permission- and device-session-gated). A customer/guest's own
+direct read of their own `guestSubAccounts` document is unaffected.
+
+**Wave 2 — Check/allocation model**: `checks`/`checkAllocations`/`checkFinancialAdjustments` as three
+flat top-level collections (preserves the established convention). Every allocation — regardless of
+split method — carries a real `sourceComposition` trace back to accepted order lines, enforced by a
+genuine concurrency-locking ledger document (`orderLineAllocationLedgers`) per source line, never a
+query-based assumption. Implemented and backend-tested: `openCheck`/`cancelCheck`/
+`finalizeCheckReadyForPayment`/`reopenCheck`; all five split modes (product/quantity/customer/
+headcount/free-amount); `mergeChecks`/`transferCheckAllocation`; three new asynchronous, remote-
+approval-gated typed actions (`checkFinancialAdjustment`/`acceptedLineCancellation`/
+`boncukBalanceCorrection`, each with its own new manager+-tier response permission, none held by
+`staff`) extending the existing AP-2 approval engine's closed allowlist. A genuine engine gap
+(`ActionHandlerParams` didn't expose the responding actor's uid at handler-execution time) was found
+and fixed while wiring the first handler that needed it — disclosed, not silent.
+
+Full backend regression after this checkpoint: Functions emulator suite and Firestore Rules suite both
+rerun fresh (exact counts in the closure report), `flutter analyze`/`flutter test` unaffected (no Dart
+file touched). **Explicitly deferred to the next AP-3 continuation** (not silently dropped — see
+ADR-037): table session transfer/merge, the replacement/counter-proposal backend, both customer-
+directory projections + backfill, and every Flutter surface (POS workspace, customer QR flow, Admin
+Customers, Platform Owner directory). AP-3 remains OPEN.

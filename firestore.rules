@@ -663,16 +663,78 @@ service cloud.firestore {
     // the unattributed `staffGeneral`/staff-created `namedWalkIn` types.
     // ---------------------------------------------------------------------
 
+    // AP-3 Wave 1 SECURITY CORRECTION (2026-08-27) — the original Wave 1 rule
+    // granted staff read access to `tableSessions`/`guestSubAccounts` on
+    // `isOrgMember && hasBranchAccess` alone. That is insufficient: AP-2's
+    // trusted-device model is a real, load-bearing operational control
+    // (`docs/decisions.md` ADR-030) whose proof is a signed challenge-
+    // response verified only inside `requireActiveDeviceSession` (Admin
+    // SDK) — a Firestore Rule has no way to re-derive or check that proof,
+    // so a rule granting staff read on membership/branch claims alone is a
+    // real bypass of the device requirement for these two sensitive,
+    // POS-operational collections. Corrected: staff have NO direct client
+    // read path to either collection at all, in any form — the sole staff
+    // read path is the new `getPosTableOperationalView` callable
+    // (`functions/src/posOperationalView.ts`), which requires
+    // `requireStaffPermission` AND `requireActiveDeviceSession` together,
+    // server-side, before returning anything. This mirrors this file's own
+    // pre-existing `restaurantTables` precedent (no match block at all —
+    // fail-closed catch-all; clients only ever see it through a callable's
+    // own minimized response).
     match /tableSessions/{tableSessionId} {
-      allow read: if isOrgMember(resource.data.organizationId) &&
-        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow read: if false; // Staff: getPosTableOperationalView only (device-session-gated, Admin SDK).
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
     match /guestSubAccounts/{subAccountId} {
-      allow read: if (isOrgMember(resource.data.organizationId) &&
-          hasBranchAccess(resource.data.organizationId, resource.data.branchId)) ||
-        (isSignedIn() && resource.data.ownerAuthUid == request.auth.uid);
+      // The owner's own direct read is UNCHANGED and correct — this is a
+      // customer/guest reading their OWN record, not a POS/staff action,
+      // so it never needed device-session verification (mirrors
+      // `tableGuestSessions`'s own owner-only precedent exactly). Only the
+      // staff branch is removed.
+      allow read: if isSignedIn() && resource.data.ownerAuthUid == request.auth.uid;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
+    // AP-3 Wave 2 — Check/allocation model (corrected report §2, Stage B
+    // mandatory refinement #3). No customer/guest ever reads any of these
+    // four directly — a check is a staff/POS-operational construct, not a
+    // customer-visible one this phase. Same "no direct client read at all"
+    // discipline as `tableSessions` above and `restaurantTables` before
+    // it — `getPosTableOperationalView` is the sole read path.
+    match /checks/{checkId} {
+      allow read: if false;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /checkAllocations/{allocationId} {
+      allow read: if false;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /checkFinancialAdjustments/{adjustmentId} {
+      allow read: if false;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /orderLineAllocationLedgers/{ledgerId} {
+      allow read: if false; // Internal accounting only — never client-readable, not even via the operational-view callable's own response shape.
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
+    // AP-3 Wave 2C/2D — asynchronous remote-approval-gated typed actions.
+    // The requester's own status visibility comes from the ALREADY-real
+    // `remoteApprovalRequests` read rule below (requester or eligible
+    // responder) — these three collections hold the action-specific
+    // payload/effect record, not client-readable directly this phase (no
+    // UI consumes them yet).
+    match /acceptedLineCancellationRequests/{requestId} {
+      allow read: if false;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /boncukBalanceCorrectionRequests/{requestId} {
+      allow read: if false;
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+    match /orderLineCancellationEvents/{eventId} {
+      allow read: if false; // Outbox marker for AP-5's future stock/waste consumer — internal only.
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 

@@ -3,6 +3,19 @@
 **Status**: CANONICAL. Established AP-1 (2026-08-26). The highest-risk document in the AP-1 set — payment
 and fiscal correctness are reviewed in isolation from general order-operations decisions.
 
+**AP-3 → AP-4 handoff contract (recorded 2026-08-27, ADR-037; AP-4 implementation not started)**: AP-3
+Wave 2 implemented the real, backend-tested `checks`/`checkAllocations` model this document's own
+`PaymentIntent{subAccountAllocations}` design consumes. The concrete contract AP-4 inherits: a `Check`
+document reaches `status: "readyForPayment"` only once every line its own active `checkAllocations`
+reference is in a terminal `OrderLineStatus`; `checkAllocations` (a flat top-level collection, each
+allocation carrying `sourceComposition` — explicit, real source-order-line/quantity/money traceability,
+never an unreferenced bare amount) IS the concrete data `PaymentIntent.subAccountAllocations` should be
+built from. `Check.paymentActivityStarted` (AP-3 always writes `false`) is the one field AP-4 owns
+flipping — its own first real `PaymentAttempt` against a check is the only thing that may ever set it
+`true`, and AP-3's own check-mutation callables (split/merge/transfer/financial-adjustment) already
+fail closed once it is. AP-3 never writes `status: "paid"` or any settlement-adjacent value — that
+transition, and everything after `readyForPayment`, belongs entirely to AP-4's own state machine.
+
 ## 1. Purpose
 
 Defines payment intent/session/allocation, tender types including mixed/split/partial, tips/cover/

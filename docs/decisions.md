@@ -16794,6 +16794,78 @@ report's own wave ordering.
 **Status**: Wave 1 IMPLEMENTED (2026-08-27), emulator-tested (1796/1796 backend, 391/391 rules), no
 Flutter/UI change. AP-3 overall: OPEN. Implementation: AP-3 (continuing).
 
+### ADR-037 — AP-3 Wave 1 Security Correction + Wave 2 Check/Allocation & Async Approval Model (Locked)
+
+**Context**: continuing directly from ADR-036's Wave 1 checkpoint. Two mandatory corrections were
+raised before any new operational surface could be added: (1) Wave 1's own `firestore.rules` granted
+staff read access to `tableSessions`/`guestSubAccounts` on `isOrgMember && hasBranchAccess` alone —
+insufficient, since a Security Rule structurally cannot verify AP-2's trusted-device challenge-
+response proof, making that rule a real bypass of the device requirement for POS-operational data.
+(2) The full money-safe Check/allocation model (corrected AP-3 Stage A report §2) had not yet been
+built, and the Stage A draft's own `freeAmount` allocation concept was separately flagged as fiscally
+unsafe (an unreferenced bare amount, insufficient for AP-4 refund/fiscal reconciliation).
+
+**Decision**:
+1. **Security correction**: `tableSessions`/`guestSubAccounts`/`checks`/`checkAllocations`/
+   `checkFinancialAdjustments`/`orderLineAllocationLedgers` are all `allow read: if false` for every
+   staff actor in `firestore.rules`, unconditionally — no membership/branch-claim exception of any
+   kind. The sole staff read path is the new `getPosTableOperationalView` callable
+   (`functions/src/posOperationalView.ts`), which requires BOTH `requireStaffPermission` AND
+   `requireActiveDeviceSession` before returning anything. A customer/guest's own direct read of their
+   own `guestSubAccounts` document (`ownerAuthUid` match) is unaffected — that was never the gap.
+2. **Money-safe Check/allocation model**: `checks`/`checkAllocations`/`checkFinancialAdjustments` as
+   three FLAT top-level collections (preserving this codebase's established convention — no
+   subcollection introduced). Every allocation carries an explicit `sourceComposition` array tracing
+   back to real accepted order lines and exact monetary portions, regardless of split method (product/
+   quantity/customer/headcount/freeAmount) — the Stage A draft's discriminated `kind:"freeAmount"`
+   concept is retired; there is now one unified allocation shape. Conservation is enforced by a real,
+   transaction-participating ledger document per source line (`orderLineAllocationLedgers`) — the
+   concurrency lock itself, not a query-returns-nothing assumption. `Check.computedTotalMinorUnits` is
+   always recomputed transactionally from the check's own active allocations. Implemented: `openCheck`/
+   `cancelCheck`/`finalizeCheckReadyForPayment`/`reopenCheck`, all five split modes
+   (`splitCheckByProduct`/`splitCheckByQuantity`/`splitCheckByCustomer`/`splitCheckEqualByHeadcount`/
+   `splitCheckFreeAmount`), `mergeChecks`, `transferCheckAllocation`.
+3. **Asynchronous remote-approval typed actions** (never synchronous/blocking — corrected Stage A
+   report §3, reconfirmed explicitly this wave): three new `ApprovalActionType`s registered in
+   `remoteApproval.ts`'s closed allowlist — `checkFinancialAdjustment`, `acceptedLineCancellation`,
+   `boncukBalanceCorrection` — each with its own handler and its own new manager+-tier response
+   permission (`approveCheckFinancialAdjustment`/`approveAcceptedLineCancellation`/
+   `approveBoncukBalanceCorrection`; `staff` holds none of them). A genuine engine gap was found and
+   fixed while wiring the first handler that actually needed to know who approved it: `ActionHandlerParams`
+   did not expose the responding actor's uid (`request.respondedByActorUid` is only committed to
+   Firestore AFTER the handler runs) — corrected by adding an explicit `respondedByActorUid` parameter,
+   passed from `respondToApprovalRequest`'s own outer scope. This is a real, disclosed self-found-and-
+   fixed defect, not a silent one.
+4. **Accepted-line cancellation**: a distinct `cancelledAfterAcceptance` line status (never reusing
+   `rejected`), full provenance recorded on the line itself, and an idempotent downstream event
+   (`orderLineCancellationEvents`) carrying a best-effort `preparationStarted` signal derived from the
+   order's own current lifecycle status — AP-5 owns building a real per-line KDS "fired" signal; this
+   is an honest, disclosed proxy, not a claim of AP-5 completeness.
+5. **Boncuk balance correction**: kept structurally separate — `requestBoncukBalanceCorrection`/
+   `applyBoncukBalanceCorrection` are the ONLY code path that may ever write a loyalty `adminAdjustment`
+   ledger entry; no check-financial-adjustment code path touches loyalty collections.
+
+**Explicitly deferred to the next AP-3 continuation** (not silently dropped — tracked here): table
+session transfer/merge (`transferTableSession`/`mergeTableSessions`), the replacement/counter-proposal
+backend (immutable snapshot, accept/reject/expiry/stale/replay), both customer-directory projections +
+backfill, the three-pane POS Flutter workspace, the customer-facing QR ordering Flutter flow, the
+canonical Admin Customers destination rewire, and the Platform Owner global customer directory.
+
+**Alternatives considered**: keeping the Stage A draft's two-kind (`line`/`freeAmount`) allocation
+model (rejected — the Stage B mandatory refinement explicitly required source traceability for every
+allocation, which the bare-amount `freeAmount` kind could not provide). Making financial-adjustment
+approval reuse an existing permission tier rather than three new dedicated ones (rejected — the
+existing `deviceActivation` precedent already establishes "one typed action, one typed permission" as
+this codebase's own convention; reusing `manageDineInOrderRefunds` would have conflated two
+conceptually distinct manager-authority actions under one audit trail).
+
+**Consequences**: AP-3 remains open. This checkpoint is safely committed and independently green
+(backend + rules + Flutter gates) before the next continuation begins Wave 2's remaining scope (table
+transfer/merge, replacement proposals) and Wave 3+ (customer directory, POS/QR Flutter UI).
+
+**Status**: IMPLEMENTED (2026-08-27), emulator-tested. AP-3 overall: OPEN. Implementation: AP-3
+(continuing).
+
 ### Governance Synchronization (recorded here for the durable record; the edits themselves live in each
 target file)
 

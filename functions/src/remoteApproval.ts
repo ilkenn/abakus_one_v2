@@ -8,6 +8,11 @@ import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { writeAuditEvent } from "./auditEvents";
 import { generateCorrelationId, sanitizeClientRequestId } from "./correlationId";
 import { applyDeviceActivation } from "./trustedDevice";
+import {
+  applyCheckFinancialAdjustment,
+  applyAcceptedLineCancellation,
+  applyBoncukBalanceCorrection,
+} from "./checkFinancialAdjustments";
 
 /**
  * AP-2 Stage B — the generic, server-authoritative remote approval engine
@@ -35,7 +40,14 @@ import { applyDeviceActivation } from "./trustedDevice";
  */
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "escalated" | "cancelled";
-export type ApprovalActionType = "deviceActivation";
+export type ApprovalActionType =
+  | "deviceActivation"
+  // AP-3 Wave 2C/2D — corrected report §3/§4, Stage B mandatory refinements
+  // #5/#9. Each is its own typed action with its own allowlisted handler —
+  // never a generic "apply this arbitrary payload" action.
+  | "checkFinancialAdjustment"
+  | "acceptedLineCancellation"
+  | "boncukBalanceCorrection";
 
 const APPROVAL_TIMEOUT_MINUTES = 24 * 60;
 const ESCALATION_TIMEOUT_MINUTES = 24 * 60;
@@ -67,6 +79,16 @@ export interface ActionHandlerParams {
   db: Firestore;
   request: ApprovalRequestRecord;
   now: Timestamp;
+  /**
+   * AP-3 Wave 2 addition — the responder's own uid. `request.respondedByActorUid`
+   * is NOT yet set to this value at the point a handler runs (the handler
+   * executes BEFORE `respondToApprovalRequest`'s own `tx.update(ref,
+   * {respondedByActorUid, ...})` write, so it can decide whether to apply
+   * anything at all before that field is committed) — a handler that needs
+   * to record who approved it (e.g. `applyAcceptedLineCancellation`'s own
+   * provenance trail) must read it from here, never from `request` itself.
+   */
+  respondedByActorUid: string;
 }
 
 type ActionHandler = (params: ActionHandlerParams) => Promise<ActionHandlerResult>;
@@ -80,11 +102,17 @@ type ActionHandler = (params: ActionHandlerParams) => Promise<ActionHandlerResul
  */
 const ACTION_HANDLERS: Readonly<Record<ApprovalActionType, ActionHandler>> = {
   deviceActivation: applyDeviceActivation,
+  checkFinancialAdjustment: applyCheckFinancialAdjustment,
+  acceptedLineCancellation: applyAcceptedLineCancellation,
+  boncukBalanceCorrection: applyBoncukBalanceCorrection,
 };
 
 /** The staff permission required to RESPOND to (approve/reject) each action type — never a bare role-tier check. */
 const RESPONSE_PERMISSION_BY_ACTION: Readonly<Record<ApprovalActionType, StaffPermission>> = {
   deviceActivation: "approveDeviceRegistration",
+  checkFinancialAdjustment: "approveCheckFinancialAdjustment",
+  acceptedLineCancellation: "approveAcceptedLineCancellation",
+  boncukBalanceCorrection: "approveBoncukBalanceCorrection",
 };
 
 function invalid(message: string): never {
@@ -221,7 +249,7 @@ export const respondToApprovalRequest = onCall(
       let newValue: unknown = null;
       if (decision === "approved") {
         const handler = ACTION_HANDLERS[current.actionType];
-        const handlerResult = await handler({ tx, db, request: current, now });
+        const handlerResult = await handler({ tx, db, request: current, now, respondedByActorUid: request.auth!.uid });
         newValue = handlerResult.newValue;
       }
 

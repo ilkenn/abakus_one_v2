@@ -3,13 +3,15 @@
 **Status**: CANONICAL. Established AP-1 (2026-08-26). Supersedes `docs/table_qr_architecture.md` and
 `docs/order_lifecycle_architecture.md` for any Admin/POS-relevant content — see §Supersession.
 
-**Implementation status (AP-3, corrected Stage A report — `docs/decisions.md` ADR-036)**: this document
-is the target design; implementation is tracked in `docs/feature_status.md`, not here. As of Wave 1
-(2026-08-27): the TableSession/GuestSubAccount entities, concurrency-safe table-session open/reuse,
-staff-entered-order self-approval fix, and per-line accept/reject (not yet counter-proposal) are real
-and backend-tested. The Check/allocation model, split/merge/transfer, financial adjustments, the
-Customer Directory, trusted-device-gated POS reads, and every Flutter surface described below remain
-design-only, not yet built.
+**Implementation status (AP-3, corrected Stage A report — `docs/decisions.md` ADR-036/ADR-037)**: this
+document is the target design; implementation is tracked in `docs/feature_status.md`, not here. As of
+Wave 2 (2026-08-27): the TableSession/GuestSubAccount entities, concurrency-safe table-session open/
+reuse, staff-entered-order self-approval fix, per-line accept/reject (not yet counter-proposal), the
+full money-safe Check/allocation model (open/cancel/finalize/reopen, all five split modes, merge,
+transfer), asynchronous remote-approval-gated financial adjustments, accepted-line cancellation, and
+device-gated POS reads (`getPosTableOperationalView`) are all real and backend-tested. Table session
+transfer/merge, the replacement/counter-proposal backend, the Customer Directory, and every Flutter
+surface described below remain design-only, not yet built.
 
 ## 1. Purpose
 

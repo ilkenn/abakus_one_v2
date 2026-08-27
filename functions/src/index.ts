@@ -105,6 +105,34 @@ export { respondToDineInOrderLines } from "./respondToDineInOrderLines";
 export { advanceDineInOrderStatus } from "./advanceDineInOrderStatus";
 export { refundDineInOrder } from "./refundDineInOrder";
 
+// AP-3 Wave 1 SECURITY CORRECTION — the sole staff/POS read path for
+// tableSessions/guestSubAccounts/checks/checkAllocations (all four are
+// `allow read: if false` in firestore.rules for every staff actor).
+export { getPosTableOperationalView } from "./posOperationalView";
+
+// AP-3 Wave 2 — money-safe Check/allocation model.
+export {
+  openCheck,
+  cancelCheck,
+  finalizeCheckReadyForPayment,
+  reopenCheck,
+  splitCheckByProduct,
+  splitCheckByQuantity,
+  splitCheckByCustomer,
+  splitCheckEqualByHeadcount,
+  splitCheckFreeAmount,
+  mergeChecks,
+  transferCheckAllocation,
+} from "./checkOperations";
+
+// AP-3 Wave 2C/2D — asynchronous, remote-approval-gated typed actions.
+export {
+  requestCheckFinancialAdjustment,
+  reverseCheckFinancialAdjustment,
+  requestAcceptedLineCancellation,
+  requestBoncukBalanceCorrection,
+} from "./checkFinancialAdjustments";
+
 // Server-Authoritative Campaign Engine P8-B (2026-08-25) — foundation only,
 // not wired into any order-submission path yet. See campaignEngine.ts.
 export { getCustomerActiveCampaigns } from "./getCustomerActiveCampaigns";
