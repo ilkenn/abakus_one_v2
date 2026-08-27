@@ -3,6 +3,14 @@
 **Status**: CANONICAL. Established AP-1 (2026-08-26). Supersedes `docs/table_qr_architecture.md` and
 `docs/order_lifecycle_architecture.md` for any Admin/POS-relevant content — see §Supersession.
 
+**Implementation status (AP-3, corrected Stage A report — `docs/decisions.md` ADR-036)**: this document
+is the target design; implementation is tracked in `docs/feature_status.md`, not here. As of Wave 1
+(2026-08-27): the TableSession/GuestSubAccount entities, concurrency-safe table-session open/reuse,
+staff-entered-order self-approval fix, and per-line accept/reject (not yet counter-proposal) are real
+and backend-tested. The Check/allocation model, split/merge/transfer, financial adjustments, the
+Customer Directory, trusted-device-gated POS reads, and every Flutter surface described below remain
+design-only, not yet built.
+
 ## 1. Purpose
 
 Defines the table/session/check/sub-account model, QR order approval (including line-level accept/

@@ -144,6 +144,17 @@ async function seedMenuProduct(
   });
 }
 
+/**
+ * AP-3 Wave 1 — extended to also seed the parent `tableSessions` document
+ * and the guest's own `guestSubAccounts` document, mirroring exactly what
+ * `openTableGuestSession` now creates transactionally. Every pre-existing
+ * caller of this helper keeps working unchanged (same signature, same
+ * return value) — `submitDineInOrder`'s guestSession path now requires
+ * both to exist. `displayName` is pre-seeded non-empty so the existing
+ * ~70 call sites in this file (none of which pass `guestDisplayName`)
+ * never hit the new mandatory-name-on-first-submission gate; tests that
+ * specifically exercise that gate seed their own bare sub-account instead.
+ */
 async function seedTableGuestSession(
   chain: { organizationId: string; restaurantId: string; branchId: string },
   guestAuthUid: string,
@@ -155,11 +166,31 @@ async function seedTableGuestSession(
   }> = {},
 ): Promise<string> {
   const sessionId = nextId("tgs");
+  const tableId = overrides.tableId ?? "dev-table-1";
+  const tableSessionId = nextId("tsess");
+  await db().collection("restaurantTables").doc(tableId).set(
+    { organizationId: chain.organizationId, branchId: chain.branchId, isActive: true },
+    { merge: true },
+  );
+  await db().collection("tableSessions").doc(tableSessionId).set({
+    organizationId: chain.organizationId,
+    restaurantId: chain.restaurantId,
+    branchId: chain.branchId,
+    tableId,
+    status: "active",
+    openedAt: admin.firestore.Timestamp.now(),
+    closedAt: null,
+    openedByType: "guestQrScan",
+    openedByStaffUid: null,
+    transferredFromTableId: null,
+    version: 1,
+  });
   await db().collection("tableGuestSessions").doc(sessionId).set({
     organizationId: chain.organizationId,
     restaurantId: chain.restaurantId,
     branchId: chain.branchId,
-    tableId: overrides.tableId ?? "dev-table-1",
+    tableId,
+    tableSessionId,
     guestAuthUid,
     status: overrides.status ?? "active",
     createdAt: admin.firestore.Timestamp.now(),
@@ -169,6 +200,19 @@ async function seedTableGuestSession(
     lastActivityAt: admin.firestore.Timestamp.now(),
     qrTokenId: nextId("qrtoken"),
     reservationContextId: overrides.reservationContextId ?? null,
+  });
+  await db().collection("guestSubAccounts").doc(`subaccount-${tableSessionId}-${guestAuthUid}`).set({
+    organizationId: chain.organizationId,
+    branchId: chain.branchId,
+    tableSessionId,
+    ownerType: "guestSession",
+    ownerSessionRef: `tableGuestSessions/${sessionId}`,
+    ownerAuthUid: guestAuthUid,
+    displayName: "Test Guest",
+    status: "open",
+    createdAt: admin.firestore.Timestamp.now(),
+    createdByStaffUid: null,
+    version: 1,
   });
   return sessionId;
 }

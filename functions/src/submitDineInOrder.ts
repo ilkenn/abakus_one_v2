@@ -45,6 +45,18 @@ import {
 } from "./loyaltyRewardCatalog";
 import { isTableGuestSessionActive } from "./tableGuestSessionConfig";
 import { enforceBenefitExclusivity } from "./benefitExclusivity";
+import { requireStaffPermission, requireBranchAccess } from "./staffAuthorization";
+import { requireActiveDeviceSession } from "./trustedDevice";
+import { writeAuditEvent } from "./auditEvents";
+import { generateCorrelationId, sanitizeClientRequestId } from "./correlationId";
+import {
+  GUEST_SUB_ACCOUNTS_COLLECTION,
+  TABLE_SESSIONS_COLLECTION,
+  deterministicIdentitySubAccountId,
+  staffGeneralSubAccountId,
+  type GuestSubAccountDoc,
+  type GuestSubAccountOwnerType,
+} from "./tableSessionConfig";
 import {
   CAMPAIGNS_COLLECTION,
   parseCampaignDefinition,
@@ -102,6 +114,11 @@ function invalid(message: string): never {
   throw new HttpsError("invalid-argument", message);
 }
 
+function requireNonEmptyStringLocal(raw: unknown, field: string): string {
+  if (typeof raw !== "string" || raw.length === 0) invalid(`${field} is required.`);
+  return raw as string;
+}
+
 function sanitizeSubmissionKey(raw: unknown): string {
   if (typeof raw !== "string" || raw.length === 0) invalid("submissionKey is required.");
   if (raw.length > MAX_SUBMISSION_KEY_LENGTH) invalid("submissionKey is too long.");
@@ -128,6 +145,73 @@ function sanitizeRequestedBoncukAmountShapeOnly(raw: unknown): number {
     invalid("requestedBoncukAmount must be a non-negative integer.");
   }
   return raw as number;
+}
+
+/**
+ * AP-3 Wave 1 — the discriminated entry-point split (corrected Stage A
+ * report §10). `mode` is checked BEFORE any shared scope-resolution logic:
+ * `guestSession` (default, omitted `mode` included — preserves every
+ * pre-AP-3 caller unchanged) resolves scope from a `tableGuestSessions`
+ * document exactly as before; `staffEntry` is a wholly separate,
+ * permission- and device-gated path with its own scope input. The two can
+ * never be confused with each other because the discriminator gates which
+ * authorization branch even runs.
+ */
+type DineInSubmissionMode = "guestSession" | "staffEntry";
+function sanitizeMode(raw: unknown): DineInSubmissionMode {
+  if (raw === undefined || raw === null || raw === "guestSession") return "guestSession";
+  if (raw === "staffEntry") return "staffEntry";
+  invalid('mode must be "guestSession" or "staffEntry".');
+}
+
+type DineInSubAccountSelection =
+  | { mode: "existingCustomer"; customerId: string }
+  | { mode: "namedWalkIn"; displayName: string }
+  | { mode: "staffGeneral" }
+  | { mode: "existingSubAccount"; subAccountId: string };
+
+const MAX_DISPLAY_NAME_LENGTH = 120;
+
+function sanitizeSubAccountSelection(raw: unknown): DineInSubAccountSelection {
+  if (typeof raw !== "object" || raw === null) {
+    invalid("subAccountSelection is required for staffEntry mode.");
+  }
+  const value = raw as Record<string, unknown>;
+  switch (value.mode) {
+    case "existingCustomer": {
+      if (typeof value.customerId !== "string" || value.customerId.length === 0) {
+        invalid("subAccountSelection.customerId is required for mode existingCustomer.");
+      }
+      return { mode: "existingCustomer", customerId: value.customerId };
+    }
+    case "namedWalkIn": {
+      if (typeof value.displayName !== "string" || value.displayName.trim().length === 0) {
+        invalid("subAccountSelection.displayName is required for mode namedWalkIn.");
+      }
+      const trimmed = value.displayName.trim();
+      if (trimmed.length > MAX_DISPLAY_NAME_LENGTH) invalid("subAccountSelection.displayName is too long.");
+      return { mode: "namedWalkIn", displayName: trimmed };
+    }
+    case "staffGeneral":
+      return { mode: "staffGeneral" };
+    case "existingSubAccount": {
+      if (typeof value.subAccountId !== "string" || value.subAccountId.length === 0) {
+        invalid("subAccountSelection.subAccountId is required for mode existingSubAccount.");
+      }
+      return { mode: "existingSubAccount", subAccountId: value.subAccountId };
+    }
+    default:
+      invalid('subAccountSelection.mode must be one of "existingCustomer", "namedWalkIn", "staffGeneral", "existingSubAccount".');
+  }
+}
+
+function sanitizeGuestDisplayName(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string") invalid("guestDisplayName must be a string.");
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.length > MAX_DISPLAY_NAME_LENGTH) invalid("guestDisplayName is too long.");
+  return trimmed;
 }
 
 function deriveDineInOrderId(uid: string, submissionKey: string): string {
@@ -257,7 +341,10 @@ function buildDineInOrderDocument(params: {
   customerId: string | null;
   guestAuthUid: string;
   tableId: string;
-  tableSessionId: string;
+  /** The pre-AP-3 field — a `tableGuestSessions` document id. `null` for a staffEntry-mode order (no guest session exists). */
+  tableSessionId: string | null;
+  /** AP-3 Wave 1 — the NEW, table-level `tableSessions` id, deliberately a distinct field name/concept from `tableSessionId` above. Always set, for both modes; Wave 2's Check/allocation model groups by this. */
+  dineInSessionGroupId: string;
   reservationContextId: string | null;
   customerNote: string;
   lines: ComputedOrderLine[];
@@ -281,6 +368,10 @@ function buildDineInOrderDocument(params: {
    * campaign (preserves the pre-P8-C.3 hardcoded-zero behavior).
    */
   discountMinorUnits: number;
+  /** AP-3 Wave 1 (corrected report §1/§8/§10). */
+  mode: DineInSubmissionMode;
+  subAccountId: string;
+  lineStatus: "pendingApproval" | "accepted";
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -297,6 +388,7 @@ function buildDineInOrderDocument(params: {
     customerId: params.customerId,
     tableId: params.tableId,
     tableSessionId: params.tableSessionId,
+    dineInSessionGroupId: params.dineInSessionGroupId,
     guestSessionId: null,
     guestAuthUid: params.guestAuthUid,
     reservationContextId: params.reservationContextId,
@@ -308,6 +400,9 @@ function buildDineInOrderDocument(params: {
     contactLastName: null,
     contactPhone: null,
     courierVisibility: "hidden",
+    mode: params.mode,
+    subAccountId: params.subAccountId,
+    linesDispositionSummary: params.lineStatus === "accepted" ? "resolved" : "pending",
     lines: params.lines.map((line) => ({
       productId: line.productId,
       productName: line.productName,
@@ -325,6 +420,14 @@ function buildDineInOrderDocument(params: {
       taxRateBasisPoints: line.taxBasisPoints,
       kitchenNote: line.kitchenNote,
       customerNote: line.customerNote,
+      // AP-3 Wave 1 (corrected report §1/§10) — per-line disposition. Every
+      // line in one submission shares the same status at CREATE time
+      // (staffEntry: auto-`accepted`; guestSession: `pendingApproval`) —
+      // `respondToDineInOrderLines` is the only writer of a per-line
+      // divergence after this point.
+      subAccountId: params.subAccountId,
+      status: params.lineStatus,
+      counterProposal: null,
     })),
     pricing: {
       grossSubtotal: moneyField(params.pricing.grossSubtotalMinorUnits),
@@ -381,8 +484,16 @@ export const submitDineInOrder = onCall(
     const isRealCustomer = request.auth.token?.firebase?.sign_in_provider === "phone";
 
     const data = (request.data ?? {}) as Record<string, unknown>;
+    // AP-3 Wave 1 (corrected report §10) — checked before anything else.
+    const mode = sanitizeMode(data.mode);
     const submissionKey = sanitizeSubmissionKey(data.submissionKey);
-    const tableSessionId = sanitizeTableSessionId(data.tableSessionId);
+    // `tableSessionId` here means a `tableGuestSessions` document id
+    // (the pre-AP-3, guest-path-only field name) — guestSession mode only.
+    // staffEntry mode never accepts it; it derives the (new,
+    // table-level) TableSession itself, server-side, from `tableId`,
+    // exactly mirroring the guest path's own "never trust a client-claimed
+    // scope id" discipline.
+    const tableSessionId = mode === "guestSession" ? sanitizeTableSessionId(data.tableSessionId) : "";
     const rawItems = parseItems(data.items);
     if (rawItems.length > MAX_ITEMS_PER_ORDER) invalid("too many items in one order.");
     const customerNote = sanitizeCustomerNote(data.customerNote);
@@ -392,6 +503,39 @@ export const submitDineInOrder = onCall(
     // campaign-related value this callable ever accepts; the server
     // resolves and re-validates everything else itself.
     const selectedCampaignId = sanitizeSelectedCampaignId(data.selectedCampaignId);
+    const guestDisplayName = mode === "guestSession" ? sanitizeGuestDisplayName(data.guestDisplayName) : null;
+
+    // AP-3 Wave 1 — staffEntry-only fields. A trusted, permission-checked,
+    // device-bound staff entry IS the approval (corrected report §10) — no
+    // Boncuk/reward/campaign benefit selection is supported for a
+    // staff-entered dine-in line this phase (disclosed simplification,
+    // never silently ignored — rejected fail-closed instead).
+    let staffEntryOrganizationId = "";
+    let staffEntryBranchId = "";
+    let staffEntryTableId = "";
+    let staffEntryDeviceId = "";
+    let staffEntryDeviceSessionId = "";
+    let subAccountSelection: DineInSubAccountSelection | null = null;
+    if (mode === "staffEntry") {
+      if (requestedBoncukAmount > 0 || selectedRewardId !== null || selectedCampaignId !== null) {
+        invalid("Boncuk/reward/campaign selection is not supported for staff-entered dine-in orders.");
+      }
+      staffEntryOrganizationId = requireNonEmptyStringLocal(data.organizationId, "organizationId");
+      staffEntryBranchId = requireNonEmptyStringLocal(data.branchId, "branchId");
+      staffEntryTableId = requireNonEmptyStringLocal(data.tableId, "tableId");
+      staffEntryDeviceId = requireNonEmptyStringLocal(data.deviceId, "deviceId");
+      staffEntryDeviceSessionId = requireNonEmptyStringLocal(data.deviceSessionId, "deviceSessionId");
+      subAccountSelection = sanitizeSubAccountSelection(data.subAccountSelection);
+
+      requireStaffPermission(request, staffEntryOrganizationId, "manageDineInOrders");
+      requireBranchAccess(request, staffEntryOrganizationId, staffEntryBranchId);
+      await requireActiveDeviceSession(
+        staffEntryOrganizationId,
+        staffEntryBranchId,
+        staffEntryDeviceId,
+        staffEntryDeviceSessionId,
+      );
+    }
 
     // Locked rule (BR-LOYALTY-019, unchanged by this phase) — dine-in cash
     // Boncuk redemption was never an approved product rule; this pipeline
@@ -453,45 +597,199 @@ export const submitDineInOrder = onCall(
       // reads. Every tx.get() in this function happens before its first
       // write, per Firestore's own transaction discipline.
       // ---------------------------------------------------------------
-      const sessionRef = db.collection("tableGuestSessions").doc(tableSessionId);
-      const sessionDoc = await tx.get(sessionRef);
-      if (!sessionDoc.exists) {
-        throw new HttpsError("not-found", "Table guest session not found.");
-      }
-      const session = sessionDoc.data()!;
-      if (session.guestAuthUid !== uid) {
-        throw new HttpsError("failed-precondition", "This table session does not belong to the caller.");
-      }
-      if (
-        !isTableGuestSessionActive({
-          status: String(session.status),
-          expiresAt: session.expiresAt,
-        })
-      ) {
-        throw new HttpsError("failed-precondition", "This table session is not active.");
-      }
+      let organizationId: string;
+      let restaurantId: string;
+      let branchId: string;
+      let tableId: string;
+      let reservationContextId: string | null = null;
+      let customerId: string | null = null;
+      let resolvedTableSessionId: string;
+      let resolvedSubAccountId: string;
+      let lineStatus: "pendingApproval" | "accepted";
+      // Populated only when the sub-account referenced above does not yet
+      // exist (or, for `guestSession` mode, needs its mandatory display
+      // name stamped for the first time) — applied in the write phase,
+      // never here (every tx.get() this transaction performs happens
+      // before its first tx.set()/tx.update()).
+      let pendingSubAccountCreate: Omit<GuestSubAccountDoc, "createdAt"> | null = null;
+      let pendingSubAccountNameStamp: string | null = null;
 
-      const organizationId = String(session.organizationId);
-      const restaurantId = String(session.restaurantId);
-      const branchId = String(session.branchId);
-      const tableId = String(session.tableId);
-      const reservationContextId: string | null = session.reservationContextId ?? null;
+      if (mode === "guestSession") {
+        const sessionRef = db.collection("tableGuestSessions").doc(tableSessionId);
+        const sessionDoc = await tx.get(sessionRef);
+        if (!sessionDoc.exists) {
+          throw new HttpsError("not-found", "Table guest session not found.");
+        }
+        const session = sessionDoc.data()!;
+        if (session.guestAuthUid !== uid) {
+          throw new HttpsError("failed-precondition", "This table session does not belong to the caller.");
+        }
+        if (
+          !isTableGuestSessionActive({
+            status: String(session.status),
+            expiresAt: session.expiresAt,
+          })
+        ) {
+          throw new HttpsError("failed-precondition", "This table session is not active.");
+        }
 
-      // Mirrors `firestore.rules`' own `reservationContextIsOrderable` —
-      // reimplemented server-side since the direct-client-create rule
-      // branches that used to enforce this are removed by this same phase.
-      if (reservationContextId !== null) {
-        const reservationRef = db.collection("reservations").doc(reservationContextId);
-        const reservationDoc = await tx.get(reservationRef);
-        if (!reservationDoc.exists || reservationDoc.data()!.status !== "confirmed") {
+        organizationId = String(session.organizationId);
+        restaurantId = String(session.restaurantId);
+        branchId = String(session.branchId);
+        tableId = String(session.tableId);
+        reservationContextId = session.reservationContextId ?? null;
+        customerId = isRealCustomer ? uid : null;
+
+        // Mirrors `firestore.rules`' own `reservationContextIsOrderable` —
+        // reimplemented server-side since the direct-client-create rule
+        // branches that used to enforce this are removed by this same phase.
+        if (reservationContextId !== null) {
+          const reservationRef = db.collection("reservations").doc(reservationContextId);
+          const reservationDoc = await tx.get(reservationRef);
+          if (!reservationDoc.exists || reservationDoc.data()!.status !== "confirmed") {
+            throw new HttpsError(
+              "failed-precondition",
+              "This table's linked reservation is no longer orderable.",
+            );
+          }
+        }
+
+        const sessionTableSessionId = session.tableSessionId as string | undefined;
+        if (!sessionTableSessionId) {
           throw new HttpsError(
             "failed-precondition",
-            "This table's linked reservation is no longer orderable.",
+            "This table guest session has no associated table session — re-scan the QR code.",
           );
         }
-      }
+        resolvedTableSessionId = sessionTableSessionId;
+        resolvedSubAccountId = deterministicIdentitySubAccountId(resolvedTableSessionId, uid);
+        const subAccountSnap = await tx.get(
+          db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc(resolvedSubAccountId),
+        );
+        if (!subAccountSnap.exists) {
+          throw new HttpsError(
+            "failed-precondition",
+            "No guest sub-account exists for this table session — re-scan the QR code.",
+          );
+        }
+        const subAccount = subAccountSnap.data() as GuestSubAccountDoc;
+        if (!subAccount.displayName || subAccount.displayName.trim().length === 0) {
+          // Corrected report §8/#11 — mandatory guest name entry before the
+          // first submission.
+          if (!guestDisplayName) {
+            throw new HttpsError(
+              "failed-precondition",
+              "guestDisplayName is required before the first order at this table.",
+              { reason: "dineIn/guest-display-name-required" },
+            );
+          }
+          pendingSubAccountNameStamp = guestDisplayName;
+        }
+        lineStatus = "pendingApproval";
+      } else {
+        // ---------------------------------------------------------------
+        // staffEntry — scope is derived server-side from the TABLE, never
+        // trusted from a client-claimed TableSession id (mirrors the
+        // guestSession branch's own "derive from a trusted server
+        // document" discipline).
+        // ---------------------------------------------------------------
+        const tableRef = db.collection("restaurantTables").doc(staffEntryTableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists) {
+          throw new HttpsError("not-found", "Table not found.");
+        }
+        const table = tableSnap.data()!;
+        if (
+          String(table.organizationId) !== staffEntryOrganizationId ||
+          String(table.branchId) !== staffEntryBranchId
+        ) {
+          throw new HttpsError("not-found", "Table not found.");
+        }
+        const activeTableSessionId = (table.activeTableSessionId as string | null | undefined) ?? null;
+        if (!activeTableSessionId) {
+          throw new HttpsError(
+            "failed-precondition",
+            "This table has no active table session — open one before entering an order.",
+          );
+        }
+        const tableSessionSnap = await tx.get(
+          db.collection(TABLE_SESSIONS_COLLECTION).doc(activeTableSessionId),
+        );
+        if (!tableSessionSnap.exists || tableSessionSnap.data()!.status !== "active") {
+          throw new HttpsError("failed-precondition", "This table has no active table session.");
+        }
+        const tableSession = tableSessionSnap.data()!;
+        organizationId = String(tableSession.organizationId);
+        restaurantId = String(tableSession.restaurantId);
+        branchId = String(tableSession.branchId);
+        tableId = String(tableSession.tableId);
+        resolvedTableSessionId = activeTableSessionId;
+        reservationContextId = null;
 
-      const customerId = isRealCustomer ? uid : null;
+        const selection = subAccountSelection!;
+        if (selection.mode === "existingCustomer") {
+          customerId = selection.customerId;
+          resolvedSubAccountId = deterministicIdentitySubAccountId(resolvedTableSessionId, selection.customerId);
+          const snap = await tx.get(db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc(resolvedSubAccountId));
+          if (!snap.exists) {
+            pendingSubAccountCreate = {
+              organizationId,
+              branchId,
+              tableSessionId: resolvedTableSessionId,
+              ownerType: "authenticatedCustomer" as GuestSubAccountOwnerType,
+              ownerSessionRef: null,
+              ownerAuthUid: selection.customerId,
+              displayName: "",
+              status: "open",
+              createdByStaffUid: uid,
+              version: 1,
+            };
+          }
+        } else if (selection.mode === "namedWalkIn") {
+          resolvedSubAccountId = db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc().id;
+          pendingSubAccountCreate = {
+            organizationId,
+            branchId,
+            tableSessionId: resolvedTableSessionId,
+            ownerType: "namedWalkIn" as GuestSubAccountOwnerType,
+            ownerSessionRef: null,
+            ownerAuthUid: null,
+            displayName: selection.displayName,
+            status: "open",
+            createdByStaffUid: uid,
+            version: 1,
+          };
+        } else if (selection.mode === "staffGeneral") {
+          resolvedSubAccountId = staffGeneralSubAccountId(resolvedTableSessionId);
+          const snap = await tx.get(db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc(resolvedSubAccountId));
+          if (!snap.exists) {
+            pendingSubAccountCreate = {
+              organizationId,
+              branchId,
+              tableSessionId: resolvedTableSessionId,
+              ownerType: "staffGeneral" as GuestSubAccountOwnerType,
+              ownerSessionRef: null,
+              ownerAuthUid: null,
+              displayName: "Masa Geneli",
+              status: "open",
+              createdByStaffUid: uid,
+              version: 1,
+            };
+          }
+        } else {
+          resolvedSubAccountId = selection.subAccountId;
+          const snap = await tx.get(db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc(resolvedSubAccountId));
+          if (!snap.exists || snap.data()!.tableSessionId !== resolvedTableSessionId) {
+            throw new HttpsError("not-found", "The selected sub-account does not exist at this table.");
+          }
+          const existing = snap.data() as GuestSubAccountDoc;
+          customerId = existing.ownerType === "authenticatedCustomer" ? existing.ownerAuthUid : null;
+        }
+        // Trusted, permission-checked, device-bound staff entry IS the
+        // approval (corrected report §10) — never `pendingApproval`, never
+        // a self-approval loop via `respondToDineInOrderLines`.
+        lineStatus = "accepted";
+      }
 
       // -------------------------------------------------------------
       // Catalog-reward PRE-resolution (real customer only — the guest
@@ -890,6 +1188,22 @@ export const submitDineInOrder = onCall(
         });
       }
 
+      // AP-3 Wave 1 — sub-account resolution writes (corrected report §8/#10).
+      const nowTs = Timestamp.fromDate(now);
+      if (pendingSubAccountCreate) {
+        tx.set(db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc(resolvedSubAccountId), {
+          ...pendingSubAccountCreate,
+          createdAt: nowTs,
+        });
+      }
+      if (pendingSubAccountNameStamp) {
+        tx.set(
+          db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc(resolvedSubAccountId),
+          { displayName: pendingSubAccountNameStamp },
+          { merge: true },
+        );
+      }
+
       tx.set(
         orderRef,
         buildDineInOrderDocument({
@@ -901,7 +1215,8 @@ export const submitDineInOrder = onCall(
           customerId,
           guestAuthUid: uid,
           tableId,
-          tableSessionId,
+          tableSessionId: mode === "guestSession" ? tableSessionId : null,
+          dineInSessionGroupId: resolvedTableSessionId,
           reservationContextId,
           customerNote,
           lines,
@@ -912,10 +1227,30 @@ export const submitDineInOrder = onCall(
           catalogReward: pendingCatalogReward ? pendingCatalogReward.orderSnapshot : null,
           campaign: campaignOrderSnapshot,
           discountMinorUnits: campaignDiscountMinorUnits,
+          mode,
+          subAccountId: resolvedSubAccountId,
+          lineStatus,
         }),
       );
 
-      return { orderId, orderNumber, duplicate: false };
+      if (mode === "staffEntry") {
+        writeAuditEvent({
+          tx,
+          db,
+          eventId: `${orderId}-staff-entered`,
+          organizationId,
+          branchId,
+          type: "order.staffEnteredLinesAccepted",
+          targetRef: orderRef.path,
+          actorType: "staff",
+          actorUid: uid,
+          correlationId: generateCorrelationId(),
+          clientRequestId: sanitizeClientRequestId(undefined),
+          now: nowTs,
+        });
+      }
+
+      return { orderId, orderNumber, duplicate: false, subAccountId: resolvedSubAccountId, tableSessionId: resolvedTableSessionId };
     });
   },
 );

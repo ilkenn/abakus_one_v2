@@ -645,6 +645,37 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
+    // ---------------------------------------------------------------------
+    // AP-3 Wave 1 — Table Session (the NEW, table-level dining-visit
+    // aggregate; deliberately a distinct collection from the pre-existing
+    // `tableGuestSessions` above, which represents one guest's own visit
+    // record, not the table-level session several guests/sub-accounts
+    // share) and Guest Sub-Account (corrected AP-3 Stage A report §1/§6/
+    // §8). `openTableGuestSession`/`submitDineInOrder` (Admin SDK) are the
+    // sole writers of both — every write bypasses this file by
+    // construction.
+    //
+    // **Corrected ownership model**: `guestSubAccounts.ownerAuthUid` is the
+    // caller's real Firebase Auth uid, denormalized at creation exactly
+    // like `tableGuestSessions.guestAuthUid`/`orders.guestAuthUid` already
+    // are — never a session document id (which a rule cannot compare
+    // against `request.auth.uid` in any meaningful way). `null` only for
+    // the unattributed `staffGeneral`/staff-created `namedWalkIn` types.
+    // ---------------------------------------------------------------------
+
+    match /tableSessions/{tableSessionId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
+    match /guestSubAccounts/{subAccountId} {
+      allow read: if (isOrgMember(resource.data.organizationId) &&
+          hasBranchAccess(resource.data.organizationId, resource.data.branchId)) ||
+        (isSignedIn() && resource.data.ownerAuthUid == request.auth.uid);
+      allow write: if false; // Cloud Function (Admin SDK) only.
+    }
+
     // Boncuk Loyalty P7-D.1 (2026-08-24) — `isActiveTableGuestSession`/
     // `tableGuestSessionMatchesOrderScope`/`reservationContextIsOrderable`
     // (Phase 3/Faz R.3B) REMOVED. They existed only to validate the two

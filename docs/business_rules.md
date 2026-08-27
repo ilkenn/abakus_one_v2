@@ -6687,6 +6687,9 @@ neither restated in full here nor duplicated between the two.
 
 ### BR-SUBACCOUNT-001 — Per-customer table sub-account, mandatory in V1
 - **Status**: DECIDED — architecture only, not yet implemented (AP-0 confirmed `NOT_FOUND` in source).
+  **AP-3 Wave 1 update (2026-08-27)**: real, implemented — `guestSubAccounts/{subAccountId}`
+  (`functions/src/tableSessionConfig.ts`/`openTableGuestSession.ts`), server-authoritative, emulator-
+  tested. Not yet consumed by any Flutter UI.
 - **Rule**: Every QR customer at a table has a canonical `GuestSubAccount` within the table's active
   session. Mandatory in the first production POS release, not deferrable.
 - **Owner Agent**: restaurant_domain / security_engineer
@@ -6694,7 +6697,11 @@ neither restated in full here nor duplicated between the two.
 - **Business Rule IDs**: ADR-028, `docs/order_operations_architecture.md`
 
 ### BR-SUBACCOUNT-002 — Mandatory guest name entry before QR ordering
-- **Status**: DECIDED — architecture only.
+- **Status**: DECIDED — architecture only. **AP-3 Wave 1 update (2026-08-27)**: real, implemented —
+  `submitDineInOrder` requires and rejects (`failed-precondition`,
+  `dineIn/guest-display-name-required`) a guest's first submission at a table until `guestDisplayName`
+  is supplied, then stamps it onto the sub-account exactly once. Not yet consumed by any Flutter UI
+  (no customer-facing name-entry screen exists yet).
 - **Rule**: A table-QR guest must enter a name before placing an order; this name becomes the owning
   `GuestSubAccount`'s `displayName`, enforced non-empty server-side.
 - **Owner Agent**: restaurant_domain
@@ -6702,7 +6709,10 @@ neither restated in full here nor duplicated between the two.
 - **Business Rule IDs**: ADR-028
 
 ### BR-SUBACCOUNT-003 — Authenticated customer linkage
-- **Status**: DECIDED — architecture only.
+- **Status**: DECIDED — architecture only. **AP-3 Wave 1 update (2026-08-27)**: real, implemented —
+  a phone-verified customer's sub-account id is deterministic (`subaccount-{tableSessionId}-{uid}`),
+  so every submission from the same identity within the same table session resolves to the same
+  sub-account automatically.
 - **Rule**: A signed-in customer's submissions link to their canonical `customerId`, not a bare display
   name; subsequent submissions from the same identity within the same table session join the same
   active sub-account.
@@ -6711,7 +6721,10 @@ neither restated in full here nor duplicated between the two.
 - **Business Rule IDs**: ADR-028
 
 ### BR-SUBACCOUNT-004 — Staff-created general lines
-- **Status**: DECIDED — architecture only.
+- **Status**: DECIDED — architecture only. **AP-3 Wave 1 update (2026-08-27)**: real, implemented —
+  `submitDineInOrder`'s `staffEntry` mode `subAccountSelection: {mode: "staffGeneral"}` writes to the
+  deterministic singleton `subaccount-{tableSessionId}-staffGeneral`, distinct from any guest's own
+  sub-account and from a staff-created `namedWalkIn`.
 - **Rule**: Order lines a cashier enters on behalf of the table generally (not attributable to one
   specific guest) are held in a separate, explicitly staff-created sub-account, never silently attached
   to an arbitrary guest's sub-account.
@@ -6746,16 +6759,48 @@ neither restated in full here nor duplicated between the two.
 - **Related Modules**: Orders, POS, Tables
 - **Business Rule IDs**: ADR-028, `docs/order_operations_architecture.md` §11
 
+### BR-TABLE-010 — Concurrency-safe single active TableSession per table (AP-3 Wave 1)
+- **Status**: IMPLEMENTED (2026-08-27) — `functions/src/openTableGuestSession.ts`, emulator-tested
+  under real concurrent load (8 simultaneous first-scans of one table).
+- **Rule**: At most one `active`-status `tableSessions` document may exist per physical table at a
+  time. `restaurantTables/{tableId}.activeTableSessionId` is both the pointer and the concurrency lock
+  — a second concurrent scan of the same not-yet-open table never creates a duplicate TableSession; it
+  transactionally retries and reuses the first scan's own newly-created one.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Orders, POS, Tables
+- **Business Rule IDs**: ADR-028, `docs/order_operations_architecture.md` §6
+
+### BR-SUBACCOUNT-007 — Staff-entered dine-in lines are immediately accepted, never self-approved (AP-3 Wave 1)
+- **Status**: IMPLEMENTED (2026-08-27) — `functions/src/submitDineInOrder.ts` (`mode: "staffEntry"`),
+  `functions/src/respondToDineInOrderLines.ts` (structurally rejects a `staffEntry`-mode order),
+  emulator-tested.
+- **Rule**: A dine-in order line entered by a permission-checked (`manageDineInOrders`), trusted-
+  device-session-verified staff member is written `accepted` at creation time — it is never routed
+  through the guest-submission per-line approval flow (`respondToDineInOrderLines`), which would
+  otherwise let the same staff member "approve their own" entry. The two paths are discriminated
+  server-side (`mode`) before any shared authorization logic runs, so they cannot be confused.
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: Orders, POS, Tables
+- **Business Rule IDs**: ADR-028, ADR-030 (Trusted Device Model), `docs/order_operations_architecture.md` §10
+
 ### BR-ORDER-015 — Every QR submission awaits cashier approval
 - **Status**: DECIDED — **partially real** (whole-order approval is real and server-authoritative per
   `submitDineInOrder.ts`/`advanceDineInOrderStatus.ts`, AP-0-confirmed); line-level detail below is new.
+  **AP-3 Wave 1 update (2026-08-27)**: line-level detail is now also real — see BR-ORDER-016.
 - **Rule**: No canonical kitchen preparation begins for a QR submission until cashier approval.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Orders, QR, KDS
 - **Business Rule IDs**: ADR-029
 
 ### BR-ORDER-016 — Line-level accept/reject
-- **Status**: DECIDED — architecture only (AP-0 confirmed whole-order-only today).
+- **Status**: DECIDED — architecture only (AP-0 confirmed whole-order-only today). **AP-3 Wave 1
+  update (2026-08-27)**: real, implemented — every `guestSession`-mode order line is written
+  `status: "pendingApproval"` at creation; `respondToDineInOrderLines` (new callable) applies
+  per-line `accept`/`reject` decisions, recomputing `order.linesDispositionSummary`
+  (`pending`\|`partiallyResolved`\|`resolved`). **Deferred, disclosed boundary**: the counter-proposal
+  ("propose a replacement") decision kind is NOT yet implemented — only `accept`/`reject`. No
+  customer-facing Flutter UI consumes any of this yet (no per-line status display, no proposal
+  screen).
 - **Rule**: The cashier disposition of a QR submission is per product line, not only whole-order.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Orders, POS

@@ -607,6 +607,170 @@ test('a client can never directly update their own table guest session — e.g. 
   );
 });
 
+// ---------------------------------------------------------------------
+// AP-3 Wave 1 — Table Session + Guest Sub-Account (corrected Stage A
+// report §1/§6/§8). Both are written exclusively by
+// `openTableGuestSession`/`submitDineInOrder` (Admin SDK, bypasses these
+// rules entirely) — these tests only cover what a *client* may do
+// against an already-seeded document.
+// ---------------------------------------------------------------------
+
+test('tableSessions: a branch-scoped staff member (org + branch access) can read; org access alone is not enough', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'tableSessions/ts-1'), {
+      organizationId: 'org-1',
+      restaurantId: 'restaurant-1',
+      branchId: 'branch-1',
+      tableId: 'table-1',
+      status: 'active',
+    });
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-branch', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+  const orgOnlyStaff = testEnv
+    .authenticatedContext('staff-org-only', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(branchStaff, 'tableSessions/ts-1')));
+  await assertFails(getDoc(doc(orgOnlyStaff, 'tableSessions/ts-1')));
+});
+
+test('tableSessions: a different organization\'s staff member cannot read — tenant isolation', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'tableSessions/ts-2'), {
+      organizationId: 'org-1',
+      restaurantId: 'restaurant-1',
+      branchId: 'branch-1',
+      tableId: 'table-1',
+      status: 'active',
+    });
+  });
+  const otherOrgStaff = testEnv
+    .authenticatedContext('staff-other-org', {
+      organizationAccess: ['org-2'],
+      branchAccess: { 'org-2': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertFails(getDoc(doc(otherOrgStaff, 'tableSessions/ts-2')));
+});
+
+test('tableSessions: no client (staff or guest) may ever write directly — Cloud Function (Admin SDK) only', async () => {
+  const branchStaff = testEnv
+    .authenticatedContext('staff-write', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertFails(
+    setDoc(doc(branchStaff, 'tableSessions/ts-3'), {
+      organizationId: 'org-1',
+      restaurantId: 'restaurant-1',
+      branchId: 'branch-1',
+      tableId: 'table-1',
+      status: 'active',
+    }),
+  );
+});
+
+test('guestSubAccounts: the owner (matching ownerAuthUid) can read their own sub-account', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/sub-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-1',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-uid-sub-1',
+      displayName: 'Test Guest',
+      status: 'open',
+    });
+  });
+  const owner = testEnv.authenticatedContext('guest-uid-sub-1').firestore();
+
+  await assertSucceeds(getDoc(doc(owner, 'guestSubAccounts/sub-1')));
+});
+
+test('guestSubAccounts: a DIFFERENT guest cannot read someone else\'s sub-account by knowing its id — IDOR protection, proves the fix is keyed on ownerAuthUid, not a session doc id', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/sub-2'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-1',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-uid-sub-2',
+      displayName: 'Test Guest',
+      status: 'open',
+    });
+  });
+  const attacker = testEnv.authenticatedContext('guest-uid-attacker-sub').firestore();
+
+  await assertFails(getDoc(doc(attacker, 'guestSubAccounts/sub-2')));
+});
+
+test('guestSubAccounts: a staffGeneral/namedWalkIn sub-account with ownerAuthUid: null is never readable by any signed-in customer, only by branch staff', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/sub-3'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-1',
+      ownerType: 'staffGeneral',
+      ownerAuthUid: null,
+      displayName: 'Masa Geneli',
+      status: 'open',
+    });
+  });
+  const randomCustomer = testEnv.authenticatedContext('some-customer').firestore();
+  const branchStaff = testEnv
+    .authenticatedContext('staff-branch-sub', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertFails(getDoc(doc(randomCustomer, 'guestSubAccounts/sub-3')));
+  await assertSucceeds(getDoc(doc(branchStaff, 'guestSubAccounts/sub-3')));
+});
+
+test('guestSubAccounts: branch staff (org + branch access) can read any sub-account in their branch; org access alone is not enough', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/sub-4'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-1',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-uid-sub-4',
+      displayName: 'Test Guest',
+      status: 'open',
+    });
+  });
+  const orgOnlyStaff = testEnv
+    .authenticatedContext('staff-org-only-sub', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  await assertFails(getDoc(doc(orgOnlyStaff, 'guestSubAccounts/sub-4')));
+});
+
+test('guestSubAccounts: no client may ever write directly — Cloud Function (Admin SDK) only', async () => {
+  const owner = testEnv.authenticatedContext('guest-uid-sub-write').firestore();
+
+  await assertFails(
+    setDoc(doc(owner, 'guestSubAccounts/sub-5'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-1',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-uid-sub-write',
+      displayName: 'Test Guest',
+      status: 'open',
+    }),
+  );
+});
+
 test('tableQrCodes and restaurantTables are unreadable by any client — covered by the fail-closed default, never a direct client lookup', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'tableQrCodes/qr-1'), {

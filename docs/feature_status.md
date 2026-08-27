@@ -4915,3 +4915,25 @@ blanket widening of the existing `hasActiveSupportGrant` support-grant model. A 
 `TextField` inside a non-`StatefulBuilder` dialog never rebuilds on keystrokes) was found and fixed via
 this pass's own new widget test suite. Full evidence, file manifest, and gate results are in
 `docs/decisions.md`'s AP-2 FINAL WIRING entry.
+
+**AP-3 WAVE 1 — Table Session + Guest Sub-Account Foundation (2026-08-27, IN PROGRESS — checkpoint, not
+AP-3 closure).** Backend-only foundation slice of the corrected AP-3 Stage A design (`docs/decisions.md`
+ADR-036): `tableSessions`/`guestSubAccounts` (new collections, corrected `ownerAuthUid`-based ownership
+— never a session document id), concurrency-safe `TableSession` open/reuse (`openTableGuestSession.ts`,
+the lock is `restaurantTables.activeTableSessionId`, proven under 8 real simultaneous first-scans of
+one table in a passing test), `submitDineInOrder`'s new discriminated `mode` (`guestSession`/
+`staffEntry` — the staff-order self-approval fix: a `staffEntry` line is written `accepted`
+immediately, permission- and trusted-device-session-gated, and can never be routed through the new
+`respondToDineInOrderLines` callable), per-line `pendingApproval`/`accepted`/`rejected` status plus
+`order.linesDispositionSummary`, and mandatory guest-name entry before a table's first order
+submission. `firestore.rules` gained `tableSessions`/`guestSubAccounts` match blocks (org+branch-scoped
+staff read, owner-uid-scoped guest read, no client write). Full backend regression: 1796/1796 Functions
+emulator tests (baseline 1781 + 15 new), 391/391 Firestore Rules tests (baseline 383 + 8 new) — zero
+regressions in any pre-existing suite. `flutter analyze`/`dart format` clean (no Dart file touched).
+**Explicitly deferred, not silently dropped** (see ADR-036 for the full list): the check/allocation
+money-safe model, accepted-line cancellation, async remote-approval-gated financial actions, both
+customer-directory projections + backfill, the counter-proposal decision kind, trusted-device-gated POS
+read models, the three-pane POS Flutter workspace, the customer-facing QR ordering Flutter flow, the
+canonical Admin Customers destination, and the Platform Owner global customer directory — none of these
+exist yet. No customer-facing or staff-facing UI consumes any of Wave 1's backend work yet. AP-3 remains
+OPEN; this is a scoped, tested, committed checkpoint within it, not its completion.

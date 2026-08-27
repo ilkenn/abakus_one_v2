@@ -16743,6 +16743,57 @@ AP-4/AP-5. Full detail in `docs/restaurant_operations_architecture.md` §9.
 **Status**: DECIDED, supersedes ADR-025's deferral specifically (ADR-025's other, non-deferral content is
 unaffected). Implementation: AP-6.
 
+### ADR-036 — AP-3 Table/Order/Check/Customer-Directory Corrected Design; Wave 1 Foundation Closure (Locked)
+
+**Context**: AP-3's first Stage A audit report (table sessions, sub-accounts, checks/allocations,
+customer directory) was rejected by the user as containing several High-impact consistency, multi-
+tenant, financial-model, and UI-flow defects — 15 specific corrections were mandated (money-unsafe
+check/allocation model, check-lifecycle circularity with AP-4, financial adjustments not separated
+from the Boncuk ledger, tenant-vs-platform restriction scope, address-privacy over-exposure, a single-
+boolean consent model, an unscalable customer-search design, a broken sub-account ownership rule keyed
+on a session doc id instead of a real auth uid, no real table-session concurrency model, staff-order
+self-approval, a missing customer-facing QR Flutter flow, an under-specified proposal snapshot, a
+competing second Customers nav destination, and no trusted-device enforcement on POS reads). A
+corrected Stage A report was produced and approved, then AP-3 Stage B (full implementation) was
+authorized to proceed in continuous waves, explicitly permitting mid-phase checkpoint commits that do
+not by themselves constitute AP-3 completion.
+
+**Decision**: The corrected design (12-section report: revised entities/state machines, revised
+check/allocation schema, command/read-model plan, customer directory projection/backfill plan, PII/
+consent/restriction authority matrix, table-session uniqueness/transfer/merge invariants, customer QR
+Flutter path, trusted-device enforcement, test matrix, file manifest, wave plan) is the locked target
+architecture for all of AP-3. **This entry records Wave 1's real, closed-out foundation slice only —
+not AP-3's completion**: `tableSessions`/`guestSubAccounts` (new collections, corrected `ownerAuthUid`
+ownership model), concurrency-safe TableSession open/reuse (`restaurantTables.activeTableSessionId` as
+the transactional lock), `submitDineInOrder`'s discriminated `mode` (`guestSession`/`staffEntry`, the
+staff-order self-approval fix), per-line `pendingApproval`/`accepted`/`rejected` status plus the new
+`respondToDineInOrderLines` callable (accept/reject only — counter-proposal deferred), and mandatory
+guest-name entry before first submission. Firestore Rules, indexes (none needed this slice — every
+Wave 1 query is a direct document read, never a `.where()` requiring a new composite), and a full
+backend/rules regression pass are all real and green for this slice specifically.
+
+**Deferred, explicitly not yet built** (tracked for AP-3's own continuation, not silently dropped):
+the check/allocation money-safe model (`checkAllocations`, split/merge/transfer, financial
+adjustments, `checkFinancialAdjustments`/`boncukBalanceCorrection`), accepted-line
+post-acceptance cancellation, asynchronous remote-approval-gated financial actions, the two customer-
+directory projections (`platformCustomerDirectoryEntries`/`customerDirectoryEntries`) and their
+backfill, the counter-proposal (replacement-line) decision kind, trusted-device-gated POS read models
+(`getPosTableOperationalView` and the branch/table overview), the three-pane POS Flutter workspace,
+the customer-facing QR ordering Flutter flow, the canonical Admin Customers destination rewire, and
+the Platform Owner global customer directory. None of these are claimed implemented by this entry.
+
+**Alternatives considered**: attempting all of AP-3 in a single non-checkpointed pass (rejected —
+explicitly deemed unrealistic to deliver correct, tested, non-fabricated financial/security-critical
+code plus a full POS UI plus real captured screenshots in one continuous run; the checkpoint-commit
+pattern was explicitly pre-authorized by the user for exactly this reason).
+
+**Consequences**: AP-3 remains open. A future continuation resumes from this commit, implementing the
+Check/allocation model (Wave 2) as the next coherent, independently testable slice, per the corrected
+report's own wave ordering.
+
+**Status**: Wave 1 IMPLEMENTED (2026-08-27), emulator-tested (1796/1796 backend, 391/391 rules), no
+Flutter/UI change. AP-3 overall: OPEN. Implementation: AP-3 (continuing).
+
 ### Governance Synchronization (recorded here for the durable record; the edits themselves live in each
 target file)
 

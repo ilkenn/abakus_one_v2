@@ -1,5 +1,5 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { resolveTableQrTokenInternal } from "./qrTokenResolution";
 import {
   TABLE_GUEST_SESSION_STATUS,
@@ -7,6 +7,11 @@ import {
 } from "./tableGuestSessionConfig";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { activeReservationTableContextRef, readLiveReservationTableContext } from "./reservationTableContext";
+import {
+  TABLE_SESSIONS_COLLECTION,
+  GUEST_SUB_ACCOUNTS_COLLECTION,
+  deterministicIdentitySubAccountId,
+} from "./tableSessionConfig";
 
 /**
  * Creates a server-authoritative `tableGuestSessions` record for a QR
@@ -79,6 +84,7 @@ export const openTableGuestSession = onCall(
   const db = getFirestore();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + TABLE_GUEST_SESSION_TTL_MS);
+  const nowTs = Timestamp.fromDate(now);
 
   // Faz R.1C.2 §11/§12 — canonical check order: QR resolve (above, already
   // includes the T-20 protection-bucket deny), *then* read the active
@@ -93,27 +99,120 @@ export const openTableGuestSession = onCall(
   );
   const reservationContextId = liveContext?.reservationId ?? null;
 
-  const sessionRef = db.collection("tableGuestSessions").doc();
+  const isRealCustomer = request.auth.token?.firebase?.sign_in_provider === "phone";
+  const tableRef = db.collection("restaurantTables").doc(resolution.tableId!);
 
-  await sessionRef.set({
-    organizationId: resolution.organizationId,
-    restaurantId: resolution.restaurantId,
-    branchId: resolution.branchId,
-    tableId: resolution.tableId,
-    guestAuthUid: request.auth.uid,
-    status: TABLE_GUEST_SESSION_STATUS.active,
-    createdAt: now,
-    expiresAt: expiresAt,
-    lastActivityAt: now,
-    qrTokenId: resolution.qrCodeId,
-    // Server-generated, immutable snapshot (Faz R.1C.2 §11) — never a
-    // client input, never re-derived later. `null` for the ordinary,
-    // non-reservation walk-in case.
-    reservationContextId,
+  // AP-3 Wave 1 — concurrency-safe TableSession open/reuse (corrected
+  // report §6.1). The lock is `restaurantTables/{tableId}.activeTableSessionId`
+  // itself: Firestore's own transaction contention detection retries a
+  // transaction whose read set (this document) was concurrently modified
+  // before commit — the same optimistic-concurrency pattern already proven
+  // by `openReservationTable`'s own `activeReservationTableContext` lock.
+  // Two simultaneous first-scans therefore can never both create a fresh
+  // TableSession: the loser's retry re-reads `tableRef` and finds the
+  // winner's `activeTableSessionId` already set, and reuses it.
+  const result = await db.runTransaction(async (tx) => {
+    // -----------------------------------------------------------------
+    // Reads — every tx.get() before any tx.set()/tx.update(), per
+    // Firestore's own transaction discipline.
+    // -----------------------------------------------------------------
+    const tableSnap = await tx.get(tableRef);
+    if (!tableSnap.exists) {
+      throw new HttpsError("failed-precondition", "Table configuration not found.");
+    }
+    const table = tableSnap.data()!;
+    const existingActiveId = (table.activeTableSessionId as string | null | undefined) ?? null;
+
+    let tableSessionId: string;
+    let tableSessionIsNew = true;
+    if (existingActiveId) {
+      const existingSessionSnap = await tx.get(
+        db.collection(TABLE_SESSIONS_COLLECTION).doc(existingActiveId),
+      );
+      if (existingSessionSnap.exists && existingSessionSnap.data()!.status === "active") {
+        tableSessionId = existingActiveId;
+        tableSessionIsNew = false;
+      } else {
+        tableSessionId = db.collection(TABLE_SESSIONS_COLLECTION).doc().id;
+      }
+    } else {
+      tableSessionId = db.collection(TABLE_SESSIONS_COLLECTION).doc().id;
+    }
+
+    const sessionRef = db.collection("tableGuestSessions").doc();
+
+    const ownerType: "authenticatedCustomer" | "guestSession" = isRealCustomer
+      ? "authenticatedCustomer"
+      : "guestSession";
+    const subAccountId = deterministicIdentitySubAccountId(tableSessionId, request.auth!.uid);
+    const subAccountRef = db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc(subAccountId);
+    const existingSubAccountSnap = await tx.get(subAccountRef);
+
+    // -----------------------------------------------------------------
+    // Writes
+    // -----------------------------------------------------------------
+    if (tableSessionIsNew) {
+      tx.set(db.collection(TABLE_SESSIONS_COLLECTION).doc(tableSessionId), {
+        organizationId: resolution.organizationId,
+        restaurantId: resolution.restaurantId,
+        branchId: resolution.branchId,
+        tableId: resolution.tableId,
+        status: "active",
+        openedAt: nowTs,
+        closedAt: null,
+        openedByType: "guestQrScan",
+        openedByStaffUid: null,
+        transferredFromTableId: null,
+        version: 1,
+      });
+      tx.set(tableRef, { activeTableSessionId: tableSessionId }, { merge: true });
+    }
+
+    tx.set(sessionRef, {
+      organizationId: resolution.organizationId,
+      restaurantId: resolution.restaurantId,
+      branchId: resolution.branchId,
+      tableId: resolution.tableId,
+      tableSessionId,
+      guestAuthUid: request.auth!.uid,
+      status: TABLE_GUEST_SESSION_STATUS.active,
+      createdAt: now,
+      expiresAt: expiresAt,
+      lastActivityAt: now,
+      qrTokenId: resolution.qrCodeId,
+      // Server-generated, immutable snapshot (Faz R.1C.2 §11) — never a
+      // client input, never re-derived later. `null` for the ordinary,
+      // non-reservation walk-in case.
+      reservationContextId,
+    });
+
+    if (!existingSubAccountSnap.exists) {
+      tx.set(subAccountRef, {
+        organizationId: resolution.organizationId,
+        branchId: resolution.branchId,
+        tableSessionId,
+        ownerType,
+        ownerSessionRef: sessionRef.path,
+        ownerAuthUid: request.auth!.uid,
+        // Mandatory guest name entry (corrected report §8/#11) is captured
+        // at first order submission, not here — `submitDineInOrder`
+        // requires and stamps it on this same sub-account the first time
+        // it's used.
+        displayName: "",
+        status: "open",
+        createdAt: nowTs,
+        createdByStaffUid: null,
+        version: 1,
+      });
+    }
+
+    return { sessionId: sessionRef.id, tableSessionId, subAccountId };
   });
 
   return {
-    sessionId: sessionRef.id,
+    sessionId: result.sessionId,
+    tableSessionId: result.tableSessionId,
+    subAccountId: result.subAccountId,
     organizationId: resolution.organizationId,
     restaurantId: resolution.restaurantId,
     branchId: resolution.branchId,

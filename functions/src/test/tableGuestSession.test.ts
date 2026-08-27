@@ -401,3 +401,86 @@ test("openTableGuestSession: two different anonymous callers scanning the same t
   assert.strictEqual(sessionB.guestAuthUid, guestB.uid);
   assert.notStrictEqual(sessionA.guestAuthUid, sessionB.guestAuthUid);
 });
+
+// ---------------------------------------------------------------------
+// AP-3 Wave 1 — TableSession + GuestSubAccount foundation (corrected
+// Stage A report §1/§6/§8).
+// ---------------------------------------------------------------------
+
+test("openTableGuestSession: creates a TableSession and points restaurantTables.activeTableSessionId at it, plus a GuestSubAccount owned by the caller's own uid", async () => {
+  await seedTable("table-ap3-1");
+  await seedQrCode("qr-ap3-1", "table-ap3-1", "TOKEN-AP3-1");
+  const { idToken, uid } = await createAnonymousUser();
+
+  const { httpStatus, body } = await callCallable(OPEN_SESSION_URL, { token: "TOKEN-AP3-1" }, idToken);
+  assert.strictEqual(httpStatus, 200);
+  const tableSessionId = body.result?.tableSessionId as string;
+  const subAccountId = body.result?.subAccountId as string;
+  assert.ok(tableSessionId);
+  assert.ok(subAccountId);
+
+  const db = admin.firestore();
+  const tableSessionDoc = await db.collection("tableSessions").doc(tableSessionId).get();
+  assert.ok(tableSessionDoc.exists);
+  assert.strictEqual(tableSessionDoc.data()!.status, "active");
+  assert.strictEqual(tableSessionDoc.data()!.tableId, "table-ap3-1");
+
+  const tableDoc = await db.collection("restaurantTables").doc("table-ap3-1").get();
+  assert.strictEqual(tableDoc.data()!.activeTableSessionId, tableSessionId);
+
+  const subAccountDoc = await db.collection("guestSubAccounts").doc(subAccountId).get();
+  assert.ok(subAccountDoc.exists);
+  assert.strictEqual(subAccountDoc.data()!.ownerAuthUid, uid);
+  assert.strictEqual(subAccountDoc.data()!.tableSessionId, tableSessionId);
+  assert.strictEqual(subAccountDoc.data()!.status, "open");
+});
+
+test("openTableGuestSession: a second, different guest scanning the same still-active table reuses the SAME TableSession but gets its OWN sub-account", async () => {
+  await seedTable("table-ap3-2");
+  await seedQrCode("qr-ap3-2", "table-ap3-2", "TOKEN-AP3-2");
+  const guestA = await createAnonymousUser();
+  const guestB = await createAnonymousUser();
+
+  const a = await callCallable(OPEN_SESSION_URL, { token: "TOKEN-AP3-2" }, guestA.idToken);
+  const b = await callCallable(OPEN_SESSION_URL, { token: "TOKEN-AP3-2" }, guestB.idToken);
+
+  assert.strictEqual(a.body.result?.tableSessionId, b.body.result?.tableSessionId);
+  assert.notStrictEqual(a.body.result?.subAccountId, b.body.result?.subAccountId);
+});
+
+test("openTableGuestSession: the SAME guest (device) re-scanning the same table reuses its own sub-account, not a new one", async () => {
+  await seedTable("table-ap3-3");
+  await seedQrCode("qr-ap3-3", "table-ap3-3", "TOKEN-AP3-3");
+  const { idToken } = await createAnonymousUser();
+
+  const first = await callCallable(OPEN_SESSION_URL, { token: "TOKEN-AP3-3" }, idToken);
+  const second = await callCallable(OPEN_SESSION_URL, { token: "TOKEN-AP3-3" }, idToken);
+
+  assert.strictEqual(first.body.result?.tableSessionId, second.body.result?.tableSessionId);
+  assert.strictEqual(first.body.result?.subAccountId, second.body.result?.subAccountId);
+  assert.notStrictEqual(first.body.result?.sessionId, second.body.result?.sessionId);
+});
+
+test("openTableGuestSession: N concurrent first-scans of the same table create EXACTLY ONE TableSession (concurrency-safe lock)", async () => {
+  await seedTable("table-ap3-concurrency");
+  await seedQrCode("qr-ap3-concurrency", "table-ap3-concurrency", "TOKEN-AP3-CONCURRENCY");
+  const guests = await Promise.all(Array.from({ length: 8 }, () => createAnonymousUser()));
+
+  const results = await Promise.all(
+    guests.map((guest) => callCallable(OPEN_SESSION_URL, { token: "TOKEN-AP3-CONCURRENCY" }, guest.idToken)),
+  );
+  for (const r of results) assert.strictEqual(r.httpStatus, 200, JSON.stringify(r.body));
+
+  const tableSessionIds = new Set(results.map((r) => r.body.result?.tableSessionId));
+  assert.strictEqual(tableSessionIds.size, 1, `expected exactly one TableSession, got ${tableSessionIds.size}`);
+
+  const subAccountIds = new Set(results.map((r) => r.body.result?.subAccountId));
+  assert.strictEqual(subAccountIds.size, 8, "each of the 8 distinct guests must get its own sub-account");
+
+  const db = admin.firestore();
+  const tableSessionsSnap = await db
+    .collection("tableSessions")
+    .where("tableId", "==", "table-ap3-concurrency")
+    .get();
+  assert.strictEqual(tableSessionsSnap.size, 1, "exactly one TableSession document must exist for this table");
+});
