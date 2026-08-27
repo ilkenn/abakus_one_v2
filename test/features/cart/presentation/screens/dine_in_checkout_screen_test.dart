@@ -64,6 +64,7 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
   String? lastSelectedRewardId;
   String? lastSelectedCampaignId;
   List<Map<String, dynamic>>? lastRequestItems;
+  String? lastGuestDisplayName;
 
   String catalogRewardTitleToReturn = 'Test Ödülü';
   int catalogRewardBoncukCostToReturn = 100;
@@ -84,11 +85,13 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     String customerNote = '',
     String? selectedRewardId,
     String? selectedCampaignId,
+    String? guestDisplayName,
   }) async {
     callCount += 1;
     lastTableSessionId = tableSessionId;
     lastSelectedRewardId = selectedRewardId;
     lastSelectedCampaignId = selectedCampaignId;
+    lastGuestDisplayName = guestDisplayName;
     lastRequestItems = [for (final item in items) item.toJson()];
 
     final pendingHold = holdUntil;
@@ -651,6 +654,81 @@ void main() {
       expect(find.byType(OrderSuccessScreen), findsOneWidget);
       expect(find.byKey(const Key('orderSuccessCatalogRewardSummary')),
           findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'AP-3: guestDisplayName-required reddi bir isim dialogu acar; isim '
+    'girilip onaylaninca gateway guestDisplayName ile tekrar cagrilir',
+    (tester) async {
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+      );
+
+      pumped.gateway.throwOnNextSubmit = const SubmitDineInOrderException(
+        'failed-precondition',
+        'guestDisplayName is required before the first order at this table.',
+        boncukErrorReason: 'dineIn/guest-display-name-required',
+      );
+
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.callCount, 1);
+      expect(find.byType(OrderSuccessScreen), findsNothing);
+      expect(find.text('Adını Öğrenebilir miyiz?'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('guestDisplayNameField')),
+        'Ayşe',
+      );
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Devam Et'));
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.callCount, 2);
+      expect(pumped.gateway.lastGuestDisplayName, 'Ayşe');
+      expect(find.byType(OrderSuccessScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'AP-3: isim dialogu vazgecilirse tekrar gonderim yapilmaz, sunucu '
+    'mesaji gosterilir',
+    (tester) async {
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+      );
+
+      pumped.gateway.throwOnNextSubmit = const SubmitDineInOrderException(
+        'failed-precondition',
+        'guestDisplayName is required before the first order at this table.',
+        boncukErrorReason: 'dineIn/guest-display-name-required',
+      );
+
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Adını Öğrenebilir miyiz?'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(TextButton, 'Vazgeç'));
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.callCount, 1);
+      expect(find.byType(OrderSuccessScreen), findsNothing);
+      expect(find.text('Adını Öğrenebilir miyiz?'), findsNothing);
     },
   );
 

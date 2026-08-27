@@ -32,7 +32,11 @@ export type PlatformCapability =
   // "platformOwner can do everything" shortcut.
   | "customerDirectory.listAllRegistered"
   | "customerDirectory.globalRestriction"
-  | "customerDirectory.revealFullAddressBook";
+  | "customerDirectory.revealFullAddressBook"
+  // AP-3 continuation — gap-filling backfill tooling for both Customer
+  // Directory projections (customerDirectoryBackfill.ts). platformOwner
+  // only: this touches every tenant's projection data, not just one.
+  | "customerDirectory.runBackfill";
 
 type KnownPlatformRole = "platformOwner" | "platformAdministrator";
 
@@ -52,6 +56,7 @@ const CAPABILITIES_BY_PLATFORM_ROLE: Record<
     "customerDirectory.listAllRegistered",
     "customerDirectory.globalRestriction",
     "customerDirectory.revealFullAddressBook",
+    "customerDirectory.runBackfill",
   ]),
   platformAdministrator: new Set<PlatformCapability>(),
 };

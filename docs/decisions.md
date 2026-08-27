@@ -17613,3 +17613,93 @@ sign-in gap this pass closed.
 
 **Determination**: `AP2_SECURE_PLATFORM_COMPLETE=YES`. Full gate results, the exact file manifest, and
 the closure commit SHA are in this session's own final report, not duplicated here.
+
+### ADR-039 — AP-3 Customer Directory Backfill Tooling + Customer QR Line-Approval/Counter-Proposal Flutter UI (Locked)
+
+**Context**: continuing directly from ADR-038's backend-complete checkpoint. Two items remained from
+ADR-038's own explicit deferral list that this pass addresses: the two Customer Directory projections'
+backfill scripts, and — the first Flutter surface of the entire AP-3 corrected design — the customer-
+facing dine-in QR line-approval/counter-proposal experience.
+
+**Decision**:
+1. **Backfill tooling**: `runPlatformCustomerDirectoryBackfill`/`runTenantCustomerDirectoryBackfill`
+   (`functions/src/customerDirectoryBackfill.ts`), gated by a new `customerDirectory.runBackfill`
+   `PlatformCapability` (platformOwner-only — this touches every tenant's projection data, not one
+   tenant's own). Deliberately **gap-filling only**: a target projection document that already exists at
+   the deterministic id (`{uid}` / `{organizationId}_{uid}`) is always left untouched — never re-merged,
+   never re-timestamped. This single rule is what makes a first run, an interrupted-then-resumed run
+   (bounded batches, `orderBy('__name__')` cursor), and a second wholly identical run all converge on the
+   exact same end state, proven directly (not just argued) by a same-`updatedAt`-after-rerun assertion in
+   the test suite. Source of truth is exactly the same canonical collection `completeCustomerProfile`'s
+   own live write already reads from (`customers/{uid}` for the platform projection,
+   `tenantCustomers/{organizationId}_{uid}` for the tenant projection) — no other signal (e.g. an order's
+   `organizationId`) is ever used to invent a tenant relationship, satisfying "tenant relationships
+   derived only from canonical evidence." `dryRun` reports counts without writing. Not executed against
+   any real project this phase — no production Firebase deployment exists yet to backfill against
+   (`docs/decisions.md`'s own repeated framing); the callables exist and are emulator-tested only.
+2. **Customer QR line-approval/counter-proposal Flutter UI**: `Order` gained an additive
+   `lineApprovalStates: List<OrderLineApprovalState>` field, deliberately kept structurally separate from
+   `OrderLine` itself. `OrderLine`'s constructor is private and always recomputes its money fields from
+   raw inputs (`OrderFirestoreMapper`'s own established discipline) — it models a *priced product line*,
+   not an approval-workflow state, so bolting `status`/`counterProposal` onto it would have meant either
+   widening a money-invariant-protecting class for a non-money concern or accepting pre-computed derived
+   fields, neither acceptable. The new `OrderLineApprovalState`/`DineInLineStatus`/`DineInCounterProposal`
+   models live parallel to `Order.lines`, index-paired — mirroring, on the Dart side, exactly how the
+   server itself already stores these fields: embedded on each raw `orders.lines[i]` map (`{...
+   originalLine, status, counterProposal}`, `functions/src/dineInCounterProposal.ts`), never inside the
+   product/price fields and never as a separate top-level array on the wire. A raw line with no `status`
+   key at all — every order that predates this feature — parses as `DineInLineStatus.accepted` with no
+   proposal attached, the same additive/backward-compatible contract every other field
+   `OrderFirestoreMapper` has ever added follows; proven by a dedicated round-trip test, not just assumed.
+   New `DineInCounterProposalGateway` (`respondToDineInCounterProposal`) mirrors
+   `SubmitDineInOrderGateway`'s exact shape/exception convention. New `DineInLineApprovalSection` widget,
+   rendered on `ActiveOrderScreen` for `OrderChannel.dineInQr` orders only, shows a status chip for a
+   pending/rejected line and a full accept/reject card (product, modifiers, price, price difference,
+   staff reason, expiry countdown) for a `proposedChange` line. Polling-based, on a fixed interval while
+   mounted, invalidating a `FutureProvider.family` — disclosed as a deliberate stand-in, not a hidden gap:
+   `CanonicalOrderRepository` has no live Firestore stream anywhere in this codebase yet (only one-shot
+   `Future`-based reads), so there is structurally nothing to subscribe to instead. Mandatory
+   guest-name-before-first-order — already enforced server-side by `submitDineInOrder`'s own
+   `guestDisplayName` check (`HttpsError` detail `dineIn/guest-display-name-required`) — is now also
+   handled client-side: `DineInCheckoutScreen` catches that specific rejection reactively (never a
+   speculative early read) and shows a cancellable name dialog, retrying once a name is supplied.
+
+**Alternatives considered**: adding `status`/`counterProposal` directly to `OrderLine` (rejected — see
+above; would have forced either loosening `OrderLine`'s money-invariant construction discipline or
+carrying pre-computed derived fields through its private constructor, neither consistent with this
+class's established design). Building a live Firestore `.snapshots()` stream for orders as a prerequisite
+to this feature (rejected as out of this pass's scope — a genuine, separate architecture addition
+`CanonicalOrderRepository` doesn't have today for ANY order, not just dine-in QR ones; polling is the
+smaller, disclosed, correctly-scoped increment). Asking for the guest's name proactively/speculatively
+before the first submission attempt (rejected — would require a new read just to check whether the
+sub-account already has a name, for a case the server already handles correctly and cheaply via one
+reactive round-trip on the rare first-submission-only path).
+
+**Tests**: 10 new Functions emulator tests (`customerDirectoryBackfill.test.ts` — dry run writes nothing,
+first-run creation, second-run idempotent no-op, interrupted/resumed cursor pagination, incomplete-
+profile skipping, cross-tenant isolation, capability/auth denial, for both the platform and tenant
+backfills). 12 new Flutter tests: 4 `OrderFirestoreMapper` round-trip (pre-existing-order backward
+compatibility, pendingApproval status, a full proposedChange snapshot including a NEGATIVE price
+difference, a post-response accepted snapshot with `respondedAt`), 2 `DineInCheckoutScreen` (guest-name
+dialog appears/retries correctly on rejection, and is safely cancellable), 6
+`DineInLineApprovalSection` widget tests (non-dineInQr renders nothing, all-accepted renders nothing,
+pendingApproval notice, full proposal card render + Kabul Et calls the gateway with `accept:true`,
+Reddet calls it with `accept:false`, a gateway rejection shows the server message without crashing).
+
+**Full regression rerun, clean**: Functions TypeScript build; `flutter analyze` (0 issues); `flutter
+test` (3524 passed, 12 skipped, 0 failed — the exact 3512 baseline plus these 12 new tests, zero
+regressions). Functions emulator/Rules/Storage suites were not required to be rerun for this Flutter-only
+half of the pass (no `firestore.rules`/`.ts` file changed beyond the new backfill module itself, which was
+independently verified); the backfill module's own build/test pass stands as its verification.
+
+**Consequences**: AP-3's Customer Directory backend now has real, tested gap-filling migration tooling
+rather than an acknowledged-but-unaddressed hole. AP-3 has its first genuine Flutter/UI surface — proof
+the corrected design's backend is reachable by an actual customer, not backend-only groundwork. AP-3
+remains open: the POS three-pane workspace, the trusted-device Flutter UX (genuinely security-critical
+cryptographic work — device key generation/attestation/challenge-signing — deliberately not rushed to
+avoid shipping a shallow, insecure stand-in), the Admin Customers screen rewire, the Platform Owner global
+customer directory, a deterministic AP-3 E2E flow, and real visual acceptance screenshots are all still
+undone.
+
+**Status**: IMPLEMENTED (2026-08-27), tested. AP-3 overall: OPEN (backend + first Flutter surface
+complete; remaining Flutter/UI and visual-acceptance work pending). Implementation: AP-3 (continuing).

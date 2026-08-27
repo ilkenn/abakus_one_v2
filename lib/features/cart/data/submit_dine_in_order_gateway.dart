@@ -139,6 +139,17 @@ abstract interface class SubmitDineInOrderGateway {
   /// exclusion on [selectedRewardId] above and the structural absence of
   /// any cash-Boncuk parameter) — the server rejects fail-closed for any
   /// non-phone-verified caller, regardless of this value.
+  ///
+  /// AP-3 continuation — [guestDisplayName] is sent only on request (the
+  /// caller supplies it after catching a first rejection whose
+  /// [SubmitDineInOrderException.boncukErrorReason] is exactly
+  /// `"dineIn/guest-display-name-required"`, or proactively once already
+  /// known) — mirrors `submitDineInOrder.ts`'s own `sanitizeGuestDisplayName`
+  /// contract: `null`/absent is valid on every call except a guest's very
+  /// first submission at a table, which the server rejects fail-closed
+  /// until a name is supplied. Never used for `mode: "staffEntry"` (that
+  /// flow's own sub-account naming is a POS-side concern, not this
+  /// customer-facing gateway's).
   Future<SubmitDineInOrderResult> submit({
     required String submissionKey,
     required String tableSessionId,
@@ -146,6 +157,7 @@ abstract interface class SubmitDineInOrderGateway {
     String customerNote = '',
     String? selectedRewardId,
     String? selectedCampaignId,
+    String? guestDisplayName,
   });
 }
 
@@ -160,6 +172,7 @@ class FirebaseSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     String customerNote = '',
     String? selectedRewardId,
     String? selectedCampaignId,
+    String? guestDisplayName,
   }) async {
     final callable = functions.FirebaseFunctions.instance.httpsCallable(
       'submitDineInOrder',
@@ -176,6 +189,7 @@ class FirebaseSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
         // "absent == null" contract exactly.
         if (selectedCampaignId != null)
           'selectedCampaignId': selectedCampaignId,
+        if (guestDisplayName != null) 'guestDisplayName': guestDisplayName,
       });
       final data = result.data;
       return SubmitDineInOrderResult(

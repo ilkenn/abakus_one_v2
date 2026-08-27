@@ -15,7 +15,10 @@ import '../domain/models/order_audit_entry.dart';
 import '../domain/models/order_benefit_type.dart';
 import '../domain/models/order_channel.dart';
 import '../domain/models/order_id.dart';
+import '../domain/models/dine_in_counter_proposal.dart';
+import '../domain/models/dine_in_line_status.dart';
 import '../domain/models/order_line.dart';
+import '../domain/models/order_line_approval_state.dart';
 import '../domain/models/order_line_modifier_selection.dart';
 import '../domain/models/order_number.dart';
 import '../domain/models/order_status.dart';
@@ -54,6 +57,9 @@ abstract final class OrderFirestoreMapper {
     Order order, {
     required String organizationId,
   }) {
+    final approvalStateByIndex = {
+      for (final state in order.lineApprovalStates) state.lineIndex: state,
+    };
     return {
       'organizationId': organizationId,
       'orderId': order.id.value,
@@ -89,7 +95,10 @@ abstract final class OrderFirestoreMapper {
       'contactLastName': order.contactLastName,
       'contactPhone': order.contactPhone,
       'courierVisibility': order.courierVisibility.name,
-      'lines': [for (final line in order.lines) _lineToFirestore(line)],
+      'lines': [
+        for (var i = 0; i < order.lines.length; i++)
+          _lineToFirestore(order.lines[i], approvalStateByIndex[i]),
+      ],
       'pricing': _priceBreakdownToFirestore(order.pricing),
       'statusHistory': [
         for (final entry in order.statusHistory) _auditEntryToFirestore(entry),
@@ -108,6 +117,9 @@ abstract final class OrderFirestoreMapper {
   }
 
   static Order fromFirestore(Map<String, dynamic> data) {
+    final rawLines = (data['lines'] as List)
+        .map((raw) => Map<String, dynamic>.from(raw as Map))
+        .toList(growable: false);
     return Order(
       id: OrderId(data['orderId'] as String),
       orderNumber: OrderNumber(data['orderNumber'] as String),
@@ -129,9 +141,10 @@ abstract final class OrderFirestoreMapper {
       contactPhone: data['contactPhone'] as String?,
       courierVisibility:
           _courierVisibilityFromName(data['courierVisibility'] as String),
-      lines: [
-        for (final raw in (data['lines'] as List))
-          _lineFromFirestore(Map<String, dynamic>.from(raw as Map)),
+      lines: [for (final raw in rawLines) _lineFromFirestore(raw)],
+      lineApprovalStates: [
+        for (var i = 0; i < rawLines.length; i++)
+          _lineApprovalStateFromFirestore(i, rawLines[i]),
       ],
       pricing: _priceBreakdownFromFirestore(
           Map<String, dynamic>.from(data['pricing'] as Map)),
@@ -240,7 +253,11 @@ abstract final class OrderFirestoreMapper {
     return Money(data['minorUnits'] as int, currency);
   }
 
-  static Map<String, dynamic> _lineToFirestore(OrderLine line) => {
+  static Map<String, dynamic> _lineToFirestore(
+    OrderLine line,
+    OrderLineApprovalState? approvalState,
+  ) =>
+      {
         'productId': line.productId,
         'productName': line.productName,
         'modifiers': [
@@ -260,6 +277,17 @@ abstract final class OrderFirestoreMapper {
         'taxRateBasisPoints': line.tax.rate.basisPoints,
         'kitchenNote': line.kitchenNote,
         'customerNote': line.customerNote,
+        // AP-3 continuation — mirrors `functions/src/dineInCounterProposal
+        // .ts`'s own raw shape: `status` embedded directly on each line map,
+        // `counterProposal` alongside it, never a separate top-level array
+        // on the wire (only [Order.lineApprovalStates] is separate, on the
+        // Dart side only).
+        'status': dineInLineStatusToWire(
+          approvalState?.status ?? DineInLineStatus.accepted,
+        ),
+        'counterProposal': approvalState?.counterProposal == null
+            ? null
+            : _counterProposalToFirestore(approvalState!.counterProposal!),
       };
 
   static OrderLine _lineFromFirestore(Map<String, dynamic> data) {
@@ -278,6 +306,98 @@ abstract final class OrderFirestoreMapper {
       taxRate: TaxRate.fromBasisPoints(data['taxRateBasisPoints'] as int),
       kitchenNote: data['kitchenNote'] as String? ?? '',
       customerNote: data['customerNote'] as String? ?? '',
+    );
+  }
+
+  /// A raw line map with no `status` key at all (every non-dine-in-QR
+  /// order, and every dine-in line that predates this feature) parses as
+  /// [DineInLineStatus.accepted] with no [DineInCounterProposal] — the same
+  /// backward-compatibility contract every other additive field on this
+  /// mapper already follows.
+  static OrderLineApprovalState _lineApprovalStateFromFirestore(
+    int lineIndex,
+    Map<String, dynamic> data,
+  ) {
+    return OrderLineApprovalState(
+      lineIndex: lineIndex,
+      status: dineInLineStatusFromWire(data['status'] as String?),
+      counterProposal: data['counterProposal'] == null
+          ? null
+          : _counterProposalFromFirestore(
+              Map<String, dynamic>.from(data['counterProposal'] as Map)),
+    );
+  }
+
+  static Map<String, dynamic> _counterProposalToFirestore(
+    DineInCounterProposal proposal,
+  ) {
+    return {
+      'proposalVersion': proposal.proposalVersion,
+      'proposedProductId': proposal.proposedProductId,
+      'proposedProductName': proposal.proposedProductName,
+      'proposedModifiers': [
+        for (final modifier in proposal.proposedModifiers)
+          {
+            'groupId': modifier.groupId,
+            'groupName': modifier.groupName,
+            'optionId': modifier.optionId,
+            'optionName': modifier.optionName,
+            'unitExtraPrice': _moneyToFirestore(modifier.unitExtraPrice),
+            'quantity': modifier.quantity,
+          },
+      ],
+      'proposedQuantity': proposal.proposedQuantity,
+      'proposedUnitPrice': _moneyToFirestore(proposal.proposedUnitPrice),
+      'proposedLineTotalMinorUnits': proposal.proposedLineTotal.minorUnits,
+      'differenceFromOriginalMinorUnits':
+          proposal.differenceFromOriginal.minorUnits,
+      'reasonCode': proposal.reasonCode,
+      'reasonMessage': proposal.reasonMessage,
+      'proposedByStaffUid': proposal.proposedByStaffUid,
+      'createdAt': proposal.createdAt.toIso8601String(),
+      'expiresAt': proposal.expiresAt.toIso8601String(),
+      'status': switch (proposal.status) {
+        DineInCounterProposalStatus.pending => 'pendingCustomerResponse',
+        DineInCounterProposalStatus.accepted => 'accepted',
+        DineInCounterProposalStatus.rejected => 'rejected',
+        DineInCounterProposalStatus.expired => 'expired',
+      },
+      'respondedAt': proposal.respondedAt?.toIso8601String(),
+    };
+  }
+
+  static DineInCounterProposal _counterProposalFromFirestore(
+    Map<String, dynamic> data,
+  ) {
+    final unitPrice = _moneyFromFirestore(
+        Map<String, dynamic>.from(data['proposedUnitPrice'] as Map));
+    return DineInCounterProposal(
+      proposalVersion: data['proposalVersion'] as int,
+      proposedProductId: data['proposedProductId'] as String,
+      proposedProductName: data['proposedProductName'] as String,
+      proposedModifiers: [
+        for (final raw in (data['proposedModifiers'] as List))
+          _modifierFromFirestore(Map<String, dynamic>.from(raw as Map)),
+      ],
+      proposedQuantity: data['proposedQuantity'] as int,
+      proposedUnitPrice: unitPrice,
+      proposedLineTotal: Money(
+        data['proposedLineTotalMinorUnits'] as int,
+        unitPrice.currency,
+      ),
+      differenceFromOriginal: Money(
+        data['differenceFromOriginalMinorUnits'] as int,
+        unitPrice.currency,
+      ),
+      reasonCode: data['reasonCode'] as String,
+      reasonMessage: data['reasonMessage'] as String,
+      proposedByStaffUid: data['proposedByStaffUid'] as String,
+      createdAt: DateTime.parse(data['createdAt'] as String),
+      expiresAt: DateTime.parse(data['expiresAt'] as String),
+      status: dineInCounterProposalStatusFromWire(data['status'] as String),
+      respondedAt: data['respondedAt'] == null
+          ? null
+          : DateTime.parse(data['respondedAt'] as String),
     );
   }
 

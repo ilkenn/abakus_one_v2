@@ -4,8 +4,11 @@ import 'package:abakus_one_v2/features/orders/data/canonical_order_repository.da
 import 'package:abakus_one_v2/features/orders/data/order_firestore_mapper.dart';
 import 'package:abakus_one_v2/features/orders/domain/identity/order_identity.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/delivery_address_snapshot.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/dine_in_counter_proposal.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/dine_in_line_status.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_benefit_type.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_line_approval_state.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/pickup_mode.dart';
 import 'package:abakus_one_v2/features/payment/domain/models/payment_method_seed_data.dart';
 import 'package:abakus_one_v2/features/payment/domain/models/payment_method_snapshot.dart';
@@ -691,6 +694,202 @@ void main() {
             OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data)),
         throwsA(anything),
       );
+    });
+  });
+
+  group('OrderFirestoreMapper — AP-3 dine-in line approval/counter-proposal',
+      () {
+    test(
+        'a raw line with no status/counterProposal key at all (every order '
+        'that predates this feature) parses as accepted with no proposal',
+        () async {
+      final order = await SubmitCustomerOrder(
+        clock: FakeClock(DateTime(2026, 8, 5, 18, 30)),
+        identityProvider: InMemoryOrderIdentityProvider(),
+        repository: InMemoryCanonicalOrderRepository(),
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+      ).call(
+        cartItems: const [
+          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        ],
+        customerId: 'uid-1',
+        channel: OrderChannel.dineInQr,
+      );
+      final data =
+          OrderFirestoreMapper.toFirestore(order, organizationId: 'org-1');
+      // toFirestore already writes 'status': 'accepted' by default (no
+      // approval state was set) — strip it to simulate a genuinely OLD
+      // document written before this feature existed at all.
+      final rawLines = (data['lines'] as List)
+          .map((l) => Map<String, dynamic>.from(l as Map))
+          .toList();
+      rawLines[0].remove('status');
+      rawLines[0].remove('counterProposal');
+      data['lines'] = rawLines;
+
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      expect(restored.lineApprovalStates, hasLength(1));
+      expect(restored.lineApprovalStates.single.lineIndex, 0);
+      expect(
+          restored.lineApprovalStates.single.status, DineInLineStatus.accepted);
+      expect(restored.lineApprovalStates.single.counterProposal, isNull);
+    });
+
+    test(
+        'a pendingApproval line round-trips its status with no proposal '
+        'attached', () async {
+      final order = await SubmitCustomerOrder(
+        clock: FakeClock(DateTime(2026, 8, 5, 18, 30)),
+        identityProvider: InMemoryOrderIdentityProvider(),
+        repository: InMemoryCanonicalOrderRepository(),
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+      ).call(
+        cartItems: const [
+          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        ],
+        customerId: 'uid-1',
+        channel: OrderChannel.dineInQr,
+      );
+      final withState = order.copyWith(lineApprovalStates: const [
+        OrderLineApprovalState(
+          lineIndex: 0,
+          status: DineInLineStatus.pendingApproval,
+        ),
+      ]);
+
+      final data =
+          OrderFirestoreMapper.toFirestore(withState, organizationId: 'org-1');
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      expect((data['lines'] as List).single['status'], 'pendingApproval');
+      expect(restored.lineApprovalStates.single.status,
+          DineInLineStatus.pendingApproval);
+      expect(restored.lineApprovalStates.single.counterProposal, isNull);
+    });
+
+    test(
+        'a proposedChange line with a full counter-proposal snapshot '
+        'round-trips every field exactly, including a NEGATIVE price '
+        'difference (a cheaper substitute)', () async {
+      final order = await SubmitCustomerOrder(
+        clock: FakeClock(DateTime(2026, 8, 5, 18, 30)),
+        identityProvider: InMemoryOrderIdentityProvider(),
+        repository: InMemoryCanonicalOrderRepository(),
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+      ).call(
+        cartItems: const [
+          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        ],
+        customerId: 'uid-1',
+        channel: OrderChannel.dineInQr,
+      );
+      final proposal = DineInCounterProposal(
+        proposalVersion: 2,
+        proposedProductId: 'p2',
+        proposedProductName: 'Vegan Bowl',
+        proposedModifiers: const [],
+        proposedQuantity: 1,
+        proposedUnitPrice: Money.fromWhole(80, Currency.tryLira),
+        proposedLineTotal: Money.fromWhole(80, Currency.tryLira),
+        differenceFromOriginal: Money.fromWhole(-20, Currency.tryLira),
+        reasonCode: 'outOfStock',
+        reasonMessage: 'Seçtiğiniz ürün tükendi, bu ürünü öneriyoruz.',
+        proposedByStaffUid: 'staff-uid-1',
+        createdAt: DateTime(2026, 8, 5, 19, 0),
+        expiresAt: DateTime(2026, 8, 5, 19, 15),
+        status: DineInCounterProposalStatus.pending,
+      );
+      final withProposal = order.copyWith(lineApprovalStates: [
+        OrderLineApprovalState(
+          lineIndex: 0,
+          status: DineInLineStatus.proposedChange,
+          counterProposal: proposal,
+        ),
+      ]);
+
+      final data = OrderFirestoreMapper.toFirestore(withProposal,
+          organizationId: 'org-1');
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      final restoredState = restored.lineApprovalStates.single;
+      expect(restoredState.status, DineInLineStatus.proposedChange);
+      final restoredProposal = restoredState.counterProposal!;
+      expect(restoredProposal.proposalVersion, 2);
+      expect(restoredProposal.proposedProductId, 'p2');
+      expect(restoredProposal.proposedProductName, 'Vegan Bowl');
+      expect(restoredProposal.proposedQuantity, 1);
+      expect(restoredProposal.proposedUnitPrice,
+          Money.fromWhole(80, Currency.tryLira));
+      expect(restoredProposal.proposedLineTotal,
+          Money.fromWhole(80, Currency.tryLira));
+      expect(restoredProposal.differenceFromOriginal.minorUnits, -2000);
+      expect(restoredProposal.reasonCode, 'outOfStock');
+      expect(restoredProposal.reasonMessage,
+          'Seçtiğiniz ürün tükendi, bu ürünü öneriyoruz.');
+      expect(restoredProposal.proposedByStaffUid, 'staff-uid-1');
+      expect(restoredProposal.createdAt, DateTime(2026, 8, 5, 19, 0));
+      expect(restoredProposal.expiresAt, DateTime(2026, 8, 5, 19, 15));
+      expect(restoredProposal.status, DineInCounterProposalStatus.pending);
+      expect(restoredProposal.respondedAt, isNull);
+    });
+
+    test(
+        'an accepted counter-proposal (post-response) round-trips its '
+        'respondedAt timestamp', () async {
+      final order = await SubmitCustomerOrder(
+        clock: FakeClock(DateTime(2026, 8, 5, 18, 30)),
+        identityProvider: InMemoryOrderIdentityProvider(),
+        repository: InMemoryCanonicalOrderRepository(),
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+      ).call(
+        cartItems: const [
+          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        ],
+        customerId: 'uid-1',
+        channel: OrderChannel.dineInQr,
+      );
+      final proposal = DineInCounterProposal(
+        proposalVersion: 1,
+        proposedProductId: 'p2',
+        proposedProductName: 'Vegan Bowl',
+        proposedModifiers: const [],
+        proposedQuantity: 1,
+        proposedUnitPrice: Money.fromWhole(100, Currency.tryLira),
+        proposedLineTotal: Money.fromWhole(100, Currency.tryLira),
+        differenceFromOriginal: Money.zero(Currency.tryLira),
+        reasonCode: 'substitution',
+        reasonMessage: 'Eşdeğer ürün.',
+        proposedByStaffUid: 'staff-uid-1',
+        createdAt: DateTime(2026, 8, 5, 19, 0),
+        expiresAt: DateTime(2026, 8, 5, 19, 15),
+        status: DineInCounterProposalStatus.accepted,
+        respondedAt: DateTime(2026, 8, 5, 19, 5),
+      );
+      final withProposal = order.copyWith(lineApprovalStates: [
+        OrderLineApprovalState(
+          lineIndex: 0,
+          status: DineInLineStatus.accepted,
+          counterProposal: proposal,
+        ),
+      ]);
+
+      final data = OrderFirestoreMapper.toFirestore(withProposal,
+          organizationId: 'org-1');
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      final restoredProposal =
+          restored.lineApprovalStates.single.counterProposal!;
+      expect(restoredProposal.status, DineInCounterProposalStatus.accepted);
+      expect(restoredProposal.respondedAt, DateTime(2026, 8, 5, 19, 5));
     });
   });
 }

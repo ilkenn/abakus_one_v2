@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/auth/real_customer_check.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
@@ -77,6 +78,15 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
   String? _selectedCampaignId;
   bool _isSubmitting = false;
   String? _submitError;
+
+  /// AP-3 continuation — captured once, the first time the server rejects a
+  /// submission with `dineIn/guest-display-name-required`, then sent on
+  /// every subsequent submission at this table (including a resubmission
+  /// this same visit) so the guest is never asked twice. `null` until that
+  /// first rejection, or for a guest whose sub-account already carries a
+  /// name (this screen never asks proactively — see [_submitOrder]'s own
+  /// doc comment for why an early, speculative read isn't worth adding).
+  String? _guestDisplayName;
 
   @override
   void initState() {
@@ -293,6 +303,7 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
         customerNote: _noteController.text.trim(),
         selectedRewardId: _selectedRewardId,
         selectedCampaignId: _selectedCampaignId,
+        guestDisplayName: _guestDisplayName,
       );
 
       final order = await ref
@@ -373,6 +384,14 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
       );
     } on SubmitDineInOrderException catch (error) {
       if (!mounted) return;
+      if (error.boncukErrorReason == 'dineIn/guest-display-name-required') {
+        setState(() => _isSubmitting = false);
+        final name = await _promptForGuestDisplayName();
+        if (name == null || !mounted) return;
+        setState(() => _guestDisplayName = name);
+        await _submitOrder();
+        return;
+      }
       final isBoncukError = error.boncukErrorReason != null;
       setState(() {
         _isSubmitting = false;
@@ -639,6 +658,74 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// AP-3 continuation — a mandatory-feeling but cancellable name prompt,
+  /// shown reactively (see [_guestDisplayName]'s own doc comment for why
+  /// this isn't asked proactively). Returns the trimmed name, or `null` if
+  /// the guest dismissed the dialog without submitting one (in which case
+  /// [_submitOrder] leaves [_submitError] showing the server's own
+  /// rejection message rather than silently retrying).
+  Future<String?> _promptForGuestDisplayName() {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          shape: const RoundedRectangleBorder(borderRadius: AppRadius.kLarge),
+          title: const Text('Adını Öğrenebilir miyiz?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Masadaki siparişini kasaya iletebilmemiz için önce adını '
+                'almamız gerekiyor. Bu isim yalnızca bu masadaki siparişini '
+                'diğer misafirlerden ayırt etmek için kullanılır.',
+                style: AppTypography.bodyMedium
+                    .copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              TextField(
+                key: const Key('guestDisplayNameField'),
+                controller: controller,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Adın',
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (value) {
+                  final trimmed = value.trim();
+                  if (trimmed.isNotEmpty) {
+                    Navigator.of(dialogContext).pop(trimmed);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Vazgeç'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.onPrimary,
+              ),
+              onPressed: () {
+                final trimmed = controller.text.trim();
+                if (trimmed.isEmpty) return;
+                Navigator.of(dialogContext).pop(trimmed);
+              },
+              child: const Text('Devam Et'),
+            ),
+          ],
+        );
+      },
     );
   }
 }

@@ -5013,3 +5013,56 @@ tests for `staff`'s new `viewTenantCustomerDirectory` grant. **Explicitly still 
 projections' backfill scripts, and the ENTIRE Flutter/UI wave (POS workspace, customer QR flow, Admin
 Customers rewire, Platform Owner directory) plus real visual acceptance screenshots — AP-3 cannot close
 without these. AP-3 remains OPEN.
+
+**AP-3 CONTINUATION — Customer Directory Backfill Tooling + Customer QR Flow Wiring (2026-08-27, IN
+PROGRESS — checkpoint, not AP-3 closure; `docs/decisions.md` ADR-039).** Closes the backfill-scripts gap
+ADR-038 disclosed, and delivers the first Flutter surface of AP-3: the customer-facing dine-in QR
+line-approval/counter-proposal UI. Explicitly does **not** close AP-3 — the POS three-pane workspace,
+trusted-device Flutter UX, Admin Customers rewire, Platform Owner directory, deterministic E2E flow, and
+real visual acceptance screenshots remain undone; see this entry's own closing disclosure.
+
+**Customer Directory backfill tooling**: `runPlatformCustomerDirectoryBackfill`/
+`runTenantCustomerDirectoryBackfill` (`functions/src/customerDirectoryBackfill.ts`), gated by a new
+platformOwner-only `customerDirectory.runBackfill` capability. Gap-filling only, never overwriting — a
+target projection document that already exists is always left untouched (skipped, not re-merged), which
+is what makes a first run, an interrupted/resumed run, and a second identical run all produce the exact
+same end state. Bounded/cursor-paginated batches (`customers`/`tenantCustomers` as source of truth,
+`orderBy('__name__')`), `dryRun` support, cross-tenant isolation (target org id always derived from the
+source membership document's own field, never caller-supplied). 10 new emulator-backed tests prove dry
+run writes nothing, first-run creation, second-run no-op, interrupted/resumed pagination, incomplete-
+profile skipping, cross-tenant isolation, and capability denial. Not executed against any real project —
+no production Firebase deployment exists to backfill against.
+
+**Customer QR line-approval/counter-proposal Flutter UI**: the first real customer-facing consumer of
+the AP-3 backend built in prior waves. `Order` gained an additive `lineApprovalStates` field (a new
+`OrderLineApprovalState`/`DineInLineStatus`/`DineInCounterProposal` model set) deliberately kept OUT of
+`OrderLine` itself — `OrderLine`'s constructor is private and recomputes its money fields from raw
+inputs, so approval/proposal state is a parallel, index-keyed list instead, mirroring exactly how the
+server embeds `status`/`counterProposal` on each raw `orders.lines[i]` map rather than inside the
+priced-product fields. `OrderFirestoreMapper` round-trips both directions; a raw line with no `status`
+key at all (every order that predates this feature) parses as `accepted` with no proposal — additive,
+backward-compatible, proven by a dedicated test. New `DineInCounterProposalGateway` (mirrors
+`SubmitDineInOrderGateway`'s shape) calls `respondToDineInCounterProposal`. New
+`DineInLineApprovalSection` widget (polling-based — `CanonicalOrderRepository` has no live stream in
+this codebase yet, disclosed as the deliberate stand-in) renders on `ActiveOrderScreen` for
+`dineInQr` orders only: a status chip for a `pendingApproval`/`rejected` line, and a full accept/reject
+card (product/modifiers/price/price-difference/reason/expiry) for a `proposedChange` line, wired to the
+real callable. Mandatory guest-name-before-first-order (already enforced server-side by
+`submitDineInOrder`'s `guestDisplayName` check) is now handled client-side too: `DineInCheckoutScreen`
+catches the specific `dineIn/guest-display-name-required` rejection, shows a cancellable name dialog, and
+retries with the captured name — never asked proactively/speculatively.
+
+**Tests**: 10 new Functions emulator tests (backfill) + 12 new Flutter tests (4 mapper round-trip, 2
+checkout-screen guest-name-dialog, 6 `DineInLineApprovalSection` widget tests covering pendingApproval
+notice, proposedChange card, accept, reject, and server-error display). Full regression rerun clean:
+Functions build, `flutter analyze` (0 issues), `flutter test` (3524 passed, 12 skipped, 0 failed — up
+from the 3512 baseline by exactly the 12 new tests, zero regressions).
+
+**Explicitly still deferred, not silently dropped**: the POS three-pane Flutter workspace (branch/table
+overview, selected-table workspace, all 5 split UIs, transfer/merge UI, remote-approval state UI); the
+trusted-device Flutter UX (device registration/challenge/session — genuinely security-critical
+cryptographic work deliberately not rushed; `requestDeviceRegistration`/`approveDeviceRegistration` still
+have zero Flutter client code anywhere in this repo); the canonical Admin Customers screen rewire to the
+real tenant directory backend (still 100% in-memory `CustomerRepository`-backed); the Platform Owner
+global customer directory tab; the deterministic AP-3 E2E flow; and real visual acceptance screenshots.
+AP-3 remains OPEN.

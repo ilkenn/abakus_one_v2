@@ -12,6 +12,7 @@ import 'order_benefit_type.dart';
 import 'order_channel.dart';
 import 'order_id.dart';
 import 'order_line.dart';
+import 'order_line_approval_state.dart';
 import 'order_number.dart';
 import 'order_status.dart';
 import 'order_timestamps.dart';
@@ -57,6 +58,7 @@ class Order {
     this.contactPhone,
     this.courierVisibility = CourierVisibility.hidden,
     required this.lines,
+    this.lineApprovalStates = const [],
     required this.pricing,
     this.statusHistory = const [],
     this.version = 1,
@@ -193,6 +195,17 @@ class Order {
   final CourierVisibility courierVisibility;
 
   final List<OrderLine> lines;
+
+  /// Staff-approval state for each [lines] entry, index-paired — see
+  /// [OrderLineApprovalState]'s own doc comment for why this lives here
+  /// rather than on [OrderLine] itself. Empty by default: every non-
+  /// [OrderChannel.dineInQr] order, and every dine-in order that predates
+  /// this feature, simply has no entries (additive field, same backward-
+  /// compatibility contract as [selectedBenefitType]/[campaign]) — UI code
+  /// reading a line's status must treat a missing entry for that index as
+  /// [DineInLineStatus.accepted], never as an error.
+  final List<OrderLineApprovalState> lineApprovalStates;
+
   final PriceBreakdown pricing;
 
   /// This aggregate's immutable status history — append-only, one
@@ -338,6 +351,7 @@ class Order {
     String? contactPhone,
     CourierVisibility? courierVisibility,
     List<OrderLine>? lines,
+    List<OrderLineApprovalState>? lineApprovalStates,
     PriceBreakdown? pricing,
     List<OrderAuditEntry>? statusHistory,
     int? version,
@@ -373,6 +387,7 @@ class Order {
       contactPhone: contactPhone ?? this.contactPhone,
       courierVisibility: courierVisibility ?? this.courierVisibility,
       lines: lines ?? this.lines,
+      lineApprovalStates: lineApprovalStates ?? this.lineApprovalStates,
       pricing: pricing ?? this.pricing,
       statusHistory: statusHistory ?? this.statusHistory,
       version: version ?? this.version,

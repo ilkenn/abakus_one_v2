@@ -157,6 +157,12 @@ export {
   setTenantCustomerRestriction,
 } from "./customerDirectory";
 
+// AP-3 continuation — Customer Directory backfill tooling (gap-filling only, never production-executed this phase).
+export {
+  runPlatformCustomerDirectoryBackfill,
+  runTenantCustomerDirectoryBackfill,
+} from "./customerDirectoryBackfill";
+
 // Server-Authoritative Campaign Engine P8-B (2026-08-25) — foundation only,
 // not wired into any order-submission path yet. See campaignEngine.ts.
 export { getCustomerActiveCampaigns } from "./getCustomerActiveCampaigns";

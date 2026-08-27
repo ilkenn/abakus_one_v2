@@ -18,6 +18,7 @@ import '../../domain/models/order_model.dart';
 import '../../domain/models/order_status.dart';
 import '../../domain/models/order_tracking_step.dart';
 import '../providers/orders_provider.dart';
+import '../widgets/dine_in_line_approval_section.dart';
 import 'order_detail_screen.dart';
 
 /// Customer-facing Active Order Tracking screen.
@@ -119,6 +120,11 @@ class _ActiveOrderBody extends StatelessWidget {
           ],
           const SizedBox(height: AppSpacing.xl),
           _OrderItemsCard(order: order),
+          if (!isCancelled)
+            DineInLineApprovalSection(
+              orderId: order.id,
+              channel: order.channel,
+            ),
           const SizedBox(height: AppSpacing.xl),
           _OrderSummaryCard(order: order),
           const SizedBox(height: AppSpacing.xl),
