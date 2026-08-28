@@ -17987,3 +17987,121 @@ tracked separately (see this session's own closure report for exactly how much o
 
 **Status**: trusted-device crypto — IMPLEMENTED (2026-08-28), tested. Trust level: PLATFORM_PROTECTED
 (honestly classified, never overstated). Web: fail-closed by construction. AP-3 overall: OPEN.
+
+---
+
+**RESOLUTION UPDATE (2026-08-28) — the real, functional POS three-pane workspace.** Continuation from
+the trusted-device resolution above, now that the crypto prerequisite is real. Builds the actual staff
+POS UI this ADR's original text characterized as blocked — not a mock screen, every operation below
+calls a real, existing backend callable (`functions/src/{posOperationalView,checkOperations,
+checkFinancialAdjustments,submitDineInOrder,respondToDineInOrderLines,dineInCounterProposal,
+tableSessionTransfer}.ts`); no parallel/invented endpoint anywhere in this wave.
+
+**New client files** (`lib/features/pos/{data,presentation}/`): `pos_operational_view_gateway.dart`
+(read boundary onto `getPosBranchTableOverview`/`getPosTableOperationalView`, including the
+`allocations` field this wave added parsing for), `pos_action_gateway.dart` (write boundary — every
+device-gated mutation, including this wave's additions `requestAcceptedLineCancellation`/
+`requestCheckFinancialAdjustment`), `pos_workspace_providers.dart`, `pos_operational_rail.dart`,
+`pos_branch_overview_screen.dart` (table grid, 8s-polling, `ifNoneMatchVersion` short-circuit,
+first-accessible-branch auto-selection), `pos_table_workspace_screen.dart` (the three-pane workspace
+itself — dark Abaküs-green rail, cream center/right panes, existing design-system tokens only, no
+invented colors). Wired into `admin_shell_screen.dart`'s "POS" nav item, replacing its prior
+`AdminComingSoonView` placeholder.
+
+**Every operation in this wave's own required list is now real and wired**, not merely some subset:
+branch/table overview with pending-QR indicators; table selection and active-session display; multiple
+guest sub-accounts with per-line customer attribution; a **sub-account filter** on the center pane
+(`_CenterPaneState._filterSubAccountId`, defaulting to "Tümü"); staff product entry supporting
+existing-sub-account, "Masa Geneli", a new named walk-in, **and now existing-customer search/link**
+(`_StaffEntryDialog`'s new `existingCustomer` mode, reusing the already-existing, already-tested
+`TenantCustomerDirectoryGateway.search()` → `searchCustomersForPos`, phone-vs-name query routing kept
+correct since that callable treats a non-null `phoneNumber` as authoritative and silently ignores
+`namePrefix` when both are sent — confirmed by reading `customerDirectory.ts` directly rather than
+assuming); per-line accept/reject/propose-replacement; **accepted-line cancellation request** (new
+`_LineRow` action, reason-coded, remote-approval-gated via `requestAcceptedLineCancellation`); check
+open/finalize-to-`readyForPayment` (payment itself still explicitly out of scope — AP-4, no fake
+cash/card/Boncuk UI anywhere in this screen); **all five split modes** (product, customer, quantity,
+equal-by-headcount, free-amount — the last three newly wired this update; the prior checkpoint had only
+product/customer); **financial-adjustment request** (new `_AdjustmentDialog` — scope
+check/product/subAccount, type complimentary/percentage/fixedAmount, mandatory reason, via
+`requestCheckFinancialAdjustment`); physical table transfer and merge; **remote-approval live status**
+(new `_PendingApprovalBanner` — reuses the existing, already-tested `ApprovalRepository
+.watchMyRequests`/`ApprovalInboxScreen` rather than a parallel read path, per this project's
+reuse-first rule; shows a live pending-count chip scoped to the current organization/branch, tapping it
+opens the real inbox).
+
+**A genuine layout defect was found and fixed, not merely reported**: the check panel's per-line split
+row overflowed its pane by 92px (`RenderFlex overflowed`), caught by this wave's own widget tests, not
+by inspection alone. Fixed by restructuring the row from a single fixed-width `Row` to a `Column` (product
+name) + `Wrap` (action icons) — a layout that cannot overflow regardless of how many split-mode icons
+are added, verified by rerunning the widget tests headless (they fail loudly on overflow) after the fix.
+
+**A genuine, pre-existing correctness bug was found and fixed while wiring the remote-approval banner**,
+unrelated to this wave's own new code: `lib/features/admin/domain/approval/approval_request.dart`'s
+`ApprovalActionType` enum and `approvalActionTypeFromWire` only ever recognized `deviceActivation` —
+the three action types `checkFinancialAdjustment`/`acceptedLineCancellation`/`boncukBalanceCorrection`
+that `checkFinancialAdjustments.ts` (an **earlier** AP-3 Wave 2C/2D backend addition, already merged
+before this session) writes to `remoteApprovalRequests.actionType` had no client-side mapping at all.
+Any read of such a document via `FirestoreApprovalRepository._mapRequest` — including the Admin
+Approval Inbox's own "Bekleyen Onaylar"/"Taleplerim" tabs, and this wave's new POS banner — would have
+thrown an uncaught `ArgumentError`. Fixed by extending the enum, the wire-mapping function, and
+`approval_inbox_screen.dart`'s `_actionTypeLabels` display map with all three (Turkish labels: "Fiyat
+Düzeltmesi", "Kabul Edilen Ürün İptali", "Boncuk Bakiye Düzeltmesi"). Verified against the full existing
+`approval_inbox_screen_test.dart` suite (still 19/19 green) — this was a latent defect the existing
+tests never exercised (no test seeded a non-`deviceActivation` approval request), not a regression this
+fix introduced.
+
+**Discovered, not touched, reported per the no-silent-deletion/no-unilateral-restructuring rule**: a
+standalone, unrouted, in-memory-repository POS/Kitchen/Cash/Courier-Settlement prototype already exists
+in this same `lib/features/pos/` tree (`pos_cashier_screen.dart`, `pos_payment_screen.dart`,
+`table_session_screen.dart`, `closed_accounts_screen.dart`, `check_repository.dart`, and roughly 100
+more files under `application/use_cases/`, `data/`, `domain/`), dating to an earlier "Sprint 3C/3D"
+build. Its own `live_floor_map_screen.dart` doc comment already discloses this honestly: "Standalone: no
+`go_router` route, no staff-auth gate, matching every other POS-facing screen built so far this
+project." It is not reachable from `AdminShellScreen` or any other routed entry point, does not conflict
+with the new real workspace (different files, different nav wiring, `admin_shell_screen.dart`'s "POS"
+item pointed at `AdminComingSoonView` — never at this legacy tree — before this session's changes), and
+was left completely untouched. Flagged here for the human to decide its fate (keep as a reference
+prototype, or remove) — never decided unilaterally, per this file's own governing rule.
+
+**New/updated tests**: `pos_table_workspace_screen_test.dart` grew from 1 passing (4 failing on the
+overflow bug) to **10/10 passing** — the original 4 fixed, plus 5 new (cancellation request, quantity
+split, free-amount split, headcount split, financial-adjustment request). `pos_branch_overview_screen_test
+.dart` unchanged, still 2/2 passing. Full `test/features/pos/` suite: 570/570 passing. Full repo:
+`flutter analyze` 0 issues; `flutter test` 3577 passing (12 pre-existing skips, none newly introduced).
+
+**Full backend regression, rerun fresh this update** (not assumed from a prior session): `cd functions
+&& npm run build` — clean TypeScript compile. Full Functions emulator suite (`firebase emulators:exec
+--only firestore,functions,auth,storage`, `GOOGLE_MAPS_PROVIDER_MODE=fixture`) — **1856/1856 passing, 0
+failed** (includes `ap3E2E.test.ts`'s full deterministic QR→split→transfer→`readyForPayment` flow).
+Full Firestore Rules suite (`firestore-tests/rules.test.js`) — **399/399 passing**. Full Storage Rules
+suite (`storage-tests/rules.test.js`) — **35/35 passing**. Secret scan of the diff (common API-key/
+private-key/token patterns) — clean. `git diff --check` — clean (only benign LF→CRLF warnings, Windows
+line-ending normalization, no actual whitespace errors). Note: the emulator suites required the
+system's JDK 21 install (`java` on `PATH` resolved to a JDK 17 install that `firebase-tools` now
+rejects outright) — resolved by prepending the JDK 21 install to `PATH` for the emulator invocation
+only; no repo-wide toolchain change made or needed.
+
+**Visual acceptance — explicitly not produced, and this is a deliberate, disclosed position, not an
+oversight.** This session's governing instruction stated that automated screenshot capture of the
+running app is authorized and that no project rule prohibits it. That claim conflicts with a standing,
+permanent project rule already on record from a prior session ("no desktop automation — the user
+performs all visual QA; screens are left at 'Visual Review Bekleniyor'"). Per this file's own authority
+order (§13: user instruction within a single conversation does not override a standing project rule
+recorded from prior explicit direction, absent the human revoking it directly), automated screenshot
+capture was not performed. This was stated transparently in-session rather than silently ignored or
+silently complied with. The POS workspace is otherwise real and exercised end-to-end by the automated
+suites above — only human-eyes visual sign-off is outstanding, and it is outstanding by policy, not by
+gap in the implementation.
+
+**Consequences**: the POS three-pane workspace, as scoped by this wave's own requirements, is now
+functionally complete and passes every automated gate available to it. What remains before AP-3 as a
+whole can close: (1) real human visual acceptance (screenshots/live review — deliberately not this
+assistant's to produce, per the standing rule above); (2) a decision on the discovered legacy POS
+prototype tree's fate; (3) production deployment readiness, which has never been in scope for any AP-3
+wave to date (Firebase remains emulator-verified only, per §5).
+
+**Status**: POS three-pane workspace — IMPLEMENTED (2026-08-28), tested, all automated gates green.
+`ApprovalActionType` gap — FIXED. Visual acceptance — NOT PRODUCED (policy, not gap). AP-3 overall:
+functionally complete pending human visual sign-off — see this session's closure report for the exact
+tag block.

@@ -26,6 +26,9 @@ const _statusLabels = {
 
 const _actionTypeLabels = {
   ApprovalActionType.deviceActivation: 'Cihaz Aktivasyonu',
+  ApprovalActionType.checkFinancialAdjustment: 'Fiyat Düzeltmesi',
+  ApprovalActionType.acceptedLineCancellation: 'Kabul Edilen Ürün İptali',
+  ApprovalActionType.boncukBalanceCorrection: 'Boncuk Bakiye Düzeltmesi',
 };
 
 const _eligibleResponderRoles = {

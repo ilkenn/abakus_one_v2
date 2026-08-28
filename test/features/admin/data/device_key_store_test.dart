@@ -15,7 +15,18 @@ import '../test_support/fake_secure_storage_platform.dart';
 /// independent proof rather than importing the implementation's own
 /// constant and trivially matching it against itself).
 const _ed25519SpkiDerPrefix = [
-  0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+  0x30,
+  0x2a,
+  0x30,
+  0x05,
+  0x06,
+  0x03,
+  0x2b,
+  0x65,
+  0x70,
+  0x03,
+  0x21,
+  0x00,
 ];
 
 void main() {
@@ -53,7 +64,8 @@ void main() {
       expect(der.sublist(0, 12), _ed25519SpkiDerPrefix);
     });
 
-    test('loadOrCreatePublicKeyPem is idempotent — a second call returns '
+    test(
+        'loadOrCreatePublicKeyPem is idempotent — a second call returns '
         'the SAME public key, never generating a new one', () async {
       final store = buildStore();
       final first = await store.loadOrCreatePublicKeyPem('org-1_branch-1');
@@ -62,8 +74,7 @@ void main() {
       expect(second, first);
     });
 
-    test('two different namespaces get two independent key pairs',
-        () async {
+    test('two different namespaces get two independent key pairs', () async {
       final store = buildStore();
       final a = await store.loadOrCreatePublicKeyPem('org-1_branch-1');
       final b = await store.loadOrCreatePublicKeyPem('org-1_branch-2');
@@ -82,8 +93,7 @@ void main() {
     });
   });
 
-  group('SecureDeviceKeyStore — signing (backend-verification-compatible)',
-      () {
+  group('SecureDeviceKeyStore — signing (backend-verification-compatible)', () {
     test(
         'signChallenge produces a signature the SAME Ed25519 public key '
         'verifies — the exact proof-of-possession property '
@@ -92,7 +102,8 @@ void main() {
       final pem = await store.loadOrCreatePublicKeyPem('org-1_branch-1');
       const nonce = 'a-real-server-issued-nonce-abc123';
 
-      final signatureBase64 = await store.signChallenge('org-1_branch-1', nonce);
+      final signatureBase64 =
+          await store.signChallenge('org-1_branch-1', nonce);
 
       // Independently re-derive the raw public key bytes from the PEM
       // (mirrors what a relying party parsing the PEM would do) and verify
@@ -115,13 +126,15 @@ void main() {
         utf8.encode(nonce),
         signature: Signature(
           base64.decode(signatureBase64),
-          publicKey: SimplePublicKey(rawPublicKeyBytes, type: KeyPairType.ed25519),
+          publicKey:
+              SimplePublicKey(rawPublicKeyBytes, type: KeyPairType.ed25519),
         ),
       );
       expect(isValid, true);
     });
 
-    test('signing the SAME nonce twice produces a deterministic Ed25519 '
+    test(
+        'signing the SAME nonce twice produces a deterministic Ed25519 '
         'signature (Ed25519 is deterministic by design — no random nonce '
         'reuse risk the way ECDSA has)', () async {
       final store = buildStore();
@@ -134,9 +147,9 @@ void main() {
       expect(second, first);
     });
 
-    test('a DIFFERENT nonce produces a DIFFERENT signature — proves the '
-        'raw nonce bytes are actually being signed, not a constant',
-        () async {
+    test(
+        'a DIFFERENT nonce produces a DIFFERENT signature — proves the '
+        'raw nonce bytes are actually being signed, not a constant', () async {
       final store = buildStore();
       await store.loadOrCreatePublicKeyPem('org-1_branch-1');
 
@@ -146,7 +159,8 @@ void main() {
       expect(sigA, isNot(sigB));
     });
 
-    test('signChallenge throws DeviceKeyNotFoundException when no key '
+    test(
+        'signChallenge throws DeviceKeyNotFoundException when no key '
         'exists for the namespace yet', () async {
       final store = buildStore();
       await expectLater(
@@ -157,7 +171,8 @@ void main() {
   });
 
   group('SecureDeviceKeyStore — corruption and deletion', () {
-    test('unparseable stored key material throws '
+    test(
+        'unparseable stored key material throws '
         'DeviceKeyStorageCorruptedException, never silently regenerates a '
         'new key under the same namespace', () async {
       final store = buildStore();
@@ -182,24 +197,26 @@ void main() {
       );
     });
 
-    test('deleteKey removes the key; a subsequent loadOrCreatePublicKeyPem '
+    test(
+        'deleteKey removes the key; a subsequent loadOrCreatePublicKeyPem '
         'call genuinely generates a NEW, different key pair', () async {
       final store = buildStore();
       final original = await store.loadOrCreatePublicKeyPem('org-1_branch-1');
       await store.deleteKey('org-1_branch-1');
       expect(await store.hasKey('org-1_branch-1'), false);
 
-      final regenerated = await store.loadOrCreatePublicKeyPem('org-1_branch-1');
+      final regenerated =
+          await store.loadOrCreatePublicKeyPem('org-1_branch-1');
       expect(regenerated, isNot(original));
     });
   });
 
   group('SecureDeviceKeyStore — private key never leaves the class', () {
-    test('every value written to secure storage, JSON-decoded, has no '
+    test(
+        'every value written to secure storage, JSON-decoded, has no '
         'field whose serialized string form appears in the returned '
         'public-key PEM or signature (a private key byte sequence never '
-        'coincidentally equals its own public key or a signature)',
-        () async {
+        'coincidentally equals its own public key or a signature)', () async {
       final store = buildStore();
       final pem = await store.loadOrCreatePublicKeyPem('org-1_branch-1');
       final signature = await store.signChallenge('org-1_branch-1', 'nonce');
@@ -215,8 +232,7 @@ void main() {
       // literally embedded the raw private key bytes as a substring —
       // trivially false for two cryptographically independent byte
       // sequences, asserted directly rather than assumed.
-      final privateKeyBytes =
-          (decoded['privateKeyBytes'] as List).cast<int>();
+      final privateKeyBytes = (decoded['privateKeyBytes'] as List).cast<int>();
       final privateKeyBase64 = base64.encode(privateKeyBytes);
       expect(pem.contains(privateKeyBase64), false);
       expect(signature.contains(privateKeyBase64), false);

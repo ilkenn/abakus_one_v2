@@ -79,8 +79,8 @@ class PlatformCustomerDetail {
       phoneMasked: data['phoneMasked'] as String,
       registrationDate: DateTime.parse(data['registrationDate'] as String),
       accountState: data['accountState'] as String,
-      relatedOrganizationIds:
-          List<String>.from(data['relatedOrganizationIds'] as List? ?? const []),
+      relatedOrganizationIds: List<String>.from(
+          data['relatedOrganizationIds'] as List? ?? const []),
       restrictionStatus: restriction['status'] as String? ?? 'none',
       restrictionReasonMessage: restriction['reasonMessage'] as String?,
       marketingConsent: data['marketingConsent'] as String? ?? 'notCaptured',
@@ -197,8 +197,7 @@ class FirebasePlatformCustomerDirectoryGateway
       'getPlatformCustomerDetail',
     );
     try {
-      final result =
-          await callable.call<Map<String, dynamic>>({'uid': uid});
+      final result = await callable.call<Map<String, dynamic>>({'uid': uid});
       return PlatformCustomerDetail.fromWire(result.data);
     } on functions.FirebaseFunctionsException catch (error) {
       _rethrow(error);

@@ -128,7 +128,8 @@ void main() {
     repository.dispose();
   });
 
-  TrustedDeviceSessionController buildController({bool platformSupported = true}) {
+  TrustedDeviceSessionController buildController(
+      {bool platformSupported = true}) {
     return TrustedDeviceSessionController(
       keyStore: SecureDeviceKeyStore(
         storage: const FlutterSecureStorage(),
@@ -144,7 +145,8 @@ void main() {
     );
   }
 
-  test('an unsupported platform starts and stays UnsupportedPlatform, never '
+  test(
+      'an unsupported platform starts and stays UnsupportedPlatform, never '
       'attempts to generate a key', () async {
     final controller = buildController(platformSupported: false);
     await Future<void>.delayed(Duration.zero);
@@ -182,7 +184,8 @@ void main() {
     expect(state.approvalRequestId, 'approval-1');
   });
 
-  test('observing the device transition to active moves '
+  test(
+      'observing the device transition to active moves '
       'RegistrationRequested -> ActivationRequired', () async {
     final controller = buildController();
     gateway.registrationResult = const RequestDeviceRegistrationResult(
@@ -194,13 +197,15 @@ void main() {
     await controller.register(capabilities: const ['POS']);
     expect(controller.state, isA<RegistrationRequested>());
 
-    repository.emit(_device(deviceId: 'device-1', status: TrustedDeviceStatus.active));
+    repository.emit(
+        _device(deviceId: 'device-1', status: TrustedDeviceStatus.active));
     await Future<void>.delayed(Duration.zero);
 
     expect(controller.state, isA<ActivationRequired>());
   });
 
-  test('activateOrRefresh(): challenge -> sign -> issue -> ActiveSession, '
+  test(
+      'activateOrRefresh(): challenge -> sign -> issue -> ActiveSession, '
       'and the signature is genuinely produced by the stored key (not a '
       'placeholder)', () async {
     final controller = buildController();
@@ -235,7 +240,8 @@ void main() {
     expect((state as ActiveSession).sessionId, 'session-1');
   });
 
-  test('ensureFreshSession(): a session well within its lifetime is '
+  test(
+      'ensureFreshSession(): a session well within its lifetime is '
       'returned as-is, no refresh call made', () async {
     final controller = buildController();
     gateway.registrationResult = const RequestDeviceRegistrationResult(
@@ -258,10 +264,12 @@ void main() {
 
     final result = await controller.ensureFreshSession();
     expect(result.sessionId, 'session-1');
-    expect(gateway.issueSessionCallCount, 1, reason: 'no additional refresh call');
+    expect(gateway.issueSessionCallCount, 1,
+        reason: 'no additional refresh call');
   });
 
-  test('ensureFreshSession(): a session near expiry triggers a silent '
+  test(
+      'ensureFreshSession(): a session near expiry triggers a silent '
       'refresh and returns the NEW session', () async {
     final controller = buildController();
     gateway.registrationResult = const RequestDeviceRegistrationResult(
@@ -277,7 +285,8 @@ void main() {
     );
     gateway.sessionResult = IssueDeviceSessionResult(
       sessionId: 'session-1',
-      expiresAt: DateTime.now().add(const Duration(minutes: 10)), // within refresh window
+      expiresAt: DateTime.now()
+          .add(const Duration(minutes: 10)), // within refresh window
       deviceId: 'device-1',
     );
     await controller.activateOrRefresh();
@@ -300,7 +309,8 @@ void main() {
     expect(gateway.lastChallengePurpose, 'renew');
   });
 
-  test('device suspended -> DeviceSuspended, session cleared from cache is '
+  test(
+      'device suspended -> DeviceSuspended, session cleared from cache is '
       'NOT required (server invalidates it) but local state reflects it '
       'immediately', () async {
     final controller = buildController();
@@ -312,13 +322,15 @@ void main() {
     );
     await controller.register(capabilities: const ['POS']);
 
-    repository.emit(_device(deviceId: 'device-1', status: TrustedDeviceStatus.suspended));
+    repository.emit(
+        _device(deviceId: 'device-1', status: TrustedDeviceStatus.suspended));
     await Future<void>.delayed(Duration.zero);
 
     expect(controller.state, isA<DeviceSuspended>());
   });
 
-  test('device revoked -> DeviceRevoked, and local key/session material is '
+  test(
+      'device revoked -> DeviceRevoked, and local key/session material is '
       'deleted (never silently reused for a re-registration)', () async {
     final controller = buildController();
     gateway.registrationResult = const RequestDeviceRegistrationResult(
@@ -328,10 +340,12 @@ void main() {
       approvalRequestId: 'approval-1',
     );
     await controller.register(capabilities: const ['POS']);
-    final keyStore = SecureDeviceKeyStore(storage: const FlutterSecureStorage());
+    final keyStore =
+        SecureDeviceKeyStore(storage: const FlutterSecureStorage());
     expect(await keyStore.hasKey('test_org-1_branch-1'), true);
 
-    repository.emit(_device(deviceId: 'device-1', status: TrustedDeviceStatus.revoked));
+    repository.emit(
+        _device(deviceId: 'device-1', status: TrustedDeviceStatus.revoked));
     await Future<void>.delayed(Duration.zero);
 
     expect(controller.state, isA<DeviceRevoked>());
@@ -348,13 +362,15 @@ void main() {
     );
     await controller.register(capabilities: const ['POS']);
 
-    repository.emit(_device(deviceId: 'device-1', status: TrustedDeviceStatus.retired));
+    repository.emit(
+        _device(deviceId: 'device-1', status: TrustedDeviceStatus.retired));
     await Future<void>.delayed(Duration.zero);
 
     expect(controller.state, isA<DeviceRetired>());
   });
 
-  test('resetAndReregister(): clears everything and returns to '
+  test(
+      'resetAndReregister(): clears everything and returns to '
       'NotRegistered, ready for a genuinely new key', () async {
     final controller = buildController();
     gateway.registrationResult = const RequestDeviceRegistrationResult(
@@ -376,10 +392,12 @@ void main() {
     );
     await controller.register(capabilities: const ['POS']);
     final state = controller.state as RegistrationRequested;
-    expect(state.deviceId, 'device-2', reason: 'a genuinely new device identity');
+    expect(state.deviceId, 'device-2',
+        reason: 'a genuinely new device identity');
   });
 
-  test('a registration network failure surfaces as DeviceNetworkError, '
+  test(
+      'a registration network failure surfaces as DeviceNetworkError, '
       'never crashes or silently retries', () async {
     final controller = buildController();
     gateway.registrationError = const TrustedDeviceSessionException(

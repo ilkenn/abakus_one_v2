@@ -66,7 +66,8 @@ class _PlatformCustomerDetailScreenState
 
   Future<void> _toggleRestriction(PlatformCustomerDetail detail) async {
     final restrict = !detail.isRestricted;
-    final result = await showDialog<({String reasonCode, String reasonMessage})>(
+    final result =
+        await showDialog<({String reasonCode, String reasonMessage})>(
       context: context,
       builder: (dialogContext) =>
           _PlatformRestrictionReasonDialog(restrict: restrict),

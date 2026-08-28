@@ -156,7 +156,8 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('detail shows tenant relationships and no-tenant customers '
+  testWidgets(
+      'detail shows tenant relationships and no-tenant customers '
       'explicitly', (tester) async {
     final gateway = _FakePlatformCustomerDirectoryGateway()
       ..detailToReturn = PlatformCustomerDetail(
@@ -176,7 +177,8 @@ void main() {
     expect(find.textContaining('kiracısız kayıt'), findsOneWidget);
   });
 
-  testWidgets('restricting platform-wide calls the gateway with the chosen '
+  testWidgets(
+      'restricting platform-wide calls the gateway with the chosen '
       'reason', (tester) async {
     final gateway = _FakePlatformCustomerDirectoryGateway()
       ..detailToReturn = PlatformCustomerDetail(
@@ -227,7 +229,8 @@ void main() {
       ];
     await pumpDetail(tester, gateway: gateway);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Adres Defterini Göster'));
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Adres Defterini Göster'));
     await tester.pumpAndSettle();
 
     // The dialog appears; submitting without a reason must not proceed.
@@ -243,7 +246,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.lastRevealReason, 'Dolandırıcılık şikayeti soruşturması.');
-    expect(find.textContaining('Ev · Test Sokak No:1 · İstanbul'),
-        findsOneWidget);
+    expect(
+        find.textContaining('Ev · Test Sokak No:1 · İstanbul'), findsOneWidget);
   });
 }

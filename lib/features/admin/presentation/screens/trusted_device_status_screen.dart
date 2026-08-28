@@ -382,8 +382,8 @@ class _RecoverableTerminalCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.md),
             Text(
               title,
-              style: AppTypography.titleMedium
-                  .copyWith(color: AppColors.error, fontWeight: FontWeight.bold),
+              style: AppTypography.titleMedium.copyWith(
+                  color: AppColors.error, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -419,7 +419,8 @@ class _RetryableErrorCard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.wifi_off_rounded, size: 40, color: AppColors.error),
+            const Icon(Icons.wifi_off_rounded,
+                size: 40, color: AppColors.error),
             const SizedBox(height: AppSpacing.md),
             const Text('Bağlantı Sorunu', style: AppTypography.titleMedium),
             const SizedBox(height: AppSpacing.sm),

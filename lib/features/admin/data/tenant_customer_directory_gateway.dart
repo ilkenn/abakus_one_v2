@@ -134,9 +134,10 @@ class TenantCustomerDetail {
           ? null
           : DateTime.parse(data['lastOrderAt'] as String),
       totalOrderCount: data['totalOrderCount'] as int,
-      orderAddressSnapshots: (data['orderAddressSnapshots'] as List? ?? const [])
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList(),
+      orderAddressSnapshots:
+          (data['orderAddressSnapshots'] as List? ?? const [])
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList(),
       restrictionStatus: restriction['status'] as String? ?? 'none',
       restrictionReasonMessage: restriction['reasonMessage'] as String?,
       marketingConsent: data['marketingConsent'] as String? ?? 'notCaptured',
@@ -224,7 +225,8 @@ class FirebaseTenantCustomerDirectoryGateway
       return TenantCustomerListPage(
         customers: [
           for (final raw in (data['customers'] as List))
-            TenantCustomerSummary.fromWire(Map<String, dynamic>.from(raw as Map)),
+            TenantCustomerSummary.fromWire(
+                Map<String, dynamic>.from(raw as Map)),
         ],
         nextCursor: data['nextCursor'] as String?,
       );

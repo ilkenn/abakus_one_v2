@@ -5147,3 +5147,49 @@ closure report).
 prerequisite, which now exists. Building the workspace itself is now tracked as remaining scope, not a
 blocker. Real visual acceptance screenshots remain not produced by the assistant, per the standing
 no-desktop-automation project rule. AP-3 remains OPEN.
+
+**AP-3 CONTINUATION — Real Three-Pane POS Workspace, Functionally Complete (2026-08-28; `docs/
+decisions.md` ADR-041 resolution update).** Builds the actual staff POS UI on top of the now-real
+trusted-device prerequisite: `lib/features/pos/{data,presentation}/{pos_operational_view_gateway,
+pos_action_gateway,pos_workspace_providers,pos_operational_rail,pos_branch_overview_screen,
+pos_table_workspace_screen}.dart`, wired into `AdminShellScreen`'s "POS" nav item. Every required
+operation is real and backend-wired, not mocked: branch/table overview with pending-QR indicators;
+sub-account filtering; staff product entry (existing sub-account, "Masa Geneli", named walk-in, and
+existing-customer search/link via the already-existing `searchCustomersForPos`); per-line accept/
+reject/propose-replacement; accepted-line cancellation request; check open/finalize-to-
+`readyForPayment` (payment itself stays AP-4-gated — no fake cash/card/Boncuk UI); all five split modes
+(product/customer/quantity/headcount/free-amount); financial-adjustment request; physical table
+transfer/merge; and a remote-approval live-status banner that reuses the existing `ApprovalRepository`/
+`ApprovalInboxScreen` rather than a parallel read path.
+
+Two real defects found and fixed in the process, not merely reported: (1) a genuine `RenderFlex`
+overflow in the check panel's per-line split row, caught by this wave's own widget tests, fixed by
+restructuring to a `Column`+`Wrap` layout that cannot overflow; (2) a pre-existing gap in
+`ApprovalActionType` (`lib/features/admin/domain/approval/approval_request.dart`) that only recognized
+`deviceActivation` — the three action types an earlier AP-3 Wave 2C/2D backend addition
+(`checkFinancialAdjustments.ts`) already writes had no client mapping, meaning the Admin Approval Inbox
+would have thrown an uncaught `ArgumentError` on any of them. Fixed; `approval_inbox_screen_test.dart`
+still 19/19 green.
+
+Also discovered and explicitly left untouched (reported, not unilaterally acted on): a standalone,
+unrouted, in-memory-repository POS/Kitchen/Cash/Courier-Settlement prototype already exists under this
+same `lib/features/pos/` tree from an earlier "Sprint 3C/3D" build (`pos_cashier_screen.dart` and
+~100 related files) — not reachable from any routed entry point, does not conflict with the new
+workspace, but its fate (keep as reference, or remove) is a decision for the human, not this assistant.
+
+Tests: `pos_table_workspace_screen_test.dart` now 10/10 (was 1/5); `pos_branch_overview_screen_test
+.dart` 2/2; full `test/features/pos/` 570/570. Full repo: `flutter analyze` 0 issues, `flutter test`
+3577 passing. Full backend regression rerun fresh: Functions build clean; Functions emulator suite
+1856/1856 (includes `ap3E2E.test.ts`); Firestore Rules 399/399; Storage Rules 35/35. Secret scan and
+`git diff --check` clean.
+
+**Visual acceptance was not produced** — this session's governing instruction claimed no project rule
+prohibits automated screenshot capture, which conflicts with a standing, permanent project rule already
+on record ("no desktop automation — the user performs all visual QA"). Per this project's own document
+authority order, the standing rule was followed and the conflict disclosed transparently in-session
+rather than silently resolved either way.
+
+AP-3 is now functionally complete and passes every automated gate available to it. What remains before
+AP-3 as a whole can close: real human visual acceptance (deliberately not this assistant's to produce);
+a human decision on the discovered legacy POS prototype tree; and production deployment readiness
+(never in scope for any AP-3 wave — Firebase remains emulator-verified only).

@@ -93,7 +93,18 @@ class DeviceKeyUnsupportedPlatformException implements Exception {
 /// 32 bytes — this constant is not derived per-key, it's the fixed
 /// structural header RFC 8410 specifies for every Ed25519 public key.
 const List<int> _ed25519SpkiDerPrefix = [
-  0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+  0x30,
+  0x2a,
+  0x30,
+  0x05,
+  0x06,
+  0x03,
+  0x2b,
+  0x65,
+  0x70,
+  0x03,
+  0x21,
+  0x00,
 ];
 
 String _ed25519PublicKeyToSpkiPem(List<int> rawPublicKeyBytes) {
@@ -110,7 +121,8 @@ String _ed25519PublicKeyToSpkiPem(List<int> rawPublicKeyBytes) {
   final wrapped = StringBuffer();
   for (var i = 0; i < base64Body.length; i += 64) {
     wrapped.writeln(
-      base64Body.substring(i, i + 64 > base64Body.length ? base64Body.length : i + 64),
+      base64Body.substring(
+          i, i + 64 > base64Body.length ? base64Body.length : i + 64),
     );
   }
   return '-----BEGIN PUBLIC KEY-----\n$wrapped-----END PUBLIC KEY-----\n';
@@ -169,7 +181,9 @@ class SecureDeviceKeyStore implements DeviceKeyStore {
 
   @override
   Future<String> loadOrCreatePublicKeyPem(String namespace) async {
-    if (!isPlatformSupported) throw const DeviceKeyUnsupportedPlatformException();
+    if (!isPlatformSupported) {
+      throw const DeviceKeyUnsupportedPlatformException();
+    }
     final existingRaw = await _storage.read(key: _storageKey(namespace));
     if (existingRaw != null) {
       final data = await _loadKeyPairData(namespace);
@@ -200,7 +214,9 @@ class SecureDeviceKeyStore implements DeviceKeyStore {
 
   @override
   Future<String> signChallenge(String namespace, String nonce) async {
-    if (!isPlatformSupported) throw const DeviceKeyUnsupportedPlatformException();
+    if (!isPlatformSupported) {
+      throw const DeviceKeyUnsupportedPlatformException();
+    }
     final keyPairData = await _loadKeyPairData(namespace);
     final signature = await _algorithm.sign(
       utf8.encode(nonce),

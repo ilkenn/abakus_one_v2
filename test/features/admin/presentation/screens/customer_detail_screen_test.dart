@@ -143,7 +143,8 @@ void main() {
     expect(find.textContaining('Personel Notları'), findsNothing);
   });
 
-  testWidgets('a restricted customer shows the restriction reason and an '
+  testWidgets(
+      'a restricted customer shows the restriction reason and an '
       'unrestrict button', (tester) async {
     await _pump(tester, detail: _detail(restrictionStatus: 'active'));
 

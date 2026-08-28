@@ -31,6 +31,7 @@ import '../../../pos/domain/authorization/staff_role.dart';
 import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../../pos/presentation/widgets/role_gate.dart';
 import '../../../pos/presentation/screens/kitchen_display_board_screen.dart';
+import '../../../pos/presentation/screens/pos_branch_overview_screen.dart';
 import '../widgets/admin_coming_soon_view.dart';
 import '../widgets/admin_context_gate.dart';
 import '../widgets/module_readiness_gate.dart';
@@ -222,11 +223,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             },
             builder: (context, ref) => RoleGate.forRoles(
               const {StaffRole.staff, StaffRole.manager, StaffRole.admin},
-              child: const AdminComingSoonView(
-                title: 'POS',
-                reason: 'POS oturumları masa/sipariş akışından başlatılır — '
-                    'buradan genel bir liste ekranı bu aşamada eklenmedi.',
-              ),
+              child: const PosBranchOverviewScreen(),
             ),
           ),
           _AdminNavItem(

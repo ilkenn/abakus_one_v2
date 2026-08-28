@@ -62,7 +62,8 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
 
   Future<void> _toggleRestriction(TenantCustomerDetail detail) async {
     final restrict = !detail.isRestricted;
-    final result = await showDialog<({String reasonCode, String reasonMessage})>(
+    final result =
+        await showDialog<({String reasonCode, String reasonMessage})>(
       context: context,
       builder: (dialogContext) => _RestrictionReasonDialog(restrict: restrict),
     );
@@ -108,8 +109,9 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
           loading: () =>
               const LoadingView(message: 'Müşteri bilgisi yükleniyor...'),
           error: (error, stackTrace) {
-            final isPermissionDenied = error is TenantCustomerDirectoryException &&
-                error.code == 'permission-denied';
+            final isPermissionDenied =
+                error is TenantCustomerDirectoryException &&
+                    error.code == 'permission-denied';
             final isNotFound = error is TenantCustomerDirectoryException &&
                 error.code == 'not-found';
             if (isNotFound) {
@@ -123,7 +125,8 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
                   ? 'Bu müşterinin bilgilerini görüntüleme yetkiniz yok.'
                   : 'Müşteri bilgisi yüklenirken bir sorun oluştu.',
               retryLabel: 'Tekrar Dene',
-              onRetry: () => ref.invalidate(tenantCustomerDetailProvider(_args)),
+              onRetry: () =>
+                  ref.invalidate(tenantCustomerDetailProvider(_args)),
             );
           },
           data: (detail) => _buildBody(detail),

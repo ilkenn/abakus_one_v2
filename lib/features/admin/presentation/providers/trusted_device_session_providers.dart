@@ -121,8 +121,8 @@ final selectedPosBranchIdProvider = StateProvider<String?>((ref) => null);
 /// or branch selection hasn't resolved yet — callers must handle that
 /// before rendering any trusted-device UI, exactly like every other
 /// branch-scoped Admin screen already does.
-final currentTrustedDeviceSessionControllerProvider = Provider<
-    ({String organizationId, String branchId})?>((ref) {
+final currentTrustedDeviceSessionControllerProvider =
+    Provider<({String organizationId, String branchId})?>((ref) {
   final organizationId = ref.watch(currentOrganizationIdProvider);
   final branchId = ref.watch(selectedPosBranchIdProvider);
   if (branchId == null) return null;

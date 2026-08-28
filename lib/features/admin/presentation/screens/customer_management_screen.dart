@@ -83,9 +83,8 @@ class _CustomerManagementScreenState
           );
       if (!mounted) return;
       setState(() {
-        _customers = append
-            ? [...?_customers, ...page.customers]
-            : page.customers;
+        _customers =
+            append ? [...?_customers, ...page.customers] : page.customers;
         _nextCursor = page.nextCursor;
         _loadingMore = false;
         _error = null;

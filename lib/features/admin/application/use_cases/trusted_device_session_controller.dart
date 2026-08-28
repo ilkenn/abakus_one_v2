@@ -24,7 +24,8 @@ import '../../domain/trusted_device/trusted_device.dart';
 /// `CLAUDE.md` §4) — a wrapping `AsyncValue` would only add a second,
 /// redundant loading/error dimension on top of states that already carry
 /// that meaning themselves.
-class TrustedDeviceSessionController extends StateNotifier<DeviceRegistrationState> {
+class TrustedDeviceSessionController
+    extends StateNotifier<DeviceRegistrationState> {
   TrustedDeviceSessionController({
     required this.keyStore,
     required this.sessionCache,
@@ -104,7 +105,8 @@ class TrustedDeviceSessionController extends StateNotifier<DeviceRegistrationSta
   void _watchDeviceStatus(String deviceId) {
     _deviceStreamSub?.cancel();
     _deviceStreamSub = deviceRepository
-        .watchDevicesForBranch(organizationId: organizationId, branchId: branchId)
+        .watchDevicesForBranch(
+            organizationId: organizationId, branchId: branchId)
         .listen(
       (devices) {
         final match = devices.where((d) => d.deviceId == deviceId).toList();
@@ -221,7 +223,8 @@ class TrustedDeviceSessionController extends StateNotifier<DeviceRegistrationSta
         deviceId: deviceId,
         purpose: purpose,
       );
-      final signature = await keyStore.signChallenge(_namespace, challenge.nonce);
+      final signature =
+          await keyStore.signChallenge(_namespace, challenge.nonce);
       final session = await sessionGateway.issueSession(
         organizationId: organizationId,
         branchId: branchId,
@@ -294,4 +297,3 @@ class TrustedDeviceSessionController extends StateNotifier<DeviceRegistrationSta
     super.dispose();
   }
 }
-

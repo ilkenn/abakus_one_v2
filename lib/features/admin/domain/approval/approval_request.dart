@@ -5,7 +5,12 @@
 /// true even as this domain evolves.
 library;
 
-enum ApprovalActionType { deviceActivation }
+enum ApprovalActionType {
+  deviceActivation,
+  checkFinancialAdjustment,
+  acceptedLineCancellation,
+  boncukBalanceCorrection,
+}
 
 enum ApprovalStatus {
   pending,
@@ -20,6 +25,12 @@ ApprovalActionType approvalActionTypeFromWire(String value) {
   switch (value) {
     case 'deviceActivation':
       return ApprovalActionType.deviceActivation;
+    case 'checkFinancialAdjustment':
+      return ApprovalActionType.checkFinancialAdjustment;
+    case 'acceptedLineCancellation':
+      return ApprovalActionType.acceptedLineCancellation;
+    case 'boncukBalanceCorrection':
+      return ApprovalActionType.boncukBalanceCorrection;
     default:
       throw ArgumentError('Unknown approval action type: $value');
   }

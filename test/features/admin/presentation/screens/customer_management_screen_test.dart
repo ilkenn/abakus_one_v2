@@ -42,9 +42,8 @@ class _FakeTenantCustomerDirectoryGateway
             .where((c) =>
                 c.displayName.toLowerCase().contains(namePrefix.toLowerCase()))
             .toList();
-    final startIndex = cursor == null
-        ? 0
-        : filtered.indexWhere((c) => c.id == cursor) + 1;
+    final startIndex =
+        cursor == null ? 0 : filtered.indexWhere((c) => c.id == cursor) + 1;
     final page = filtered.skip(startIndex).take(pageSize).toList();
     final isLastPage = startIndex + page.length >= filtered.length;
     return TenantCustomerListPage(
@@ -156,7 +155,8 @@ void main() {
     expect(find.textContaining('henüz kayıtlı müşteri yok'), findsOneWidget);
   });
 
-  testWidgets('error state: permission-denied shows a Turkish unauthorized '
+  testWidgets(
+      'error state: permission-denied shows a Turkish unauthorized '
       'message with a retry button', (tester) async {
     final gateway = _FakeTenantCustomerDirectoryGateway()
       ..errorToThrow = const TenantCustomerDirectoryException(

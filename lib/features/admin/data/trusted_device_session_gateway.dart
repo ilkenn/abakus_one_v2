@@ -83,7 +83,8 @@ abstract interface class TrustedDeviceSessionGateway {
   });
 }
 
-class FirebaseTrustedDeviceSessionGateway implements TrustedDeviceSessionGateway {
+class FirebaseTrustedDeviceSessionGateway
+    implements TrustedDeviceSessionGateway {
   const FirebaseTrustedDeviceSessionGateway();
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
@@ -185,7 +186,8 @@ class FirebaseTrustedDeviceSessionGateway implements TrustedDeviceSessionGateway
 }
 
 /// Fail-closed fallback — mirrors this codebase's established convention.
-class UnavailableTrustedDeviceSessionGateway implements TrustedDeviceSessionGateway {
+class UnavailableTrustedDeviceSessionGateway
+    implements TrustedDeviceSessionGateway {
   const UnavailableTrustedDeviceSessionGateway();
 
   Never _unavailable() => throw const TrustedDeviceSessionException(
