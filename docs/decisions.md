@@ -17886,3 +17886,104 @@ closure report) — the FIRST full run to include every test built across this e
 (backfill, counter-proposal UI wiring's backend dependencies, and this E2E test itself).
 
 **Status**: IMPLEMENTED (2026-08-28), tested. AP-3 overall: OPEN. Implementation: AP-3 (continuing).
+
+---
+
+**RESOLUTION UPDATE (2026-08-28, same-day continuation) — trusted-device blocker: RESOLVED/IMPLEMENTED.**
+Append-only correction to this ADR's own "formally blocked" framing above: the project architect
+explicitly approved a named cryptography dependency decision (below), which removes the specific
+blocker this ADR identified (no crypto package existed in `pubspec.yaml`). The POS-workspace blocker is
+therefore also downgraded from "blocked" to "not yet built" — it was only ever blocked ON the
+trusted-device prerequisite, which now has a real implementation.
+
+**Dependency decision, independently verified, not merely taken on request**: `flutter pub add
+cryptography cryptography_flutter flutter_secure_storage --dry-run` was run against this repository's
+actual `pubspec.yaml`/Flutter 3.44.4/Dart 3.12.2 toolchain before anything was pinned — the resolver
+independently confirmed the exact versions requested (`cryptography: ^2.9.0`, `cryptography_flutter:
+^2.3.4`, `flutter_secure_storage: ^11.0.0`, upgraded from the already-present `^10.3.1`), resolving
+cleanly with zero forced downgrades elsewhere and zero SDK/platform constraint conflicts (Android
+`minSdk`/`compileSdk` are Flutter-managed, not hardcoded in this project, so the bump required no
+manual Android config change). Applied for real (not dry-run) via the same command. Existing
+`flutter_secure_storage` call sites (`session_storage.dart`,
+`integration_credential_storage.dart`/`store_integration_credential.dart`,
+`integration_dependencies_provider.dart`) were directly re-analyzed after the v10→v11 bump — zero
+breaking API changes affect them. **License review**: both new packages' `LICENSE` files were read
+directly from the resolved pub cache — Apache License 2.0, the same permissive family already used
+throughout this project's dependency tree; no conflict with any stated project license policy (none
+exists that would restrict this).
+
+**Trust-level honesty, enforced by construction, not merely by naming convention**:
+`lib/features/admin/data/device_key_store.dart`'s own doc comment states explicitly what this
+implementation is (`PLATFORM_PROTECTED` — OS-encrypted-at-rest storage, software-accessible signing
+during the app process) and, just as explicitly, what it is NOT (`HARDWARE_ATTESTED`; no Play
+Integrity/App Attest attestation; no non-exportable hardware-backed key object). This matches — and
+never overrides — the server's own independent resolution
+(`trustedDevice.ts`'s `PLATFORM_PROTECTED_ELIGIBLE` set); the client never claims a tier, it only
+supplies proof-of-possession the server already independently classifies. Web is fail-closed by
+construction, not by a runtime check that could be bypassed: `devicePlatformSupportedProvider`
+(`trusted_device_session_providers.dart`) resolves `false` for `web`, and `DeviceKeyStore
+.loadOrCreatePublicKeyPem`/`.signChallenge` both throw `DeviceKeyUnsupportedPlatformException` before
+touching secure storage at all when `isPlatformSupported` is `false` — no code path exists that would
+generate or persist a POS private key in browser storage.
+
+**Implementation** (`lib/features/admin/{domain,data,application,presentation}/`, feature-first,
+layered exactly per this project's own architecture rules):
+- `domain/trusted_device/device_registration_state.dart` — the full client-side state machine
+  (`UnsupportedPlatform`/`NotRegistered`/`RegistrationRequested`/`ActivationRequired`/`Activating`/
+  `ActiveSession`/`ExpiringRefreshing`/`DeviceSuspended`/`DeviceRevoked`/`DeviceRetired`/
+  `KeyStorageCorrupted`/`DeviceNetworkError`/`DeviceEntitlementDenied`), a sealed class hierarchy so
+  every consuming `switch` is exhaustive-checked by the analyzer, never a silently-uncovered state.
+- `data/device_key_store.dart` — real Ed25519 key generation (`package:cryptography`'s `Ed25519()`),
+  RFC 8410 SubjectPublicKeyInfo PEM encoding (the fixed 12-byte DER prefix + 32 raw public-key bytes,
+  independently verified byte-for-byte in `device_key_store_test.dart`, not merely asserted),
+  `flutter_secure_storage`-backed persistence, and challenge signing — raw UTF-8 nonce bytes signed
+  exactly as `trustedDevice.ts`'s own `verifySignature` expects (`Buffer.from(nonce, "utf8")`), proven
+  compatible against the SAME Node-side `generateKeyPairSync("ed25519")`/`sign(null, ...)` pair
+  `functions/src/test/ap3E2E.test.ts` already exercises against the real backend. The private key is
+  never returned by any public method, never logged, and minimized in local-variable lifetime; a
+  corrupted stored key throws `DeviceKeyStorageCorruptedException` rather than silently regenerating
+  (which would desynchronize the server's already-registered public key from what the app can still
+  sign with).
+- `data/device_session_cache.dart` — session id/expiry/deviceId persistence, deliberately separate from
+  key material.
+- `data/trusted_device_session_gateway.dart` — the three real callables `trusted_device_gateway.dart`
+  had deliberately excluded (`requestDeviceRegistration`/`requestDeviceChallenge`/`issueDeviceSession`)
+  — no parallel/invented endpoint, the exact existing `functions/src/trustedDevice.ts` contracts.
+- `application/use_cases/trusted_device_session_controller.dart` — orchestrates the full lifecycle,
+  including observing manager approval via the EXISTING staff-facing `TrustedDeviceRepository` stream
+  (never a new/duplicate approval mechanism — the real Approval Inbox screen is still the only place
+  approval happens), transparent session refresh 30 minutes before the server's 12-hour expiry, and
+  fail-closed handling of suspended/revoked/retired/corrupted/network-error conditions — a revoked or
+  retired device has its local key and session immediately and permanently deleted, never silently
+  reused.
+- `presentation/screens/trusted_device_status_screen.dart` — every one of the 13 states above rendered
+  with its own explicit branch (a Dart `switch` over the sealed state class — exhaustiveness is
+  analyzer-enforced, not merely reviewed).
+
+**Tests** (23 new, all passing): `device_key_store_test.dart` (11 — RFC 8410 PEM structure proof,
+idempotent key reuse, namespace isolation, unsupported-platform fail-closed, backend-compatible
+sign/verify round-trip via `package:cryptography`'s own `Ed25519().verify()`, determinism, nonce
+sensitivity, corruption detection without silent regeneration, deletion/regeneration, and a direct
+proof that neither the returned PEM nor the returned signature ever contains the private key's own
+base64 form); `trusted_device_session_controller_test.dart` (12 — the full state machine: unsupported
+platform never attempts key generation, register→pending→(observed active)→ActivationRequired,
+challenge→sign→issue→ActiveSession with a genuinely-produced non-empty signature, session-still-fresh
+short-circuit, near-expiry silent refresh producing a NEW session id, suspended/revoked/retired
+transitions with revoked/retired verified to delete local key material, operator-confirmed
+reset-and-reregister producing a genuinely new device identity, and a network-failure surfacing as an
+explicit error state rather than a crash).
+
+**Alternatives considered**: none beyond what ADR-041's original text already considered (a UI shell
+with placeholder device ids, client-side-only session mocking) — both remain rejected for the same
+reasons; this update only removes the dependency obstacle that previously made the real implementation
+unavailable, it doesn't change the earlier security reasoning.
+
+**Full regression after this update**: `flutter analyze` (0 issues), `flutter test` (exact count in this
+session's own closure report, including these 23 new tests).
+
+**Consequences**: the trusted-device Flutter UX is now real, tested, and honestly classified. The POS
+three-pane workspace is no longer architecturally blocked — building it is now a scope/time question,
+tracked separately (see this session's own closure report for exactly how much of it is built).
+
+**Status**: trusted-device crypto — IMPLEMENTED (2026-08-28), tested. Trust level: PLATFORM_PROTECTED
+(honestly classified, never overstated). Web: fail-closed by construction. AP-3 overall: OPEN.

@@ -94,6 +94,15 @@ class AppBootstrapResult {
 Future<AppBootstrapResult> bootstrapApp() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // AP-3 continuation (`docs/decisions.md` ADR-041) — `cryptography_flutter`
+  // (the platform-accelerated Ed25519 backend `DeviceKeyStore` benefits
+  // from, Android Keystore/iOS Keychain-backed where available, behind the
+  // exact same `package:cryptography` API) is auto-registered by Flutter
+  // itself in this package version — no explicit enable call is needed or
+  // available (`FlutterCryptography.enable()` is deprecated as a no-op).
+  // This never changes what trust tier a device resolves to (still
+  // PLATFORM_PROTECTED, never HARDWARE_ATTESTED — see that ADR).
+
   final loggingService = defaultLoggingService();
   final isFirebaseReady = await FirebaseBootstrapService(
     loggingService: loggingService,

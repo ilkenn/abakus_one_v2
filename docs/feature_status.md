@@ -5120,3 +5120,30 @@ across this entire continuation (exact count in this session's own closure repor
 
 AP-3 remains OPEN: POS workspace, trusted-device UX, and real visual acceptance screenshots (blocked by
 the standing no-desktop-automation rule) are the remaining scope.
+
+**AP-3 CONTINUATION — Trusted-Device Crypto Implementation, Blocker Resolved (2026-08-28, IN PROGRESS —
+checkpoint, not AP-3 closure; `docs/decisions.md` ADR-041 resolution update).**
+
+The project architect approved the cryptography dependency decision this ADR previously reported as the
+blocker. `cryptography ^2.9.0`, `cryptography_flutter ^2.3.4`, `flutter_secure_storage ^11.0.0` (upgraded
+from `^10.3.1`) added — resolver-verified against this repo's real toolchain, not just requested versions
+taken on faith; existing `flutter_secure_storage` call sites re-verified unaffected by the v10→v11 bump;
+both new packages' licenses (Apache 2.0) read directly from the resolved pub cache.
+
+Real Ed25519 trusted-device implementation: genuine key generation, RFC 8410 SPKI PEM encoding
+(byte-for-byte verified), `flutter_secure_storage`-backed persistence, challenge signing compatible with
+`trustedDevice.ts`'s real verification (proven via `Ed25519().verify()` round-trip, matching the same
+Node-side keypair/signing shape `ap3E2E.test.ts` already exercises against the real backend), and a full
+13-state client state machine covering registration, manager-approval observation (via the existing
+staff-facing device stream — no duplicate approval mechanism), activation, session refresh, and
+suspended/revoked/retired/corrupted/network-error handling. Honestly classified `PLATFORM_PROTECTED`
+only — never claims `HARDWARE_ATTESTED`; Web is fail-closed by construction (no code path generates or
+persists a key for it).
+
+23 new tests, all passing. `flutter analyze` clean; `flutter test` (exact count in this session's own
+closure report).
+
+**The POS workspace is no longer architecturally blocked** — it was blocked ON this trusted-device
+prerequisite, which now exists. Building the workspace itself is now tracked as remaining scope, not a
+blocker. Real visual acceptance screenshots remain not produced by the assistant, per the standing
+no-desktop-automation project rule. AP-3 remains OPEN.
