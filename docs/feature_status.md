@@ -5093,3 +5093,30 @@ report). No backend file changed this pass — Functions/Rules/Storage suites un
 **Explicitly still deferred**: the POS three-pane Flutter workspace, the trusted-device Flutter UX
 (deliberately not rushed — genuinely security-critical cryptographic work), a deterministic AP-3 E2E
 flow, and real visual acceptance screenshots. AP-3 remains OPEN.
+
+**AP-3 CONTINUATION — Deterministic End-to-End Flow; POS/Trusted-Device Formally Characterized as
+Blocked (2026-08-28, IN PROGRESS — checkpoint, not AP-3 closure; `docs/decisions.md` ADR-041).**
+
+**E2E flow**: `functions/src/test/ap3E2E.test.ts` — one deterministic, emulator-backed test proving the
+entire AP-3 backend chain composes correctly through `readyForPayment`: QR table session → two guest
+sub-accounts → independent submissions → cashier accept + propose-replacement → guest accepts the
+replacement (verified exact, never recomputed) → staff-entered line (verified pre-accepted) → check
+opened → split by customer and by product (two representative modes) → table physically transferred →
+check finalized to `readyForPayment`. Uses a real simulated device session (genuine ed25519 keypair +
+challenge signing via Node's own `crypto` module — no new dependency). Passed on its first real run:
+1/1, 0 failures.
+
+**POS workspace / trusted-device UX — formally blocked, with the specific finding recorded**: every
+callable a real POS Flutter workspace would need (`getPosTableOperationalView`,
+`getPosBranchTableOverview`, every `checkOperations.ts` callable, `proposeDineInLineReplacement`,
+`transferTableSession`/`mergeTableSessions`) requires a real trusted-device session — POS UI is
+structurally unbuildable-as-functional without one first. Trusted-device registration requires genuine
+asymmetric key generation and challenge signing; `pubspec.yaml` has no crypto package, so building it
+would mean adding a new Flutter dependency — an explicit architecture decision this session is not
+authorized to make silently. See ADR-041 for the full reasoning and what would unblock each.
+
+**Full regression**: a fresh, full Functions emulator suite run — the first to include every test built
+across this entire continuation (exact count in this session's own closure report).
+
+AP-3 remains OPEN: POS workspace, trusted-device UX, and real visual acceptance screenshots (blocked by
+the standing no-desktop-automation rule) are the remaining scope.

@@ -17794,3 +17794,95 @@ session's own closure report). Functions/Rules/Storage suites unaffected — no 
 pass.
 
 **Status**: IMPLEMENTED (2026-08-28), tested. AP-3 overall: OPEN. Implementation: AP-3 (continuing).
+
+### ADR-041 — AP-3 Deterministic End-to-End Flow; POS Workspace and Trusted-Device UX Formally Blocked (Locked)
+
+**Context**: continuing directly from ADR-040. Two items remained genuinely open-ended in every prior
+AP-3 checkpoint's deferral list: a deterministic, emulator-backed proof that the ENTIRE backend chain
+built across Waves 1–3 and this continuation's own increments actually composes correctly end-to-end
+(not just in isolated per-file test suites), and the POS three-pane Flutter workspace / trusted-device
+Flutter UX. This entry closes the first with a real, passing test, and closes the second with a
+specific, evidence-based architectural finding rather than continued open-ended deferral.
+
+**Decision — Part 1: the E2E flow.** `functions/src/test/ap3E2E.test.ts` — one deterministic,
+emulator-backed test exercising the full AP-3 chain through `readyForPayment` in a single coherent
+scenario: a table session is opened (state seeded directly, mirroring `submitDineInOrder.test.ts`'s own
+established convention — QR resolution itself is proven by its own dedicated test files); two customers
+receive separate guest sub-accounts; both submit independently (`submitDineInOrder`, guestSession mode);
+the cashier accepts one guest's line (`respondToDineInOrderLines`) and proposes a replacement for the
+other's (`proposeDineInLineReplacement`); that guest accepts the replacement
+(`respondToDineInCounterProposal`), and the accepted product is verified to be EXACTLY the proposed one
+(never recomputed); the cashier adds a staff-entered product onto the first guest's own sub-account
+(`submitDineInOrder`, staffEntry mode) and it is verified pre-accepted; the check is opened (`openCheck`)
+and split using two representative modes — by customer and by product — deliberately leaving one line
+unsplit to prove a check finalizes correctly as long as every SOURCE LINE is decided, not that every
+line must be individually allocated; the table is physically transferred to a second table
+(`transferTableSession`) and the source/target tables' `activeTableSessionId` are verified to have moved
+correctly; the check is finalized to `readyForPayment` and both the callable's response and the
+persisted document are asserted. A real device session backs every staff-side callable in this flow,
+produced via genuine ed25519 key generation and challenge-signing using Node's own built-in `crypto`
+module (`generateKeyPairSync`/`sign` — no new dependency, mirrors the identical harness already
+established and duplicated across `tableSessionTransfer.test.ts`) — this is a real simulated device, not
+a mocked authorization bypass. The test passed on its first real run against the emulator: 1/1, 0
+failures, ~35 seconds.
+
+**Decision — Part 2: POS workspace and trusted-device UX, formally blocked, not merely deferred.**
+Investigating what a real POS three-pane Flutter workspace would need to call
+(`getPosTableOperationalView`/`getPosBranchTableOverview`/every `checkOperations.ts` callable/
+`proposeDineInLineReplacement`/`transferTableSession`/`mergeTableSessions`) confirmed that EVERY ONE of
+them requires `deviceId`/`deviceSessionId` and validates them via `requireActiveDeviceSession`
+(`functions/src/trustedDevice.ts`) — this is not a convenience gate that could be bypassed for a
+read-only or lower-stakes view; it's the actual security boundary Wave 1's own correction established
+after the original design's staff-permission-alone gate was found insufficient. This means a POS
+Flutter UI cannot be genuinely functional — able to make a single real call against the real
+backend — without a real trusted-device session first. Building POS screens without one would produce a
+UI that can never succeed against the real backend, which is a materially different (and worse)
+category of incomplete than "not yet built": it would look finished while being structurally inert.
+
+Investigating what a real trusted-device session requires client-side
+(`requestDeviceRegistration`/`requestDeviceChallenge`/`issueDeviceSession`,
+`functions/src/trustedDevice.ts`) confirmed it requires genuine asymmetric key generation
+(RSA-SHA256 or ed25519), durable private-key storage that never leaves the device, and challenge-nonce
+signing — real, security-critical public-key cryptography, not a hash or a bearer token. `pubspec.yaml`
+contains no cryptography package of any kind (`grep -i "crypto\|pointycastle\|cryptography"` returns
+nothing). Building this would require adding a new Flutter dependency — an explicit architecture
+decision under this project's own "never add a new dependency without a recorded reason, never a silent
+decision" rule (`CLAUDE.md` §15), not something to introduce mid-implementation-sprint even under a
+broad standing continuation authorization. This is the same judgment already recorded in ADR-039 (device
+UX "genuinely security-critical... deliberately not rushed"), now with the specific technical finding
+that names exactly what's missing and why it can't be silently added.
+
+**Both are therefore reported as formally BLOCKED, not merely "not done this pass"**: POS workspace is
+blocked ON trusted-device UX (a real prerequisite, discovered by tracing every callable it would need to
+call); trusted-device UX is blocked on an explicit new-dependency decision this session is not
+authorized to make silently. Resolving this requires either (a) an explicit user decision to add a named
+crypto package (e.g. `cryptography`, `pointycastle`, or a platform-channel Keystore/Keychain
+integration) and then building the real registration/challenge/session Flutter flow, or (b) an explicit
+product decision to design a lower-security-bar path for this specific surface (not recommended without
+security review, since it would weaken the exact boundary Wave 1 introduced this security correction
+for).
+
+**Alternatives considered**: building a POS UI shell that calls the real callables with placeholder
+`deviceId`/`deviceSessionId` values (rejected outright — this would either silently fail every real
+call, which is a bad user experience with no real functionality behind it, or, worse, someone could be
+tempted to special-case a bypass, which would reintroduce exactly the security gap Wave 1's correction
+closed). Mocking device-session verification client-side only (rejected — the server never trusts the
+client's own claim of a valid session; a client-side mock proves nothing about the real system and
+risks being mistaken for real coverage later).
+
+**Consequences**: AP-3's backend is now proven correct end-to-end by a real, passing, deterministic
+test — not just proven correct per-file in isolation. The POS workspace and trusted-device UX gaps are
+now precisely characterized (what's missing, why, and what decision would unblock them) rather than
+open-ended "still deferred" language repeated across checkpoints. AP-3 remains open. The E2E test itself,
+plus every increment already committed (Waves 1–2 tables/checks/approvals, ADR-038's table transfer/
+counter-proposal/customer-directory backend, ADR-039's backfill tooling and customer QR UI, ADR-040's
+Admin Customers and Platform Owner UI), constitute AP-3's real, tested completion short of the POS
+workspace, trusted-device UX, the Admin/Platform-side POS device-gated read UI, and real visual
+acceptance evidence (blocked by this project's own standing "no desktop automation" rule — visual QA is
+the human's, never automated by the assistant).
+
+**Full regression**: a fresh, full Functions emulator suite run (exact count in this session's own
+closure report) — the FIRST full run to include every test built across this entire continuation
+(backfill, counter-proposal UI wiring's backend dependencies, and this E2E test itself).
+
+**Status**: IMPLEMENTED (2026-08-28), tested. AP-3 overall: OPEN. Implementation: AP-3 (continuing).
