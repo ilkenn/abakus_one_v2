@@ -18105,3 +18105,50 @@ wave to date (Firebase remains emulator-verified only, per §5).
 `ApprovalActionType` gap — FIXED. Visual acceptance — NOT PRODUCED (policy, not gap). AP-3 overall:
 functionally complete pending human visual sign-off — see this session's closure report for the exact
 tag block.
+
+---
+
+**RESOLUTION UPDATE (2026-08-28) — visual acceptance attempt, genuine and disclosed, still
+incomplete.** A later instruction this same day explicitly authorized non-destructive, application-
+scoped automated screenshot capture, superseding the standing no-automation policy above for this one
+task. That authorization was accepted; a real, multi-hour, multi-method attempt followed. Full detail,
+including two safety/technical blockers hit along the way, lives in
+`docs/visual_evidence/ap3/README.md` — this entry summarizes the outcome only.
+
+**Result: 2 of the 14 required screenshots captured** (`/admin` route's unauthorized gate; the real
+`StaffSignInScreen` form) — both real, both inspected, neither the POS workspace itself. The other 12
+were not achieved:
+- Items 1–9 (trusted-device flow + full POS workspace) require a real mobile/desktop platform — Web
+  is architecturally fail-closed by design (this is correct, tested behavior, not a gap). No Android/
+  iOS emulator exists in this environment. A real Windows build was compiled and launched
+  successfully, but the attempt to drive it was **stopped mid-capture, deliberately, on safety
+  grounds**: `SetForegroundWindow` from this non-interactive process was silently failing, and
+  simulated clicks were confirmed landing on the user's own unrelated foreground application instead
+  of the target window. No further input was sent once this was discovered; the misdirected
+  screenshot was deleted unread.
+- Items 10–11 (customer QR) were not attempted — no non-camera path exists in
+  `qr_scanner_screen.dart`, and simulating a Chromium fake camera feed was judged too large an
+  addition for the time remaining after the above.
+- Items 12–14 require a completed staff sign-in, which hung indefinitely in both a debug and a
+  release web build. One real, contributing bug was found and fixed along the way (see immediately
+  below); the hang persisted after the fix, so a second, undiagnosed cause remains open.
+
+**A genuine bug found and fixed in the process**: `FirebaseStaffAuthRepository.signIn`/
+`.refreshSession` (`lib/features/admin/data/staff_auth_repository.dart`) called
+`_staffMemberRepository.findByAuthUid`/`.findById` with no `try`/`catch`, contradicting the class's
+own documented intent ("a missing/unavailable member never denies what the real claims would
+otherwise grant") — an unavailable/slow staff directory (e.g. a cold Firestore query) threw
+uncaught, aborting sign-in before `_busy` could ever reset, hanging the UI indefinitely for a real
+user, not just in this test environment. Fixed by wrapping both calls in `try`/`catch`, falling back
+to `null`. Two new regression tests added (`firebase_staff_auth_repository_test.dart`, 15/15 passing)
+using a fake staff-member repository that unconditionally throws.
+
+**Full regression rerun after the fix**: `flutter analyze` 0 issues; `flutter test` 3579 passing (was
+3577 — the 2 new regression tests, no other change). Functions/Firestore-Rules/Storage-Rules suites
+not rerun — no backend file changed in this pass (verified via `git status` against `functions/src`,
+`firestore.rules`, `storage.rules`), so this session's earlier fresh results (1856/1856, 399/399,
+35/35) still stand honestly. Secret scan and `git diff --check` clean on the new changes.
+
+**Status**: visual acceptance — ATTEMPTED, PARTIAL (2/14), both blockers disclosed in full, one real
+bug found and fixed as a direct result of the attempt. AP-3 overall: still not fully closed — see this
+session's closure report for the exact final tag block.

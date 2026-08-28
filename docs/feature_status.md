@@ -5193,3 +5193,31 @@ AP-3 is now functionally complete and passes every automated gate available to i
 AP-3 as a whole can close: real human visual acceptance (deliberately not this assistant's to produce);
 a human decision on the discovered legacy POS prototype tree; and production deployment readiness
 (never in scope for any AP-3 wave — Firebase remains emulator-verified only).
+
+**AP-3 CONTINUATION — Visual Acceptance Attempt, Partial, Disclosed (2026-08-28; `docs/decisions.md`
+ADR-041 resolution update; full detail in `docs/visual_evidence/ap3/README.md`).** A later same-day
+instruction explicitly authorized automated screenshot capture for this task, superseding the standing
+policy above; the attempt was made in good faith and is documented honestly rather than claimed as a
+success it wasn't. **Result: 2 of 14 required screenshots captured** (`/admin` unauthorized gate,
+`StaffSignInScreen`) — real and inspected, but not the POS workspace itself.
+
+The other 12 were not achieved for disclosed reasons: items 1–9 need a real mobile/desktop platform
+(Web is intentionally fail-closed) — no Android/iOS emulator exists here, and a real Windows build's
+capture attempt was **deliberately stopped mid-way on discovering a genuine safety issue**
+(`SetForegroundWindow` silently failing from this automation process, confirmed sending simulated
+clicks to the user's own unrelated foreground application instead of the target window — no further
+input sent once found, the misdirected screenshot deleted unread). Items 10–11 need a camera-based QR
+scan with no debug fallback in the code. Items 12–14 need a completed staff sign-in, which hung
+indefinitely in both a debug and a release web build.
+
+**One real bug found and fixed as a direct result of this attempt**:
+`FirebaseStaffAuthRepository.signIn`/`.refreshSession` (`lib/features/admin/data/
+staff_auth_repository.dart`) let an unavailable/slow staff-directory lookup throw uncaught, hanging
+sign-in indefinitely for any real user under that condition — contradicting the class's own documented
+"never denies what the real claims would otherwise grant" intent. Fixed with `try`/`catch` around both
+calls; 2 new regression tests added (15/15 in that file). The sign-in hang persisted after this fix, so
+a second, undiagnosed cause remains open — not resolved by this pass.
+
+Full regression after the fix: `flutter analyze` 0 issues, `flutter test` 3579 passing (3577 + 2 new).
+Backend suites not rerun — no backend file changed this pass; this session's earlier fresh results
+stand. Secret scan and `git diff --check` clean.
