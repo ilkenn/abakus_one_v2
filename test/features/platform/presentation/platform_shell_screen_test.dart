@@ -30,8 +30,8 @@ void main() {
   });
 
   testWidgets(
-      'a platformOwner session sees the 4-tab shell (AP-2 final wiring '
-      'added Abonelikler) with Monitoring as the default tab', (tester) async {
+      'a platformOwner session sees the 5-tab shell (AP-3 continuation '
+      'added Müşteriler) with Monitoring as the default tab', (tester) async {
     await pumpShell(
       tester,
       session: const PlatformActorSession(
@@ -46,7 +46,30 @@ void main() {
     expect(find.text('Yayın Hazırlığı'), findsOneWidget);
     expect(find.text('Mağaza Uyumluluğu'), findsOneWidget);
     expect(find.text('Abonelikler'), findsOneWidget);
+    expect(find.text('Müşteriler'), findsOneWidget);
     expect(find.text('Kiracı Organizasyon'), findsOneWidget);
+  });
+
+  testWidgets(
+      'switching to the Müşteriler tab shows the real customer directory '
+      '(backend-unavailable error state under flutter test, never a crash)',
+      (tester) async {
+    await pumpShell(
+      tester,
+      session: const PlatformActorSession(
+        actorId: 'platform-1',
+        roles: {PlatformRole.platformOwner},
+        activeRole: PlatformRole.platformOwner,
+      ),
+    );
+
+    await tester.tap(find.text('Müşteriler'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Müşteri dizini şu anda kullanılamıyor.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets(

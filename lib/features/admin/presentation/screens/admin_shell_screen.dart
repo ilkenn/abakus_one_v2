@@ -260,10 +260,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             },
             builder: (context, ref) => RoleGate.forAction(
               PosAuthorizedAction.viewCustomerAdmin,
-              child: CustomerManagementScreen(
-                authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
-                performedByStaffId: actorId,
-              ),
+              child: const CustomerManagementScreen(),
             ),
           ),
           _AdminNavItem(

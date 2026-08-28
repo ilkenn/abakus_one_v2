@@ -33,6 +33,7 @@ import '../../data/restaurant_repository.dart';
 import '../../data/staff_auth_repository.dart';
 import '../../data/staff_member_repository.dart';
 import '../../data/approval_gateway.dart';
+import '../../data/tenant_customer_directory_gateway.dart';
 import '../../data/approval_repository.dart';
 import '../../data/staff_role_change_event_repository.dart';
 import '../../data/translation_entry_repository.dart';
@@ -113,6 +114,18 @@ final approvalGatewayProvider = Provider<ApprovalGateway>((ref) {
     return const FirebaseApprovalGateway();
   }
   return const UnavailableApprovalGateway();
+});
+
+/// AP-3 continuation — the real tenant Customer Directory backend. Same
+/// gate shape as [trustedDeviceGatewayProvider]: no in-memory fallback,
+/// an explicit "unavailable" implementation instead.
+final tenantCustomerDirectoryGatewayProvider =
+    Provider<TenantCustomerDirectoryGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) {
+    return const FirebaseTenantCustomerDirectoryGateway();
+  }
+  return const UnavailableTenantCustomerDirectoryGateway();
 });
 
 final adminAuditEntryRepositoryProvider =

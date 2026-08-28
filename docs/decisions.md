@@ -17703,3 +17703,94 @@ undone.
 
 **Status**: IMPLEMENTED (2026-08-27), tested. AP-3 overall: OPEN (backend + first Flutter surface
 complete; remaining Flutter/UI and visual-acceptance work pending). Implementation: AP-3 (continuing).
+
+### ADR-040 — AP-3 Admin Customers Rewire + Platform Owner Customer Directory (Locked)
+
+**Context**: continuing directly from ADR-039. Two of the four remaining Flutter/UI surfaces named in
+every prior AP-3 checkpoint's deferral list: the canonical Admin "Müşteri 360" destination (previously
+100% in-memory, unrelated to the real backend) and the Platform Owner's global customer directory (no
+UI existed at all).
+
+**Decision**:
+1. **Admin Customers rewire**: `customer_management_screen.dart`/`customer_detail_screen.dart` (the
+   existing `customer-360` Admin nav destination — no duplicate screen or nav item added) now consume
+   a new `TenantCustomerDirectoryGateway` (`lib/features/admin/data/tenant_customer_directory_gateway.dart`,
+   mirrors `TrustedDeviceGateway`'s exact real/`Unavailable` gate shape) calling
+   `listTenantCustomers`/`searchCustomersForPos`/`getTenantCustomerDetail`/`setTenantCustomerRestriction`
+   — replacing `CustomerRepository.findAll()` and its client-side substring filter entirely. Debounced
+   server-side name-prefix search, cursor-based "Daha Fazla Yükle" pagination (mirrors
+   `adminReservationListProvider`'s established query-object pattern), explicit loading/empty/error/
+   unauthorized states (`LoadingView`/`EmptyView`/`ErrorView`, a `permission-denied` response mapped to
+   an explicit Turkish unauthorized message — the real enforcement is `viewTenantCustomerDirectory`,
+   server-side; this UI never re-derives that check).
+
+   **A disclosed, deliberate scope reduction, not a silent regression**: the detail screen's prior
+   Visit/Feedback/Staff-Notes panels were removed by this rewire. Those three panels queried
+   `CustomerVisit`/`CustomerFeedback`/`CustomerAdminNote` repositories by the legacy in-memory
+   `Customer.id` — a structurally different identifier space from the real tenant directory's
+   `customerId` (a genuine Firebase Auth uid). Querying those repositories with the new real customer's
+   id would not error — it would silently return empty results (or, in a coincidental id collision,
+   wrong data), which is a worse failure mode than an honest missing section. The old
+   `CustomerRepository`/`CustomerVisit`/`CustomerFeedback`/`CustomerAdminNote` types and their
+   repositories are untouched — reconnecting them (via a real link from a canonical customer uid to
+   visit/feedback/note records) is separate, future, explicitly out-of-scope work, not silently
+   abandoned.
+
+   The restriction toggle now requires a reason (`reasonCode` from a small closed set —
+   `policyViolation`/`fraudSuspected`/`paymentIssue`/`staffDecision` — plus a free-text
+   `reasonMessage`), matching `setTenantCustomerRestriction`'s own required-reason contract (the
+   previous in-memory toggle had no reason field at all).
+
+2. **Platform Owner customer directory**: a new fifth tab ("Müşteriler") on `PlatformShellScreen`
+   (4→5 tabs, mirrors the shell's own established `TabController`/`TabBarView` shape exactly — no new
+   shell architecture introduced), backed by a new `PlatformCustomerDirectoryGateway`
+   (`lib/features/platform/data/platform_customer_directory_gateway.dart`, mirrors
+   `EntitlementAdminGateway`'s exact convention) calling `listPlatformCustomers`/
+   `searchPlatformCustomersByPhone`/`getPlatformCustomerDetail`/`revealCustomerFullAddressBook`/
+   `setPlatformCustomerRestriction`. Every registered customer appears exactly once, including one with
+   no tenant relationship (`relatedOrganizationIds: []`, shown explicitly as "Yok (kiracısız kayıt)"
+   rather than left blank). The full-address-book reveal is the ONE new mutation-adjacent surface with a
+   mandatory-reason dialog before any call — the callable itself always writes an `auditEvents` record
+   server-side regardless of what the UI does, but the UI's own mandatory dialog prevents an accidental
+   reveal with no typed justification. Platform-wide restriction uses its own closed reason-code set
+   (`policyViolation`/`fraudSuspected`/`legalHold`/`platformOwnerDecision`), structurally separate from
+   the tenant-side restriction's own set — the two `setXRestriction` callables and their
+   `PlatformCapability`/`StaffPermission` gates were already structurally separate (ADR-038); this
+   keeps the Flutter-side reason vocabularies separate too, never conflated.
+
+   No new client-side authorization check was added for either surface — `listTenantCustomers`/
+   `getTenantCustomerDetail` require `viewTenantCustomerDirectory`; `listPlatformCustomers`/
+   `getPlatformCustomerDetail`/`setPlatformCustomerRestriction`/`revealCustomerFullAddressBook` require
+   their own named `PlatformCapability`, all `platformOwner`-only, never `platformAdministrator` — a
+   caller lacking the real permission is rejected by the callable itself, surfaced as an explicit
+   unauthorized state.
+
+**Alternatives considered**: keeping the Visit/Feedback/Staff-Notes panels wired to the OLD
+`Customer.id`-keyed repositories alongside the new real identity fields (rejected — would show data that
+structurally cannot correspond to the customer on screen, a worse failure mode than omission, and
+CLAUDE.md's own "no silently misleading UI" spirit rules it out). Building a combined
+Admin+Platform-Owner shared customer-directory widget (rejected — the two hierarchies' authorization
+models, capability sets, and restriction reason vocabularies are already deliberately structurally
+separate per ADR-038/ADR-036; a shared widget would blur that boundary for no real reuse benefit, since
+almost none of the actual gateway/DTO code is shared either).
+
+**Tests**: 12 new Admin tests (`customer_management_screen_test.dart` — 6: loading/data, empty,
+permission-denied, debounced search, cursor pagination, navigate-to-detail;
+`customer_detail_screen_test.dart` — 6: real-field rendering with panels absent, restricted-state
+display, restriction dialog submit, empty-reason-message no-op, not-found, permission-denied). 12 new
+Platform tests (`platform_customer_directory_screen_test.dart` — 5: list render, permission-denied,
+no-tenant-customer display, restriction dialog submit, address-book-reveal reason-required + display;
+`platform_shell_screen_test.dart` — 2 updated/added: 5-tab assertion including Müşteriler, and the
+Müşteriler tab's backend-unavailable fallback state under `flutter test`).
+
+**Consequences**: 4 of the 6 major AP-3 corrected-design items now have real, tested Flutter surfaces
+(table transfer/merge backend, counter-proposal backend+UI, Customer Directory backend+backfill+both
+admin UIs). AP-3 remains open: the POS three-pane workspace, the trusted-device Flutter UX (still
+deliberately not rushed — see ADR-039), a deterministic E2E flow, and real visual acceptance screenshots
+are the remaining scope.
+
+**Full regression rerun, clean**: `flutter analyze` (0 issues); `flutter test` (exact count in this
+session's own closure report). Functions/Rules/Storage suites unaffected — no backend file changed this
+pass.
+
+**Status**: IMPLEMENTED (2026-08-28), tested. AP-3 overall: OPEN. Implementation: AP-3 (continuing).

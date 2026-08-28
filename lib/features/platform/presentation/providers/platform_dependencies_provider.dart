@@ -11,6 +11,7 @@ import '../../data/firebase_platform_member_repository.dart';
 import '../../data/firestore_platform_organization_repository.dart';
 import '../../data/platform_audit_entry_repository.dart';
 import '../../data/platform_auth_repository.dart';
+import '../../data/platform_customer_directory_gateway.dart';
 import '../../data/platform_member_repository.dart';
 
 final platformClaimsSyncClientProvider =
@@ -79,6 +80,17 @@ final entitlementAdminGatewayProvider =
     return const FirebaseEntitlementAdminGateway();
   }
   return const UnavailableEntitlementAdminGateway();
+});
+
+/// AP-3 continuation — the Platform Owner's real global Customer Directory
+/// backend. Same gate shape as [entitlementAdminGatewayProvider].
+final platformCustomerDirectoryGatewayProvider =
+    Provider<PlatformCustomerDirectoryGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) {
+    return const FirebasePlatformCustomerDirectoryGateway();
+  }
+  return const UnavailablePlatformCustomerDirectoryGateway();
 });
 
 /// [firebaseReadyProvider] selects the fail-closed implementation —

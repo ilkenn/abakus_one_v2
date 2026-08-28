@@ -10,41 +10,38 @@ import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
-import '../../data/tenant_customer_directory_gateway.dart';
-import '../providers/admin_dependencies_provider.dart';
-import 'customer_detail_screen.dart';
+import '../../data/platform_customer_directory_gateway.dart';
+import '../providers/platform_dependencies_provider.dart';
+import 'platform_customer_detail_screen.dart';
 
-/// Customer administration — AP-3 continuation (`docs/decisions.md`
-/// ADR-039). Rewires the canonical `customer-360`/"Müşteri 360" Admin
-/// destination onto the real, server-authoritative tenant Customer
-/// Directory backend (`listTenantCustomers`/`searchCustomersForPos`),
-/// replacing the previous in-memory `CustomerRepository.findAll()` +
-/// client-side substring filter.
+/// Platform-wide Customer Directory — AP-3 continuation (`docs/decisions.md`
+/// ADR-039). Every registered customer exactly once, including one with no
+/// tenant relationship at all (`listPlatformCustomers`, backed by
+/// `platformCustomerDirectoryEntries`, structurally distinct from any
+/// tenant's own `customerDirectoryEntries` projection).
 ///
-/// **Access is enforced by `RoleGate` at the shell's push site** (unchanged
-/// from before this rewire) — the REAL, authoritative enforcement is
-/// server-side: `listTenantCustomers`/`getTenantCustomerDetail` both
-/// require the `viewTenantCustomerDirectory` `StaffPermission`
-/// (`functions/src/staffAuthorization.ts`), a structurally separate
-/// authorization system from the client-side `RoleGate`/
-/// `PosAuthorizedAction` convenience filter — a caller lacking the real
-/// permission is rejected by the callable itself (`permission-denied`),
-/// surfaced here as an explicit unauthorized error state, never a silent
-/// empty list.
-class CustomerManagementScreen extends ConsumerStatefulWidget {
-  const CustomerManagementScreen({super.key});
+/// **Access is server-enforced only** — `listPlatformCustomers` requires
+/// the `customerDirectory.listAllRegistered` `PlatformCapability`
+/// (`platformOwner` only, never `platformAdministrator`); a caller lacking
+/// it is rejected by the callable itself, surfaced here as an explicit
+/// unauthorized state, never a silent empty list. There is no separate
+/// client-side capability check — this console has no operational-device
+/// concept to bypass in the first place (Platform Owner sessions are never
+/// device-bound).
+class PlatformCustomerDirectoryScreen extends ConsumerStatefulWidget {
+  const PlatformCustomerDirectoryScreen({super.key});
 
   @override
-  ConsumerState<CustomerManagementScreen> createState() =>
-      _CustomerManagementScreenState();
+  ConsumerState<PlatformCustomerDirectoryScreen> createState() =>
+      _PlatformCustomerDirectoryScreenState();
 }
 
-class _CustomerManagementScreenState
-    extends ConsumerState<CustomerManagementScreen> {
+class _PlatformCustomerDirectoryScreenState
+    extends ConsumerState<PlatformCustomerDirectoryScreen> {
   final _searchController = TextEditingController();
   Timer? _debounce;
 
-  List<TenantCustomerSummary>? _customers;
+  List<PlatformCustomerSummary>? _customers;
   String? _nextCursor;
   bool _loadingMore = false;
   Object? _error;
@@ -63,8 +60,6 @@ class _CustomerManagementScreenState
     super.dispose();
   }
 
-  String get _organizationId => ref.read(currentOrganizationIdProvider);
-
   Future<void> _load({bool append = false}) async {
     if (append) {
       setState(() => _loadingMore = true);
@@ -76,11 +71,11 @@ class _CustomerManagementScreenState
       });
     }
     try {
-      final page = await ref.read(tenantCustomerDirectoryGatewayProvider).list(
-            organizationId: _organizationId,
-            namePrefix: _activeQuery.isEmpty ? null : _activeQuery,
-            cursor: append ? _nextCursor : null,
-          );
+      final gateway = ref.read(platformCustomerDirectoryGatewayProvider);
+      final page = await gateway.list(
+        namePrefix: _activeQuery.isEmpty ? null : _activeQuery,
+        cursor: append ? _nextCursor : null,
+      );
       if (!mounted) return;
       setState(() {
         _customers = append
@@ -108,9 +103,9 @@ class _CustomerManagementScreenState
   }
 
   String _errorMessage(Object error) {
-    if (error is TenantCustomerDirectoryException) {
+    if (error is PlatformCustomerDirectoryException) {
       if (error.code == 'permission-denied') {
-        return 'Müşteri dizinini görüntüleme yetkiniz yok.';
+        return 'Küresel müşteri dizinini görüntüleme yetkiniz yok.';
       }
       return error.message;
     }
@@ -119,33 +114,22 @@ class _CustomerManagementScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('Müşteri Yönetimi'),
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              child: TextField(
-                controller: _searchController,
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  hintText: 'İsme göre ara',
-                  border: OutlineInputBorder(),
-                ),
-                onChanged: _onSearchChanged,
-              ),
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: TextField(
+            controller: _searchController,
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              hintText: 'İsme göre ara (tüm kiracılar)',
+              border: OutlineInputBorder(),
             ),
-            Expanded(child: _buildBody()),
-          ],
+            onChanged: _onSearchChanged,
+          ),
         ),
-      ),
+        Expanded(child: _buildBody()),
+      ],
     );
   }
 
@@ -166,7 +150,7 @@ class _CustomerManagementScreenState
       return EmptyView(
         icon: Icons.people_outline,
         message: _activeQuery.isEmpty
-            ? 'Bu şubede henüz kayıtlı müşteri yok.'
+            ? 'Henüz kayıtlı müşteri yok.'
             : '"$_activeQuery" ile eşleşen müşteri bulunamadı.',
       );
     }
@@ -201,8 +185,7 @@ class _CustomerManagementScreenState
               ),
               title: Text(customer.displayName, style: AppTypography.bodyLarge),
               subtitle: Text(
-                '${customer.totalOrderCount} sipariş · '
-                'Son aktivite: ${_formatDate(customer.lastActivityAt)} · '
+                'Kayıt: ${_formatDate(customer.registrationDate)} · '
                 '${customer.accountState}',
                 style: AppTypography.bodySmall
                     .copyWith(color: AppColors.textSecondary),
@@ -210,10 +193,8 @@ class _CustomerManagementScreenState
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => CustomerDetailScreen(
-                    customerId: customer.id,
-                    organizationId: _organizationId,
-                  ),
+                  builder: (_) =>
+                      PlatformCustomerDetailScreen(uid: customer.id),
                 ),
               ),
             ),

@@ -5066,3 +5066,30 @@ have zero Flutter client code anywhere in this repo); the canonical Admin Custom
 real tenant directory backend (still 100% in-memory `CustomerRepository`-backed); the Platform Owner
 global customer directory tab; the deterministic AP-3 E2E flow; and real visual acceptance screenshots.
 AP-3 remains OPEN.
+
+**AP-3 CONTINUATION — Admin Customers Rewire + Platform Owner Customer Directory (2026-08-28, IN
+PROGRESS — checkpoint, not AP-3 closure; `docs/decisions.md` ADR-040).** Closes 2 of the 4 remaining
+Flutter/UI gaps ADR-039 disclosed.
+
+**Admin Customers rewire**: `customer_management_screen.dart`/`customer_detail_screen.dart` (the
+existing `customer-360` nav destination, no duplicate added) now consume the real
+`TenantCustomerDirectoryGateway` instead of the in-memory `CustomerRepository` — server-side name-prefix
+search, cursor pagination, explicit loading/empty/error/unauthorized states. The detail screen's prior
+Visit/Feedback/Staff-Notes panels were deliberately removed (disclosed, not silent) — those queried the
+legacy `Customer.id`, an identifier space unrelated to the real tenant directory's genuine Firebase Auth
+uid; showing that data against the real customer would be actively misleading, not merely incomplete.
+Restriction now requires a reason (closed reason-code set + free text), matching the real callable's
+contract.
+
+**Platform Owner customer directory**: a new fifth `PlatformShellScreen` tab ("Müşteriler") backed by a
+new `PlatformCustomerDirectoryGateway` — every registered customer exactly once including no-tenant
+customers (shown explicitly), capability-gated platform-wide restriction (its own separate reason-code
+set from the tenant side), and the audited full-address-book reveal behind a mandatory-reason dialog.
+
+**Tests**: 24 new Flutter tests (12 Admin, 12 Platform — full breakdown in ADR-040). Full regression
+rerun clean: `flutter analyze` (0 issues), `flutter test` (exact count in this session's own closure
+report). No backend file changed this pass — Functions/Rules/Storage suites unaffected.
+
+**Explicitly still deferred**: the POS three-pane Flutter workspace, the trusted-device Flutter UX
+(deliberately not rushed — genuinely security-critical cryptographic work), a deterministic AP-3 E2E
+flow, and real visual acceptance screenshots. AP-3 remains OPEN.
