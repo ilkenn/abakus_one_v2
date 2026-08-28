@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:abakus_one_v2/core/services/auth/staff_claims_sync_client.dart';
 import 'package:abakus_one_v2/features/admin/data/staff_auth_repository.dart';
 import 'package:abakus_one_v2/features/admin/data/staff_member_repository.dart';
@@ -297,6 +299,81 @@ void main() {
       expect(session, isNotNull);
       expect(session!.roles, {StaffRole.manager});
     });
+
+    test(
+        'an auth sign-in whose network call never settles surfaces as a '
+        'typed, catchable StaffAuthUnavailableException — never an '
+        'indefinite hang', () async {
+      final repository = FirebaseStaffAuthRepository(
+        authClient: FakeEmailPasswordAuthClient(neverResolvesSignIn: true),
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(),
+        organizationId: () => _testOrgId,
+        networkTimeout: const Duration(milliseconds: 20),
+      );
+
+      await expectLater(
+        repository.signIn(email: 'anyone@abakus.test', password: 'x'),
+        throwsA(isA<StaffAuthUnavailableException>()),
+      );
+    });
+
+    test(
+        'a claims sync whose network call never settles surfaces as a '
+        'typed, catchable StaffAuthUnavailableException — never an '
+        'indefinite hang (this is the exact class of bug that hung real '
+        'sign-in against a cold local emulator)', () async {
+      final authClient = FakeEmailPasswordAuthClient();
+      await authClient.createAccount(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+      final repository = FirebaseStaffAuthRepository(
+        authClient: authClient,
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(neverResolves: true),
+        organizationId: () => _testOrgId,
+        networkTimeout: const Duration(milliseconds: 20),
+      );
+
+      await expectLater(
+        repository.signIn(
+            email: 'manager@abakus.test', password: 'S3curePass!'),
+        throwsA(isA<StaffAuthUnavailableException>()),
+      );
+    });
+
+    test(
+        'a staff-directory lookup whose network call never settles still '
+        'lets sign-in succeed (best-effort metadata only — bounded by the '
+        'same timeout, but never denies what the real claims already '
+        'grant)', () async {
+      final authClient = FakeEmailPasswordAuthClient();
+      await authClient.createAccount(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+      final repository = FirebaseStaffAuthRepository(
+        authClient: authClient,
+        staffMemberRepository: _NeverResolvingStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: const StaffAuthorizationClaims(
+            organizationAccess: [_testOrgId],
+            rolesByOrganization: {
+              _testOrgId: ['manager'],
+            },
+            branchAccessByOrganization: {},
+          ),
+        ),
+        organizationId: () => _testOrgId,
+        networkTimeout: const Duration(milliseconds: 20),
+      );
+
+      final session = await repository.signIn(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+
+      expect(session, isNotNull);
+      expect(session!.roles, {StaffRole.manager});
+    });
   });
 
   group(
@@ -487,7 +564,62 @@ void main() {
       expect(refreshed, isNotNull);
       expect(refreshed!.roles, {StaffRole.manager});
     });
+
+    test(
+        'a claims sync whose network call never settles surfaces as a '
+        'typed, catchable StaffAuthUnavailableException from '
+        'refreshSession too — never an indefinite hang', () async {
+      final repository = FirebaseStaffAuthRepository(
+        authClient: FakeEmailPasswordAuthClient(),
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(neverResolves: true),
+        organizationId: () => _testOrgId,
+        networkTimeout: const Duration(milliseconds: 20),
+      );
+      const current = ActorSession(
+        actorId: 'uid-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+      );
+
+      await expectLater(
+        repository.refreshSession(current),
+        throwsA(isA<StaffAuthUnavailableException>()),
+      );
+    });
   });
+}
+
+/// Simulates a staff-directory query whose underlying network call never
+/// settles (e.g. a cold/stuck Firestore query against a local emulator) —
+/// distinct from `_ThrowingStaffMemberRepository` above, which fails fast.
+/// Both must be tolerated identically by `FirebaseStaffAuthRepository`.
+class _NeverResolvingStaffMemberRepository implements StaffMemberRepository {
+  @override
+  Future<void> save(StaffMember member) => Completer<void>().future;
+
+  @override
+  Future<StaffMember?> findById(String staffMemberId) =>
+      Completer<StaffMember?>().future;
+
+  @override
+  Future<StaffMember?> findByAuthUid(String authUid) =>
+      Completer<StaffMember?>().future;
+
+  @override
+  Future<List<StaffMember>> findAll() => Completer<List<StaffMember>>().future;
+
+  @override
+  Future<List<StaffMember>> findByBranch(String branchId) =>
+      Completer<List<StaffMember>>().future;
+
+  @override
+  Future<StaffMember> register({
+    required String displayName,
+    required String email,
+  }) =>
+      Completer<StaffMember>().future;
 }
 
 /// Simulates a slow/unavailable staff directory (e.g. a Firestore query

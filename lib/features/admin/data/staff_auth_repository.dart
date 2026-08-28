@@ -1,9 +1,34 @@
+import 'dart:async';
+
 import '../../../core/services/auth/email_password_auth_client.dart';
 import '../../../core/services/auth/staff_claims_sync_client.dart';
 import '../../pos/domain/authorization/actor_session.dart';
 import '../domain/staff/staff_member.dart';
 import '../domain/staff/staff_member_status.dart';
 import 'staff_member_repository.dart';
+
+/// The upper bound every network-dependent step of [FirebaseStaffAuthRepository]
+/// is wrapped in — chosen generous enough for a cold Cloud Functions
+/// invocation, but finite: no step in this class may ever leave a caller
+/// awaiting forever. Every step that hits this bound surfaces as a typed,
+/// catchable [StaffAuthUnavailableException] instead — "an indefinite
+/// loading state is forbidden" applies to every await in this file, not
+/// just the ones a prior pass already caught.
+const staffAuthNetworkTimeout = Duration(seconds: 20);
+
+/// Thrown when a sign-in-critical step (credential verification, claims
+/// sync) cannot complete within [staffAuthNetworkTimeout] — deliberately
+/// distinct from `signIn` returning `null` (which means "the credential or
+/// its authorization was genuinely checked and rejected"). A caller must
+/// show this as a retryable connectivity error, never as "check your
+/// email/password" — the credential was never actually evaluated.
+class StaffAuthUnavailableException implements Exception {
+  const StaffAuthUnavailableException(this.message);
+  final String message;
+
+  @override
+  String toString() => 'StaffAuthUnavailableException: $message';
+}
 
 /// Everything the app needs to issue/refresh/end a staff [ActorSession] —
 /// mirrors `AuthRepository`'s exact seam shape (`features/auth`) so a
@@ -164,14 +189,17 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     required Duration Function() sessionDuration,
     required StaffClaimsSyncClient claimsSyncClient,
     required String Function() organizationId,
+    Duration networkTimeout = staffAuthNetworkTimeout,
   })  : _authClient = authClient,
         _staffMemberRepository = staffMemberRepository,
         _sessionDuration = sessionDuration,
         _claimsSyncClient = claimsSyncClient,
-        _organizationId = organizationId;
+        _organizationId = organizationId,
+        _networkTimeout = networkTimeout;
 
   final EmailPasswordAuthClient _authClient;
   final StaffMemberRepository _staffMemberRepository;
+  final Duration _networkTimeout;
   final Duration Function() _sessionDuration;
   final StaffClaimsSyncClient _claimsSyncClient;
   final String Function() _organizationId;
@@ -210,20 +238,39 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
   }) async {
     final EmailPasswordAuthResult result;
     try {
-      result = await _authClient.signIn(email: email, password: password);
+      result = await _authClient
+          .signIn(email: email, password: password)
+          .timeout(_networkTimeout);
     } on EmailPasswordAuthClientException {
       return null;
+    } on TimeoutException {
+      throw const StaffAuthUnavailableException(
+        'Giriş isteği zaman aşımına uğradı — bağlantınızı kontrol edip '
+        'tekrar deneyin.',
+      );
     }
 
-    final claims = await _claimsSyncClient.syncAndRefresh();
+    final StaffAuthorizationClaims? claims;
+    try {
+      claims =
+          await _claimsSyncClient.syncAndRefresh().timeout(_networkTimeout);
+    } on TimeoutException {
+      throw const StaffAuthUnavailableException(
+        'Yetki bilgileri alınamadı (zaman aşımı) — tekrar deneyin.',
+      );
+    }
     if (claims == null) return null; // no Firebase user actually signed in
 
     // Profile/display metadata only — see the class-level note above. A
-    // failed/unavailable directory lookup must never deny or hang a sign-in
-    // the real claims already authorize.
+    // failed/unavailable/slow directory lookup must never deny or hang a
+    // sign-in the real claims already authorize — bounded by the same
+    // timeout so a hanging query degrades to "no metadata" rather than an
+    // indefinite wait.
     StaffMember? member;
     try {
-      member = await _staffMemberRepository.findByAuthUid(result.uid);
+      member = await _staffMemberRepository
+          .findByAuthUid(result.uid)
+          .timeout(_networkTimeout);
     } catch (_) {
       member = null;
     }
@@ -242,18 +289,28 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
 
   @override
   Future<ActorSession?> refreshSession(ActorSession current) async {
-    final claims = await _claimsSyncClient.syncAndRefresh();
+    final StaffAuthorizationClaims? claims;
+    try {
+      claims =
+          await _claimsSyncClient.syncAndRefresh().timeout(_networkTimeout);
+    } on TimeoutException {
+      throw const StaffAuthUnavailableException(
+        'Oturum yenilenemedi (zaman aşımı) — tekrar deneyin.',
+      );
+    }
     if (claims == null) return null;
 
     final roleNames = claims.rolesFor(_organizationId());
     final branchAccess = claims.branchAccessFor(_organizationId());
 
     // Profile/display metadata only — see the class-level note above. A
-    // failed/unavailable directory lookup must never deny or hang what the
-    // real claims already grant.
+    // failed/unavailable/slow directory lookup must never deny or hang what
+    // the real claims already grant.
     StaffMember? member;
     try {
-      member = await _staffMemberRepository.findById(current.actorId);
+      member = await _staffMemberRepository
+          .findById(current.actorId)
+          .timeout(_networkTimeout);
     } catch (_) {
       member = null;
     }

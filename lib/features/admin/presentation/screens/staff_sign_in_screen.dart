@@ -6,6 +6,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../application/use_cases/bootstrap_first_admin_account.dart';
+import '../../data/staff_auth_repository.dart';
 import 'admin_shell_screen.dart';
 import '../providers/admin_dependencies_provider.dart';
 import '../providers/staff_session_controller.dart';
@@ -55,16 +56,28 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
       _busy = true;
       _error = null;
     });
-    final success = await ref.read(staffSessionControllerProvider).signIn(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-        );
-    if (!mounted) return;
-    setState(() => _busy = false);
+    bool success = false;
+    try {
+      success = await ref.read(staffSessionControllerProvider).signIn(
+            email: _emailController.text.trim(),
+            password: _passwordController.text,
+          );
+    } on StaffAuthUnavailableException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.message);
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Beklenmeyen bir sorun oluştu — tekrar deneyin.');
+      return;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
     if (!success) {
       setState(() => _error = 'Giriş başarısız. Bilgilerinizi kontrol edin.');
       return;
     }
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const AdminShellScreen()),
     );
