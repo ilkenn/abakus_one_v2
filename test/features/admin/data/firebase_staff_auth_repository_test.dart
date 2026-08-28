@@ -1,6 +1,7 @@
 import 'package:abakus_one_v2/core/services/auth/staff_claims_sync_client.dart';
 import 'package:abakus_one_v2/features/admin/data/staff_auth_repository.dart';
 import 'package:abakus_one_v2/features/admin/data/staff_member_repository.dart';
+import 'package:abakus_one_v2/features/admin/domain/staff/staff_member.dart';
 import 'package:abakus_one_v2/features/admin/domain/staff/staff_member_status.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
@@ -265,6 +266,37 @@ void main() {
       expect(session, isNotNull);
       expect(session!.roles, {StaffRole.manager});
     });
+
+    test(
+        'a StaffMemberRepository lookup that throws (e.g. a slow/unavailable '
+        'directory query) never denies or hangs sign-in — profile metadata '
+        'is best-effort only, exactly as this class documents itself',
+        () async {
+      final authClient = FakeEmailPasswordAuthClient();
+      await authClient.createAccount(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+      final repository = FirebaseStaffAuthRepository(
+        authClient: authClient,
+        staffMemberRepository: _ThrowingStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: const StaffAuthorizationClaims(
+            organizationAccess: [_testOrgId],
+            rolesByOrganization: {
+              _testOrgId: ['manager'],
+            },
+            branchAccessByOrganization: {},
+          ),
+        ),
+        organizationId: () => _testOrgId,
+      );
+
+      final session = await repository.signIn(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+
+      expect(session, isNotNull);
+      expect(session!.roles, {StaffRole.manager});
+    });
   });
 
   group(
@@ -424,5 +456,69 @@ void main() {
 
       expect(refreshed, isNull);
     });
+
+    test(
+        'a StaffMemberRepository lookup that throws never denies or hangs '
+        'refreshSession either — same best-effort-only guarantee as signIn',
+        () async {
+      final repository = FirebaseStaffAuthRepository(
+        authClient: FakeEmailPasswordAuthClient(),
+        staffMemberRepository: _ThrowingStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: const StaffAuthorizationClaims(
+            organizationAccess: [_testOrgId],
+            rolesByOrganization: {
+              _testOrgId: ['manager'],
+            },
+            branchAccessByOrganization: {},
+          ),
+        ),
+        organizationId: () => _testOrgId,
+      );
+      const current = ActorSession(
+        actorId: 'uid-1',
+        roles: {StaffRole.manager},
+        activeRole: StaffRole.manager,
+      );
+
+      final refreshed = await repository.refreshSession(current);
+
+      expect(refreshed, isNotNull);
+      expect(refreshed!.roles, {StaffRole.manager});
+    });
   });
+}
+
+/// Simulates a slow/unavailable staff directory (e.g. a Firestore query
+/// that times out) — every method throws, proving `signIn`/`refreshSession`
+/// treat this repository as best-effort profile metadata only, never as an
+/// authorization gate.
+class _ThrowingStaffMemberRepository implements StaffMemberRepository {
+  @override
+  Future<void> save(StaffMember member) =>
+      throw Exception('directory unavailable');
+
+  @override
+  Future<StaffMember?> findById(String staffMemberId) =>
+      throw Exception('directory unavailable');
+
+  @override
+  Future<StaffMember?> findByAuthUid(String authUid) =>
+      throw Exception('directory unavailable');
+
+  @override
+  Future<List<StaffMember>> findAll() =>
+      throw Exception('directory unavailable');
+
+  @override
+  Future<List<StaffMember>> findByBranch(String branchId) =>
+      throw Exception('directory unavailable');
+
+  @override
+  Future<StaffMember> register({
+    required String displayName,
+    required String email,
+  }) =>
+      throw Exception('directory unavailable');
 }

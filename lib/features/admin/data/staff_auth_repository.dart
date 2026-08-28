@@ -218,7 +218,15 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     final claims = await _claimsSyncClient.syncAndRefresh();
     if (claims == null) return null; // no Firebase user actually signed in
 
-    final member = await _staffMemberRepository.findByAuthUid(result.uid);
+    // Profile/display metadata only — see the class-level note above. A
+    // failed/unavailable directory lookup must never deny or hang a sign-in
+    // the real claims already authorize.
+    StaffMember? member;
+    try {
+      member = await _staffMemberRepository.findByAuthUid(result.uid);
+    } catch (_) {
+      member = null;
+    }
 
     final now = DateTime.now();
     return ActorSession.tryFromRaw(
@@ -241,9 +249,14 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     final branchAccess = claims.branchAccessFor(_organizationId());
 
     // Profile/display metadata only — see the class-level note above. A
-    // missing/unavailable member never denies what the real claims would
-    // otherwise grant.
-    final member = await _staffMemberRepository.findById(current.actorId);
+    // failed/unavailable directory lookup must never deny or hang what the
+    // real claims already grant.
+    StaffMember? member;
+    try {
+      member = await _staffMemberRepository.findById(current.actorId);
+    } catch (_) {
+      member = null;
+    }
     if (member != null) {
       final revokedAt = member.sessionsRevokedAt;
       if (revokedAt != null &&
