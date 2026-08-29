@@ -775,8 +775,8 @@ class _TopBar extends ConsumerWidget implements PreferredSizeWidget {
           ),
         ),
         IconButton(
-          icon: const Icon(Icons.logout_outlined,
-              color: AppColors.textSecondary),
+          icon:
+              const Icon(Icons.logout_outlined, color: AppColors.textSecondary),
           tooltip: 'Çıkış Yap',
           onPressed: () => ref.read(staffSessionControllerProvider).signOut(),
         ),

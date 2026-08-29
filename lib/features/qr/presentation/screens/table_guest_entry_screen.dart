@@ -97,7 +97,8 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
       if (!mounted) return;
       setState(() {
         _phase = _EntryPhase.error;
-        _errorMessage = 'QR kod okunurken bir sorun oluştu. Lütfen tekrar dene.';
+        _errorMessage =
+            'QR kod okunurken bir sorun oluştu. Lütfen tekrar dene.';
       });
     }
   }

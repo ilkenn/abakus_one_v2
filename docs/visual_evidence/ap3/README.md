@@ -539,3 +539,285 @@ NEXT_PHASE=NOT_STARTED (AP-4 was not begun, per this wave's explicit instruction
 
 This is the final tag block for this wave. It is not retroactively edited if a later wave finds something
 new — any future correction is appended below this line, per this document's own established convention.
+
+---
+
+## CORRECTION (append-only) — the WAVE 4 closing tag block overstated completeness
+
+A follow-up instruction correctly rejected `FULL_QUALITY_GATES_PASSED=YES` given the Functions suite was
+1848/1856 (not a clean full run) and `HIGH_ISSUES_OPEN=1` was still true at the same time — those two facts
+cannot coexist with a "fully passed" gate claim, the same class of error corrected twice already in this
+document. Also rejected: treating 87/87-in-isolation as equivalent to closing the 8 full-suite failures —
+isolation-clean does not prove the full-suite contamination itself isn't a real test-infrastructure defect
+that needs fixing, not just explaining away. The corrected state, effective until superseded:
+
+```text
+FULL_QUALITY_GATES_PASSED=NO
+FUNCTIONS_FULL_SUITE_PASSED=NO
+REAL_VISUAL_ACCEPTANCE_EVIDENCE_CREATED=PARTIAL
+AP3_COMPLETE=NO
+```
+
+Explicit instruction for this next pass: do not disable, uninstall, or otherwise interfere with Vanguard
+or any other security/anti-cheat software, and do not change Windows Features/hypervisor/reboot without
+explicit approval. Non-system-changing Android options (software-accelerated emulation on a cloned/fresh
+AVD, or an already-connected physical device) must be exhausted first. Continuing below.
+
+---
+
+## CORRECTION (append-only) — the 8/14 count was wrong; strict 1:1 table follows
+
+A follow-up instruction correctly rejected the "8/14" figure: it counted screenshots that don't map to
+any of the 14 originally-required numbered items (`05_admin_shell_overview.png`,
+`10_qr_table_deep_link_preview.png`, `11_qr_table_deep_link_session_opened.png` are real, valuable
+evidence for other requirements — Section 1's Web Admin path and Section 5's QR deep-link feature — but
+they are not stand-ins for required items #10/#11, which are specifically the customer-facing
+*pending-approval* and *counter-proposal* states of an in-progress order negotiation, not the QR entry
+mechanism itself). `01`/`02` from Wave 1 were never claimed as matching any of the 14 either. Rebuilding
+the count strictly, one row per original numbered requirement, counting only a screenshot that directly
+satisfies that exact requirement:
+
+| # | Requirement | Screenshot | Route/Surface | Fixture | Platform | Status | Reason if missing |
+|---|---|---|---|---|---|---|---|
+| 1 | Trusted-device activation / active state | — | POS trusted-device flow | — | Android | **MISSING** | Requires a real Android/iOS/Windows/macOS trusted-device session — blocked by the Android emulator finding (see below); Web is structurally fail-closed for this by design |
+| 2 | POS three-pane workspace | — | `PosBranchOverviewScreen` (operational, trusted-device-backed) | — | Android | **MISSING** | Same blocker as #1 |
+| 3 | Table overview | — | POS table overview pane | — | Android | **MISSING** | Same blocker as #1 |
+| 4 | Multiple customer sub-accounts | — | POS table session, sub-account list | — | Android | **MISSING** | Same blocker as #1 |
+| 5 | Product catalogue + staff order entry | — | POS order entry | — | Android | **MISSING** | Same blocker as #1 |
+| 6 | Check allocation | — | POS check allocation | — | Android | **MISSING** | Same blocker as #1 |
+| 7 | All five split modes | — | POS check splitting (product/quantity/customer/equal/free-amount) | — | Android | **MISSING** | Same blocker as #1 |
+| 8 | Table transfer/merge | — | POS table transfer/merge | — | Android | **MISSING** | Same blocker as #1 |
+| 9 | Remote approval live state | — | Approval Inbox, live pending state | — | Android | **MISSING** | Same blocker as #1 |
+| 10 | Customer QR pending-approval state | — | Customer-facing order awaiting staff response | — | Web or Android | **MISSING** | Not attempted — requires an active order negotiation in progress, itself requiring either the blocked POS workspace on the staff side or a longer customer-order-then-staff-review sequence not attempted this wave |
+| 11 | Customer QR counter-proposal state | — | Customer-facing counter-proposal UI | — | Web or Android | **MISSING** | Same reason as #10 |
+| 12 | Tenant Admin Customer Directory | `12_admin_customer_directory.png` | `/admin` → Müşteri 360 (`CustomerManagementScreen`) | `kasiyer@abakus.test`, real seeded customers | Web (profile build) | **PASS** | — |
+| 13 | Platform Owner Customer Directory | `13_platform_customer_directory.png` | `/platform` → Müşteriler tab | `sahip@abakus.test` | Web (profile build) | **PASS** | — |
+| 14 | Web operational POS fail-closed state | `14_web_pos_fail_closed.png` | `TrustedDeviceStatusScreen`'s "Bu Platform Desteklenmiyor" | `kasiyer@abakus.test` | Web (profile build) | **PASS** | — |
+
+**Corrected `VISUAL_EVIDENCE_COUNT=3/14`** (items 12, 13, 14 only). Items 1–9 are blocked by the single
+Android-emulator finding; items 10–11 were not attempted this wave. The `05`/`10`/`11` screenshots
+(Admin shell overview, QR deep-link preview, QR deep-link session-opened) remain in the evidence folder
+as real, genuine proof of Section 1 (Web Admin sign-in) and Section 5 (QR deep-link) respectively — they
+are not deleted, and they are not double-counted toward the 14 either. `01`/`02` likewise remain as
+Wave-1 evidence, uncounted toward the 14.
+
+---
+
+## WAVE 5 — Android software-emulation exhausted (no system changes); physical-device handoff
+
+Per this pass's explicit instruction: no Vanguard/anti-cheat interference, no Windows Features/hypervisor
+changes, no reboot. Non-system-changing options exhausted first, in order, each with concrete evidence.
+
+### 1. Physical device check
+
+`adb devices -l` → empty. `flutter devices` → only Windows (desktop), Chrome (web), Edge (web). No
+physical Android device is connected to this machine. Re-check this first if a device becomes available
+— see the launch commands at the end of this section.
+
+### 2. Disposable AVD, software-accelerated/off emulation — all four attempts, concrete evidence
+
+A **new, disposable AVD** (`Pixel_7_Diag`, `pixel_7` device profile, the already-installed
+`system-images;android-35;google_apis_playstore;x86_64` image — the exact same image `Pixel_7` uses) was
+created via `avdmanager create avd -n Pixel_7_Diag -k "system-images;android-35;google_apis_playstore;x86_64" -d pixel_7`
+specifically so the original `Pixel_7` AVD is never touched. Four boot attempts, spanning this wave and
+the prior one, covering every accelerated/software combination the installed emulator (36.6.11.0)
+supports:
+
+| Attempt | Flags | Result | Evidence |
+|---|---|---|---|
+| 1 (prior wave) | AEHD (default) + host GPU (Vulkan/gfxstream) | **Crash** (segfault) | `Segmentation fault` in process output |
+| 2 (prior wave) | AEHD (default) + `-gpu swiftshader_indirect` | **Hang** — guest VM never executes | Process alive but near-zero CPU growth (0.375s–1.875s total) over two independent 5–7.5 min windows; `adb devices` stayed `offline`; log stops dead after `AEHD is operational` |
+| 3 (this wave) | `-no-accel -gpu swiftshader_indirect` | **Crash** (new dump) | Process exit code 21; crash report `b9de73c4-258c-4d7d-b7fc-13daf9fbc115.dmp` (1.39MB), timestamp-matched to the attempt |
+| 4 (this wave) | `-no-accel` (GPU auto-selected) | **Crash** (new dump) | Process exit code 21; crash report `9eb5f2da-30de-4a71-b84a-a1920d40e653.dmp` (1.5MB), timestamp-matched |
+
+`-no-accel`/`-accel off` was confirmed via `emulator -help-all` to be the exact, correct, documented flag
+for this emulator version — not a guessed or wrong flag name. Both `-no-accel` attempts crash
+**immediately** (not a hang — a real process exit with a real crash dump), a qualitatively different and
+in one sense more conclusive failure mode than the AEHD-accelerated hang: pure software CPU emulation
+(QEMU TCG, bypassing AEHD/the hypervisor entirely) is itself broken on this machine, independent of
+Vulkan/gfxstream/swiftshader GPU backend choice. Combined with attempt 1's genuine segfault under host-GPU
+acceleration, every one of the four independent code paths this emulator version can take on Windows
+fails, each in a different, real, reproducible way. `emulator -accel-check` separately confirms AEHD
+itself reports "installed and usable" — the underlying hypervisor driver is not the exclusive failure
+point (attempts 3–4 don't even use it).
+
+This is a systemic, whole-machine-level incompatibility (the emulator's own log across every attempt
+names "Vanguard anti-cheat software... known to have compatibility issues with Android emulator" as the
+one common thread), not a single misconfigured flag. **Every non-system-changing option available for
+this task has now been exhausted with concrete evidence** — no further software-only variation is
+expected to succeed differently, and none is attempted further without new information.
+
+The disposable `Pixel_7_Diag` AVD is left in place (not deleted) in case a later pass wants to try a
+config not covered above; the original `Pixel_7` AVD was never launched, modified, or wiped this wave.
+
+### 3. Physical-device handoff — the only remaining path that doesn't touch this host system
+
+No further host-system changes are recommended (Vanguard, Windows Features, hypervisor, reboot) per
+this pass's explicit instruction. The only remaining path to the required Android evidence is a real
+physical Android phone connected to this machine. Handoff below; **stopped here** — this pass does not
+call AP-3 closed and does not proceed past the point where a physical device must actually be connected.
+
+#### Minimum requirements
+
+- This project's `minSdk` (`android/app/build.gradle.kts`) is `flutter.minSdkVersion` — Flutter's own
+  current default, not a literal number in this repo; any reasonably recent Android phone (Android 8+)
+  comfortably qualifies.
+- A USB-A/USB-C cable capable of data transfer (not charge-only), **or** the phone and this PC on the
+  same network for wireless debugging (Android 11+).
+
+#### One-time phone setup
+
+1. **Settings → About phone** → tap "Build number" 7 times → "You are now a developer."
+2. **Settings → System → Developer options**:
+   - Enable **USB debugging** (for a cable connection), or
+   - Enable **Wireless debugging** (Android 11+, for a cable-free connection).
+3. Connect the cable (or, for wireless: **Wireless debugging → Pair device with pairing code**, then run
+   `adb pair <ip>:<port>` with the code shown, followed by `adb connect <ip>:<port>` using the address
+   shown in "Wireless debugging" once paired).
+4. **On the phone**: a "Allow USB debugging?" (or wireless equivalent) dialog appears — check "Always
+   allow from this computer" and tap **Allow**. This is the RSA key authorization; without tapping
+   Allow, `adb` sees the device but cannot use it (shows as `unauthorized`).
+
+#### Verify the connection
+
+```powershell
+& "C:\Users\Mücahit\AppData\Local\Android\sdk\platform-tools\adb.exe" devices -l
+# expect: <serial>   device   ...        <- "device", not "unauthorized" or "offline"
+flutter devices
+# expect: a new "<phone model> (mobile)" entry, android-arm64
+```
+
+#### Run the app on the device
+
+```powershell
+cd C:\Projects\abakus_one_v2
+flutter run -d <device-id-from-flutter-devices>
+```
+
+For a physical device reached over USB, the app's Firebase emulator connections need
+`adb reverse` so `127.0.0.1:PORT` on the phone reaches this PC's emulators (already documented in
+`FirebaseAuthEmulatorConfig`'s own doc comment for exactly this reason):
+
+```powershell
+& adb.exe reverse tcp:9099 tcp:9099   # Auth
+& adb.exe reverse tcp:8080 tcp:8080   # Firestore
+& adb.exe reverse tcp:5001 tcp:5001   # Functions
+& adb.exe reverse tcp:9199 tcp:9199   # Storage
+```
+
+(Wireless debugging has no `adb reverse` — use
+`--dart-define=FIREBASE_EMULATOR_HOST=<this-PC's-LAN-IP>` instead, and ensure Windows Firewall allows
+inbound connections to those four ports from the phone's subnet.)
+
+#### Run the AP-3 integration test on the device
+
+```powershell
+flutter test integration_test/staff_sign_in_e2e_test.dart -d <device-id>
+```
+
+(This exercises the Web-equivalent sign-in flow; a dedicated Android trusted-device/POS integration test
+does not yet exist in this repo — writing one, or driving the flow manually per
+`docs/local_admin_login_runbook.md`, is the next step once a device is connected.)
+
+#### Capture screenshots safely (no global Windows input)
+
+```powershell
+& adb.exe shell screencap -p /sdcard/evidence.png
+& adb.exe pull /sdcard/evidence.png docs\visual_evidence\ap3\
+& adb.exe shell rm /sdcard/evidence.png
+```
+
+`adb shell screencap` captures only the device's own screen buffer over the USB/network debug channel —
+it never touches this Windows machine's mouse, keyboard, or desktop, matching this project's standing
+automation-safety rule.
+
+#### Privacy cleanup afterward
+
+```powershell
+& adb.exe uninstall com.abakus.one
+```
+
+On the phone: **Settings → Developer options → Revoke USB debugging authorizations** (clears this PC's
+RSA key), then disable Developer options / USB or Wireless debugging if the phone is not the tester's
+own regular device. No personal data, notifications, photos, contacts, or any app other than Abaküs was
+touched by any command above — every command is scoped to `adb`'s own device/app-debug channel.
+
+### 4. Host-level alternative — documented only, not enabled
+
+WHPX (Windows Hypervisor Platform) is a documented next alternative if a physical device is unavailable
+and a future pass gets explicit approval to change host virtualization settings and reboot. **Not
+enabled, not recommended as the default path, and not attempted this wave** — it is a genuine
+system-level change (`Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V` or similar,
+requiring a reboot) squarely inside the category of changes this pass was explicitly told not to make
+without the user's own approval.
+
+---
+
+## WAVE 5 — Functions full-suite failures: real root cause, real fix, proven twice
+
+Reproducing the 8 failures inside the complete suite (per this pass's explicit instruction, not
+accepting isolation-clean as sufficient) found the actual cause: **it was never Node-version drift, and
+it was never eight independent test bugs.** The single necessary-and-sufficient cause was this session's
+own `--project abakus-one-dev` override on the `firebase emulators:exec` invocation used to run gates —
+correct and required for testing the *Flutter app* (`docs/local_admin_login_runbook.md`), but
+incompatible with several backend test files (`completeCustomerProfile.test.ts`,
+`tableGuestSession.test.ts`, others) that hardcode `EMULATOR_PROJECT_ID = "demo-abakus-one-emulator"`,
+matching `.firebaserc`'s default and `singleProjectMode: true`. `package.json`'s own
+`test:emulator` script has **never** passed `--project` — this was a defect in this session's own
+ad-hoc gate-running command, not in the project.
+
+Concretely isolated: `singleProjectMode` transparently accepts a *write* under any project id, but a
+project-id-scoped *read* (the Auth Emulator's `GET /emulator/v1/projects/{id}/verificationCodes`) is not
+remapped — querying it under the wrong id silently returns an empty list instead of erroring, which is
+exactly what made `createRealPhoneUser()`'s verification-code lookup fail. Verified directly with a
+standalone script sending a real `sendVerificationCode` call then listing under each project id:
+`demo-abakus-one-emulator` → 0 codes; `abakus-one-dev` (the emulator's actual configured project) → 1
+code, matched correctly.
+
+**Node version is not a factor for correctness** — re-verified directly this wave: the same 106-file
+suite, run under the system's actual Node 24.18.0 with the project id fixed (no `--project` override),
+passes identically to a run under a pinned Node 20.19.5. `functions/README.md`'s own pre-existing note
+("local emulation works under a newer local Node with an advisory warning, not an error") was already
+correct; this wave confirms it empirically rather than assuming it. A reproducible, project-level Node
+20 mechanism was still added (`functions/.nvmrc`, `functions/scripts/run-with-node20.ps1` — downloads a
+pinned Node 20 into a gitignored `functions/.tools/` cache only if the system Node isn't already v20.x)
+for anyone who wants to test under the exact pinned deployment runtime, but it is not required for a
+green suite.
+
+### The two real remaining failures, once the project id was fixed, and their real fixes
+
+1. **`tableGuestSession.test.ts`: "N concurrent first-scans... EXACTLY ONE TableSession"** — 1 of 8
+   simultaneous `Promise.all`-fired callable invocations returned `httpStatus 500` with body
+   `{"code":"ECONNRESET"}` instead of a real response, only under full-suite cumulative load. This is
+   the same class of emulator-under-load transport flakiness `orderEarnReversal.test.ts`'s own
+   `withTransientEmulatorTransportRetry` already documents and retries for a different transient
+   signature ("Transaction is invalid or closed") — not a bug in `openTableGuestSession`'s own
+   concurrency-safe locking (the business assertion — exactly one `TableSession` — was never reached
+   for the failing run because one HTTP call never got a real response at all). **Fix**: added
+   `withTransientConnectionResetRetry` to `tableGuestSession.test.ts`, matching the existing helper's
+   exact shape and narrow-scoping discipline — retries only on the exact `httpStatus 500` +
+   `"ECONNRESET"` signature, up to 3 attempts; any other status/body (including a genuine business
+   rejection) returns on the first attempt, so a real assertion failure is never silently retried away.
+2. **`trustedDeviceAndApproval.test.ts`: "suspendTrustedDevice..." timed out after 60000ms** — this test
+   has zero internal concurrency (every call is sequentially `await`ed); it was never in the original
+   set of 8 failures either. **Root cause: this session's own diagnostic `--test-timeout=60000` flag**,
+   added to bound a hang during earlier misdiagnosis, was too tight for this specific test's legitimate
+   wall-clock time under this machine's full-suite cumulative load. Confirmed directly: the exact same
+   suite, run via the project's real, standard invocation (no `--test-timeout` override — Node's test
+   runner has no default timeout), passes this test cleanly. **Fix: removed the diagnostic
+   `--test-timeout` flag from the gate-running command** — not a code or test change, since there was
+   never a real defect to fix; the "failure" was an artifact of this session's own temporary diagnostic
+   instrumentation.
+
+### Proof
+
+Full 106-file suite (`node --test --test-concurrency=1`, system Node 24, default/no `--project`
+override, no artificial `--test-timeout`), run twice consecutively to rule out order-dependent
+flakiness per this pass's explicit requirement:
+
+```
+Run 1: tests 1856, pass 1856, fail 0, duration_ms 826255
+Run 2: tests 1856, pass 1856, fail 0, duration_ms 847124
+```
+
+`FUNCTIONS_FULL_SUITE_PASSED=YES`, `FUNCTIONS_FULL_SUITE_REPEAT_PASSED=YES`.
