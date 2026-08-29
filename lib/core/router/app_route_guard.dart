@@ -68,6 +68,14 @@ abstract final class AppRouteGuard {
     // bounced straight past the QR flow into the main app shell instead.
     if (location.startsWith(AppRoutes.takeawayGuestPrefix)) return null;
 
+    // AP-3 — the dine-in table QR guest flow is public by design for the
+    // exact same reason the Gel Al QR flow immediately above is: a
+    // customer opening a table's QR link has not signed in to anything
+    // yet, and must never be bounced through onboarding/login/OTP (nor,
+    // for an already-signed-in customer, swept straight to `main` by the
+    // `signedIn` branch below) just to sit at their table.
+    if (location.startsWith(AppRoutes.tableGuestPrefix)) return null;
+
     // AP-2 Stage B — Admin/staff authorization is a wholly separate
     // identity system from the customer signed-in/guest concept this
     // guard otherwise governs (mirrors [AppRoutes.admin]'s own doc

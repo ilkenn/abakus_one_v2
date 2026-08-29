@@ -28,6 +28,19 @@ abstract final class AppRoutes {
 
   static String takeawayGuest(String token) => '$takeawayGuestPrefix/$token';
 
+  /// AP-3 — the public, login-free dine-in table QR guest entry point,
+  /// mirroring [takeawayGuestPrefix] exactly: a customer opening a table's
+  /// QR link (by scanning it, tapping it, or any other way the link
+  /// reaches them) lands here directly, with no onboarding/login/OTP gate
+  /// — see [AppRouteGuard.resolve]'s explicit bypass for any location
+  /// under this prefix. `:token` is the opaque `tableQrCodes` token
+  /// `resolveTableQrToken`/`openTableGuestSession` independently
+  /// re-resolve server-side; the client never derives organization/
+  /// restaurant/branch/table scope from it directly.
+  static const String tableGuestPrefix = '/table';
+
+  static String tableGuest(String token) => '$tableGuestPrefix/$token';
+
   /// AP-2 Stage B — the Admin/staff shell entry point. Staff/Platform
   /// authorization is an entirely separate identity system from the
   /// customer [authProvider]/[AppRouteGuard] stack (Firebase email/

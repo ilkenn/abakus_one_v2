@@ -242,6 +242,79 @@ void main() {
   });
 
   group(
+      'AppRouteGuard.resolve — AP-3 table QR guest route is always public, '
+      'regardless of session state', () {
+    test('not signed in: no redirect', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.tableGuest('some-token'),
+          isAuthenticated: false,
+          isGuest: false,
+          isOnboardingComplete: false,
+          isRealCustomer: false,
+        ),
+        isNull,
+      );
+    });
+
+    test(
+        'a real, authenticated (phone-verified) session does NOT get '
+        'bounced to /main — the one case the blanket "signed in -> main" '
+        'branch would otherwise hijack', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.tableGuest('some-token'),
+          isAuthenticated: true,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: false,
+        ),
+        isNull,
+      );
+    });
+
+    test('an existing guest session does NOT get bounced to /main either', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.tableGuest('some-token'),
+          isAuthenticated: false,
+          isGuest: true,
+          isOnboardingComplete: true,
+          isRealCustomer: false,
+        ),
+        isNull,
+      );
+    });
+
+    test('onboarding not yet complete: still no redirect (never onboarding)',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.tableGuest('some-token'),
+          isAuthenticated: false,
+          isGuest: false,
+          isOnboardingComplete: false,
+          isRealCustomer: false,
+        ),
+        isNull,
+      );
+    });
+
+    test('the bare prefix without a token is also never redirected', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.tableGuestPrefix,
+          isAuthenticated: true,
+          isGuest: false,
+          isOnboardingComplete: true,
+          isRealCustomer: false,
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group(
       'AppRouteGuard.resolve — AP-2 Stage B: /admin is always bypassed, '
       'regardless of customer session state', () {
     test('not signed in: no redirect', () {

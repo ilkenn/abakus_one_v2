@@ -16,6 +16,7 @@ import '../../features/platform/presentation/screens/platform_shell_screen.dart'
 import '../../features/reservation/presentation/screens/reservation_confirmation_screen.dart';
 import '../../features/reservation/presentation/screens/reservation_detail_screen.dart';
 import '../../features/reservation/presentation/screens/reservation_flow_screen.dart';
+import '../../features/qr/presentation/screens/table_guest_entry_screen.dart';
 import '../../features/takeaway/presentation/screens/takeaway_guest_entry_screen.dart';
 import '../auth/real_customer_check.dart';
 import 'app_route_guard.dart';
@@ -163,6 +164,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) {
           return _fadeTransitionPage(
             TakeawayGuestEntryScreen(token: state.pathParameters['token']!),
+          );
+        },
+      ),
+      // AP-3 — public, login-free dine-in table QR guest entry. Never
+      // behind the onboarding/login/OTP gate — see
+      // `AppRouteGuard.resolve`'s own explicit bypass for this prefix,
+      // mirroring the Gel Al QR route immediately above.
+      GoRoute(
+        path: '${AppRoutes.tableGuestPrefix}/:token',
+        pageBuilder: (context, state) {
+          return _fadeTransitionPage(
+            TableGuestEntryScreen(token: state.pathParameters['token']!),
           );
         },
       ),
