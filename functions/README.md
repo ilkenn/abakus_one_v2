@@ -699,7 +699,20 @@ npm run test:emulator
 
 Requires JDK 21+ for the Firestore Emulator (see `docs/firebase_emulator.md`) and Node 18+ locally
 (the `engines.node: "20"` in `package.json` targets the Cloud Functions *deployment* runtime — local
-emulation works under a newer local Node with an advisory warning, not an error).
+emulation works under a newer local Node with an advisory warning, not an error — confirmed directly,
+AP-3: the full 1856-test suite passes identically under the system's actual Node 24 and under a pinned
+Node 20, see `functions/scripts/run-with-node20.ps1` if you want to reproduce the pinned version anyway).
+
+**Run `test:emulator` exactly as written above — do not add `--project <id>`.** Several test files
+(`completeCustomerProfile.test.ts`, `tableGuestSession.test.ts`, others) hardcode
+`EMULATOR_PROJECT_ID = "demo-abakus-one-emulator"`, matching `.firebaserc`'s default and
+`singleProjectMode: true`. Overriding with a different `--project` (e.g. `abakus-one-dev`, which the
+*Flutter app itself* needs — see `docs/local_admin_login_runbook.md`) still lets the emulator start and
+still accepts writes under any project id, but a project-id-scoped *read* (`GET /emulator/v1/projects/
+{id}/verificationCodes`, the Auth Emulator's own pending-code listing endpoint) silently returns an empty
+list for the wrong id instead of erroring — this produced confusing, systemic, full-suite-only test
+failures the first time it happened (`docs/visual_evidence/ap3/README.md`'s AP-3 wave history has the
+full diagnosis). Nothing to fix here; just don't override the project id for this specific script.
 
 ## Local project id
 

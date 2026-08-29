@@ -36,6 +36,33 @@ after(async () => {
   await app.delete();
 });
 
+/**
+ * Retries a single callable invocation when the Functions Emulator itself
+ * returns a transient connection-reset failure (`httpStatus 500`, body
+ * `{"code":"ECONNRESET"}`) rather than a real business-logic response —
+ * observed only under full-suite cumulative load (never in isolation),
+ * exactly the same class of emulator-under-load transport flakiness
+ * `orderEarnReversal.test.ts`'s own `withTransientEmulatorTransportRetry`
+ * already documents and retries for a different transient signature
+ * ("Transaction is invalid or closed"). Narrowly scoped: only this one,
+ * named transient shape is retried — any other status/body (including a
+ * genuine business-logic rejection) is returned as-is on the first attempt,
+ * so a real assertion failure is never silently retried away.
+ */
+async function withTransientConnectionResetRetry(
+  fn: () => Promise<{ httpStatus: number; body: { result?: Record<string, unknown>; error?: { status?: string; message?: string } } }>,
+  attempts = 3,
+): Promise<{ httpStatus: number; body: { result?: Record<string, unknown>; error?: { status?: string; message?: string } } }> {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = await fn();
+    const isTransientConnectionReset =
+      result.httpStatus === 500 &&
+      JSON.stringify(result.body).includes("ECONNRESET");
+    if (!isTransientConnectionReset || attempt === attempts) return result;
+  }
+  throw new Error("unreachable");
+}
+
 async function callCallable(
   url: string,
   data: Record<string, unknown>,
@@ -467,7 +494,11 @@ test("openTableGuestSession: N concurrent first-scans of the same table create E
   const guests = await Promise.all(Array.from({ length: 8 }, () => createAnonymousUser()));
 
   const results = await Promise.all(
-    guests.map((guest) => callCallable(OPEN_SESSION_URL, { token: "TOKEN-AP3-CONCURRENCY" }, guest.idToken)),
+    guests.map((guest) =>
+      withTransientConnectionResetRetry(() =>
+        callCallable(OPEN_SESSION_URL, { token: "TOKEN-AP3-CONCURRENCY" }, guest.idToken),
+      ),
+    ),
   );
   for (const r of results) assert.strictEqual(r.httpStatus, 200, JSON.stringify(r.body));
 

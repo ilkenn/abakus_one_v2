@@ -74,6 +74,11 @@ ui-debug.log
 node_modules/
 functions/lib/
 
+# Pinned-Node-20 cache for functions/scripts/run-with-node20.sh (AP-3) — a
+# downloaded runtime binary, never source; the script re-downloads it
+# deterministically from nodejs.org if this directory is absent.
+functions/.tools/
+
 # Places-API coverage spike output — captured research artifacts, not source
 # (functions/scripts/, Faz P.2).
 functions/scripts/coverage_spike_results.json
