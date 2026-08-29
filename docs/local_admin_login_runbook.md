@@ -1,9 +1,10 @@
 # Local Admin/Staff Login Runbook (AP-3 closure tooling)
 
-**Every command below was actually executed in this environment while writing this document.**
-Emulator startup and seeding are fully verified working. **A full, successful staff sign-in through
-the running app was NOT achieved on either platform available in this environment** — see
-"Known blockers" below before assuming this runbook gets you all the way to a working session.
+**Every command below was actually executed in this environment while writing this document
+(re-verified 2026-08-28, Wave 4).** Emulator startup, seeding, and a real, complete Web staff
+sign-in through the actual running app are all verified working end-to-end. Windows remains
+genuinely blocked (see "Known blockers"), which is why this runbook's "launch the app" step
+targets Web.
 
 ## 1. Start the emulators
 
@@ -34,7 +35,8 @@ cd functions
 node scripts/seed_local_admin.js
 ```
 
-Verified output (2026-08-28, this session):
+Verified output (2026-08-28, Wave 4 — **`Organization` is now `org-1`, corrected from the
+`org-ap3vis` an earlier wave's seed script mistakenly used**; see "The organization-id bug" below):
 
 ```
 Seeding tenant...
@@ -61,7 +63,7 @@ DONE. Local login instructions:
     E-posta : sahip@abakus.test
     Şifre   : GorselKabul2026!
 
-  Organization: org-ap3vis   Branch: branch-ap3vis
+  Organization: org-1   Branch: branch-ap3vis
   Occupied table (live demo data): table-ap3vis-2
   Available table: table-ap3vis-1
 ```
@@ -70,49 +72,163 @@ The script refuses to run at all unless `FIRESTORE_EMULATOR_HOST`/`FIREBASE_AUTH
 resolve to `127.0.0.1:*`/`localhost:*` — see its own `refuseUnlessEmulator()` — so it structurally
 cannot touch a real project. Safe to rerun (idempotent).
 
-## 3. Launch the app
+## 3. Build and serve the Web app
 
 ```bash
-flutter run -d windows          # native Windows desktop
-# or
-flutter run -d web-server --web-port=8765 --web-hostname=127.0.0.1   # then open a browser at that URL yourself
+flutter build web --profile   # --profile, not --release — see "Which build mode" below
 ```
 
-Navigate to Profile → "İşletme Modu" (or directly to the `/admin` route) to reach the staff sign-in
-gate, then enter the cashier credential from step 2.
+Serve `build/web` with any static file server that sends `Cache-Control: no-store` (a plain
+`flutter build web` output has no dev server of its own). A minimal one:
 
-## Known blockers — read before relying on this runbook for a working session
+```js
+// static_serve.js
+const http = require('http'); const fs = require('fs'); const path = require('path');
+const root = process.argv[2]; const port = parseInt(process.argv[3], 10);
+const mime = { '.html':'text/html', '.js':'application/javascript', '.json':'application/json',
+  '.css':'text/css', '.png':'image/png', '.jpg':'image/jpeg', '.svg':'image/svg+xml',
+  '.ico':'image/x-icon', '.wasm':'application/wasm', '.otf':'font/otf', '.ttf':'font/ttf' };
+http.createServer((req, res) => {
+  let filePath = path.join(root, decodeURIComponent(req.url.split('?')[0]));
+  if (filePath.endsWith('/')) filePath = path.join(filePath, 'index.html');
+  fs.readFile(filePath, (err, data) => {
+    if (err) { fs.readFile(path.join(root, 'index.html'), (e2, d2) => {
+      if (e2) { res.writeHead(404); res.end('not found'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(d2); }); return; }
+    res.writeHead(200, { 'Content-Type': mime[path.extname(filePath)] || 'application/octet-stream',
+      'Cache-Control': 'no-store, no-cache, must-revalidate' });
+    res.end(data);
+  });
+}).listen(port, '127.0.0.1', () => console.log(`Static server on http://127.0.0.1:${port} serving ${root}`));
+```
 
-**Windows: staff sign-in cannot complete at all — this is a real, upstream, structural limitation,
-not a bug in this app.** `cloud_functions` package version 6.3.6's own `pubspec.yaml` declares
-platform support for `android`/`ios`/`macos`/`web` only — **Windows is not a supported platform for
-Cloud Functions in this plugin version**, confirmed independently via
+```bash
+node static_serve.js build/web 8900
+```
+
+Then open `http://127.0.0.1:8900/#/admin` in a real browser tab (a **fresh** tab/navigation — see
+the caching note below) and sign in with the cashier credential from step 2.
+
+**Verified reaching the real Admin shell** (2026-08-28): `kasiyer@abakus.test` /
+`GorselKabul2026!` → "Yönetici Paneli" heading, `org-1 · branch-ap3vis` context, real uid, working
+`Çıkış Yap` (sign-out) button, real Firestore-backed Customer Directory under "Müşteri 360" (3 real
+seeded customers). Same result for `yonetici@abakus.test` (manager, broader nav) and
+`sahip@abakus.test` at `/platform` (Platform Owner console).
+
+### Which build mode
+
+Use `--profile`, not `--release`, if you want to see actual screen *content* beyond the sign-in
+form. `ModuleReadinessGate` (`lib/features/admin/presentation/widgets/module_readiness_gate.dart`)
+hard-blocks every destination that isn't yet `ModuleDeploymentAvailability.production` — which is
+every destination in the app today, by design (`CLAUDE.md` §5: nothing has ever been deployed to a
+real Firebase project) — behind a "Bu modül henüz production kullanımına açılmadı." placeholder,
+but **only when `kReleaseMode` is true**. A `--profile` (or `--debug`) build renders the real screen
+with a small "DEMO" badge overlay instead — the honest, intentional disclosure marker, not a bug.
+`--release` is still the right build for testing the sign-in flow itself (and for the Web POS
+fail-closed screen, which isn't readiness-gated).
+
+### A browser-caching trap when iterating
+
+If you rebuild and re-serve on the **same port** after a code change, a plain browser reload can
+serve a stale cached `main.dart.js` even after a full page reload — Chromium does not always treat
+"navigate to the same URL again" as cache-busting, especially for a hash-only route change (e.g.
+`#/admin` → `#/table/xyz` on an already-loaded page is a same-document SPA navigation, not a fresh
+load at all, and won't pick up new code even where you'd expect a genuine reload). Confirmed via
+byte-for-byte comparison between the file on disk and the file actually served — they matched, but
+the browser was still executing old cached JS. Robust fix: serve on a **new port** after every
+rebuild (a different origin has no cache to be stale), or add `Cache-Control: no-store` (included
+in the server above) and open a **brand-new tab** rather than reusing/reloading an existing one —
+`browser_tabs`/`new tab` in Playwright, or a plain new browser tab for manual testing.
+
+## 4. Automated E2E test (optional, real)
+
+`integration_test/staff_sign_in_e2e_test.dart` drives the real `StaffSignInScreen` end-to-end
+(sign in → Admin shell → open Customers → sign out) via `WidgetTester`, against the real running
+emulators — no mocks. On Web this needs `flutter drive`, which needs a local WebDriver server:
+
+```bash
+npx --yes chromedriver --port=4444 &        # any chromedriver matching your installed Chrome works
+flutter drive --driver=test_driver/integration_test.dart \
+  --target=integration_test/staff_sign_in_e2e_test.dart \
+  -d web-server --browser-name=chrome
+```
+
+## PowerShell version (Windows-computer operator, single copyable sequence)
+
+Everything above works identically from Windows PowerShell (5.1). The one difference: PowerShell
+uses `$env:NAME = 'value'` instead of `export NAME=value`, and `Start-Process`/background jobs
+instead of `&`. Run each block from the repository root (`C:\Projects\abakus_one_v2`).
+
+```powershell
+# 1. Start the emulators (separate window/job — this blocks until stopped)
+$env:PATH = "C:\path\to\jdk-21\bin;$env:PATH"        # any JDK 21+
+$env:GOOGLE_MAPS_PROVIDER_MODE = "fixture"
+firebase emulators:start --only firestore,functions,auth,storage --project abakus-one-dev
+```
+
+```powershell
+# 2. In a second window, once step 1 shows no more "!" warnings — seed deterministic data
+Set-Location functions
+$env:FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080"
+$env:FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099"
+$env:GCLOUD_PROJECT = "abakus-one-dev"
+node scripts/seed_local_admin.js
+Set-Location ..
+```
+
+```powershell
+# 3. Build and serve the Web app (--profile, not --release — see "Which build mode" above)
+flutter build web --profile
+node "<path-to-static_serve.js-from-this-doc>" build\web 8900
+```
+
+Open a **fresh** browser tab at `http://127.0.0.1:8900/#/admin` and sign in with
+`kasiyer@abakus.test` / `GorselKabul2026!` (or `yonetici@abakus.test` for the manager view, or
+`http://127.0.0.1:8900/#/platform` with `sahip@abakus.test` for the Platform Owner console — same
+password for all three). Verified reaching the real Admin shell, exactly as documented above.
+
+```powershell
+# 4. Stop everything (Ctrl+C in each window, or):
+Get-Process node, firebase, chrome -ErrorAction SilentlyContinue | Where-Object {
+  $_.MainWindowTitle -match "abakus|emulator|firebase" -or $_.Path -match "abakus_one_v2"
+} | Stop-Process -Force -ErrorAction SilentlyContinue
+```
+
+**Note on step 4**: the filter above is deliberately conservative (matches by path/window title, not
+a blanket `Stop-Process -Name node`) — this machine may be running unrelated Node/Chrome processes
+you do not want to kill. Prefer `Ctrl+C` in each foreground window when possible; use the filtered
+command only for a background/job-based setup.
+
+## Known blockers
+
+**Windows: staff sign-in cannot complete at all — a real, narrow, upstream platform-support gap, not
+a bug in this app, and not something to describe as categorically "impossible."**
+`cloud_functions` package version 6.3.6's own `pubspec.yaml` declares platform support for
+`android`/`ios`/`macos`/`web` only — confirmed independently via
 `windows/flutter/generated_plugin_registrant.cc`, which genuinely does not register a Windows
-implementation for `cloud_functions` (nor `firebase_crashlytics`/`firebase_messaging` — only
-`firebase_app_check`/`firebase_auth`/`firebase_core`/`firebase_remote_config`/`firebase_storage` are
-registered for Windows). Since staff sign-in requires the `syncOwnStaffClaims` Cloud Functions
-callable, it cannot succeed on Windows regardless of any app-level code change. Reproduced via
-`integration_test/staff_sign_in_e2e_test.dart -d windows`, which fails fast (in ~2s, not a hang —
-this session's own timeout fix, described below, is what makes it fail fast instead of hanging) with:
+implementation for `cloud_functions`. Staff sign-in needs the `syncOwnStaffClaims` callable, so it
+cannot succeed on Windows with this plugin version. A Windows-native REST/HTTP adapter for
+`https.onCall` is architecturally possible (the protocol is documented) but is deliberately not the
+chosen path for this closure — Web is the sanctioned Windows-computer path. Reproduced via
+`integration_test/staff_sign_in_e2e_test.dart -d windows`, which fails fast (~2s) with:
 `[firebase_functions/unknown] Unable to establish connection on channel:
 "dev.flutter.pigeon.cloud_functions_platform_interface.CloudFunctionsHostApi.call"`.
 
-**Web: staff sign-in still hangs indefinitely, for a deeper reason than the bug this pass fixed.**
-Web IS a declared-supported `cloud_functions` platform, so this is not the same class of problem as
-Windows. This session found and fixed a real bug (`FirebaseStaffAuthRepository` had no bounded
-timeout anywhere and `StaffSignInScreen._signIn` had no `try`/`catch`, so ANY failure hung the UI
-forever with no error) — but even with that fix in place (a 20-second `.timeout()` on every
-network-dependent step), a real sign-in attempt against the local emulator via a release Web build
-still shows the loading spinner indefinitely, past 40+ real seconds, with the "zaman aşımı" error
-text never appearing. Diagnostic investigation this session found that even an unrelated, purely
-local `setState` (tapping the "İlk yönetici hesabını oluştur" link, which does nothing but flip a
-boolean) also stopped responding during the same hang — meaning the underlying issue with the actual
-credentials-and-claims request is not a plain unresolved Dart `Future.timeout()` was able to observe;
-it looks like the whole rendering isolate stalls before that Timer runs. The exact upstream cause was
-not identified within this session's time budget. This is a real, open, disclosed technical gap —
-not something this runbook or the current code can talk you past. If Android/iOS device or emulator
-access becomes available, sign-in should be re-attempted there next — `cloud_functions` genuinely
-supports both, and neither of the two structural blockers above applies.
+## The organization-id bug (found and fixed, Wave 4)
 
-**Net effect**: seeding is fully reproducible and verified end-to-end; a real, complete staff sign-in
-through the actual running app is not achievable in this environment as of this writing.
+An earlier wave's `seed_local_admin.js` seeded its fixture tenant under a self-invented
+`org-${RUN_ID}` (`org-ap3vis`) instead of the app's actual hardcoded single-tenant organization id,
+`kSingleTenantOrganizationId = 'org-1'` (`lib/core/config/current_organization.dart` — the same
+constant the real backend, `functions/src/completeCustomerProfile.ts`'s
+`SINGLE_TENANT_ORGANIZATION_ID`, uses). `FirebaseStaffAuthRepository._organizationId()` always
+resolves to `'org-1'`, so `claims.rolesFor('org-1')` was always empty despite a fully successful
+sign-in + claims sync — `ActorSession.tryFromRaw` correctly failed closed, surfacing as "Giriş
+başarısız. Bilgilerinizi kontrol edin." **This was misdiagnosed in earlier waves as a Web-specific
+rendering isolate stall** (a separate, unrelated Playwright interaction-timing artifact — a
+too-fast click+type sequence that silently failed to land in a form field — produced a superficially
+similar symptom during that investigation). Fixed by seeding under `'org-1'`; verified end-to-end
+per step 3 above.
+
+**Net effect**: seeding and a real, complete Web staff sign-in are both fully reproducible and
+verified end-to-end as of this writing. Windows remains blocked for the documented, narrow platform
+reason above.

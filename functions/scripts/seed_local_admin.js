@@ -116,7 +116,17 @@ async function signUpAnonymously() {
 // staff/guest fixtures rather than accumulating a new set every time,
 // which is what makes this safe to rerun idempotently.
 const RUN_ID = 'ap3vis';
-const ORG_ID = `org-${RUN_ID}`;
+// The app's Flutter client hardcodes the single-tenant organization id as
+// `'org-1'` (`kSingleTenantOrganizationId`, lib/core/config/
+// current_organization.dart) — the same constant the backend's own
+// `SINGLE_TENANT_ORGANIZATION_ID` (functions/src/completeCustomerProfile.ts)
+// uses. Seeding under any other organization id (a prior `org-${RUN_ID}`
+// here) produces real, correctly-synced staff claims that the client can
+// never look up, since `_organizationId()` always resolves to `'org-1'` —
+// confirmed root cause of "Giriş başarısız" despite a successful sign-in +
+// claims sync. Restaurant/branch/product ids stay RUN_ID-scoped since
+// nothing client-side hardcodes those; only the organization id must match.
+const ORG_ID = 'org-1';
 const RESTAURANT_ID = `restaurant-${RUN_ID}`;
 const BRANCH_ID = `branch-${RUN_ID}`;
 const PRODUCT_A = `product-${RUN_ID}-bowl`;
@@ -176,6 +186,16 @@ async function main() {
   const tableSessionId = `tsess-${RUN_ID}`;
   await db.collection('restaurantTables').doc(availableTableId).set({
     organizationId: ORG_ID, restaurantId: RESTAURANT_ID, branchId: BRANCH_ID, activeTableSessionId: null, isActive: true, status: 'available',
+    displayName: 'Masa 1', branchDisplayName: 'Abaküs Merkez',
+  });
+  // AP-3 — a real, active `tableQrCodes` token for the available table, so
+  // the customer QR deep-link entry route (`/table/:token`,
+  // `TableGuestEntryScreen`) has a genuine `valid` preview to open against,
+  // matching `resolveTableQrTokenInternal`'s exact schema
+  // (functions/src/qrTokenResolution.ts).
+  const availableTableQrToken = `qrtoken-${RUN_ID}-available`;
+  await db.collection('tableQrCodes').doc(availableTableQrToken).set({
+    opaqueToken: availableTableQrToken, tableId: availableTableId, status: 'active', expiresAt: null,
   });
   await db.collection('restaurantTables').doc(occupiedTableId).set({
     organizationId: ORG_ID, restaurantId: RESTAURANT_ID, branchId: BRANCH_ID, activeTableSessionId: tableSessionId, isActive: true, status: 'occupied',

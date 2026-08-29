@@ -36,6 +36,7 @@ import '../widgets/admin_coming_soon_view.dart';
 import '../widgets/admin_context_gate.dart';
 import '../widgets/module_readiness_gate.dart';
 import '../providers/admin_dependencies_provider.dart';
+import '../providers/staff_session_controller.dart';
 import 'admin_overview_screen.dart';
 import 'admin_session_expired_screen.dart';
 import 'admin_unauthorized_screen.dart';
@@ -772,6 +773,12 @@ class _TopBar extends ConsumerWidget implements PreferredSizeWidget {
               ],
             ],
           ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.logout_outlined,
+              color: AppColors.textSecondary),
+          tooltip: 'Çıkış Yap',
+          onPressed: () => ref.read(staffSessionControllerProvider).signOut(),
         ),
       ],
     );
