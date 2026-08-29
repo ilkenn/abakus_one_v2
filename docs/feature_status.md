@@ -5221,3 +5221,55 @@ a second, undiagnosed cause remains open — not resolved by this pass.
 Full regression after the fix: `flutter analyze` 0 issues, `flutter test` 3579 passing (3577 + 2 new).
 Backend suites not rerun — no backend file changed this pass; this session's earlier fresh results
 stand. Secret scan and `git diff --check` clean.
+
+**AP-3 DESKTOP ACCESS UNBLOCK — Web sign-in root-caused and fixed, QR deep-link added, Android
+diagnosed-and-documented-blocked (2026-08-28/29; full detail in `docs/visual_evidence/ap3/README.md`'s
+"WAVE 4" sections).** The "Web sign-in hangs indefinitely" finding from the prior entry was itself
+misdiagnosed: real root cause was `functions/scripts/seed_local_admin.js` seeding its fixture tenant
+under a self-invented `org-ap3vis` instead of the app's actual hardcoded single-tenant organization id
+(`kSingleTenantOrganizationId = 'org-1'`, `lib/core/config/current_organization.dart`) — sign-in
+genuinely succeeded end-to-end (auth + claims sync) but `ActorSession` correctly failed closed on empty
+role claims for the wrong org id. Fixed by seeding under `org-1`; verified twice — manually via
+Playwright, and via a real, automated, browser-driven `flutter drive` run (`integration_test/
+staff_sign_in_e2e_test.dart`, extended to also open Customers and sign out) against real Chrome +
+chromedriver + real local emulators, which now reports "All tests passed."
+
+A second real gap fixed along the way: `AdminShellScreen` had no sign-out UI at all despite
+`StaffSessionController.signOut()` already existing — added a `Çıkış Yap` `IconButton`, verified
+working (clears session, returns to `AdminUnauthorizedScreen`).
+
+**Customer QR non-camera deep-link entry (Section 5) — implemented and tested.** New
+`AppRoutes.tableGuestPrefix` (`/table/:token`), a matching `AppRouteGuard` bypass, and
+`TableGuestEntryScreen` (`lib/features/qr/presentation/screens/table_guest_entry_screen.dart`) —
+mirrors `TakeawayGuestEntryScreen`'s existing preview-then-confirm shape, reuses the exact same
+server-authoritative `TableGuestSessionGateway`/`OpenTableGuestSessionFromQrScan` the camera-based
+`QrScannerScreen` already uses. 24 new passing tests. Manually verified end-to-end in a fresh browser
+tab: a real seeded `tableQrCodes` token resolves to a real preview, confirming opens a real
+`openTableGuestSession` session and lands on the real dine-in `MenuScreen`.
+
+**Android emulator/POS visual evidence — investigated concretely, confirmed blocked by a system-level
+issue, not a code defect.** The `Pixel_7` AVD exists and its hypervisor (AEHD) reports "installed and
+usable," but the guest VM never actually executes after `AEHD is operational` prints — confirmed via
+near-zero CPU-time growth across two independently-configured (windowed host-GPU, then headless
+swiftshader) multi-minute boot attempts. The emulator's own log explicitly names the likely cause:
+"Vanguard anti-cheat software is detected on your system. It is known to have compatibility issues with
+Android emulator." Disabling system-wide anti-cheat software is outside what this pass does
+unilaterally — flagged for the user to decide. Items 1–9 of the 14-screenshot requirement, and the
+Android trusted-device/POS E2E, remain blocked for this one, disclosed reason.
+
+**Visual evidence: 8/14** (up from 2/14) — Admin shell overview, QR deep-link preview + session-opened,
+tenant Admin Customer Directory, Platform Owner Customer Directory, and the real Web POS fail-closed
+screen (`TrustedDeviceStatusScreen`'s "Bu Platform Desteklenmiyor," not the `/admin` route-guard state
+the prior wave substituted) are now real, captured, and verified — see the README for the full table.
+
+**Full fresh gates** (Section 8, not reused from any prior pass): `flutter analyze` clean; `flutter
+test` 3604/3604; Functions build clean; Functions emulator suite 1848/1856 in one full run, with the 8
+failures re-verified 87/87 clean in isolation (confirmed full-suite-only cumulative-load flakiness,
+matching the precedent `docs/decisions.md`'s 2026-08-24 entry already documented — not a regression,
+not touching any file this session modified); Firestore Rules 399/399; Storage Rules 35/35; secret scan
+and `git diff --check` clean. A genuine, separate infrastructure issue was found and worked around
+while producing these numbers — the system's global Node.js had drifted to v24 against this project's
+pinned `engines: {node: "20"}` — documented in full in the README rather than silently patched around.
+
+AP-3 remains open: 14/14 visual evidence and the Android trusted-device/POS E2E are both blocked by the
+single Android-emulator/Vanguard finding above.

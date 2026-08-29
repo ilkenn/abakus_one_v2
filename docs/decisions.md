@@ -18152,3 +18152,40 @@ not rerun — no backend file changed in this pass (verified via `git status` ag
 **Status**: visual acceptance — ATTEMPTED, PARTIAL (2/14), both blockers disclosed in full, one real
 bug found and fixed as a direct result of the attempt. AP-3 overall: still not fully closed — see this
 session's closure report for the exact final tag block.
+
+## ADR-042 — AP-3 Desktop Access Unblock: Web sign-in root cause, QR deep-link, Android environment
+finding (2026-08-28/29)
+
+**Decision**: the "Web sign-in hangs indefinitely" finding ADR-041 recorded was misdiagnosed — real
+root cause was a seed-fixture organization-id mismatch (`functions/scripts/seed_local_admin.js` seeded
+under a self-invented `org-ap3vis` instead of the app's hardcoded single-tenant `'org-1'`), not an
+isolate-level defect. Fixed; verified twice (manual Playwright, and an automated `flutter drive` run
+against real Chrome + chromedriver + real emulators — "All tests passed."). Full detail, including the
+"how this was misdiagnosed" analysis, lives in `docs/visual_evidence/ap3/README.md`'s "WAVE 4" sections
+— not duplicated here.
+
+**Decision**: added a second, non-camera entry point for dine-in table QR sessions
+(`AppRoutes.tableGuestPrefix`, `/table/:token`, `TableGuestEntryScreen`) — mirrors the existing Gel Al
+`/takeaway/:token` pattern exactly, reuses the same server-authoritative gateway/use case the
+camera-based `QrScannerScreen` already uses. This is a new customer-facing route, not an architecture
+change to any existing flow — flagged here per §15 for the record, not because it required a design
+trade-off.
+
+**Finding, not a decision**: the Android emulator (`Pixel_7` AVD) cannot be used in this environment —
+its hypervisor (AEHD) reports itself as usable, but the guest VM never executes, matching the
+emulator's own logged Vanguard anti-cheat compatibility warning. This blocks AP-3's remaining
+Android-only visual evidence (items 1–9 of 14) and the Android trusted-device/POS E2E. No code fix
+exists for this — it requires a user decision (disable/uninstall the conflicting anti-cheat software,
+or accept this scope as blocked). Not attempted unilaterally, consistent with this project's standing
+rule against destructive/system-level changes without explicit authorization.
+
+**Finding, not a decision**: the system's global Node.js had drifted to v24.18.0 against
+`functions/package.json`'s pinned `"engines": {"node": "20"}`, with no Node 20 or version manager
+present. Worked around for this session's own gate-running by downloading a portable Node 20 build into
+the scratch directory (never touching the system's global Node install) — not a project configuration
+change, disclosed for whoever next needs to reproduce a clean backend gate run on this machine.
+
+**Status**: AP-3 still not closed — 14/14 visual evidence and the Android E2E both remain blocked by
+the single Android/Vanguard finding above. Every other AP-3 requirement this wave addressed (Web
+sign-in, QR deep-link, sign-out UI, full fresh gates) is genuinely complete — see the closure report's
+tag block for the precise, honest final state.
