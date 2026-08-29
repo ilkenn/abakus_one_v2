@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/layout/app_breakpoints.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -139,210 +140,224 @@ class _PosTableWorkspaceScreenState
       return const LoadingView(message: 'Masa yükleniyor...');
     }
 
-    return Row(
-      children: [
-        Expanded(
-          flex: 3,
-          child: _CenterPane(
-            organizationId: ctx.organizationId,
-            view: view,
-            busy: _busy,
-            actionError: _actionError,
-            onAcceptReject: (orderId, lineIndex, accept) => _runAction(
-              () => ref.read(posActionGatewayProvider).respondToOrderLines(
-                orderId: orderId,
-                decisions: [(lineIndex: lineIndex, accept: accept)],
-              ),
+    final centerPane = _CenterPane(
+      organizationId: ctx.organizationId,
+      view: view,
+      busy: _busy,
+      actionError: _actionError,
+      onAcceptReject: (orderId, lineIndex, accept) => _runAction(
+        () => ref.read(posActionGatewayProvider).respondToOrderLines(
+          orderId: orderId,
+          decisions: [(lineIndex: lineIndex, accept: accept)],
+        ),
+      ),
+      onPropose: (orderId, lineIndex, productId, quantity, reasonCode,
+              reasonMessage) =>
+          _runAction(
+        () => ref.read(posActionGatewayProvider).proposeLineReplacement(
+              ctx: ctx,
+              orderId: orderId,
+              lineIndex: lineIndex,
+              proposedProductId: productId,
+              proposedQuantity: quantity,
+              reasonCode: reasonCode,
+              reasonMessage: reasonMessage,
             ),
-            onPropose: (orderId, lineIndex, productId, quantity, reasonCode,
-                    reasonMessage) =>
-                _runAction(
-              () => ref.read(posActionGatewayProvider).proposeLineReplacement(
-                    ctx: ctx,
-                    orderId: orderId,
-                    lineIndex: lineIndex,
-                    proposedProductId: productId,
-                    proposedQuantity: quantity,
-                    reasonCode: reasonCode,
-                    reasonMessage: reasonMessage,
-                  ),
-            ),
-            onStaffEntry: (subAccountSelection, productId, quantity) =>
-                _runAction(
-              () => ref.read(posActionGatewayProvider).submitStaffEntryOrder(
+      ),
+      onStaffEntry: (subAccountSelection, productId, quantity) => _runAction(
+        () => ref.read(posActionGatewayProvider).submitStaffEntryOrder(
+          ctx: ctx,
+          tableId: tableId,
+          subAccountSelection: subAccountSelection,
+          items: [
+            {
+              'kind': 'product',
+              'productId': productId,
+              'quantity': quantity,
+              'selectedModifiers': <Map<String, String>>[],
+              'note': '',
+            },
+          ],
+        ),
+      ),
+      onCancelRequest: (orderId, lineIndex, reasonCode, reasonMessage) =>
+          _runAction(
+        () =>
+            ref.read(posActionGatewayProvider).requestAcceptedLineCancellation(
+                  ctx: ctx,
+                  orderId: orderId,
+                  lineIndex: lineIndex,
+                  reasonCode: reasonCode,
+                  reasonMessage: reasonMessage,
+                ),
+      ),
+    );
+
+    final checkPanel = _CheckPanel(
+      ctx: ctx,
+      view: view,
+      checkId: _openedCheckId,
+      busy: _busy,
+      actionError: _actionError,
+      onOpenCheck: () async {
+        final tableSessionId = view.tableSessionId;
+        if (tableSessionId == null) return;
+        final checkId = await _runAction(
+          () => ref.read(posActionGatewayProvider).openCheck(
                 ctx: ctx,
-                tableId: tableId,
-                subAccountSelection: subAccountSelection,
-                items: [
-                  {
-                    'kind': 'product',
-                    'productId': productId,
-                    'quantity': quantity,
-                    'selectedModifiers': <Map<String, String>>[],
-                    'note': '',
-                  },
-                ],
+                tableSessionId: tableSessionId,
               ),
-            ),
-            onCancelRequest: (orderId, lineIndex, reasonCode, reasonMessage) =>
-                _runAction(
-              () => ref
-                  .read(posActionGatewayProvider)
-                  .requestAcceptedLineCancellation(
-                    ctx: ctx,
-                    orderId: orderId,
-                    lineIndex: lineIndex,
-                    reasonCode: reasonCode,
-                    reasonMessage: reasonMessage,
-                  ),
-            ),
-          ),
-        ),
-        Container(width: 1, color: AppColors.border),
-        Expanded(
-          flex: 2,
-          child: _CheckPanel(
-            ctx: ctx,
-            view: view,
-            checkId: _openedCheckId,
-            busy: _busy,
-            actionError: _actionError,
-            onOpenCheck: () async {
-              final tableSessionId = view.tableSessionId;
-              if (tableSessionId == null) return;
-              final checkId = await _runAction(
-                () => ref.read(posActionGatewayProvider).openCheck(
-                      ctx: ctx,
-                      tableSessionId: tableSessionId,
-                    ),
+        );
+        if (checkId != null) setState(() => _openedCheckId = checkId);
+      },
+      onSplit: (subAccountId, sourceOrderId, sourceLineIndex, mode) async {
+        final gateway = ref.read(posActionGatewayProvider);
+        final checkId = _openedCheckId;
+        if (checkId == null) return;
+        await _runAction(() {
+          switch (mode) {
+            case 'product':
+              return gateway.splitByProduct(
+                ctx: ctx,
+                checkId: checkId,
+                subAccountId: subAccountId,
+                sourceOrderId: sourceOrderId,
+                sourceLineIndex: sourceLineIndex,
               );
-              if (checkId != null) setState(() => _openedCheckId = checkId);
-            },
-            onSplit:
-                (subAccountId, sourceOrderId, sourceLineIndex, mode) async {
-              final gateway = ref.read(posActionGatewayProvider);
-              final checkId = _openedCheckId;
-              if (checkId == null) return;
-              await _runAction(() {
-                switch (mode) {
-                  case 'product':
-                    return gateway.splitByProduct(
-                      ctx: ctx,
-                      checkId: checkId,
-                      subAccountId: subAccountId,
-                      sourceOrderId: sourceOrderId,
-                      sourceLineIndex: sourceLineIndex,
-                    );
-                  case 'customer':
-                    return gateway.splitByCustomer(
-                      ctx: ctx,
-                      checkId: checkId,
-                      subAccountId: subAccountId,
-                    );
-                  default:
-                    throw StateError('Unknown split mode $mode');
-                }
-              });
-            },
-            onQuantitySplit:
-                (subAccountId, sourceOrderId, sourceLineIndex, quantity) async {
-              final checkId = _openedCheckId;
-              if (checkId == null) return;
-              await _runAction(
-                () => ref.read(posActionGatewayProvider).splitByQuantity(
-                      ctx: ctx,
-                      checkId: checkId,
-                      subAccountId: subAccountId,
-                      sourceOrderId: sourceOrderId,
-                      sourceLineIndex: sourceLineIndex,
-                      quantity: quantity,
-                    ),
+            case 'customer':
+              return gateway.splitByCustomer(
+                ctx: ctx,
+                checkId: checkId,
+                subAccountId: subAccountId,
               );
-            },
-            onFreeAmountSplit: (subAccountId, sourceOrderId, sourceLineIndex,
-                amountMinorUnits) async {
-              final checkId = _openedCheckId;
-              if (checkId == null) return;
-              await _runAction(
-                () => ref.read(posActionGatewayProvider).splitFreeAmount(
-                      ctx: ctx,
-                      checkId: checkId,
-                      subAccountId: subAccountId,
-                      amountMinorUnits: amountMinorUnits,
-                      sourceOrderId: sourceOrderId,
-                      sourceLineIndex: sourceLineIndex,
-                    ),
+            default:
+              throw StateError('Unknown split mode $mode');
+          }
+        });
+      },
+      onQuantitySplit:
+          (subAccountId, sourceOrderId, sourceLineIndex, quantity) async {
+        final checkId = _openedCheckId;
+        if (checkId == null) return;
+        await _runAction(
+          () => ref.read(posActionGatewayProvider).splitByQuantity(
+                ctx: ctx,
+                checkId: checkId,
+                subAccountId: subAccountId,
+                sourceOrderId: sourceOrderId,
+                sourceLineIndex: sourceLineIndex,
+                quantity: quantity,
+              ),
+        );
+      },
+      onFreeAmountSplit: (subAccountId, sourceOrderId, sourceLineIndex,
+          amountMinorUnits) async {
+        final checkId = _openedCheckId;
+        if (checkId == null) return;
+        await _runAction(
+          () => ref.read(posActionGatewayProvider).splitFreeAmount(
+                ctx: ctx,
+                checkId: checkId,
+                subAccountId: subAccountId,
+                amountMinorUnits: amountMinorUnits,
+                sourceOrderId: sourceOrderId,
+                sourceLineIndex: sourceLineIndex,
+              ),
+        );
+      },
+      onHeadcountSplit: (subAccountIds) async {
+        final checkId = _openedCheckId;
+        if (checkId == null) return;
+        await _runAction(
+          () => ref.read(posActionGatewayProvider).splitEqualByHeadcount(
+                ctx: ctx,
+                checkId: checkId,
+                subAccountIds: subAccountIds,
+              ),
+        );
+      },
+      onRequestAdjustment: ({
+        required scope,
+        allocationId,
+        subAccountId,
+        required adjustmentType,
+        percentageBasisPoints,
+        fixedAmountMinorUnits,
+        required reasonCode,
+        required reasonMessage,
+      }) async {
+        final checkId = _openedCheckId;
+        if (checkId == null) return;
+        await _runAction(
+          () => ref
+              .read(posActionGatewayProvider)
+              .requestCheckFinancialAdjustment(
+                ctx: ctx,
+                checkId: checkId,
+                scope: scope,
+                allocationId: allocationId,
+                subAccountId: subAccountId,
+                adjustmentType: adjustmentType,
+                percentageBasisPoints: percentageBasisPoints,
+                fixedAmountMinorUnits: fixedAmountMinorUnits,
+                reasonCode: reasonCode,
+                reasonMessage: reasonMessage,
+              ),
+        );
+      },
+      onFinalize: () => _runAction(
+        () {
+          final checkId = _openedCheckId;
+          if (checkId == null) return Future.value();
+          return ref
+              .read(posActionGatewayProvider)
+              .finalizeCheckReadyForPayment(
+                ctx: ctx,
+                checkId: checkId,
               );
-            },
-            onHeadcountSplit: (subAccountIds) async {
-              final checkId = _openedCheckId;
-              if (checkId == null) return;
-              await _runAction(
-                () => ref.read(posActionGatewayProvider).splitEqualByHeadcount(
-                      ctx: ctx,
-                      checkId: checkId,
-                      subAccountIds: subAccountIds,
-                    ),
-              );
-            },
-            onRequestAdjustment: ({
-              required scope,
-              allocationId,
-              subAccountId,
-              required adjustmentType,
-              percentageBasisPoints,
-              fixedAmountMinorUnits,
-              required reasonCode,
-              required reasonMessage,
-            }) async {
-              final checkId = _openedCheckId;
-              if (checkId == null) return;
-              await _runAction(
-                () => ref
-                    .read(posActionGatewayProvider)
-                    .requestCheckFinancialAdjustment(
-                      ctx: ctx,
-                      checkId: checkId,
-                      scope: scope,
-                      allocationId: allocationId,
-                      subAccountId: subAccountId,
-                      adjustmentType: adjustmentType,
-                      percentageBasisPoints: percentageBasisPoints,
-                      fixedAmountMinorUnits: fixedAmountMinorUnits,
-                      reasonCode: reasonCode,
-                      reasonMessage: reasonMessage,
-                    ),
-              );
-            },
-            onFinalize: () => _runAction(
-              () {
-                final checkId = _openedCheckId;
-                if (checkId == null) return Future.value();
-                return ref
-                    .read(posActionGatewayProvider)
-                    .finalizeCheckReadyForPayment(
-                      ctx: ctx,
-                      checkId: checkId,
-                    );
-              },
+        },
+      ),
+      onTransfer: (targetTableId) => _runAction(
+        () => ref.read(posActionGatewayProvider).transferTable(
+              ctx: ctx,
+              sourceTableId: tableId,
+              targetTableId: targetTableId,
             ),
-            onTransfer: (targetTableId) => _runAction(
-              () => ref.read(posActionGatewayProvider).transferTable(
-                    ctx: ctx,
-                    sourceTableId: tableId,
-                    targetTableId: targetTableId,
-                  ),
+      ),
+      onMerge: (targetTableId) => _runAction(
+        () => ref.read(posActionGatewayProvider).mergeTables(
+              ctx: ctx,
+              sourceTableId: tableId,
+              targetTableId: targetTableId,
             ),
-            onMerge: (targetTableId) => _runAction(
-              () => ref.read(posActionGatewayProvider).mergeTables(
-                    ctx: ctx,
-                    sourceTableId: tableId,
-                    targetTableId: targetTableId,
-                  ),
-            ),
-          ),
-        ),
-      ],
+      ),
+    );
+
+    // Phone-width devices (AP-3 physical-device finding): the canonical
+    // side-by-side 3:2 split assumes POS-hardware/tablet width and produces
+    // unreadably narrow columns (character-per-line text wrap) below
+    // [AppBreakpoints.tablet] — stack the two panes instead, each full-width
+    // and independently scrollable. Tablet/desktop/POS-hardware keeps the
+    // original side-by-side layout unchanged.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < AppBreakpoints.tablet) {
+          return Column(
+            children: [
+              Expanded(child: centerPane),
+              Container(height: 1, color: AppColors.border),
+              Expanded(child: checkPanel),
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(flex: 3, child: centerPane),
+            Container(width: 1, color: AppColors.border),
+            Expanded(flex: 2, child: checkPanel),
+          ],
+        );
+      },
     );
   }
 }
@@ -679,53 +694,75 @@ class _LineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasActions = onAccept != null ||
+        onReject != null ||
+        onPropose != null ||
+        onCancelRequest != null;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text('${line.quantity}x ${line.productName}',
-                style: AppTypography.bodyMedium),
+          Row(
+            children: [
+              Expanded(
+                child: Text('${line.quantity}x ${line.productName}',
+                    style: AppTypography.bodyMedium),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _statusColor.withValues(alpha: 0.12),
+                  borderRadius: AppRadius.kPill,
+                ),
+                child: Text(
+                  _statusLabel,
+                  style: AppTypography.bodySmall.copyWith(
+                      color: _statusColor, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.sm, vertical: 2),
-            decoration: BoxDecoration(
-              color: _statusColor.withValues(alpha: 0.12),
-              borderRadius: AppRadius.kPill,
-            ),
-            child: Text(
-              _statusLabel,
-              style: AppTypography.bodySmall
-                  .copyWith(color: _statusColor, fontWeight: FontWeight.bold),
-            ),
-          ),
-          if (onAccept != null)
-            IconButton(
-              icon: const Icon(Icons.check_circle_outline,
-                  color: AppColors.primary),
-              tooltip: 'Kabul Et',
-              onPressed: onAccept,
-            ),
-          if (onReject != null)
-            IconButton(
-              icon: const Icon(Icons.cancel_outlined, color: AppColors.error),
-              tooltip: 'Reddet',
-              onPressed: onReject,
-            ),
-          if (onPropose != null)
-            IconButton(
-              icon:
-                  const Icon(Icons.swap_horiz_rounded, color: AppColors.accent),
-              tooltip: 'Değişiklik Öner',
-              onPressed: onPropose,
-            ),
-          if (onCancelRequest != null)
-            IconButton(
-              icon: const Icon(Icons.remove_circle_outline,
-                  color: AppColors.error),
-              tooltip: 'İptal Talebi Gönder',
-              onPressed: onCancelRequest,
+          // A narrow phone screen doesn't have room for up to four
+          // IconButtons on the same row as the product name/status pill
+          // (AP-3 physical-device finding — squeezed the name down to a
+          // character-per-line wrap). A `Wrap` lets them flow onto their
+          // own line instead, unlike the previous `Row`, which never
+          // shrank them.
+          if (hasActions)
+            Wrap(
+              alignment: WrapAlignment.end,
+              children: [
+                if (onAccept != null)
+                  IconButton(
+                    icon: const Icon(Icons.check_circle_outline,
+                        color: AppColors.primary),
+                    tooltip: 'Kabul Et',
+                    onPressed: onAccept,
+                  ),
+                if (onReject != null)
+                  IconButton(
+                    icon: const Icon(Icons.cancel_outlined,
+                        color: AppColors.error),
+                    tooltip: 'Reddet',
+                    onPressed: onReject,
+                  ),
+                if (onPropose != null)
+                  IconButton(
+                    icon: const Icon(Icons.swap_horiz_rounded,
+                        color: AppColors.accent),
+                    tooltip: 'Değişiklik Öner',
+                    onPressed: onPropose,
+                  ),
+                if (onCancelRequest != null)
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline,
+                        color: AppColors.error),
+                    tooltip: 'İptal Talebi Gönder',
+                    onPressed: onCancelRequest,
+                  ),
+              ],
             ),
         ],
       ),
