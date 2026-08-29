@@ -44,6 +44,20 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- AP-3 — custom-scheme deep link so a real device/emulator can reach a
+                 go_router path (e.g. `/admin`) from outside the app (adb, QA), the same way
+                 a Web build reaches it via `#/admin` in the URL bar. Every in-app route
+                 transition beyond the entry flow is still a raw Navigator.push (CLAUDE.md
+                 §3) — this does not change that; it only gives the OS an entry point into
+                 the go_router routes that already exist (`/admin`, `/platform`). Flutter's
+                 engine forwards the Intent's data URI to go_router automatically; no Dart
+                 code change is needed. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="abakusone"/>
+            </intent-filter>
         </activity>
         <!-- Faz P.2.1 — Google Maps SDK for Android. The value is a Gradle
              manifest placeholder (never a literal key in source control),

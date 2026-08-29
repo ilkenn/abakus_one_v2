@@ -24,7 +24,13 @@ dependencies:
     sdk: flutter
   flutter_map: ^8.3.1
   flutter_riverpod: ^2.5.1
-  flutter_secure_storage: ^11.0.0
+  # Pinned below ^11.0.0 (AP-3): 11.0.0 raised its Android compileSdk requirement to 37, which
+  # exceeds this project's Android Gradle Plugin 9.0.1 ceiling (max recommended compileSdk 36) —
+  # confirmed via a real `:app:checkDevelopmentProfileAarMetadata` build failure, not guessed.
+  # 10.3.1 has no API this codebase uses from 11.0.0's breaking changes (encryptedSharedPreferences/
+  # sharedPreferencesName removal, RSA_ECB_PKCS1Padding/AES_CBC_PKCS7Padding removal) — verified via
+  # a repo-wide search finding zero references to any of them.
+  flutter_secure_storage: ">=10.3.1 <11.0.0"
   geolocator: ^14.0.3
   go_router: ^17.3.0
   google_maps_flutter: ^2.18.0

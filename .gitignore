@@ -93,3 +93,7 @@ scripts/blender/output/
 # gitignored via android/.gitignore). Copy from the committed
 # ApiKeys.xcconfig.example template, never commit the real file.
 ios/Flutter/ApiKeys.xcconfig
+
+# Playwright MCP's own screenshot/session output (AP-3 visual driving) —
+# regenerated on every browser automation run, never source.
+.playwright-mcp/
