@@ -821,3 +821,167 @@ Run 2: tests 1856, pass 1856, fail 0, duration_ms 847124
 ```
 
 `FUNCTIONS_FULL_SUITE_PASSED=YES`, `FUNCTIONS_FULL_SUITE_REPEAT_PASSED=YES`.
+
+---
+
+## WAVE 6 — real physical Android device, real POS flow, two real UI bugs found and fixed
+
+A real, ADB-authorized physical Android phone (`zdp7beibzd9hnrdu`, Xiaomi/Redmi/POCO codename
+`emerald`, model `23117RA68G`, Android 16/API 36, `android-arm64`) was connected and used for the
+entire remainder of AP-3's required Android evidence — no emulator, no system changes, no Vanguard/
+hypervisor/Windows-Features involvement of any kind, matching Wave 5's constraint even though the
+blocker that made Wave 5 stop (no physical device available) no longer applied.
+
+### Real build blocker found and fixed: `flutter_secure_storage` vs this project's AGP ceiling
+
+`flutter run -d <device> --profile` failed on **every** Android target (not just this device) with a
+real Gradle error, never reached before because no prior wave got far enough into an actual Android app
+build to hit it:
+
+```
+Dependency ':flutter_secure_storage' requires ... compile against version 37 or later ... :app is
+currently compiled against android-36 ... the maximum recommended compile SDK version for Android
+Gradle plugin 9.0.1 is 36.
+```
+
+Root cause, confirmed directly (not guessed): `flutter_secure_storage` `11.0.0` (the version
+`pubspec.yaml`'s `^11.0.0` constraint resolved to) raised its Android `compileSdk` requirement to 37
+solely because "Flutter 3.35 raised its own Android minimum to API 24" (its own CHANGELOG) — nothing
+this app uses required API 37. This project's Android Gradle Plugin (`9.0.1`, `android/settings.gradle
+.kts`) caps at compileSdk 36; bumping AGP itself is a much larger, riskier change than pinning back one
+plugin version. Fix: `pubspec.yaml` now pins `flutter_secure_storage: ">=10.3.1 <11.0.0"` (10.3.1 is
+cached locally, `compileSdk 36`, and a repo-wide search confirmed zero references to any of the
+`AndroidOptions` API 11.0.0 removed) — `flutter pub get` resolved cleanly, `pubspec.lock` updated.
+Confirmed this is a real, general blocker, not device-specific: it reproduced identically before any
+device-specific step (before `--flavor` was even known to matter).
+
+A second, real, and unrelated build issue on the same first attempt: no `--flavor` was passed, and this
+project always builds under a flavor (`development`/`staging`/`production`, `android/app/build.gradle
+.kts`), so Gradle produced `app-development-profile.apk` while `flutter_tools` looked for the
+unflavored `app-profile.apk` and reported "couldn't find it" despite a genuinely successful build.
+Fix: always pass `--flavor development` for local/dev testing.
+
+### Real deep-link gap found and fixed (test-infrastructure only): no way to reach `/admin` on native Android
+
+`AppRoutes.admin`/`AppRoutes.platform` are real `go_router` paths, reachable on Web via `#/admin` in the
+URL bar (`docs/local_admin_login_runbook.md`), but the Android manifest had zero intent-filters beyond
+the launcher — there was structurally no way to navigate there from outside the running app (the only
+in-app entry point, `ProfileBusinessModeCard`, requires a customer identity with pre-existing staff role
+claims, which the seed fixtures don't create). Fix: added a `abakusone://` custom-scheme `VIEW` intent-
+filter to `android/app/src/main/AndroidManifest.xml` (`android:scheme="abakusone"`) — Flutter/go_router
+handle the incoming URI automatically; no Dart code changed. `adb shell am start -a
+android.intent.action.VIEW -d "abakusone:///admin" com.abakus.one` reaches the real staff sign-in gate.
+This is additive (a new intent-filter, not a change to any existing route) and mirrors exactly how the
+Web build already reaches the same routes — kept as a permanent, real capability (QA/deep-link
+entry-point), not reverted, since it has no security implication beyond what Web already exposes.
+
+### Real, expected first-attempt latency: App Check debug-provider dance, not a bug
+
+The first "Cihazı Kaydet" (register trusted device) attempt failed with `DeviceNetworkError:
+DEADLINE_EXCEEDED`. Root-caused (not guessed) via a direct `curl` to the Functions emulator from the
+host (7ms response, no App Check involved) plus an on-device raw-TCP check (`adb shell toybox nc`,
+instant on both port 5001 and 8080) — the local emulator path itself was never the bottleneck. The real
+cost is `FirebaseAppCheckService`'s already-correct, already-approved (Phase 2 Sprint 2) behavior:
+Android in `development` genuinely uses `AndroidDebugProvider` (never Play Integrity in dev, by design),
+which makes real, individually-slow attestation round-trips to Google's real backend on every app
+launch, all of which legitimately fail with 403 (`App attestation failed` / `Too many attempts`) because
+this specific debug token isn't registered in the `abakus-one-dev` Firebase Console — expected for a
+machine that has never done that one-time registration. The client's own placeholder-token fallback
+still lets the real call through, just after paying that cost once. A same-session retry (key material
+already cached) succeeded in a few seconds. Not a code change — this is normal, working-as-designed
+local-dev App Check behavior; noted here only so a future run isn't misdiagnosed as broken.
+
+### Real UI defect #1 found and fixed: `PosTableWorkspaceScreen`'s 3-pane split assumes tablet/POS-hardware width
+
+The canonical `_buildBody` `Row(Expanded(flex:3), Expanded(flex:2))` split, first exercised on a real
+phone here (never tested at phone width before — every prior POS screenshot in this evidence set is
+Web/desktop-width), produced an unreadable column width (~150 logical px for the center pane after the
+88px rail) — narrow enough that Flutter's text layout broke individual words onto one character per
+line (confirmed via real device measurement: the `DropdownButtonFormField` spanned only 150 of the
+~305 logical px available after the rail). Fix: `_buildBody` now uses `LayoutBuilder` and stacks the
+two panes in a `Column` (each independently scrollable) below `AppBreakpoints.tablet` (600, the
+project's own existing Material 3 breakpoint, `core/layout/app_breakpoints.dart`) — unchanged
+side-by-side `Row` at/above it, so tablet/desktop/POS-hardware behavior is bit-for-bit identical to
+before. Verified fixed on-device after the fix (full-width, correctly-wrapped text throughout).
+
+### Real UI defect #2 found and fixed: `_LineRow` squeezes the product name to zero width when 3 action icons are present
+
+Even after defect #1's fix, a `pendingApproval` order line (which shows 3 `IconButton`s — accept/
+reject/propose, each a 48px minimum tap target) still wrapped its product name character-by-character:
+3 full-size icon buttons plus the status pill consumed nearly the entire row width on a phone, leaving
+almost nothing for the `Expanded` product-name `Text`. Confirmed as a distinct defect from #1 by direct
+comparison on the same fixed-width screen: an `accepted` line (1 icon only) rendered its text fine,
+while the 3-icon `pendingApproval` line next to it did not. Fix: `_LineRow` now puts the product name +
+status pill on their own `Row` (which alone was always wide enough — proven by the working 1-icon case)
+and the action icons in a `Wrap` below, matching the existing `Bölüştürme` icon-row pattern already used
+elsewhere in the same file. Verified fixed on-device: `1x Klasik Bowl` / `Onay bekliyor` now renders on
+one line with the three action icons wrapped cleanly beneath it.
+
+### Build-staleness finding (environment note, not a code defect)
+
+Twice this wave, a `flutter run --profile` rebuild after a genuine, `flutter analyze`-clean, `dart
+format`-clean Dart source edit did **not** reflect that edit on-device (confirmed three independent ways
+each time: identical rendered layout/measurements before and after, a `debugPrint` diagnostic that never
+appeared in the attached console despite the app definitely running and other native logs streaming
+normally, and a single `com.abakus.one` process confirmed via `adb shell ps`, ruling out a stale
+orphaned process). `flutter clean` + `flutter pub get` + a fresh `flutter run` reliably resolved it both
+times. Root cause not conclusively isolated (candidates: Gradle/AGP incremental-build caching on this
+Windows machine, possibly interacting with the same third-party security-software file-system
+interference already documented in Wave 4/5's emulator findings) — recorded here so a future session
+doesn't waste time re-diagnosing identical symptoms: **if an on-device Dart change doesn't appear to
+take effect after a normal `flutter run`, `flutter clean` first, don't assume the fix is wrong.**
+
+### Real trusted-device + POS flow, executed end to end on the physical device
+
+Using the already-running, already-seeded local emulators (`--project abakus-one-dev`, `adb reverse`
+for ports `9099`/`8080`/`5001`/`9199`, all four confirmed via `adb reverse --list`) and the deterministic
+`node scripts/seed_local_admin.js` fixture (re-run this wave to guarantee freshness — idempotent, same
+output as documented in `docs/local_admin_login_runbook.md`):
+
+1. Staff sign-in (`kasiyer@abakus.test`) on-device → real Admin shell (`org-1 · branch-ap3vis`).
+2. Operasyonlar → POS → real `NotRegistered` → `Cihazı Kaydet` → `RegistrationRequested`.
+3. Switched to the already-open Web Admin manager session (`yonetici@abakus.test`) → Cihazlar →
+   Güvenilir Cihazlar → the real pending device (`Android · 85e602f1…`, `Onay Bekliyor`) → Onay
+   Kutusuna Git → real `Onayla` (with mandatory reason text) → **Onaylandı**.
+4. Back on-device: real-time Firestore listener (`_watchDeviceStatus`, no manual refresh) flipped to
+   `ActivationRequired` → `Oturumu Etkinleştir` → real `ActiveSession` → auto-navigated into the real
+   POS table workspace.
+5. Table overview: `Masa 1` (Boş) / `table-ap3vis-2` (Dolu) — matches the seed fixture exactly.
+6. Opened `table-ap3vis-2`: real check (`Hesap No: check-ap3vis`), two real guest orders (one
+   `pendingApproval` with working Kabul Et/Reddet/Değişiklik Öner, one `accepted` with working İptal
+   Talebi Gönder, one `proposedChange`), real sub-accounts (Zeynep, Ayşe, Mehmet — the seed script's
+   "three guests with sub-accounts"; the `Bölüştürme`/headcount-split lists show duplicate entries per
+   name, a seed-data artifact worth a future look but not a POS-UI defect and not chased further here),
+   the real `Personel Ürün Girişi` dialog with the real product catalogue (Mexifit Bowl, Meatball Bowl,
+   Çıtırtı Bowl, … — no overflow), all four per-line split-mode icons (Ürüne/Kişiye/Adete/Serbest Tutara
+   Göre Böl) plus the separate `Eşit Böl (Kişi Sayısına Göre)` dialog (5 split modes total, all real),
+   `Masa Transfer Et`/`Masa Birleştir` dialogs, `Fiyat Düzeltmesi Talep Et`, and the real
+   `_PendingApprovalBanner` (`1 onay bekleyen talebim var`, live Riverpod stream) — confirming remote-
+   approval live state is visible from the POS side, not just the Admin Approval Inbox side.
+
+Items #10/#11 (customer-facing QR pending-approval / counter-proposal state) were **not attempted this
+wave** either — they need a separate customer-side session against the same table/order, which this
+wave's time went to the nine Android POS items plus the two real UI bugs found in the process instead.
+Recorded as still missing below, not silently dropped.
+
+### Updated strict evidence table
+
+| # | Requirement | Screenshot | Route/Surface | Fixture | Platform | Status | Reason if missing |
+|---|---|---|---|---|---|---|---|
+| 1 | Trusted-device activation / active state | `01_trusted_device_activation_android.png` | `TrustedDeviceStatusScreen` (`ActivationRequired`) → real `ActiveSession` (reaching POS below is only possible post-activation) | `kasiyer@abakus.test`, real device `85e602f1…` | **Android (physical device)** | **PASS** | — |
+| 2 | POS three-pane workspace | `02_pos_three_pane_workspace_android.png` | `PosTableWorkspaceScreen`, real table session | `table-ap3vis-2` | **Android (physical device)** | **PASS** | Responsively stacked at phone width (Wave 6 defect #1 fix) — same screen/panes as the tablet/POS-hardware 3-pane layout, not a different screen |
+| 3 | Table overview | `03_table_overview_android.png` | POS table overview pane | `Masa 1` / `table-ap3vis-2` | **Android (physical device)** | **PASS** | — |
+| 4 | Multiple customer sub-accounts | `04_customer_subaccounts_android.png` | `Personel Ürün Girişi` dialog, `Hesap` radio list | Zeynep / Ayşe / Mehmet | **Android (physical device)** | **PASS** | — |
+| 5 | Product catalogue + staff order entry | `05_product_catalog_staff_entry_android.png` | `Personel Ürün Girişi` → `Ürün` dropdown | real menu catalogue | **Android (physical device)** | **PASS** | — |
+| 6 | Check allocation | `06_check_allocation_android.png` | Check panel, `Hesap No: check-ap3vis`, `Bölüştürme` allocations | `check-ap3vis` | **Android (physical device)** | **PASS** | Same source screenshot as #2 — one real screen legitimately demonstrates both facets |
+| 7 | All five split modes | `07_split_modes_headcount_android.png` (headcount) + `02_pos_three_pane_workspace_android.png` (product/customer/quantity/free-amount icons) | Check panel split icons + `Eşit Böl` dialog | `check-ap3vis` | **Android (physical device)** | **PASS** | Two files together show all 5 modes |
+| 8 | Table transfer/merge | `08_table_transfer_android.png` + `08b_table_merge_android.png` | `Masa Transferi` / `Masa Birleştir` dialogs | `table-ap3vis-2` | **Android (physical device)** | **PASS** | — |
+| 9 | Remote approval live state | `09_remote_approval_web_approved.png` (Web Onay Kutusu **Onaylandı**) + `02_pos_three_pane_workspace_android.png` (device-side `1 onay bekleyen talebim var` live banner) | `ApprovalInboxScreen` + `_PendingApprovalBanner` | device `85e602f1…` approval, `checkFinancialAdjustments` pending request | Web + **Android (physical device)** | **PASS** | Both directions of the same live remote-approval feature |
+| 10 | Customer QR pending-approval state | — | Customer-facing order awaiting staff response | — | Web or Android | **MISSING** | Not attempted this wave either — needs a separate customer-side session against an in-progress order negotiation; time went to items 1–9 and the two real UI bugs found while producing that evidence |
+| 11 | Customer QR counter-proposal state | — | Customer-facing counter-proposal UI | — | Web or Android | **MISSING** | Same reason as #10 |
+| 12 | Tenant Admin Customer Directory | `12_admin_customer_directory.png` | `/admin` → Müşteri 360 (`CustomerManagementScreen`) | `kasiyer@abakus.test`, real seeded customers | Web (profile build) | **PASS** | — |
+| 13 | Platform Owner Customer Directory | `13_platform_customer_directory.png` | `/platform` → Müşteriler tab | `sahip@abakus.test` | Web (profile build) | **PASS** | — |
+| 14 | Web operational POS fail-closed state | `14_web_pos_fail_closed.png` | `TrustedDeviceStatusScreen`'s "Bu Platform Desteklenmiyor" | `kasiyer@abakus.test` | Web (profile build) | **PASS** | — |
+
+**`VISUAL_EVIDENCE_COUNT=12/14`.** Items 1–9 and 12–14 pass with real, freshly-captured evidence; items
+10–11 remain genuinely missing (not attempted, not fabricated, not counted).
