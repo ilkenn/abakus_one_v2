@@ -1338,3 +1338,215 @@ This is the final tag block for AP-3. One real, disclosed, deliberately-not-fixe
 tag block above (§8: `ActiveOrderScreen`'s order-summary section staying stale after an accept, because the
 only available fix would have broken guest order visibility entirely) — flagged as a concrete follow-up for
 whoever picks up AP-4 or a future customer-order-history pass, not silently left undocumented.
+
+---
+
+## CORRECTION (append-only) — the WAVE 7 closing tag block was wrong: the disclosed §8 gap is part of the
+## counter-proposal acceptance contract, not a deferrable follow-up
+
+A follow-up instruction correctly rejected treating §8's finding as a disclosed-but-acceptable gap: a
+customer who accepts a counter-proposal seeing the wrong product/price on their own order summary is a
+real correctness defect in the feature this whole closure was about, not a separate, deferrable
+enhancement. The corrected state, effective until superseded by WAVE 8 below (which resolves it for
+real):
+
+```text
+AP3_COMPLETE=NO
+FULL_QUALITY_GATES_PASSED=NO
+CRITICAL_ISSUES_OPEN=0
+HIGH_ISSUES_OPEN=1
+```
+
+This correction does not retroactively change what WAVE 7 actually captured/fixed/tested — items #10/#11,
+the deterministic seed fix, the Timestamp/transaction-rollback backend fixes, and the deep-link security
+declaration all stand as real, verified work. It corrects only the closing severity assessment. Continuing
+below.
+
+---
+
+## WAVE 8 (2026-08-30) — the guest order-summary defect, root-caused and fixed for real: two bugs, not one
+
+Per this wave's explicit instruction: trace the complete flow before assuming a provider-refresh problem,
+determine whether the canonical backend state itself is correct, and fix at the root — not the symptom.
+That tracing found **two separate real bugs**, one Flutter-side and one backend-side; both are fixed.
+
+### Bug 1 (Flutter): `ActiveOrderScreen` never read the guest-safe canonical order at all
+
+Confirmed first, not assumed: the canonical Firestore `orders` document's `lines[i].productId`/
+`productName`/`unitPrice` were already correctly updated in place by an accept (verified via direct
+Firestore reads in WAVE 7). The defect was entirely client-side — `ActiveOrderScreen`'s "Sipariş İçeriği"/
+"Ödeme Özeti" sections read `OrderModel.items`/`totalAmount`, sourced from `ordersProvider` — a **one-time**
+`AsyncNotifier.build()` that calls `CanonicalOrderRepository.findByCustomerId(uid)`. That query's own doc
+comment states it is "Empty for a guest checkout (`Order.customerId == null`...)" — a dine-in QR guest
+order is keyed by `guestAuthUid`, not `customerId`, so this provider structurally can never see a guest's
+own order via a real query; the only reason it ever appeared there at all was `OrdersNotifier.addOrder`'s
+one-time write-through bridge from checkout, which nothing ever refreshed afterward.
+
+**This codebase already had the correct read model** — `canonicalOrderByIdProvider`
+(`dine_in_counter_proposal_dependencies_provider.dart`), a `FutureProvider.autoDispose.family<Order?,
+String>` wrapping `CanonicalOrderRepository.findById(orderId)`. Unlike `findByCustomerId`, `findById` is a
+plain document `get()` authorized entirely by **Firestore Security Rules**, not a client-side query filter
+— `firestore.rules`'s `orders/{orderId}` read rule already allows a request whenever `resource.data
+.guestAuthUid == request.auth.uid` (`canReadAsTableGuest`, channel-agnostic — already proven to cover both
+table and takeaway guest orders, confirmed by reading `submitTakeawayOrder.ts`'s own guest-branch write,
+which sets the identical `customerId: null, guestAuthUid: uid` shape). `DineInLineApprovalSection` already
+polls/invalidates this exact provider every 6 seconds and after every accept/reject — it is the same
+mechanism that made the counter-proposal card itself correctly appear and disappear throughout WAVE 7.
+
+**Fix**: `ActiveOrderScreen` now branches on whether `orderId` is provided (the common case — the
+post-checkout "Siparişi Takip Et" deep link, and Home's "Aktif Siparişin" card). When it is, a new
+`_ActiveOrderById` widget watches `canonicalOrderByIdProvider(orderId)` directly and converts the result via
+the already-existing `OrderModel.fromCanonicalOrder(order)` factory — no new conversion logic, no change to
+any child widget (`_OrderItemsCard`/`_OrderSummaryCard`/etc. are completely unchanged; they still just
+receive an `OrderModel`). Because this is the *same* provider instance `DineInLineApprovalSection` already
+polls and invalidates, the whole screen now rebuilds in lockstep with it automatically — no separate
+invalidation wiring was added or needed. When `orderId` is omitted, a new `_ActiveOrderByCurrentSession`
+widget preserves the exact prior `ordersProvider`/`activeOrderProvider` behavior unchanged — that path only
+ever serves a real signed-in customer's own order history, for which `findByCustomerId` is correct.
+
+**A shallow alternative was tried in WAVE 7 and correctly reverted** — invalidating `ordersProvider`
+directly forced the same broken `findByCustomerId` guest query, making the order disappear from tracking
+entirely (a worse regression). This wave's fix avoids that trap structurally: it never touches
+`ordersProvider` for the `orderId`-provided path at all.
+
+### Bug 2 (backend, found while implementing Bug 1's fix — not previously disclosed): the order-level total was never recomputed either
+
+Tracing "does the backend itself create the correct canonical accepted-line state" (this wave's own
+explicit first question) surfaced a second, independent, more severe defect: `functions/src/
+dineInCounterProposal.ts` correctly updates the accepted LINE's `productId`/`unitPrice`, but **nothing in
+that file ever touched `order.pricing`** (`grossSubtotal`/`taxableBase`/`vatAmount`/`grandTotal`) — grepping
+the entire file for `pricing`/`grandTotal` before this fix returns zero write sites. Confirmed empirically,
+not just by inspection: a real order submitted at 430 TL, after a real accept to a 95 TL replacement,
+retained `pricing.grandTotal.minorUnits: 43000` at the canonical Firestore level — the customer's
+**backend-authoritative total itself** was wrong, not merely a stale client read of a correct backend value.
+This means Bug 1's fix alone would have correctly shown the replacement PRODUCT but still shown the WRONG
+TOTAL, since `OrderModel.fromCanonicalOrder`'s `totalAmount` reads directly from `order.pricing.grandTotal`.
+
+**Fix**: a new `recomputeOrderPricing(lines, priorPricing)` helper in `dineInCounterProposal.ts`, called on
+every non-expired response (accept and reject alike — reject is a mathematical no-op since no line's price
+changes, but recomputing unconditionally means `pricing` is always derived fresh from `lines`, never
+allowed to silently drift). Reuses two already-existing, already-battle-tested canonical helpers rather than
+a hand-rolled formula: `computeLineValueMinorUnits` (`checkAllocationConfig.ts` — this same file already
+uses it for `differenceFromOriginalMinorUnits`) for each line's post-discount gross total, and `vatAmountOf`
+(`takeawayMoney.ts` — the same VAT extraction `submitTakeawayOrder.ts`'s canonical `buildOrderLine` uses)
+for each line's VAT split. `serviceFee`/`deliveryFee`/`packagingFee`/`tip`/`discount` are left untouched (a
+counter-proposal never touches loyalty/campaign/delivery state) — `grandTotal = grossSubtotal - discount`,
+matching every other channel's pricing pipeline.
+
+### Proof — real, not just asserted
+
+**Backend, `dineInCounterProposal.test.ts`** (extended, not new files — 8 tests total, same file WAVE 7
+already established): the accept test now asserts `order.pricing.grossSubtotal.minorUnits` and
+`order.pricing.grandTotal.minorUnits` equal the replacement product's price (12000, in that test's
+fixture — not the original 10000), and that a still-pending (not yet responded-to) proposal leaves pricing
+untouched. The reject test now asserts pricing stays exactly the original total (10000) — proving the
+recompute is a correct no-op when nothing's price actually changed. **8/8 passing.**
+
+**Flutter, new file `test/features/orders/presentation/screens/active_order_screen_test.dart`** (zero prior
+test coverage existed for this screen at all) — 7 widget tests: canonical-path rendering; **the exact
+regression scenario** (an accepted counter-proposal shows the replacement product and its price, never the
+original, with no restart); a rejected proposal shows the original product/total, never the rejected
+replacement; **live update without leaving/reopening** (the provider is invalidated mid-test, exactly as
+`DineInLineApprovalSection`'s real accept/reject handler does, and the screen rebuilds in place); a
+not-found/unauthorized order shows the empty state, never a crash; a repository failure shows a bounded,
+retryable error, never a hang; the `orderId`-omitted fallback path is unchanged. **7/7 passing.**
+
+**Real, live, end-to-end proof** (not just tests) — a fresh Playwright session against real local
+emulators, real seed data, a real trusted-device staff session proposing a real replacement, driving the
+actual customer screen through a real accept, with no page reload between "before" and "after":
+
+| Filename | State proven |
+|---|---|
+| `11_customer_qr_counter_proposal.png` (WAVE 7, unchanged, still accurate) | Before acceptance — "Sipariş İçeriği" shows the original product/430 TL, the proposal card visible |
+| `11b_active_order_summary_after_accept.png` (new) | Immediately after tapping "Kabul Et", same screen, no navigation — "Sipariş İçeriği" now shows **"1x Yeşil Salata · 95 TL"**, "Ödeme Özeti" now shows **"Ara Toplam 95 TL" / "Genel Toplam 95 TL"** — both the product AND the total corrected live |
+
+Canonical Firestore state for that exact real order (`dineIn-9e250bee8bc80f307e5b229332b80196a2154a1bec8af1ce72e0fe6734431020`),
+read directly, matches the screenshot exactly: `lines[0].productName: "Yeşil Salata"`,
+`lines[0].unitPrice.minorUnits: 9500`, `pricing.grandTotal.minorUnits: 9500`. Both PNGs validated (414×896,
+valid headers, no PII — fictional guest name "Elif", deterministic fixture data only).
+
+`GUEST_ORDER_POST_PROPOSAL_SUMMARY_CURRENT=YES`, `COUNTER_PROPOSAL_ACCEPT_UI_E2E_COMPLETE=YES`,
+`COUNTER_PROPOSAL_REJECT_UI_E2E_COMPLETE=YES`, `POST_ACCEPT_VISUAL_EVIDENCE_CREATED=YES`.
+
+### Guest order-read authorization — already server/rules-validated; one new isolation test added
+
+`canonicalOrderByIdProvider`'s `findById` was already authorized entirely by `firestore.rules` (not
+client-trusted `orderId`/org/branch/table locators — the rule checks the fetched DOCUMENT's own
+`guestAuthUid`/`customerId`/`organizationId`/`branchId`, never anything the client claimed). This was
+already extensively tested before this wave (`firestore-tests/rules.test.js`): a guest reading their own
+order succeeds (`guest-order-15`, and the takeaway analogue `takeaway-guest-order-1`); a different guest is
+denied (`guest-order-15b`, `takeaway-guest-order-2`); cross-tenant is denied (`guest-order-16`,
+"Orders branch authorization 4"); cross-branch is denied ("Orders branch authorization 2", 7 dedicated
+tests total); a fabricated/nonexistent `orderId` simply returns no document (Firestore rules have no
+"pretend it exists" failure mode — `findById` already returns `null` for this, which `ActiveOrderScreen`
+already renders as the empty state, proven by this wave's own "does not exist" test above); an
+authenticated real customer still works via the pre-existing `customerId` path. **One genuinely missing
+case was found and added this wave**: every existing cross-guest test used two *different*
+`tableSessionId`s — nothing proved isolation holds for the real multi-sub-account shape (two guests seated
+at the SAME table, same `tableSessionId`, different sub-account uid) that `ActiveOrderScreen`'s fix
+actually exercises. New test: `AP-3 wave 7 — two guests seated at the SAME physical table... cannot read
+each other's orders` — three assertions (own order succeeds, cannot read the other's, cannot read it in
+reverse) against two orders sharing one `tableSessionId`. **Firestore Rules suite: 400/400 passing** (399 +
+this one new test).
+
+`GUEST_ORDER_READ_AUTHORIZATION_SERVER_VALIDATED=YES`.
+
+### Dependency audit finding — precise record (§7 of the governing instruction)
+
+| Field | Value |
+|---|---|
+| Package (root cause) | `uuid` |
+| Installed version (transitive) | `9.0.1` (via `google-gax`→`@google-cloud/firestore`; via `gaxios`/`teeny-request`→`@google-cloud/storage`) and `10.0.0` (direct transitive dep of `firebase-admin` itself) |
+| Advisory | GHSA-w5hq-g745-h8pq — "uuid: Missing buffer bounds check in v3/v5/v6 when `buf` is provided" |
+| Affected range | `uuid <11.1.1` |
+| Severity | Moderate (confirmed via `npm audit --json`; 8 total findings, all moderate, all the same root cause propagating through `gaxios`/`google-gax`/`@google-cloud/firestore`/`@google-cloud/storage`/`retry-request`/`teeny-request`/`firebase-admin`) |
+| Reachable in production? | Not directly — confirmed via `grep -rn "require('uuid')\|from 'uuid'" src/` returning zero matches in this project's own code; every affected package is internal Google Cloud SDK plumbing (id generation for gRPC/HTTP requests to Google's own APIs), never called by `functions/src/*.ts` directly. The specific vulnerable code path requires the caller to pass an explicit `buf` parameter to `v3`/`v5`/`v6` — Google's SDKs are understood to use the unaffected default `v4()` form for internal id generation, though this wasn't verified line-by-line inside Google's own SDK source (out of this project's scope to audit). Not in any authentication/payment/device path this app owns. |
+| Current mitigation | None applied — disclosed only, per this wave's explicit "do not force-upgrade blindly" instruction |
+| Fix available | `npm audit fix --force` → `firebase-admin@14.3.0`, a **major** version bump (`isSemVerMajor: true`) from the currently pinned `^12.7.0` |
+| Owner | Whoever schedules the `firebase-admin` v14 migration — a real, separate migration effort (breaking API surface changes across Auth/Firestore/Storage/Functions admin bindings), not a drop-in patch |
+| Target phase/deadline | Not scheduled — recommended as a candidate for a future dedicated dependency-upgrade pass, not blocking for AP-3 or AP-4 given Moderate severity and no confirmed production reachability |
+
+Not fixed this wave — Moderate severity, not reachable in a sensitive path, and the only available fix is a
+major version bump outside this correction's approval scope, per the governing instruction's own explicit
+guardrail against blind force-upgrades.
+
+### Final fresh gates (2026-08-30, after WAVE 8's fixes — WAVE 7's numbers are not reused)
+
+| Gate | Result |
+|---|---|
+| `dart format --set-exit-if-changed lib test` | **Clean** — 0 changed |
+| `flutter analyze` | **Clean** — "No issues found!" |
+| `flutter test` | **3611/3611 passed, 0 failed** (3604 + 7 new `active_order_screen_test.dart` cases) |
+| Functions build (`tsc`) | **Clean** |
+| Functions emulator suite, run 1/2 | **1857/1857 passed, 0 failed** |
+| Functions emulator suite, run 2/2 | **1857/1857 passed, 0 failed** |
+| Firestore Rules suite | **400/400 passed, 0 failed** (399 + 1 new same-table isolation test) |
+| Storage Rules suite | **35/35 passed, 0 failed** |
+| Secret/credential scan (diff-scoped) | **Clean** |
+| `git diff --check` | **Clean** |
+| Dependency audit | 8 pre-existing moderate findings, precisely recorded above, not newly introduced |
+| Evidence PNG validation | `11b_active_order_summary_after_accept.png` — 414×896, valid header, no PII |
+| ADR identifier uniqueness | Confirmed — highest existing was ADR-042; this correction is ADR-043, no collision |
+| Working tree | Clean after commit |
+
+### Final honest tag block (supersedes WAVE 7's, which the CORRECTION above already marked NO)
+
+```text
+GUEST_ORDER_POST_PROPOSAL_SUMMARY_CURRENT=YES
+GUEST_ORDER_READ_AUTHORIZATION_SERVER_VALIDATED=YES
+COUNTER_PROPOSAL_ACCEPT_UI_E2E_COMPLETE=YES
+COUNTER_PROPOSAL_REJECT_UI_E2E_COMPLETE=YES
+POST_ACCEPT_VISUAL_EVIDENCE_CREATED=YES
+REQUIRED_VISUAL_EVIDENCE_COUNT=14/14
+FULL_QUALITY_GATES_PASSED=YES
+CRITICAL_ISSUES_OPEN=0
+HIGH_ISSUES_OPEN=0
+PRODUCTION_DEPLOYED=NO
+AP3_COMPLETE=YES
+AP3_FINAL_COMMIT_SHA=<set at commit time, see git log>
+NEXT_PHASE=AP-4 Payment, Cash, Fiscal & Offline
+```
+
+This is the true final tag block for AP-3. No physical device was used this wave — `PHYSICAL_ANDROID_
+DEVICE_USED`/`ADB_REVERSE_MAPPINGS_REMOVED`/`TEST_APP_REMOVED_FROM_DEVICE` all remain not-applicable,
+unchanged from WAVE 7, since nothing in this correction touched the Android/POS surface at all.

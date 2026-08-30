@@ -5322,3 +5322,22 @@ changes) is disclosed, not silently remediated with a force-upgrade outside this
 
 **`AP3_COMPLETE=YES`.** See the README's final tag block for the complete honest closure state.
 `NEXT_PHASE=AP-4 Payment, Cash, Fiscal & Offline` — not started this wave.
+
+**CORRECTION — AP-3 was not actually complete (2026-08-30; `docs/decisions.md` ADR-043).** The entry above's
+disclosed §8 gap (guest order-summary staying stale after a counter-proposal accept) was correctly rejected
+as part of the acceptance contract itself, not a deferrable follow-up — `AP3_COMPLETE=YES`/
+`HIGH_ISSUES_OPEN=0` above were premature. Tracing the full flow (not assumed) found **two** real bugs:
+`ActiveOrderScreen` reading a structurally-guest-blind provider (`ordersProvider`/`findByCustomerId`,
+fixed by reusing the already-existing guest-safe `canonicalOrderByIdProvider`), and — found only while
+fixing the first — `dineInCounterProposal.ts` never recomputing `order.pricing.grandTotal` after an accept
+at all, a genuine backend correctness defect, not just a client staleness one. Both fixed; both proven with
+new tests (`active_order_screen_test.dart`, zero prior coverage, 7/7 passing; extended
+`dineInCounterProposal.test.ts` pricing assertions, 8/8) and a real Playwright walkthrough showing the
+correct replacement product AND recomputed total live, same session, no reload. One new Firestore Rules
+isolation test added (same-table, different-sub-account guests — 400/400). Dependency-audit finding
+recorded to precise fields (package/version/advisory/range/reachability/mitigation/owner/target) rather
+than left vague — not fixed, Moderate severity, unreachable from this project's own code, only remediable
+via a major `firebase-admin` version bump outside this correction's scope. Full fresh gates rerun (not
+reused): `flutter test` 3611/3611, Functions suite 1857/1857 twice, Firestore Rules 400/400, Storage Rules
+35/35. **`AP3_COMPLETE=YES` for real this time, `HIGH_ISSUES_OPEN=0`.** See
+`docs/visual_evidence/ap3/README.md`'s WAVE 8 section and ADR-043 for full detail.

@@ -18244,3 +18244,60 @@ fresh gates green (Functions suite 1857/1857 twice, Firestore Rules 399/399, Sto
 `flutter test` 3604/3604). One disclosed, deliberately out-of-scope gap remains (Decision 4) — not a
 blocker, a flagged follow-up. See the closure report's tag block for the complete, honest final state.
 `NEXT_PHASE=AP-4 Payment, Cash, Fiscal & Offline` — not started.
+
+### ADR-043 — AP-3 Correction: Guest Order Summary Was Never Actually Fixed by ADR-042's Decision 4 (Locked)
+
+**Context**: a follow-up instruction correctly rejected ADR-042's Decision 4 as a disclosed-but-acceptable
+gap — a customer seeing the wrong accepted product/price on their own order summary is part of the
+counter-proposal acceptance contract itself, not a deferrable enhancement. Required: trace the complete
+flow, determine whether the defect is backend or client-side (not assume), and fix at the root.
+
+**Decision 1 — the flow traced to TWO separate real bugs, not one**. (a) **Flutter**: `ActiveOrderScreen`
+read `OrderModel.items`/`totalAmount` from `ordersProvider`, a one-time `findByCustomerId` load that its
+own doc comment already discloses returns nothing for a guest order (`Order.customerId == null`) — Decision
+4's own reverted attempt (invalidating that provider) proved this structurally, not just theoretically.
+Fixed by reading `canonicalOrderByIdProvider(orderId)` instead — the exact same guest-safe, Firestore-Rules
+-validated, already-polled-by-`DineInLineApprovalSection` read path this codebase already had, reused
+rather than reinvented (a new `_ActiveOrderById`/`_ActiveOrderByCurrentSession` split, `orderId`-provided
+vs. omitted). (b) **Backend, found while implementing (a), not previously known**: `dineInCounterProposal
+.ts` updates an accepted line's `productId`/`unitPrice` correctly but never recomputed `order.pricing`
+(`grossSubtotal`/`taxableBase`/`vatAmount`/`grandTotal`) — confirmed empirically (a real 430 TL order,
+accepted to a 95 TL replacement, kept `grandTotal: 43000` at the canonical Firestore level). This means (a)
+alone would have shown the right product with the WRONG total. Fixed: a new `recomputeOrderPricing` helper,
+reusing already-existing `computeLineValueMinorUnits`/`vatAmountOf` (never a hand-rolled formula), called on
+every accept/reject response.
+
+**Decision 2 — guest order-read authorization was already correct**; `firestore.rules`'s `orders/{orderId}`
+read rule already validates `guestAuthUid`/`customerId`/org/branch server-side, with extensive pre-existing
+test coverage (own-order-succeeds, cross-guest-denied, cross-tenant-denied, cross-branch-denied, for both
+table and takeaway channels). One genuinely missing case — two guests at the SAME table (same
+`tableSessionId`) isolated from each other — was found and added (Firestore Rules suite: 400/400).
+
+**Decision 3 — the dependency-audit finding was recorded to the governing instruction's exact required
+fields** (package, version, advisory, range, reachability, mitigation, owner, target) rather than left as a
+vague "8 moderate findings" note. Root cause is `uuid <11.1.1` (GHSA-w5hq-g745-h8pq), reachable only through
+Google Cloud SDK internals (`google-gax`/`gaxios`/`teeny-request`) bundled inside `firebase-admin@12.7.0`,
+confirmed unreachable from this project's own code (`grep` for direct `uuid` usage returns nothing). Not
+fixed — the only available remediation is `firebase-admin@14.3.0`, a major version bump, out of this
+correction's approval scope for a Moderate, non-production-reachable finding.
+
+**Proof, not just assertion**: backend `dineInCounterProposal.test.ts` extended with pricing assertions on
+both the accept and reject paths (8/8 passing); a new `active_order_screen_test.dart` — zero prior coverage
+for this screen — with 7 tests including the exact regression scenario and a live-update-without-reopening
+test (7/7 passing); a real Playwright session against real emulators, capturing the counter-proposal before
+acceptance and `ActiveOrderScreen` immediately after, same session, no reload, showing both the replacement
+product AND the recomputed 95 TL total — cross-checked directly against the real Firestore document. Full
+fresh gates rerun (not reused from ADR-042's numbers): `flutter test` 3611/3611, Functions suite 1857/1857
+twice, Firestore Rules 400/400, Storage Rules 35/35.
+
+**Alternatives considered**: recomputing `pricing` inside `OrderFirestoreMapper` on the Flutter read side
+(deriving `grandTotal` from `lines` client-side) was considered and rejected — it would silently diverge
+from whatever the real canonical backend total is supposed to be (fees/discounts/tips this project's
+pricing pipeline may add later), and "the backend is the source of truth for money" is this project's
+existing, non-negotiable discipline (`CLAUDE.md` §4). Recomputing once, server-side, at the exact moment a
+line's price can change, is the only place this can correctly live.
+
+**Status**: AP-3 is CLOSED for real. `GUEST_ORDER_POST_PROPOSAL_SUMMARY_CURRENT=YES`,
+`GUEST_ORDER_READ_AUTHORIZATION_SERVER_VALIDATED=YES`, `HIGH_ISSUES_OPEN=0`. See
+`docs/visual_evidence/ap3/README.md`'s WAVE 8 section for full detail and the final tag block.
+`NEXT_PHASE=AP-4 Payment, Cash, Fiscal & Offline` — still not started.
