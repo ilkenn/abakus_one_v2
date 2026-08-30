@@ -5273,3 +5273,52 @@ pinned `engines: {node: "20"}` — documented in full in the README rather than 
 
 AP-3 remains open: 14/14 visual evidence and the Android trusted-device/POS E2E are both blocked by the
 single Android-emulator/Vanguard finding above.
+
+**AP-3 CLOSED — Final Two Items, Deterministic Seed Fix, Deep-Link Security Audit (2026-08-30; `docs/
+decisions.md` ADR-042).** Closes AP-3. A real physical Android device (Wave 6, unaffected by this wave)
+already closed items #1–#9/#12–#14; this wave closes the last two required screenshots (#10 customer QR
+pending-approval, #11 customer QR counter-proposal) via a real end-to-end Playwright session against real
+local emulators — no mock widget, no golden-only render. **Visual evidence: 14/14 — complete for the
+first time.**
+
+Three real, previously-undiscovered backend/Flutter bugs were found and fixed while producing that
+evidence, none cosmetic: (1) `functions/src/dineInCounterProposal.ts` stored `counterProposal.createdAt`/
+`expiresAt`/`respondedAt` as native Firestore `Timestamp`s against a codebase-wide ISO-string convention —
+every real counter-proposal ever created silently failed to render on the customer screen (`AsyncValue
+.error` swallowed the resulting `TypeError`), fixed to store strings; (2) the same file's inline expiry
+check inside `respondToDineInCounterProposal` called `tx.update(...)` then `throw`ed inside the same
+transaction callback — Firestore discards all queued writes when a transaction callback throws, so the
+"expired" status never actually persisted despite the customer correctly seeing a `proposal/expired`
+error; fixed by returning a sentinel from the transaction and throwing only after it commits; (3)
+`TableGuestEntryScreen`/`TakeawayGuestEntryScreen` pushed a bare `MenuScreen` outside `MainNavigationScreen`
+'s tab shell, making the cart tab unreachable after "Masaya Otur"/a QR scan — fixed to route through the
+real tab shell, plus a new "Siparişi Takip Et" button on `OrderSuccessScreen` (the missing link
+`ActiveOrderScreen`'s own doc comment already anticipated but nothing ever wired up).
+
+Also fixed at the root cause: the deterministic sub-account duplication flagged in Wave 6
+(`functions/scripts/seed_local_admin.js` used the Auth client's always-random anonymous sign-up endpoint
+for guest identities instead of a deterministic Admin-SDK-created uid) — proven idempotent via a new
+automated test (`seed_local_admin.idempotency.test.mjs`, 3 consecutive runs, byte-identical sub-account
+ids every time) and manual verification. The `abakusone://` native deep-link intent-filter was audited and
+declared, with evidence: a canonical production entry point protected by the same route/screen-level guards
+as any other access path (`/admin`'s own internal `actorSessionProvider` check), never a bypass — no code
+change was needed, since the manifest, router guard, and token-resolution backend were already correct.
+
+Both accept and reject outcomes were exercised for real (fresh orders, a genuine trusted-device staff
+session scripting the real `proposeDineInLineReplacement` callable) and verified both canonically
+(direct Firestore reads: accept applies exactly the snapshotted product/price, reject leaves the original
+untouched) and visually (the customer UI correctly shows "Kabul Et"/"Reddet" outcomes). One real,
+disclosed, deliberately-not-fixed gap remains: `ActiveOrderScreen`'s order-summary section stays stale
+after an accept, because the only available shallow fix (`ref.invalidate(ordersProvider)`) would have made
+guest orders disappear from tracking entirely — a documented, structural `findByCustomerId`/guest-order
+limitation, out of this closure's scope; see the README §8 for the full reasoning and the reverted attempt.
+
+**Full fresh gates, all clean**: `dart format`/`flutter analyze` clean; `flutter test` 3604/3604;
+Functions build clean; Functions emulator suite **1857/1857 passed, twice consecutively, zero flakiness**;
+Firestore Rules 399/399; Storage Rules 35/35; secret scan and `git diff --check` clean. One pre-existing,
+not-introduced-this-wave dependency-audit finding (8 moderate transitive vulnerabilities inside
+`firebase-admin`/`google-gax`, confirmed via `git diff` on `package.json`/`package-lock.json` showing zero
+changes) is disclosed, not silently remediated with a force-upgrade outside this closure's approval scope.
+
+**`AP3_COMPLETE=YES`.** See the README's final tag block for the complete honest closure state.
+`NEXT_PHASE=AP-4 Payment, Cash, Fiscal & Offline` — not started this wave.

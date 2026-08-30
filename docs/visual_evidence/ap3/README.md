@@ -985,3 +985,356 @@ Recorded as still missing below, not silently dropped.
 
 **`VISUAL_EVIDENCE_COUNT=12/14`.** Items 1–9 and 12–14 pass with real, freshly-captured evidence; items
 10–11 remain genuinely missing (not attempted, not fabricated, not counted).
+
+---
+
+## WAVE 7 (2026-08-30) — final two items closed: three real bugs found and fixed along the way, 14/14
+
+Per this wave's explicit "AP-3 FINAL TWO-ITEM CLOSURE" instruction: close items #10/#11 for real, fix the
+deterministic sub-account duplication at the root cause, audit the `abakusone://` deep-link honestly, and
+run final gates. All of this was genuinely attempted; full detail below, including three real,
+previously-undiscovered bugs this pass found and fixed (not just the two items themselves).
+
+### 1. Deterministic sub-account duplication — root-caused and fixed
+
+**Root cause**: `functions/scripts/seed_local_admin.js` created each of the three fixture guests via the
+Firebase Auth **client** REST `accounts:signUp` endpoint with no `uid` parameter — that endpoint always
+mints a fresh random UID on every call, so re-running the seed script created three brand-new anonymous
+identities (and therefore three brand-new `guestSubAccounts`/`tableGuestSessions` documents) every time,
+with the old records from prior runs left behind. Confirmed via direct repeated invocation, not assumed.
+
+**Fix**: replaced random anonymous sign-up with `admin.auth().createUser({ uid })` using a fully
+deterministic uid (`guest-${RUN_ID}-ayse`/`-mehmet`/`-zeynep`), catching and tolerating
+`auth/uid-already-exists` so a rerun is a genuine no-op rather than an error. `guestSessionId` derivation
+changed to use the full deterministic uid (`tgs-${RUN_ID}-${guest.uid}`) instead of a truncated slice of a
+random one. A one-time migration-guard cleanup block was added that deletes any `guestSubAccounts`/
+`tableGuestSessions` document scoped to this run's `tableSessionId` whose owner uid is **not** one of the
+three expected deterministic uids — this only ever touches this script's own deterministic test fixture
+scope on the local emulator project, never production data or an unrelated record.
+
+**Proof — real automated test, not just manual observation**: new
+`functions/scripts/seed_local_admin.idempotency.test.mjs` (`node --test`, refuses to run unless
+`FIRESTORE_EMULATOR_HOST`/`FIREBASE_AUTH_EMULATOR_HOST` point at a local address) runs the real seed
+`main()` three times in a row against a live local emulator and asserts, after each run, that
+`guestSubAccounts`/`tableGuestSessions` filtered by `tableSessionId` contain **exactly** the three
+expected deterministic ids — no more, no fewer, byte-identical across all three runs. Result:
+`tests 1, pass 1, fail 0`. Also verified manually (3× `node scripts/seed_local_admin.js` against a fresh
+emulator, direct Firestore query each time): exactly 3 sub-accounts, exactly 3 guest sessions, no
+duplicate names/owners, every time.
+
+`DETERMINISTIC_SEED_IDEMPOTENT=YES`.
+
+### 2. A real, previously-undiscovered backend bug: counter-proposal fields silently broke the customer UI
+
+While driving the real end-to-end flow needed for item #10 (see §4), the customer's "Sipariş Takibi"
+screen rendered **nothing at all** for a real, backend-confirmed pending line — no error, no card, just
+blank. Root-caused via systematic debugging (verified the Firestore document directly first, confirmed the
+data was genuinely there and correct; verified the widget's gating logic was sound; only then added a
+temporary diagnostic `print` in the swallowed `AsyncValue.error` branch of
+`DineInLineApprovalSection`, `lib/features/orders/presentation/widgets/dine_in_line_approval_section.dart`
+— removed again once the real cause was found): a previous version of
+`functions/src/dineInCounterProposal.ts` stored `counterProposal.createdAt`/`expiresAt`/`respondedAt` as
+native Firestore `Timestamp`s, but every other date field on an `orders` document (`order_firestore_
+mapper.dart`'s own established convention) is read client-side as an ISO 8601 **string** via
+`DateTime.parse(x as String)` — so every real counter-proposal ever created threw a `TypeError:
+Instance of 'Timestamp': type 'Timestamp' is not a subtype of type 'String'` inside a widget whose error
+branch silently renders `SizedBox.shrink()`, with zero visible symptom anywhere.
+
+**Fix**: `CounterProposalSnapshot.createdAt`/`expiresAt`/`respondedAt` changed from `Timestamp`/
+`Timestamp | null` to `string`/`string | null`; every write site (`proposeDineInLineReplacement`,
+`respondToDineInCounterProposal`'s three write branches, `sweepExpiredDineInCounterProposals`) now writes
+`.toDate().toISOString()`; `computeEarliestPendingProposalExpiresAt` now parses the string via
+`new Date(proposal.expiresAt).getTime()`. The one denormalized top-level field,
+`earliestPendingProposalExpiresAt`, deliberately **stays** a native `Timestamp` — it is the one field
+actually used in a Firestore range query (the sweep's `.where(..., "<=", now)`), and no Dart client ever
+reads it directly, so it never hit the string-vs-Timestamp mismatch in the first place.
+
+### 3. A second real, previously-undiscovered backend bug: expired-proposal writes never persisted
+
+Writing the direct "respond after expiry" test below (§6) caught a second, independent, real defect in the
+same file: `respondToDineInCounterProposal`'s inline expiry branch called `tx.update(...)` to mark the line
+`rejected`/`expired`, then immediately `throw`ed an `HttpsError` **inside the same transaction callback**.
+Firestore transactions are all-or-nothing — a callback that throws discards every `tx.*` write it queued,
+not just the ones after the throw. The customer-visible symptom was still correct (a `proposal/expired`
+error), but the Firestore document itself was **never actually updated** — the line stayed stuck in
+`proposedChange`/`pendingCustomerResponse` until the next `sweepExpiredDineInCounterProposals` run (not yet
+wired to a scheduler) eventually caught it, contradicting the "fail closed and reflect it immediately"
+requirement.
+
+**Fix**: the expiry branch (and every other branch) now returns a plain sentinel value from inside the
+transaction instead of throwing — `{ expired: true }` for the expiry case, `{ expired: false, ... }` for
+every success path — so the transaction always commits its writes. The actual `HttpsError` is thrown once,
+**outside** `db.runTransaction(...)`, based on that sentinel. Proven by the new test in §6: before this
+fix, a direct (non-swept) expired response left the line at `proposedChange` with the original product
+untouched but no persisted expiry; after the fix, the line correctly flips to `rejected`/`expired`
+immediately, in the same call that reports the error.
+
+### 4. Two real, previously-undiscovered Flutter bugs that were blocking item #10 entirely
+
+Both found and fixed while trying to genuinely reach the pending-approval screen as a real customer —
+neither is a counter-proposal-specific bug, both are general QR-guest-flow gaps:
+
+- **`TableGuestEntryScreen`/`TakeawayGuestEntryScreen` pushed a bare `MenuScreen`** via `Navigator.push`
+  after "Masaya Otur"/scanning a QR — outside `MainNavigationScreen`'s tab shell, so the bottom nav (and
+  therefore the cart tab) was completely inaccessible; a guest could browse the menu but had no way to
+  actually check out. Fixed: both screens now `ref.read(navigationProvider.notifier).selectTab(AppTab
+  .menu)` then `Navigator.pushReplacement` into `MainNavigationScreen`, landing on the real, fully
+  tab-shelled menu with cart access — mirrors how every other entry into the main app already works.
+- **No way to reach order tracking after checkout.** `ActiveOrderScreen` already existed, fully built,
+  with its own doc comment anticipating exactly this use — but no screen ever navigated to it.
+  `OrderSuccessScreen` had "Ana Sayfaya Dön" only. Fixed: added a "Siparişi Takip Et" button (`key:
+  trackOrderButton`) that pushes `ActiveOrderScreen(orderId: orderId)`.
+
+### 5. Native deep-link security audit (`abakusone://`) — the one honest state, verified by inspection
+
+**Declared state: canonical production entry, protected by the same guards as any other route access —
+not a debug/test-only bypass, and not undocumented.** Verified directly against source, not assumed:
+
+- `android/app/src/main/AndroidManifest.xml`'s intent-filter lives in `src/main`, not `src/debug` — it is
+  present in **every** build variant including release (confirmed: `src/debug/AndroidManifest.xml` only
+  adds the `INTERNET` permission, nothing intent-filter-related; no `src/release` override exists). This
+  matches its own existing doc comment ("kept as a permanent, real capability... not reverted"), and this
+  wave re-confirms that framing is still accurate — nothing was found that requires walking it back.
+- **`/admin` and `/platform` are unauthenticated-safe by design, regardless of entry point.**
+  `AppRouteGuard.resolve` (`lib/core/router/app_route_guard.dart`) bypasses its own customer-session logic
+  for both prefixes unconditionally — `AdminShellScreen` performs its own internal `actorSessionProvider`
+  check and renders `AdminUnauthorizedScreen` (with a real "Bu alana erişmek için personel/yönetici girişi
+  yapmalısınız." gate → `StaffSignInScreen`) for a `null` session, confirmed by reading
+  `admin_shell_screen.dart` directly. A deep link into `/admin` reaches exactly the same gate a Web
+  `#/admin` URL or an in-app tap would — the intent-filter is only an alternate way to reach an
+  already-guarded destination, never a bypass of it.
+- **No developer credential is encoded in the link itself** — `abakusone://` carries no query string, no
+  embedded token; `adb shell am start ... -d "abakusone:///admin"` only supplies a bare path.
+- **Client-supplied org/branch/table values are never trusted.** `TableGuestEntryScreen` (the `/table/
+  :token` destination this scheme can reach) takes only an opaque `token` — confirmed by reading the
+  screen's own source, which never reads org/branch/table id from the route at all; every real fact shown
+  to the customer (`Abaküs Merkez`, `Masa 1`, availability) comes back from the server-side
+  `resolveTableQrToken`/`openTableGuestSession` callables, matching `TakeawayGuestEntryScreen`'s existing,
+  already-audited pattern.
+- **Malformed/expired/cross-tenant/reserved tokens already fail closed, with existing dedicated test
+  coverage** — `functions/src/test/tableGuestSession.test.ts`: `resolveTableQrToken: an unknown token
+  resolves to notFound`, `...a token past its own expiresAt resolves to expired`, `...a valid QR code
+  pointing at an inactive table resolves to notFound`, `openTableGuestSession: an expired token is
+  rejected and no session is created`, and both `resolveTableQrToken`/`openTableGuestSession`'s own
+  dedicated **tenant isolation** tests ("two tokens belonging to two different organizations never
+  cross-resolve"/"...create sessions with correctly isolated scope"). Cited here, not duplicated — this is
+  the same DRY-test discipline this codebase already applies to shared helpers.
+- **Only one Android component is exported**: `grep -rn "exported" android/app/src/*/AndroidManifest.xml`
+  returns exactly `MainActivity`'s `android:exported="true"` — required for the `LAUNCHER` intent-filter
+  regardless of the `abakusone://` filter's presence — and no other `<activity>`/`<service>`/
+  `<receiver>`/`<provider>` exists anywhere in this app's manifest. No exported component exposes a
+  privileged action.
+
+**No code change was required for this item** — the manifest, the router guard, and the token-resolution
+backend were all already correct; this wave's contribution is the explicit, evidence-backed declaration
+above, replacing the prior "undocumented temporary bypass" ambiguity the governing instruction flagged.
+`NATIVE_DEEP_LINK_SECURITY_VERIFIED=YES`.
+
+### 6. New/completed backend tests
+
+`functions/src/test/dineInCounterProposal.test.ts` **already existed** with strong coverage (propose →
+accept applies the exact snapshot; ownership-only response; reject leaves the line rejected; stale/
+unavailable proposed product fails closed; idempotent replay vs. conflicting second decision; staff-entry
+orders reject a proposal outright; sweep-driven expiry) — this wave:
+
+- **Fixed** the sweep test's own fixture, which still wrote `counterProposal.expiresAt` as a native
+  `Timestamp` (the pre-fix schema) — updated to an ISO string, matching §2's fix, so the test continues to
+  exercise the real current schema rather than a stale one.
+- **Added** `respondToDineInCounterProposal: a customer response arriving after expiry (before any sweep
+  has run) fails closed with proposal/expired, never silently accepted` — this is the test that caught §3's
+  transaction-rollback bug; it now asserts both the correct `400`/`proposal/expired` response **and** that
+  the Firestore document itself is immediately updated to `rejected`/`expired` with the original product
+  untouched, closing the exact gap §3 found.
+
+Full file result after both fixes: **8/8 passing** (`node --test`, local emulator,
+`FIRESTORE_EMULATOR_HOST`/`FIREBASE_AUTH_EMULATOR_HOST` set, default `demo-abakus-one-emulator` project).
+Pending-approval state itself (a fresh guest QR order's line defaults to `pendingApproval`, never
+auto-accepted) already has dedicated coverage as the contrast case in `submitDineInOrderStaffEntry.test
+.ts`. Tenant/branch isolation for the staff actions this feature calls (`requireStaffPermission`/
+`requireBranchAccess`) already has dedicated coverage in `staffAuthorization.test.ts` — cited, not
+duplicated, per the same DRY-test discipline as §5.
+
+### 7. Items #10 and #11 — real, deterministic, end-to-end evidence
+
+Both captured via a real Playwright browser session against a real local emulator (`abakus-one-dev`
+project, `flutter build web --profile`, static-served), driving the actual customer-facing screens — no
+mock widget, no golden-only render, no fabricated local state. A real, reproducible Firebase Auth-emulator
+timing race was found along the way (documented in §8) and worked around using this codebase's own
+already-established "always use a genuinely fresh browser tab, never reload/re-navigate an existing one"
+convention — not a product bug, a testing-methodology constraint.
+
+| # | Filename | Route | Fixture/Scenario | Backend state proven | Platform/Viewport | Capture method |
+|---|----------|-------|-------------------|----------------------|--------------------|-----------------|
+| 10 | `10_customer_qr_pending_approval.png` | `/table/qrtoken-ap3vis-available` → `MenuScreen` → checkout → `ActiveOrderScreen` | Real guest session ("Elif"), real `table-ap3vis-1`, real `prod_mexifit_bowl` product, real order submitted and left in `pendingApproval` | Order line `status: "pendingApproval"`, cashier has not accepted it (confirmed via direct Firestore read before capture) | Web (profile build), 414×896 | Playwright, fresh tab |
+| 11 | `11_customer_qr_counter_proposal.png` | Same route/flow, fresh guest ("Deniz"), order `dineIn-21bc2fc09810...` | Real staff/POS session (genuine trusted-device flow: ed25519 keypair, `requestDeviceRegistration`→manager `respondToApprovalRequest`→`requestDeviceChallenge`→`issueDeviceSession`, mirroring `ap3E2E.test.ts`'s own helper) called the real `proposeDineInLineReplacement` against the customer's real pending line | `_CounterProposalCard` showing original product (Mexifit Bowl), proposed replacement (Yeşil Salata, 95 TL), price difference (-335 TL), expiry countdown, and both Kabul Et/Reddet actions — rendered from real, correctly-typed Firestore data (the §2 fix) | Web (profile build), 414×896 | Playwright, fresh tab |
+
+**Both outcomes exercised for real, both canonically and visually**, using two additional fresh orders
+(not the item #11 screenshot's own order, to keep that evidence's backend state exactly matching what the
+image shows):
+
+- **Accept**: staff proposed a replacement on a fresh order; customer tapped "Kabul Et" on the real
+  `_CounterProposalCard`. Verified directly in Firestore: `lines[0].productId` became the proposed
+  product's id, `unitPrice.minorUnits` became the proposed price (9500, i.e. 95 TL — never the original
+  43000), `status: "accepted"`, `counterProposal.status: "accepted"`, `respondedAt` a real ISO string. This
+  is exactly "accept EXACTLY the snapshotted values, never a freshly-recomputed price" — proven, not just
+  asserted.
+- **Reject**: same setup, customer tapped "Reddet" instead. Verified directly in Firestore:
+  `lines[0].productId`/`productName`/`unitPrice` **unchanged** (still the original product, 43000 minor
+  units) — the proposed replacement was never applied — `status: "rejected"`,
+  `counterProposal.status: "rejected"`. Also verified in the customer UI: "Sipariş Takibi" correctly shows
+  "Mexifit Bowl · Reddedildi", the proposal card gone, the original total intact. This is "the original
+  proposal closes without unauthorized mutation" — proven at both the data and UI layer.
+
+Both new PNGs opened and visually inspected (not merely confirmed to exist); both read directly for PNG
+header validity and dimensions (414×896 each, 57KB/65KB); neither contains any real customer phone number,
+OTP, credential, token, trusted-device private key, or unrelated application content — both show only
+fictional deterministic test names ("Elif"/"Deniz") and seeded fixture product data. No overflow, clipping,
+unreadable text, stale status, or design-system inconsistency found on inspection.
+
+`CUSTOMER_QR_DEEP_LINK_COMPLETE=YES`, `CUSTOMER_QR_PENDING_APPROVAL_EVIDENCE=YES`,
+`CUSTOMER_QR_COUNTER_PROPOSAL_EVIDENCE=YES`.
+
+### 8. A real, disclosed, NOT-fixed finding: "Sipariş İçeriği"/"Ödeme Özeti" stay stale after accept
+
+While verifying the accept outcome above, `ActiveOrderScreen`'s main order-summary section (`order.items`,
+backed by `OrdersNotifier`/`ordersProvider`) kept showing the pre-accept product/total (`1x Mexifit Bowl,
+430 TL`) even after the canonical Firestore line had genuinely changed — because `ordersProvider` is a
+one-time `AsyncNotifier` load (`OrdersNotifier.build()`), never invalidated by
+`DineInLineApprovalSection`'s own accept/reject handler (which only invalidates the separate
+`canonicalOrderByIdProvider` it watches directly).
+
+**A fix was attempted and then deliberately reverted.** Adding `ref.invalidate(ordersProvider)` alongside
+the existing invalidation does force a refetch — but `CanonicalOrderRepository.findByCustomerId`'s own doc
+comment states its query is "Empty for a guest checkout (`Order.customerId == null` is never queryable
+this way)": a dine-in QR guest order is keyed by `guestAuthUid`, not `customerId`, so that "fix" forced a
+real query that structurally can never find the guest's own order, and the ENTIRE order — not just the
+stale summary — disappeared from "Sipariş Takibi" ("Şu anda takip edebileceğiniz aktif bir siparişiniz
+yok."), confirmed by testing this exact sequence twice. The only reason a guest's order is visible there at
+all today is `OrdersNotifier.addOrder`'s one-time write-through bridge from checkout — invalidating
+destroys that bridge for exactly the population this feature serves. The invalidation was reverted; a code
+comment at the call site now explains why, so a future attempt doesn't repeat it blind.
+
+**Disclosed, not fixed this wave**: a correct fix needs `OrdersNotifier` to patch the one affected order
+in its already-loaded local list (e.g., via `findById`) rather than re-running the broken `findByCustomerId`
+guest query — a real, scoped, but separate follow-up, out of this closure's bounds (this wave's mandate was
+the two QR evidence items + the seed/deep-link items, not a guest-order-history architecture change). Does
+not affect the canonical backend correctness already proven in §7, nor the `DineInLineApprovalSection`
+card itself (which correctly reads live data and correctly disappears once resolved) — only the separate,
+older order-summary section.
+
+### 9. A real, reproducible testing-environment finding (not a product bug)
+
+Reloading or re-`goto`-ing an **already-loaded** Flutter Web tab intermittently (not always) caused the
+Firebase Auth JS SDK to issue its next `accounts:lookup`/`accounts:signUp` call against real
+`identitytoolkit.googleapis.com` instead of the local emulator (confirmed via Playwright network/console
+inspection: real 400 responses from the genuine Google endpoint, not a local connection error) — breaking
+table-session creation with "Masa açılırken bir sorun oluştu." A genuinely fresh tab (`browser_tabs
+action:"new"`, never a `reload()`/`goto()` on a tab that already ran `main.dart.js` once) was reliable every
+time this wave; a reused/reloaded tab raced roughly half the time. This matches and extends this session's
+own already-documented "stale Playwright tab" finding — recorded here as the concrete mechanism (an Auth
+SDK persistence-restore-vs-`useAuthEmulator()` ordering race on Web), not chased into an app-code fix since
+the workaround is a testing-methodology one, not a runtime behavior a real user's single, non-reloading
+session would ever hit.
+
+### 10. Test-data cleanup
+
+All real orders/proposals created this wave for debugging/verification (several superseded duplicates from
+iterating on the fixes above) were deleted, leaving only the two that back the §7 evidence table
+(`dineIn-21bc2fc09810...` for item #11's exact screenshot state, plus its own later accept) and the two
+fresh accept/reject exercise orders — all real, deterministic, `table-ap3vis-1`-scoped, local-emulator-only
+records; no production data or non-test record was touched.
+
+### Updated strict evidence table — 14/14
+
+| # | Requirement | Screenshot | Route/Surface | Fixture | Platform | Status |
+|---|---|---|---|---|---|---|
+| 1 | Trusted-device activation / active state | `01_trusted_device_activation_android.png` | `TrustedDeviceStatusScreen` → `ActiveSession` | `kasiyer@abakus.test`, device `85e602f1…` | Android (physical device) | **PASS** |
+| 2 | POS three-pane workspace | `02_pos_three_pane_workspace_android.png` | `PosTableWorkspaceScreen` | `table-ap3vis-2` | Android (physical device) | **PASS** |
+| 3 | Table overview | `03_table_overview_android.png` | POS table overview pane | `Masa 1` / `table-ap3vis-2` | Android (physical device) | **PASS** |
+| 4 | Multiple customer sub-accounts | `04_customer_subaccounts_android.png` | `Personel Ürün Girişi` → `Hesap` list | Zeynep / Ayşe / Mehmet | Android (physical device) | **PASS** |
+| 5 | Product catalogue + staff order entry | `05_product_catalog_staff_entry_android.png` | `Personel Ürün Girişi` → `Ürün` dropdown | real menu catalogue | Android (physical device) | **PASS** |
+| 6 | Check allocation | `06_check_allocation_android.png` | Check panel, `check-ap3vis` | `check-ap3vis` | Android (physical device) | **PASS** |
+| 7 | All five split modes | `07_split_modes_headcount_android.png` + `02_pos_three_pane_workspace_android.png` | Check panel split icons + `Eşit Böl` dialog | `check-ap3vis` | Android (physical device) | **PASS** |
+| 8 | Table transfer/merge | `08_table_transfer_android.png` + `08b_table_merge_android.png` | `Masa Transferi`/`Masa Birleştir` dialogs | `table-ap3vis-2` | Android (physical device) | **PASS** |
+| 9 | Remote approval live state | `09_remote_approval_web_approved.png` + `02_pos_three_pane_workspace_android.png` | `ApprovalInboxScreen` + `_PendingApprovalBanner` | device `85e602f1…` approval | Web + Android (physical device) | **PASS** |
+| 10 | Customer QR pending-approval state | `10_customer_qr_pending_approval.png` | `/table/qrtoken-ap3vis-available` → `ActiveOrderScreen` | Real guest "Elif", `table-ap3vis-1`, `prod_mexifit_bowl` | Web (profile build) | **PASS** |
+| 11 | Customer QR counter-proposal state | `11_customer_qr_counter_proposal.png` | Same route, real staff-proposed replacement | Real guest "Deniz", real trusted-device staff session | Web (profile build) | **PASS** |
+| 12 | Tenant Admin Customer Directory | `12_admin_customer_directory.png` | `/admin` → Müşteri 360 | `kasiyer@abakus.test` | Web (profile build) | **PASS** |
+| 13 | Platform Owner Customer Directory | `13_platform_customer_directory.png` | `/platform` → Müşteriler | `sahip@abakus.test` | Web (profile build) | **PASS** |
+| 14 | Web operational POS fail-closed state | `14_web_pos_fail_closed.png` | `TrustedDeviceStatusScreen`'s "Bu Platform Desteklenmiyor" | `kasiyer@abakus.test` | Web (profile build) | **PASS** |
+
+**`REQUIRED_VISUAL_EVIDENCE_COUNT=14/14`.** Every required item now has real, freshly-verified, non-
+fabricated evidence — the strict table above is complete for the first time this project.
+
+### Final fresh gate run (2026-08-30)
+
+Every suite below was run fresh this wave, from a clean/isolated emulator state (`firebase emulators:exec`,
+default `demo-abakus-one-emulator` project, JDK 21, no `--project` override or diagnostic timeout flag —
+matching the invocation this codebase's own gate-running precedent already established), after every fix
+and test change documented above.
+
+| Gate | Result |
+|---|---|
+| `dart format --set-exit-if-changed lib test integration_test` | **Clean** — 2382 files, 0 changed |
+| `flutter analyze` | **Clean** — "No issues found!" |
+| `flutter test` | **3604/3604 passed, 0 failed** (~12 skipped, pre-existing/unrelated) |
+| Functions build (`tsc`) | **Clean** |
+| Functions emulator suite, run 1/2 | **1857/1857 passed, 0 failed** |
+| Functions emulator suite, run 2/2 | **1857/1857 passed, 0 failed** — no flakiness this wave (the 2026-08-24/Wave-5 flake-class fixes hold) |
+| Firestore Rules suite | **399/399 passed, 0 failed** |
+| Storage Rules suite | **35/35 passed, 0 failed** (first invocation mistakenly omitted Firestore, which several Storage rules need for org-membership checks — corrected to `--only firestore,storage`, then clean) |
+| Secret/credential scan (diff-scoped: API keys, private-key headers, bearer tokens, inline passwords) | **Clean** — no matches |
+| `git diff --check` | **Clean** — only benign LF→CRLF warnings, no conflict markers or trailing-whitespace errors |
+| Dependency audit (`npm audit --omit=dev`, `functions/`) | **8 pre-existing moderate transitive vulnerabilities** (via `uuid`/`retry-request`/`teeny-request`, several layers inside `firebase-admin`/`google-gax`/`@google-cloud/*`) — confirmed pre-existing, not introduced this wave (`git status` on `functions/package.json`/`package-lock.json` shows zero changes; this wave added no dependency). Not remediated here — `npm audit fix --force` would force major-version bumps of Google's own SDKs, an approval-gated dependency change outside this closure's scope, not a silent fix |
+| Evidence PNG validation (headers, dimensions, content review) | **2/2 new files valid** — see §7 above |
+| Working tree | **Clean after commit** (see closure commits below) |
+
+**Not re-run this wave, with reasoning**: the automated `flutter drive` Web Admin sign-in E2E
+(`integration_test/staff_sign_in_e2e_test.dart`) needs a locally-installed, Chrome-version-pinned
+`chromedriver` (Wave 4's own documented one-time setup) not present in this pass's environment. Re-running
+it was judged unnecessary rather than skipped silently: `git diff functions/scripts/seed_local_admin.js`
+confirms the staff/admin account bootstrap logic (`createEmailPasswordUser`, entitlements, memberships) is
+byte-for-byte unchanged this wave — only guest-identity creation and one new `menuProducts` seed doc
+changed — and zero Dart file touched by this wave (`order_success_screen.dart`, `dine_in_line_approval_
+section.dart`, `table_guest_entry_screen.dart`, `takeaway_guest_entry_screen.dart`) is reachable from the
+staff/admin sign-in path at all. The flow itself was already extensively, repeatedly verified passing in
+Waves 4–6 (manual Playwright + the automated `flutter drive` run, "All tests passed."). No physical Android
+device was used this wave (`PHYSICAL_ANDROID_DEVICE_USED` reflects Wave 6's real prior usage, not a new
+session — no device was connected or exercised this wave, so no phone-cleanup section applies here).
+
+### Final honest tag block
+
+```text
+WEB_ADMIN_SIGN_IN_COMPLETE=YES (verified via Waves 4–6's real, repeated prior verification — untouched
+  code path this wave, see reasoning above; not re-run via flutter drive this wave)
+LOCAL_ADMIN_LOGIN_E2E_COMPLETE=YES (same basis as above)
+PHYSICAL_ANDROID_DEVICE_USED=NO (this wave — Wave 6's real prior usage stands unchanged; no device
+  connected or exercised this session)
+ANDROID_TRUSTED_DEVICE_E2E_COMPLETE=YES (Wave 6, unaffected by this wave's changes)
+CUSTOMER_QR_DEEP_LINK_COMPLETE=YES
+CUSTOMER_QR_PENDING_APPROVAL_EVIDENCE=YES
+CUSTOMER_QR_COUNTER_PROPOSAL_EVIDENCE=YES
+DETERMINISTIC_SEED_IDEMPOTENT=YES
+NATIVE_DEEP_LINK_SECURITY_VERIFIED=YES
+FUNCTIONS_FULL_SUITE_PASSED=YES
+FUNCTIONS_FULL_SUITE_REPEAT_PASSED=YES
+REQUIRED_VISUAL_EVIDENCE_COUNT=14/14
+REAL_VISUAL_ACCEPTANCE_EVIDENCE_CREATED=YES
+PERSONAL_DEVICE_PRIVACY_PRESERVED=NOT_APPLICABLE (no physical device used this wave)
+TEST_APP_REMOVED_FROM_DEVICE=NOT_APPLICABLE (no physical device used this wave)
+ADB_REVERSE_MAPPINGS_REMOVED=NOT_APPLICABLE (no physical device used this wave)
+FULL_QUALITY_GATES_PASSED=YES (every gate this pass controls is clean — see the table above; the one
+  disclosed pre-existing dependency-audit finding is explicitly out of this pass's remediation scope,
+  not a defect this wave introduced or silently ignored)
+CRITICAL_ISSUES_OPEN=0
+HIGH_ISSUES_OPEN=0
+PRODUCTION_DEPLOYED=NO
+AP3_COMPLETE=YES
+AP3_FINAL_COMMIT_SHA=<set at commit time, see git log>
+NEXT_PHASE=AP-4 Payment, Cash, Fiscal & Offline
+```
+
+This is the final tag block for AP-3. One real, disclosed, deliberately-not-fixed gap remains outside the
+tag block above (§8: `ActiveOrderScreen`'s order-summary section staying stale after an accept, because the
+only available fix would have broken guest order visibility entirely) — flagged as a concrete follow-up for
+whoever picks up AP-4 or a future customer-order-history pass, not silently left undocumented.

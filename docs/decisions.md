@@ -18189,3 +18189,58 @@ change, disclosed for whoever next needs to reproduce a clean backend gate run o
 the single Android/Vanguard finding above. Every other AP-3 requirement this wave addressed (Web
 sign-in, QR deep-link, sign-out UI, full fresh gates) is genuinely complete — see the closure report's
 tag block for the precise, honest final state.
+
+### ADR-042 — AP-3 Final Closure: Deterministic Seed Fix, Counter-Proposal Backend Fixes, Deep-Link Security Declaration (Locked)
+
+**Context**: continuing from ADR-041's Wave 6 (real physical Android device closed items #1–#9/#12–#14;
+items #10/#11 — customer QR pending-approval/counter-proposal — and Wave 6's own disclosed sub-account
+duplication remained open). This wave closed both.
+
+**Decision 1 — deterministic seed fix**: `functions/scripts/seed_local_admin.js`'s three fixture guests
+now use `admin.auth().createUser({ uid })` with a deterministic uid, tolerant of
+`auth/uid-already-exists`, instead of the Auth client's anonymous sign-up endpoint (always mints a random
+uid, the actual root cause of Wave 6's "each guest appears twice" observation). Proven idempotent by a new
+automated test (`seed_local_admin.idempotency.test.mjs`) that runs the real seed three times and asserts
+byte-identical sub-account/session ids every time.
+
+**Decision 2 — two real backend bugs in `dineInCounterProposal.ts`, both fixed**: (a) counter-proposal
+date fields were stored as native `Timestamp`s against this codebase's established ISO-string convention
+for every other order date field, silently breaking the customer-facing card via a swallowed `TypeError`
+— fixed to store strings, with the one legitimately-still-`Timestamp` field (`earliestPendingProposalExpiresAt`,
+the sole field used in a Firestore range query) explicitly preserved and documented as the deliberate
+exception; (b) `respondToDineInCounterProposal`'s inline expiry branch wrote its "expired" update via
+`tx.update()` then threw inside the same transaction callback, which Firestore discards entirely on throw
+— fixed by returning a sentinel and throwing only after the transaction commits. Both are genuine, real,
+previously-undiscovered defects, not speculative hardening — found via the systematic-debugging discipline
+(verify backend state directly, verify widget logic, only then instrument) while producing real customer
+evidence, not guessed.
+
+**Decision 3 — `abakusone://` deep-link: declared canonical, not changed**. Audited against the governing
+instruction's exact checklist (unauthenticated `/admin` access, client-trusted org/branch/table, malformed/
+expired/cross-tenant token handling, exported components, embedded credentials) — every check passed by
+inspection of already-correct code and already-existing test coverage (`tableGuestSession.test.ts`'s
+tenant-isolation/expiry/notFound tests). No code change was required or made; the outcome is a documented
+declaration, not a fix.
+
+**Decision 4 — a shallow customer-order-summary staleness fix was attempted and reverted**: after a
+counter-proposal accept, `ActiveOrderScreen`'s order-summary section (backed by the separate, one-time-
+loaded `ordersProvider`) kept showing the pre-accept product/total. Invalidating `ordersProvider` was tried
+and immediately reverted on discovering `CanonicalOrderRepository.findByCustomerId`'s own documented
+contract: it is empty by design for a guest/dine-in-QR order (keyed by `guestAuthUid`, not `customerId`) —
+forcing that requery made the order disappear from tracking entirely, a strictly worse regression than the
+staleness it was meant to fix. Left disclosed, not fixed — a correct fix needs `OrdersNotifier` to patch
+the one affected order via `findById` rather than re-running the broken guest query, out of this closure's
+scope. See `docs/visual_evidence/ap3/README.md` §8 for the full account, including the reverted diff's
+reasoning (kept as an in-code comment at the call site so a future attempt doesn't repeat it blind).
+
+**Alternatives considered**: for Decision 4, a full `OrdersNotifier` redesign (query by `guestAuthUid`
+OR `customerId`, or a live stream instead of one-time load) would resolve the staleness properly, but is a
+real, separate architecture-sized change to the customer order-history read path — not something to bundle
+into a QR-evidence closure pass without its own explicit scoping/approval.
+
+**Status**: AP-3 is CLOSED. 14/14 visual evidence, deterministic seed idempotency proven, native deep-link
+security declared and verified, both counter-proposal outcomes exercised canonically and visually, full
+fresh gates green (Functions suite 1857/1857 twice, Firestore Rules 399/399, Storage Rules 35/35,
+`flutter test` 3604/3604). One disclosed, deliberately out-of-scope gap remains (Decision 4) — not a
+blocker, a flagged follow-up. See the closure report's tag block for the complete, honest final state.
+`NEXT_PHASE=AP-4 Payment, Cash, Fiscal & Offline` — not started.
