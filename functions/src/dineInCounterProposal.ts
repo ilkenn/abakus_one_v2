@@ -9,6 +9,7 @@ import { generateCorrelationId, sanitizeClientRequestId } from "./correlationId"
 import { loadCanonicalChannelPricingPolicy, loadCanonicalMenuProduct } from "./takeawayCatalog";
 import { buildProductLine, type RawProductItem } from "./submitTakeawayOrder";
 import { computeLineValueMinorUnits } from "./checkAllocationConfig";
+import { vatAmountOf } from "./takeawayMoney";
 
 /**
  * AP-3 Wave 2 remainder — the QR replacement/counter-proposal backend
@@ -84,6 +85,56 @@ function computeEarliestPendingProposalExpiresAt(lines: Array<Record<string, unk
     if (earliestMillis === null || millis < earliestMillis) earliestMillis = millis;
   }
   return earliestMillis === null ? null : Timestamp.fromMillis(earliestMillis);
+}
+
+/**
+ * AP-3 wave 7 correction — a real, previously-undiscovered gap: accepting a
+ * counter-proposal updated the affected LINE's `productId`/`unitPrice`
+ * correctly, but nothing ever recomputed the order-level `pricing`
+ * aggregate (`grossSubtotal`/`taxableBase`/`vatAmount`/`grandTotal`) from
+ * the now-changed lines — so a customer who accepted a cheaper or pricier
+ * replacement would see the ORIGINAL total forever, not just transiently.
+ * Reuses `computeLineValueMinorUnits` (the same per-line total this file
+ * already uses for `differenceFromOriginalMinorUnits`) and `vatAmountOf`
+ * (the same VAT helper `submitTakeawayOrder.ts`'s canonical `buildOrderLine`
+ * uses) — never a hand-rolled formula. `serviceFee`/`deliveryFee`/
+ * `packagingFee`/`tip`/`discount` are untouched (a counter-proposal never
+ * touches loyalty/campaign/delivery state), matching `grandTotal =
+ * grossSubtotal - discount` exactly like every other channel's pricing
+ * pipeline. Called on every non-expired response (accept AND reject) —
+ * reject leaves every line's price unchanged, so the recompute is a
+ * mathematical no-op there, but running it unconditionally means `pricing`
+ * is always freshly derived from `lines`, never silently allowed to drift.
+ */
+function recomputeOrderPricing(
+  lines: Array<Record<string, unknown>>,
+  priorPricing: Record<string, unknown>,
+): Record<string, unknown> {
+  let grossSubtotalMinorUnits = 0;
+  let taxableBaseMinorUnits = 0;
+  let vatAmountMinorUnits = 0;
+  for (const line of lines) {
+    const lineTotalMinorUnits = computeLineValueMinorUnits(line as {
+      quantity: number;
+      unitPrice?: { minorUnits: number };
+      lineDiscount?: { minorUnits: number };
+      modifiers?: Array<{ unitExtraPrice?: { minorUnits: number }; quantity: number }>;
+    });
+    const taxRateBasisPoints = (line.taxRateBasisPoints as number | undefined) ?? 0;
+    const lineVatMinorUnits = vatAmountOf(lineTotalMinorUnits, taxRateBasisPoints);
+    grossSubtotalMinorUnits += lineTotalMinorUnits;
+    taxableBaseMinorUnits += lineTotalMinorUnits - lineVatMinorUnits;
+    vatAmountMinorUnits += lineVatMinorUnits;
+  }
+  const currencyCode = ((priorPricing.grandTotal as { currencyCode?: string } | undefined)?.currencyCode) ?? "TRY";
+  const discountMinorUnits = (priorPricing.discount as { minorUnits?: number } | undefined)?.minorUnits ?? 0;
+  return {
+    ...priorPricing,
+    grossSubtotal: { minorUnits: grossSubtotalMinorUnits, currencyCode },
+    taxableBase: { minorUnits: taxableBaseMinorUnits, currencyCode },
+    vatAmount: { minorUnits: vatAmountMinorUnits, currencyCode },
+    grandTotal: { minorUnits: grossSubtotalMinorUnits - discountMinorUnits, currencyCode },
+  };
 }
 
 export const proposeDineInLineReplacement = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
@@ -247,8 +298,9 @@ export const respondToDineInCounterProposal = onCall({ enforceAppCheck: shouldEn
     const stillPending = lines.some((l) => l.status === "pendingApproval");
     const anyResolved = lines.some((l) => l.status === "accepted" || l.status === "rejected");
     const linesDispositionSummary = stillPending ? (anyResolved ? "partiallyResolved" : "pending") : "resolved";
+    const pricing = recomputeOrderPricing(lines, order.pricing as Record<string, unknown>);
     tx.update(orderRef, {
-      lines, linesDispositionSummary,
+      lines, linesDispositionSummary, pricing,
       hasPendingProposal: computeEarliestPendingProposalExpiresAt(lines) !== null,
       earliestPendingProposalExpiresAt: computeEarliestPendingProposalExpiresAt(lines),
     });

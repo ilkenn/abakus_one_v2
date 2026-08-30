@@ -167,6 +167,11 @@ test("proposeDineInLineReplacement: resolves the canonical product/price snapsho
   assert.strictEqual(line.status, "proposedChange");
   assert.strictEqual(line.counterProposal.proposedProductId, f.altProductId);
   assert.strictEqual(line.counterProposal.differenceFromOriginalMinorUnits, 2000);
+  // A still-pending proposal must never touch the order-level total yet —
+  // only the eventual accept/reject response does (see the pricing
+  // assertions below).
+  const pricingBeforeResponse = order.pricing.grandTotal.minorUnits;
+  assert.strictEqual(pricingBeforeResponse, 10000);
 
   const respond = await callCallable(RESPOND_URL, { orderId, lineIndex: 0, decision: "accept" }, guestIdToken);
   assert.strictEqual(respond.httpStatus, 200, JSON.stringify(respond.body));
@@ -177,6 +182,12 @@ test("proposeDineInLineReplacement: resolves the canonical product/price snapsho
   assert.strictEqual(line.productId, f.altProductId);
   assert.strictEqual(line.unitPrice.minorUnits, 12000);
   assert.strictEqual(line.counterProposal.status, "accepted");
+  // AP-3 wave 7 correction — the order-level pricing aggregate must be
+  // recomputed from the now-accepted line's new price, not just the line
+  // itself; a customer accepting a pricier/cheaper replacement must see a
+  // correct total, not the frozen submission-time one.
+  assert.strictEqual(order.pricing.grossSubtotal.minorUnits, 12000);
+  assert.strictEqual(order.pricing.grandTotal.minorUnits, 12000);
 });
 
 test("respondToDineInCounterProposal: only the order's own owner may respond — a different guest is denied", async () => {
@@ -199,6 +210,10 @@ test("respondToDineInCounterProposal: reject leaves the line rejected, never sil
   const order = (await db().collection("orders").doc(orderId).get()).data()!;
   assert.strictEqual(order.lines[0].status, "rejected");
   assert.strictEqual(order.lines[0].counterProposal.status, "rejected");
+  assert.strictEqual(order.lines[0].productId, f.productId, "a rejected proposal must never change the original product");
+  // Rejecting never changes any price — the recompute this response
+  // triggers must be a mathematical no-op, still exactly the original total.
+  assert.strictEqual(order.pricing.grandTotal.minorUnits, 10000);
 });
 
 test("respondToDineInCounterProposal: a stale (now-unavailable) proposed product fails closed on accept, forcing a fresh proposal", async () => {

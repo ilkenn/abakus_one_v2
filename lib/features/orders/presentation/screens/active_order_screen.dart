@@ -17,40 +17,47 @@ import '../../domain/models/order_item_snapshot.dart';
 import '../../domain/models/order_model.dart';
 import '../../domain/models/order_status.dart';
 import '../../domain/models/order_tracking_step.dart';
+import '../providers/dine_in_counter_proposal_dependencies_provider.dart';
 import '../providers/orders_provider.dart';
 import '../widgets/dine_in_line_approval_section.dart';
 import 'order_detail_screen.dart';
 
 /// Customer-facing Active Order Tracking screen.
 ///
-/// Reads state exclusively through [ordersProvider]/[activeOrderProvider] —
-/// no order data is ever embedded in this widget. With [orderId] omitted,
-/// shows the customer's current active order (see [activeOrderProvider]);
-/// with it set, shows that specific order regardless of whether it's still
-/// active (used by the post-checkout "Siparişi Takip Et" deep link, and by
-/// a delivered/cancelled order's own "Detaylar" flow if ever routed here).
-/// If no matching order exists — including a direct-route open with nothing
-/// active — renders a safe empty state instead of crashing or showing
-/// stale content.
+/// With [orderId] set (the common case — the post-checkout "Siparişi Takip
+/// Et" deep link, and the Home screen's "Aktif Siparişin" card), reads
+/// through [canonicalOrderByIdProvider] — the same guest-safe,
+/// Firestore-Rules-validated, live-repolled canonical [Order] read
+/// [DineInLineApprovalSection] itself already uses to show a staff
+/// accept/reject/proposal decision without a restart. AP-3 wave 7 fix: this
+/// screen previously read the customer-facing summary (`OrderModel.items`/
+/// totals) from [ordersProvider] — a ONE-TIME `findByCustomerId` load that
+/// is documented to return nothing at all for a guest/dine-in-QR order
+/// (`Order.customerId == null` for a guest — see
+/// `CanonicalOrderRepository.findByCustomerId`'s own doc comment) and is
+/// never invalidated after checkout. That made a real, previously-shipped
+/// defect possible: after a customer accepted a staff counter-proposal, the
+/// canonical Firestore line correctly updated, but this screen's summary
+/// kept showing the pre-accept product/total until the app was restarted.
+/// Sharing the exact same [canonicalOrderByIdProvider] family instance
+/// [DineInLineApprovalSection] polls/invalidates means this screen now
+/// rebuilds in lockstep with it — no separate invalidation wiring needed,
+/// and no risk of the guest-order-visibility regression a naive
+/// `ordersProvider` invalidation caused when it was tried and reverted (see
+/// `docs/visual_evidence/ap3/README.md`'s AP-3 wave 7 §8).
+///
+/// With [orderId] omitted, falls back to [ordersProvider]/
+/// [activeOrderProvider] — there is no id to look up canonically, and this
+/// path only ever serves a real signed-in customer's own order history (for
+/// which `findByCustomerId` is correct), never a guest.
 class ActiveOrderScreen extends ConsumerWidget {
   final String? orderId;
 
   const ActiveOrderScreen({super.key, this.orderId});
 
-  OrderModel? _resolveOrder(List<OrderModel> orders, OrderModel? active) {
-    final targetId = orderId;
-    if (targetId == null) return active;
-    for (final order in orders) {
-      if (order.id == targetId) return order;
-    }
-    return null;
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final ordersAsync = ref.watch(ordersProvider);
-    final active = ref.watch(activeOrderProvider);
-
+    final targetId = orderId;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sipariş Takibi'),
@@ -63,27 +70,75 @@ class ActiveOrderScreen extends ConsumerWidget {
         foregroundColor: AppColors.textPrimary,
       ),
       body: SafeArea(
-        child: ordersAsync.when(
-          loading: () => const LoadingView(),
-          error: (error, stackTrace) => ErrorView(
-            message: 'Sipariş bilgileri yüklenirken bir sorun oluştu.',
-            retryLabel: 'Tekrar Dene',
-            onRetry: () => ref.invalidate(ordersProvider),
-          ),
-          data: (orders) {
-            final order = _resolveOrder(orders, active);
-            return order == null
-                ? EmptyView(
-                    icon: Icons.receipt_long_rounded,
-                    message:
-                        'Şu anda takip edebileceğiniz aktif bir siparişiniz yok.',
-                    actionLabel: 'Menüye Göz At',
-                    onAction: () => Navigator.pop(context),
-                  )
-                : _ActiveOrderBody(order: order);
-          },
-        ),
+        child: targetId == null
+            ? const _ActiveOrderByCurrentSession()
+            : _ActiveOrderById(orderId: targetId),
       ),
+    );
+  }
+}
+
+/// [orderId] provided — the guest-safe canonical read path (see the class
+/// doc comment on [ActiveOrderScreen] above).
+class _ActiveOrderById extends ConsumerWidget {
+  final String orderId;
+
+  const _ActiveOrderById({required this.orderId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final canonicalAsync = ref.watch(canonicalOrderByIdProvider(orderId));
+
+    return canonicalAsync.when(
+      loading: () => const LoadingView(),
+      error: (error, stackTrace) => ErrorView(
+        message: 'Sipariş bilgileri yüklenirken bir sorun oluştu.',
+        retryLabel: 'Tekrar Dene',
+        onRetry: () => ref.invalidate(canonicalOrderByIdProvider(orderId)),
+      ),
+      data: (order) {
+        return order == null
+            ? EmptyView(
+                icon: Icons.receipt_long_rounded,
+                message:
+                    'Şu anda takip edebileceğiniz aktif bir siparişiniz yok.',
+                actionLabel: 'Menüye Göz At',
+                onAction: () => Navigator.pop(context),
+              )
+            : _ActiveOrderBody(order: OrderModel.fromCanonicalOrder(order));
+      },
+    );
+  }
+}
+
+/// [orderId] omitted — the pre-existing "current active order" path,
+/// unchanged, for a real signed-in customer's own order history.
+class _ActiveOrderByCurrentSession extends ConsumerWidget {
+  const _ActiveOrderByCurrentSession();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ordersAsync = ref.watch(ordersProvider);
+    final active = ref.watch(activeOrderProvider);
+
+    return ordersAsync.when(
+      loading: () => const LoadingView(),
+      error: (error, stackTrace) => ErrorView(
+        message: 'Sipariş bilgileri yüklenirken bir sorun oluştu.',
+        retryLabel: 'Tekrar Dene',
+        onRetry: () => ref.invalidate(ordersProvider),
+      ),
+      data: (_) {
+        return active == null
+            ? EmptyView(
+                icon: Icons.receipt_long_rounded,
+                message:
+                    'Şu anda takip edebileceğiniz aktif bir siparişiniz yok.',
+                actionLabel: 'Menüye Göz At',
+                onAction: () => Navigator.pop(context),
+              )
+            : _ActiveOrderBody(order: active);
+      },
     );
   }
 }

@@ -1616,6 +1616,34 @@ test('another table guest (different uid) cannot read someone else\'s guest orde
   await assertFails(getDoc(doc(otherGuest, 'orders/guest-order-15b')));
 });
 
+test('AP-3 wave 7 — two guests seated at the SAME physical table (same tableSessionId, different sub-account uid) cannot read each other\'s orders', async () => {
+  // Distinct from the two tests above, which use two entirely different
+  // tableSessionIds — this proves isolation holds even when both orders
+  // share the same table/session, which is the real multi-sub-account
+  // shape `canonicalOrderByIdProvider` (ActiveOrderScreen's guest-safe
+  // read path, AP-3 wave 7) actually exercises for a QR table order.
+  await seed(async (db) => {
+    await setDoc(
+      doc(db, 'tableGuestSessions/tgs-shared-table'),
+      activeGuestSession({ guestAuthUid: 'guest-uid-shared-a' }),
+    );
+    await setDoc(
+      doc(db, 'orders/guest-order-shared-a'),
+      tableOrderPayload({ tableSessionId: 'tgs-shared-table', guestAuthUid: 'guest-uid-shared-a' }),
+    );
+    await setDoc(
+      doc(db, 'orders/guest-order-shared-b'),
+      tableOrderPayload({ tableSessionId: 'tgs-shared-table', guestAuthUid: 'guest-uid-shared-b' }),
+    );
+  });
+  const guestA = testEnv.authenticatedContext('guest-uid-shared-a').firestore();
+  const guestB = testEnv.authenticatedContext('guest-uid-shared-b').firestore();
+
+  await assertSucceeds(getDoc(doc(guestA, 'orders/guest-order-shared-a')));
+  await assertFails(getDoc(doc(guestA, 'orders/guest-order-shared-b')));
+  await assertFails(getDoc(doc(guestB, 'orders/guest-order-shared-a')));
+});
+
 test('a table guest can still read their own past order after their session has expired', async () => {
   await seed(async (db) => {
     await setDoc(
