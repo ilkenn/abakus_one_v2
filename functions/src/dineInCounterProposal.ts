@@ -53,21 +53,37 @@ interface CounterProposalSnapshot {
   reasonCode: string;
   reasonMessage: string;
   proposedByStaffUid: string;
-  createdAt: Timestamp;
-  expiresAt: Timestamp;
+  // ISO 8601 strings, not native Firestore `Timestamp`s — matching every
+  // other date field on this same order document (`OrderTimestamps`, etc.),
+  // which `order_firestore_mapper.dart`'s `DateTime.parse(x as String)`
+  // convention already relies on everywhere else. Storing these three as
+  // native `Timestamp`s (as an earlier version of this file did) was a
+  // real, previously-undiscovered bug: the customer-facing counter-proposal
+  // UI (`DineInLineApprovalSection`) silently rendered nothing at all for
+  // every real proposal ever created, because its `AsyncValue.error` branch
+  // swallows the resulting `TypeError` without surfacing it anywhere —
+  // found only by driving the real customer screen end to end (AP-3 wave
+  // 7). The denormalized top-level `earliestPendingProposalExpiresAt`
+  // field is unaffected by this fix — it stays a native `Timestamp`
+  // deliberately, since it is the one field of the two actually queried on
+  // (`sweepExpiredDineInCounterProposals` below), and no Dart client ever
+  // reads it directly.
+  createdAt: string;
+  expiresAt: string;
   status: "pendingCustomerResponse" | "accepted" | "rejected" | "expired";
-  respondedAt: Timestamp | null;
+  respondedAt: string | null;
 }
 
-/** Recomputes the order's earliest-still-pending-proposal expiry across every line — the denormalized top-level field the sweep queries on (nested-array Firestore queries aren't possible; mirrors this codebase's own established denormalize-for-queryability convention). */
+/** Recomputes the order's earliest-still-pending-proposal expiry across every line — the denormalized top-level field the sweep queries on (nested-array Firestore queries aren't possible; mirrors this codebase's own established denormalize-for-queryability convention). Returns a native `Timestamp` (unlike the per-line `counterProposal.expiresAt` ISO strings this reads from) because this is the one value actually used in a Firestore range query. */
 function computeEarliestPendingProposalExpiresAt(lines: Array<Record<string, unknown>>): Timestamp | null {
-  let earliest: Timestamp | null = null;
+  let earliestMillis: number | null = null;
   for (const line of lines) {
     const proposal = line.counterProposal as CounterProposalSnapshot | null | undefined;
     if (!proposal || proposal.status !== "pendingCustomerResponse") continue;
-    if (!earliest || proposal.expiresAt.toMillis() < earliest.toMillis()) earliest = proposal.expiresAt;
+    const millis = new Date(proposal.expiresAt).getTime();
+    if (earliestMillis === null || millis < earliestMillis) earliestMillis = millis;
   }
-  return earliest;
+  return earliestMillis === null ? null : Timestamp.fromMillis(earliestMillis);
 }
 
 export const proposeDineInLineReplacement = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
@@ -126,7 +142,8 @@ export const proposeDineInLineReplacement = onCall({ enforceAppCheck: shouldEnfo
       proposedQuantity, proposedUnitPrice: { minorUnits: proposedLine.unitPriceMinorUnits, currencyCode: "TRY" },
       proposedLineTotalMinorUnits, differenceFromOriginalMinorUnits: proposedLineTotalMinorUnits - originalLineValue,
       reasonCode, reasonMessage, proposedByStaffUid: request.auth!.uid,
-      createdAt: now, expiresAt: Timestamp.fromMillis(now.toMillis() + COUNTER_PROPOSAL_TTL_MINUTES * 60_000),
+      createdAt: now.toDate().toISOString(),
+      expiresAt: Timestamp.fromMillis(now.toMillis() + COUNTER_PROPOSAL_TTL_MINUTES * 60_000).toDate().toISOString(),
       status: "pendingCustomerResponse", respondedAt: null,
     };
 
@@ -142,7 +159,7 @@ export const proposeDineInLineReplacement = onCall({ enforceAppCheck: shouldEnfo
       correlationId: generateCorrelationId(), clientRequestId: sanitizeClientRequestId(data.clientRequestId), now,
     });
 
-    return { orderId, lineIndex, proposalVersion: snapshot.proposalVersion, expiresAt: snapshot.expiresAt.toDate().toISOString() };
+    return { orderId, lineIndex, proposalVersion: snapshot.proposalVersion, expiresAt: snapshot.expiresAt };
   });
 });
 
@@ -157,7 +174,17 @@ export const respondToDineInCounterProposal = onCall({ enforceAppCheck: shouldEn
 
   const db = getFirestore();
   const uid = request.auth.uid;
-  return db.runTransaction(async (tx) => {
+  // The expiry branch below must commit its "expired" write even though the
+  // caller still needs to see a `failed-precondition`/`proposal/expired`
+  // error — but a transaction callback that throws discards every `tx.*`
+  // write it queued, Firestore rolls back the whole thing, not just the
+  // parts after the throw. So the expiry case returns a plain sentinel
+  // (never throws) to let the transaction commit, and the actual
+  // `HttpsError` is thrown once, outside `runTransaction`, from that
+  // sentinel — same "reflect real backend state before failing" reasoning
+  // `sweepExpiredDineInCounterProposals` already established, just applied
+  // to the inline check inside this callable instead of the sweep.
+  const result = await db.runTransaction(async (tx) => {
     const orderRef = db.collection("orders").doc(orderId);
     const orderSnap = await tx.get(orderRef);
     if (!orderSnap.exists) throw new HttpsError("not-found", "Order not found.");
@@ -184,19 +211,19 @@ export const respondToDineInCounterProposal = onCall({ enforceAppCheck: shouldEn
     const now = Timestamp.now();
     // Idempotent replay — same decision already recorded: safe no-op.
     if (proposal.status === (decision === "accept" ? "accepted" : "rejected")) {
-      return { orderId, lineIndex, status: proposal.status, idempotent: true };
+      return { expired: false as const, orderId, lineIndex, status: proposal.status, idempotent: true };
     }
     if (proposal.status !== "pendingCustomerResponse") {
       throw new HttpsError("failed-precondition", `This proposal is already "${proposal.status}" — a conflicting second response is rejected.`);
     }
-    if (proposal.expiresAt.toMillis() < now.toMillis()) {
-      lines[lineIndex] = { ...line, status: "rejected", counterProposal: { ...proposal, status: "expired", respondedAt: now } };
+    if (new Date(proposal.expiresAt).getTime() < now.toMillis()) {
+      lines[lineIndex] = { ...line, status: "rejected", counterProposal: { ...proposal, status: "expired", respondedAt: now.toDate().toISOString() } };
       tx.update(orderRef, { lines, hasPendingProposal: false, earliestPendingProposalExpiresAt: computeEarliestPendingProposalExpiresAt(lines) });
-      throw new HttpsError("failed-precondition", "This proposal has expired — ask staff for a fresh one.", { code: "proposal/expired" });
+      return { expired: true as const };
     }
 
     if (decision === "reject") {
-      lines[lineIndex] = { ...line, status: "rejected", counterProposal: { ...proposal, status: "rejected", respondedAt: now } };
+      lines[lineIndex] = { ...line, status: "rejected", counterProposal: { ...proposal, status: "rejected", respondedAt: now.toDate().toISOString() } };
     } else {
       // Stale catalog/availability re-check — never silently substitute a
       // different price/product than what the customer actually saw.
@@ -213,7 +240,7 @@ export const respondToDineInCounterProposal = onCall({ enforceAppCheck: shouldEn
         modifiers: proposal.proposedModifiers,
         quantity: proposal.proposedQuantity,
         unitPrice: proposal.proposedUnitPrice,
-        counterProposal: { ...proposal, status: "accepted", respondedAt: now },
+        counterProposal: { ...proposal, status: "accepted", respondedAt: now.toDate().toISOString() },
       };
     }
 
@@ -235,8 +262,13 @@ export const respondToDineInCounterProposal = onCall({ enforceAppCheck: shouldEn
       correlationId: generateCorrelationId(), clientRequestId: sanitizeClientRequestId(data.clientRequestId), now,
     });
 
-    return { orderId, lineIndex, status: decision === "accept" ? "accepted" : "rejected", idempotent: false };
+    return { expired: false as const, orderId, lineIndex, status: decision === "accept" ? "accepted" : "rejected", idempotent: false };
   });
+
+  if (result.expired) {
+    throw new HttpsError("failed-precondition", "This proposal has expired — ask staff for a fresh one.", { code: "proposal/expired" });
+  }
+  return { orderId: result.orderId, lineIndex: result.lineIndex, status: result.status, idempotent: result.idempotent };
 });
 
 /** Mirrors `reservationSweep.ts`/`sweepExpiredApprovalRequests`'s own real, tested sweep-function precedent — callable directly or wired to Cloud Scheduler later. */
@@ -258,8 +290,8 @@ export const sweepExpiredDineInCounterProposals = onCall({ enforceAppCheck: shou
       let changed = false;
       for (let i = 0; i < lines.length; i++) {
         const proposal = lines[i].counterProposal as CounterProposalSnapshot | null;
-        if (!proposal || proposal.status !== "pendingCustomerResponse" || proposal.expiresAt.toMillis() > now.toMillis()) continue;
-        lines[i] = { ...lines[i], status: "rejected", counterProposal: { ...proposal, status: "expired", respondedAt: now } };
+        if (!proposal || proposal.status !== "pendingCustomerResponse" || new Date(proposal.expiresAt).getTime() > now.toMillis()) continue;
+        lines[i] = { ...lines[i], status: "rejected", counterProposal: { ...proposal, status: "expired", respondedAt: now.toDate().toISOString() } };
         changed = true;
       }
       if (!changed) return;

@@ -218,6 +218,21 @@ class _CounterProposalCardState extends ConsumerState<_CounterProposalCard> {
           );
       if (!mounted) return;
       ref.invalidate(canonicalOrderByIdProvider(widget.orderId));
+      // Deliberately NOT also invalidating `ordersProvider` here: it's a
+      // one-time `findByCustomerId` load, and that query is documented
+      // (`CanonicalOrderRepository.findByCustomerId`) to return nothing at
+      // all for a guest/dine-in-QR order (`Order.customerId == null` is
+      // never queryable that way) — the only reason a guest's own order is
+      // visible there at all is `OrdersNotifier.addOrder`'s one-time
+      // write-through bridge from checkout. Invalidating would force a
+      // real requery that wipes that bridge and makes the order disappear
+      // from "Sipariş Takibi" entirely for exactly the guest customers
+      // this feature serves (confirmed by testing this exact sequence).
+      // Net effect: `ActiveOrderScreen`'s "Sipariş İçeriği"/"Ödeme Özeti"
+      // sections (backed by the separate `OrderModel.items` snapshot) stay
+      // stale after an accept/reject — a real, known, disclosed gap (see
+      // `docs/visual_evidence/ap3/README.md`), left alone rather than
+      // "fixed" into a worse regression.
     } on RespondToDineInCounterProposalException catch (error) {
       if (!mounted) return;
       setState(() => _error = error.message);

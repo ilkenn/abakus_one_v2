@@ -7,7 +7,8 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
-import '../../../menu/presentation/screens/menu_screen.dart';
+import '../../../navigation/presentation/providers/navigation_provider.dart';
+import '../../../navigation/presentation/screens/main_navigation_screen.dart';
 import '../../data/table_guest_session_gateway.dart';
 import '../providers/active_table_context_provider.dart';
 import '../providers/table_guest_session_dependencies_provider.dart';
@@ -114,17 +115,21 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
       ref.read(activeTableContextProvider.notifier).set(tableContext);
 
       if (!mounted) return;
-      // Mirrors `TakeawayGuestEntryScreen._startOrder`'s exact reasoning:
-      // this entry screen isn't nested inside `MainNavigationScreen`'s own
-      // Navigator (it's a top-level deep link), so `TableConfirmedScreen`'s
-      // `popUntil(isFirst) + selectTab` — built for the in-shell camera-scan
-      // push — would pop back to nothing useful here. Landing directly on
-      // `MenuScreen`, which already reads `activeTableContextProvider` for
-      // its dine-in scope, is the same "closest analog to home" choice the
-      // takeaway entry screen already makes.
+      // AP-3 wave 7 fix — this used to `pushReplacement` a bare `MenuScreen`
+      // (not nested inside `MainNavigationScreen`'s tab shell, reasoning:
+      // this entry screen isn't nested inside that Navigator either, so
+      // `TableConfirmedScreen`'s in-shell `popUntil(isFirst) + selectTab`
+      // has nothing to pop back to here). That "closest analog to home"
+      // choice was never actually equivalent: `MenuScreen` on its own has
+      // no cart entry point at all (cart is one of the shell's four
+      // persistent bottom-nav tabs, not something Menu can navigate to by
+      // itself) — a guest could add items but never reach checkout. Push
+      // the real shell instead, pre-selecting its Menu tab exactly like the
+      // in-shell QR-scanner path does, so Cart/Home/Profile stay reachable.
+      ref.read(navigationProvider.notifier).selectTab(AppTab.menu);
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const MenuScreen()),
+        MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
       );
     } on TableGuestSessionException catch (error) {
       if (!mounted) return;

@@ -252,10 +252,16 @@ test("sweepExpiredDineInCounterProposals: an expired pending proposal is transit
   assert.strictEqual(propose.httpStatus, 200, JSON.stringify(propose.body));
 
   // Force the proposal into the past without going through the callable.
+  // `counterProposal.expiresAt` is an ISO 8601 string (matching every other
+  // date field on this order document — see `dineInCounterProposal.ts`'s
+  // own `CounterProposalSnapshot` doc comment); only the denormalized
+  // top-level `earliestPendingProposalExpiresAt` stays a native `Timestamp`,
+  // since that's the one field the sweep's own query filters on.
   const orderRef = db().collection("orders").doc(orderId);
   const order = (await orderRef.get()).data()!;
-  order.lines[0].counterProposal.expiresAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() - 60_000));
-  await orderRef.update({ lines: order.lines, earliestPendingProposalExpiresAt: order.lines[0].counterProposal.expiresAt });
+  const pastExpiry = new Date(Date.now() - 60_000);
+  order.lines[0].counterProposal.expiresAt = pastExpiry.toISOString();
+  await orderRef.update({ lines: order.lines, earliestPendingProposalExpiresAt: admin.firestore.Timestamp.fromDate(pastExpiry) });
 
   const sweep = await callCallable(SWEEP_URL, {});
   assert.strictEqual(sweep.httpStatus, 200, JSON.stringify(sweep.body));
@@ -267,4 +273,29 @@ test("sweepExpiredDineInCounterProposals: an expired pending proposal is transit
 
   const lateResponse = await callCallable(RESPOND_URL, { orderId, lineIndex: 0, decision: "accept" }, guestIdToken);
   assert.strictEqual(lateResponse.httpStatus, 400, JSON.stringify(lateResponse.body));
+});
+
+test("respondToDineInCounterProposal: a customer response arriving after expiry (before any sweep has run) fails closed with proposal/expired, never silently accepted", async () => {
+  const f = await setupFixture();
+  const { orderId, guestIdToken } = await seedGuestOrder(f);
+  const propose = await callCallable(PROPOSE_URL, { ...ctx(f), orderId, lineIndex: 0, proposedProductId: f.altProductId, proposedQuantity: 1, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  assert.strictEqual(propose.httpStatus, 200, JSON.stringify(propose.body));
+
+  // Same "force into the past" technique as the sweep test above, but here
+  // no sweep is ever invoked — this proves `respondToDineInCounterProposal`
+  // itself fails closed on an expired proposal, independent of the sweep.
+  const orderRef = db().collection("orders").doc(orderId);
+  const order = (await orderRef.get()).data()!;
+  const pastExpiry = new Date(Date.now() - 60_000);
+  order.lines[0].counterProposal.expiresAt = pastExpiry.toISOString();
+  await orderRef.update({ lines: order.lines, earliestPendingProposalExpiresAt: admin.firestore.Timestamp.fromDate(pastExpiry) });
+
+  const res = await callCallable(RESPOND_URL, { orderId, lineIndex: 0, decision: "accept" }, guestIdToken);
+  assert.strictEqual(res.httpStatus, 400, JSON.stringify(res.body));
+  assert.strictEqual((res.body.error as { details?: { code?: string } })?.details?.code, "proposal/expired");
+
+  const after = (await orderRef.get()).data()!;
+  assert.strictEqual(after.lines[0].status, "rejected");
+  assert.strictEqual(after.lines[0].productId, f.productId, "the original product must never be silently replaced by an expired proposal");
+  assert.strictEqual(after.lines[0].counterProposal.status, "expired");
 });

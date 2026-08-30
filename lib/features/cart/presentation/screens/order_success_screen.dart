@@ -3,6 +3,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/theme/app_radius.dart';
+import '../../../orders/presentation/screens/active_order_screen.dart';
 
 class OrderSuccessScreen extends StatelessWidget {
   final String orderId;
@@ -290,6 +291,40 @@ class OrderSuccessScreen extends StatelessWidget {
                 ),
               ],
               const Spacer(),
+              // AP-3 wave 7 — closes a real gap found while producing the
+              // customer QR pending-approval/counter-proposal evidence:
+              // [ActiveOrderScreen]'s own doc comment already documented
+              // "the post-checkout 'Siparişi Takip Et' deep link" as an
+              // intended caller, but no checkout success screen (dine-in,
+              // takeaway, or delivery — this screen is shared by all three)
+              // actually linked to it. A dine-in QR guest — an anonymous
+              // session by design, so [ActiveOrderScreen]'s other entry
+              // point (the authenticated-only Home active-order banner)
+              // never applies to them — had no reachable way at all to see
+              // their order's staff-approval status or respond to a
+              // counter-proposal.
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  key: const Key('trackOrderButton'),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            ActiveOrderScreen(orderId: orderId),
+                      ),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: AppSpacing.md,
+                    ),
+                  ),
+                  child: const Text('Siparişi Takip Et'),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(

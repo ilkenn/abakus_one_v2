@@ -8,7 +8,8 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../../cart/presentation/providers/shopping_channel_provider.dart';
-import '../../../menu/presentation/screens/menu_screen.dart';
+import '../../../navigation/presentation/providers/navigation_provider.dart';
+import '../../../navigation/presentation/screens/main_navigation_screen.dart';
 import '../../data/takeaway_guest_session_gateway.dart';
 import '../providers/takeaway_guest_dependencies_provider.dart';
 
@@ -38,9 +39,11 @@ enum _EntryPhase { resolving, previewReady, openingSession, error }
 /// [shoppingChannelProvider] is switched to [OrderChannel.takeaway] with
 /// the session's own server-derived branch scope — the exact same
 /// two-step [TakeawayBranchSelectionScreen] already performs for the
-/// authenticated flow — before pushing [MenuScreen] directly (this screen
-/// is not inside [MainNavigationScreen]'s tab shell, so there is no
-/// "select the menu tab" step the way `TableConfirmedScreen` does).
+/// authenticated flow — before pushing the real [MainNavigationScreen]
+/// shell with its Menu tab pre-selected (AP-3 wave 7 — this screen isn't
+/// nested inside that shell's own Navigator either, but pushing a bare
+/// [MenuScreen] instead of the shell, as an earlier version did, left no
+/// way to reach the Cart tab at all).
 class TakeawayGuestEntryScreen extends ConsumerStatefulWidget {
   final String token;
 
@@ -127,9 +130,19 @@ class _TakeawayGuestEntryScreenState
       // should land on the branch's menu (this flow's closest analog to
       // "home"), never back on a stale "Sipariş başlatılıyor..." spinner
       // this screen would otherwise still be showing.
+      //
+      // AP-3 wave 7 fix — this used to push a bare `MenuScreen`, not nested
+      // inside `MainNavigationScreen`'s tab shell. That left no way to reach
+      // Cart at all (it's one of the shell's four persistent bottom-nav
+      // tabs, not something Menu can navigate to on its own) — a guest
+      // could add items but never check out. Push the real shell instead,
+      // pre-selecting its Menu tab exactly like the in-shell QR-scanner
+      // path (`TableConfirmedScreen`) does, so Cart/Home/Profile stay
+      // reachable.
+      ref.read(navigationProvider.notifier).selectTab(AppTab.menu);
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const MenuScreen()),
+        MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
       );
     } on TakeawayGuestSessionException catch (error) {
       if (!mounted) return;
