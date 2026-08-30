@@ -19,7 +19,13 @@
  * Safe to rerun — every write is either idempotent (deterministic doc ids,
  * `.set()` not `.create()`) or explicitly tolerant of "already exists"
  * (email sign-up falls back to sign-in; bootstrap tolerates an
- * already-bootstrapped organization).
+ * already-bootstrapped organization; guest identities use a deterministic
+ * Admin-SDK-created uid, tolerant of `auth/uid-already-exists`, rather than
+ * the anonymous sign-up endpoint's always-random uid — see
+ * `getOrCreateDeterministicGuestUser` below and
+ * `seed_local_admin.idempotency.test.mjs`, which proves this directly:
+ * run the seed 3 times against a fresh emulator, assert the exact same 3
+ * `guestSubAccounts` document ids every time).
  */
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
 process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
@@ -103,13 +109,26 @@ async function refreshIdToken(refreshToken) {
   return body.id_token;
 }
 
-async function signUpAnonymously() {
-  const response = await fetch(
-    `${AUTH_HOST}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ returnSecureToken: true }) },
-  );
-  const body = await response.json();
-  return { idToken: body.idToken, uid: body.localId };
+// AP-3 wave 7 fix — replaces a prior `signUpAnonymously()` that called the
+// Identity Toolkit anonymous sign-up REST endpoint, which mints a brand new
+// random uid on every single call with no way to make it deterministic.
+// Everything derived from that uid (`guestSessionId`, `subAccountId` below)
+// was therefore a *different* document id on every script rerun, leaving
+// the previous run's guest/sub-account documents orphaned in Firestore
+// instead of being overwritten — the real root cause of the "Zeynep/Ayşe/
+// Mehmet each appear twice" duplication observed in Wave 6. Every other
+// identity/document in this script is already deterministic (RUN_ID-scoped
+// ids with `.set()`, or the create-then-fall-back-to-existing pattern
+// `createEmailPasswordUser` above uses for EMAIL_EXISTS) — this makes guest
+// identities follow the same discipline via the Admin SDK, which (unlike
+// the client sign-up endpoint) accepts a caller-supplied `uid`.
+async function getOrCreateDeterministicGuestUser(uid) {
+  try {
+    await admin.auth().createUser({ uid });
+  } catch (err) {
+    if (err.code !== 'auth/uid-already-exists') throw err;
+  }
+  return { uid };
 }
 
 // A fixed run id (not time-based) — reruns target the SAME tenant/branch/
@@ -155,6 +174,25 @@ async function main() {
   await db.collection('menuProducts').doc(PRODUCT_B).set({
     organizationId: ORG_ID, restaurantId: RESTAURANT_ID, categoryId: 'cat_standard', name: 'Yeşil Salata',
     basePriceMinorUnits: 9500, isAvailable: true, modifierGroups: [], channelPriceOverrides: {},
+  });
+  // AP-3 wave 7 — the customer-facing Menu screen and the POS staff-entry
+  // dropdown both browse `AbakusMenuCatalog` (lib/features/menu/data/
+  // abakus_menu_catalog.dart), a static Dart catalog entirely separate from
+  // this collection — neither reads `menuProducts` for browsing. A real
+  // customer order submitted through that real catalog references its real
+  // ids (e.g. `prod_mexifit_bowl`), which `submitDineInOrder` then
+  // correctly, securely rejects as "does not exist" if this collection
+  // never heard of them — exactly the fail-closed behavior a stale/unknown
+  // product id is supposed to get, confirmed directly while producing this
+  // wave's real customer-order evidence. Seeding this one real catalog id
+  // (matching the static catalog's own name/price exactly) is what makes a
+  // real end-to-end customer QR order through the actual displayed menu
+  // possible at all — PRODUCT_A/PRODUCT_B above remain the separate,
+  // POS-fixture-only ids the pre-seeded orders/splits/staff-entry-dropdown
+  // scenarios already depend on and keep using.
+  await db.collection('menuProducts').doc('prod_mexifit_bowl').set({
+    organizationId: ORG_ID, restaurantId: RESTAURANT_ID, categoryId: 'cat_bowl', name: 'Mexifit Bowl',
+    basePriceMinorUnits: 43000, isAvailable: true, modifierGroups: [], channelPriceOverrides: {},
   });
 
   console.log('Creating staff accounts (email/password)...');
@@ -207,12 +245,26 @@ async function main() {
   });
 
   console.log('Seeding three guests with sub-accounts...');
-  const guest1 = await signUpAnonymously(); // Ayşe
-  const guest2 = await signUpAnonymously(); // Mehmet
-  const guest3 = await signUpAnonymously(); // Zeynep
+  // Migration guard for an emulator that still holds orphaned documents
+  // from a pre-fix run of this script (random-uid-derived ids that no
+  // longer match the deterministic ones below) — deletes only documents
+  // scoped to this exact deterministic `tableSessionId`, never anything
+  // else. A fresh emulator has nothing to delete here; this only matters
+  // for a long-lived emulator that was seeded by an older version.
+  const expectedGuestUids = new Set([`guest-${RUN_ID}-ayse`, `guest-${RUN_ID}-mehmet`, `guest-${RUN_ID}-zeynep`]);
+  for (const collectionName of ['guestSubAccounts', 'tableGuestSessions']) {
+    const stale = await db.collection(collectionName).where('tableSessionId', '==', tableSessionId).get();
+    for (const doc of stale.docs) {
+      const ownerUid = doc.data().ownerAuthUid || doc.data().guestAuthUid;
+      if (!expectedGuestUids.has(ownerUid)) await doc.ref.delete();
+    }
+  }
+  const guest1 = await getOrCreateDeterministicGuestUser(`guest-${RUN_ID}-ayse`); // Ayşe
+  const guest2 = await getOrCreateDeterministicGuestUser(`guest-${RUN_ID}-mehmet`); // Mehmet
+  const guest3 = await getOrCreateDeterministicGuestUser(`guest-${RUN_ID}-zeynep`); // Zeynep
 
   async function seedGuest(guest, displayName) {
-    const guestSessionId = `tgs-${RUN_ID}-${guest.uid.slice(0, 6)}`;
+    const guestSessionId = `tgs-${RUN_ID}-${guest.uid}`;
     await db.collection('tableGuestSessions').doc(guestSessionId).set({
       organizationId: ORG_ID, restaurantId: RESTAURANT_ID, branchId: BRANCH_ID, tableId: occupiedTableId, tableSessionId,
       guestAuthUid: guest.uid, status: 'active', createdAt: Timestamp.now(),
@@ -364,4 +416,8 @@ async function main() {
   console.log(`  Available table: ${availableTableId}`);
 }
 
-main().then(() => process.exit(0)).catch((err) => { console.error(err); process.exit(1); });
+module.exports = { main };
+
+if (require.main === module) {
+  main().then(() => process.exit(0)).catch((err) => { console.error(err); process.exit(1); });
+}
