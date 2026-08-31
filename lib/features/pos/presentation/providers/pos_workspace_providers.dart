@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../admin/domain/trusted_device/device_registration_state.dart';
 import '../../../admin/presentation/providers/trusted_device_session_providers.dart';
+import '../../data/cash_register_gateway.dart';
+import '../../data/fiscal_offline_gateway.dart';
+import '../../data/payment_gateway.dart';
 import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 
@@ -23,6 +26,28 @@ final posActionGatewayProvider = Provider<PosActionGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
   if (isFirebaseReady) return const FirebasePosActionGateway();
   return const UnavailablePosActionGateway();
+});
+
+/// AP-4 Wave D wiring — the real payment/cash/fiscal boundaries, gated on
+/// Firebase readiness exactly like every gateway above. Never falls back to
+/// an in-memory/mock implementation that could silently fabricate a money
+/// result — see each `Unavailable*Gateway`'s own fail-closed doc comment.
+final paymentGatewayProvider = Provider<PaymentGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) return const FirebasePaymentGateway();
+  return const UnavailablePaymentGateway();
+});
+
+final cashRegisterGatewayProvider = Provider<CashRegisterGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) return const FirebaseCashRegisterGateway();
+  return const UnavailableCashRegisterGateway();
+});
+
+final fiscalOfflineGatewayProvider = Provider<FiscalOfflineGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) return const FirebaseFiscalOfflineGateway();
+  return const UnavailableFiscalOfflineGateway();
 });
 
 /// `null` until a real trusted-device session is active — every POS screen
