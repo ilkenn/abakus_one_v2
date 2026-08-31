@@ -14,6 +14,16 @@ import {
   applyBoncukBalanceCorrection,
 } from "./checkFinancialAdjustments";
 import { applyPaymentRefund } from "./paymentRefund";
+import {
+  applyCashSessionOpen,
+  applyCashSessionOpenRejected,
+  applyCashMovement,
+  applyCashMovementRejected,
+  applyCashAdjustment,
+  applyCashAdjustmentRejected,
+  applyCashReconciliationApproved,
+  applyCashReconciliationRejected,
+} from "./cashRegisterEngine";
 
 /**
  * AP-2 Stage B — the generic, server-authoritative remote approval engine
@@ -52,7 +62,15 @@ export type ApprovalActionType =
   // AP-4 Wave A (ADR-033) — a staff-requested refund that requires manager
   // approval before any money actually moves. Same typed-handler discipline
   // as every action above.
-  | "paymentRefund";
+  | "paymentRefund"
+  // AP-4 Wave B (ADR-045) — cash register lifecycle actions. Unlike every
+  // action above, these four have a REJECTION_HANDLERS entry too (see
+  // below) — a rejected cash session-open/reconciliation is a real state
+  // change (session -> openRejected/rejected), not a no-op.
+  | "cashSessionOpen"
+  | "cashMovement"
+  | "cashAdjustment"
+  | "cashReconciliation";
 
 const APPROVAL_TIMEOUT_MINUTES = 24 * 60;
 const ESCALATION_TIMEOUT_MINUTES = 24 * 60;
@@ -111,6 +129,30 @@ const ACTION_HANDLERS: Readonly<Record<ApprovalActionType, ActionHandler>> = {
   acceptedLineCancellation: applyAcceptedLineCancellation,
   boncukBalanceCorrection: applyBoncukBalanceCorrection,
   paymentRefund: applyPaymentRefund,
+  cashSessionOpen: applyCashSessionOpen,
+  cashMovement: applyCashMovement,
+  cashAdjustment: applyCashAdjustment,
+  cashReconciliation: applyCashReconciliationApproved,
+};
+
+/**
+ * AP-4 Wave B addition — OPTIONAL, additive-only. Every action type above
+ * this map's introduction has NO entry here, so a rejected
+ * deviceActivation/checkFinancialAdjustment/acceptedLineCancellation/
+ * boncukBalanceCorrection/paymentRefund request behaves EXACTLY as before
+ * (the target aggregate is left untouched — there is nothing to roll back).
+ * Cash register actions are different: a rejected session-open or
+ * reconciliation is itself a real, required state transition (`awaitingOpen
+ * Approval -> openRejected`, `pendingApproval -> rejected`), not a no-op —
+ * this map is consulted ONLY when `decision === "rejected"`, immediately
+ * below the existing approved-only dispatch, so every pre-existing action
+ * type's contract is unchanged.
+ */
+const REJECTION_HANDLERS: Readonly<Partial<Record<ApprovalActionType, ActionHandler>>> = {
+  cashSessionOpen: applyCashSessionOpenRejected,
+  cashMovement: applyCashMovementRejected,
+  cashAdjustment: applyCashAdjustmentRejected,
+  cashReconciliation: applyCashReconciliationRejected,
 };
 
 /** The staff permission required to RESPOND to (approve/reject) each action type — never a bare role-tier check. */
@@ -120,6 +162,10 @@ const RESPONSE_PERMISSION_BY_ACTION: Readonly<Record<ApprovalActionType, StaffPe
   acceptedLineCancellation: "approveAcceptedLineCancellation",
   boncukBalanceCorrection: "approveBoncukBalanceCorrection",
   paymentRefund: "approvePaymentRefund",
+  cashSessionOpen: "approveCashReconciliation",
+  cashMovement: "approveCashReconciliation",
+  cashAdjustment: "approveCashReconciliation",
+  cashReconciliation: "approveCashReconciliation",
 };
 
 function invalid(message: string): never {
@@ -258,6 +304,12 @@ export const respondToApprovalRequest = onCall(
         const handler = ACTION_HANDLERS[current.actionType];
         const handlerResult = await handler({ tx, db, request: current, now, respondedByActorUid: request.auth!.uid });
         newValue = handlerResult.newValue;
+      } else {
+        const rejectionHandler = REJECTION_HANDLERS[current.actionType];
+        if (rejectionHandler) {
+          const handlerResult = await rejectionHandler({ tx, db, request: current, now, respondedByActorUid: request.auth!.uid });
+          newValue = handlerResult.newValue;
+        }
       }
 
       tx.update(ref, {

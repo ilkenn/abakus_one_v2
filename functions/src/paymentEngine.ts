@@ -32,6 +32,7 @@ import {
   type BranchPaymentConfigDoc,
 } from "./paymentDomain";
 import { resolveProviderAdapter } from "./paymentProviderAdapter";
+import { CASH_SESSIONS_COLLECTION, CASH_MOVEMENTS_COLLECTION, type CashSessionDoc, type CashMovementDoc } from "./cashDomain";
 
 /**
  * AP-4 Wave A — the canonical, server-authoritative payment engine. Builds
@@ -238,6 +239,10 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
   const rawAllocations = Array.isArray(data.allocations) ? (data.allocations as Array<Record<string, unknown>>) : [];
   if (rawAllocations.length === 0) invalid("allocations must be a non-empty array.");
   const requestedBoncukAmount = tenderType === "boncuk" ? requirePositiveInt(data.requestedBoncukAmount, "requestedBoncukAmount") : null;
+  // AP-4 Wave B — optional; when present for a cash tender, links the
+  // settlement to a real drawer session (writes a `cashSale` movement).
+  // See `PaymentAttemptDoc.cashSessionId`'s own doc comment.
+  const cashSessionId = tenderType === "cash" && typeof data.cashSessionId === "string" && data.cashSessionId.length > 0 ? data.cashSessionId : null;
 
   const db = getFirestore();
   const attemptId = db.collection(PAYMENT_ATTEMPTS_COLLECTION).doc().id;
@@ -321,6 +326,26 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
       throw new HttpsError("failed-precondition", "Amount exceeds the check's remaining payable balance.", { code: "payment/exceeds-remaining" });
     }
 
+    // AP-4 Wave B — read (never write yet) the linked cash-drawer session,
+    // if one was supplied for this cash tender. Must happen here, before
+    // any write in this transaction, per the same read-before-write rule
+    // driving every other branch's own read placement above.
+    let cashSession: CashSessionDoc | null = null;
+    let cashSessionRef: FirebaseFirestore.DocumentReference | null = null;
+    if (tenderType === "cash" && cashSessionId) {
+      cashSessionRef = db.collection(CASH_SESSIONS_COLLECTION).doc(cashSessionId);
+      const cashSessionSnap = await tx.get(cashSessionRef);
+      if (!cashSessionSnap.exists) throw new HttpsError("not-found", "Cash session not found.");
+      const candidate = cashSessionSnap.data() as CashSessionDoc;
+      if (candidate.organizationId !== organizationId || candidate.branchId !== branchId) {
+        throw new HttpsError("not-found", "Cash session not found.");
+      }
+      if (candidate.status !== "active") {
+        throw new HttpsError("failed-precondition", `Cash session must be "active" to collect cash against it (current: "${candidate.status}").`, { code: "payment/cash-session-not-active" });
+      }
+      cashSession = candidate;
+    }
+
     const now = Timestamp.now();
     const correlationId = generateCorrelationId();
     const attemptRef = db.collection(PAYMENT_ATTEMPTS_COLLECTION).doc(attemptId);
@@ -330,6 +355,7 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
       organizationId, branchId, checkId, sessionId, intentId: session.intentId,
       tenderType, currencyCode: intent.currencyCode, allocations,
       idempotencyKey, createdAt: now, createdByStaffUid: uid, correlationId,
+      cashSessionId: tenderType === "cash" ? cashSessionId : null,
     };
 
     // Firestore transactions require every read across the WHOLE transaction
@@ -346,6 +372,16 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
       };
       if (flagPaymentActivityStarted) tx.update(checkRef, { paymentActivityStarted: true });
       tx.set(attemptRef, attempt);
+      if (cashSession && cashSessionRef) {
+        const movement: CashMovementDoc = {
+          organizationId, branchId, sessionId: cashSessionRef.id, drawerId: cashSession.drawerId,
+          type: "cashSale", amountMinorUnits: requestedTotal, currencyCode: intent.currencyCode,
+          reason: `Cash payment for check ${checkId}.`, actorStaffUid: uid, timestamp: now,
+          reversalOfMovementId: null, paymentAttemptId: attemptId, refundRequestId: null,
+        };
+        tx.set(db.collection(CASH_MOVEMENTS_COLLECTION).doc(), movement);
+        tx.update(cashSessionRef, { settledAmountMinorUnits: cashSession.settledAmountMinorUnits + requestedTotal, updatedAt: now, version: cashSession.version + 1 });
+      }
       finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: [...existingAttempts, attempt] });
       return { replay: false as const, attemptId, status: "succeeded" as const, tenderType };
     }

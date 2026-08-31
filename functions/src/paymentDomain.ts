@@ -266,6 +266,14 @@ export interface PaymentAttemptDoc {
   createdByStaffUid: string;
   resolvedAt: Timestamp | null;
   correlationId: string;
+  /**
+   * AP-4 Wave B — set only for `tenderType:"cash"` when the cashier's
+   * client supplied one; drives a linked `cashMovements` (`cashSale`) doc.
+   * Optional this wave (a cash attempt with no drawer session still
+   * settles exactly as it did in Wave A) — real, tested, but not yet
+   * mandatorily enforced; see ADR-045.
+   */
+  cashSessionId: string | null;
 }
 
 // ---------------------------------------------------------------------

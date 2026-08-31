@@ -5342,7 +5342,7 @@ reused): `flutter test` 3611/3611, Functions suite 1857/1857 twice, Firestore Ru
 35/35. **`AP3_COMPLETE=YES` for real this time, `HIGH_ISSUES_OPEN=0`.** See
 `docs/visual_evidence/ap3/README.md`'s WAVE 8 section and ADR-043 for full detail.
 
-## AP-4 Wave A — Payment/Tender/Refund Engine (2026-08-31, IN PROGRESS)
+## AP-4 Wave A — Payment/Tender/Refund Engine (2026-08-31, CLOSED)
 
 Real, server-authoritative payment engine built directly on AP-3's `checks`/`checkAllocations` model:
 `paymentIntents`/`paymentSessions`/`paymentAttempts`/`refundRequests`/`branchPaymentConfig` (all
@@ -5355,6 +5355,25 @@ apportionment. `CheckDoc.status` gained `"paid"`. See ADR-044 for full detail, t
 transaction-ordering defects found and fixed, and exact gate numbers (Functions suite 1875/1875,
 Firestore Rules 400/400).
 
-**Not yet built** (Waves B/C/D, continuing immediately, no stop between waves): cash register/business
-day Firestore backing, fiscal device boundary + offline lease/outbox, POS/Admin UI wiring, visual
-evidence, final closure gates.
+## AP-4 Wave B — Cash Register / Business Day / Remote-Approval Extensions (2026-08-31, CLOSED)
+
+Real, server-authoritative cash register engine, porting the existing Flutter prototype's locked business
+rules (BR-CASH-001 through BR-CASH-010) into Cloud Functions: `cashDrawers`/`cashSessions`/
+`cashMovements`/`cashCounts`/`cashReconciliations`/`cashAdjustments`/`cashMovementRequests`/
+`cashAdjustmentRequests` (all total Firestore lockdown). `createCashDrawer`, `requestCashSessionOpen`
+(manager on-site or remote-approved), `requestCashMovement`/`requestCashAdjustment` (always
+manager-approved, no self-authorization), `submitCashCount` (server-frozen expected amount),
+`closeCashSession` (only from `approved`). `remoteApproval.ts` gained four new action types
+(`cashSessionOpen`/`cashMovement`/`cashAdjustment`/`cashReconciliation`) plus a new, additive-only
+`REJECTION_HANDLERS` map — every pre-existing action type's rejection behavior is unchanged, only cash
+actions need a real state transition on rejection. `computeBusinessDate` resolves branch-timezone/
+cutover-hour-authoritative business dates via Node's built-in `Intl`, never device local time. Wave A's
+own disclosed gap closed for real: `recordPaymentAttempt`(`cash`)/`applyPaymentRefund` now write real
+linked `cashSale`/`cashRefund` movements when a drawer session is supplied. See ADR-045 for full detail,
+the remote-approval architecture addition, and exact gate numbers (Functions suite 1895/1895, Firestore
+Rules 400/400, new cash-engine suite 18/18).
+
+**Not yet built** (Waves C/D, continuing immediately, no stop between waves): fiscal device boundary +
+offline lease/outbox (Wave C is explicitly anticipated to end with the PAX A910SF/GMP-3
+production-adapter tags `NO` — no real vendor SDK/hardware access exists in this environment), POS/Admin
+UI wiring, visual evidence, final closure gates.

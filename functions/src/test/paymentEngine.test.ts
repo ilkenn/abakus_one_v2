@@ -31,6 +31,8 @@ const REQUEST_DEVICE_REGISTRATION_URL = fn("requestDeviceRegistration");
 const REQUEST_CHALLENGE_URL = fn("requestDeviceChallenge");
 const ISSUE_SESSION_URL = fn("issueDeviceSession");
 const RESPOND_APPROVAL_URL = fn("respondToApprovalRequest");
+const CREATE_DRAWER_URL = fn("createCashDrawer");
+const OPEN_CASH_SESSION_URL = fn("requestCashSessionOpen");
 
 let app: admin.app.App;
 before(() => { app = admin.initializeApp({ projectId: EMULATOR_PROJECT_ID }); });
@@ -485,4 +487,71 @@ test("refund: a partial refund apportions correctly and leaves the remaining amo
   assert.strictEqual(tooMuch.httpStatus, 400, JSON.stringify(tooMuch.body));
   const exact = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 6000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
   assert.strictEqual(exact.httpStatus, 200, JSON.stringify(exact.body));
+});
+
+// -----------------------------------------------------------------------
+// AP-4 Wave B integration — a cash tender/refund linked to a real drawer
+// session writes a real cashMovements doc and keeps the session's
+// settledAmountMinorUnits in sync (cashDomain.ts/cashRegisterEngine.ts).
+// -----------------------------------------------------------------------
+
+async function openCashSession(f: Fixture, openingFloatAmountMinorUnits = 0): Promise<string> {
+  const drawer = await callCallable(CREATE_DRAWER_URL, { ...ctx(f), name: "Ana Kasa" }, f.manager.idToken);
+  assert.strictEqual(drawer.httpStatus, 200, JSON.stringify(drawer.body));
+  const open = await callCallable(OPEN_CASH_SESSION_URL, {
+    ...ctx(f), drawerId: drawer.body.result?.drawerId, openingFloatAmountMinorUnits, currencyCode: "TRY", reason: "Gün başı açılış.",
+  }, f.manager.idToken);
+  assert.strictEqual(open.httpStatus, 200, JSON.stringify(open.body));
+  return open.body.result?.sessionId as string;
+}
+
+test("cash tender linked to a drawer session writes a real cashSale movement and updates the session's settledAmountMinorUnits", async () => {
+  const f = await setupFixture(10000);
+  const cashSessionId = await openCashSession(f, 2000);
+  const { checkId, sessionId } = await checkReadyForPayment(f);
+  const subAccountId = await checkReadyForPaymentSubAccount(checkId);
+
+  const attempt = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "cash", idempotencyKey: nextId("idem"), cashSessionId,
+    allocations: [{ subAccountId, amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(attempt.httpStatus, 200, JSON.stringify(attempt.body));
+  assert.strictEqual(attempt.body.result?.status, "succeeded");
+
+  const attemptDoc = await db().collection("paymentAttempts").doc(attempt.body.result?.attemptId as string).get();
+  assert.strictEqual(attemptDoc.data()!.cashSessionId, cashSessionId);
+
+  const movementsSnap = await db().collection("cashMovements").where("sessionId", "==", cashSessionId).where("type", "==", "cashSale").get();
+  assert.strictEqual(movementsSnap.size, 1);
+  assert.strictEqual(movementsSnap.docs[0].data().amountMinorUnits, 10000);
+  assert.strictEqual(movementsSnap.docs[0].data().paymentAttemptId, attempt.body.result?.attemptId);
+
+  const cashSessionDoc = await db().collection("cashSessions").doc(cashSessionId).get();
+  assert.strictEqual(cashSessionDoc.data()!.settledAmountMinorUnits, 12000, "2000 opening float + 10000 cash sale");
+});
+
+test("refund of a drawer-linked cash payment writes a real negative cashRefund movement and debits the session back", async () => {
+  const f = await setupFixture(10000);
+  const cashSessionId = await openCashSession(f, 0);
+  const { checkId, sessionId } = await checkReadyForPayment(f);
+  const subAccountId = await checkReadyForPaymentSubAccount(checkId);
+  const attempt = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "cash", idempotencyKey: nextId("idem"), cashSessionId,
+    allocations: [{ subAccountId, amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(attempt.body.result?.status, "succeeded");
+
+  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, f.manager.idToken);
+
+  const refundMovementsSnap = await db().collection("cashMovements").where("sessionId", "==", cashSessionId).where("type", "==", "cashRefund").get();
+  assert.strictEqual(refundMovementsSnap.size, 1);
+  assert.strictEqual(refundMovementsSnap.docs[0].data().amountMinorUnits, -10000);
+
+  const cashSessionDoc = await db().collection("cashSessions").doc(cashSessionId).get();
+  assert.strictEqual(cashSessionDoc.data()!.settledAmountMinorUnits, 0, "10000 sale - 10000 refund = 0");
+
+  const refundDoc = await db().collection("refundRequests").doc(request.body.result?.refundId as string).get();
+  const cashAllocation = (refundDoc.data()!.allocations as Array<{ tenderType: string; cashMovementId: string | null }>).find((a) => a.tenderType === "cash");
+  assert.ok(cashAllocation?.cashMovementId, "the resolved allocation records which cashMovements doc it produced");
 });

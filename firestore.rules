@@ -749,6 +749,43 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // AP-4 Wave B (ADR-045) — cash register/business-day money data, same
+    // total-lockdown pattern as the payment collections above. A purpose-
+    // built operational-view callable for POS/Admin cash screens is a
+    // Wave D UI item, not a gap introduced here.
+    match /cashDrawers/{drawerId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /cashSessions/{sessionId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /cashMovements/{movementId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /cashCounts/{countId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /cashReconciliations/{reconciliationId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /cashAdjustments/{adjustmentId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /cashMovementRequests/{requestId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /cashAdjustmentRequests/{requestId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
     // AP-3 Wave 2C/2D — asynchronous remote-approval-gated typed actions.
     // The requester's own status visibility comes from the ALREADY-real
     // `remoteApprovalRequests` read rule below (requester or eligible

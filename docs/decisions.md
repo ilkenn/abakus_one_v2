@@ -18390,3 +18390,83 @@ owed before AP-4's final closure once Wave D touches Flutter/Storage.
 **Status**: AP-4 Wave A is functionally complete and gate-clean. `NEXT_PHASE=AP-4 Wave B (cash register,
 business day, remote-approval extensions)` — starting immediately, no stop between waves per the
 governing instruction.
+
+## ADR-045 — AP-4 Wave B: real cash register engine, business-day resolution, remote-approval extensions (2026-08-31)
+
+**Decision**: ported the existing, business-rule-locked Flutter prototype (`lib/features/pos/domain/
+cash/*.dart`, BR-CASH-001 through BR-CASH-010) into a real, server-authoritative Cloud Functions backend
+— the Flutter classes remain the reference for field shape/state-machine correctness (unchanged this
+wave, still 100% in-memory, still Wave D's own wiring target), but every mutation now happens
+transactionally, permission-gated, and remote-approved. New: `functions/src/cashDomain.ts` (pure
+contracts — `CashSessionStatus` extends the Flutter enum with two AP-4-only states,
+`awaitingOpenApproval`/`openRejected`, for the opening-approval step the prototype never had; every other
+value — `active|pendingApproval|approved|rejected|closed` — keeps its exact original BR-CASH-005/006/008
+meaning, never overloaded; `computeBusinessDate` — branch-timezone/cutover-hour-authoritative, built on
+Node's own `Intl` ICU support, no new dependency), `cashRegisterEngine.ts` (`createCashDrawer`;
+`requestCashSessionOpen` — a manager opens on-site immediately, a base-tier staff member's request goes
+through the SAME remote-approval engine everything else in this codebase uses; `requestCashMovement` —
+non-sale in/out, ALWAYS manager-approved, no on-site shortcut, mandatory reason; `requestCashAdjustment`
+— BR-CASH-009's correction, links to (never duplicates) its `cashMovements` doc; `submitCashCount` —
+BR-CASH-004's expected amount frozen server-side from the real movement ledger; `closeCashSession` — only
+from `approved`, BR-CASH-006). `cashDrawers`/`cashSessions`/`cashMovements`/`cashCounts`/
+`cashReconciliations`/`cashAdjustments`/`cashMovementRequests`/`cashAdjustmentRequests` are all total
+Firestore lockdowns, matching every other staff-facing money collection.
+
+**Remote-approval engine extended, additively** (`remoteApproval.ts`): four new action types
+(`cashSessionOpen`/`cashMovement`/`cashAdjustment`/`cashReconciliation`), all requiring
+`approveCashReconciliation` (manager tier, added in Wave A in anticipation) to respond. A genuine
+architecture addition was needed here, not just new handler entries: every pre-existing action type
+(`deviceActivation`/`checkFinancialAdjustment`/`acceptedLineCancellation`/`boncukBalanceCorrection`/
+`paymentRefund`) only ever needed a side effect on APPROVAL — rejection just leaves the target untouched,
+since there's nothing to roll back. Cash is different: a rejected session-open or reconciliation is
+itself a real, required state transition (`awaitingOpenApproval -> openRejected`, `pendingApproval ->
+rejected`, both BR-CASH-005-relevant), not a no-op. Added a new, OPTIONAL `REJECTION_HANDLERS` map,
+consulted only when `decision === "rejected"` — every pre-existing action type has no entry in it, so
+their behavior is byte-for-byte unchanged (proven by the full 1895-test suite passing with zero
+regressions); only the four cash actions populate it. `cashReconciliation`'s own mapping is a disclosed,
+deliberate simplification: the generic engine only carries a binary approved/rejected decision, so
+"approved" is defined to mean "the manager accepts whatever variance (if any) the count showed"
+(BR-CASH-008) and "rejected" means they don't — there is no separate `varianceAccepted` flag in this
+wave's wire format, because the decision itself already carries that meaning.
+
+**Real integration closing Wave A's own disclosed gap**: `paymentEngine.ts`'s `recordPaymentAttempt` now
+accepts an OPTIONAL `cashSessionId` for `tenderType:"cash"` — when supplied, validates the session is
+`active` for the same org/branch (read before any write, same transaction-ordering discipline as every
+other branch) and writes a real, linked `cashMovements` (`cashSale`) doc, keeping the session's
+`settledAmountMinorUnits` in sync. `paymentRefund.ts`'s `applyPaymentRefund` derives the cash-back
+session from the ORIGINAL `PaymentAttemptDoc.cashSessionId` (never a client-supplied value on the refund
+itself — avoids the ambiguity of "which session" if a refund ever spans two cash attempts) and writes a
+real negative `cashRefund` movement when that session is still `active`; if the drawer has since closed,
+the refund still succeeds (the manager still hands cash back physically) but `cashMovementId` stays
+`null`, disclosed, not fabricated. `cashSessionId` is genuinely optional this wave (a cash attempt with
+no linked drawer still settles exactly as Wave A shipped it) — real and tested, not yet mandatorily
+enforced; closing that gap for real is a Wave D UI-policy decision (whether the POS UI always supplies
+one), not a backend one.
+
+**Disclosed, not implemented this wave**: "branch configures which permission tier may initiate day-end"
+(`closeCashSession` is gated on the static `manageCashSessions` permission for anyone operating the
+session, not a per-branch-configurable tier). Multiple cash allocations touching the SAME drawer session
+within one refund are aggregated into a single settled-amount write (mirroring Wave A's own Boncuk
+same-account aggregation) to avoid a stale-balance overwrite, proven by design but not separately
+exercised by a dedicated multi-allocation-same-session test this wave (the existing single-cash-attempt
+refund test covers the common case).
+
+**Full fresh Wave B gates, against a freshly restarted (not reused) local emulator**: Functions build
+clean; Functions emulator suite 1895/1895 (1894/1895 on the full run, the one failure —
+`ap3E2E.test.ts`'s own single test, an unrelated pre-existing file this wave never touched — showed the
+same non-JSON "Function u…" cold-start signature already documented for this exact scenario earlier this
+session; re-verified 1/1 clean in isolation against the now-warm same emulator); Firestore Rules 400/400.
+New tests: `cashRegisterEngine.test.ts` (18/18 — business-date cutover/timezone/year-boundary math,
+manager on-site open vs. remote-approved open vs. rejected-then-retried open, BR-CASH-002 exclusivity,
+self-approval denial on movements/adjustments, signed inflow/outflow correctness, cashierBound
+enforcement, BR-CASH-009 adjustment-links-not-duplicates, exact/short count reconciliation with correct
+closingDifference sign, BR-CASH-005 reject-then-recount, close-only-from-approved); two new integration
+tests added to `paymentEngine.test.ts` (16/16 total) proving the real cashSale/cashRefund movement
+linkage end-to-end. `flutter analyze`/`flutter test` not rerun — Wave B is backend-only, no Flutter file
+changed; Storage Rules not rerun — nothing storage-related changed.
+
+**Status**: AP-4 Wave B is functionally complete and gate-clean. `NEXT_PHASE=AP-4 Wave C (fiscal device
+boundary, offline lease/outbox)` — starting immediately, no stop between waves. Wave C is explicitly
+anticipated to end with the PAX A910SF/GMP-3 production-adapter tags `NO`, per the governing instruction's
+own controlled-external-dependency allowance — no real vendor SDK/protocol/hardware access exists in this
+environment.

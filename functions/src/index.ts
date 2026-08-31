@@ -179,3 +179,15 @@ export { createPaymentIntent, recordPaymentAttempt } from "./paymentEngine";
 // allowlisted remote-approval handler (registered in remoteApproval.ts's
 // own closed ACTION_HANDLERS map, never exported as a callable itself).
 export { requestPaymentRefund } from "./paymentRefund";
+
+// AP-4 Wave B — the real cash register engine (ADR-045). apply*/*Rejected
+// handlers are registered in remoteApproval.ts's own closed ACTION_HANDLERS/
+// REJECTION_HANDLERS maps, never exported as callables themselves.
+export {
+  createCashDrawer,
+  requestCashSessionOpen,
+  requestCashMovement,
+  requestCashAdjustment,
+  submitCashCount,
+  closeCashSession,
+} from "./cashRegisterEngine";

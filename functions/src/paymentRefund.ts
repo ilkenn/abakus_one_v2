@@ -21,6 +21,7 @@ import {
   type RefundAllocationEntry,
   type RefundType,
 } from "./paymentDomain";
+import { CASH_SESSIONS_COLLECTION, CASH_MOVEMENTS_COLLECTION, type CashSessionDoc, type CashMovementDoc } from "./cashDomain";
 
 /**
  * AP-4 Wave A — refund architecture (ADR-033). Full + selected-item/
@@ -29,19 +30,22 @@ import {
  * discount allocation already uses (`campaignPricing.ts`'s
  * `allocateProportionally`) — never a hand-rolled rounding scheme.
  *
- * **Refund execution per tender, honestly scoped**: `cash` settles
- * synchronously (a real physical hand-back, confirmed by the approving
- * manager — Wave B's real `CashMovement` Firestore backing will attach a
- * genuine negative movement here once it exists; `cashMovementId` stays
- * `null` until then, disclosed, not fabricated). `boncuk` is a real,
- * complete restoration through the existing closed loyalty ledger
- * mechanism — no different from any other Boncuk ledger write in this
- * codebase. `card`/`mealCard` use the same CERTIFICATION-ONLY fallback
- * `refundTakeawayOrder.ts` (etc.) already established for the identical
- * reason: no real payment provider is configured (BR-PAY-003) — this
- * function records that a refund was externally certified as having
- * happened, it does not and cannot execute a real provider reversal that
- * doesn't exist. Never presented as equivalent to a real provider refund.
+ * **Refund execution per tender, honestly scoped**: `cash` writes a real,
+ * negative `cashMovements` (`cashRefund`) doc when the ORIGINAL sale's
+ * `PaymentAttemptDoc.cashSessionId` still points at an `active` drawer
+ * session (AP-4 Wave B — never a client-supplied session, always derived
+ * from the original attempt); if that session has since closed or was
+ * never linked, the refund still succeeds (the manager still hands the
+ * cash back physically) but `cashMovementId` stays `null`, disclosed, not
+ * fabricated. `boncuk` is a real, complete restoration through the
+ * existing closed loyalty ledger mechanism — no different from any other
+ * Boncuk ledger write in this codebase. `card`/`mealCard` use the same
+ * CERTIFICATION-ONLY fallback `refundTakeawayOrder.ts` (etc.) already
+ * established for the identical reason: no real payment provider is
+ * configured (BR-PAY-003) — this function records that a refund was
+ * externally certified as having happened, it does not and cannot execute
+ * a real provider reversal that doesn't exist. Never presented as
+ * equivalent to a real provider refund.
  */
 
 function invalid(message: string): never {
@@ -188,6 +192,31 @@ export async function applyPaymentRefund(params: ActionHandlerParams): Promise<A
   type BoncukLookup = { kind: "failed" } | BoncukLookupResolved;
   const boncukLookups = new Map<number, BoncukLookup>();
 
+  // Same read-first discipline for cash: the linked drawer session (if the
+  // original sale had one, AP-4 Wave B) is only resolvable via the ORIGINAL
+  // `PaymentAttemptDoc.cashSessionId` — a refund never accepts one from the
+  // client. `null` when the original attempt had no linked session, or that
+  // session is no longer `active` (e.g. the drawer already closed for the
+  // day) — the refund still succeeds either way (BR-CASH is about the
+  // physical drawer, not a precondition for returning a customer's money);
+  // it just isn't reflected in a `cashMovements` ledger in that case.
+  const cashSessionLookups = new Map<number, { sessionRef: FirebaseFirestore.DocumentReference; session: CashSessionDoc } | null>();
+
+  for (let i = 0; i < refund.allocations.length; i++) {
+    const alloc = refund.allocations[i];
+    if (alloc.tenderType !== "cash") continue;
+    const attemptSnap = await tx.get(db.collection(PAYMENT_ATTEMPTS_COLLECTION).doc(alloc.originalAttemptId));
+    const attempt = attemptSnap.exists ? (attemptSnap.data() as PaymentAttemptDoc) : null;
+    if (!attempt?.cashSessionId) {
+      cashSessionLookups.set(i, null);
+      continue;
+    }
+    const sessionRef = db.collection(CASH_SESSIONS_COLLECTION).doc(attempt.cashSessionId);
+    const sessionSnap = await tx.get(sessionRef);
+    const session = sessionSnap.exists ? (sessionSnap.data() as CashSessionDoc) : null;
+    cashSessionLookups.set(i, session && session.status === "active" ? { sessionRef, session } : null);
+  }
+
   for (let i = 0; i < refund.allocations.length; i++) {
     const alloc = refund.allocations[i];
     if (alloc.tenderType !== "boncuk") continue;
@@ -225,15 +254,32 @@ export async function applyPaymentRefund(params: ActionHandlerParams): Promise<A
   // touching the SAME customer's account within one refund never overwrite
   // each other using a stale pre-read balance.
   const accountRestorations = new Map<string, { accountRef: FirebaseFirestore.DocumentReference; account: FirebaseFirestore.DocumentData; totalRestored: number }>();
+  const cashSessionDebits = new Map<string, { sessionRef: FirebaseFirestore.DocumentReference; session: CashSessionDoc; totalDebited: number }>();
   const resolvedAllocations: RefundAllocationEntry[] = [];
   let anyFailed = false;
   for (let i = 0; i < refund.allocations.length; i++) {
     const alloc = refund.allocations[i];
     if (alloc.tenderType === "cash") {
-      // Wave B will attach a real negative CashMovement here once cash
-      // Firestore backing exists — disclosed, not fabricated (see this
-      // file's own doc comment).
-      resolvedAllocations.push({ ...alloc, status: "resolvedSucceeded" });
+      const lookup = cashSessionLookups.get(i);
+      let cashMovementId: string | null = null;
+      if (lookup) {
+        const movementRef = db.collection(CASH_MOVEMENTS_COLLECTION).doc();
+        const movement: CashMovementDoc = {
+          organizationId: refund.organizationId, branchId: refund.branchId, sessionId: lookup.sessionRef.id, drawerId: lookup.session.drawerId,
+          type: "cashRefund", amountMinorUnits: -alloc.amountMinorUnits, currencyCode: lookup.session.currencyCode,
+          reason: `Cash refund for check ${refund.checkId}.`, actorStaffUid: respondedByActorUid, timestamp: now,
+          reversalOfMovementId: null, paymentAttemptId: alloc.originalAttemptId, refundRequestId: approval.targetAggregateRef,
+        };
+        tx.set(movementRef, movement);
+        cashMovementId = movementRef.id;
+        const existing = cashSessionDebits.get(lookup.sessionRef.path);
+        if (existing) {
+          existing.totalDebited += alloc.amountMinorUnits;
+        } else {
+          cashSessionDebits.set(lookup.sessionRef.path, { sessionRef: lookup.sessionRef, session: lookup.session, totalDebited: alloc.amountMinorUnits });
+        }
+      }
+      resolvedAllocations.push({ ...alloc, status: "resolvedSucceeded", cashMovementId });
       continue;
     }
     if (alloc.tenderType === "boncuk") {
@@ -275,6 +321,9 @@ export async function applyPaymentRefund(params: ActionHandlerParams): Promise<A
 
   for (const { accountRef, account, totalRestored } of accountRestorations.values()) {
     tx.update(accountRef, { spendableBalance: account.spendableBalance + totalRestored, revision: account.revision + 1, updatedAt: now });
+  }
+  for (const { sessionRef, session, totalDebited } of cashSessionDebits.values()) {
+    tx.update(sessionRef, { settledAmountMinorUnits: session.settledAmountMinorUnits - totalDebited, updatedAt: now, version: session.version + 1 });
   }
 
   tx.update(refundRef, {

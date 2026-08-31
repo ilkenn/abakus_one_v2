@@ -3270,6 +3270,14 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Owner Agent**: security_engineer
 - **Related Modules**: POS, Payments, Courier
 
+**AP-4 Wave B correction (2026-08-31, `docs/decisions.md` ADR-045)**: BR-CASH-001 through BR-CASH-009
+above cite only the Flutter prototype (`lib/features/pos/domain/cash/*.dart`, still 100% in-memory,
+unchanged this wave). A real, server-authoritative Cloud Functions backend now ALSO enforces every rule
+above transactionally (`functions/src/cashDomain.ts`/`cashRegisterEngine.ts`) — the Flutter classes
+remain the reference for field shape/state-machine correctness; the backend is the actual authority.
+BR-CASH-010 (`courierCashSettlement`) is not yet wired server-side — the courier-settlement flow itself
+remains Phase 3 scope, out of this wave.
+
 # Refund, Cancellation, and Order Correction Rules
 
 ### BR-REFUND-001 — Cancellation info shape
