@@ -26,6 +26,14 @@
  * `seed_local_admin.idempotency.test.mjs`, which proves this directly:
  * run the seed 3 times against a fresh emulator, assert the exact same 3
  * `guestSubAccounts` document ids every time).
+ *
+ * Local full-access review account (2026-08-31): `yonetici@abakus.test`
+ * (the already-bootstrapped tenant `admin`, org-1/branch-ap3vis) also
+ * receives real `platformMembers` `platformOwner` membership under the
+ * SAME uid — a fixed-doc-id `.set()`, naturally idempotent exactly like
+ * the pre-existing `sahip@abakus.test` grant it mirrors. No parallel/
+ * simulated permission system; this is the same canonical membership model
+ * every other identity in this script already goes through.
  */
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
 process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
@@ -401,6 +409,24 @@ async function main() {
     uid: ownerAuth.uid, roles: ['platformOwner'], status: 'active', createdAt: Timestamp.now(), version: 1,
   });
 
+  // Local full-access review user — grants the SAME uid that already holds
+  // real tenant `admin` (the maximal tenant role: identical permission set
+  // to `tenantOwner` in DEFAULT_STAFF_ROLE_PERMISSIONS, staffAuthorization
+  // .ts) real Platform Owner membership too, via the exact same direct-write
+  // pattern already used for `ownerAuth.uid` two lines above — never a
+  // parallel/simulated auth system. `.set()` on a fixed doc id
+  // (`platformMembers/{managerAuth.uid}`) is naturally idempotent: rerunning
+  // produces the byte-identical document, never a duplicate. The real
+  // Flutter app's own Platform sign-in flow calls `syncOwnPlatformClaims`
+  // itself on sign-in (mirroring `FirebaseStaffAuthRepository.signIn()`'s
+  // own `syncOwnStaffClaims` call) — this script only needs to write the
+  // Firestore membership record, exactly as it already does for
+  // `ownerAuth.uid`, never the custom claim directly.
+  console.log('Granting the local review account (manager/admin uid) Platform Owner membership too...');
+  await db.collection('platformMembers').doc(managerAuth.uid).set({
+    uid: managerAuth.uid, roles: ['platformOwner'], status: 'active', createdAt: Timestamp.now(), version: 1,
+  });
+
   console.log('\nDONE. Local login instructions:\n');
   console.log('  Staff/Admin sign-in  (route /admin -> "Giriş Yap"):');
   console.log(`    E-posta : ${CASHIER_EMAIL}`);
@@ -410,6 +436,9 @@ async function main() {
   console.log(`    Şifre   : ${PASSWORD}`);
   console.log('  Platform Owner sign-in  (route /platform):');
   console.log(`    E-posta : ${OWNER_EMAIL}`);
+  console.log(`    Şifre   : ${PASSWORD}`);
+  console.log('  Local full-access review account (tenant admin + Platform Owner, SAME uid):');
+  console.log(`    E-posta : ${MANAGER_EMAIL}`);
   console.log(`    Şifre   : ${PASSWORD}`);
   console.log(`\n  Organization: ${ORG_ID}   Branch: ${BRANCH_ID}`);
   console.log(`  Occupied table (live demo data): ${occupiedTableId}`);
