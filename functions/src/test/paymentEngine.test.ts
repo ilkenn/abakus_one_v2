@@ -33,6 +33,7 @@ const ISSUE_SESSION_URL = fn("issueDeviceSession");
 const RESPOND_APPROVAL_URL = fn("respondToApprovalRequest");
 const CREATE_DRAWER_URL = fn("createCashDrawer");
 const OPEN_CASH_SESSION_URL = fn("requestCashSessionOpen");
+const ISSUE_OFFLINE_LEASE_URL = fn("issueOfflineLease");
 
 let app: admin.app.App;
 before(() => { app = admin.initializeApp({ projectId: EMULATOR_PROJECT_ID }); });
@@ -554,4 +555,84 @@ test("refund of a drawer-linked cash payment writes a real negative cashRefund m
   const refundDoc = await db().collection("refundRequests").doc(request.body.result?.refundId as string).get();
   const cashAllocation = (refundDoc.data()!.allocations as Array<{ tenderType: string; cashMovementId: string | null }>).find((a) => a.tenderType === "cash");
   assert.ok(cashAllocation?.cashMovementId, "the resolved allocation records which cashMovements doc it produced");
+});
+
+// -----------------------------------------------------------------------
+// AP-4 Wave C integration — a cash tender REPLAYED under a real offline
+// authorization lease is validated server-side (fiscalDomain.ts's
+// validateOfflineLeaseForOperation, wired into recordPaymentAttempt).
+// -----------------------------------------------------------------------
+
+test("offline lease: a valid lease + correct device sequence authorizes the cash replay and advances the lease", async () => {
+  const f = await setupFixture(10000);
+  const lease = await callCallable(ISSUE_OFFLINE_LEASE_URL, { ...ctx(f) }, f.staff.idToken);
+  assert.strictEqual(lease.httpStatus, 200, JSON.stringify(lease.body));
+  const leaseId = lease.body.result?.leaseId as string;
+
+  const { checkId, sessionId } = await checkReadyForPayment(f);
+  const subAccountId = await checkReadyForPaymentSubAccount(checkId);
+  const attempt = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "cash", idempotencyKey: nextId("idem"),
+    offlineLease: { leaseId, deviceSequence: 1 },
+    allocations: [{ subAccountId, amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(attempt.httpStatus, 200, JSON.stringify(attempt.body));
+  assert.strictEqual(attempt.body.result?.status, "succeeded");
+
+  const leaseDoc = await db().collection("offlineLeases").doc(leaseId).get();
+  assert.strictEqual(leaseDoc.data()!.lastSeenDeviceSequence, 1);
+  assert.strictEqual(leaseDoc.data()!.transactionsUsed, 1);
+});
+
+test("offline lease: replaying the SAME device sequence a second time is rejected — never a duplicate offline-authorized charge", async () => {
+  const f = await setupFixture(20000);
+  const lease = await callCallable(ISSUE_OFFLINE_LEASE_URL, { ...ctx(f) }, f.staff.idToken);
+  const leaseId = lease.body.result?.leaseId as string;
+  const { checkId, sessionId } = await checkReadyForPayment(f, 2);
+  const subAccountId = await checkReadyForPaymentSubAccount(checkId);
+
+  const first = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "cash", idempotencyKey: nextId("idem"),
+    offlineLease: { leaseId, deviceSequence: 1 }, allocations: [{ subAccountId, amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(first.httpStatus, 200, JSON.stringify(first.body));
+
+  const replay = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "cash", idempotencyKey: nextId("idem"),
+    offlineLease: { leaseId, deviceSequence: 1 }, allocations: [{ subAccountId, amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(replay.httpStatus, 400, JSON.stringify(replay.body));
+  assert.strictEqual(replay.body.error?.details?.code, "payment/offline-lease-replay");
+});
+
+test("offline lease: an offline lease may never authorize a non-cash tender", async () => {
+  const f = await setupFixture(10000);
+  const lease = await callCallable(ISSUE_OFFLINE_LEASE_URL, { ...ctx(f) }, f.staff.idToken);
+  const leaseId = lease.body.result?.leaseId as string;
+  const { checkId, sessionId } = await checkReadyForPayment(f);
+  const subAccountId = await checkReadyForPaymentSubAccount(checkId);
+
+  const res = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "card", idempotencyKey: nextId("idem"),
+    offlineLease: { leaseId, deviceSequence: 1 }, allocations: [{ subAccountId, amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(res.httpStatus, 400, JSON.stringify(res.body));
+  assert.strictEqual(res.body.error?.details?.code, "payment/offline-tender-not-allowed");
+});
+
+test("offline lease: a REVOKED lease is rejected", async () => {
+  const f = await setupFixture(10000);
+  const lease = await callCallable(ISSUE_OFFLINE_LEASE_URL, { ...ctx(f) }, f.staff.idToken);
+  const leaseId = lease.body.result?.leaseId as string;
+  const revoke = await callCallable(fn("revokeOfflineLease"), { organizationId: f.organizationId, branchId: f.branchId, leaseId, reason: "Cihaz kayboldu." }, f.manager.idToken);
+  assert.strictEqual(revoke.httpStatus, 200, JSON.stringify(revoke.body));
+
+  const { checkId, sessionId } = await checkReadyForPayment(f);
+  const subAccountId = await checkReadyForPaymentSubAccount(checkId);
+  const res = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "cash", idempotencyKey: nextId("idem"),
+    offlineLease: { leaseId, deviceSequence: 1 }, allocations: [{ subAccountId, amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(res.httpStatus, 400, JSON.stringify(res.body));
+  assert.strictEqual(res.body.error?.details?.code, "payment/offline-lease-revoked");
 });

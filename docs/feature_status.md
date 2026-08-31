@@ -5373,7 +5373,26 @@ linked `cashSale`/`cashRefund` movements when a drawer session is supplied. See 
 the remote-approval architecture addition, and exact gate numbers (Functions suite 1895/1895, Firestore
 Rules 400/400, new cash-engine suite 18/18).
 
-**Not yet built** (Waves C/D, continuing immediately, no stop between waves): fiscal device boundary +
-offline lease/outbox (Wave C is explicitly anticipated to end with the PAX A910SF/GMP-3
-production-adapter tags `NO` — no real vendor SDK/hardware access exists in this environment), POS/Admin
-UI wiring, visual evidence, final closure gates.
+## AP-4 Wave C — Fiscal Device Boundary / Offline Authorization / Durable Outbox (2026-08-31, CLOSED)
+
+Honest, provider-neutral fiscal boundary — confirmed by exhaustive repo search before writing any code
+that zero PAX A910SF/GMP-3/YN ÖKC vendor material exists anywhere in this repo (see the new
+`docs/ap4_wave_c_vendor_dependencies.md` dossier). `fiscalOperationJournal`/`offlineLeases` (total
+Firestore lockdown). `recordFiscalOperation` (real journal, two-phase device round-trip, idempotent),
+`issueOfflineLease`/`revokeOfflineLease` (server-authoritative, hard-ceiling-clamped, cash-only per the
+locked offline rule). `recordPaymentAttempt` now validates a real offline lease (expiry/revocation/
+monotonic-sequence replay protection) when a cash tender is replayed post-reconnect — reusing the
+existing engine, never a parallel sync path. Flutter: a real, durable (survives app restart, proven by
+test) local outbox for offline-captured cash sales
+(`lib/features/pos/data/offline_payment_outbox_repository.dart`), no new dependency
+(`shared_preferences` already pinned). See ADR-046 for full detail and exact gate numbers.
+
+**Disclosed, not built**: any real PAX A910SF/GMP-3 device integration (`PAX_A910SF_PRODUCTION_ADAPTER_
+COMPLETE=NO`, `GMP3_REAL_DEVICE_ACCEPTANCE_COMPLETE=NO` — no vendor SDK/protocol/hardware access exists
+in this environment); the Flutter-side sync use case that would actually call the new backend callables
+(the app has zero API client for ANY AP-4 backend function yet — that's Wave D's own job, building the
+client the sync use case would depend on).
+
+**Not yet built** (Wave D, continuing immediately, no stop between waves): POS/Admin UI wiring
+(including the API client the entire AP-4 backend still has zero Flutter consumer for), visual evidence,
+final closure gates.

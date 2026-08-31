@@ -18470,3 +18470,82 @@ boundary, offline lease/outbox)` — starting immediately, no stop between waves
 anticipated to end with the PAX A910SF/GMP-3 production-adapter tags `NO`, per the governing instruction's
 own controlled-external-dependency allowance — no real vendor SDK/protocol/hardware access exists in this
 environment.
+
+## ADR-046 — AP-4 Wave C: fiscal operation journal, offline authorization lease, durable outbox (2026-08-31)
+
+**Decision**: before writing any code, an exhaustive repo search (filename glob + content grep across
+the whole repository) confirmed the already-documented finding in `docs/payment_cash_fiscal_architecture
+.md` §4: zero PAX A910SF SDK, zero GMP-3/YN ÖKC protocol specification, zero vendor credential material,
+zero prior fiscal code anywhere in this repository. Every real vendor-integration requirement is
+therefore recorded, not built — see the new `docs/ap4_wave_c_vendor_dependencies.md` dossier for the
+full table (protocol spec, PAX SDK, device provisioning, and the exact blocked acceptance tests). What
+WAS built is the honest, provider-neutral boundary and everything around it that doesn't need a real
+device to be real:
+
+**`functions/src/fiscalDomain.ts`** — pure contracts. `FiscalOperationStatus` mirrors
+`PaymentAttemptStatus`'s own locked shape: `timedOut` always routes through
+`unknownReconciliationRequired`, never a direct terminal — a definitive answer is never second-guessed,
+but a timeout is never silently retried or treated as failure either. `OfflineLease` +
+`validateOfflineLeaseForOperation` (pure, fails closed on every branch — expired/revoked/replay/
+tender-not-allowed/count-exceeded/value-exceeded) implement the governing instruction's own locked rule
+exactly: "cash and only a fiscal/payment-device-verified sale may continue" offline — `allowedTenderTypes`
+is always `["cash"]` this wave, nothing issues a lease authorizing anything else.
+
+**`functions/src/fiscalAdapter.ts`** — mirrors `paymentProviderAdapter.ts`'s own honest structure
+exactly. `UnconfiguredFiscalAdapter` is what production actually gets: every operation resolves
+`"unavailable"`, never a fabricated fiscal document. `TestOnlyDeterministicFiscalAdapter` is
+structurally unselectable outside the Functions emulator (same real `FUNCTIONS_EMULATOR` gate,
+proven by a dedicated production-exclusion test). **A simulator passing this adapter's tests is never
+real PAX/GMP-3 certification** — the governing instruction's own rule, restated here because it governs
+this file's entire reason for existing.
+
+**`functions/src/fiscalEngine.ts`** — `recordFiscalOperation` (the one callable every fiscal send goes
+through: idempotent by `idempotencyKey`, two-phase — reserve as `sentToDevice` inside a transaction, call
+the adapter strictly outside any transaction, resolve inside a second transaction — same discipline as
+Wave A's card/mealCard path), `issueOfflineLease`/`revokeOfflineLease` (server-authoritative,
+hard-ceiling-clamped: a client-requested validity/count/value above the server's own ceiling is silently
+capped, never rejected outright, so a cashier's legitimate request for "a bit more" degrades gracefully
+to the safe maximum rather than failing). Lease issuance requires the SAME `processPayments` permission
+the lease will later authorize offline — never a broader one. Revocation requires manager-tier
+`approveCashReconciliation` — a higher bar than issuance, matching the asymmetric risk of a mis-issued
+lease vs. a wrongly-un-revoked one (e.g. a lost/stolen device).
+
+**Real integration, not a parallel sync path**: `paymentEngine.ts`'s `recordPaymentAttempt` now accepts
+an optional `offlineLease: {leaseId, deviceSequence}` for `tenderType:"cash"`. Since the locked offline
+rule restricts offline sales to cash only, a post-reconnect replay of an offline-captured sale is
+literally just another call to the SAME callable every online cash tender already goes through — never a
+separate "sync" endpoint that would duplicate its conservation/idempotency logic. The lease is validated
+(read before any write, same transaction-ordering discipline established in Wave A) and, on success,
+`lastSeenDeviceSequence`/`transactionsUsed` advance in the same transaction as the payment attempt.
+
+**Flutter-side durable outbox** (`lib/features/pos/domain/offline/*`,
+`lib/features/pos/data/offline_payment_outbox_repository.dart`): `SharedPreferencesOfflinePaymentOutbox
+Repository` — real, durable (proven by a dedicated test that reopens a fresh `SharedPreferences` handle,
+simulating an app restart, and confirms the queue survives), no new dependency (`shared_preferences` is
+already pinned). Idempotent enqueue by id, strict `deviceSequence` ordering on read, and — per the
+governing instruction's own locked rule — no delete path exists for an unresolved entry; `removeSynced`
+only ever removes an entry already in the terminal `synced` state.
+
+**Disclosed scope boundary, not a gap silently left**: the durable outbox's DATA LAYER is real and
+tested; the use case that actually calls the real `recordPaymentAttempt`/`issueOfflineLease` Cloud
+Functions from Flutter is Wave D's own job — **the Flutter app currently has zero API client for ANY
+AP-4 backend function** (payment, cash, or fiscal), since no POS screen has been wired yet. Building a
+sync use case ahead of the API client it would need to call would itself be premature, parallel work.
+This is a real, load-bearing scope line, not an excuse: everything this wave COULD honestly build without
+that client (the queue itself, its persistence guarantees, its ordering/idempotency contract) is built
+and tested; the wiring is deferred to the wave that builds the client it depends on.
+
+**Full fresh Wave C gates**: Functions build clean. New tests: `fiscalAdapter.test.ts` (4/4, pure,
+production-exclusion proven), `fiscalDomain.test.ts` (9/9, pure, every `validateOfflineLeaseForOperation`
+branch), `fiscalEngine.test.ts` (6/6, emulator-backed — sale success, idempotent replay, FORCE_TIMEOUT/
+FORCE_DECLINE, lease issuance with hard-ceiling clamping, revocation idempotency), four new offline-lease
+integration tests in `paymentEngine.test.ts` (valid lease advances it; replayed sequence rejected;
+non-cash tender rejected; revoked lease rejected). Flutter: `flutter analyze` clean on every new file;
+`offline_payment_outbox_repository_test.dart` 7/7 (including the dedicated restart-durability proof).
+Full suite numbers recorded in the final gate run below this entry.
+
+**Status**: AP-4 Wave C is functionally complete for everything achievable without real PAX A910SF/GMP-3
+vendor access — `PAX_A910SF_PRODUCTION_ADAPTER_COMPLETE=NO`, `GMP3_REAL_DEVICE_ACCEPTANCE_COMPLETE=NO`,
+both the honest, disclosed, structural consequence documented in
+`docs/ap4_wave_c_vendor_dependencies.md`, not an oversight. `NEXT_PHASE=AP-4 Wave D (POS/Admin UI wiring,
+visual evidence, final closure gates)` — starting immediately, no stop between waves.

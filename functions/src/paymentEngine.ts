@@ -33,6 +33,7 @@ import {
 } from "./paymentDomain";
 import { resolveProviderAdapter } from "./paymentProviderAdapter";
 import { CASH_SESSIONS_COLLECTION, CASH_MOVEMENTS_COLLECTION, type CashSessionDoc, type CashMovementDoc } from "./cashDomain";
+import { OFFLINE_LEASES_COLLECTION, validateOfflineLeaseForOperation, type OfflineLease } from "./fiscalDomain";
 
 /**
  * AP-4 Wave A — the canonical, server-authoritative payment engine. Builds
@@ -243,6 +244,16 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
   // settlement to a real drawer session (writes a `cashSale` movement).
   // See `PaymentAttemptDoc.cashSessionId`'s own doc comment.
   const cashSessionId = tenderType === "cash" && typeof data.cashSessionId === "string" && data.cashSessionId.length > 0 ? data.cashSessionId : null;
+  // AP-4 Wave C — optional; present when this attempt is a REPLAY of a cash
+  // sale the client queued while offline under a real, server-issued lease
+  // (`fiscalEngine.ts`'s `issueOfflineLease`). This call itself always
+  // requires an active device session (i.e. connectivity) — the lease
+  // proves the offline PERIOD was authorized, it never bypasses the online
+  // requirement of this callable itself.
+  const rawOfflineLease = data.offlineLease as Record<string, unknown> | undefined;
+  const offlineLeaseInput = rawOfflineLease && typeof rawOfflineLease === "object"
+    ? { leaseId: requireNonEmptyString(rawOfflineLease.leaseId, "offlineLease.leaseId"), deviceSequence: requirePositiveInt(rawOfflineLease.deviceSequence, "offlineLease.deviceSequence") }
+    : null;
 
   const db = getFirestore();
   const attemptId = db.collection(PAYMENT_ATTEMPTS_COLLECTION).doc().id;
@@ -346,6 +357,33 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
       cashSession = candidate;
     }
 
+    // AP-4 Wave C — read (never write yet) the offline lease, if this
+    // attempt is a post-reconnect replay of an offline-authorized cash
+    // sale. Same read-before-write placement as every other conditional
+    // read above.
+    let offlineLease: OfflineLease | null = null;
+    let offlineLeaseRef: FirebaseFirestore.DocumentReference | null = null;
+    if (offlineLeaseInput) {
+      if (tenderType !== "cash") {
+        throw new HttpsError("failed-precondition", "An offline lease may only authorize a cash tender.", { code: "payment/offline-tender-not-allowed" });
+      }
+      offlineLeaseRef = db.collection(OFFLINE_LEASES_COLLECTION).doc(offlineLeaseInput.leaseId);
+      const leaseSnap = await tx.get(offlineLeaseRef);
+      if (!leaseSnap.exists) throw new HttpsError("not-found", "Offline lease not found.");
+      const candidateLease = leaseSnap.data() as OfflineLease;
+      if (candidateLease.organizationId !== organizationId || candidateLease.branchId !== branchId) {
+        throw new HttpsError("not-found", "Offline lease not found.");
+      }
+      const validation = validateOfflineLeaseForOperation({
+        lease: candidateLease, nowMs: Date.now(), presentedDeviceSequence: offlineLeaseInput.deviceSequence,
+        tenderType, amountMinorUnits: requestedTotal,
+      });
+      if (validation.status !== "ok") {
+        throw new HttpsError("failed-precondition", `Offline lease validation failed: ${validation.status}.`, { code: `payment/offline-lease-${validation.status}` });
+      }
+      offlineLease = candidateLease;
+    }
+
     const now = Timestamp.now();
     const correlationId = generateCorrelationId();
     const attemptRef = db.collection(PAYMENT_ATTEMPTS_COLLECTION).doc(attemptId);
@@ -381,6 +419,13 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
         };
         tx.set(db.collection(CASH_MOVEMENTS_COLLECTION).doc(), movement);
         tx.update(cashSessionRef, { settledAmountMinorUnits: cashSession.settledAmountMinorUnits + requestedTotal, updatedAt: now, version: cashSession.version + 1 });
+      }
+      if (offlineLease && offlineLeaseRef && offlineLeaseInput) {
+        tx.update(offlineLeaseRef, {
+          lastSeenDeviceSequence: offlineLeaseInput.deviceSequence,
+          transactionsUsed: offlineLease.transactionsUsed + 1,
+          version: offlineLease.version + 1,
+        });
       }
       finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: [...existingAttempts, attempt] });
       return { replay: false as const, attemptId, status: "succeeded" as const, tenderType };

@@ -786,6 +786,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // AP-4 Wave C (ADR-046) — fiscal operation journal + offline
+    // authorization leases, same total-lockdown pattern. No PAN/PIN/OTP/
+    // provider-secret material is ever stored in either collection.
+    match /fiscalOperationJournal/{entryId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /offlineLeases/{leaseId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
     // AP-3 Wave 2C/2D — asynchronous remote-approval-gated typed actions.
     // The requester's own status visibility comes from the ALREADY-real
     // `remoteApprovalRequests` read rule below (requester or eligible

@@ -191,3 +191,8 @@ export {
   submitCashCount,
   closeCashSession,
 } from "./cashRegisterEngine";
+
+// AP-4 Wave C — the fiscal operation journal + offline authorization lease
+// engine (ADR-046). No real PAX A910SF/GMP-3 vendor integration exists —
+// see fiscalAdapter.ts's own doc comment and docs/ap4_wave_c_vendor_dependencies.md.
+export { recordFiscalOperation, issueOfflineLease, revokeOfflineLease } from "./fiscalEngine";
