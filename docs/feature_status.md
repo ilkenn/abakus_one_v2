@@ -5341,3 +5341,20 @@ via a major `firebase-admin` version bump outside this correction's scope. Full 
 reused): `flutter test` 3611/3611, Functions suite 1857/1857 twice, Firestore Rules 400/400, Storage Rules
 35/35. **`AP3_COMPLETE=YES` for real this time, `HIGH_ISSUES_OPEN=0`.** See
 `docs/visual_evidence/ap3/README.md`'s WAVE 8 section and ADR-043 for full detail.
+
+## AP-4 Wave A — Payment/Tender/Refund Engine (2026-08-31, IN PROGRESS)
+
+Real, server-authoritative payment engine built directly on AP-3's `checks`/`checkAllocations` model:
+`paymentIntents`/`paymentSessions`/`paymentAttempts`/`refundRequests`/`branchPaymentConfig` (all
+Cloud-Function-only, total Firestore lockdown). `createPaymentIntent` + `recordPaymentAttempt` cover
+cash/card/mealCard/Boncuk tenders (mixed, partial, per-sub-account), with cash/Boncuk resolving
+synchronously and card/mealCard reserving at `providerPending` before a real external round-trip
+strictly outside any transaction. `requestPaymentRefund`/`applyPaymentRefund` cover full/partial refunds
+through the existing closed remote-approval engine, with deterministic largest-remainder mixed-tender
+apportionment. `CheckDoc.status` gained `"paid"`. See ADR-044 for full detail, the three genuine
+transaction-ordering defects found and fixed, and exact gate numbers (Functions suite 1875/1875,
+Firestore Rules 400/400).
+
+**Not yet built** (Waves B/C/D, continuing immediately, no stop between waves): cash register/business
+day Firestore backing, fiscal device boundary + offline lease/outbox, POS/Admin UI wiring, visual
+evidence, final closure gates.

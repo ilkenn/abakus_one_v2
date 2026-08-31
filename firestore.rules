@@ -719,6 +719,36 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
+    // AP-4 Wave A — the canonical payment/tender/refund engine
+    // (paymentDomain.ts). Same total-lockdown pattern as checks/
+    // checkAllocations above: every field (payable amount, tender
+    // status, provider reference, Boncuk ledger link) is server-
+    // authoritative money data — no client, staff or customer, ever
+    // reads or writes these directly. Staff-facing POS UI is expected to
+    // consume payment state through a purpose-built operational-view
+    // callable (mirrors getPosTableOperationalView), not built this
+    // wave — not a gap introduced by this rule, a Wave D UI item.
+    match /paymentIntents/{intentId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /paymentSessions/{sessionId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /paymentAttempts/{attemptId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /refundRequests/{refundId} {
+      allow read: if false;
+      allow write: if false;
+    }
+    match /branchPaymentConfig/{branchId} {
+      allow read: if false; // Server-resolved policy only — never client-trusted (cover/service charge, refund window, cash model).
+      allow write: if false;
+    }
+
     // AP-3 Wave 2C/2D — asynchronous remote-approval-gated typed actions.
     // The requester's own status visibility comes from the ALREADY-real
     // `remoteApprovalRequests` read rule below (requester or eligible

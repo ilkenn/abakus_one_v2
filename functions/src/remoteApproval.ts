@@ -13,6 +13,7 @@ import {
   applyAcceptedLineCancellation,
   applyBoncukBalanceCorrection,
 } from "./checkFinancialAdjustments";
+import { applyPaymentRefund } from "./paymentRefund";
 
 /**
  * AP-2 Stage B — the generic, server-authoritative remote approval engine
@@ -47,7 +48,11 @@ export type ApprovalActionType =
   // never a generic "apply this arbitrary payload" action.
   | "checkFinancialAdjustment"
   | "acceptedLineCancellation"
-  | "boncukBalanceCorrection";
+  | "boncukBalanceCorrection"
+  // AP-4 Wave A (ADR-033) — a staff-requested refund that requires manager
+  // approval before any money actually moves. Same typed-handler discipline
+  // as every action above.
+  | "paymentRefund";
 
 const APPROVAL_TIMEOUT_MINUTES = 24 * 60;
 const ESCALATION_TIMEOUT_MINUTES = 24 * 60;
@@ -105,6 +110,7 @@ const ACTION_HANDLERS: Readonly<Record<ApprovalActionType, ActionHandler>> = {
   checkFinancialAdjustment: applyCheckFinancialAdjustment,
   acceptedLineCancellation: applyAcceptedLineCancellation,
   boncukBalanceCorrection: applyBoncukBalanceCorrection,
+  paymentRefund: applyPaymentRefund,
 };
 
 /** The staff permission required to RESPOND to (approve/reject) each action type — never a bare role-tier check. */
@@ -113,6 +119,7 @@ const RESPONSE_PERMISSION_BY_ACTION: Readonly<Record<ApprovalActionType, StaffPe
   checkFinancialAdjustment: "approveCheckFinancialAdjustment",
   acceptedLineCancellation: "approveAcceptedLineCancellation",
   boncukBalanceCorrection: "approveBoncukBalanceCorrection",
+  paymentRefund: "approvePaymentRefund",
 };
 
 function invalid(message: string): never {

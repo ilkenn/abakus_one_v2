@@ -65,7 +65,34 @@ export type StaffPermission =
   // (list/detail/POS search). Staff-tier (day-to-day operational lookup,
   // same reasoning as `manageDineInOrders`), distinct from the
   // restriction-mutation permission above.
-  | "viewTenantCustomerDirectory";
+  | "viewTenantCustomerDirectory"
+  // AP-4 Wave A — recording a tender attempt (cash/card/mealCard/boncuk)
+  // against a ready-for-payment Check. Staff-tier: day-to-day, high-volume,
+  // same reasoning as `manageDineInOrders`/`manageTakeawayOrders` — a
+  // cashier must never need a manager present to take a routine payment.
+  | "processPayments"
+  // AP-4 Wave A — approving a `paymentRefund` remote-approval request
+  // (ADR-033). Manager-tier-and-above only, mirrors every other refund/
+  // financial-adjustment approval permission's own boundary
+  // (`approveCheckFinancialAdjustment`) — a cashier may request a refund
+  // (via `processPayments`) but never approve their own.
+  | "approvePaymentRefund"
+  // AP-4 Wave B — opening a cash drawer/session and recording routine cash
+  // movements. Staff-tier (BR-CASH rules already require manager approval
+  // for the CONSEQUENTIAL actions — non-zero-variance close, opening-float
+  // confirmation — that's what `approveCashReconciliation` below is for).
+  | "manageCashSessions"
+  // AP-4 Wave B — approving cash-session opening confirmation, a manual
+  // cash movement, or a non-zero closing variance. Manager-tier-and-above,
+  // mirrors `approveCheckFinancialAdjustment`'s exact boundary.
+  | "approveCashReconciliation"
+  // AP-4 Wave C — binding/unbinding a fiscal device (PAX A910SF or
+  // equivalent) to a branch, and manually triggering fiscal reconciliation.
+  // Admin-tier-and-above only — a fiscal-device binding is a branch-wide,
+  // legally-consequential configuration change, never a routine staff
+  // action (deliberately NOT granted to `manager`, unlike most permissions
+  // above — mirrors `manageStaffAdminRole`'s admin-only boundary).
+  | "manageFiscalDevices";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -178,6 +205,8 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     // self-approval structurally, regardless of permission).
     "requestDeviceRegistration",
     "viewTenantCustomerDirectory",
+    "processPayments",
+    "manageCashSessions",
   ],
   manager: [
     "manageReservations",
@@ -201,6 +230,10 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveBoncukBalanceCorrection",
     "viewTenantCustomerDirectory",
     "manageTenantCustomerRestriction",
+    "processPayments",
+    "approvePaymentRefund",
+    "manageCashSessions",
+    "approveCashReconciliation",
   ],
   admin: [
     "manageReservations",
@@ -226,6 +259,11 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveBoncukBalanceCorrection",
     "viewTenantCustomerDirectory",
     "manageTenantCustomerRestriction",
+    "processPayments",
+    "approvePaymentRefund",
+    "manageCashSessions",
+    "approveCashReconciliation",
+    "manageFiscalDevices",
   ],
   tenantOwner: [
     "manageReservations",
@@ -251,6 +289,11 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveBoncukBalanceCorrection",
     "viewTenantCustomerDirectory",
     "manageTenantCustomerRestriction",
+    "processPayments",
+    "approvePaymentRefund",
+    "manageCashSessions",
+    "approveCashReconciliation",
+    "manageFiscalDevices",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must

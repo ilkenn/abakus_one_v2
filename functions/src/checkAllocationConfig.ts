@@ -43,7 +43,16 @@ export const CHECK_ALLOCATIONS_COLLECTION = "checkAllocations";
 export const CHECK_FINANCIAL_ADJUSTMENTS_COLLECTION = "checkFinancialAdjustments";
 export const ORDER_LINE_ALLOCATION_LEDGERS_COLLECTION = "orderLineAllocationLedgers";
 
-export type CheckStatus = "open" | "readyForPayment" | "cancelled";
+/**
+ * `"paid"` is AP-4 Wave A's own addition (`docs/payment_cash_fiscal
+ * _architecture.md` §6 handoff contract: "AP-3 never writes status:'paid' —
+ * that and everything after readyForPayment belongs to AP-4"). Written
+ * exactly once, transactionally, by `paymentEngine.ts`'s `recordPaymentAttempt`
+ * the moment a `PaymentSession` reaches `completed` — never by any AP-3
+ * check-mutation callable, all of which remain scoped to
+ * `open`/`readyForPayment`/`cancelled` exactly as before.
+ */
+export type CheckStatus = "open" | "readyForPayment" | "paid" | "cancelled";
 
 export interface CheckDoc {
   organizationId: string;

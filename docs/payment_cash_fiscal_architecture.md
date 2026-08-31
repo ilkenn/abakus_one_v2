@@ -3,7 +3,9 @@
 **Status**: CANONICAL. Established AP-1 (2026-08-26). The highest-risk document in the AP-1 set — payment
 and fiscal correctness are reviewed in isolation from general order-operations decisions.
 
-**AP-3 → AP-4 handoff contract (recorded 2026-08-27, ADR-037; AP-4 implementation not started)**: AP-3
+**AP-3 → AP-4 handoff contract (recorded 2026-08-27, ADR-037; AP-4 Wave A landed 2026-08-31, ADR-044 —
+payment intent/session/attempt + full/partial refund are now real and gate-clean; cash register, fiscal
+device, offline lease/outbox, and POS/Admin UI remain Waves B–D, not started as of this note)**: AP-3
 Wave 2 implemented the real, backend-tested `checks`/`checkAllocations` model this document's own
 `PaymentIntent{subAccountAllocations}` design consumes. The concrete contract AP-4 inherits: a `Check`
 document reaches `status: "readyForPayment"` only once every line its own active `checkAllocations`

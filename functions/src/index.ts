@@ -171,3 +171,11 @@ export { getCustomerActiveCampaigns } from "./getCustomerActiveCampaigns";
 // (below); this is the terminal-release consumer, the campaign sibling of
 // onOrderEventCreatedForLoyaltyRedemptionRestore above.
 export { onOrderEventCreatedForCampaignUsageRelease } from "./campaignUsageRestore";
+
+// AP-4 Wave A — the canonical payment/tender engine, built directly on
+// AP-3's real checks/checkAllocations (paymentEngine.ts's own doc comment).
+export { createPaymentIntent, recordPaymentAttempt } from "./paymentEngine";
+// AP-4 Wave A — refund architecture (ADR-033): request (staff) + the
+// allowlisted remote-approval handler (registered in remoteApproval.ts's
+// own closed ACTION_HANDLERS map, never exported as a callable itself).
+export { requestPaymentRefund } from "./paymentRefund";

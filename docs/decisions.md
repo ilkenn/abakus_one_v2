@@ -18301,3 +18301,92 @@ line's price can change, is the only place this can correctly live.
 `GUEST_ORDER_READ_AUTHORIZATION_SERVER_VALIDATED=YES`, `HIGH_ISSUES_OPEN=0`. See
 `docs/visual_evidence/ap3/README.md`'s WAVE 8 section for full detail and the final tag block.
 `NEXT_PHASE=AP-4 Payment, Cash, Fiscal & Offline` — still not started.
+
+## ADR-044 — AP-4 Wave A: canonical payment/tender/refund engine (2026-08-31)
+
+**Decision**: built the canonical, server-authoritative payment/tender/refund engine directly on top of
+AP-3's real `checks`/`checkAllocations` model (`checkAllocationConfig.ts`) — never a parallel
+basket/total model. New: `functions/src/paymentDomain.ts` (pure contracts — `TenderType`
+`cash|card|mealCard|boncuk`; `PaymentSessionStatus` `collecting→readyToComplete→completing→completed`
+plus `cancelled`/`failed`; `PaymentAttemptStatus` `initiated|providerPending|succeeded|declined|
+timedOut|unknownReconciliationRequired|resolvedSucceeded|resolvedFailed|reversed`; explicit transition
+tables, server-rejecting on an invalid hop), `paymentProviderAdapter.ts` (`PaymentProviderPort` +
+`UnconfiguredProviderAdapter`, always declines — the honest "no real provider configured" stance already
+established elsewhere in this codebase — + `TestOnlyDeterministicAdapter`, gated exclusively by the real
+`FUNCTIONS_EMULATOR` env var, structurally unselectable outside the emulator), `paymentEngine.ts`
+(`createPaymentIntent` — a frozen, re-verifiable per-subaccount payable snapshot including branch-
+authoritative cover/service charges; `recordPaymentAttempt` — the one callable every tender goes
+through, cash/Boncuk resolve synchronously in one transaction, card/mealCard reserve at
+`providerPending` then resolve via a real external round-trip strictly OUTSIDE any transaction, never
+holding a Firestore transaction open across a network call), `paymentRefund.ts` (`requestPaymentRefund`
++ `applyPaymentRefund`, wired as a new `paymentRefund` action into the existing closed
+`ACTION_HANDLERS`/`RESPONSE_PERMISSION_BY_ACTION` remote-approval map — never a new ad hoc callable,
+mixed-tender apportionment reuses `campaignPricing.ts`'s existing `allocateProportionally` largest-
+remainder helper verbatim). `checkAllocationConfig.ts`'s `CheckStatus` gained `"paid"`, written exactly
+once by `recordPaymentAttempt`'s `finalizeSessionIfComplete` when a session's settled total reaches its
+payable amount. `staffAuthorization.ts` gained `processPayments`/`manageCashSessions` (staff tier) and
+`approvePaymentRefund`/`approveCashReconciliation` (manager tier) and `manageFiscalDevices` (admin tier
+— Wave C). All five new collections (`paymentIntents`/`paymentSessions`/`paymentAttempts`/
+`refundRequests`/`branchPaymentConfig`) are total Firestore lockdowns (`allow read/write: if false`) —
+Cloud Function/Admin SDK only, matching every other staff-facing money collection in this codebase; a
+purpose-built operational-view callable for POS/Admin to actually read this data is explicitly deferred
+to Wave D, not a gap introduced here.
+
+**Three genuine defects found and fixed while building this, all via the same root cause class**:
+Firestore transactions require every `tx.get()` across the WHOLE transaction to precede every
+`tx.set()`/`tx.update()` — violating this throws `Firestore transactions require all reads to be
+executed before all writes` at runtime, not compile time, so it only surfaced once emulator-backed
+tests actually ran. (1) `createPaymentIntent` read the payment session AFTER writing the intent doc —
+fixed by moving that read earlier. (2) `recordPaymentAttempt` wrote `paymentActivityStarted` before
+Boncuk's own sub-account/loyalty-account/policy reads, and `finalizeSessionIfComplete` re-queried the
+attempts collection (a read) after the triggering attempt had already been written — fixed by
+restructuring every branch so all of its reads complete before any of its writes, and by turning
+`finalizeSessionIfComplete` into a write-only function fed a precomputed in-memory attempts list instead
+of doing its own read. The identical pattern also existed in `paymentRefund.ts`'s `applyPaymentRefund`
+(a per-allocation loop that could read-then-write per iteration, which breaks the moment a SECOND Boncuk
+allocation appears in one mixed-tender refund) — fixed with an explicit two-pass (read-all, then
+write-all) structure, additionally aggregating same-account Boncuk restorations into one write instead
+of one write per allocation to avoid a stale-balance overwrite if two allocations in the same refund
+touch the same customer's loyalty account. (3) `PAYMENT_SESSION_TRANSITIONS` never allowed
+`collecting→completed` directly (only `collecting→readyToComplete→cancelled`) — `finalizeSessionIfComplete`
+tried that exact illegal jump, so `canTransitionPaymentSession` silently rejected it and the check never
+actually flipped to `"paid"`. Fixed with a new `computeCompletedSessionStatus` helper that walks the real
+`collecting→readyToComplete→completing→completed` chain, validating each hop against the same transition
+table rather than asserting a shortcut it doesn't allow. A fourth, smaller ordering bug: the idempotency-
+replay check in `recordPaymentAttempt` ran AFTER the session-status guard, so a retried request with the
+same `idempotencyKey` against an already-`completed` session was wrongly rejected instead of returning the
+original result — fixed by moving the replay check first, unconditionally.
+
+**Boncuk redemption cap correction (test, not production code)**: the first version of the Boncuk
+payment test assumed a single Boncuk tender could fully settle a check; the real, already-existing
+default loyalty policy (`loyaltyPolicy.ts`) caps redemption at `maxRedemptionBasisPoints: 5000` (50%) of
+the eligible basis, so Boncuk alone can never cover more than half a check's total by design. Rewrote the
+test to redeem the real cap-respecting maximum (47 Boncuk of a 9500-minor-unit check, exactly
+`floor(9500 × 5000 / 10000 / 100)`), then settle the remainder with cash — not a production defect.
+
+**Conservation invariants proven by the test suite** (`functions/src/test/paymentEngine.test.ts`, 14
+tests): idempotent retry returns the original attempt (never a duplicate charge, exactly one document);
+an amount exceeding the remaining payable balance is rejected (`payment/exceeds-remaining`); two
+concurrent cashiers both attempting to collect the full remaining balance — exactly one succeeds,
+`settledAmountMinorUnits` never exceeds payable; mixed cash+card settles correctly, an earlier
+succeeded tender survives a later declined one; a real Boncuk redemption debits the ledger and account
+exactly once and is denied outright against a `staffGeneral` sub-account; a full cash refund resolves
+only via the real remote-approval engine (self-approval rejected); a second full-amount refund request
+after the first is fully approved is rejected as exceeding the refundable amount (double-refund
+prevention); a partial refund apportions correctly and leaves the exact remainder refundable once, not
+twice.
+
+**Full fresh Wave A gates, all run against a freshly restarted (not reused) local emulator**: Functions
+build clean; Functions emulator suite 1875/1875 (1859/1875 on the first pass, the other 16 — one
+`ap3E2E.test.ts` test plus the entirety of `assignReservationTable.test.ts` — failed with an identical
+non-JSON "Function u…" response signature consistent with a transient Functions-emulator crash/restart
+window under ~14 minutes of continuous sequential load, not a logic failure; re-verified 32/32 clean in
+isolation immediately after, matching this project's own already-documented "full-suite-only
+cumulative-load flakiness" precedent (ADR entries above) and touching no file this wave modified);
+Firestore Rules 400/400. `flutter analyze`/`flutter test` not rerun this wave — Wave A is backend-only,
+no Flutter file changed; Storage Rules not rerun — nothing storage-related changed either. Both are
+owed before AP-4's final closure once Wave D touches Flutter/Storage.
+
+**Status**: AP-4 Wave A is functionally complete and gate-clean. `NEXT_PHASE=AP-4 Wave B (cash register,
+business day, remote-approval extensions)` — starting immediately, no stop between waves per the
+governing instruction.
