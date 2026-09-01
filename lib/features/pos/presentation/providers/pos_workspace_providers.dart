@@ -1,10 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../admin/domain/trusted_device/device_registration_state.dart';
 import '../../../admin/presentation/providers/trusted_device_session_providers.dart';
+import '../../application/use_cases/sync_offline_payment_outbox.dart';
 import '../../data/cash_register_gateway.dart';
 import '../../data/fiscal_offline_gateway.dart';
+import '../../data/offline_payment_outbox_repository.dart';
 import '../../data/payment_gateway.dart';
 import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
@@ -77,3 +80,26 @@ final posDeviceContextProvider = Provider<PosDeviceContext?>((ref) {
 /// Currently selected table (branch overview -> table workspace
 /// navigation) — `null` while on the branch overview itself.
 final selectedPosTableIdProvider = StateProvider<String?>((ref) => null);
+
+/// AP-4 Wave D — the device-local, durable offline cash-payment queue
+/// (`docs`'s offline-outbox contract). `FutureProvider` because
+/// `SharedPreferences.getInstance()` is itself async; every consumer reads
+/// this once (`ref.watch(...).value`/`AsyncValue.when`) rather than each
+/// constructing its own instance, so the whole app shares one queue.
+final offlinePaymentOutboxRepositoryProvider =
+    FutureProvider<OfflinePaymentOutboxRepository>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  return SharedPreferencesOfflinePaymentOutboxRepository(prefs);
+});
+
+/// The real replay/sync use case, built once the durable queue is ready.
+final syncOfflinePaymentOutboxProvider =
+    FutureProvider<SyncOfflinePaymentOutbox>((ref) async {
+  final repository =
+      await ref.watch(offlinePaymentOutboxRepositoryProvider.future);
+  final gateway = ref.watch(paymentGatewayProvider);
+  return SyncOfflinePaymentOutbox(
+    paymentGateway: gateway,
+    outboxRepository: repository,
+  );
+});

@@ -37,6 +37,15 @@ abstract interface class OfflinePaymentOutboxRepository {
   Future<void> markManualInterventionRequired(String id,
       {required String reason});
 
+  /// Explicit, staff-triggered resumption of a [OfflineOutboxStatus.failed]/
+  /// [OfflineOutboxStatus.manualInterventionRequired] entry back to
+  /// [OfflineOutboxStatus.pending] — the ONLY way such an entry becomes
+  /// eligible for replay again. Never called automatically by the sync use
+  /// case itself: "requires reconciliation before either retrying or
+  /// discarding" (this class's own [OfflineOutboxStatus.manualInterventionRequired]
+  /// doc comment) means a human decision gates the retry, not a timer.
+  Future<void> resetToPending(String id);
+
   /// A user may never locally delete an UNRESOLVED financial operation
   /// (the governing instruction's own locked rule) — this only removes an
   /// already-[OfflineOutboxStatus.synced] entry, once it is no longer
@@ -141,6 +150,10 @@ class SharedPreferencesOfflinePaymentOutboxRepository
           failureReason: reason,
         ),
       );
+
+  @override
+  Future<void> resetToPending(String id) =>
+      _updateOne(id, (e) => e.copyWith(status: OfflineOutboxStatus.pending));
 
   @override
   Future<void> removeSynced(String id) async {
