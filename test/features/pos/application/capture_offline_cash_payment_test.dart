@@ -134,8 +134,8 @@ void main() {
     test('refuses when the lease transaction-count ceiling is exhausted',
         () async {
       final leaseStore = InMemoryOfflineLeaseStore();
-      await leaseStore.saveLease(_validLease(
-          maxTransactionCount: 2, transactionsUsedLocally: 2));
+      await leaseStore.saveLease(
+          _validLease(maxTransactionCount: 2, transactionsUsedLocally: 2));
       final outbox = InMemoryOfflinePaymentOutboxRepository();
       final useCase = CaptureOfflineCashPayment(
           leaseStore: leaseStore, outboxRepository: outbox);
@@ -172,7 +172,8 @@ void main() {
     test('refuses when the amount exceeds the lease per-transaction ceiling',
         () async {
       final leaseStore = InMemoryOfflineLeaseStore();
-      await leaseStore.saveLease(_validLease(maxTransactionValueMinorUnits: 1000));
+      await leaseStore
+          .saveLease(_validLease(maxTransactionValueMinorUnits: 1000));
       final outbox = InMemoryOfflinePaymentOutboxRepository();
       final useCase = CaptureOfflineCashPayment(
           leaseStore: leaseStore, outboxRepository: outbox);

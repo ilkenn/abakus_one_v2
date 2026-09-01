@@ -35,7 +35,8 @@ class HeldOfflineLease {
   final int transactionsUsedLocally;
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
-  bool get hasRemainingCapacity => transactionsUsedLocally < maxTransactionCount;
+  bool get hasRemainingCapacity =>
+      transactionsUsedLocally < maxTransactionCount;
 
   bool allowsTenderType(String tenderType) =>
       allowedTenderTypes.contains(tenderType);
@@ -70,8 +71,7 @@ class HeldOfflineLease {
     return HeldOfflineLease(
       leaseId: json['leaseId'] as String,
       expiresAt: DateTime.parse(json['expiresAt'] as String),
-      allowedTenderTypes:
-          List<String>.from(json['allowedTenderTypes'] as List),
+      allowedTenderTypes: List<String>.from(json['allowedTenderTypes'] as List),
       maxTransactionCount: json['maxTransactionCount'] as int,
       maxTransactionValueMinorUnits:
           json['maxTransactionValueMinorUnits'] as int,

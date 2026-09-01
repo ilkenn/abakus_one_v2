@@ -113,8 +113,7 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
       final all = await repository.findAll();
       if (!mounted) return;
       setState(() {
-        _queuedEntries =
-            all.where((e) => e.checkId == widget.checkId).toList();
+        _queuedEntries = all.where((e) => e.checkId == widget.checkId).toList();
       });
     } catch (_) {
       // Best-effort — the repository is a local device concern; a failure
@@ -242,7 +241,7 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
         case OfflineCashPaymentCaptured():
           setState(() => _offlineSyncNotice =
               'Nakit tahsilat offline olarak kaydedildi. Bağlantı geri '
-              'geldiğinde otomatik olarak senkronize edilecek.');
+                  'geldiğinde otomatik olarak senkronize edilecek.');
           await _refreshQueuedEntries();
         case OfflineCashPaymentRefused(:final reason):
           setState(() => _actionError = reason);
@@ -645,7 +644,8 @@ class _SummaryPanel extends StatelessWidget {
               children: [
                 _AmountRow(label: 'Toplam', amount: payable),
                 const Divider(color: AppColors.border),
-                _AmountRow(label: 'Tahsil Edilen (Sunucu Onaylı)', amount: settled),
+                _AmountRow(
+                    label: 'Tahsil Edilen (Sunucu Onaylı)', amount: settled),
                 if (unsyncedEntries.isNotEmpty)
                   _AmountRow(
                     label: 'Yerel — Senkronize Edilmedi',
@@ -717,7 +717,10 @@ class _OfflineQueueRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (entry.status) {
-      OfflineOutboxStatus.pending => ('Yerel — Senkronizasyon Bekliyor', AppColors.warning),
+      OfflineOutboxStatus.pending => (
+          'Yerel — Senkronizasyon Bekliyor',
+          AppColors.warning
+        ),
       OfflineOutboxStatus.syncing => ('Senkronize Ediliyor...', AppColors.info),
       OfflineOutboxStatus.synced => ('Senkronize Edildi', AppColors.success),
       OfflineOutboxStatus.failed => ('Reddedildi', AppColors.error),

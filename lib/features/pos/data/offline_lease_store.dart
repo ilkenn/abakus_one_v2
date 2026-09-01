@@ -37,8 +37,7 @@ class SharedPreferencesOfflineLeaseStore implements OfflineLeaseStore {
   Future<HeldOfflineLease?> currentLease() async {
     final raw = _prefs.getString(_leaseKey);
     if (raw == null || raw.isEmpty) return null;
-    return HeldOfflineLease.fromJson(
-        jsonDecode(raw) as Map<String, Object?>);
+    return HeldOfflineLease.fromJson(jsonDecode(raw) as Map<String, Object?>);
   }
 
   @override

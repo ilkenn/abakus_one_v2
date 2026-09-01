@@ -139,12 +139,20 @@ class EmulatorFixtures {
     );
     await callCallableRaw(
       'assignStaffRole',
-      {'organizationId': organizationId, 'targetUid': signUp.uid, 'role': 'manager'},
+      {
+        'organizationId': organizationId,
+        'targetUid': signUp.uid,
+        'role': 'manager'
+      },
       idToken: adminIdToken,
     );
     await callCallableRaw(
       'grantStaffBranchAccess',
-      {'organizationId': organizationId, 'targetUid': signUp.uid, 'branchId': branchId},
+      {
+        'organizationId': organizationId,
+        'targetUid': signUp.uid,
+        'branchId': branchId
+      },
       idToken: adminIdToken,
     );
     // The role/branch grants above landed as Firestore membership writes,
@@ -154,7 +162,8 @@ class EmulatorFixtures {
     // resolves the real claims from Firestore, then a token refresh is
     // what actually makes them show up on THIS token going forward
     // (mirrors every Node backend test's own identical two-step dance).
-    await callCallableRaw('syncOwnStaffClaims', const {}, idToken: signUp.idToken);
+    await callCallableRaw('syncOwnStaffClaims', const {},
+        idToken: signUp.idToken);
     return refreshIdToken(signUp.refreshToken);
   }
 
@@ -162,7 +171,8 @@ class EmulatorFixtures {
     final client = http.Client();
     try {
       final response = await client.post(
-        Uri.parse('$authHost/securetoken.googleapis.com/v1/token?key=fake-api-key'),
+        Uri.parse(
+            '$authHost/securetoken.googleapis.com/v1/token?key=fake-api-key'),
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: {'grant_type': 'refresh_token', 'refresh_token': refreshToken},
       );
@@ -179,7 +189,8 @@ class EmulatorFixtures {
   /// actor, see [createApproverActor]) to respond to the approval
   /// request. Returns the real `deviceId`/`deviceSessionId` the app's
   /// `PosDeviceContext` should be constructed from.
-  Future<({String deviceId, String deviceSessionId})> issueDeviceSessionForCurrentUser({
+  Future<({String deviceId, String deviceSessionId})>
+      issueDeviceSessionForCurrentUser({
     required String organizationId,
     required String branchId,
     required String approverIdToken,
@@ -228,8 +239,9 @@ class EmulatorFixtures {
     final challengeId = challenge.data['challengeId'] as String;
     final signature = await keyPair.sign(nonce);
 
-    final session =
-        await callable.httpsCallable('issueDeviceSession').call<Map<String, dynamic>>({
+    final session = await callable
+        .httpsCallable('issueDeviceSession')
+        .call<Map<String, dynamic>>({
       'organizationId': organizationId,
       'branchId': branchId,
       'deviceId': deviceId,
@@ -254,7 +266,18 @@ class EmulatorFixtureException implements Exception {
 /// (not exported) rather than imported; this is a small, RFC-fixed,
 /// stable structural constant, not business logic.
 const List<int> _ed25519SpkiDerPrefix = [
-  0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+  0x30,
+  0x2a,
+  0x30,
+  0x05,
+  0x06,
+  0x03,
+  0x2b,
+  0x65,
+  0x70,
+  0x03,
+  0x21,
+  0x00,
 ];
 
 String _ed25519PublicKeyToSpkiPem(List<int> rawPublicKeyBytes) {

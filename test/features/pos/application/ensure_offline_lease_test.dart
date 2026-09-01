@@ -91,8 +91,7 @@ void main() {
       expect(store.lease, isNotNull);
     });
 
-    test('reuses a held lease that is still valid and has capacity',
-        () async {
+    test('reuses a held lease that is still valid and has capacity', () async {
       final gateway = FakeFiscalOfflineGateway();
       final store = InMemoryOfflineLeaseStore();
       final useCase =

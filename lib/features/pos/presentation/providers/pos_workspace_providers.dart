@@ -109,7 +109,8 @@ final syncOfflinePaymentOutboxProvider =
 
 /// AP-4 Wave E — the device's locally-held offline authorization lease
 /// record. Same async-init reasoning as [offlinePaymentOutboxRepositoryProvider].
-final offlineLeaseStoreProvider = FutureProvider<OfflineLeaseStore>((ref) async {
+final offlineLeaseStoreProvider =
+    FutureProvider<OfflineLeaseStore>((ref) async {
   final prefs = await SharedPreferences.getInstance();
   return SharedPreferencesOfflineLeaseStore(prefs);
 });
@@ -117,7 +118,8 @@ final offlineLeaseStoreProvider = FutureProvider<OfflineLeaseStore>((ref) async 
 /// Acquires/renews the held lease while online — the checkout screen calls
 /// this opportunistically (e.g. on load) so a later, unpredictable loss of
 /// connectivity already has a valid lease to capture against.
-final ensureOfflineLeaseProvider = FutureProvider<EnsureOfflineLease>((ref) async {
+final ensureOfflineLeaseProvider =
+    FutureProvider<EnsureOfflineLease>((ref) async {
   final leaseStore = await ref.watch(offlineLeaseStoreProvider.future);
   final gateway = ref.watch(fiscalOfflineGatewayProvider);
   return EnsureOfflineLease(
