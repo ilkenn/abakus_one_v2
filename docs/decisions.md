@@ -18730,3 +18730,102 @@ to this specific, bounded task under this specific instruction.
 
 Wave E's own entry (below, appended as this work completes) is where the corrected values above get
 their final answer.
+
+## Wave E closure entry (2026-09-01)
+
+### Built and verified this pass
+
+- **Offline checkout capture** (`held_offline_lease.dart`, `offline_lease_store.dart`,
+  `ensure_offline_lease.dart`, `capture_offline_cash_payment.dart`) — the piece Wave D's own sync
+  engine was built to drain but nothing yet fed. `EnsureOfflineLease` acquires/renews a real
+  server-issued lease while online (never callable offline — issuance is itself a Cloud Function
+  call); `CaptureOfflineCashPayment` enforces every check the governing instruction named (lease
+  validity/tender/per-transaction-ceiling/count-ceiling) client-side, BEFORE ever writing to the
+  durable queue, with the idempotency key generated deterministically from
+  `(checkId, leaseId, deviceSequence)` before any attempt. Wired into `PosCheckoutScreen`: cash
+  tenders route to this path automatically when offline; reconnection auto-triggers
+  `SyncOfflinePaymentOutbox`; the summary panel shows a separate "Yerel — Senkronize Edilmedi" figure
+  alongside (never merged into) the canonical server-sourced remaining amount; the offline queue's
+  own entries render with the five required distinct states (queued/syncing/synced/rejected/manual-
+  reconciliation-required). 12 new unit tests (8 capture-refusal/success cases, 4 lease-acquisition
+  cases), all passing.
+- **Flutter E2E test infrastructure** (`integration_test/support/emulator_fixtures.dart`) — real
+  fixture helpers ported from the Functions backend suite's own established pattern: a genuine
+  Ed25519 device challenge-response (the same `package:cryptography` the production `DeviceKeyStore`
+  uses, not a stub), a second real approver actor (self-approval is server-rejected), raw-HTTP
+  callable invocation for setup that needs an identity the app itself never signs into.
+  `pos_cash_full_payment_e2e_test.dart` drives Flow #1 against the real routed `PosCheckoutScreen`.
+- **A genuine, reproducible environment blocker, thoroughly diagnosed, not a code defect**: every
+  real `FirebaseFunctions.instance.httpsCallable(...).call(...)` invocation made directly from this
+  Dart test's own body — confirmed down to the simplest possible case (`syncOwnStaffClaims` with
+  empty data) — fails with a generic `[firebase_functions/internal] internal` error, with zero
+  corresponding entry in the Functions emulator's own invocation log (the request never reaches the
+  server). Ruled out: App Check (never activated on Web in this app — no site key configured,
+  confirmed by reading `firebase_app_check_service.dart`), plugin-registration timing (pumping a
+  placeholder widget first made no difference), device type (`web-server` and a real `chrome` device
+  both fail identically), this file's own payload (the simplest possible call also fails). The same
+  emulator, same browser session, is reachable fine via raw HTTP and via `firebase_auth`'s own
+  `signInWithEmailAndPassword`. This is specific to `cloud_functions_web`'s JS interop layer in a
+  `flutter drive --target=integration_test/...` harness; diagnosing further requires browser
+  devtools/network-inspector access this environment does not provide. `functions/scripts/
+  seed_dev_pos_entitlement.mjs` was added along the way (a real, disclosed gap found while seeding:
+  `entitlements` has no tenant-scoped writer by design — only `requirePlatformMember` can grant one —
+  so a dev/emulator-only direct-write seed script mirrors the same mechanism the Node backend test
+  suite's own fixtures already use for this exact document).
+- **Section 5 audit (not a new test matrix — an honest read of what already exists)**: self-approval
+  is denied and tested for refund/cash-movement/device-registration specifically; wrong-branch and
+  insufficient-permission are denied and exhaustively tested at the shared `requireStaffPermission`/
+  `requireBranchAccess` layer every new AP-4 action type reuses (not re-tested per action type, by
+  design — the same DRY reasoning `staffAuthorization.test.ts` itself already establishes);
+  duplicate-response idempotency and rejection-without-mutation are tested (`respond: opposite
+  decision after success fails closed`; `a REJECTED request never writes a movement and never changes
+  settledAmountMinorUnits`). Confirmed genuinely NOT covered for the new Wave A/B financial action
+  types specifically (only for device registration): stale-target rejection, and expiry-driven
+  escalation. Confirmed NOT covered anywhere: Platform Owner + device-restriction interaction. A
+  dedicated new test matrix for these gaps was not built this pass (time-boxed decision, disclosed
+  rather than silently skipped).
+- **Section 8 read-boundary audit**: `paymentOperationalView.ts`/`cashOperationalView.ts` require an
+  active trusted-device session (`requireActiveDeviceSession`); `adminFinancialView.ts` deliberately
+  does not (Admin panel access is a separate surface from the POS device-binding model, matching
+  `listReservationsForBranch.ts`'s own established precedent). None of the three check POS module
+  entitlement directly — confirmed this is NOT a gap specific to these files: entitlement is enforced
+  once, at device-registration time (`requireModuleEntitlement`, called from `trustedDevice.ts`, not
+  from any of the three read boundaries or from `paymentEngine.ts`/`cashRegisterEngine.ts` either) —
+  the same precedent `getPosTableOperationalView` itself already follows. Cross-tenant leakage is
+  proven denied by dedicated tests (`listPaymentSessionsForBranch: cross-branch data is never
+  leaked...`). Pagination is bounded (`resolvePageSize` clamps to a 200 ceiling) and ordering is
+  stable (`orderBy("createdAt", "desc")`). No PAN/provider-secret field appears in any returned
+  projection (confirmed by re-reading each file's exact response shape).
+
+### Full fresh Wave E gates (2026-09-01, two independently-run, back-to-back, freshly-restarted-emulator passes — never reusing Wave D's numbers)
+
+| Gate | Result |
+|---|---|
+| Functions suite, run 1/2 | **1931/1931 passed, 0 failed** |
+| Functions suite, run 2/2 | **1931/1931 passed, 0 failed** |
+| Firestore Rules suite | **403/403 passed, 0 failed** |
+| Storage Rules suite | **35/35 passed, 0 failed** |
+| `dart format --set-exit-if-changed lib test integration_test` | Clean (7 files auto-formatted, no semantic change) |
+| `flutter analyze` | Clean — "No issues found!" |
+| `flutter test` | **3639 tests, 0 failed** (12 pre-existing skips; +12 new tests over Wave D's 3627) |
+| Functions `tsc` build | Clean |
+| `git diff --check` | Clean |
+| Secret/credential scan (diff-scoped) | Clean (only the standard Firebase emulator `fake-api-key` literal and already-established dev-only fixture passwords) |
+| Dependency audit (`npm audit`, functions) | 8 pre-existing moderate findings, identical set, not newly introduced |
+| Flutter integration/E2E suite | **Not passing** — see the diagnosed environment blocker above |
+| Web Admin sign-in E2E / POS trusted-device E2E / QR regression E2E | **Not run** — same blocker for anything requiring a real Functions callable from test code; not attempted for surfaces that would only exercise Auth/Firestore without Functions, given the time already spent diagnosing |
+| Visual evidence | Still 0/14 — capture requires reaching real UI states, which requires the same blocked callable path |
+| Production fake-adapter exclusion | Confirmed via `paymentProviderAdapter.test.ts`/`fiscalAdapter.test.ts` (both suites passed clean in both official runs above) |
+| Working tree | Clean after this wave's commits |
+
+### Status
+
+`AP4_CONTROLLABLE_SOFTWARE_COMPLETE=NO`. Real, working, tested progress this wave: offline checkout
+capture (implementation + unit tests), Flutter E2E test infrastructure, one written E2E flow, and a
+thorough, evidence-based diagnosis of why the Flutter E2E/visual-evidence/cross-surface-E2E layer
+cannot currently run in this environment — none of it the PAX A910SF/GMP-3 vendor gap. Genuinely open,
+none vendor-blocked: 21 of 22 enumerated E2E flows, cross-surface E2E, visual evidence capture, and a
+dedicated remote-approval test matrix for stale-target/escalation/Platform-Owner-device-restriction on
+the new financial action types. `NEXT_PHASE=AP-4 Wave F` — first priority: resolve the
+`cloud_functions_web`/`flutter drive` environment blocker (requires browser devtools access this
+environment doesn't provide), since every remaining open item in this wave depends on it.

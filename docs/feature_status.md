@@ -5433,3 +5433,22 @@ explicitly authorized scoped, application-restricted test automation (Playwright
 Abaküs URLs only, `flutter drive`/integration tests, `adb` against an explicitly connected authorized
 device) — an explicit, bounded override of this project's standing no-automation preference for this
 task specifically, not a repeal of that preference generally.
+
+## AP-4 Wave E — offline checkout capture, E2E infrastructure, environment blocker (2026-09-01, PARTIAL)
+
+Real, tested offline checkout capture is now wired end-to-end (`EnsureOfflineLease`/
+`CaptureOfflineCashPayment`, 12 new passing unit tests, real UI states for queued/syncing/synced/
+rejected/manual-reconciliation-required). Real Flutter E2E test infrastructure was built
+(`integration_test/support/emulator_fixtures.dart`, genuine Ed25519 device sessions) and one flow
+written — but a thorough, evidence-based diagnosis found a genuine, reproducible environment blocker:
+every real `FirebaseFunctions.instance.httpsCallable(...)` call made directly from Dart test code
+fails generically in this `flutter drive` harness (confirmed with the simplest possible callable in
+isolation; the same emulator is reachable fine via raw HTTP and via `firebase_auth`). This blocks the
+remaining 21 E2E flows, cross-surface E2E, and visual evidence capture — none of it vendor-blocked,
+all of it disclosed in ADR-047's Wave E entry rather than silently skipped or faked.
+
+Two fresh, independently-run, back-to-back Functions suite runs: **1931/1931 both times.** Firestore
+Rules 403/403. Storage Rules 35/35. `flutter test` 3639/3639 (12 pre-existing skips). `flutter
+analyze` clean. Full detail, the Section 5/8 audits, and the exact diagnostic trail: ADR-047's Wave E
+entry. `AP4_COMPLETE=NO`. `AP4_CONTROLLABLE_SOFTWARE_COMPLETE=NO`. `NEXT_PHASE=AP-4 Wave F` — resolve
+the `cloud_functions_web` environment blocker first; every other open item depends on it.
