@@ -15,9 +15,12 @@ import '../../../../shared/models/money.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../application/use_cases/capture_offline_cash_payment.dart';
 import '../../data/payment_gateway.dart';
 import '../../data/pos_action_gateway.dart' show PosDeviceContext;
 import '../../data/pos_operational_view_gateway.dart';
+import '../../domain/offline/offline_outbox_status.dart';
+import '../../domain/offline/offline_queued_cash_payment.dart';
 import '../providers/pos_workspace_providers.dart';
 
 /// The real, canonical AP-4 checkout panel — replaces the "Ödeme işlemi bu
@@ -65,6 +68,14 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
       _connectivitySub;
   bool _isOffline = false;
 
+  /// This check's own queued-but-not-yet-synced (or terminally
+  /// failed/manualInterventionRequired) offline entries — refreshed from
+  /// the durable outbox after every capture/sync pass. Purely a local,
+  /// device-side view: never sent to the server, never substituted for
+  /// [PaymentSessionView]'s own canonical figures.
+  List<OfflineQueuedCashPayment> _queuedEntries = const [];
+  String? _offlineSyncNotice;
+
   @override
   void initState() {
     super.initState();
@@ -72,7 +83,14 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
     _connectivitySub = _connectivity!.onConnectivityChanged.listen((results) {
       final offline =
           results.every((r) => r == connectivity_plus.ConnectivityResult.none);
+      final wasOffline = _isOffline;
       if (mounted) setState(() => _isOffline = offline);
+      if (wasOffline && !offline) {
+        // Reconnected — automatically resume draining this device's
+        // offline queue, matching the governing requirement that recovery
+        // never waits on a manual step.
+        unawaited(_syncOfflineQueue());
+      }
     });
     _connectivity!.checkConnectivity().then((results) {
       final offline =
@@ -86,6 +104,62 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
   void dispose() {
     _connectivitySub?.cancel();
     super.dispose();
+  }
+
+  Future<void> _refreshQueuedEntries() async {
+    try {
+      final repository =
+          await ref.read(offlinePaymentOutboxRepositoryProvider.future);
+      final all = await repository.findAll();
+      if (!mounted) return;
+      setState(() {
+        _queuedEntries =
+            all.where((e) => e.checkId == widget.checkId).toList();
+      });
+    } catch (_) {
+      // Best-effort — the repository is a local device concern; a failure
+      // here never blocks the canonical, server-sourced checkout UI.
+    }
+  }
+
+  Future<void> _ensureOfflineLeaseOpportunistically() async {
+    if (_isOffline) return;
+    try {
+      final ensure = await ref.read(ensureOfflineLeaseProvider.future);
+      await ensure(ctx: widget.ctx);
+    } catch (_) {
+      // Best-effort pre-provisioning — a failure here (e.g. Firebase not
+      // ready) must never block the checkout screen from loading; it only
+      // means offline cash capture won't be available until a lease is
+      // successfully acquired on some later online moment.
+    }
+  }
+
+  Future<void> _syncOfflineQueue() async {
+    try {
+      final lease = await (await ref.read(offlineLeaseStoreProvider.future))
+          .currentLease();
+      if (lease == null) return;
+      final sync = await ref.read(syncOfflinePaymentOutboxProvider.future);
+      final result = await sync(ctx: widget.ctx, leaseId: lease.leaseId);
+      if (!mounted) return;
+      if (result.entries.isNotEmpty) {
+        setState(() {
+          _offlineSyncNotice = result.hasUnresolved
+              ? 'Senkronizasyon tamamlandı: ${result.syncedCount} işlem '
+                  'onaylandı, bazı işlemler mutabakat bekliyor (aşağıdaki '
+                  'kuyruğu kontrol edin).'
+              : '${result.syncedCount} offline işlem başarıyla senkronize '
+                  'edildi.';
+        });
+      }
+      await _refreshQueuedEntries();
+      await _refresh();
+    } catch (_) {
+      // A failed sync attempt leaves every queued entry exactly as it was
+      // — nothing here ever marks an entry resolved on the client's own
+      // assumption. The next reconnect/manual retry tries again.
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -112,6 +186,8 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
         _session = view;
         _phase = _LoadPhase.ready;
       });
+      unawaited(_ensureOfflineLeaseOpportunistically());
+      unawaited(_refreshQueuedEntries());
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -139,12 +215,56 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
   String _newIdempotencyKey() =>
       '${widget.checkId}-${DateTime.now().microsecondsSinceEpoch}';
 
+  /// Offline capture path — never calls the network. Section 3's own
+  /// requirement: "distinguish definitively offline from 'request may have
+  /// reached the server'" — this branch is only ever taken when
+  /// connectivity is confirmed absent, so there is no ambiguity about
+  /// whether a request was sent (none was); the online branch below keeps
+  /// its own, separate `outcomeUnknown` handling for that different case.
+  Future<void> _submitOfflineCashTender({
+    required List<Map<String, dynamic>> allocations,
+  }) async {
+    setState(() {
+      _busy = true;
+      _actionError = null;
+    });
+    try {
+      final capture = await ref.read(captureOfflineCashPaymentProvider.future);
+      final allocation = allocations.first;
+      final currency = _currencyFor(_session!.currencyCode);
+      final result = await capture(
+        checkId: widget.checkId,
+        paymentSessionId: _session!.sessionId!,
+        subAccountId: allocation['subAccountId'] as String,
+        amount: Money(allocation['amountMinorUnits'] as int, currency),
+      );
+      switch (result) {
+        case OfflineCashPaymentCaptured():
+          setState(() => _offlineSyncNotice =
+              'Nakit tahsilat offline olarak kaydedildi. Bağlantı geri '
+              'geldiğinde otomatik olarak senkronize edilecek.');
+          await _refreshQueuedEntries();
+        case OfflineCashPaymentRefused(:final reason):
+          setState(() => _actionError = reason);
+      }
+    } catch (e) {
+      setState(() =>
+          _actionError = 'Offline tahsilat kaydedilemedi: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _submitTender({
     required String tenderType,
     required List<Map<String, dynamic>> allocations,
     int? requestedBoncukAmount,
   }) async {
     if (_busy) return;
+    if (_isOffline && tenderType == 'cash') {
+      await _submitOfflineCashTender(allocations: allocations);
+      return;
+    }
     setState(() {
       _busy = true;
       _actionError = null;
@@ -252,6 +372,9 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
               actionError: _actionError,
               unknownOutcomeNotice: _unknownOutcomeNotice,
               isOffline: _isOffline,
+              queuedEntries: _queuedEntries,
+              offlineSyncNotice: _offlineSyncNotice,
+              onSyncNow: () => unawaited(_syncOfflineQueue()),
               onSubmitTender: _submitTender,
               onSubmitRefund: _submitRefund,
               onRefresh: _refresh,
@@ -283,6 +406,9 @@ class _CheckoutBody extends StatelessWidget {
     required this.actionError,
     required this.unknownOutcomeNotice,
     required this.isOffline,
+    this.queuedEntries = const [],
+    this.offlineSyncNotice,
+    this.onSyncNow,
     required this.onSubmitTender,
     required this.onSubmitRefund,
     required this.onRefresh,
@@ -295,6 +421,9 @@ class _CheckoutBody extends StatelessWidget {
   final String? actionError;
   final String? unknownOutcomeNotice;
   final bool isOffline;
+  final List<OfflineQueuedCashPayment> queuedEntries;
+  final String? offlineSyncNotice;
+  final VoidCallback? onSyncNow;
   final _SubmitTenderFn onSubmitTender;
   final _SubmitRefundFn onSubmitRefund;
   final Future<void> Function() onRefresh;
@@ -316,6 +445,9 @@ class _CheckoutBody extends StatelessWidget {
       session: session,
       subAccountName: _subAccountName,
       isOffline: isOffline,
+      queuedEntries: queuedEntries,
+      offlineSyncNotice: offlineSyncNotice,
+      onSyncNow: onSyncNow,
     );
 
     if (isCompleted) {
@@ -415,11 +547,20 @@ class _SummaryPanel extends StatelessWidget {
     required this.session,
     required this.subAccountName,
     required this.isOffline,
+    this.queuedEntries = const [],
+    this.offlineSyncNotice,
+    this.onSyncNow,
   });
 
   final PaymentSessionView session;
   final String Function(String subAccountId) subAccountName;
   final bool isOffline;
+
+  /// This check's own locally-queued offline entries — display-only, never
+  /// substituted for [session]'s own canonical, server-sourced figures.
+  final List<OfflineQueuedCashPayment> queuedEntries;
+  final String? offlineSyncNotice;
+  final VoidCallback? onSyncNow;
 
   @override
   Widget build(BuildContext context) {
@@ -427,6 +568,23 @@ class _SummaryPanel extends StatelessWidget {
     final payable = Money(session.payableAmountMinorUnits ?? 0, currency);
     final settled = Money(session.settledAmountMinorUnits ?? 0, currency);
     final remaining = Money(session.remainingAmountMinorUnits, currency);
+
+    // Locally-queued amounts NOT yet confirmed by the server (pending/
+    // syncing/manualInterventionRequired — never `failed`, which never
+    // happened) — folded into a device-local "not yet synced" figure,
+    // always rendered separately from and never merged into `remaining`
+    // itself, so the cashier can never mistake a local capture for a
+    // server-confirmed settlement.
+    final unsyncedEntries = queuedEntries
+        .where((e) =>
+            e.status == OfflineOutboxStatus.pending ||
+            e.status == OfflineOutboxStatus.syncing ||
+            e.status == OfflineOutboxStatus.manualInterventionRequired)
+        .toList();
+    final unsyncedTotal = Money(
+      unsyncedEntries.fold<int>(0, (sum, e) => sum + e.amount.minorUnits),
+      currency,
+    );
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -457,6 +615,28 @@ class _SummaryPanel extends StatelessWidget {
                 ],
               ),
             ),
+          if (offlineSyncNotice != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: AppSpacing.md),
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              decoration: BoxDecoration(
+                color: AppColors.info.withValues(alpha: 0.12),
+                borderRadius: AppRadius.kSmall,
+                border: Border.all(color: AppColors.info),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.sync_outlined,
+                      color: AppColors.info, size: 18),
+                  const SizedBox(width: AppSpacing.xs),
+                  Expanded(
+                    child: Text(offlineSyncNotice!,
+                        style: AppTypography.bodySmall
+                            .copyWith(color: AppColors.info)),
+                  ),
+                ],
+              ),
+            ),
           AppCard(
             padding: const EdgeInsets.all(AppSpacing.md),
             borderColor: AppColors.primary,
@@ -465,9 +645,15 @@ class _SummaryPanel extends StatelessWidget {
               children: [
                 _AmountRow(label: 'Toplam', amount: payable),
                 const Divider(color: AppColors.border),
-                _AmountRow(label: 'Tahsil Edilen', amount: settled),
+                _AmountRow(label: 'Tahsil Edilen (Sunucu Onaylı)', amount: settled),
+                if (unsyncedEntries.isNotEmpty)
+                  _AmountRow(
+                    label: 'Yerel — Senkronize Edilmedi',
+                    amount: unsyncedTotal,
+                    color: AppColors.warning,
+                  ),
                 _AmountRow(
-                  label: 'Kalan',
+                  label: 'Kalan (Sunucu)',
                   amount: remaining,
                   emphasize: true,
                   color: remaining.isPositive
@@ -477,6 +663,23 @@ class _SummaryPanel extends StatelessWidget {
               ],
             ),
           ),
+          if (queuedEntries.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Offline Kuyruk', style: AppTypography.labelLarge),
+                if (onSyncNow != null)
+                  TextButton(
+                    onPressed: isOffline ? null : onSyncNow,
+                    child: const Text('Şimdi Senkronize Et'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            for (final entry in queuedEntries)
+              _OfflineQueueRow(entry: entry, currency: currency),
+          ],
           const SizedBox(height: AppSpacing.md),
           const Text('Hesaplara Göre Tutar', style: AppTypography.labelLarge),
           const SizedBox(height: AppSpacing.xs),
@@ -496,6 +699,45 @@ class _SummaryPanel extends StatelessWidget {
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One row in the offline-capture queue — the required distinction between
+/// "paid and server-confirmed," "locally captured, awaiting sync,"
+/// "outcome unknown," "rejected," and "manual reconciliation required."
+class _OfflineQueueRow extends StatelessWidget {
+  const _OfflineQueueRow({required this.entry, required this.currency});
+
+  final OfflineQueuedCashPayment entry;
+  final Currency currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (entry.status) {
+      OfflineOutboxStatus.pending => ('Yerel — Senkronizasyon Bekliyor', AppColors.warning),
+      OfflineOutboxStatus.syncing => ('Senkronize Ediliyor...', AppColors.info),
+      OfflineOutboxStatus.synced => ('Senkronize Edildi', AppColors.success),
+      OfflineOutboxStatus.failed => ('Reddedildi', AppColors.error),
+      OfflineOutboxStatus.manualInterventionRequired => (
+          'Sonuç Bilinmiyor — Mutabakat Gerekli',
+          AppColors.error,
+        ),
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Icon(Icons.circle, size: 10, color: color),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(label,
+                style: AppTypography.bodySmall.copyWith(color: color)),
+          ),
+          Text('${Money(entry.amount.minorUnits, currency)}',
+              style: AppTypography.bodySmall),
         ],
       ),
     );

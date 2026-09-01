@@ -4,9 +4,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../admin/domain/trusted_device/device_registration_state.dart';
 import '../../../admin/presentation/providers/trusted_device_session_providers.dart';
+import '../../application/use_cases/capture_offline_cash_payment.dart';
+import '../../application/use_cases/ensure_offline_lease.dart';
 import '../../application/use_cases/sync_offline_payment_outbox.dart';
 import '../../data/cash_register_gateway.dart';
 import '../../data/fiscal_offline_gateway.dart';
+import '../../data/offline_lease_store.dart';
 import '../../data/offline_payment_outbox_repository.dart';
 import '../../data/payment_gateway.dart';
 import '../../data/pos_action_gateway.dart';
@@ -100,6 +103,38 @@ final syncOfflinePaymentOutboxProvider =
   final gateway = ref.watch(paymentGatewayProvider);
   return SyncOfflinePaymentOutbox(
     paymentGateway: gateway,
+    outboxRepository: repository,
+  );
+});
+
+/// AP-4 Wave E — the device's locally-held offline authorization lease
+/// record. Same async-init reasoning as [offlinePaymentOutboxRepositoryProvider].
+final offlineLeaseStoreProvider = FutureProvider<OfflineLeaseStore>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  return SharedPreferencesOfflineLeaseStore(prefs);
+});
+
+/// Acquires/renews the held lease while online — the checkout screen calls
+/// this opportunistically (e.g. on load) so a later, unpredictable loss of
+/// connectivity already has a valid lease to capture against.
+final ensureOfflineLeaseProvider = FutureProvider<EnsureOfflineLease>((ref) async {
+  final leaseStore = await ref.watch(offlineLeaseStoreProvider.future);
+  final gateway = ref.watch(fiscalOfflineGatewayProvider);
+  return EnsureOfflineLease(
+    fiscalOfflineGateway: gateway,
+    leaseStore: leaseStore,
+  );
+});
+
+/// The real offline-capture decision point the checkout screen's cash
+/// tender submission calls into when the device is offline.
+final captureOfflineCashPaymentProvider =
+    FutureProvider<CaptureOfflineCashPayment>((ref) async {
+  final leaseStore = await ref.watch(offlineLeaseStoreProvider.future);
+  final repository =
+      await ref.watch(offlinePaymentOutboxRepositoryProvider.future);
+  return CaptureOfflineCashPayment(
+    leaseStore: leaseStore,
     outboxRepository: repository,
   );
 });
