@@ -5421,3 +5421,15 @@ README.md` — this project's standing no-desktop-automation rule governs, unlik
 authorized pass). `AP4_COMPLETE=NO`. `AP4_CONTROLLABLE_SOFTWARE_COMPLETE=NO` — the open items above are
 real, controllable gaps, not the PAX A910SF/GMP-3 vendor blocker, so that flag cannot honestly read YES
 either. `NEXT_PHASE=AP-4 Wave E` (the four items above).
+
+**AP-4 Wave E correction (2026-09-01, append-only):** the closing chat report for the entry above
+included `FULL_QUALITY_GATES_PASSED=YES`, which is corrected here to `FULL_QUALITY_GATES_PASSED=NO`
+— that could never be true while mandatory Flutter E2E, cross-surface E2E, and visual evidence
+remained undone. `REAL_POS_PAYMENT_UI_COMPLETE=YES` is also split going forward into
+`REAL_POS_PAYMENT_UI_IMPLEMENTED=YES` (true — the screen is real and backend-wired) vs.
+`REAL_POS_PAYMENT_UI_E2E_VERIFIED` (not yet true at that point — no E2E test had proven it against a
+real emulator). Same split applies to the Admin financial UI. This pass's governing instruction also
+explicitly authorized scoped, application-restricted test automation (Playwright against local
+Abaküs URLs only, `flutter drive`/integration tests, `adb` against an explicitly connected authorized
+device) — an explicit, bounded override of this project's standing no-automation preference for this
+task specifically, not a repeal of that preference generally.

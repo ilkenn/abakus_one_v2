@@ -18693,3 +18693,40 @@ them blocked by the PAX A910SF/GMP-3 vendor gap (`docs/ap4_wave_c_vendor_depende
 from Wave C), so `AP4_CONTROLLABLE_SOFTWARE_COMPLETE` cannot honestly read `YES` either.
 `NEXT_PHASE=AP-4 Wave E (offline-capture UI wiring, Flutter E2E flow coverage, visual evidence,
 remaining automation gates)`.
+
+### AP-4 Wave E correction (2026-09-01, append-only — the record above is not erased)
+
+The closing report that accompanied this ADR entry included a `FULL_QUALITY_GATES_PASSED=YES` tag in
+chat output (never written into this file itself, but still a real inconsistency in what was
+communicated): that tag cannot be true while mandatory Flutter E2E, cross-surface E2E, and visual
+evidence remain undone. Corrected here explicitly:
+
+```text
+FULL_QUALITY_GATES_PASSED=NO
+AP4_COMPLETE=NO
+```
+
+**Implementation vs. E2E verification are also being tracked as two separate questions from this point
+on**, since the prior report's `REAL_POS_PAYMENT_UI_COMPLETE=YES` conflated "the screen exists and is
+wired to the real backend" with "an end-to-end test has proven it works against a real emulator" —
+those are different claims:
+
+```text
+REAL_POS_PAYMENT_UI_IMPLEMENTED=YES
+REAL_POS_PAYMENT_UI_E2E_VERIFIED=<tracked separately below as Wave E work completes>
+REAL_ADMIN_FINANCIAL_UI_IMPLEMENTED=YES
+REAL_ADMIN_FINANCIAL_UI_E2E_VERIFIED=<tracked separately below as Wave E work completes>
+OFFLINE_DRAIN_ENGINE_COMPLETE=YES
+OFFLINE_CHECKOUT_CAPTURE_COMPLETE=NO
+OFFLINE_RECOVERY_E2E_COMPLETE=NO
+```
+
+Also: this pass's governing instruction explicitly authorized safe, application-scoped test
+automation (Playwright restricted to local Abaküs URLs, `flutter drive`/integration tests, `adb`
+against an explicitly connected authorized test device, screenshots of the local emulator-backed app
+only) — a scoped, explicit, in-context override of this project's standing no-desktop-automation
+preference, not a repeal of it. That preference still governs by default; this override applies only
+to this specific, bounded task under this specific instruction.
+
+Wave E's own entry (below, appended as this work completes) is where the corrected values above get
+their final answer.
