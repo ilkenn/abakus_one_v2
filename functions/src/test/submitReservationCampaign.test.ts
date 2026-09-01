@@ -1155,10 +1155,18 @@ test("28. end-to-end: a reservation whose response deadline passes unanswered (t
   assert.strictEqual((await reservationRecord(reservationId))?.status, "rejected");
   assert.strictEqual((await orderDoc(orderId))?.status, "cancelled");
 
+  // AP-4 Wave D full-suite-only flake, root-caused (2026-09-01): identical
+  // class of bug to `loyaltyRedemptionRestore.test.ts`'s own documented
+  // fix — `onOrderTerminalFailureOrRefund`'s trigger genuinely fires
+  // correctly, but this deep into the full ~1900-test sequential suite
+  // (confirmed via isolated rerun: this test alone completes well inside
+  // the default 15000ms), its real latency occasionally exceeds `waitFor`'s
+  // 15000ms default. Scoped override at this one call site, not a change
+  // to the shared default.
   const counter = await waitFor(async () => {
     const data = await usageCounterDoc(chain.organizationId, campaignId);
     return data && data.usageCount === 0 ? data : null;
-  });
+  }, 45000);
   assert.strictEqual(counter.usageCount, 0);
 });
 

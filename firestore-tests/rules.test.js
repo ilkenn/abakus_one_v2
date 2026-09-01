@@ -5108,3 +5108,72 @@ test('tenantCustomerRestrictions / platformCustomerRestrictions: no direct clien
   await assertFails(setDoc(doc(manager, 'tenantCustomerRestrictions/org-1_uid-2'), { organizationId: 'org-1' }));
   await assertFails(setDoc(doc(platformOwner, 'platformCustomerRestrictions/uid-2'), { uid: 'uid-2' }));
 });
+
+// ---------------------------------------------------------------------
+// AP-4 Waves A–D — payment/cash/fiscal/offline collections. Every one of
+// these is `allow read, write: if false` unconditionally in
+// firestore.rules (Cloud Function/Admin SDK only) — this suite previously
+// had zero coverage for any of them (confirmed by direct grep before
+// writing this block), a genuine gap this closes rather than a
+// pre-existing regression. One consolidated test per collection is
+// enough given the rule itself has no conditional branches to exercise —
+// mirrors `tenantCustomerRestrictions`/`platformCustomerRestrictions`'s
+// own "no direct client read or write for anyone" pattern immediately
+// above.
+// ---------------------------------------------------------------------
+
+test('AP-4 payment collections (paymentIntents/paymentSessions/paymentAttempts/refundRequests): no direct client read or write for anyone, even branch-matched staff', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'paymentIntents/intent-1'), { organizationId: 'org-1', branchId: 'branch-1' });
+    await setDoc(doc(db, 'paymentSessions/session-1'), { organizationId: 'org-1', branchId: 'branch-1' });
+    await setDoc(doc(db, 'paymentAttempts/attempt-1'), { organizationId: 'org-1', branchId: 'branch-1' });
+    await setDoc(doc(db, 'refundRequests/refund-1'), { organizationId: 'org-1', branchId: 'branch-1' });
+  });
+  const staff = testEnv
+    .authenticatedContext('staff-payment-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['admin'] }, branchAccess: { 'org-1': ['branch-1'] } })
+    .firestore();
+
+  await assertFails(getDoc(doc(staff, 'paymentIntents/intent-1')));
+  await assertFails(getDoc(doc(staff, 'paymentSessions/session-1')));
+  await assertFails(getDoc(doc(staff, 'paymentAttempts/attempt-1')));
+  await assertFails(getDoc(doc(staff, 'refundRequests/refund-1')));
+  await assertFails(setDoc(doc(staff, 'paymentIntents/intent-2'), { organizationId: 'org-1' }));
+  await assertFails(setDoc(doc(staff, 'paymentSessions/session-2'), { organizationId: 'org-1' }));
+  await assertFails(setDoc(doc(staff, 'paymentAttempts/attempt-2'), { organizationId: 'org-1' }));
+  await assertFails(setDoc(doc(staff, 'refundRequests/refund-2'), { organizationId: 'org-1' }));
+});
+
+test('AP-4 cash collections (cashDrawers/cashSessions/cashMovements/cashCounts/cashReconciliations/cashAdjustments/cashMovementRequests/cashAdjustmentRequests): no direct client read or write for anyone', async () => {
+  const cashCollections = [
+    'cashDrawers', 'cashSessions', 'cashMovements', 'cashCounts',
+    'cashReconciliations', 'cashAdjustments', 'cashMovementRequests', 'cashAdjustmentRequests',
+  ];
+  await seed(async (db) => {
+    for (const name of cashCollections) {
+      await setDoc(doc(db, `${name}/seed-1`), { organizationId: 'org-1', branchId: 'branch-1' });
+    }
+  });
+  const manager = testEnv
+    .authenticatedContext('manager-cash-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['manager'] }, branchAccess: { 'org-1': ['branch-1'] } })
+    .firestore();
+
+  for (const name of cashCollections) {
+    await assertFails(getDoc(doc(manager, `${name}/seed-1`)));
+    await assertFails(setDoc(doc(manager, `${name}/seed-2`), { organizationId: 'org-1' }));
+  }
+});
+
+test('AP-4 fiscal/offline collections (fiscalOperationJournal/offlineLeases): no direct client read or write for anyone', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'fiscalOperationJournal/entry-1'), { organizationId: 'org-1', branchId: 'branch-1' });
+    await setDoc(doc(db, 'offlineLeases/lease-1'), { organizationId: 'org-1', branchId: 'branch-1' });
+  });
+  const admin = testEnv
+    .authenticatedContext('admin-fiscal-1', { organizationAccess: ['org-1'], roles: { 'org-1': ['admin'] }, branchAccess: { 'org-1': ['branch-1'] } })
+    .firestore();
+
+  await assertFails(getDoc(doc(admin, 'fiscalOperationJournal/entry-1')));
+  await assertFails(getDoc(doc(admin, 'offlineLeases/lease-1')));
+  await assertFails(setDoc(doc(admin, 'fiscalOperationJournal/entry-2'), { organizationId: 'org-1' }));
+  await assertFails(setDoc(doc(admin, 'offlineLeases/lease-2'), { organizationId: 'org-1' }));
+});

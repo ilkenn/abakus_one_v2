@@ -387,16 +387,20 @@ void main() {
     expect(fakes.actionGateway.splitByCustomerCallCount, 1);
   });
 
-  testWidgets(
-      'finalize button calls finalizeCheckReadyForPayment and shows '
-      'the AP-4 payment-gating note', (tester) async {
+  testWidgets('finalize button calls finalizeCheckReadyForPayment',
+      (tester) async {
     final fakes = await _pump(tester, initialView: _acceptedLineView());
     await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
+    // AP-4 Wave D correction: the check panel no longer shows a
+    // "payment unavailable, AP-4 kapsamındadır" dead-end note — a real
+    // checkout is now wired (see the `onOpenCheckout` widget-integration
+    // coverage this same file adds below for the post-`readyForPayment`
+    // "Ödemeye Git" button).
     expect(find.text('Ödemeye Hazır'), findsOneWidget);
-    expect(find.textContaining('AP-4 kapsamındadır'), findsOneWidget);
+    expect(find.textContaining('AP-4 kapsamındadır'), findsNothing);
 
     await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazır'));
     await tester.pump();

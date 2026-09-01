@@ -639,10 +639,18 @@ test("end-to-end: a real order status transition to rejected, via the real trigg
 
   await db().collection("orders").doc(orderId).update({ status: "rejected" });
 
+  // The real Firestore trigger chain (order status write -> onOrderEvent
+  // -> loyaltyRedemptionRestore) has genuine, variable latency — confirmed
+  // to comfortably finish in well under 1s in isolation, but observed to
+  // occasionally exceed the previous 15s default under a full ~1900-test
+  // sequential emulator run's sustained load (AP-4 Wave D diagnosis, not a
+  // logic bug — every other test in this file is a direct, synchronous
+  // call and unaffected). 45s gives real headroom without masking an
+  // actual hang (a genuinely broken trigger would still time out).
   const account = await waitFor(async () => {
     const data = await accountDoc(uid);
     return data && data.spendableBalance === 7 ? data : null;
-  });
+  }, 45000);
 
   assert.strictEqual(account.spendableBalance, 7);
   const restore = await restoreLedgerDoc(orderId, uid);
