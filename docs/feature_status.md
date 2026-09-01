@@ -5396,3 +5396,28 @@ client the sync use case would depend on).
 **Not yet built** (Wave D, continuing immediately, no stop between waves): POS/Admin UI wiring
 (including the API client the entire AP-4 backend still has zero Flutter consumer for), visual evidence,
 final closure gates.
+
+## AP-4 Wave D — Admin financial UI, offline sync engine, closure gates (2026-09-01, PARTIAL — not closed)
+
+The Flutter API client (`PaymentGateway`/`CashRegisterGateway`/`FiscalOfflineGateway`), the real routed
+POS payment/cash screens (`pos_checkout_screen.dart`/`pos_cash_register_screen.dart`, reachable from
+`PosTableWorkspaceScreen`/`PosBranchOverviewScreen`), the real Admin financial UI
+(`admin_financial_operations_screen.dart`, 5 tabs backed by 5 new `adminFinancialView.ts` callables),
+and the offline outbox's own sync/replay engine (`sync_offline_payment_outbox.dart`, 9/9 unit tests) are
+all real, wired, and passing. Two genuine test defects were root-caused and fixed (not dismissed as
+flake) — see ADR-047 for full detail. Two genuinely clean, back-to-back Functions suite runs:
+**1931/1931 both times.** Firestore Rules 403/403 (3 new AP-4 lockdown tests, previously zero coverage
+for any of the 14 AP-4 collections — also corrected here: an earlier session's uncommitted "15
+collections" figure was wrong, the real count is 14). Storage Rules 35/35 (untouched). `flutter test`
+3627/3627 (12 pre-existing skips). `flutter analyze` clean. Full detail and gate table: ADR-047.
+
+**Honestly still open, none of it vendor-blocked**: the checkout screen doesn't yet enqueue into the
+offline outbox when offline (only the engine that drains it exists); the 22 enumerated Flutter/E2E test
+flows the governing instruction named are not built (backend logic coverage for most of them exists,
+the Flutter-side E2E layer does not); Web Admin sign-in E2E, POS trusted-device E2E, and QR/customer
+regression E2E were not attempted (browser/device automation, out of safe scope this pass per this
+project's own AP-3 near-miss record); visual evidence is 0/14 captured (`docs/visual_evidence/ap4/
+README.md` — this project's standing no-desktop-automation rule governs, unlike AP-3's own explicitly
+authorized pass). `AP4_COMPLETE=NO`. `AP4_CONTROLLABLE_SOFTWARE_COMPLETE=NO` — the open items above are
+real, controllable gaps, not the PAX A910SF/GMP-3 vendor blocker, so that flag cannot honestly read YES
+either. `NEXT_PHASE=AP-4 Wave E` (the four items above).

@@ -18549,3 +18549,147 @@ vendor access — `PAX_A910SF_PRODUCTION_ADAPTER_COMPLETE=NO`, `GMP3_REAL_DEVICE
 both the honest, disclosed, structural consequence documented in
 `docs/ap4_wave_c_vendor_dependencies.md`, not an oversight. `NEXT_PHASE=AP-4 Wave D (POS/Admin UI wiring,
 visual evidence, final closure gates)` — starting immediately, no stop between waves.
+
+## ADR-047 — AP-4 Wave D: Admin financial UI, offline outbox sync engine, and closure gate corrections (2026-09-01)
+
+- Tarih: 2026-09-01
+- Durum: Accepted (partial closure — see Status below; this is an honest interim record, not a claim
+  the wave is finished)
+
+### Context
+
+Wave D's job was to wire the real AP-4 backend (Waves A–C) into UI, close the durable outbox's own
+disclosed "sync use case not built yet" gap, and run the full closure gate suite. This entry records
+what was actually built and verified this pass, and — per the governing instruction's explicit
+requirement to never present a partial result as complete — what was not.
+
+### Root-caused test defects (not dismissed as flake)
+
+Two genuine, fixed defects surfaced by running the real suite, both root-caused before any fix was
+applied (never a symptom patch):
+
+1. **Self-approval fixture bug**, `cashOperationalView.test.ts`/`adminFinancialView.test.ts`: both
+   files' `setupFixture` passed the same bootstrapped admin as both the device-registration requester
+   AND approver — the server correctly rejects that as self-approval (a real, already-tested security
+   rule). Fixed by adding a second, distinct `newStaffMember` actor as requester, mirroring
+   `paymentOperationalView.test.ts`'s own already-correct `staff`/`admin1` split.
+2. **`onlyUnresolved` filter gap**, `adminFinancialView.ts`'s `listFiscalOperationsForBranch`: the
+   filter only matched `unknownReconciliationRequired`/`manualInterventionRequired`, but no sweep
+   exists anywhere in this codebase (confirmed by grep) that ever promotes a `timedOut` fiscal entry to
+   `unknownReconciliationRequired` — `fiscalDomain.ts`'s transition map declares that transition valid,
+   but nothing performs it. A real timed-out device round-trip would sit invisible to Admin's
+   reconciliation queue indefinitely. Fixed by including `timedOut` in the filter.
+
+A third, unrelated, pre-existing flake was also found and fixed while establishing the two official
+clean runs: `submitReservationCampaign.test.ts`'s test 28 used `waitFor`'s bare 15000ms default to
+await a trigger-driven campaign-usage release — the identical class of bug already fixed once this
+session in `loyaltyRedemptionRestore.test.ts` (the trigger fires correctly; its real latency
+occasionally exceeds 15s this deep into the ~1930-test sequential suite). Fixed with the same pattern:
+a scoped `45000` override at the one call site.
+
+### Built and verified this wave
+
+- **`functions/src/paymentOperationalView.ts`/`cashOperationalView.ts`/`adminFinancialView.ts`** — the
+  real read boundaries the POS checkout/cash screens and Admin's financial destinations consume
+  (mirrors `getPosTableOperationalView`'s own trusted-device-gated, total-Firestore-lockdown
+  reasoning; the Admin-tier callables use a `processPayments`-based `requireAdminView` gate instead,
+  matching `listReservationsForBranch.ts`'s precedent that Admin access is a separate surface from the
+  POS device-binding model).
+- **`lib/features/pos/presentation/screens/pos_checkout_screen.dart`** (new) and
+  **`pos_cash_register_screen.dart`** (new) — the real, routed POS payment and cash-register UI,
+  reachable from `PosTableWorkspaceScreen`'s check panel and `PosBranchOverviewScreen`'s operational
+  rail respectively. Canonical amounts always re-fetched from the server after every action, never
+  locally accumulated. Outcome-uncertain responses (`deadline-exceeded`/`unavailable`/`internal`/
+  `cancelled`/`unknown`, or a non-terminal returned status) are shown as a persistent warning banner,
+  never as success, never auto-retried.
+- **Sandbox-only tender gating** (`pos_checkout_screen.dart`): card/meal-card tender chips are now
+  hidden outright in `kReleaseMode` and labeled "(Sandbox)" in debug/profile — closing a real gap
+  where the UI offered them unconditionally even though the real backend
+  (`paymentProviderAdapter.ts`) already fails closed outside `FUNCTIONS_EMULATOR=true` regardless.
+- **`lib/features/admin/presentation/screens/admin_financial_operations_screen.dart`** (new) — one
+  tabbed Admin destination (Ödemeler/İadeler/Kasa Oturumları/Fiskal Günlük/Offline Yetkiler), each tab
+  backed by one of `adminFinancialView.ts`'s five real callables via new `FutureProvider.family`
+  providers (`admin_financial_list_providers.dart`) and a new read-only `AdminFinancialGateway`
+  (`admin_financial_gateway.dart`). Registered in `AdminShellScreen` under the existing `'cash'`
+  nav-item id (replacing its previous `AdminComingSoonView` placeholder — the exact gap that
+  placeholder's own text named), gated by a new `PosAuthorizedAction.viewFinancialOperations`
+  (manager-tier, same tier as the existing `reviewCashReconciliation`/`viewAuditCenter` read-oversight
+  actions).
+- **`lib/features/pos/application/use_cases/sync_offline_payment_outbox.dart`** (new) — the real
+  replay/sync engine the durable outbox (Wave C) was built for but never had a consumer. Replays
+  strictly in `deviceSequence` order; stops a lease's replay entirely (never skips ahead) the moment
+  one entry's outcome is anything other than a confirmed success, since the server's own
+  monotonic-sequence replay protection makes "skip and continue" unsafe; classifies
+  `payment/offline-lease-{revoked,expired,tender-not-allowed}` as terminal (`failed`),
+  `payment/offline-lease-replay` and transport-uncertain errors as `outcomeUnknown`
+  (`manualInterventionRequired` — the entry may already be recorded server-side, never assumed either
+  way); idempotent by construction (each entry's own stable `idempotencyKey`, never regenerated on
+  retry). `OfflinePaymentOutboxRepository` gained `resetToPending` — the one, explicit,
+  staff-triggered path back from `failed`/`manualInterventionRequired`, never automatic. 9/9 new unit
+  tests (`sync_offline_payment_outbox_test.dart`, fake gateway + in-memory repository, no emulator
+  needed) covering: queueing while offline, strict-order replay, outcome-unknown blocking later
+  entries, duplicate-replay prevention via the same idempotency key, expired lease, revoked lease,
+  replayed sequence, server rejection, and a no-op pass.
+- **Firestore Rules**: 3 new consolidated tests covering all 12 previously-untested AP-4 collections
+  (`paymentIntents`/`paymentSessions`/`paymentAttempts`/`refundRequests`/`cashDrawers`/`cashSessions`/
+  `cashMovements`/`cashCounts`/`cashReconciliations`/`cashAdjustments`/`cashMovementRequests`/
+  `cashAdjustmentRequests`/`fiscalOperationJournal`/`offlineLeases`) — confirmed by grep that this
+  suite had zero prior coverage for any of them, a real gap this closes.
+
+### Disclosed, NOT built this wave (real gaps, not vendor-blocked)
+
+- **The checkout screen's offline-CAPTURE path.** The sync engine above drains the outbox; nothing
+  yet decides to enqueue into it. Wiring this requires a lease-acquisition/renewal flow (a lease must
+  be requested while still online, before connectivity is lost), local device-sequence tracking, and
+  the checkout summary panel accounting for locally-queued-but-unsynced amounts in its remaining-
+  balance display — assessed as too much untested surface to add correctly under this pass's time
+  budget without risking exactly the kind of money-correctness bug this whole program exists to
+  prevent. Left disclosed rather than rushed.
+- **The 22 enumerated Flutter/widget/provider/integration/E2E flows.** The underlying business logic
+  for most of them is genuinely covered by the now-1931/1931 Functions suite (e.g. Boncuk tender,
+  partial/mixed payment, refund proportionality, cross-tenant denial are all real, passing backend
+  tests) — but that is backend coverage, not the Flutter-side "real routed screen against a real
+  emulator" E2E layer the instruction asked for specifically. Not built this pass.
+- **Web Admin sign-in E2E, POS trusted-device E2E on a physical/emulated target, QR/customer
+  regression E2E.** Not attempted — each requires either Playwright browser automation or physical/
+  emulated device automation, both explicitly high-risk categories per this project's own AP-3 closure
+  record (`docs/visual_evidence/ap3/README.md`'s documented near-miss with simulated input landing on
+  the wrong foreground window).
+- **Visual evidence (0/14).** See `docs/visual_evidence/ap4/README.md` — this project's standing
+  no-desktop-automation rule governs here (unlike AP-3's own pass, which had an explicit override in
+  its governing instruction); the scaffold and exact capture instructions are ready for a human to
+  complete.
+
+### Full fresh Wave D gates (2026-09-01, two independently-run, back-to-back, freshly-restarted-emulator passes — never reusing Wave A/B/C's numbers)
+
+| Gate | Result |
+|---|---|
+| Functions suite, run 1/2 | **1931/1931 passed, 0 failed** |
+| Functions suite, run 2/2 | **1931/1931 passed, 0 failed** |
+| Firestore Rules suite | **403/403 passed, 0 failed** (400 + 3 new) |
+| Storage Rules suite (rerun, untouched) | **35/35 passed, 0 failed** |
+| `dart format --set-exit-if-changed lib test integration_test` | Clean (6 files auto-formatted, no semantic change) |
+| `flutter analyze` | Clean — "No issues found!" |
+| `flutter test` | **3627 tests, 0 failed** (12 pre-existing skips, unrelated to this wave) |
+| Functions `tsc` build | Clean |
+| `git diff --check` | Clean |
+| Secret/credential scan (diff-scoped) | Clean |
+| Dependency audit (`npm audit`, functions) | 8 pre-existing moderate findings, identical to AP-3's own recorded set — not newly introduced |
+| Production fake-adapter exclusion | Confirmed via existing `paymentProviderAdapter.test.ts`/`fiscalAdapter.test.ts` (both adapters structurally unselectable outside `FUNCTIONS_EMULATOR=true`) |
+| ADR identifier uniqueness | Confirmed — highest existing was ADR-046; this entry is ADR-047, no collision |
+| Firestore collection count | **Corrected in this pass.** A prior session's chat prose claimed "15 confirmed" for the AP-4 locked-collection count; freshly re-verified by direct grep this pass (`firestore.rules`, unmodified this wave) and found to be **14**, not 15: `paymentIntents`/`paymentSessions`/`paymentAttempts`/`refundRequests` (Wave A, 4) + `cashDrawers`/`cashSessions`/`cashMovements`/`cashCounts`/`cashReconciliations`/`cashAdjustments`/`cashMovementRequests`/`cashAdjustmentRequests` (Wave B, 8) + `fiscalOperationJournal`/`offlineLeases` (Wave C, 2) = 14. The prior "15" was itself never committed to any doc (only prior chat prose, per the earlier session's own note) — this row is the first time an exact count has been written down, and it is verified against source, not carried forward |
+| Web Admin sign-in E2E / POS trusted-device E2E / QR regression E2E | **Not run** — see disclosed gaps above |
+| Evidence-file validation | N/A — 0/14 captured, nothing to validate yet |
+| Deployment invariant | Holds — nothing in this wave touched any deploy command; `PRODUCTION_DEPLOYED=NO` |
+| Working tree | Clean after this wave's commits (see commit list in the closing report) |
+
+### Status
+
+AP-4 Wave D is **not complete**. The Admin financial UI, the offline sync/replay engine, the two
+genuinely clean back-to-back Functions runs, and the Rules/Storage/format/analyze/test/audit gate
+suite are real and done. The checkout screen's offline-capture wiring, the 22 enumerated Flutter E2E
+flows, browser/device-automation E2E, and visual evidence capture are honestly not done — none of
+them blocked by the PAX A910SF/GMP-3 vendor gap (`docs/ap4_wave_c_vendor_dependencies.md`, unchanged
+from Wave C), so `AP4_CONTROLLABLE_SOFTWARE_COMPLETE` cannot honestly read `YES` either.
+`NEXT_PHASE=AP-4 Wave E (offline-capture UI wiring, Flutter E2E flow coverage, visual evidence,
+remaining automation gates)`.
