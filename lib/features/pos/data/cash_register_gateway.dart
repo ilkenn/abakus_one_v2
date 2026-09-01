@@ -54,10 +54,206 @@ class CashCountResult {
   final String approvalRequestId;
 }
 
+class CashOpenSessionSummary {
+  const CashOpenSessionSummary({required this.sessionId, required this.status});
+  final String sessionId;
+  final String status;
+
+  factory CashOpenSessionSummary.fromWire(Map<String, dynamic> data) {
+    return CashOpenSessionSummary(
+      sessionId: data['sessionId'] as String,
+      status: data['status'] as String,
+    );
+  }
+}
+
+class CashDrawerSummary {
+  const CashDrawerSummary({
+    required this.drawerId,
+    required this.name,
+    required this.isActive,
+    this.openSession,
+  });
+  final String drawerId;
+  final String name;
+  final bool isActive;
+  final CashOpenSessionSummary? openSession;
+
+  factory CashDrawerSummary.fromWire(Map<String, dynamic> data) {
+    final openSessionRaw = data['openSession'] as Map<String, dynamic>?;
+    return CashDrawerSummary(
+      drawerId: data['drawerId'] as String,
+      name: data['name'] as String,
+      isActive: data['isActive'] as bool,
+      openSession: openSessionRaw != null
+          ? CashOpenSessionSummary.fromWire(openSessionRaw)
+          : null,
+    );
+  }
+}
+
+class CashMovementSummary {
+  const CashMovementSummary({
+    required this.type,
+    required this.amountMinorUnits,
+    required this.reason,
+    required this.timestamp,
+  });
+  final String type;
+  final int amountMinorUnits;
+  final String reason;
+  final DateTime timestamp;
+
+  factory CashMovementSummary.fromWire(Map<String, dynamic> data) {
+    return CashMovementSummary(
+      type: data['type'] as String,
+      amountMinorUnits: data['amountMinorUnits'] as int,
+      reason: data['reason'] as String,
+      timestamp: DateTime.parse(data['timestamp'] as String),
+    );
+  }
+}
+
+class CashVarianceSummary {
+  const CashVarianceSummary(
+      {required this.type, required this.amountMinorUnits});
+  final String type;
+  final int amountMinorUnits;
+
+  factory CashVarianceSummary.fromWire(Map<String, dynamic> data) {
+    return CashVarianceSummary(
+      type: data['type'] as String,
+      amountMinorUnits: data['amountMinorUnits'] as int,
+    );
+  }
+}
+
+class CashCountSummary {
+  const CashCountSummary({
+    required this.countId,
+    required this.expectedAmountMinorUnits,
+    required this.actualAmountMinorUnits,
+    required this.variance,
+    required this.declaredAt,
+  });
+  final String countId;
+  final int expectedAmountMinorUnits;
+  final int actualAmountMinorUnits;
+  final CashVarianceSummary variance;
+  final DateTime declaredAt;
+
+  factory CashCountSummary.fromWire(Map<String, dynamic> data) {
+    return CashCountSummary(
+      countId: data['countId'] as String,
+      expectedAmountMinorUnits: data['expectedAmountMinorUnits'] as int,
+      actualAmountMinorUnits: data['actualAmountMinorUnits'] as int,
+      variance: CashVarianceSummary.fromWire(
+          Map<String, dynamic>.from(data['variance'] as Map)),
+      declaredAt: DateTime.parse(data['declaredAt'] as String),
+    );
+  }
+}
+
+class CashReconciliationSummary {
+  const CashReconciliationSummary({
+    required this.status,
+    required this.varianceAccepted,
+    required this.variance,
+  });
+  final String status;
+  final bool varianceAccepted;
+  final CashVarianceSummary variance;
+
+  factory CashReconciliationSummary.fromWire(Map<String, dynamic> data) {
+    return CashReconciliationSummary(
+      status: data['status'] as String,
+      varianceAccepted: data['varianceAccepted'] as bool,
+      variance: CashVarianceSummary.fromWire(
+          Map<String, dynamic>.from(data['variance'] as Map)),
+    );
+  }
+}
+
+/// The cash screen's canonical, server-authoritative snapshot — [exists]
+/// is `false` for a `sessionId` that was never created or belongs to a
+/// different org/branch.
+class CashSessionView {
+  const CashSessionView({
+    required this.exists,
+    this.sessionId,
+    this.drawerId,
+    this.status,
+    this.businessDate,
+    this.openingFloatAmountMinorUnits,
+    this.settledAmountMinorUnits,
+    this.currencyCode,
+    this.cashRegisterModel,
+    this.movements = const [],
+    this.counts = const [],
+    this.reconciliations = const [],
+  });
+
+  final bool exists;
+  final String? sessionId;
+  final String? drawerId;
+
+  /// Verbatim server status (`awaitingOpenApproval`/`openRejected`/
+  /// `active`/`pendingApproval`/`approved`/`rejected`/`closed`) — never
+  /// re-interpreted client-side.
+  final String? status;
+  final String? businessDate;
+  final int? openingFloatAmountMinorUnits;
+  final int? settledAmountMinorUnits;
+  final String? currencyCode;
+  final String? cashRegisterModel;
+  final List<CashMovementSummary> movements;
+  final List<CashCountSummary> counts;
+  final List<CashReconciliationSummary> reconciliations;
+
+  factory CashSessionView.fromWire(Map<String, dynamic> data) {
+    if (data['exists'] != true) return const CashSessionView(exists: false);
+    return CashSessionView(
+      exists: true,
+      sessionId: data['sessionId'] as String,
+      drawerId: data['drawerId'] as String,
+      status: data['status'] as String,
+      businessDate: data['businessDate'] as String,
+      openingFloatAmountMinorUnits: data['openingFloatAmountMinorUnits'] as int,
+      settledAmountMinorUnits: data['settledAmountMinorUnits'] as int,
+      currencyCode: data['currencyCode'] as String,
+      cashRegisterModel: data['cashRegisterModel'] as String,
+      movements: [
+        for (final raw in (data['movements'] as List? ?? const []))
+          CashMovementSummary.fromWire(Map<String, dynamic>.from(raw as Map)),
+      ],
+      counts: [
+        for (final raw in (data['counts'] as List? ?? const []))
+          CashCountSummary.fromWire(Map<String, dynamic>.from(raw as Map)),
+      ],
+      reconciliations: [
+        for (final raw in (data['reconciliations'] as List? ?? const []))
+          CashReconciliationSummary.fromWire(
+              Map<String, dynamic>.from(raw as Map)),
+      ],
+    );
+  }
+}
+
 abstract interface class CashRegisterGateway {
   Future<String> createCashDrawer({
     required PosDeviceContext ctx,
     required String name,
+  });
+
+  Future<List<CashDrawerSummary>> listCashDrawers({
+    required PosDeviceContext ctx,
+  });
+
+  /// The cash screen's canonical refresh point — call after EVERY action,
+  /// never accumulate movements/status from local state alone.
+  Future<CashSessionView> getCashSessionView({
+    required PosDeviceContext ctx,
+    required String sessionId,
   });
 
   Future<CashSessionOpenResult> requestCashSessionOpen({
@@ -123,6 +319,40 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
         'name': name,
       });
       return result.data['drawerId'] as String;
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
+
+  @override
+  Future<List<CashDrawerSummary>> listCashDrawers({
+    required PosDeviceContext ctx,
+  }) async {
+    try {
+      final result = await _fn('listCashDrawers').call<Map<String, dynamic>>({
+        ...ctx.toWire(),
+      });
+      return [
+        for (final raw in (result.data['drawers'] as List))
+          CashDrawerSummary.fromWire(Map<String, dynamic>.from(raw as Map)),
+      ];
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
+
+  @override
+  Future<CashSessionView> getCashSessionView({
+    required PosDeviceContext ctx,
+    required String sessionId,
+  }) async {
+    try {
+      final result = await _fn('getCashSessionOperationalView')
+          .call<Map<String, dynamic>>({
+        ...ctx.toWire(),
+        'sessionId': sessionId,
+      });
+      return CashSessionView.fromWire(result.data);
     } on functions.FirebaseFunctionsException catch (error) {
       _rethrow(error);
     }
@@ -267,6 +497,19 @@ class UnavailableCashRegisterGateway implements CashRegisterGateway {
   Future<String> createCashDrawer({
     required PosDeviceContext ctx,
     required String name,
+  }) async =>
+      _unavailable();
+
+  @override
+  Future<List<CashDrawerSummary>> listCashDrawers({
+    required PosDeviceContext ctx,
+  }) async =>
+      _unavailable();
+
+  @override
+  Future<CashSessionView> getCashSessionView({
+    required PosDeviceContext ctx,
+    required String sessionId,
   }) async =>
       _unavailable();
 

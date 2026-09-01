@@ -18,6 +18,7 @@ import '../../../admin/presentation/screens/trusted_device_status_screen.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
+import 'pos_cash_register_screen.dart';
 import 'pos_table_workspace_screen.dart';
 
 /// The real POS branch/table overview — AP-3 continuation (`docs/decisions
@@ -127,7 +128,12 @@ class _PosBranchOverviewScreenState
       body: SafeArea(
         child: Row(
           children: [
-            const PosOperationalRail(),
+            PosOperationalRail(
+              onCashRegister: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) => const PosCashRegisterScreen()),
+              ),
+            ),
             Expanded(child: _buildContent()),
           ],
         ),

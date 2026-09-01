@@ -29,6 +29,12 @@ const _actionTypeLabels = {
   ApprovalActionType.checkFinancialAdjustment: 'Fiyat Düzeltmesi',
   ApprovalActionType.acceptedLineCancellation: 'Kabul Edilen Ürün İptali',
   ApprovalActionType.boncukBalanceCorrection: 'Boncuk Bakiye Düzeltmesi',
+  // AP-4 Wave A/B.
+  ApprovalActionType.paymentRefund: 'İade Talebi',
+  ApprovalActionType.cashSessionOpen: 'Kasa Açılışı',
+  ApprovalActionType.cashMovement: 'Kasa Hareketi',
+  ApprovalActionType.cashAdjustment: 'Kasa Düzeltmesi',
+  ApprovalActionType.cashReconciliation: 'Kasa Sayım Onayı',
 };
 
 const _eligibleResponderRoles = {

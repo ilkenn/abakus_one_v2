@@ -10,6 +10,17 @@ enum ApprovalActionType {
   checkFinancialAdjustment,
   acceptedLineCancellation,
   boncukBalanceCorrection,
+  // AP-4 Wave A (ADR-033/044) — a staff-requested refund requiring manager
+  // approval before any money moves.
+  paymentRefund,
+  // AP-4 Wave B (ADR-045) — cash register lifecycle actions. Unlike every
+  // action above, these four also have a real REJECTION effect server-side
+  // (`remoteApproval.ts`'s `REJECTION_HANDLERS`) — a rejected request is
+  // never a client-side no-op for these.
+  cashSessionOpen,
+  cashMovement,
+  cashAdjustment,
+  cashReconciliation,
 }
 
 enum ApprovalStatus {
@@ -31,6 +42,16 @@ ApprovalActionType approvalActionTypeFromWire(String value) {
       return ApprovalActionType.acceptedLineCancellation;
     case 'boncukBalanceCorrection':
       return ApprovalActionType.boncukBalanceCorrection;
+    case 'paymentRefund':
+      return ApprovalActionType.paymentRefund;
+    case 'cashSessionOpen':
+      return ApprovalActionType.cashSessionOpen;
+    case 'cashMovement':
+      return ApprovalActionType.cashMovement;
+    case 'cashAdjustment':
+      return ApprovalActionType.cashAdjustment;
+    case 'cashReconciliation':
+      return ApprovalActionType.cashReconciliation;
     default:
       throw ArgumentError('Unknown approval action type: $value');
   }

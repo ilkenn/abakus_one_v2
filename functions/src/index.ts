@@ -196,3 +196,23 @@ export {
 // engine (ADR-046). No real PAX A910SF/GMP-3 vendor integration exists —
 // see fiscalAdapter.ts's own doc comment and docs/ap4_wave_c_vendor_dependencies.md.
 export { recordFiscalOperation, issueOfflineLease, revokeOfflineLease } from "./fiscalEngine";
+
+// AP-4 Wave D — the real payment-session read boundary the checkout UI
+// polls after every action; mirrors getPosTableOperationalView's own
+// trusted-device-gated, total-Firestore-lockdown reasoning.
+export { getPaymentSessionOperationalView } from "./paymentOperationalView";
+
+// AP-4 Wave D — the real cash session read boundary the cash register UI
+// polls after every action.
+export { listCashDrawers, getCashSessionOperationalView } from "./cashOperationalView";
+
+// AP-4 Wave D — the real branch-wide read boundary Admin's financial
+// destinations consume (cash sessions/payments/refunds/fiscal journal/
+// offline leases).
+export {
+  listPaymentSessionsForBranch,
+  listRefundsForBranch,
+  listCashSessionsForBranch,
+  listFiscalOperationsForBranch,
+  listOfflineLeasesForBranch,
+} from "./adminFinancialView";

@@ -163,6 +163,11 @@ abstract final class RolePermissionMap {
     PosAuthorizedAction.useKdsModule,
     PosAuthorizedAction.manageCourierModule,
     PosAuthorizedAction.manageAiModule,
+    // AP-4 Wave D — branch-wide financial oversight (payment sessions,
+    // refunds, cash sessions, fiscal journal, offline leases), same tier
+    // as the existing `reviewCashReconciliation`/`viewAuditCenter`
+    // read-oversight actions above.
+    PosAuthorizedAction.viewFinancialOperations,
   };
 
   /// Front-line, day-to-day execution actions.

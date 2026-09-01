@@ -177,4 +177,17 @@ enum PosAuthorizedAction {
   useKdsModule,
   manageCourierModule,
   manageAiModule,
+
+  /// AP-4 Wave D — read-only Admin visibility onto the branch-wide
+  /// financial destinations (`adminFinancialView.ts`'s five callables):
+  /// payment sessions, refunds, cash sessions, the fiscal operation
+  /// journal, and offline authorization leases. Deliberately a single
+  /// value covering all five rather than five separate ones — every
+  /// existing read-only oversight action in this enum (`viewAuditCenter`,
+  /// `viewFeatureFlags`, `viewProfitability`) is similarly one value per
+  /// cohesive destination group, not per screen. This is a client-side UI
+  /// gate only, defense-in-depth on top of the backend's own real
+  /// `requireStaffPermission`/`requireBranchAccess` check on every
+  /// callable — never the sole authorization boundary.
+  viewFinancialOperations,
 }

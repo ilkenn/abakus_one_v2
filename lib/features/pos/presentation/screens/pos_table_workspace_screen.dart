@@ -21,16 +21,18 @@ import '../../data/pos_operational_view_gateway.dart';
 import '../providers/actor_session_provider.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
+import 'pos_cash_register_screen.dart';
+import 'pos_checkout_screen.dart';
 
 /// The real open-table three-pane POS workspace — AP-3 continuation
 /// (`docs/decisions.md` ADR-041's own "no longer blocked" follow-up).
 /// Center pane: table/order/sub-account view with per-line accept/reject/
 /// propose-replacement and staff order entry. Right pane: check panel —
 /// open, all five split modes, table transfer/merge, finalize to
-/// `readyForPayment`. Payment itself is never implemented here — AP-4
-/// scope, `_CheckPanel`'s own finalize button is the deliberate stopping
-/// point, and nothing beyond it (no cash/card/Boncuk UI of any kind)
-/// exists in this screen.
+/// `readyForPayment`. **AP-4 Wave D correction**: once a check reaches
+/// `readyForPayment`/`paid`, `_CheckPanel` now shows a real "Ödemeye Git"
+/// button pushing `PosCheckoutScreen` — the previous "payment unavailable,
+/// AP-4 scope" dead-end no longer exists.
 class PosTableWorkspaceScreen extends ConsumerStatefulWidget {
   const PosTableWorkspaceScreen({super.key});
 
@@ -118,7 +120,13 @@ class _PosTableWorkspaceScreenState
       body: SafeArea(
         child: Row(
           children: [
-            PosOperationalRail(onBack: () => Navigator.of(context).pop()),
+            PosOperationalRail(
+              onBack: () => Navigator.of(context).pop(),
+              onCashRegister: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) => const PosCashRegisterScreen()),
+              ),
+            ),
             Expanded(child: _buildBody(ctx, tableId)),
           ],
         ),
@@ -331,6 +339,19 @@ class _PosTableWorkspaceScreenState
               targetTableId: targetTableId,
             ),
       ),
+      onOpenCheckout: () {
+        final checkId = _openedCheckId;
+        if (checkId == null) return;
+        Navigator.of(context)
+            .push(MaterialPageRoute(
+              builder: (_) => PosCheckoutScreen(
+                ctx: ctx,
+                checkId: checkId,
+                view: view,
+              ),
+            ))
+            .then((_) => _load());
+      },
     );
 
     // Phone-width devices (AP-3 physical-device finding): the canonical
@@ -1120,6 +1141,7 @@ class _CheckPanel extends StatelessWidget {
     required this.onFinalize,
     required this.onTransfer,
     required this.onMerge,
+    required this.onOpenCheckout,
   });
 
   final PosDeviceContext ctx;
@@ -1136,6 +1158,21 @@ class _CheckPanel extends StatelessWidget {
   final VoidCallback onFinalize;
   final _TransferMergeFn onTransfer;
   final _TransferMergeFn onMerge;
+  final VoidCallback onOpenCheckout;
+
+  /// The open check's own real server status (`open`/`readyForPayment`/
+  /// `paid`/`cancelled`) — AP-4 Wave D. Read directly from [view].checks,
+  /// never independently tracked, so it can never drift from what
+  /// `finalizeCheckReadyForPayment`/the payment engine actually did.
+  String? get _currentCheckStatus {
+    if (checkId == null) return null;
+    for (final check in view.checks) {
+      if ((check['id'] ?? check['checkId']) == checkId) {
+        return check['status'] as String?;
+      }
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1272,20 +1309,28 @@ class _CheckPanel extends StatelessWidget {
               child: const Text('Masa Birleştir'),
             ),
             const SizedBox(height: AppSpacing.lg),
-            ElevatedButton(
-              onPressed: busy ? null : onFinalize,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.onPrimary,
+            if (_currentCheckStatus == 'readyForPayment' ||
+                _currentCheckStatus == 'paid')
+              ElevatedButton.icon(
+                onPressed: busy ? null : onOpenCheckout,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.onPrimary,
+                ),
+                icon: const Icon(Icons.point_of_sale_outlined),
+                label: Text(_currentCheckStatus == 'paid'
+                    ? 'Ödeme Detayı'
+                    : 'Ödemeye Git'),
+              )
+            else
+              ElevatedButton(
+                onPressed: busy ? null : onFinalize,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.onPrimary,
+                ),
+                child: const Text('Ödemeye Hazır'),
               ),
-              child: const Text('Ödemeye Hazır'),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Ödeme işlemi bu sürümde kullanılamaz — AP-4 kapsamındadır.',
-              style: AppTypography.bodySmall
-                  .copyWith(color: AppColors.textSecondary),
-            ),
           ],
           if (actionError != null) ...[
             const SizedBox(height: AppSpacing.sm),

@@ -17,15 +17,148 @@ class PaymentGatewayException implements Exception {
   String toString() => 'PaymentGatewayException($code): $message';
 }
 
+class PaymentSubAccountAllocation {
+  const PaymentSubAccountAllocation({
+    required this.subAccountId,
+    required this.payableAmountMinorUnits,
+  });
+  final String subAccountId;
+  final int payableAmountMinorUnits;
+
+  factory PaymentSubAccountAllocation.fromWire(Map<String, dynamic> data) {
+    return PaymentSubAccountAllocation(
+      subAccountId: data['subAccountId'] as String,
+      payableAmountMinorUnits: data['payableAmountMinorUnits'] as int,
+    );
+  }
+}
+
 class PaymentIntentResult {
   const PaymentIntentResult({
     required this.intentId,
     required this.sessionId,
     required this.payableAmountMinorUnits,
+    this.subAccountAllocations = const [],
   });
   final String intentId;
   final String sessionId;
   final int payableAmountMinorUnits;
+  final List<PaymentSubAccountAllocation> subAccountAllocations;
+}
+
+/// One `paymentAttempts` doc as the checkout UI needs it — verbatim server
+/// status/amounts, never re-derived client-side. See `PaymentGateway
+/// .getPaymentSessionView`'s own doc comment: this is the canonical source
+/// for "remaining amount," never a locally-accumulated tally.
+class PaymentAttemptSummary {
+  const PaymentAttemptSummary({
+    required this.attemptId,
+    required this.tenderType,
+    required this.status,
+    required this.amountMinorUnits,
+    required this.declineReason,
+  });
+  final String attemptId;
+  final String tenderType;
+  final String status;
+  final int amountMinorUnits;
+  final String? declineReason;
+
+  factory PaymentAttemptSummary.fromWire(Map<String, dynamic> data) {
+    return PaymentAttemptSummary(
+      attemptId: data['attemptId'] as String,
+      tenderType: data['tenderType'] as String,
+      status: data['status'] as String,
+      amountMinorUnits: data['amountMinorUnits'] as int,
+      declineReason: data['declineReason'] as String?,
+    );
+  }
+}
+
+class RefundRequestSummary {
+  const RefundRequestSummary({
+    required this.refundId,
+    required this.refundType,
+    required this.amountMinorUnits,
+    required this.status,
+  });
+  final String refundId;
+  final String refundType;
+  final int amountMinorUnits;
+  final String status;
+
+  factory RefundRequestSummary.fromWire(Map<String, dynamic> data) {
+    return RefundRequestSummary(
+      refundId: data['refundId'] as String,
+      refundType: data['refundType'] as String,
+      amountMinorUnits: data['amountMinorUnits'] as int,
+      status: data['status'] as String,
+    );
+  }
+}
+
+/// The checkout UI's canonical, server-authoritative snapshot — every
+/// screen refresh re-fetches this rather than accumulating local state.
+/// [exists] is `false` before `createPaymentIntent` has ever been called
+/// for this check (a normal, expected state, not an error).
+class PaymentSessionView {
+  const PaymentSessionView({
+    required this.exists,
+    this.sessionId,
+    this.sessionStatus,
+    this.payableAmountMinorUnits,
+    this.settledAmountMinorUnits,
+    this.currencyCode,
+    this.subAccountAllocations = const [],
+    this.attempts = const [],
+    this.refunds = const [],
+  });
+
+  final bool exists;
+  final String? sessionId;
+
+  /// Verbatim server status (`collecting`/`readyToComplete`/`completing`/
+  /// `completed`/`cancelled`/`failed`) — never re-interpreted client-side.
+  final String? sessionStatus;
+  final int? payableAmountMinorUnits;
+  final int? settledAmountMinorUnits;
+  final String? currencyCode;
+  final List<PaymentSubAccountAllocation> subAccountAllocations;
+  final List<PaymentAttemptSummary> attempts;
+  final List<RefundRequestSummary> refunds;
+
+  /// The one figure the checkout UI's "Kalan" (remaining) display must
+  /// always read from — never computed by subtracting locally-tracked
+  /// tender amounts, which could drift from the canonical server state.
+  int get remainingAmountMinorUnits =>
+      (payableAmountMinorUnits ?? 0) - (settledAmountMinorUnits ?? 0);
+
+  factory PaymentSessionView.fromWire(Map<String, dynamic> data) {
+    if (data['exists'] != true) return const PaymentSessionView(exists: false);
+    final intent = data['intent'] as Map<String, dynamic>?;
+    return PaymentSessionView(
+      exists: true,
+      sessionId: data['sessionId'] as String,
+      sessionStatus: data['sessionStatus'] as String,
+      payableAmountMinorUnits: data['payableAmountMinorUnits'] as int,
+      settledAmountMinorUnits: data['settledAmountMinorUnits'] as int,
+      currencyCode: data['currencyCode'] as String,
+      subAccountAllocations: [
+        for (final raw
+            in (intent?['subAccountAllocations'] as List? ?? const []))
+          PaymentSubAccountAllocation.fromWire(
+              Map<String, dynamic>.from(raw as Map)),
+      ],
+      attempts: [
+        for (final raw in (data['attempts'] as List? ?? const []))
+          PaymentAttemptSummary.fromWire(Map<String, dynamic>.from(raw as Map)),
+      ],
+      refunds: [
+        for (final raw in (data['refunds'] as List? ?? const []))
+          RefundRequestSummary.fromWire(Map<String, dynamic>.from(raw as Map)),
+      ],
+    );
+  }
 }
 
 class PaymentAttemptResult {
@@ -59,6 +192,13 @@ abstract interface class PaymentGateway {
     required PosDeviceContext ctx,
     required String checkId,
     int coverCount = 0,
+  });
+
+  /// The checkout UI's canonical refresh point — call after EVERY tender/
+  /// refund action, never accumulate "remaining" from local state alone.
+  Future<PaymentSessionView> getPaymentSessionView({
+    required PosDeviceContext ctx,
+    required String checkId,
   });
 
   Future<PaymentAttemptResult> recordPaymentAttempt({
@@ -118,7 +258,30 @@ class FirebasePaymentGateway implements PaymentGateway {
         intentId: data['intentId'] as String,
         sessionId: data['sessionId'] as String,
         payableAmountMinorUnits: data['payableAmountMinorUnits'] as int,
+        subAccountAllocations: [
+          for (final raw
+              in (data['subAccountAllocations'] as List? ?? const []))
+            PaymentSubAccountAllocation.fromWire(
+                Map<String, dynamic>.from(raw as Map)),
+        ],
       );
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
+
+  @override
+  Future<PaymentSessionView> getPaymentSessionView({
+    required PosDeviceContext ctx,
+    required String checkId,
+  }) async {
+    try {
+      final result = await _fn('getPaymentSessionOperationalView')
+          .call<Map<String, dynamic>>({
+        ...ctx.toWire(),
+        'checkId': checkId,
+      });
+      return PaymentSessionView.fromWire(result.data);
     } on functions.FirebaseFunctionsException catch (error) {
       _rethrow(error);
     }
@@ -214,6 +377,13 @@ class UnavailablePaymentGateway implements PaymentGateway {
     required PosDeviceContext ctx,
     required String checkId,
     int coverCount = 0,
+  }) async =>
+      _unavailable();
+
+  @override
+  Future<PaymentSessionView> getPaymentSessionView({
+    required PosDeviceContext ctx,
+    required String checkId,
   }) async =>
       _unavailable();
 

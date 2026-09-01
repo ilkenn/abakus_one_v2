@@ -37,6 +37,7 @@ import '../widgets/admin_context_gate.dart';
 import '../widgets/module_readiness_gate.dart';
 import '../providers/admin_dependencies_provider.dart';
 import '../providers/staff_session_controller.dart';
+import 'admin_financial_operations_screen.dart';
 import 'admin_overview_screen.dart';
 import 'admin_session_expired_screen.dart';
 import 'admin_unauthorized_screen.dart';
@@ -229,16 +230,12 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
           ),
           _AdminNavItem(
             id: 'cash',
-            label: 'Kasa',
+            label: 'Finansal İşlemler',
             icon: Icons.point_of_sale,
             visibleToRoles: const {StaffRole.manager, StaffRole.admin},
-            builder: (context, ref) => RoleGate.forRoles(
-              const {StaffRole.manager, StaffRole.admin},
-              child: const AdminComingSoonView(
-                title: 'Kasa',
-                reason: 'Kasa mutabakatı/işlemleri oturuma özgüdür — genel bir '
-                    'kasa listesi ekranı bu aşamada eklenmedi.',
-              ),
+            builder: (context, ref) => RoleGate.forAction(
+              PosAuthorizedAction.viewFinancialOperations,
+              child: const AdminFinancialOperationsScreen(),
             ),
           ),
         ],
