@@ -5452,3 +5452,8 @@ Rules 403/403. Storage Rules 35/35. `flutter test` 3639/3639 (12 pre-existing sk
 analyze` clean. Full detail, the Section 5/8 audits, and the exact diagnostic trail: ADR-047's Wave E
 entry. `AP4_COMPLETE=NO`. `AP4_CONTROLLABLE_SOFTWARE_COMPLETE=NO`. `NEXT_PHASE=AP-4 Wave F` — resolve
 the `cloud_functions_web` environment blocker first; every other open item depends on it.
+
+**AP-4 Wave F correction (2026-09-02, append-only):** the prior entry's `FULL_CONTROLLABLE_QUALITY_
+GATES_PASSED=YES` is corrected to `NO` — `FUNCTIONAL_E2E_FLOW_COUNT=0/22` and `REAL_VISUAL_ACCEPTANCE_
+EVIDENCE_COUNT=0/14` at that point meant the controllable gate list was not actually complete. See
+ADR-047's Wave F entry for the CDP-based re-diagnosis and everything built from it.

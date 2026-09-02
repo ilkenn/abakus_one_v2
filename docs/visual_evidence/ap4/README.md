@@ -18,6 +18,15 @@ own foreground window) caused the automated approach to be abandoned mid-pass. T
 instruction asks for evidence to be captured, but does not contain the equivalent explicit override
 authorizing automated capture — so the standing rule governs here, and no automation was attempted.
 
+**AP-4 Wave E/F correction (append-only):** the Wave E and Wave F governing instructions both
+explicitly authorized safe, application-scoped automation (Playwright restricted to local Abaküs
+URLs, Chrome DevTools Protocol via `connectOverCDP`, `flutter drive`, `adb` against an explicitly
+connected authorized device) — a bounded, in-context override for this specific task, not a repeal of
+the standing preference generally. Wave E attempted capture via `flutter drive` and hit a diagnosed
+environment blocker before reaching any real UI state (see ADR-047's Wave E entry). Wave F's own
+re-diagnosis and any resulting captures are recorded below this point, still append-only against the
+original scaffold above.
+
 **This is a genuine gap, not a formality.** Until a human captures these 14 screenshots from the
 real running app (against the local Firebase emulators, per every other AP-4 test in this codebase),
 `REAL_VISUAL_ACCEPTANCE_EVIDENCE_COUNT` in any AP-4 closure report must read `0/14`, not a number

@@ -18829,3 +18829,22 @@ dedicated remote-approval test matrix for stale-target/escalation/Platform-Owner
 the new financial action types. `NEXT_PHASE=AP-4 Wave F` — first priority: resolve the
 `cloud_functions_web`/`flutter drive` environment blocker (requires browser devtools access this
 environment doesn't provide), since every remaining open item in this wave depends on it.
+
+## AP-4 Wave F correction (2026-09-02, append-only — the record above is not erased)
+
+The prior report's `FULL_CONTROLLABLE_QUALITY_GATES_PASSED=YES` was wrong: the mandatory controllable
+E2E and visual-evidence gates were still incomplete at that point (`FUNCTIONAL_E2E_FLOW_COUNT=0/22`,
+`REAL_VISUAL_ACCEPTANCE_EVIDENCE_COUNT=0/14`), so that tag could not honestly read `YES`. Corrected
+explicitly:
+
+```text
+FULL_CONTROLLABLE_QUALITY_GATES_PASSED=NO
+FUNCTIONAL_E2E_FLOW_COUNT=0/22
+REAL_VISUAL_ACCEPTANCE_EVIDENCE_COUNT=0/14
+AP4_COMPLETE=NO
+```
+
+This pass's governing instruction also explicitly superseded the prior framing of "no graphical
+browser devtools access" as a hard stop: Playwright's Chrome DevTools Protocol connection
+(`connectOverCDP`) is available programmatically and does not require a human-operated devtools
+window. Wave F's own entry (below) is where the corrected diagnostic actually happens.
