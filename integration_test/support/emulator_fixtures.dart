@@ -29,7 +29,20 @@ import 'package:http/http.dart' as http;
 ///   real UI code path is what's actually exercised.
 class EmulatorFixtures {
   EmulatorFixtures({
-    this.projectId = 'demo-abakus-one-emulator',
+    // Unlike the Node backend suite's own fixture helpers (which
+    // deliberately target `demo-abakus-one-emulator`, `.firebaserc`'s
+    // default project — a legitimate, self-consistent, backend-only
+    // convention), this class exists to set up fixtures for the REAL
+    // Flutter app under test, which always resolves to a real, provisioned
+    // Firebase project (`abakus-one-dev` under `AppEnvironment.development`
+    // — see `lib/firebase_options_development.dart`). Defaulting to the
+    // Node convention here caused every raw-HTTP callable this class makes
+    // to target the wrong project namespace once the emulator is (correctly)
+    // started with `--project=abakus-one-dev` to match the app itself —
+    // confirmed via a `Failed to fetch` against
+    // `.../demo-abakus-one-emulator/us-central1/registerStaffMember` in a
+    // real `flutter drive` run (AP-4 Wave F, 2026-09-04).
+    this.projectId = 'abakus-one-dev',
     this.functionsHost = 'http://127.0.0.1:5001',
     this.authHost = 'http://127.0.0.1:9099',
   });

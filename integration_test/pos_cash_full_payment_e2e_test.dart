@@ -121,6 +121,24 @@ void main() {
 
     final fixtures = EmulatorFixtures();
     final adminIdToken = await auth.currentUser!.getIdToken();
+    // bootstrapFirstAdminAccount deliberately starts admin with
+    // branchAccess: [] (staffAuthorization.ts's own documented "no
+    // wildcard branch access, not even for admin/tenantOwner" rule) — a
+    // real admin must explicitly grant themselves branch access before
+    // operating a branch-scoped POS device, exactly like any other staff
+    // member. Self-targeting is legitimate: grantStaffBranchAccess only
+    // requires the caller to hold manageStaffBranchAccess for the
+    // organization, which the admin role has.
+    await fixtures.callCallableRaw(
+      'grantStaffBranchAccess',
+      {
+        'organizationId': organizationId,
+        'targetUid': auth.currentUser!.uid,
+        'branchId': branchId,
+      },
+      idToken: adminIdToken,
+    );
+    await auth.currentUser!.getIdToken(true);
     final approverIdToken = await fixtures.createApproverActor(
       organizationId: organizationId,
       branchId: branchId,
