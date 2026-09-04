@@ -19059,3 +19059,32 @@ remaining Flutter-integration-test-shaped flows in the 22-flow matrix (reusing t
 `EmulatorFixtures`/fixture pattern this fix validated); Playwright against the normally-served app
 remains the tool for flows that don't have a pre-written Dart integration test yet, and is the sole
 tool for visual evidence capture regardless.
+
+### Flow #7 (partial refund) — a genuine UI gap found and fixed while writing it (2026-09-04)
+
+Writing `integration_test/pos_partial_refund_e2e_test.dart` (request a partial refund on a fully
+cash-paid check, through the real `PosCheckoutScreen`, approved by a real second identity) surfaced a
+real, confirmed, blocking UI gap, not a test-authoring issue: **once `PaymentSessionView.sessionStatus
+== "completed"`, `PosCheckoutScreen` unconditionally rendered `_PaymentCompletedView` — a bare
+"Ödeme Tamamlandı"/"Masaya Dön" success screen with no way to reach the refund dialog, attempts list,
+or refunds list.** Since `requestPaymentRefund` requires the backing check to already be `"paid"`
+(exactly the state that triggers this replacement), there was **no reachable UI path anywhere in the
+app** to request a refund — grepped confirmed `_RefundDialog`/`_openRefundDialog` exist only in this
+one file, no alternate route.
+
+**Fixed, additively**: `_PaymentCompletedView` now also renders the same "İade Talep Et" button +
+refunds list `_TenderPanel` already has (reusing `_RefundDialog`/`_RefundRow` directly), threading
+`busy`/`onSubmitRefund` through from `_CheckoutBody`. The primary "Masaya Dön" exit is unchanged. All
+598 existing POS widget/unit tests pass unchanged; `flutter analyze` clean.
+
+A second, purely test-authoring pitfall surfaced and was fixed along the way, worth recording for
+future flow authors: re-pumping a structurally-identical widget tree (same type/position, no distinct
+`Key`) lets Flutter's element reconciliation reuse the existing `State` object rather than create a
+fresh one — `PosCheckoutScreen`'s own `initState` re-fetch never re-ran, so the screen kept showing
+the stale pre-approval session forever. A direct diagnostic (`getPaymentSessionView` called right
+after approval, independent of the widget tree) proved the backend already showed `"succeeded"`
+immediately, isolating this precisely to the test's own re-pump technique, not a backend bug. Fixed by
+unmounting to a blank tree (`pumpWidget(SizedBox.shrink())`) before remounting — the same pattern
+already used at the start of every flow test in this suite.
+
+Verified via `flutter drive` — "All tests passed." `FUNCTIONAL_E2E_FLOW_COUNT=2/22`.

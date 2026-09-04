@@ -5468,6 +5468,9 @@ full payment, genuinely passing end-to-end). A dedicated remote-approval cross-c
 tests) surfaced two more real, confirmed, unfixed findings — a missing branch-access check on the
 shared approval-response path, and a rejected refund's reservation never being released — both
 requiring an explicit decision before being touched, documented in ADR-047 rather than silently
-patched. Functions full suite run 1/2: 1939/1939 passed. Remaining: 21/22 flows, offline recovery
-verification, cross-surface E2E, 14/14 visual evidence, Functions run 2/2, Rules/Storage suites this
-wave, Android POS (no device connected — reported, not fabricated).
+patched. Functions full suite run 1/2: 1939/1939 passed. `FUNCTIONAL_E2E_FLOW_COUNT=2/22` — Flow #7 (partial
+refund, request -> real second-approver approval -> settled) also now passing; writing it surfaced and
+fixed a real, confirmed UI gap (`PosCheckoutScreen` had no reachable path to request a refund once a
+payment session showed "completed" — exactly the state a refund requires — see ADR-047). Remaining:
+20/22 flows, offline recovery verification, cross-surface E2E, 14/14 visual evidence, Functions run
+2/2, Rules/Storage suites this wave, Android POS (no device connected — reported, not fabricated).
