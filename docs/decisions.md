@@ -18992,3 +18992,30 @@ writes a `notificationOutbox` entry and flips status to `escalated`; there is no
 for a different approver, and no cross-namespace path letting a Platform Owner claim respond to a
 tenant approval). Writing a test that "proves" either would require inventing behavior that doesn't
 exist — not attempted. Both are reported as open, non-vendor-blocked, real product gaps.
+
+### Section 12 — Firestore Rules collection count, mechanically reconfirmed (2026-09-04)
+
+`firestore.rules` was not modified this wave. Direct `grep` against current source (not carried-forward
+prose): **79 total top-level `match /{collection}/{doc}` blocks**, of which the AP-4-specific locked
+set remains exactly **14** as ADR-047's Wave D entry already established (`paymentIntents`/
+`paymentSessions`/`paymentAttempts`/`refundRequests` × 4, `cashDrawers`/`cashSessions`/
+`cashMovements`/`cashCounts`/`cashReconciliations`/`cashAdjustments`/`cashMovementRequests`/
+`cashAdjustmentRequests` × 8, `fiscalOperationJournal`/`offlineLeases` × 2) — unchanged, reconfirmed
+rather than assumed. The read-boundary properties (organization scope, branch scope, permission,
+trusted-device gating, entitlement model, pagination/cursor bounding, stable ordering, no PAN/
+provider-secret leakage, no cross-tenant inference) were already audited with direct evidence in Wave
+E's own entry above and are unaffected by this wave's changes (no read-boundary callable was touched);
+carried forward rather than re-audited from scratch, since nothing in scope this wave could have
+changed them.
+
+### Section 13 — Functions full suite, run 1/2 (2026-09-04)
+
+`node --test --test-concurrency=1 lib/test/*.test.js` against a freshly started
+`demo-abakus-one-emulator` instance (JDK 21, `GOOGLE_MAPS_PROVIDER_MODE=fixture`,
+`FUNCTIONS_DISCOVERY_TIMEOUT=60000`): **1939/1939 passed, 0 failed** (958.9s) — the pre-existing
+1931-test baseline plus this wave's new 8-test `remoteApprovalMatrix.test.ts`, confirming both the
+bootstrap fix (§4) and the new matrix file are clean and introduced no regression anywhere else in the
+suite. Run 2/2 (required to be independent, with a fresh emulator restart in between, before
+`FUNCTIONS_FULL_SUITE_RUN_2`/`FULL_CONTROLLABLE_QUALITY_GATES_PASSED` can read `YES`) is deferred to
+this wave's final gate sweep rather than repeated immediately, to avoid re-spending ~16 minutes twice
+before the remaining E2E/visual-evidence work is done.
