@@ -450,7 +450,12 @@ class _CheckoutBody extends StatelessWidget {
     );
 
     if (isCompleted) {
-      return _PaymentCompletedView(session: session, checkId: checkId);
+      return _PaymentCompletedView(
+        session: session,
+        checkId: checkId,
+        busy: busy,
+        onSubmitRefund: onSubmitRefund,
+      );
     }
 
     final tenderPanel = _TenderPanel(
@@ -490,10 +495,25 @@ class _CheckoutBody extends StatelessWidget {
 }
 
 class _PaymentCompletedView extends StatelessWidget {
-  const _PaymentCompletedView({required this.session, required this.checkId});
+  const _PaymentCompletedView({
+    required this.session,
+    required this.checkId,
+    required this.busy,
+    required this.onSubmitRefund,
+  });
 
   final PaymentSessionView session;
   final String checkId;
+  final bool busy;
+  final _SubmitRefundFn onSubmitRefund;
+
+  Future<void> _openRefundDialog(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) =>
+          _RefundDialog(session: session, onSubmit: onSubmitRefund),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -501,7 +521,7 @@ class _PaymentCompletedView extends StatelessWidget {
       session.payableAmountMinorUnits ?? 0,
       _currencyFor(session.currencyCode),
     );
-    return Center(
+    return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xl),
         child: Column(
@@ -524,11 +544,47 @@ class _PaymentCompletedView extends StatelessWidget {
               ),
               child: const Text('Masaya Dön'),
             ),
+            const SizedBox(height: AppSpacing.lg),
+            const Divider(),
+            // A completed payment session is exactly the state
+            // requestPaymentRefund requires (the backing check must be
+            // "paid") — this section is the ONLY reachable UI path to
+            // request a refund once payment has settled, since this
+            // completed view otherwise replaces the tender panel entirely.
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('İade', style: AppTypography.labelLarge),
+                TextButton.icon(
+                  onPressed: busy || session.attempts.isEmpty
+                      ? null
+                      : () => _openRefundDialog(context),
+                  icon: const Icon(Icons.replay_outlined, size: 18),
+                  label: const Text('İade Talep Et'),
+                ),
+              ],
+            ),
+            if (session.refunds.isEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Henüz iade talebi yok',
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.textSecondary)),
+              )
+            else
+              for (final refund in session.refunds)
+                _RefundRow(
+                    refund: refund, currencyFor: _currencyForSession(session)),
           ],
         ),
       ),
     );
   }
+}
+
+Money Function(int) _currencyForSession(PaymentSessionView session) {
+  final currency = _currencyFor(session.currencyCode);
+  return (minorUnits) => Money(minorUnits, currency);
 }
 
 Currency _currencyFor(String? isoCode) {
