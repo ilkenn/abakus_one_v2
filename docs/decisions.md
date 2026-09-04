@@ -18928,3 +18928,67 @@ bug, not yet investigated — noted as an open follow-up, not required for the P
 strategy Wave E already selected). All 22 E2E flows, visual evidence, remote-approval matrix, Android
 POS check, offline recovery verification, and the final gate suite remain open and continue in this
 same wave.
+
+### Section 7 — dedicated remote-approval E2E test matrix (2026-09-04)
+
+New file `functions/src/test/remoteApprovalMatrix.test.ts` (8 tests, all passing against a freshly
+restarted `demo-abakus-one-emulator` instance), scoped to properties genuinely NOT already proven by
+`trustedDeviceAndApproval.test.ts`'s exhaustive `deviceActivation`-based coverage of the shared
+`respondToApprovalRequest` engine (self-approval, plain double-response, plain expiry — re-testing
+those per action type would be redundant coverage, not new evidence; see the file's own header
+comment). Covers `paymentRefund`, `cashMovement`, `checkFinancialAdjustment` (complimentary),
+insufficient-permission denial isolated from self-approval, request-time reservation semantics,
+concurrent exactly-once execution, rejection-without-mutation, and sequential idempotent duplicate
+response.
+
+**Two genuine, confirmed, controllable findings — neither fixed yet, both requiring an explicit
+decision before either is touched, per this file's own "no silent authorization change" rule (§15):**
+
+1. **`respondToApprovalRequest` never checks the responder's own branch access.** It calls
+   `requireStaffPermission(request, pre.organizationId, ...)` (organization-level only) and never
+   `requireBranchAccess(request, pre.organizationId, pre.branchId)` — even though the approval record
+   carries a real `branchId`, and even though every REQUESTING callable for these same action types
+   (`requestPaymentRefund`, `authorizeCashCommand` — used by `requestCashSessionOpen`/
+   `requestCashMovement`/`requestCashAdjustment`/`closeCashSession`, `requestCheckFinancialAdjustment`)
+   does check the requester's branch access. Proven empirically (not asserted-and-assumed) for
+   `paymentRefund`, `cashMovement`, and `checkFinancialAdjustment`: a manager whose `branchAccess`
+   grant covers only Branch B can currently approve a refund/cash-movement/complimentary-adjustment
+   request that a Branch A staff member created, with no denial anywhere in the path. This is the
+   SHARED responder code path every one of the 9 action types dispatches through, so the gap is
+   systemic, not per-type.
+
+   **Not silently fixed.** Adding the check has real blast radius: `activeDeviceSession` (the fixture
+   helper reused across most of `functions/src/test/*.test.ts`) has the org admin — who, by design,
+   starts with `branchAccess: []` (`staffAuthorization.ts`'s own documented "no wildcard branch access,
+   not even for admin/tenantOwner" rule) — approve every device-activation request in every test that
+   uses it. If admin's org-wide approval authority for `deviceActivation` is intentional (a plausible
+   reading: org-level admins approving cross-branch device activations, distinct from operational
+   cash/payment actions which arguably SHOULD be branch-scoped), a blanket fix would be wrong; if it's
+   an oversight, the fix needs to reconcile with that fixture across dozens of existing tests. This is
+   a genuine authorization-change decision, not a mechanical bug fix — flagged for explicit decision,
+   not resolved unilaterally.
+
+2. **`paymentRefund` has no `REJECTION_HANDLERS` entry** (only the four cash actions do — see
+   `remoteApproval.ts`'s `REJECTION_HANDLERS` map). Rejecting a `paymentRefund` approval request
+   updates the approval request's own status but never touches the underlying `refundRequests` doc,
+   which stays at `status: "pendingApproval"` permanently. `requestPaymentRefund`'s own reservation
+   query (`where("status", "!=", "failed")`) then counts that permanently-stuck doc as still reserving
+   its amount forever — so once a refund request is rejected (e.g. wrong amount), the money it covered
+   can never be correctly re-requested. Proven empirically: reject a 7000 partial refund on a 10000
+   check, then a fresh 10000 full-refund request is wrongly denied as exceeding the (now permanently
+   3000) refundable remainder.
+
+   This one has a clear intended fix shape (add a `REJECTION_HANDLERS.paymentRefund` entry that
+   transitions the `refundRequests` doc to `"rejected"`, mirroring the four cash actions' own
+   established pattern exactly) — but is still a real behavior change to a financial code path, so it
+   is reported here rather than applied without confirmation, consistent with finding 1's framing.
+
+**Status**: `REMOTE_FINANCIAL_APPROVAL_E2E_COMPLETE=PARTIAL` — the dedicated matrix is real, passing,
+and evidence-based; it surfaced two genuine open findings rather than rubber-stamping the existing
+design. Escalation-to-another-eligible-manager and Platform-Owner-direct-response (also asked for in
+this section) are **not implemented at all** in the current codebase — `remoteApproval.ts`'s own top
+comment documents this as a known, deliberate simplification (`sweepExpiredApprovalRequests` only
+writes a `notificationOutbox` entry and flips status to `escalated`; there is no second pending request
+for a different approver, and no cross-namespace path letting a Platform Owner claim respond to a
+tenant approval). Writing a test that "proves" either would require inventing behavior that doesn't
+exist — not attempted. Both are reported as open, non-vendor-blocked, real product gaps.
