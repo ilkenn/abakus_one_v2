@@ -18848,3 +18848,83 @@ This pass's governing instruction also explicitly superseded the prior framing o
 browser devtools access" as a hard stop: Playwright's Chrome DevTools Protocol connection
 (`connectOverCDP`) is available programmatically and does not require a human-operated devtools
 window. Wave F's own entry (below) is where the corrected diagnostic actually happens.
+
+### Wave F diagnosis: two distinct, now-fixed root causes (2026-09-04)
+
+Using the Playwright MCP tools directly against `flutter run -d web-server` serving the real
+`main.dart`/`bootstrapApp()` app (no `flutter drive` harness involved), two separate, previously
+unconfirmed root causes were found and fixed. **`flutter drive`'s own Web harness remains a distinct,
+separately-diagnosed test-harness limitation**, not addressed by either fix below — real Web E2E must
+continue to go through Playwright against the normally-served app, per the existing Wave E framing.
+
+**Root cause 1 — emulator/app project-id mismatch (process-only, no code change).** The local
+emulator had been running under `GCLOUD_PROJECT=demo-abakus-one-emulator` (`.firebaserc`'s default,
+which the Node backend test suite's 1931 tests deliberately hardcode against — a legitimate,
+backend-only convention). The real Flutter app's `AppEnvironment.development` Firebase config
+(`lib/firebase_options_development.dart`) resolves to the real, provisioned `abakus-one-dev` project,
+so every real `httpsCallable` from the app targeted `127.0.0.1:5001/abakus-one-dev/...` — a project
+namespace the emulator didn't recognize, producing a response with no CORS headers, surfaced by
+`cloud_functions_web` as a generic `[firebase_functions/internal] internal` error with no server-side
+trace. **Fix**: run the emulator with `--project=abakus-one-dev` / `GCLOUD_PROJECT=abakus-one-dev`,
+matching the app's real compiled config; dev fixtures re-seeded under that project id via the existing
+`functions/scripts/seed_dev_*.mjs` scripts.
+
+**Root cause 2 — unawaited `Future` in the Auth emulator connector (real code bug, fixed).**
+`lib/bootstrap/firebase_bootstrap_service.dart`'s `AuthEmulatorConnector`/`StorageEmulatorConnector`
+typedefs were `void Function(String, int)`, but the real plugin methods they wrap —
+`FirebaseAuth.useAuthEmulator`/`FirebaseStorage.useStorageEmulator` (`firebase_auth 6.5.7`,
+`firebase_storage 13.4.6`, both confirmed via `pubspec.lock`) — are `Future<void> Function(...)`, unlike
+`FirebaseFirestore.useFirestoreEmulator`/`FirebaseFunctions.useFunctionsEmulator`, which are genuinely
+synchronous `void`. `_defaultConnectAuthEmulator`/`_defaultConnectStorageEmulator` called their real
+plugin method and discarded the returned `Future` without awaiting it; `initialize()`'s call sites
+didn't await them either (both were typed to return `void`, so there was nothing to await). This meant
+`FirebaseBootstrapService.initialize()` — and therefore `bootstrapApp()` — could return before the Auth
+emulator connection had actually been applied to the underlying JS Auth SDK object, letting the very
+next real Auth call (`checkPersistedSession()`/sign-in, triggered immediately after `initialize()`
+resolves) race ahead and hit real production `identitytoolkit.googleapis.com` instead of the local
+emulator at `127.0.0.1:9099` — with no exception anywhere, since the call never failed, it just hadn't
+finished configuring yet. This exactly matched every symptom observed: `accounts:lookup`/
+`accounts:signInWithPassword` hitting production and returning 400 (real credentials don't exist
+there), no "Auth Emulator connection failed" log ever appearing (nothing threw), and Dart-level
+sequencing in `app_bootstrap.dart` "looking" correct (the bug was inside the future being silently
+dropped, not in the Dart-level await order around it). Storage's connector had the identical latent
+bug (same `Future<void>`-returning underlying method, same `void`-typed wrapper) but wasn't the
+symptomatic path in this diagnosis, since Storage isn't touched on the sign-in path — fixed for the
+same reason regardless, not as a hypothetical.
+
+**Fix**: `AuthEmulatorConnector`/`StorageEmulatorConnector` typedefs changed to
+`Future<void> Function(String, int)`; `_defaultConnectAuthEmulator`/`_defaultConnectStorageEmulator`
+now return the real plugin call's `Future` instead of discarding it; both call sites in
+`initialize()` now `await` them. `FirestoreEmulatorConnector`/`FunctionsEmulatorConnector` were left
+unchanged — their underlying plugin methods are genuinely synchronous, so there was no bug there to
+fix. `test/bootstrap/firebase_bootstrap_service_test.dart`'s 22 fake-connector closures for
+`connectAuthEmulator`/`connectStorageEmulator` updated to `async` to match the new signature — no
+test assertions changed, since `initialize()`'s externally-observable behavior (which log message on
+which failure, `true`/`false` return) is unchanged; only the timing guarantee is fixed.
+`flutter analyze` clean repo-wide; `flutter test test/bootstrap/firebase_bootstrap_service_test.dart`
+— 13/13 passed.
+
+**Verification**: with both fixes applied, restarted `flutter run -d web-server` fresh (picking up the
+code change) against the `abakus-one-dev`-project emulator, and drove a real sign-in via Playwright
+using the seeded `admin@abakus.dev` credentials
+(`functions/scripts/seed_dev_staff.mjs`). Captured network trail confirms, for the first time this
+initiative: `POST http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword`
+→ 200, `.../accounts:lookup` → 200, `POST http://127.0.0.1:5001/abakus-one-dev/us-central1/
+syncOwnStaffClaims` → 200, `POST .../securetoken.googleapis.com/v1/token` → 200, followed by
+`listStaffMembersForOrganization` → 200 and `resolveActorContext` → 200 (both cold-start-slow, ~40-60s,
+but successful — expected first-call emulator container warm-up, not an error). Browser console logged
+Firebase JS SDK's own `"WARNING: You are using the Auth Emulator..."` line, confirming the emulator
+connection is genuinely active this time. The app progressed past sign-in to a real, new UI state
+("Şube Seçin" — branch selection) never reached in any prior wave. **This is a genuine, mechanically
+confirmed bug fix, not a test-harness accommodation** — it corrects real production sign-in behavior
+under `AppEnvironment.development`, squarely in scope per this wave's own instruction to distinguish
+real bugs from harness defects and fix the former.
+
+**Status**: `CLOUD_FUNCTIONS_WEB_FAILURE_ROOT_CAUSE_FOUND=YES` (root cause 1);
+`WEB_E2E_HARNESS_OPERATIONAL=PARTIAL` — Playwright-against-real-app now demonstrated working
+end-to-end through real sign-in; `flutter drive`'s own harness remains unaddressed and untouched (its
+defect, if any, is now additionally suspect of being the same or a related unawaited-Future class of
+bug, not yet investigated — noted as an open follow-up, not required for the Playwright-based E2E
+strategy Wave E already selected). All 22 E2E flows, visual evidence, remote-approval matrix, Android
+POS check, offline recovery verification, and the final gate suite remain open and continue in this
+same wave.

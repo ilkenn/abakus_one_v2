@@ -27,7 +27,23 @@ Future<void> _defaultFirebaseInitializer({FirebaseOptions? options}) async {
 /// Matches [FirebaseAuth.useAuthEmulator]'s signature. Injected for the same
 /// testability reason as [FirebaseInitializer] — real `firebase_auth` isn't
 /// available under `flutter test`.
-typedef AuthEmulatorConnector = void Function(String host, int port);
+///
+/// **Must return `Future<void>`, not `void`** — unlike
+/// [FirestoreEmulatorConnector]/[FunctionsEmulatorConnector] (whose
+/// underlying plugin methods are genuinely synchronous),
+/// `FirebaseAuth.useAuthEmulator` is itself `Future<void> Function(...)`.
+/// A prior version of this typedef was `void Function(...)`, which let
+/// [_defaultConnectAuthEmulator] silently fire-and-forget that future: this
+/// service's `initialize()` (and therefore `bootstrapApp()`) would resolve
+/// before the Auth emulator connection had actually been applied to the
+/// underlying JS/native Auth SDK, letting the very next real Auth call
+/// (`checkPersistedSession()`/sign-in) race ahead and hit production
+/// `identitytoolkit.googleapis.com` instead of the local emulator — with no
+/// exception thrown anywhere, since the call never failed, it just hadn't
+/// finished yet. [StorageEmulatorConnector] has the identical underlying
+/// shape and was fixed for the same reason, even though it wasn't the
+/// symptomatic path.
+typedef AuthEmulatorConnector = Future<void> Function(String host, int port);
 
 /// `automaticHostMapping: false` on every one of the four default
 /// connectors below is load-bearing, not decorative — see
@@ -46,8 +62,8 @@ typedef AuthEmulatorConnector = void Function(String host, int port);
 /// Emulator session still gets `10.0.2.2` correctly, just via an explicit
 /// `--dart-define=FIREBASE_EMULATOR_HOST=10.0.2.2` override rather than the
 /// plugins' own opaque, non-overridable heuristic.
-void _defaultConnectAuthEmulator(String host, int port) {
-  FirebaseAuth.instance.useAuthEmulator(
+Future<void> _defaultConnectAuthEmulator(String host, int port) {
+  return FirebaseAuth.instance.useAuthEmulator(
     host,
     port,
     automaticHostMapping: false,
@@ -73,11 +89,18 @@ void _defaultConnectFirestoreEmulator(String host, int port) {
 /// the same testability reason as [AuthEmulatorConnector] — real
 /// `firebase_storage` isn't available under `flutter test`. See
 /// [_defaultConnectAuthEmulator]'s doc comment for why
-/// `automaticHostMapping: false` is required here too.
-typedef StorageEmulatorConnector = void Function(String host, int port);
+/// `automaticHostMapping: false` is required here too, and
+/// [AuthEmulatorConnector]'s doc comment for why this must be
+/// `Future<void> Function(...)`, not `void Function(...)` — the underlying
+/// `FirebaseStorage.useStorageEmulator` is async for the same reason
+/// `useAuthEmulator` is.
+typedef StorageEmulatorConnector = Future<void> Function(
+  String host,
+  int port,
+);
 
-void _defaultConnectStorageEmulator(String host, int port) {
-  FirebaseStorage.instance.useStorageEmulator(
+Future<void> _defaultConnectStorageEmulator(String host, int port) {
+  return FirebaseStorage.instance.useStorageEmulator(
     host,
     port,
     automaticHostMapping: false,
@@ -172,7 +195,7 @@ class FirebaseBootstrapService {
     // `PERMISSION_DENIED` / real-project Firestore traffic this fix closes.
     if (FirebaseAuthEmulatorConfig.shouldUseEmulator(AppEnvironment.current)) {
       try {
-        _connectAuthEmulator(
+        await _connectAuthEmulator(
           FirebaseAuthEmulatorConfig.host,
           FirebaseAuthEmulatorConfig.port,
         );
@@ -210,7 +233,7 @@ class FirebaseBootstrapService {
       AppEnvironment.current,
     )) {
       try {
-        _connectStorageEmulator(
+        await _connectStorageEmulator(
           FirebaseStorageEmulatorConfig.host,
           FirebaseStorageEmulatorConfig.port,
         );

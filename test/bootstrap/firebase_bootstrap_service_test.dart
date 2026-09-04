@@ -33,9 +33,9 @@ void main() {
       final logger = _RecordingLoggingService();
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         connectFirestoreEmulator: (host, port) {},
-        connectStorageEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) async {},
         connectFunctionsEmulator: (host, port) {},
         initializeApp: ({options}) async {},
       );
@@ -55,12 +55,12 @@ void main() {
       int? connectedPort;
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {
+        connectAuthEmulator: (host, port) async {
           connectedHost = host;
           connectedPort = port;
         },
         connectFirestoreEmulator: (host, port) {},
-        connectStorageEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) async {},
         connectFunctionsEmulator: (host, port) {},
         initializeApp: ({options}) async {},
       );
@@ -77,11 +77,11 @@ void main() {
       final logger = _RecordingLoggingService();
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {
+        connectAuthEmulator: (host, port) async {
           throw StateError('emulator not running');
         },
         connectFirestoreEmulator: (host, port) {},
-        connectStorageEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) async {},
         connectFunctionsEmulator: (host, port) {},
         initializeApp: ({options}) async {},
       );
@@ -104,12 +104,12 @@ void main() {
       int? connectedPort;
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         connectFirestoreEmulator: (host, port) {
           connectedHost = host;
           connectedPort = port;
         },
-        connectStorageEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) async {},
         connectFunctionsEmulator: (host, port) {},
         initializeApp: ({options}) async {},
       );
@@ -127,11 +127,11 @@ void main() {
       final logger = _RecordingLoggingService();
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         connectFirestoreEmulator: (host, port) {
           throw StateError('emulator not running');
         },
-        connectStorageEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) async {},
         connectFunctionsEmulator: (host, port) {},
         initializeApp: ({options}) async {},
       );
@@ -154,9 +154,9 @@ void main() {
       int? connectedPort;
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         connectFirestoreEmulator: (host, port) {},
-        connectStorageEmulator: (host, port) {
+        connectStorageEmulator: (host, port) async {
           connectedHost = host;
           connectedPort = port;
         },
@@ -177,9 +177,9 @@ void main() {
       final logger = _RecordingLoggingService();
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         connectFirestoreEmulator: (host, port) {},
-        connectStorageEmulator: (host, port) {
+        connectStorageEmulator: (host, port) async {
           throw StateError('emulator not running');
         },
         connectFunctionsEmulator: (host, port) {},
@@ -204,9 +204,9 @@ void main() {
       int? connectedPort;
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         connectFirestoreEmulator: (host, port) {},
-        connectStorageEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) async {},
         connectFunctionsEmulator: (host, port) {
           connectedHost = host;
           connectedPort = port;
@@ -227,9 +227,9 @@ void main() {
       final logger = _RecordingLoggingService();
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         connectFirestoreEmulator: (host, port) {},
-        connectStorageEmulator: (host, port) {},
+        connectStorageEmulator: (host, port) async {},
         connectFunctionsEmulator: (host, port) {
           throw StateError('emulator not running');
         },
@@ -252,7 +252,7 @@ void main() {
       final logger = _RecordingLoggingService();
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         initializeApp: ({options}) async {
           throw Exception('network unavailable');
         },
@@ -268,7 +268,7 @@ void main() {
       final logger = _RecordingLoggingService();
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         initializeApp: ({options}) async {
           throw Exception('network unavailable');
         },
@@ -288,7 +288,7 @@ void main() {
           'apiKey=AIzaSySECRETLOOKINGVALUE rejected by server';
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         initializeApp: ({options}) async {
           throw Exception(secretLookingMessage);
         },
@@ -303,7 +303,7 @@ void main() {
       final logger = _RecordingLoggingService();
       final service = FirebaseBootstrapService(
         loggingService: logger,
-        connectAuthEmulator: (host, port) {},
+        connectAuthEmulator: (host, port) async {},
         initializeApp: ({options}) async {
           throw StateError('unexpected SDK state');
         },
