@@ -19019,3 +19019,43 @@ suite. Run 2/2 (required to be independent, with a fresh emulator restart in bet
 `FUNCTIONS_FULL_SUITE_RUN_2`/`FULL_CONTROLLABLE_QUALITY_GATES_PASSED` can read `YES`) is deferred to
 this wave's final gate sweep rather than repeated immediately, to avoid re-spending ~16 minutes twice
 before the remaining E2E/visual-evidence work is done.
+
+### Section 5/6/8 correction — `flutter drive` Web was never a distinct harness limitation (2026-09-04)
+
+Wave E's conclusion that `flutter drive`'s Web harness had its own separate, undiagnosed defect
+(distinct from the Playwright-confirmed-working path) was **wrong** — re-tested directly this wave
+after §4's two fixes landed: `flutter drive --driver=test_driver/integration_test.dart
+--target=integration_test/staff_sign_in_e2e_test.dart -d web-server --browser-name=chrome` → "All
+tests passed" on the first attempt. `flutter drive` was hitting the exact same project-ID mismatch and
+Auth-emulator race as every other path — there never was a third, harness-specific bug. This
+supersedes Wave E's `WEB_E2E_HARNESS_OPERATIONAL=PARTIAL` framing from earlier in this same wave:
+`flutter drive` on Web is now confirmed fully operational, not merely Playwright-against-the-real-app.
+
+Two further, genuine (non-harness) issues surfaced and were fixed while getting
+`pos_cash_full_payment_e2e_test.dart` (Flow #1) to pass — both are test-fixture-side, not production
+code:
+1. `integration_test/support/emulator_fixtures.dart`'s `EmulatorFixtures` defaulted `projectId` to
+   `"demo-abakus-one-emulator"` (the Node backend suite's own convention) instead of `"abakus-one-dev"`
+   (what the real Flutter app under `AppEnvironment.development` actually resolves to) — every raw-HTTP
+   fixture call this Dart-only helper makes was targeting the wrong project namespace. Fixed: default
+   changed to `"abakus-one-dev"`.
+2. The test signs in as the bootstrapped org admin, who by design starts with `branchAccess: []`
+   (`staffAuthorization.ts`'s documented "no wildcard branch access, not even for admin" rule), then
+   immediately attempts a branch-scoped device registration without ever granting itself branch access.
+   Fixed: the test now self-grants branch-1 access via `grantStaffBranchAccess` (legitimate — admin
+   holds `manageStaffBranchAccess` org-wide) and forces a token refresh before proceeding.
+
+**Flow #1 (cash full payment) is now genuinely complete**: a real staff-entered order → opened check →
+split → finalized → paid in cash, through the real routed `PosCheckoutScreen` against real local
+emulators, verified via `flutter drive`. `FUNCTIONAL_E2E_FLOW_COUNT=1/22`.
+
+No PNG evidence was produced by this run — `saveScreenshot`'s own disk-write branch is deliberately
+skipped on Web (`dart:io` unavailable there, documented in the test file itself), so `flutter drive` on
+Web proves functional correctness but cannot itself produce the 14-item visual evidence matrix; that
+remains a separate Playwright-based capture task (§11), unaffected by this correction.
+
+**Revised E2E strategy**: `flutter drive` against the real app is now the primary tool for the
+remaining Flutter-integration-test-shaped flows in the 22-flow matrix (reusing the exact
+`EmulatorFixtures`/fixture pattern this fix validated); Playwright against the normally-served app
+remains the tool for flows that don't have a pre-written Dart integration test yet, and is the sole
+tool for visual evidence capture regardless.

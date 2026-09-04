@@ -5457,3 +5457,17 @@ the `cloud_functions_web` environment blocker first; every other open item depen
 GATES_PASSED=YES` is corrected to `NO` — `FUNCTIONAL_E2E_FLOW_COUNT=0/22` and `REAL_VISUAL_ACCEPTANCE_
 EVIDENCE_COUNT=0/14` at that point meant the controllable gate list was not actually complete. See
 ADR-047's Wave F entry for the CDP-based re-diagnosis and everything built from it.
+
+**AP-4 Wave F progress (2026-09-04, append-only):** the "every real `httpsCallable` fails generically"
+blocker described above is root-caused and fixed — an emulator/app project-id mismatch plus a genuine
+unawaited-`Future` race in `FirebaseBootstrapService`'s Auth/Storage emulator connectors (real
+production bug, not a harness artifact; see ADR-047). Both `flutter drive` and Playwright against the
+real app are now confirmed operational — Wave E's belief that `flutter drive` had its own separate,
+distinct defect was itself wrong, not merely resolved. `FUNCTIONAL_E2E_FLOW_COUNT=1/22` (Flow #1, cash
+full payment, genuinely passing end-to-end). A dedicated remote-approval cross-cutting test matrix (8
+tests) surfaced two more real, confirmed, unfixed findings — a missing branch-access check on the
+shared approval-response path, and a rejected refund's reservation never being released — both
+requiring an explicit decision before being touched, documented in ADR-047 rather than silently
+patched. Functions full suite run 1/2: 1939/1939 passed. Remaining: 21/22 flows, offline recovery
+verification, cross-surface E2E, 14/14 visual evidence, Functions run 2/2, Rules/Storage suites this
+wave, Android POS (no device connected — reported, not fabricated).
