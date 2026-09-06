@@ -19275,3 +19275,30 @@ byte-identical to the start SHA, so this is pre-existing external advisory-datab
 Wave E, 11 now), not a dependency this wave introduced. Fake-adapter production-exclusion files
 (`paymentProviderAdapter.ts`/`fiscalAdapter.ts` and their tests) confirmed untouched since the start
 SHA.
+
+Firestore Rules suite (`firestore-tests`, `firebase emulators:exec --only firestore`): **403/403 passed,
+0 failed** (23.0s) — matches the known baseline exactly; `firestore.rules` was not modified this wave.
+
+Storage Rules suite (`storage-tests`, `firebase emulators:exec --only firestore,storage`): **35/35
+passed, 0 failed** (10.9s) — matches the known baseline exactly; `storage.rules` was not modified this
+wave. (One benign `EvaluationException: Null value error` logged mid-run at `storage.rules` line 46 —
+pre-existing rules-engine warning noise on a rule branch that legitimately evaluates a null field before
+short-circuiting; does not affect the passing test's own assertion and is unrelated to anything touched
+this wave.)
+
+**Section 4 final gate summary — all clean, all fresh this session:**
+
+| Gate | Result |
+|---|---|
+| Functions suite, run 1/2 | 1939/1939 passed |
+| Functions suite, run 2/2 (fresh restart) | 1939/1939 passed |
+| Firestore Rules suite | 403/403 passed |
+| Storage Rules suite | 35/35 passed |
+| `dart format --set-exit-if-changed` | Clean |
+| `flutter analyze` (full repo) | Clean, no issues |
+| `flutter test` (full repo) | 3642 passed, 12 pre-existing skips, 0 failed |
+| `git diff --check` (start SHA → HEAD) | Clean |
+| Secret/credential scan (diff-scoped) | Clean |
+| `npm audit` (functions) | 11 pre-existing moderate (transitive `uuid`), deps unchanged |
+| Fake-adapter production-exclusion | Confirmed untouched |
+| Working tree | Clean (only pre-existing, unrelated untracked files) |
