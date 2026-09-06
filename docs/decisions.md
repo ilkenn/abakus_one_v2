@@ -19156,3 +19156,26 @@ NATIVE_OPERATIONAL_POS_E2E_COMPLETE = NO (no authorized Android target connected
   resource for this specific requirement)
 WEB_POS_FAIL_CLOSED_VERIFIED = YES (pre-existing, unit-tested, unaffected by this wave)
 ```
+
+### Admin sign-in E2E — genuine, correctly-classified Web surface evidence (2026-09-06)
+
+Unlike the two checkout scenarios above, `integration_test/staff_sign_in_e2e_test.dart` needs no
+trusted-device session at all — it exercises the Admin **authentication/navigation** surface, which
+this wave's own governing instruction explicitly permits on Web ("Use Web for authorized Admin,
+Platform Owner and customer surfaces"). Re-run against a freshly restarted, freshly seeded
+(`seed_local_admin.js`) `abakus-one-dev` emulator via `flutter drive --driver=test_driver
+/integration_test.dart --target=integration_test/staff_sign_in_e2e_test.dart -d web-server
+--browser-name=chrome`: **"All tests passed."** Real sign-in (`kasiyer@abakus.test`) against the real
+Auth emulator → real `AdminShellScreen` reached → real `CustomerManagementScreen` ("Müşteri 360")
+opened from the real nav → real sign-out returns to `AdminUnauthorizedScreen`. No device session, no
+platform claim, no impersonation of any kind involved — this one is unambiguous, correctly-scoped Web
+E2E evidence.
+
+Operationally significant note for whoever continues this wave: `seed_local_admin.js` and the
+`seed_dev_*.mjs` family both hardcode `org-1` (this codebase's single-tenant model —
+`kSingleTenantOrganizationId`/`SINGLE_TENANT_ORGANIZATION_ID`) and each assumes it is the FIRST
+bootstrap for that organization. Running both against the same emulator instance in sequence causes the
+second script's own bootstrap to be silently skipped, leaving its accounts without the roles it expects
+to have granted them (observed directly: `seed_local_admin.js` run after `seed_dev_staff.mjs` failed at
+`assignStaffRole` with `PERMISSION_DENIED: manageStaffRoles`). Use one seeding profile per emulator
+instance, not both.
