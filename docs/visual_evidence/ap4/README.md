@@ -47,13 +47,14 @@ implying partial or full completion.
 | 9 | Cash movement remote approval | `ApprovalInboxScreen` | A pending `cashMovement` approval request, real requester/amount |
 | 10 | Cash difference approval | `PosCashRegisterScreen` — count/reconciliation panel | A `short`/`over` count awaiting manager reconciliation |
 | 11 | Fiscal outcome-unknown / reconciliation | `AdminFinancialOperationsScreen` — Fiskal Günlük tab, "sadece çözülmemiş" on | A `timedOut` fiscal journal entry in the unresolved queue |
-| 12 | Offline queued operation | (not yet reachable — see `docs/decisions.md`'s AP-4 Wave D entry: the checkout screen's offline-capture path is not wired yet, only the sync/replay engine is) | — |
-| 13 | Successful reconnection reconciliation | (same blocker as #12) | — |
+| 12 | Offline queued operation | `PosCheckoutScreen` — offline tender path, queued-entries list | **Corrected 2026-09-06 (AP-4 Wave F): the prior "not wired yet" claim here was stale.** `pos_checkout_screen.dart` genuinely wires `connectivity_plus`-detected offline state to `_submitOfflineCashTender`/`CaptureOfflineCashPayment` and shows queued entries — confirmed by direct inspection. Capture is blocked only on forcing real "offline" state in this environment (no injectable connectivity seam; see `docs/decisions.md`'s "Offline capture, restart, reconnection, reconciliation" entry), not on missing UI |
+| 13 | Successful reconnection reconciliation | `PosCheckoutScreen` — post-`_syncOfflineQueue()` state | Same correction and same capture blocker as #12 — the UI and sync logic are real and wired; only forcing the offline→online transition in this environment is the open item |
 | 14 | Admin cash/payment/fiscal view | `AdminFinancialOperationsScreen` — any tab | The real branch-wide list, populated with ≥1 row per tab |
 
-Items 12–13 have an additional, disclosed blocker beyond capture: the routed UI path that would
-produce the state to photograph doesn't exist yet (see the honest gap noted in this same wave's
-`docs/decisions.md` entry). Items 1–11 and 14 are capturable today against a seeded local emulator.
+Items 12–13's blocker is narrower than previously stated: not a missing UI path (that claim was stale
+and is corrected above), but the lack of an injectable seam to force "offline" state against the real
+`connectivity_plus` plugin in this environment — see `docs/decisions.md` for the full trace. Items 1–11
+and 14 are capturable today against a seeded local emulator.
 
 ## How to capture (for whoever performs this step)
 
