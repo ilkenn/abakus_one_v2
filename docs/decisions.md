@@ -19199,3 +19199,54 @@ Flow #1 (cash full payment, POS/device-session caveat applies), `E2E-PARTIAL-REF
 Admin sign-in (unambiguous Web evidence), `E2E-PLATFORM-OWNER-REGRESSION` (unambiguous),
 `E2E-CUSTOMER-QR-ENTRY` (unambiguous). None of these five are native Android operational-POS
 acceptance evidence — that remains blocked on an authorized device (§6).
+
+### Offline capture, restart, reconnection, reconciliation — precise current status (2026-09-06)
+
+**Correction to a stale claim**: `docs/visual_evidence/ap4/README.md` items #12-13 previously said "the
+checkout screen's offline-capture path is not wired yet, only the sync/replay engine is." That is no
+longer true and should not be repeated — direct inspection of `pos_checkout_screen.dart` this session
+confirms real, wired UI: `initState` subscribes to `connectivity_plus.Connectivity().onConnectivityChanged`,
+routes a cash tender through `_submitOfflineCashTender`/`CaptureOfflineCashPayment` whenever `_isOffline`
+is true, automatically calls `_syncOfflineQueue()` the moment connectivity is regained
+(`wasOffline && !offline`), exposes a manual "sync now" action, and surfaces `_offlineSyncNotice`/queued
+entries in the real UI.
+
+**What is genuinely, already tested** (all real, all pre-existing or already-verified-in-place this
+session, not newly written): durable persistence surviving a fresh `SharedPreferences.getInstance()`
+handle (`offline_payment_outbox_repository_test.dart` — a genuine "app restart" proof at the storage
+layer); strict `deviceSequence`-ordered replay; late-response/outcome-unknown marking; **duplicate
+replay prevention after an outcome-unknown response reuses the same operation rather than blindly
+re-enqueuing it** (`sync_offline_payment_outbox_test.dart`); expired-lease, revoked-lease, and
+replayed/gapped-device-sequence rejection (both client-side outbox handling and server-side
+`validateOfflineLeaseForOperation`, `fiscalDomain.test.ts`); non-cash tender never offline-authorized;
+transaction count and value ceilings (`fiscalDomain.test.ts`); a real device-session replay round trip
+end-to-end (`paymentEngine.test.ts`'s "offline lease" group).
+
+**Structurally satisfied by construction, not by a dedicated test**: "not-yet-synced money is never
+included in canonical server totals" — an offline-captured payment has no `paymentAttempts`/
+`cashMovements` document at all until it is actually replayed and accepted server-side, so canonical
+Firestore-sourced totals cannot reference something that doesn't yet exist; there is no code path to
+test here, only an absence to reason about.
+
+**Genuinely not implemented yet** (a real, precise, non-vendor-blocked gap, not a testing gap):
+`fiscalDomain.ts`'s `OfflineLease.catalogVersion` field exists with the comment "opaque staleness marker
+the client can compare against on reconnect" — but nothing anywhere in `functions/src` or `lib/`
+actually reads or compares it. **"Stale pricing/catalog rejection" is not built** — the field is a
+placeholder for a feature that was never implemented, not a tested-and-working control. Reported here
+rather than silently implemented (a real behavior change to the offline authorization contract) or
+silently claimed as done.
+
+**Not achievable as a genuine end-to-end test in this environment, and not attempted**: the full "online
+→ network unavailable → offline capture → app termination → app relaunch → queued state restored →
+reconnection → server replay → UI shows synced" round trip, driven through the real `PosCheckoutScreen`
+UI. Root cause: `_isOffline` is derived directly from the real `connectivity_plus.Connectivity()` plugin
+inside `initState` — a leaf platform plugin with **no Riverpod provider or other injectable seam** —
+so a `flutter drive`/Playwright test cannot force "offline" without either genuinely severing this
+environment's network (unsafe/unavailable — this is shared infrastructure, and would also break the
+Firebase emulator connections the same test needs) or refactoring the screen to accept connectivity via
+an injectable provider (a real architecture change to production code, not something to make silently
+under a testing task). "App termination and relaunch" has the same shape of answer: it can be genuinely
+proven for the LOCAL PERSISTENCE LAYER (already is, see above — a fresh `SharedPreferences` handle IS a
+real restart proof), but proving it through the full bootstrap-to-checkout-screen UI stack would require
+either a real device/process restart (unavailable, same as the native-POS blocker in §6) or building a
+dedicated harness for it — reported as an open, precise, independently-actionable item, not fabricated.
