@@ -19179,3 +19179,23 @@ second script's own bootstrap to be silently skipped, leaving its accounts witho
 to have granted them (observed directly: `seed_local_admin.js` run after `seed_dev_staff.mjs` failed at
 `assignStaffRole` with `PERMISSION_DENIED: manageStaffRoles`). Use one seeding profile per emulator
 instance, not both.
+
+### Two more correctly-classified Web E2E scenarios (2026-09-06)
+
+Following the same "Admin/Platform Owner/customer surfaces are legitimately Web-testable" principle:
+
+- **`E2E-PLATFORM-OWNER-REGRESSION`** (`integration_test/platform_owner_sign_in_e2e_test.dart`): real
+  sign-in (`sahip@abakus.test`) → real `PlatformShellScreen` → a real tab switch (İzleme → Yayın
+  Hazırlığı) → real sign-out → real `PlatformSignInScreen`. No device session, no platform claim.
+  `flutter drive` — "All tests passed."
+- **`E2E-CUSTOMER-QR-ENTRY`** (`integration_test/customer_qr_entry_e2e_test.dart`): a real anonymous
+  customer session → real `resolveTableQrToken` preview (token `qrtoken-ap3vis-available`, confirmed via
+  a direct Firestore query against the seeded emulator, not guessed) → real "Masaya Otur" confirm → real
+  `openTableGuestSession` → lands on the real `MainNavigationScreen`. No device session, no platform
+  claim. `flutter drive` — "All tests passed."
+
+Running total of genuinely passing, correctly-classified E2E scenarios this wave: 5 —
+Flow #1 (cash full payment, POS/device-session caveat applies), `E2E-PARTIAL-REFUND` (same caveat),
+Admin sign-in (unambiguous Web evidence), `E2E-PLATFORM-OWNER-REGRESSION` (unambiguous),
+`E2E-CUSTOMER-QR-ENTRY` (unambiguous). None of these five are native Android operational-POS
+acceptance evidence — that remains blocked on an authorized device (§6).
