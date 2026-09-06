@@ -1,9 +1,11 @@
 # AP-4 Visual Acceptance Evidence
 
-**Status: NOT CAPTURED — 0 of 14 required screenshots.** This is an honest scaffold, not a claim of
-progress on the visual-evidence requirement itself. The routed screens these items require ARE real
-and reachable (see the wiring evidence in `docs/decisions.md`'s AP-4 Wave D entry and the passing
-test suites referenced there) — what's missing here is only the capture step.
+**Status (2026-09-06, AP-4 Wave F): 4 of 14 required screenshots genuinely captured** (items #7, #8,
+#11, #14 below) — real running app, real local `abakus-one-dev` Firebase emulators, real seeded data
+(via `functions/scripts/seed_local_admin.js` + the new `seed_visual_evidence_financial.mjs`), captured
+via Playwright against the normally-served Flutter Web app. Each screenshot's exact route/state-source/
+capture-method is recorded in the matrix below. 10 items remain open — see each row for its specific
+status and, where relevant, its capture caveat.
 
 ## Why this wasn't captured automatically this pass
 
@@ -34,27 +36,41 @@ implying partial or full completion.
 
 ## Required evidence matrix
 
-| # | Item | Real screen / route | Suggested fixture |
-|---|------|----------------------|--------------------|
-| 1 | Canonical POS remaining amount | `PosCheckoutScreen` — `_SummaryPanel` | An open check with one partial cash tender recorded, remaining > 0 |
-| 2 | Item/sub-account payment | `PosCheckoutScreen` — `_TenderPanel`, sub-account allocation picker | A check split across ≥2 sub-accounts, one sub-account's own remaining shown |
-| 3 | Mixed payment | `PosCheckoutScreen` — attempts list | A check with both a cash and a card/meal-card attempt recorded |
-| 4 | Successful cash payment | `PosCheckoutScreen` — completed state | A cash tender for the full remaining amount, session status `completed` |
-| 5 | Card/meal-card provider state | `PosCheckoutScreen` — `_TenderPanel` (sandbox adapter only) | Development/sandbox card adapter selected — must show a visible "sandbox" label, never selectable in a release build |
-| 6 | Boncuk payment | `PosCheckoutScreen` — `_TenderPanel` Boncuk field | A tender using `requestedBoncukAmount` > 0 |
-| 7 | Partial refund | `PosCheckoutScreen` — `_RefundDialog` / refunds list | A `partial` refund request, showing its approval status |
-| 8 | Cash opening | `PosCashRegisterScreen` — open-session dialog | A drawer being opened with a real opening float amount |
-| 9 | Cash movement remote approval | `ApprovalInboxScreen` | A pending `cashMovement` approval request, real requester/amount |
-| 10 | Cash difference approval | `PosCashRegisterScreen` — count/reconciliation panel | A `short`/`over` count awaiting manager reconciliation |
-| 11 | Fiscal outcome-unknown / reconciliation | `AdminFinancialOperationsScreen` — Fiskal Günlük tab, "sadece çözülmemiş" on | A `timedOut` fiscal journal entry in the unresolved queue |
-| 12 | Offline queued operation | `PosCheckoutScreen` — offline tender path, queued-entries list | **Corrected 2026-09-06 (AP-4 Wave F): the prior "not wired yet" claim here was stale.** `pos_checkout_screen.dart` genuinely wires `connectivity_plus`-detected offline state to `_submitOfflineCashTender`/`CaptureOfflineCashPayment` and shows queued entries — confirmed by direct inspection. Capture is blocked only on forcing real "offline" state in this environment (no injectable connectivity seam; see `docs/decisions.md`'s "Offline capture, restart, reconnection, reconciliation" entry), not on missing UI |
-| 13 | Successful reconnection reconciliation | `PosCheckoutScreen` — post-`_syncOfflineQueue()` state | Same correction and same capture blocker as #12 — the UI and sync logic are real and wired; only forcing the offline→online transition in this environment is the open item |
-| 14 | Admin cash/payment/fiscal view | `AdminFinancialOperationsScreen` — any tab | The real branch-wide list, populated with ≥1 row per tab |
+Screenshots against `PosCheckoutScreen`/`PosCashRegisterScreen` (items #1-6, #9-10) require a real
+trusted-device session. On Web, the only way to obtain one for capture purposes is the same
+fixture-injected `platform: "android"` technique documented in `docs/decisions.md`'s "Web POS evidence
+classification" entry — a real device session is genuinely issued and the screen genuinely renders real
+data, but this does **not** demonstrate Web operational POS support (which remains correctly
+fail-closed for any real Web client — see that same entry). Each such screenshot's caption below states
+this explicitly. Items #7, #8, #11, #14 needed no such session (financial *records*, viewed through the
+Admin console, not a live device-bound tender flow) and are unambiguous.
 
-Items 12–13's blocker is narrower than previously stated: not a missing UI path (that claim was stale
-and is corrected above), but the lack of an injectable seam to force "offline" state against the real
-`connectivity_plus` plugin in this environment — see `docs/decisions.md` for the full trace. Items 1–11
-and 14 are capturable today against a seeded local emulator.
+| # | Item | Real screen / route | Status |
+|---|------|----------------------|--------|
+| 1 | Canonical POS remaining amount | `PosCheckoutScreen` — `_SummaryPanel` | Visual Review Bekleniyor |
+| 2 | Item/sub-account payment | `PosCheckoutScreen` — `_TenderPanel`, sub-account allocation picker | Visual Review Bekleniyor |
+| 3 | Mixed payment | `PosCheckoutScreen` — attempts list | Visual Review Bekleniyor |
+| 4 | Successful cash payment | `PosCheckoutScreen` — completed state | Visual Review Bekleniyor |
+| 5 | Card/meal-card provider state | `PosCheckoutScreen` — `_TenderPanel` (sandbox adapter only) | Visual Review Bekleniyor |
+| 6 | Boncuk payment | `PosCheckoutScreen` — `_TenderPanel` Boncuk field | Visual Review Bekleniyor |
+| 7 | Partial refund | `AdminFinancialOperationsScreen` — İadeler tab | **Captured: `07_partial_refund_pending.png`.** Two real `partial` refund requests, both `Onay Bekliyor` (pendingApproval), real check ids/amounts/timestamps. Web, Admin console, `yonetici@abakus.test`, no device session needed. |
+| 8 | Cash opening | `AdminFinancialOperationsScreen` — Kasa Oturumları tab | **Captured: `08_cash_opening.png`.** Four real active cash-drawer sessions with real opening amounts (TRY 500-620). Web, Admin console, no device session needed. |
+| 9 | Cash movement remote approval | `ApprovalInboxScreen` | Visual Review Bekleniyor |
+| 10 | Cash difference approval | `PosCashRegisterScreen` — count/reconciliation panel | Visual Review Bekleniyor |
+| 11 | Fiscal outcome-unknown / reconciliation | `AdminFinancialOperationsScreen` — Fiskal Günlük tab, "Sadece çözülmemiş" | **Captured: `11_fiscal_timeout_unresolved.png`.** A real `timedOut`/"Zaman Aşımı — Sonuç Bilinmiyor" fiscal journal entry (via the test-only deterministic adapter's `FORCE_TIMEOUT` marker — never reachable outside `FUNCTIONS_EMULATOR`), unresolved-only filter visibly on. Web, Admin console, no device session needed. |
+| 12 | Offline queued operation | `PosCheckoutScreen` — offline tender path, queued-entries list | Not capturable in this environment — see below |
+| 13 | Successful reconnection reconciliation | `PosCheckoutScreen` — post-`_syncOfflineQueue()` state | Not capturable in this environment — see below |
+| 14 | Admin cash/payment/fiscal view | `AdminFinancialOperationsScreen` — any tab | **Captured: `14_admin_financial_odemeler.png`** (Ödemeler tab, 2 real completed check payments) **+ `14b_offline_lease_active.png`** (Offline Yetkiler tab, 1 real active lease). All 5 tabs of this screen were verified populated with real rows during this same capture session. Web, Admin console, no device session needed. |
+
+**Corrected 2026-09-06 (AP-4 Wave F)**: items #12-13's blocker is narrower than a prior pass claimed —
+not a missing UI path (`pos_checkout_screen.dart` genuinely wires `connectivity_plus`-detected offline
+state to `_submitOfflineCashTender`/`CaptureOfflineCashPayment` and shows queued entries, confirmed by
+direct inspection), but the lack of an injectable seam to force "offline" state against the real
+`connectivity_plus` plugin in this environment (forcing it would mean severing this environment's own
+network) — see `docs/decisions.md`'s "Offline capture, restart, reconnection, reconciliation" entry for
+the full trace. Items #1-6, #9-10 remain open pending either a native Android device (preferred, avoids
+the fixture-injection caveat entirely) or a further capture pass using the same fixture-session
+technique already used for the E2E flows.
 
 ## How to capture (for whoever performs this step)
 
