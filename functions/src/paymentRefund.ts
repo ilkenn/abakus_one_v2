@@ -344,3 +344,46 @@ export async function applyPaymentRefund(params: ActionHandlerParams): Promise<A
 
   return { newValue: { status: anyFailed ? "failed" : "succeeded" } };
 }
+
+/**
+ * AP-4 Wave F security fix (2026-09-07) — `paymentRefund` had no
+ * `REJECTION_HANDLERS` entry (only the four cash actions did — see
+ * `remoteApproval.ts`). Rejecting the approval request updated the
+ * approval record's own status but never touched the underlying
+ * `refundRequests` doc, which stayed at `status: "pendingApproval"`
+ * permanently. `requestPaymentRefund`'s own reservation query
+ * (`where("status", "!=", "failed")`) then counted that permanently-stuck
+ * doc as still reserving its amount forever, so a rejected refund's money
+ * could never be correctly re-requested — confirmed exploitable by
+ * `remoteApprovalMatrix.test.ts`'s "target changed while pending" test.
+ * Mirrors the four cash actions' own established rejection-handler shape
+ * exactly: re-verify the target hasn't already changed, transition to the
+ * terminal `rejected` status, and stop — never touch allocations, never
+ * move money, matching every REJECTION_HANDLERS sibling's own contract
+ * that a rejected request is a real state transition, not a silent no-op.
+ */
+export async function applyPaymentRefundRejected(params: ActionHandlerParams): Promise<ActionHandlerResult> {
+  const { tx, db, request: approval, now } = params;
+  const refundRef = db.doc(approval.targetAggregateRef);
+  const refundSnap = await tx.get(refundRef);
+  if (!refundSnap.exists) throw new HttpsError("not-found", "The refund request no longer exists.");
+  const refund = refundSnap.data() as RefundRequestDoc;
+  if (refund.version !== approval.targetAggregateVersion) {
+    throw new HttpsError("failed-precondition", "The refund request has changed since this approval was created.");
+  }
+  if (refund.status !== "pendingApproval") {
+    throw new HttpsError("failed-precondition", `This refund request is already "${refund.status}".`);
+  }
+  // Marking the top-level status "rejected" alone is not enough:
+  // requestPaymentRefund's own reservation query
+  // (`where("status", "!=", "failed")`) sums every allocation across every
+  // non-"failed" refund request whose own allocation status isn't
+  // "resolvedFailed" — the request-time allocations (status
+  // "providerPending") must themselves be marked "resolvedFailed" here, or
+  // they keep reserving their amount forever despite the parent request
+  // being rejected. This exactly mirrors how a genuinely-failed allocation
+  // is already excluded elsewhere in this same file.
+  const resolvedFailedAllocations = refund.allocations.map((alloc) => ({ ...alloc, status: "resolvedFailed" as const }));
+  tx.update(refundRef, { status: "rejected", allocations: resolvedFailedAllocations, resolvedAt: now, version: refund.version + 1 });
+  return { newValue: { status: "rejected" } };
+}

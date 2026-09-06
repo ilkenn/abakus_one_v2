@@ -1144,6 +1144,7 @@ Color _statusColor(String status) {
       return AppColors.success;
     case 'declined':
     case 'resolvedFailed':
+    case 'rejected':
       return AppColors.error;
     case 'timedOut':
     case 'unknownReconciliationRequired':
@@ -1242,6 +1243,7 @@ class _RefundRow extends StatelessWidget {
                 'pendingApproval' => 'Onay Bekliyor',
                 'succeeded' => 'Tamamlandı',
                 'failed' => 'Başarısız',
+                'rejected' => 'Reddedildi',
                 _ => refund.status,
               },
               style: AppTypography.bodySmall

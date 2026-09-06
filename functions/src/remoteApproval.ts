@@ -2,7 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import type { CallableRequest } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import type { Firestore, Transaction } from "firebase-admin/firestore";
-import { requireStaffPermission } from "./staffAuthorization";
+import { requireStaffPermission, requireBranchAccess } from "./staffAuthorization";
 import type { StaffPermission } from "./staffAuthorization";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { writeAuditEvent } from "./auditEvents";
@@ -13,7 +13,7 @@ import {
   applyAcceptedLineCancellation,
   applyBoncukBalanceCorrection,
 } from "./checkFinancialAdjustments";
-import { applyPaymentRefund } from "./paymentRefund";
+import { applyPaymentRefund, applyPaymentRefundRejected } from "./paymentRefund";
 import {
   applyCashSessionOpen,
   applyCashSessionOpenRejected,
@@ -61,9 +61,14 @@ export type ApprovalActionType =
   | "boncukBalanceCorrection"
   // AP-4 Wave A (ADR-033) — a staff-requested refund that requires manager
   // approval before any money actually moves. Same typed-handler discipline
-  // as every action above.
+  // as every action above. Also has a REJECTION_HANDLERS entry (added AP-4
+  // Wave F, 2026-09-07) — a rejected refund request must transition its own
+  // refundRequests doc to "rejected", or its reservation against the
+  // check's refundable remainder would never be released (see
+  // applyPaymentRefundRejected's own doc comment for the confirmed bug this
+  // closes).
   | "paymentRefund"
-  // AP-4 Wave B (ADR-045) — cash register lifecycle actions. Unlike every
+  // AP-4 Wave B (ADR-045) — cash register lifecycle actions. Unlike most
   // action above, these four have a REJECTION_HANDLERS entry too (see
   // below) — a rejected cash session-open/reconciliation is a real state
   // change (session -> openRejected/rejected), not a no-op.
@@ -136,16 +141,21 @@ const ACTION_HANDLERS: Readonly<Record<ApprovalActionType, ActionHandler>> = {
 };
 
 /**
- * AP-4 Wave B addition — OPTIONAL, additive-only. Every action type above
- * this map's introduction has NO entry here, so a rejected
- * deviceActivation/checkFinancialAdjustment/acceptedLineCancellation/
- * boncukBalanceCorrection/paymentRefund request behaves EXACTLY as before
- * (the target aggregate is left untouched — there is nothing to roll back).
- * Cash register actions are different: a rejected session-open or
- * reconciliation is itself a real, required state transition (`awaitingOpen
- * Approval -> openRejected`, `pendingApproval -> rejected`), not a no-op —
- * this map is consulted ONLY when `decision === "rejected"`, immediately
- * below the existing approved-only dispatch, so every pre-existing action
+ * AP-4 Wave B addition, extended AP-4 Wave F (2026-09-07). OPTIONAL,
+ * additive-only. `deviceActivation`/`checkFinancialAdjustment`/
+ * `acceptedLineCancellation`/`boncukBalanceCorrection` have no entry here,
+ * so a rejection of any of those behaves exactly as before (the target
+ * aggregate is left untouched — there is nothing to roll back for those).
+ * Cash register actions and `paymentRefund` are different: a rejection is
+ * itself a real, required state transition (`awaitingOpenApproval ->
+ * openRejected`, `pendingApproval -> rejected`), not a no-op — for
+ * `paymentRefund` specifically, omitting this entry was a confirmed bug
+ * (Wave F): the refundRequests doc stayed "pendingApproval" forever after
+ * rejection, permanently reserving its amount against the check's
+ * refundable remainder (`requestPaymentRefund`'s own `where("status", "!=",
+ * "failed")` reservation query) and blocking any correct re-request. This
+ * map is consulted ONLY when `decision === "rejected"`, immediately below
+ * the existing approved-only dispatch, so every other pre-existing action
  * type's contract is unchanged.
  */
 const REJECTION_HANDLERS: Readonly<Partial<Record<ApprovalActionType, ActionHandler>>> = {
@@ -153,6 +163,7 @@ const REJECTION_HANDLERS: Readonly<Partial<Record<ApprovalActionType, ActionHand
   cashMovement: applyCashMovementRejected,
   cashAdjustment: applyCashAdjustmentRejected,
   cashReconciliation: applyCashReconciliationRejected,
+  paymentRefund: applyPaymentRefundRejected,
 };
 
 /** The staff permission required to RESPOND to (approve/reject) each action type — never a bare role-tier check. */
@@ -167,6 +178,55 @@ const RESPONSE_PERMISSION_BY_ACTION: Readonly<Record<ApprovalActionType, StaffPe
   cashAdjustment: "approveCashReconciliation",
   cashReconciliation: "approveCashReconciliation",
 };
+
+/**
+ * AP-4 Wave F security fix (2026-09-07) — the responder's own branch access
+ * was never checked, only their organization-level permission
+ * (`RESPONSE_PERMISSION_BY_ACTION`), even though every REQUESTING callable
+ * for these same action types (`requestPaymentRefund`, `authorizeCashCommand`
+ * — used by the cash actions, `requestCheckFinancialAdjustment`) already
+ * checks the requester's `requireBranchAccess`. Confirmed exploitable:
+ * `remoteApprovalMatrix.test.ts`'s "GAP — wrong-branch approver" tests
+ * proved a manager scoped only to Branch B could approve a
+ * paymentRefund/cashMovement/checkFinancialAdjustment request that
+ * originated at Branch A.
+ *
+ * Deliberately scoped to the financial action types only —
+ * `deviceActivation` is excluded on purpose. Org-wide device-fleet
+ * oversight by an org admin (who, by design, starts with `branchAccess: []`
+ * — `staffAuthorization.ts`'s own "no wildcard branch access, not even for
+ * admin/tenantOwner" rule) is a pre-existing, widely-relied-upon authority
+ * model (`activeDeviceSession`'s own test fixture, reused unmodified across
+ * 13 files / 28 call sites, always approves as the org admin) and was never
+ * part of the reported vulnerability — broadening this fix to
+ * `deviceActivation` would be an unrelated, large-blast-radius behavior
+ * change to a working, intentional design, not a fix to the actual gap.
+ * Physical-cash/financial actions are different: they're tied to a specific
+ * branch's own drawer/register/check, so branch-scoping the *response*,
+ * matching every request-side check already in place, is the correct fix.
+ *
+ * `boncukBalanceCorrection` is ALSO deliberately excluded, for a different
+ * reason discovered while verifying this fix against the existing test
+ * suite: unlike every other type here, it operates on a CUSTOMER's loyalty
+ * account, which is organization-scoped, not branch-scoped —
+ * `requestBoncukBalanceCorrection` itself never takes a `branchId` and
+ * always creates its approval request with the literal sentinel
+ * `branchId: "platform"` (`checkFinancialAdjustments.ts`), which would never
+ * match any real staff member's `branchAccess` grant. Including it here
+ * would have made every boncuk correction unapprovable by anyone, confirmed
+ * by `checkFinancialAdjustments.test.ts`'s own pre-existing test failing
+ * with exactly that error the moment this fix was first tried with it
+ * included.
+ */
+const BRANCH_SCOPED_RESPONSE_ACTION_TYPES: ReadonlySet<ApprovalActionType> = new Set([
+  "checkFinancialAdjustment",
+  "acceptedLineCancellation",
+  "paymentRefund",
+  "cashSessionOpen",
+  "cashMovement",
+  "cashAdjustment",
+  "cashReconciliation",
+]);
 
 function invalid(message: string): never {
   throw new HttpsError("invalid-argument", message);
@@ -271,6 +331,9 @@ export const respondToApprovalRequest = onCall(
       throw new HttpsError("permission-denied", "The requester cannot respond to their own approval request.");
     }
     requireStaffPermission(request, pre.organizationId, RESPONSE_PERMISSION_BY_ACTION[pre.actionType]);
+    if (BRANCH_SCOPED_RESPONSE_ACTION_TYPES.has(pre.actionType)) {
+      requireBranchAccess(request, pre.organizationId, pre.branchId);
+    }
 
     if (pre.status === decision && pre.respondedByActorUid === request.auth.uid) {
       return { requestId, status: pre.status, idempotent: true };

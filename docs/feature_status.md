@@ -5489,7 +5489,22 @@ tested, unaffected by this wave). Both scenarios are real, valuable checkout/pay
 backend integration evidence — they are **not** Web-operational-POS evidence (Web POS remains correctly
 fail-closed by construction) and are **not** a substitute for genuine native Android acceptance
 evidence, which remains blocked on an authorized device (`adb`/`flutter devices` show none connected).
-See ADR-047's "Web POS evidence classification" entry for the full trace. Remaining: the rest of the
-22-item matrix (exact count not independently verifiable without the original list), offline recovery
-verification, cross-surface E2E, 14/14 visual evidence, Functions run 2/2, Rules/Storage suites this
-wave, genuine native Android POS evidence (device access still the one missing resource).
+See ADR-047's "Web POS evidence classification" entry for the full trace. 4/14 visual evidence items
+captured (7, 8, 11, 14 — all unambiguous, no device session needed); a supporting screenshot
+(`web_pos_fail_closed_gate.png`) confirms Web POS's fail-closed gate directly from the real app's own
+navigation.
+
+**AP-4 Wave F closure (2026-09-07): both HIGH findings fixed, on explicit instruction.** `HIGH_ISSUES_
+OPEN=0`, `CRITICAL_ISSUES_OPEN=0`. `respondToApprovalRequest` now enforces branch access for the
+financial action types (`checkFinancialAdjustment`/`acceptedLineCancellation`/`paymentRefund`/all four
+cash actions), deliberately excluding `deviceActivation` (pre-existing org-wide authority model) and
+`boncukBalanceCorrection` (genuinely org-scoped, confirmed via its `branchId: "platform"` sentinel).
+`paymentRefund` now has a `REJECTION_HANDLERS` entry that correctly releases a rejected refund's
+reservation (both the parent status AND each allocation's own status must transition — the first
+attempt only fixed the former and was proven insufficient by the regression test before being
+corrected). See ADR-047 for the full fix/verification trace. Full Functions suite re-run fresh:
+**1941/1941 passed**. Firestore Rules: **403/403**. Storage Rules: **35/35**. Remaining: the rest of
+the 22-item matrix (exact count not independently verifiable without the original list), 10/14 visual
+evidence items, offline UI-round-trip verification, genuine native Android POS evidence (device access
+still the one missing resource). A comprehensive `gemini_handoff.md` was created at the repository
+root for onward handoff.

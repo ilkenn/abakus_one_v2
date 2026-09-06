@@ -19334,3 +19334,65 @@ carrying its own caveat. Given Section 2's whole concern is exactly this kind of
 easily-misinterpreted evidence, these items are left open rather than captured that way. They
 remain blocked on the same missing resource as native POS acceptance (§6): an authorized
 Android/iOS/Windows/macOS target. `REAL_VISUAL_ACCEPTANCE_EVIDENCE_COUNT=4/14`.
+
+### Both HIGH findings closed, on explicit user instruction (2026-09-07)
+
+The two findings left open throughout this wave — deliberately, per the prior instruction to keep an
+unresolved finding open until an explicit decision authorized touching it — are now fixed, on direct
+user instruction (Turkish-language request, this session).
+
+**1. Missing branch-access check in `respondToApprovalRequest`.** Fixed by adding
+`requireBranchAccess(request, pre.organizationId, pre.branchId)` immediately after the existing
+`requireStaffPermission` call, gated by a new `BRANCH_SCOPED_RESPONSE_ACTION_TYPES` set. Scoped to the
+financial action types only — `checkFinancialAdjustment`, `acceptedLineCancellation`, `paymentRefund`,
+`cashSessionOpen`, `cashMovement`, `cashAdjustment`, `cashReconciliation`. Two deliberate exclusions,
+both discovered/confirmed empirically against the real test suite before finalizing, not assumed:
+
+- `deviceActivation` — a pre-existing, widely-relied-upon org-wide device-fleet-oversight authority
+  model. `activeDeviceSession`'s own test fixture (reused unmodified across 13 files / 28 call sites)
+  always approves as the org admin, who by design holds `branchAccess: []`. Broadening the fix to this
+  type would have broken effectively the entire existing test suite for an authority model that was
+  never part of the reported vulnerability.
+- `boncukBalanceCorrection` — genuinely organization-scoped, not branch-scoped. Its own
+  `createApprovalRequest` call always sets the literal sentinel `branchId: "platform"`
+  (`checkFinancialAdjustments.ts`), which can never match a real staff member's `branchAccess` grant.
+  Including it in the first attempt at this fix broke `checkFinancialAdjustments.test.ts`'s own
+  pre-existing, correct test — caught by running the real suite, not assumed safe.
+
+Regression tests (`functions/src/test/remoteApprovalMatrix.test.ts`): the three prior "GAP" tests were
+flipped from proving the vulnerability (`assert 200`) to proving the fix (`assert 403`, plus a
+same-branch manager subsequently succeeding); a new test proves `deviceActivation`'s deliberate
+exemption explicitly rather than leaving it as an unstated side effect of the fixture.
+
+**2. `paymentRefund` missing a `REJECTION_HANDLERS` entry.** Fixed by adding
+`applyPaymentRefundRejected` (`functions/src/paymentRefund.ts`), wired into `remoteApproval.ts`'s
+`REJECTION_HANDLERS` map. Two things were required, not one — the first attempt (transitioning only
+the parent `status` field to a new `"rejected"` value added to `RefundStatus`) was proven insufficient
+by re-running the regression test: `requestPaymentRefund`'s own reservation query only excludes an
+allocation whose *own* `status` is `"resolvedFailed"`, so the original request-time allocations
+(status `"providerPending"`, untouched by the first attempt) kept reserving their amount regardless of
+the parent's new status. The actual fix marks every original allocation `"resolvedFailed"` as well.
+`RefundStatus` (`paymentDomain.ts`) gained the `"rejected"` value; `pos_checkout_screen.dart`'s
+`_RefundRow` gained a `'rejected' → 'Reddedildi'` label and error-color mapping, since this state is
+now genuinely reachable through the real UI.
+
+Regression tests: the prior reservation-leak test now asserts the fix (a corrected re-request
+succeeds, 200, not 400; the rejected doc's own status reads `"rejected"`, not stuck at
+`"pendingApproval"`); a new dedicated test proves a rejected refund never mutates the check, cash
+session, or any ledger — only its own status/allocations transition.
+
+**Verification, both fixes together**: `functions/src/test/remoteApprovalMatrix.test.ts` 10/10 passed.
+Combined with the directly related suites (`paymentEngine.test.ts`, `cashRegisterEngine.test.ts`,
+`checkFinancialAdjustments.test.ts`, `trustedDeviceAndApproval.test.ts`, `fiscalEngine.test.ts`,
+`checkOperations.test.ts`): 89/89 passed. **Full Functions suite, fresh emulator restart**:
+**1941/1941 passed, 0 failed** (1939 baseline + 2 net new tests). Firestore Rules suite re-run:
+**403/403 passed, 0 failed** — unchanged, as expected (`firestore.rules` not touched). Storage Rules
+suite re-run: **35/35 passed, 0 failed** — unchanged, as expected (`storage.rules` not touched).
+
+```text
+HIGH_ISSUES_OPEN=0
+CRITICAL_ISSUES_OPEN=0
+FUNCTIONS_FULL_SUITE=PASS (1941/1941)
+FIRESTORE_RULES_FULL_SUITE=PASS (403/403)
+STORAGE_RULES_FULL_SUITE=PASS (35/35)
+```

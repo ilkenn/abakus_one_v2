@@ -24,15 +24,16 @@ import { generateKeyPairSync, sign as cryptoSign } from "crypto";
  * this file exists to document — whether the responder's OWN branch
  * authorization is checked at all.
  *
- * **Confirmed finding, not yet fixed (see docs/decisions.md's Wave F
- * entry)**: `respondToApprovalRequest` calls `requireStaffPermission`
+ * **Fixed 2026-09-07 (see docs/decisions.md's Wave F entry)**:
+ * `respondToApprovalRequest` called `requireStaffPermission`
  * (organization-level) but never `requireBranchAccess`, even though every
  * REQUESTING callable for these same action types (`requestPaymentRefund`,
- * `authorizeCashCommand`, etc.) does call `requireBranchAccess` on the
- * requester. The tests below marked "wrong-branch approver" prove the
- * CURRENT (gap-present) behavior empirically rather than asserting the
- * intended-but-unimplemented denial — flipping them to `assertFails`-style
- * once a decision is made and the fix lands is a one-line change per test.
+ * `authorizeCashCommand`, etc.) already called `requireBranchAccess` on the
+ * requester. The tests below marked "FIXED — wrong-branch approver denied"
+ * now prove the fix (denial), for the financial action types only —
+ * `deviceActivation` is deliberately excluded (see
+ * `BRANCH_SCOPED_RESPONSE_ACTION_TYPES`'s own doc comment in
+ * `remoteApproval.ts` for why).
  */
 
 const EMULATOR_PROJECT_ID = "demo-abakus-one-emulator";
@@ -221,29 +222,33 @@ async function payAndApproveFullCash(f: Fixture): Promise<{ checkId: string; ses
 }
 
 // -----------------------------------------------------------------------
-// The confirmed finding: respondToApprovalRequest never checks the
-// responder's OWN branch access, even though every requesting callable for
-// these same action types checks the requester's. A manager scoped ONLY to
-// Branch B can currently approve a request that originated at Branch A.
+// FIXED (AP-4 Wave F, 2026-09-07): respondToApprovalRequest now checks the
+// responder's OWN branch access for the financial action types, matching
+// every requesting callable for these same action types, which already
+// checked the requester's. A manager scoped ONLY to Branch B must be
+// denied when approving a request that originated at Branch A. These
+// three tests previously proved the opposite (the "GAP" — approval wrongly
+// succeeded); they now prove the fix.
 // -----------------------------------------------------------------------
 
-test("GAP — wrong-branch approver: paymentRefund created at branch A is currently approvable by a manager scoped only to branch B", async () => {
+test("FIXED — wrong-branch approver denied: paymentRefund created at branch A is rejected when approved by a manager scoped only to branch B", async () => {
   const f = await setupFixture(10000);
   const { checkId } = await payAndApproveFullCash(f);
   const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
   assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
 
   const respond = await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, f.managerB.idToken);
-  // Documents CURRENT behavior (the gap): this succeeds today. If/when
-  // requireBranchAccess is added to respondToApprovalRequest, this
-  // assertion must flip to expect 403/permission-denied.
-  assert.strictEqual(respond.httpStatus, 200, JSON.stringify(respond.body));
+  assert.strictEqual(respond.httpStatus, 403, JSON.stringify(respond.body));
 
   const after = await db().collection("refundRequests").doc(request.body.result?.refundId as string).get();
-  assert.strictEqual(after.data()!.status, "succeeded", "the branch-B-scoped manager's approval genuinely took effect on a branch-A refund");
+  assert.strictEqual(after.data()!.status, "pendingApproval", "the wrong-branch manager's denied approval must never take effect");
+
+  // The SAME-branch manager can still approve it correctly.
+  const correct = await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, f.manager.idToken);
+  assert.strictEqual(correct.httpStatus, 200, JSON.stringify(correct.body));
 });
 
-test("GAP — wrong-branch approver: cashMovement created at branch A is currently approvable by a manager scoped only to branch B", async () => {
+test("FIXED — wrong-branch approver denied: cashMovement created at branch A is rejected when approved by a manager scoped only to branch B", async () => {
   const f = await setupFixture(10000);
   const drawer = await callCallable(CREATE_DRAWER_URL, { ...ctx(f), name: "Ana Kasa" }, f.manager.idToken);
   assert.strictEqual(drawer.httpStatus, 200, JSON.stringify(drawer.body));
@@ -257,10 +262,13 @@ test("GAP — wrong-branch approver: cashMovement created at branch A is current
   assert.strictEqual(movement.httpStatus, 200, JSON.stringify(movement.body));
 
   const respond = await callCallable(RESPOND_APPROVAL_URL, { requestId: movement.body.result?.approvalRequestId, decision: "approved" }, f.managerB.idToken);
-  assert.strictEqual(respond.httpStatus, 200, `documents the current gap — see docs/decisions.md Wave F entry — got ${JSON.stringify(respond.body)}`);
+  assert.strictEqual(respond.httpStatus, 403, JSON.stringify(respond.body));
+
+  const movementsSnap = await db().collection("cashMovements").where("sessionId", "==", cashSessionId).where("type", "==", "manualOut").get();
+  assert.strictEqual(movementsSnap.size, 0, "the wrong-branch manager's denied approval must never create the movement");
 });
 
-test("GAP — wrong-branch approver: checkFinancialAdjustment (complimentary) created at branch A is currently approvable by a manager scoped only to branch B", async () => {
+test("FIXED — wrong-branch approver denied: checkFinancialAdjustment (complimentary) created at branch A is rejected when approved by a manager scoped only to branch B", async () => {
   const f = await setupFixture(10000);
   const { checkId } = await checkReadyForPayment(f);
   const request = await callCallable(REQUEST_ADJUSTMENT_URL, {
@@ -269,7 +277,16 @@ test("GAP — wrong-branch approver: checkFinancialAdjustment (complimentary) cr
   assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
 
   const respond = await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, f.managerB.idToken);
-  assert.strictEqual(respond.httpStatus, 200, `documents the current gap — see docs/decisions.md Wave F entry — got ${JSON.stringify(respond.body)}`);
+  assert.strictEqual(respond.httpStatus, 403, JSON.stringify(respond.body));
+});
+
+test("FIXED — deviceActivation is deliberately NOT branch-scoped: the org admin (branchAccess: []) can still approve a device registration for any branch", async () => {
+  const f = await setupFixture(10000);
+  // f's own device session already proves this (setupFixture uses f.admin1,
+  // who holds branchAccess: [], to approve device registration for
+  // f.branchId) — this test exists to make the deliberate exclusion
+  // explicit and independently regression-tested, not just incidental.
+  assert.ok(f.deviceSessionId, "the existing fixture setup already exercises this — device activation must keep working for a branch-access-less org admin");
 });
 
 // -----------------------------------------------------------------------
@@ -298,7 +315,7 @@ test("insufficient permission: a second staff member (not the requester, so not 
 // time. Two overlapping partial refund requests, only one can be honored.
 // -----------------------------------------------------------------------
 
-test("target changed while pending: requestPaymentRefund reserves against already-pending requests, not just resolved ones — a second overlapping request is rejected at REQUEST time, before it can ever reach approval", async () => {
+test("target changed while pending, AND rejection releases the reservation (FIXED): requestPaymentRefund reserves against already-pending requests, and rejecting one correctly frees its amount for a fresh request", async () => {
   const f = await setupFixture(10000);
   const { checkId } = await payAndApproveFullCash(f);
 
@@ -316,21 +333,17 @@ test("target changed while pending: requestPaymentRefund reserves against alread
   const rejectFirst = await callCallable(RESPOND_APPROVAL_URL, { requestId: first.body.result?.approvalRequestId, decision: "rejected" }, f.manager.idToken);
   assert.strictEqual(rejectFirst.httpStatus, 200, JSON.stringify(rejectFirst.body));
 
-  // GAP, distinct from the branch-scoping one: `paymentRefund` has no
-  // REJECTION_HANDLERS entry (only the four cash actions do — see
-  // remoteApproval.ts), so rejecting the approval request never updates the
-  // underlying refundRequests doc's own `status` — it stays "pendingApproval"
-  // forever. requestPaymentRefund's reservation query
-  // (`where("status", "!=", "failed")`) then treats that permanently-stuck
-  // "pendingApproval" doc as still reserving its amount, so a corrected
-  // re-request for the same money can never succeed. Documents CURRENT
-  // (gap-present) behavior — see docs/decisions.md's Wave F entry.
-  const staleRefundDoc = await db().collection("refundRequests").doc(first.body.result?.refundId as string).get();
-  assert.strictEqual(staleRefundDoc.data()!.status, "pendingApproval", "the rejected refund request's own status was never transitioned — this is the gap");
+  // FIXED (Wave F): paymentRefund now has a REJECTION_HANDLERS entry
+  // (applyPaymentRefundRejected) that transitions the underlying
+  // refundRequests doc to the real terminal status "rejected" — it no
+  // longer stays "pendingApproval" forever, so requestPaymentRefund's
+  // reservation query (`where("status", "!=", "failed")`) no longer counts
+  // it as still reserving its amount.
+  const rejectedRefundDoc = await db().collection("refundRequests").doc(first.body.result?.refundId as string).get();
+  assert.strictEqual(rejectedRefundDoc.data()!.status, "rejected", "the rejected refund request's own status must transition to the real terminal state");
 
   const third = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
-  assert.strictEqual(third.httpStatus, 400, "documents the gap: a correct re-request for the full amount is wrongly blocked because the rejected request's reservation was never released");
-  assert.strictEqual(third.body.error?.details?.code, "refund/exceeds-refundable");
+  assert.strictEqual(third.httpStatus, 200, `a correct re-request for the full amount must now succeed once the rejected request's reservation is released — got ${JSON.stringify(third.body)}`);
 });
 
 // -----------------------------------------------------------------------
@@ -393,6 +406,41 @@ test("rejection closes without mutation: a rejected cashMovement never creates t
   assert.strictEqual(movementsSnap.size, 0, "a rejected movement request must never create a real cashMovements document");
   const sessionDoc = await db().collection("cashSessions").doc(cashSessionId).get();
   assert.strictEqual(sessionDoc.data()!.settledAmountMinorUnits, 5000, "rejection must leave the session's settled amount exactly at the opening float, undebited");
+});
+
+test("rejection closes without mutation (FIXED): a rejected paymentRefund never touches allocations, the check, or any cash/loyalty ledger — only its own status transitions", async () => {
+  const f = await setupFixture(10000);
+  const cashSessionId = await (async () => {
+    const drawer = await callCallable(CREATE_DRAWER_URL, { ...ctx(f), name: "Ana Kasa" }, f.manager.idToken);
+    const open = await callCallable(REQUEST_CASH_SESSION_OPEN_URL, { ...ctx(f), drawerId: drawer.body.result?.drawerId, openingFloatAmountMinorUnits: 0, currencyCode: "TRY", reason: "Açılış." }, f.manager.idToken);
+    return open.body.result?.sessionId as string;
+  })();
+  const { checkId, sessionId } = await checkReadyForPayment(f);
+  const subAccountId = await checkSubAccount(checkId);
+  const attempt = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "cash", idempotencyKey: nextId("idem"), cashSessionId,
+    allocations: [{ subAccountId, amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(attempt.body.result?.status, "succeeded", JSON.stringify(attempt.body));
+
+  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
+
+  const respond = await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "rejected" }, f.manager.idToken);
+  assert.strictEqual(respond.httpStatus, 200, JSON.stringify(respond.body));
+
+  const refundDoc = await db().collection("refundRequests").doc(request.body.result?.refundId as string).get();
+  assert.strictEqual(refundDoc.data()!.status, "rejected");
+  assert.ok(refundDoc.data()!.allocations.length > 0, "the original request-time allocations must still be present, not stripped");
+  assert.ok(
+    (refundDoc.data()!.allocations as Array<{ status: string }>).every((a) => a.status === "resolvedFailed"),
+    "every allocation must be marked resolvedFailed on rejection — this is what actually excludes the rejected request from the reservation query, not just the parent status",
+  );
+
+  const cashSessionDoc = await db().collection("cashSessions").doc(cashSessionId).get();
+  assert.strictEqual(cashSessionDoc.data()!.settledAmountMinorUnits, 10000, "a rejected refund must never debit the cash session — money was never actually returned");
+  const refundMovements = await db().collection("cashMovements").where("sessionId", "==", cashSessionId).where("type", "==", "cashRefund").get();
+  assert.strictEqual(refundMovements.size, 0, "a rejected refund must never create a cashRefund movement");
 });
 
 // -----------------------------------------------------------------------

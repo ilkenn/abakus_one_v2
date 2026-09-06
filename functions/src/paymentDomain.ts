@@ -296,6 +296,7 @@ export type RefundStatus =
   | "partiallySucceeded"
   | "succeeded"
   | "failed"
+  | "rejected"
   | "unknownReconciliationRequired"
   | "resolved";
 
