@@ -72,6 +72,18 @@ the full trace. Items #1-6, #9-10 remain open pending either a native Android de
 the fixture-injection caveat entirely) or a further capture pass using the same fixture-session
 technique already used for the E2E flows.
 
+**Supporting capture, not one of the 14 required items**: `web_pos_fail_closed_gate.png` — navigating
+the real Admin app's own "POS" destination on Web, through completely normal in-app navigation (no
+fixture, no injected session), renders a real "Bu Platform Desteklenmiyor" gate:
+*"Güvenilir cihaz oturumu yalnızca Android, iOS, Windows ve macOS üzerinde kullanılabilir. Web üzerinde
+operasyonel POS oturumu açılamaz."* This is direct visual confirmation that **there is no real,
+app-navigated path to `PosCheckoutScreen` on Web at all** — captured specifically because it clarifies
+why items #1-6/#9-10 are intentionally left uncaptured rather than reproduced via the same
+fixture-injection technique the E2E tests use: a screenshot of that bypass would be far more easily
+misread out of context ("POS renders on Web") than a test result already carrying its own caveat, and
+Section 2 of this wave's governing instruction was specifically about avoiding exactly that kind of
+evidence. See `docs/decisions.md`'s "Visual evidence capture, 4/14" entry for the full reasoning.
+
 ## How to capture (for whoever performs this step)
 
 1. `firebase emulators:start --only firestore,functions,auth,storage` (with `JAVA_HOME` pointed at a

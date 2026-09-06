@@ -19302,3 +19302,35 @@ this wave.)
 | `npm audit` (functions) | 11 pre-existing moderate (transitive `uuid`), deps unchanged |
 | Fake-adapter production-exclusion | Confirmed untouched |
 | Working tree | Clean (only pre-existing, unrelated untracked files) |
+
+### Visual evidence capture, 4/14, and a clarifying discovery about items #1-6/#9-10 (2026-09-06)
+
+Seeded real financial data under `org-1`/`branch-ap3vis` via a new script
+(`functions/scripts/seed_visual_evidence_financial.mjs`, real callables only — device registration,
+cash drawer/session, staff order→check→payment, partial refund, a `FORCE_TIMEOUT` fiscal operation, an
+offline lease) and captured 5 screenshots via Playwright against the real, normally-served Flutter Web
+app, covering **items #7, #8, #11, #14 — 4/14, all verified real, readable, no PII**:
+`07_partial_refund_pending.png`, `08_cash_opening.png`, `11_fiscal_timeout_unresolved.png`,
+`14_admin_financial_odemeler.png`, `14b_offline_lease_active.png`. None of these needed a
+trusted-device session (they're financial records viewed through the Admin console), so none carry the
+Web-POS-support caveat from earlier in this entry.
+
+**Clarifying discovery while attempting items #1-6/#9-10** (which do require `PosCheckoutScreen`/
+`PosCashRegisterScreen`/`ApprovalInboxScreen`): navigating the real Admin app's own "POS" destination on
+Web — through completely normal in-app navigation, no fixture involved — renders a real, dedicated
+"Bu Platform Desteklenmiyor" (This platform is not supported) screen: *"Güvenilir cihaz oturumu yalnızca
+Android, iOS, Windows ve macOS üzerinde kullanılabilir. Web üzerinde operasyonel POS oturumu
+açılamaz."* Captured as `web_pos_fail_closed_gate.png` — direct visual confirmation, from the real app's
+own real navigation, of the fail-closed property this entry's earlier section already established from
+source. **There is no real, app-navigated path to `PosCheckoutScreen` on Web at all** — my two checkout
+E2E tests only reach it by constructing the widget directly in a standalone Dart harness, bypassing this
+gate and the entire `TrustedDeviceSessionController` flow, not by finding some alternate legitimate
+route.
+
+Given this, capturing items #1-6/#9-10 for Web would require deliberately reproducing that same
+bypass for a *screenshot* rather than a test assertion — and a screenshot is far more easily
+misread out of context ("look, POS renders on Web") than a test's pass/fail result already
+carrying its own caveat. Given Section 2's whole concern is exactly this kind of
+easily-misinterpreted evidence, these items are left open rather than captured that way. They
+remain blocked on the same missing resource as native POS acceptance (§6): an authorized
+Android/iOS/Windows/macOS target. `REAL_VISUAL_ACCEPTANCE_EVIDENCE_COUNT=4/14`.
