@@ -20,15 +20,36 @@ import 'package:abakus_one_v2/features/pos/presentation/screens/pos_checkout_scr
 
 import 'support/emulator_fixtures.dart';
 
-/// AP-4 Wave E — Flow #1: cash full payment. Real routed
-/// `PosCheckoutScreen`, real local Firebase emulators (Auth/Firestore/
-/// Functions), a real signed-in staff identity, a real trusted-device
-/// session (genuine Ed25519 challenge-response), and a real seeded
-/// tenant/catalog/table (`functions/scripts/seed_dev_tenant.mjs`/
+/// AP-4 Wave E, unblocked in Wave F (2026-09-04) — Flow #1: cash full
+/// payment. This position is confirmed against Wave E's own commit
+/// (`test(ap4-wave-e): real Flutter E2E infrastructure for the 22 flow
+/// matrix`); the original 22-item enumeration itself was never committed to
+/// this repository (see `docs/decisions.md`'s "Web POS evidence
+/// classification" entry), so this is the one position in that matrix this
+/// repository can actually verify. Real routed `PosCheckoutScreen`, real
+/// local Firebase emulators (Auth/Firestore/Functions), a real signed-in
+/// staff identity, a real Ed25519 challenge-response round trip, and a real
+/// seeded tenant/catalog/table (`functions/scripts/seed_dev_tenant.mjs`/
 /// `seed_dev_catalog.mjs`/`seed_dev_staff.mjs`/`seed_dev_table_qr.mjs` —
 /// run once against the running emulator before this suite).
 ///
-/// The only non-literal simulation here: the table's guest session is
+/// **What this does NOT prove — read before citing this test as evidence**:
+/// the device session is provisioned via
+/// `EmulatorFixtures.issueDeviceSessionForCurrentUser`, which calls the
+/// backend `requestDeviceRegistration` callable directly with a
+/// fixture-supplied `platform: "android"` claim. The REAL app never does
+/// this on Web — `devicePlatformWireValueProvider` correctly derives the
+/// platform from `kIsWeb`/`defaultTargetPlatform`, and
+/// `TrustedDeviceSessionController.register()` refuses to even attempt
+/// registration when `isPlatformSupported` is false (Web always is),
+/// already covered by `trusted_device_session_controller_test.dart`. This
+/// test proves the real checkout/payment UI and backend engine work
+/// end-to-end once a valid trusted-device session exists — it does not
+/// prove Web operational POS is supported (it is not, and remains
+/// fail-closed by construction), and it is not a substitute for real
+/// native-device (Android) operational POS acceptance evidence.
+///
+/// The only other non-literal simulation here: the table's guest session is
 /// opened by the already-signed-in admin identity rather than a separate
 /// anonymous customer session (`openTableGuestSession` only requires SOME
 /// authenticated caller, not specifically an anonymous one) — every
@@ -36,30 +57,14 @@ import 'support/emulator_fixtures.dart';
 /// follows reads the resulting `tableSessions`/`restaurantTables` state
 /// exactly as it would for a genuine customer-opened session.
 ///
-/// **Known, diagnosed, unresolved blocker (AP-4 Wave E, 2026-09-01):** in
-/// this exact environment, EVERY real `FirebaseFunctions.instance
-/// .httpsCallable(...).call(...)` invocation made directly from this
-/// test's own bare async body — even the simplest possible one
-/// (`syncOwnStaffClaims` with empty data) — fails with a generic
-/// `[firebase_functions/internal] internal` error, with zero
-/// corresponding entry in the Functions emulator's own invocation log
-/// (confirmed: the request never reaches the server at all). This is NOT
-/// specific to this file's own data/logic — proven by testing the
-/// simplest possible callable in isolation, which fails identically.
-/// Ruled out as causes: App Check (never activated on Web in this app —
-/// no site key configured, confirmed by reading
-/// `firebase_app_check_service.dart`), plugin-registration timing
-/// (pumping a placeholder widget first made no difference), device type
-/// (`web-server` and a real `chrome` device both fail identically), and
-/// this file's specific payload (the simplest possible call also fails).
-/// The SAME emulator, from the SAME browser session, is reachable fine
-/// via raw HTTP (`EmulatorFixtures.callCallableRaw`, `package:http`) and
-/// via the real `firebase_auth` SDK (`signInWithEmailAndPassword`
-/// succeeds) — this is specific to `cloud_functions_web`'s own JS interop
-/// layer in a `flutter drive --target=integration_test/...` harness.
-/// Diagnosing further requires browser devtools/network-inspector access
-/// this environment does not provide. This test's own code is believed
-/// correct and ready to run once that platform issue is resolved.
+/// **Historical note (resolved, AP-4 Wave F, 2026-09-04)**: this file
+/// previously documented an "every real `FirebaseFunctions.instance
+/// .httpsCallable(...)` fails generically" blocker as unresolved. That was
+/// actually two real, now-fixed bugs — an emulator/app project-id mismatch
+/// and an unawaited `Future` race in `FirebaseBootstrapService`'s Auth/
+/// Storage emulator connectors — not a `cloud_functions_web` JS-interop
+/// defect. See `docs/decisions.md`'s Wave F entries for the full root-cause
+/// trail.
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 

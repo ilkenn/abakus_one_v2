@@ -5468,9 +5468,28 @@ full payment, genuinely passing end-to-end). A dedicated remote-approval cross-c
 tests) surfaced two more real, confirmed, unfixed findings — a missing branch-access check on the
 shared approval-response path, and a rejected refund's reservation never being released — both
 requiring an explicit decision before being touched, documented in ADR-047 rather than silently
-patched. Functions full suite run 1/2: 1939/1939 passed. `FUNCTIONAL_E2E_FLOW_COUNT=2/22` — Flow #7 (partial
-refund, request -> real second-approver approval -> settled) also now passing; writing it surfaced and
-fixed a real, confirmed UI gap (`PosCheckoutScreen` had no reachable path to request a refund once a
-payment session showed "completed" — exactly the state a refund requires — see ADR-047). Remaining:
-20/22 flows, offline recovery verification, cross-surface E2E, 14/14 visual evidence, Functions run
-2/2, Rules/Storage suites this wave, Android POS (no device connected — reported, not fabricated).
+patched. Functions full suite run 1/2: 1939/1939 passed. A second scenario (`E2E-PARTIAL-REFUND`:
+partial refund, request -> real second-approver approval -> settled) also now passing; writing it
+surfaced and fixed a real, confirmed UI gap (`PosCheckoutScreen` had no reachable path to request a
+refund once a payment session showed "completed" — exactly the state a refund requires — see ADR-047),
+with a fast widget-level regression test added and verified to actually catch the regression (reverted
+the fix, confirmed the test fails; restored it, confirmed it passes again).
+
+**AP-4 Wave F correction (2026-09-06, append-only):** the prior `FUNCTIONAL_E2E_FLOW_COUNT=2/22` framing
+above is corrected — this repository does not contain the original 22-item flow enumeration in any
+committed form, so "2/22" implied a precision that can't actually be verified beyond Flow #1 (confirmed
+against Wave E's own commit message). The second scenario's prior "Flow #7" label incorrectly borrowed
+a number from the *separate* 14-item visual-evidence matrix; it is now the stable id
+`E2E-PARTIAL-REFUND`, not an ordinal claim. Separately, and more substantively: both passing scenarios
+provision their trusted-device session via a direct backend callable call with a fixture-supplied
+`platform: "android"` claim, bypassing the real app's own `devicePlatformWireValueProvider`/
+`isPlatformSupported` gate — a documented testability seam, not something a genuine Web client could
+ever trigger (`TrustedDeviceSessionController` already refuses to attempt registration on Web, unit-
+tested, unaffected by this wave). Both scenarios are real, valuable checkout/payment/refund UI +
+backend integration evidence — they are **not** Web-operational-POS evidence (Web POS remains correctly
+fail-closed by construction) and are **not** a substitute for genuine native Android acceptance
+evidence, which remains blocked on an authorized device (`adb`/`flutter devices` show none connected).
+See ADR-047's "Web POS evidence classification" entry for the full trace. Remaining: the rest of the
+22-item matrix (exact count not independently verifiable without the original list), offline recovery
+verification, cross-surface E2E, 14/14 visual evidence, Functions run 2/2, Rules/Storage suites this
+wave, genuine native Android POS evidence (device access still the one missing resource).

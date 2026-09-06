@@ -15,14 +15,34 @@ import 'package:abakus_one_v2/features/pos/presentation/screens/pos_checkout_scr
 
 import 'support/emulator_fixtures.dart';
 
-/// AP-4 Wave F — Flow #7 (partial refund matrix item): a fully cash-paid
-/// check has a partial refund requested through the real routed
-/// `PosCheckoutScreen`, approved by a real second approver identity via a
-/// real remote-approval round trip, and the resulting "Tamamlandı"
-/// (succeeded) status is confirmed by re-fetching the real operational view
-/// — never asserted against a mocked/local state, matching
-/// `pos_cash_full_payment_e2e_test.dart` (Flow #1)'s exact real-emulator
-/// pattern and fixture setup.
+/// AP-4 Wave F — requirement ID `E2E-PARTIAL-REFUND` (see
+/// `docs/decisions.md`'s "Web POS evidence classification" entry for why
+/// this is a stable descriptive id, not a guessed ordinal position in the
+/// original 22-item flow enumeration — that list was never committed to
+/// this repository and is not recoverable from repository state; only
+/// Flow #1 (`pos_cash_full_payment_e2e_test.dart`, AP-4 Wave E) is
+/// confirmed to correspond to a real original position).
+///
+/// **Scope, precisely**: a fully cash-paid check has a partial refund
+/// requested through the real routed `PosCheckoutScreen`, approved by a
+/// real, distinct second approver identity via a real remote-approval round
+/// trip, and the resulting "Tamamlandı" (succeeded) status is confirmed by
+/// re-fetching the real operational view — never asserted against a
+/// mocked/local state. This proves the real checkout/payment/refund/
+/// approval UI and backend engine, exactly like Flow #1. It does **not**
+/// prove Web operational POS is supported (it is not, and remains
+/// fail-closed by construction for any client using the real
+/// `TrustedDeviceSessionController` — see that same decisions.md entry):
+/// the device session here is provisioned directly via
+/// `EmulatorFixtures.issueDeviceSessionForCurrentUser`, which calls the
+/// backend `requestDeviceRegistration` callable directly with a
+/// fixture-supplied `platform: "android"` claim, bypassing the real app's
+/// own `devicePlatformWireValueProvider`/`isPlatformSupported` gate
+/// entirely — a deliberate, documented testability seam
+/// (`trusted_device_session_controller.dart`'s own comment: "so a test can
+/// supply any platform value without needing platform-detection test
+/// doubles"), not a demonstration that a genuine Web client could ever
+/// reach this state.
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 

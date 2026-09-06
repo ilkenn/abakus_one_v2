@@ -19088,3 +19088,71 @@ unmounting to a blank tree (`pumpWidget(SizedBox.shrink())`) before remounting �
 already used at the start of every flow test in this suite.
 
 Verified via `flutter drive` — "All tests passed." `FUNCTIONAL_E2E_FLOW_COUNT=2/22`.
+
+### Web POS evidence classification — a real contradiction in how this wave reported evidence (2026-09-06)
+
+Resuming this wave, a governing-instruction review correctly identified two problems with how the two
+passing flows above were being reported, both now corrected.
+
+**Problem 1 — a genuine, real evidence-quality issue, not a nitpick.** `pos_cash_full_payment_e2e_test
+.dart` and `pos_partial_refund_e2e_test.dart` both provision their trusted-device session via
+`EmulatorFixtures.issueDeviceSessionForCurrentUser`, which calls the backend `requestDeviceRegistration`
+callable **directly**, with a fixture-supplied `platform: "android"` string, from a test running via
+`flutter drive -d web-server`. Traced precisely: the REAL app never does this. `lib/features/admin/
+presentation/providers/trusted_device_session_providers.dart`'s `devicePlatformWireValueProvider`
+correctly derives the platform from `kIsWeb`/`defaultTargetPlatform` (genuine runtime introspection, not
+client-asserted input), and `devicePlatformSupportedProvider` returns `false` for `'web'` — so
+`TrustedDeviceSessionController.register()` sets `state = UnsupportedPlatform()` and **returns before
+ever calling `requestRegistration`** for a real Web client. This three-layer client-side gate (correct
+platform detection → `isPlatformSupported` check → never call the registration API) is genuine,
+pre-existing, and already unit-tested (`trusted_device_session_controller_test.dart`: "an unsupported
+platform starts and stays UnsupportedPlatform, never [registers]") — untouched by anything in this wave.
+**Web POS is, and remains, correctly fail-closed by construction.**
+
+What my two E2E tests actually exercise, precisely: the raw backend `requestDeviceRegistration`/
+`requestDeviceChallenge`/`issueDeviceSession` callables accept a `platform` field with no server-side
+attestation cross-check (`trustedDevice.ts`'s own comment: "Correction #4 — resolved server-side, never
+from a client-claimed tier" refers only to the *trust-tier lookup* being server-side, not to the
+underlying *platform claim* itself being verified against anything) — this is a **deliberate, documented
+testability seam** (`trusted_device_session_controller.dart`: "resolved once... and passed in here...
+so a test can supply any platform value without needing platform-detection test doubles"), not a
+production vulnerability I introduced, and not something either test exploited by accident. But citing
+these two tests as "Web operational POS E2E" or as any kind of native-device acceptance evidence would
+have been wrong, and my prior framing in this same file didn't draw that line clearly enough.
+
+**Corrected classification, applied to both test files' own header comments**: Flow #1 and
+`E2E-PARTIAL-REFUND` are real, valuable **checkout/payment/refund/approval UI + backend integration
+tests** — the `PosCheckoutScreen` widget, the `PaymentGateway`/approval engine, and the Firestore/
+Functions emulator round trip are all genuinely real and unmocked. They prove: "once a valid
+trusted-device session exists, the real checkout UI and backend engine correctly process a cash payment
+/ partial refund end-to-end." They do **not** prove Web operational POS is supported, and are **not**
+substitutes for genuine native (Android) operational POS acceptance evidence — that remains blocked on
+an authorized Android target (§6, unchanged: `flutter devices`/`adb` show no connected device).
+
+**Problem 2 — a real numbering-integrity issue.** This repository does not contain the original 22-item
+flow enumeration from the governing Wave D/E/F instructions anywhere in committed history — it existed
+only in the instruction text of earlier, now-summarized conversation turns. Wave E's own commit (`test
+(ap4-wave-e): real Flutter E2E infrastructure for the 22 flow matrix`) and `pos_cash_full_payment_e2e
+_test.dart`'s own doc comment independently confirm Flow #1 = cash full payment, so that one position is
+genuinely verifiable. This wave's later addition, previously labeled "Flow #7 (partial refund matrix
+item)," was **not** verified against the real 22-item list — it was a guess that conflated the 14-item
+*visual-evidence* matrix's item #7 ("Partial refund") with the *22-item flow* matrix's own, separately-
+numbered item #7, which could be a completely different scenario. That label has been corrected to the
+stable, non-numeric requirement id `E2E-PARTIAL-REFUND` in both the test file and this document, and no
+further scenario will be assigned a guessed ordinal position in the 22-item list going forward — new
+scenarios get descriptive, stable requirement ids instead, until/unless the original enumeration is
+actually supplied.
+
+**Corrected status** (supersedes the bare `FUNCTIONAL_E2E_FLOW_COUNT=2/22` line above, which implied a
+precision this repository cannot actually verify):
+
+```text
+VERIFIED_ORIGINAL_FLOW_POSITIONS = 1 of 22 (Flow #1 only, confirmed against Wave E's own commit)
+ADDITIONAL_VERIFIED_SCENARIOS = 1 (E2E-PARTIAL-REFUND — real, passing, not yet reconciled to an
+  original ordinal position)
+WEB_UI_BACKEND_INTEGRATION_SCENARIOS_PASSING = 2 (Flow #1, E2E-PARTIAL-REFUND)
+NATIVE_OPERATIONAL_POS_E2E_COMPLETE = NO (no authorized Android target connected — independent
+  Web/backend work continues; a native target remains the one genuinely missing, user-controlled
+  resource for this specific requirement)
+WEB_POS_FAIL_CLOSED_VERIFIED = YES (pre-existing, unit-tested, unaffected by this wave)
+```
