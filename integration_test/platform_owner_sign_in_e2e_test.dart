@@ -57,9 +57,8 @@ void main() {
     for (var i = 0; i < 60; i++) {
       await tester.pump(const Duration(milliseconds: 500));
       if (find.byType(PlatformShellScreen).evaluate().isNotEmpty) break;
-      final failed = find
-          .text('Giriş başarısız. Bilgilerinizi kontrol edin.')
-          .evaluate();
+      final failed =
+          find.text('Giriş başarısız. Bilgilerinizi kontrol edin.').evaluate();
       if (failed.isNotEmpty) {
         fail('signIn returned an invalid-credential error — the seeded '
             'Platform Owner account/claims are not what this test expects. '
