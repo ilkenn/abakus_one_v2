@@ -19250,3 +19250,28 @@ proven for the LOCAL PERSISTENCE LAYER (already is, see above — a fresh `Share
 real restart proof), but proving it through the full bootstrap-to-checkout-screen UI stack would require
 either a real device/process restart (unavailable, same as the native-POS blocker in §6) or building a
 dedicated harness for it — reported as an open, precise, independently-actionable item, not fabricated.
+
+### Section 4 — Functions full suite, run 2/2 (2026-09-06)
+
+Fresh `demo-abakus-one-emulator` restart (JDK 21, `GOOGLE_MAPS_PROVIDER_MODE=fixture`,
+`FUNCTIONS_DISCOVERY_TIMEOUT=60000`), independent of run 1: `node --test --test-concurrency=1
+lib/test/*.test.js` — **1939/1939 passed, 0 failed** (1188.0s). Both runs required before
+`FUNCTIONS_FULL_SUITE_RUN_2`/`FULL_CONTROLLABLE_QUALITY_GATES_PASSED` can read `YES` are now complete
+and clean — run 1 (§13 above, this same wave) 1939/1939, run 2 1939/1939, neither combined with an
+isolated pass per the governing instruction's own rule.
+
+Also this pass: full-repo `dart format --set-exit-if-changed lib test integration_test` — clean (one
+file needed reformatting on the first pass, a newly-added test file, fixed and reformatted-clean on
+the second pass). Full-repo `flutter analyze` — clean, "No issues found!" (273s). Full-repo `flutter
+test` — **3642 passed, 12 skipped (pre-existing), 0 failed** (3639 baseline + 3 new
+`pos_checkout_screen_test.dart` tests, exact expected count). `git diff --check` against the start SHA
+— clean, no whitespace errors. Secret scan (diff-scoped, this wave's 8 commits) — clean; the only
+token-shaped strings are legitimate test fixtures (`fake-api-key`, seeded dev passwords, deterministic
+QR tokens) or Firestore/callable identifiers, no real credential, and no `AIzaSy`-shaped key, appears
+anywhere in the diff. `npm audit` (functions) — 11 moderate findings, all a single transitive `uuid`
+bounds-check advisory fanning out through `firebase-admin`/`google-gax`/`gaxios`/`@google-cloud/
+firestore`/`@google-cloud/storage`; confirmed `functions/package.json`/`package-lock.json` are
+byte-identical to the start SHA, so this is pre-existing external advisory-database drift (8 found in
+Wave E, 11 now), not a dependency this wave introduced. Fake-adapter production-exclusion files
+(`paymentProviderAdapter.ts`/`fiscalAdapter.ts` and their tests) confirmed untouched since the start
+SHA.
