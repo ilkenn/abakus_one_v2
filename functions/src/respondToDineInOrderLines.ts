@@ -6,6 +6,7 @@ import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { writeAuditEvent } from "./auditEvents";
 import { generateCorrelationId, sanitizeClientRequestId } from "./correlationId";
 import { prepareKitchenWorkAndStockConsumption, applyKitchenWorkAndStockConsumption } from "./acceptOrderLine";
+import { preparePrintJobForAcceptance, applyPrintJobPlan } from "./printJobEngine";
 
 /**
  * AP-3 Wave 1 — per-line accept/reject for a `guestSession`-mode
@@ -145,9 +146,27 @@ export const respondToDineInOrderLines = onCall(
               now,
             })
           : null;
+      // AP-5 Sprint 4 — one print job per order, opened at the same point
+      // as kitchen enqueue/stock consumption (read phase, before this
+      // transaction's own first write). Idempotent via
+      // `preparePrintJobForAcceptance`'s own deterministic-id check, so a
+      // retried/duplicate call never opens a second job.
+      const printPlan =
+        acceptedLines.length > 0
+          ? await preparePrintJobForAcceptance({
+              tx,
+              db,
+              organizationId: order.organizationId,
+              branchId: order.branchId,
+              orderId,
+              stationId: "shared",
+              now,
+            })
+          : null;
 
       tx.update(orderRef, { lines, linesDispositionSummary });
       applyKitchenWorkAndStockConsumption(tx, db, stockPlan);
+      applyPrintJobPlan(tx, db, printPlan);
 
       writeAuditEvent({
         tx,

@@ -1344,13 +1344,18 @@ service cloud.firestore {
     match /printerConfigs/{printerId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
-      allow write: if false; // Cloud Function only — no writer this sprint.
+      allow write: if false; // Cloud Function / Admin SDK only — still no client writer this sprint.
     }
 
     match /printJobs/{printJobId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
-      allow write: if false; // Cloud Function only — no writer this sprint.
+      // AP-5 Sprint 4 — real writers exist now (`acceptOrderLine.ts`'s
+      // four call sites via `printJobEngine.ts`, plus the
+      // `requestPrintJob`/`recordPrintOutcome` callables), all Admin SDK
+      // (bypasses Security Rules entirely) — client-side writes stay
+      // denied, matching every other AP-5 collection's own convention.
+      allow write: if false;
     }
 
     // AP-5 Sprint 2 correction: `recipes`/`recipeVersions`/

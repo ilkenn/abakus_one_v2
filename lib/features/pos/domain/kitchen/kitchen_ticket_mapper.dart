@@ -55,12 +55,24 @@ abstract final class KitchenTicketMapper {
         orderTypeLabel: _channelLabel(order.channel),
         receivedAt: firedAt,
         priority: priority,
+        tableLabel: order.tableId == null ? null : 'Masa ${order.tableId}',
+        customerName: _customerName(order),
       ),
       lines: lines,
       isCopy: isCopy,
       firedAt: firedAt,
       revision: 1,
     );
+  }
+
+  /// `null` when the order carries no contact name at all — never an empty
+  /// string, so callers can treat "no customer name" as a single `null`
+  /// check rather than also trimming/blank-checking.
+  static String? _customerName(Order order) {
+    final first = order.contactFirstName?.trim() ?? '';
+    final last = order.contactLastName?.trim() ?? '';
+    final full = [first, last].where((part) => part.isNotEmpty).join(' ');
+    return full.isEmpty ? null : full;
   }
 
   static String _channelLabel(OrderChannel channel) {

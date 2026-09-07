@@ -232,3 +232,12 @@ export { setProductPackagingLink } from "./setProductPackagingLink";
 // handled through the existing `respondToApprovalRequest` (registered in
 // remoteApproval.ts), not a separate callable.
 export { submitStockCount } from "./submitStockCount";
+
+// AP-5 Sprint 4 — the real writers for the `printJobs` queue. The
+// automatic per-order job (opened at acceptance) is created inline inside
+// `acceptOrderLine.ts`'s four call sites, not through either of these
+// callables — `requestPrintJob` is the manual KDS-card "Fiş Yazdır /
+// Tekrar Yazdır" trigger, `recordPrintOutcome` the manual-override/future
+// -real-printer-worker seam.
+export { requestPrintJob } from "./requestPrintJob";
+export { recordPrintOutcome } from "./recordPrintOutcome";

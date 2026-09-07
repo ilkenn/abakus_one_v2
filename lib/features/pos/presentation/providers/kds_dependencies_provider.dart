@@ -25,6 +25,7 @@ import '../../domain/kds/kitchen_connection_monitor.dart';
 import '../../domain/kds/kitchen_event_publisher.dart';
 import '../../domain/kds/kitchen_event_subscriber.dart';
 import '../../domain/kds/kitchen_synchronization_service.dart';
+import '../../../printing/data/print_job_action_gateway.dart';
 
 /// Every Phase 4 KDS repository/id-generator/service currently in use.
 /// **AP-5 Sprint 1**: [kitchenProjectionRepositoryProvider] is now
@@ -61,6 +62,18 @@ final kitchenActionGatewayProvider = Provider<KitchenActionGateway>((ref) {
     return const UnavailableKitchenActionGateway();
   }
   return const FirebaseKitchenActionGateway();
+});
+
+/// AP-5 Sprint 4 — the real backend boundary for opening/driving a
+/// `PrintJob` (`requestPrintJob`/`recordPrintOutcome` callables). Same
+/// fail-closed shape as [kitchenActionGatewayProvider]: no in-memory
+/// simulation once Firebase readiness gates whether printing is real.
+final printJobActionGatewayProvider = Provider<PrintJobActionGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return const UnavailablePrintJobActionGateway();
+  }
+  return const FirebasePrintJobActionGateway();
 });
 
 final kitchenEventRepositoryProvider = Provider<KitchenEventRepository>((ref) {

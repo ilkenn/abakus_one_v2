@@ -1,6 +1,7 @@
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_ticket_repository.dart';
+import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_line_status.dart';
 import 'package:abakus_one_v2/features/pos/domain/kitchen/kitchen_ticket.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kitchen_ticket_dependencies_provider.dart';
@@ -46,13 +47,14 @@ void main() {
   Future<void> pumpScreen(
     WidgetTester tester, {
     required KitchenTicketRepository ticketRepository,
+    KitchenProjectionRepository? projectionRepository,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           kitchenTicketRepositoryProvider.overrideWithValue(ticketRepository),
-          kitchenProjectionRepositoryProvider
-              .overrideWithValue(InMemoryKitchenProjectionRepository()),
+          kitchenProjectionRepositoryProvider.overrideWithValue(
+              projectionRepository ?? InMemoryKitchenProjectionRepository()),
         ],
         child: const MaterialApp(
           home: KitchenDisplayBoardScreen(branchId: 'branch-1'),
@@ -87,7 +89,9 @@ void main() {
     await ticketRepository.save(buildTestKitchenTicket());
     await pumpScreen(tester, ticketRepository: ticketRepository);
 
-    expect(find.widgetWithText(ChoiceChip, 'Tümü'), findsOneWidget);
+    // AP-5 Sprint 4 — the new status filter bar also has its own 'Tümü'
+    // chip, so there are now two: one per filter dimension.
+    expect(find.widgetWithText(ChoiceChip, 'Tümü'), findsNWidgets(2));
     expect(find.widgetWithText(ChoiceChip, 'Sıcak'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(ChoiceChip, 'Sıcak'));
@@ -137,5 +141,73 @@ void main() {
         findsOneWidget);
     expect(find.text('Mutfak ekranı yükleniyor...'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  // AP-5 Sprint 4 — the status filter tabs (Tümü/Bekleyen/Hazırlanıyor/
+  // Geciken/Hazır) are a second, additive filter dimension alongside the
+  // existing station chips.
+  testWidgets('the status filter tabs are present and narrow the board',
+      (tester) async {
+    final ticketRepository = InMemoryKitchenTicketRepository();
+    await ticketRepository.save(buildTestKitchenTicket());
+    await pumpScreen(tester, ticketRepository: ticketRepository);
+
+    expect(find.widgetWithText(ChoiceChip, 'Bekleyen'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Hazırlanıyor'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Geciken'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Hazır'), findsOneWidget);
+
+    // The fixture's work item starts `queued` — filtering to `Hazır`
+    // (ready-only) must hide it.
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Hazır'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bekleyen sipariş yok'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the ticket card shows a channel badge and the order-received clock time',
+      (tester) async {
+    final ticketRepository = InMemoryKitchenTicketRepository();
+    await ticketRepository.save(buildTestKitchenTicket());
+    await pumpScreen(tester, ticketRepository: ticketRepository);
+
+    // `buildTestKitchenTicket`'s fixture: channelLabel 'Masa',
+    // receivedAt DateTime(2026, 1, 1, 12) -> '12:00'.
+    expect(find.text('Masa'), findsOneWidget);
+    expect(find.text('12:00'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a wasted work item shows the distinct wasted badge, not the plain status label',
+      (tester) async {
+    final ticketRepository = InMemoryKitchenTicketRepository();
+    await ticketRepository.save(buildTestKitchenTicket());
+    final projectionRepository = InMemoryKitchenProjectionRepository();
+    await projectionRepository.createInitial(buildTestKitchenWorkItem(
+      status: KitchenLineStatus.wasted,
+    ));
+
+    await pumpScreen(
+      tester,
+      ticketRepository: ticketRepository,
+      projectionRepository: projectionRepository,
+    );
+
+    expect(find.text('Fireye Ayrıldı'), findsOneWidget);
+    expect(find.byIcon(Icons.local_fire_department_outlined), findsOneWidget);
+  });
+
+  testWidgets(
+      'the print button reports the print service as unavailable when Firebase is not ready',
+      (tester) async {
+    final ticketRepository = InMemoryKitchenTicketRepository();
+    await ticketRepository.save(buildTestKitchenTicket());
+    await pumpScreen(tester, ticketRepository: ticketRepository);
+
+    await tester.tap(find.byIcon(Icons.print_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Yazdırma servisi şu anda kullanılamıyor.'),
+        findsOneWidget);
   });
 }

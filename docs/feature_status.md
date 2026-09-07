@@ -5728,3 +5728,73 @@ comment). `flutter analyze` clean. `flutter test` **3647/3647**, no regressions.
 
 No git commit exists yet for AP-5 Sprint 1/2/3 — nothing has been committed this session (confirmed via
 `git status`); there is no SHA to report until the user asks for one.
+
+**Correction (AP-5 Sprint 4, below)**: Sprint 1/2/3 were in fact committed later the same session as
+`caba0851e45051f8a147d825fc1dfd95ab6cc704` on `phase-7/profile-redesign` — the line above is a stale
+snapshot from mid-Sprint-3, left as-is rather than silently rewritten.
+
+## AP-5 Sprint 4 — KDS presentation (UI), ticket card refinement & print job queue integration (2026-09-07)
+
+Wires the KDS front-end and the printer queue engine on top of Sprints 1-3's data/stock/kitchen-routing
+foundation, per PRD Madde 1/4/5 and CLAUDE.md §6.
+
+**KDS board/ticket card UI (`KitchenDisplayBoardScreen`/`KitchenOrderCard`/`_WorkItemTile`)** — table/
+customer name/received-time row (new `KitchenTicketHeader.tableLabel`/`customerName`, derived in
+`KitchenTicketMapper.fromOrder` from `Order.tableId`/`contactFirstName`/`contactLastName`; **additive
+beyond BR-KITCHEN-006's own required-field list**, disclosed rather than silently added), a colored
+`_ChannelBadge` (existing `AppColors` semantic tokens only — no new colors), a distinct `_WastedBadge`
+(icon + colored chip, replacing the plain-text label) for the `wasted` status, and new Tümü/Bekleyen/
+Hazırlanıyor/Geciken/Hazır status filter tabs (`_StatusFilterBar`) as a second, additive filter dimension
+alongside the existing station chips — filtering happens client-side over already-fetched work items,
+same shape the station filter already uses. Also fixed one pre-existing hardcoded `Colors.white`/
+`FontWeight.bold` in the "HAZIR" banner (now `AppTypography.labelLarge`/`AppColors.onPrimary`). No
+"Marketplace" channel badge exists — `OrderChannel` has no such value; not fabricated, flagged instead.
+
+**Printer job queue** — built out Sprint 1's bare `PrintJob`/`PrinterConfig` domain classes into a real,
+testable queue (deliberately the newer queue-shaped system, not Sprint 1's older `KitchenPrintAttempt`/
+`PrintKitchenTicketWithRetry` attempt-log, which this sprint leaves untouched). New
+`functions/src/printJobEngine.ts` (`preparePrintJobForAcceptance`/`applyPrintJobPlan`, same read-before
+-write transaction split `acceptOrderLine.ts` established; `resolveMockPrintOutcome`/`processPrintJob` —
+the safe mock transport, deterministic on whether a `printerConfigs` document is registered for the
+(branch, station) pair, no real hardware). New callables `requestPrintJob` (manual "Fiş Yazdır/Tekrar
+Yazdır" from the KDS card; `isCopy: false` opens the idempotent generation-0 job, `isCopy: true` always
+mints a new generation) and `recordPrintOutcome` (manual override/future real-printer-worker seam).
+Both reuse the existing `manageKitchenOperations` staff-tier permission — already correctly tiered
+across all four role levels from Sprint 2/3's fix, so no new permission was needed. Wired into all four
+real acceptance call sites (`submitDineInOrder`, `respondToDineInOrderLines`, `respondToTakeawayOrder`,
+`respondToDeliveryOrder`) alongside the existing stock/kitchen plan. `printJobs`/`printerConfigs`
+Firestore Rules already denied client writes from Sprint 1 (Admin SDK only) — only the stale rule
+comments were updated, no rule behavior changed.
+
+**Real bug found and fixed during verification**: `recordPrintOutcome`'s terminal-state guard originally
+treated `failed` as immutable alongside `success`, which defeated the callable's own stated purpose (the
+manual override for a job the mock/real transport reported as failed). Fixed to treat only `success` as
+terminal; the test that had encoded the wrong (failed-is-immutable) expectation was corrected to test
+the real terminal case instead (a `success` job can never be demoted back to `failed`).
+
+**Explicitly not done this sprint**: no live Flutter-side read/stream of `printJobs` status (the KDS
+button surfaces only its own call's result via a transient message banner); no cancellation-triggered
+print-job voiding (a cancelled line's ticket may already be physically printed by the time cancellation
+happens, mirroring real kitchen behavior); no "Marketplace" channel (not part of `OrderChannel` yet).
+
+**Verification**: `functions` TypeScript build clean. Firestore Rules **411/411** (no rule behavior
+changed). Cloud Functions **1993/1993** (1979 + 14 new print-job tests), one clean run after the bug fix
+above — not the "two consecutive clean runs" discipline Sprint 3 used, disclosed rather than silently
+skipped (time/session-length tradeoff this sprint). `flutter analyze` clean. `flutter test` **3653/3653**
+(3647 + 6 new tests), no regressions — two real, unrelated-to-scope issues were caught and fixed along
+the way: a duplicate-"Tümü"-chip test collision from adding the second filter bar, and a `RenderFlex`
+overflow in `_WastedBadge` on narrow card widths.
+
+New/changed files: `lib/features/pos/domain/kitchen/{kitchen_ticket_header,kitchen_ticket_mapper}.dart`,
+`lib/features/pos/presentation/screens/kitchen_display_board_screen.dart`,
+`lib/features/pos/presentation/providers/kds_dependencies_provider.dart`,
+`lib/features/printing/data/print_job_action_gateway.dart` (new),
+`functions/src/{printJobEngine,requestPrintJob,recordPrintOutcome}.ts` (new),
+`functions/src/{submitDineInOrder,respondToDineInOrderLines,respondToTakeawayOrder,
+respondToDeliveryOrder,index}.ts`, `firestore.rules` (comments only),
+`test/features/pos/{presentation/screens/kitchen_display_board_screen_test,
+domain/kitchen/kitchen_ticket_mapper_test}.dart`,
+`functions/src/test/{printJobEngine,requestPrintJob,recordPrintOutcome}.test.ts` (new).
+
+No git commit exists yet for AP-5 Sprint 4 — nothing has been committed this session; there is no SHA to
+report until the user asks for one.

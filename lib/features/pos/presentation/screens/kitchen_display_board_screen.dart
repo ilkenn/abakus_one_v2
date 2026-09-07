@@ -29,6 +29,8 @@ import '../../domain/kitchen/kitchen_ticket.dart';
 import '../../domain/kitchen/kitchen_ticket_line.dart';
 import '../providers/kds_dependencies_provider.dart';
 import '../providers/kitchen_ticket_dependencies_provider.dart';
+import '../../../printing/data/print_job_action_gateway.dart';
+import '../../../printing/domain/print_job.dart';
 import 'delayed_orders_screen.dart';
 import 'kitchen_completed_history_screen.dart';
 import 'kitchen_order_details_screen.dart';
@@ -41,6 +43,31 @@ const _defaultThresholds = KitchenDelayThresholds(
   warningThreshold: Duration(minutes: 10),
   criticalThreshold: Duration(minutes: 20),
 );
+
+/// AP-5 Sprint 4 — the board's status filter tabs (Tümü/Bekleyen/
+/// Hazırlanıyor/Geciken/Hazır), a second, additive filter dimension on top
+/// of [_StationFilterBar]'s existing station chips — filtering happens
+/// purely client-side over the already-fetched work items, the same way
+/// the station filter already narrows what's visible once a ticket has no
+/// matching items left (`_buildBoard`'s `visibleTickets`).
+enum _KdsStatusFilter { all, pending, preparing, delayed, ready }
+
+const _kdsStatusFilterLabels = {
+  _KdsStatusFilter.all: 'Tümü',
+  _KdsStatusFilter.pending: 'Bekleyen',
+  _KdsStatusFilter.preparing: 'Hazırlanıyor',
+  _KdsStatusFilter.delayed: 'Geciken',
+  _KdsStatusFilter.ready: 'Hazır',
+};
+
+/// `HH:mm`, no `intl` dependency (none exists in `pubspec.yaml` yet) — a
+/// tiny, local, presentation-only helper, not a central formatter, since
+/// this is its only use site.
+String _formatClockTime(DateTime time) {
+  final hour = time.hour.toString().padLeft(2, '0');
+  final minute = time.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
+}
 
 /// The main real-time KDS board — every active [KitchenWorkItem] for a
 /// branch, grouped by [KitchenTicket], with a functional station filter
@@ -76,6 +103,7 @@ class _KitchenDisplayBoardScreenState
   KitchenSynchronizationState? _syncState;
   DateTime? _now;
   KitchenStation? _selectedStation;
+  _KdsStatusFilter _statusFilter = _KdsStatusFilter.all;
   bool _isFullscreen = false;
   String? _message;
   StreamSubscription<List<KitchenTicket>>? _ticketSubscription;
@@ -188,6 +216,72 @@ class _KitchenDisplayBoardScreenState
     await _load();
   }
 
+  /// AP-5 Sprint 4 — applies [_statusFilter] to one ticket's work items.
+  /// `delayed` cuts across [KitchenLineStatus] values (any item currently
+  /// warning/critical per [KitchenDelayState]) rather than being a status
+  /// value itself, so it's computed here instead of matched against
+  /// `item.status` like the other tabs.
+  List<KitchenWorkItem> _filterItemsByStatus(
+    KitchenTicket ticket,
+    List<KitchenWorkItem> items,
+    DateTime now,
+  ) {
+    if (_statusFilter == _KdsStatusFilter.all) return items;
+    return items.where((item) {
+      switch (_statusFilter) {
+        case _KdsStatusFilter.all:
+          return true;
+        case _KdsStatusFilter.pending:
+          return item.status == KitchenLineStatus.queued ||
+              item.status == KitchenLineStatus.acknowledged;
+        case _KdsStatusFilter.preparing:
+          return item.status == KitchenLineStatus.preparing ||
+              item.status == KitchenLineStatus.recalled;
+        case _KdsStatusFilter.ready:
+          return item.status == KitchenLineStatus.ready;
+        case _KdsStatusFilter.delayed:
+          final delay = KitchenDelayState.compute(
+            workItemId: item.id,
+            queuedAt: item.queuedAt,
+            preparingStartedAt: item.preparingStartedAt,
+            readyAt: item.readyAt,
+            now: now,
+            thresholds: _defaultThresholds,
+            channelName: ticket.header.orderTypeLabel,
+          );
+          return delay.isWarning || delay.isCritical;
+      }
+    }).toList();
+  }
+
+  /// AP-5 Sprint 4 — "Fiş Yazdır / Tekrar Yazdır" from a kitchen card.
+  /// Always the shared station (V1 default — see `acceptOrderLine.ts`'s
+  /// `stationForLine`); [isCopy] is true only for an explicit reprint of an
+  /// already-fired ticket, mirroring `KitchenTicket.isCopy`.
+  Future<void> _requestPrint(KitchenTicket ticket, {bool isCopy = false}) async {
+    if (!ref.read(firebaseReadyProvider)) {
+      setState(() => _message = 'Yazdırma servisi şu anda kullanılamıyor.');
+      return;
+    }
+    try {
+      final result =
+          await ref.read(printJobActionGatewayProvider).requestPrintJob(
+                orderId: ticket.orderId.value,
+                stationId: 'shared',
+                isCopy: isCopy,
+              );
+      if (!mounted) return;
+      setState(() {
+        _message = result.status == PrintJobStatus.success
+            ? 'Fiş yazdırıldı.'
+            : 'Fiş yazdırılamadı — yazıcı bağlı değil.';
+      });
+    } on PrintJobActionException catch (e) {
+      if (!mounted) return;
+      setState(() => _message = e.message);
+    }
+  }
+
   /// AP-5 Sprint 1: once Firebase is ready, the real
   /// `transitionKitchenWorkItem` callable (`KitchenActionGateway`) is the
   /// only path a transition takes — `TransitionKitchenWorkItem`'s local
@@ -283,6 +377,11 @@ class _KitchenDisplayBoardScreenState
                         _load();
                       },
                     ),
+                    _StatusFilterBar(
+                      selected: _statusFilter,
+                      onSelected: (filter) =>
+                          setState(() => _statusFilter = filter),
+                    ),
                     if (widget.deviceId != null)
                       _SyncStatusBar(state: _syncState, onResync: _resync),
                     if (_message != null)
@@ -368,8 +467,17 @@ class _KitchenDisplayBoardScreenState
     Map<String, List<KitchenWorkItem>> grouped,
     DateTime now,
   ) {
-    final visibleTickets =
-        tickets.where((t) => (grouped[t.id] ?? const []).isNotEmpty).toList();
+    final filteredByTicket = <String, List<KitchenWorkItem>>{
+      for (final ticket in tickets)
+        ticket.id: _filterItemsByStatus(
+          ticket,
+          grouped[ticket.id] ?? const [],
+          now,
+        ),
+    };
+    final visibleTickets = tickets
+        .where((t) => (filteredByTicket[t.id] ?? const []).isNotEmpty)
+        .toList();
 
     if (visibleTickets.isEmpty) {
       return const EmptyView(
@@ -389,13 +497,18 @@ class _KitchenDisplayBoardScreenState
       itemCount: visibleTickets.length,
       itemBuilder: (context, index) {
         final ticket = visibleTickets[index];
-        final items = grouped[ticket.id] ?? const [];
+        final items = filteredByTicket[ticket.id] ?? const [];
         return KitchenOrderCard(
           ticket: ticket,
           workItems: items,
           now: now,
           thresholds: _defaultThresholds,
           onLineTap: _advanceLine,
+          // Manual print from the KDS card is always a reprint: the
+          // automatic job already fired at order acceptance (Sprint 4's
+          // `requestPrintJobForAcceptance` server-side hook) by the time a
+          // ticket is visible here at all.
+          onPrintRequested: () => _requestPrint(ticket, isCopy: true),
           onOpenDetails: () {
             Navigator.of(context).push(MaterialPageRoute(
               builder: (_) => KitchenOrderDetailsScreen(
@@ -437,6 +550,32 @@ class _StationFilterBar extends StatelessWidget {
         spacing: AppSpacing.xs,
         children: [
           for (final entry in _labels.entries)
+            ChoiceChip(
+              label: Text(entry.value),
+              selected: selected == entry.key,
+              onSelected: (_) => onSelected(entry.key),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusFilterBar extends StatelessWidget {
+  const _StatusFilterBar({required this.selected, required this.onSelected});
+
+  final _KdsStatusFilter selected;
+  final ValueChanged<_KdsStatusFilter> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
+      child: Wrap(
+        spacing: AppSpacing.xs,
+        children: [
+          for (final entry in _kdsStatusFilterLabels.entries)
             ChoiceChip(
               label: Text(entry.value),
               selected: selected == entry.key,
@@ -495,6 +634,7 @@ class KitchenOrderCard extends StatelessWidget {
     required this.thresholds,
     required this.onLineTap,
     required this.onOpenDetails,
+    required this.onPrintRequested,
   });
 
   final KitchenTicket ticket;
@@ -503,6 +643,7 @@ class KitchenOrderCard extends StatelessWidget {
   final KitchenDelayThresholds thresholds;
   final void Function(KitchenWorkItem item, KitchenLineStatus to) onLineTap;
   final VoidCallback onOpenDetails;
+  final VoidCallback onPrintRequested;
 
   static KitchenLineStatus? nextStatus(KitchenLineStatus current) {
     switch (current) {
@@ -566,24 +707,52 @@ class KitchenOrderCard extends StatelessWidget {
                       style: AppTypography.bodyLarge,
                       overflow: TextOverflow.ellipsis),
                 ),
-                Text(
-                  '${worstDelay?.totalDuration.inMinutes ?? 0}dk',
-                  style: AppTypography.bodySmall.copyWith(
-                    color: isCritical
-                        ? AppColors.error
-                        : isWarning
-                            ? AppColors.warning
-                            : AppColors.textSecondary,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${worstDelay?.totalDuration.inMinutes ?? 0}dk',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: isCritical
+                            ? AppColors.error
+                            : isWarning
+                                ? AppColors.warning
+                                : AppColors.textSecondary,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.print_outlined, size: 18),
+                      tooltip: 'Fiş Yazdır / Tekrar Yazdır',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: onPrintRequested,
+                    ),
+                  ],
                 ),
               ],
             ),
-            Text(
-              ticket.header.channelLabel,
-              style: AppTypography.bodySmall
-                  .copyWith(color: AppColors.textSecondary),
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+              child: Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _ChannelBadge(label: ticket.header.channelLabel),
+                  if (ticket.header.tableLabel != null)
+                    Text(ticket.header.tableLabel!,
+                        style: AppTypography.bodySmall
+                            .copyWith(color: AppColors.textPrimary)),
+                  if (ticket.header.customerName != null)
+                    Text(ticket.header.customerName!,
+                        style: AppTypography.bodySmall
+                            .copyWith(color: AppColors.textPrimary)),
+                  Text(_formatClockTime(ticket.header.receivedAt),
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.textSecondary)),
+                ],
+              ),
             ),
-            const SizedBox(height: AppSpacing.sm),
             Expanded(
               child: ListView(
                 children: [
@@ -615,12 +784,83 @@ class KitchenOrderCard extends StatelessWidget {
                   borderRadius: AppRadius.kSmall,
                 ),
                 alignment: Alignment.center,
-                child: const Text('HAZIR',
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold)),
+                child: Text('HAZIR',
+                    style: AppTypography.labelLarge
+                        .copyWith(color: AppColors.onPrimary)),
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// AP-5 Sprint 4 — a colored channel-type chip (QR/Kasiyer/Gel-Al/Teslimat/
+/// Rezervasyon), replacing the plain-text channel label. Colors come
+/// entirely from the existing `AppColors` semantic palette (no new tokens
+/// added — see this sprint's own §6 mandate); an unrecognized label (e.g.
+/// a future marketplace channel not yet modeled in `OrderChannel`) falls
+/// back to [AppColors.textSecondary] rather than guessing.
+class _ChannelBadge extends StatelessWidget {
+  const _ChannelBadge({required this.label});
+
+  final String label;
+
+  static const _colorsByLabel = {
+    'Masa (QR)': AppColors.primary,
+    'Masa': AppColors.primaryLight,
+    'Gel-Al': AppColors.accent,
+    'Teslimat': AppColors.info,
+    'Rezervasyon Ön Sipariş': AppColors.secondary,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _colorsByLabel[label] ?? AppColors.textSecondary;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+      decoration: BoxDecoration(color: color, borderRadius: AppRadius.kPill),
+      child: Text(
+        label,
+        style: AppTypography.labelMedium.copyWith(
+          color: AppColors.onPrimary,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+/// AP-5 Sprint 4 — an explicit visual badge for the terminal `wasted`
+/// status (distinct from every other status, which stays a plain text
+/// label per this sprint's targeted ask), so a wasted line is unmistakable
+/// at a glance rather than reading like any other status word.
+class _WastedBadge extends StatelessWidget {
+  const _WastedBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+      decoration: const BoxDecoration(
+        color: AppColors.error,
+        borderRadius: AppRadius.kSmall,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.local_fire_department_outlined,
+              size: 14, color: AppColors.onPrimary),
+          const SizedBox(width: AppSpacing.xs),
+          Flexible(
+            child: Text('Fireye Ayrıldı',
+                overflow: TextOverflow.ellipsis,
+                style: AppTypography.bodySmall
+                    .copyWith(color: AppColors.onPrimary)),
+          ),
+        ],
       ),
     );
   }
@@ -682,11 +922,15 @@ class _WorkItemTile extends StatelessWidget {
                     Text(line.note,
                         style: AppTypography.bodySmall
                             .copyWith(color: AppColors.warning)),
-                  Text(
-                    _statusLabels[item.status] ?? item.status.name,
-                    style: AppTypography.bodySmall
-                        .copyWith(color: AppColors.textSecondary),
-                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  if (item.status == KitchenLineStatus.wasted)
+                    const _WastedBadge()
+                  else
+                    Text(
+                      _statusLabels[item.status] ?? item.status.name,
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.textSecondary),
+                    ),
                 ],
               ),
             ),

@@ -11,6 +11,7 @@ import {
   writeTakeawayOrderStatusChangeAuditEvent,
 } from "./takeawayOrderLifecycle";
 import { prepareKitchenWorkAndStockConsumption, applyKitchenWorkAndStockConsumption } from "./acceptOrderLine";
+import { preparePrintJobForAcceptance, applyPrintJobPlan } from "./printJobEngine";
 
 /**
  * `respondToTakeawayOrder` — Boncuk Loyalty Program P4-C-C-B (2026-08-22).
@@ -143,6 +144,20 @@ export const respondToTakeawayOrder = onCall(
               now,
             })
           : null;
+      // AP-5 Sprint 4 — one print job per order, opened at the same read
+      // -phase point as the stock plan above.
+      const printPlan =
+        decision === "confirm"
+          ? await preparePrintJobForAcceptance({
+              tx,
+              db,
+              organizationId,
+              branchId,
+              orderId,
+              stationId: "shared",
+              now,
+            })
+          : null;
 
       applyTakeawayLifecycleTransition({
         tx,
@@ -172,6 +187,7 @@ export const respondToTakeawayOrder = onCall(
       });
 
       applyKitchenWorkAndStockConsumption(tx, db, stockPlan);
+      applyPrintJobPlan(tx, db, printPlan);
 
       return { orderId, status: targetStatus, duplicate: false };
     });

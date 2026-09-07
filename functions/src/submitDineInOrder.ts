@@ -67,6 +67,7 @@ import { isCampaignScheduleCurrentlyOpen, DEFAULT_ORGANIZATION_TIMEZONE } from "
 import { resolveCampaignDiscount, type CampaignPriceableLine } from "./campaignPricing";
 import { reserveCampaignUsage } from "./campaignUsage";
 import { prepareKitchenWorkAndStockConsumption, applyKitchenWorkAndStockConsumption } from "./acceptOrderLine";
+import { preparePrintJobForAcceptance, applyPrintJobPlan } from "./printJobEngine";
 
 /**
  * `submitDineInOrder` — Boncuk Loyalty Program P7-D.1 (2026-08-24).
@@ -1149,6 +1150,22 @@ export const submitDineInOrder = onCall(
             })
           : null;
 
+      // AP-5 Sprint 4 — one print job per order, opened at the same read
+      // -phase point as the kitchen/stock plan above; idempotent via
+      // `preparePrintJobForAcceptance`'s own deterministic-id check.
+      const printPlan =
+        lineStatus === "accepted"
+          ? await preparePrintJobForAcceptance({
+              tx,
+              db,
+              organizationId,
+              branchId,
+              orderId,
+              stationId: "shared",
+              now: Timestamp.now(),
+            })
+          : null;
+
       // ---------------------------------------------------------------
       // Write phase — every tx.get() this transaction will ever perform
       // has already happened above.
@@ -1283,6 +1300,7 @@ export const submitDineInOrder = onCall(
       // kitchen enqueue + stock/packaging consumption commit in this SAME
       // transaction, not a later step that may never come.
       applyKitchenWorkAndStockConsumption(tx, db, stockPlan);
+      applyPrintJobPlan(tx, db, printPlan);
 
       return { orderId, orderNumber, duplicate: false, subAccountId: resolvedSubAccountId, tableSessionId: resolvedTableSessionId };
     });

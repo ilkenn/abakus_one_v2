@@ -34,6 +34,9 @@ import 'package:flutter_test/flutter_test.dart';
 Order _buildOrder({
   required OrderChannel channel,
   required OrderStatus status,
+  String? tableId,
+  String? contactFirstName,
+  String? contactLastName,
 }) {
   final line = OrderLine.create(
     productId: 'p1',
@@ -51,6 +54,9 @@ Order _buildOrder({
     restaurantId: 'restaurant-1',
     customerId: 'customer-1',
     reservationContextId: 'reservation-1',
+    tableId: tableId,
+    contactFirstName: contactFirstName,
+    contactLastName: contactLastName,
     lines: [line],
     pricing:
         PriceCalculator.calculate(lines: [line], currency: Currency.tryLira),
@@ -82,6 +88,54 @@ void main() {
       expect(ticket.orderId, order.id);
       expect(ticket.lines, hasLength(1));
       expect(ticket.lines.single.productName, 'Mexifit Bowl');
+    });
+  });
+
+  // AP-5 Sprint 4 — `KitchenTicketHeader.tableLabel`/`customerName`,
+  // additive beyond BR-KITCHEN-006's own required-field list, derived
+  // directly from the already-available `Order.tableId`/
+  // `contactFirstName`/`contactLastName` (no mapper signature change).
+  group('KitchenTicketMapper.fromOrder — table/customer header fields', () {
+    test('derives tableLabel and customerName when the order carries both',
+        () {
+      final order = _buildOrder(
+        channel: OrderChannel.dineInQr,
+        status: OrderStatus.confirmed,
+        tableId: 'table-5',
+        contactFirstName: 'Ada',
+        contactLastName: 'Yılmaz',
+      );
+
+      final ticket = KitchenTicketMapper.fromOrder(
+        ticketId: 'ticket-2',
+        order: order,
+        type: KitchenTicketType.initial,
+        restaurantName: 'Test Restaurant',
+        branchName: 'Merkez Şube',
+        firedAt: DateTime(2026, 7, 28, 12, 0),
+      );
+
+      expect(ticket.header.tableLabel, 'Masa table-5');
+      expect(ticket.header.customerName, 'Ada Yılmaz');
+    });
+
+    test('leaves both null when the order carries neither', () {
+      final order = _buildOrder(
+        channel: OrderChannel.takeaway,
+        status: OrderStatus.confirmed,
+      );
+
+      final ticket = KitchenTicketMapper.fromOrder(
+        ticketId: 'ticket-3',
+        order: order,
+        type: KitchenTicketType.initial,
+        restaurantName: 'Test Restaurant',
+        branchName: 'Merkez Şube',
+        firedAt: DateTime(2026, 7, 28, 12, 0),
+      );
+
+      expect(ticket.header.tableLabel, isNull);
+      expect(ticket.header.customerName, isNull);
     });
   });
 }
