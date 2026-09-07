@@ -5216,6 +5216,8 @@ const ap5OrgScopedCollections = [
   'productPackagingLinks',
   'ingredients',
   'inventoryItems',
+  // AP-5 Sprint 5
+  'standardIngredientCosts',
 ];
 
 test('AP-5 branch-scoped collections: same-branch staff can read, no client (staff or otherwise) can write', async () => {

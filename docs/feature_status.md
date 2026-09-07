@@ -5798,3 +5798,85 @@ domain/kitchen/kitchen_ticket_mapper_test}.dart`,
 
 No git commit exists yet for AP-5 Sprint 4 — nothing has been committed this session; there is no SHA to
 report until the user asks for one.
+
+**Correction (AP-5 Sprint 5, below)**: Sprint 4 was in fact committed and pushed later the same
+session as `d1a71b1` on `phase-7/profile-redesign` (followed by a separate `8948a3f` commit for the
+AP-4 PAX/TEB payment-adapter stub) — the line above is a stale snapshot from before either commit,
+left as-is rather than silently rewritten.
+
+## AP-5 Sprint 5 — Low stock alerts, out-of-stock guard & cost snapshot (2026-09-07)
+
+Closes three remaining PRD items on top of Sprints 1-4's KDS/stock/printer foundation: manager-facing
+low/out-of-stock status, a guard that actually distinguishes "already out of stock" from "this order's
+own quantity exceeds what's left," and a per-consumption cost snapshot for audit/profitability
+reporting.
+
+**Research findings that changed scope from the request's literal wording** (read from source, not
+assumed; plan approved before any code was written): the request's `minStockLevel` is actually
+`InventoryItem.reorderThreshold`; a `StockHealthStatus` concept didn't exist anywhere and was built
+fresh; the "prevent kitchen enqueue for an out-of-stock product" guard the request describes was
+**already implemented and tested in Sprint 2** (`acceptOrderLine.ts`'s `forbid`-policy negative-push
+check already throws before any write, including `kitchenWorkItems`) — what was genuinely missing was
+a *distinct* check/message for "this item was already at/below zero before this order," not a new
+blocking mechanism; and the cost-snapshot feature needed a **new server-side data source from scratch**
+— the entire client-side `lib/features/costing/` feature (`StandardIngredientCost`, `StandardCostResolver`
+/`WeightedAverageCostResolver`/`LatestPurchaseCostResolver`) is real and tested but 100% in-memory, with
+zero Firestore collection or Cloud Function (confirmed by an exhaustive `functions/src` grep).
+
+**`StockHealthStatus`** (new, `lib/features/inventory/domain/stock_health_status.dart`) —
+`healthy`/`lowStock`/`outOfStock`, a pure computation from `BranchStock.quantityOnHand` vs.
+`InventoryItem.reorderThreshold`/`negativeStockPolicy`, mirroring `KitchenDelayState.compute`'s own
+"pure computed value object" shape. No `BranchStock` record → `healthy` (nothing tracked yet); on-hand
+`<= 0` → `outOfStock` (covers exact zero and, under `warn`/`allow`, negative); at/below
+`reorderThreshold` (when configured — `null` never fabricates a default) → `lowStock`. Wired into
+`InventoryScreen`: a `_StockHealthBadge` chip (existing `AppColors`/`AppTypography`/`AppSpacing`/
+`AppRadius` tokens only) plus a Tümü/Düşük Stok/Tükendi status filter bar, mirroring the KDS board's
+own `_StatusFilterBar` precedent from Sprint 4 — client-side filtering over the already-loaded item
+list, no repository change.
+
+**Out-of-stock pre-check** (`acceptOrderLine.ts`'s `prepareKitchenWorkAndStockConsumption`) — before
+the existing "this order's own quantity would push it negative" loop, a new check: for each distinct
+`inventoryItemId` (ingredient or packaging) whose *pre-order* balance is already `<= 0` under a
+`forbid` policy, throws immediately with a distinct message ("zaten stokta yok / out of stock") rather
+than falling through to the generic "insufficient stock" message. Same `<= 0` rule as the Dart-side
+`StockHealthStatus.outOfStock` computation, kept deliberately identical in meaning across languages —
+the same status-parity precedent `KitchenLineStatus` already established, not literal code sharing.
+`warn`/`allow` policies are completely unaffected (no new blocking behavior for those tiers) and the
+existing "insufficient stock" message is unchanged for items that had *some* stock left.
+
+**Cost snapshot on consumption** — new `standardIngredientCosts` Firestore collection (doc id
+`cost-{ingredientId}`, mirrors `recipeIngredientLinks`' exact shape/rules/writer-callable pattern from
+Sprint 2: org-scoped catalog collection, `isOrgMember`-only read, Cloud-Function-only write) plus a new
+`setStandardIngredientCost` callable (manager-tier, reuses the existing `manageRecipes` permission — no
+new permission needed). `prepareKitchenWorkAndStockConsumption` now also reads this collection (via
+`InventoryItem.ingredientId` as the bridge from `inventoryItemId` to `ingredientId`) and writes a
+`costSnapshotAmountMinorUnits` field onto each ingredient-kind `stockMovements` doc, computed with the
+exact same integer multiply-then-divide formula as the Dart `CostAggregator.aggregate` (`unitCost *
+quantitySmallestUnits / smallestUnitsPerWhole`, mirrored via a small built-in-unit lookup table
+server-side — never floating point). **Omitted, never a fabricated zero**, when no cost record exists
+yet or its unit doesn't exactly match the consumed unit — cost data is enrichment, never a gate; it
+never blocks order acceptance. Packaging lines never get a cost snapshot (out of scope per the
+request's own wording — ingredient/COGS only).
+
+**Explicitly not done this sprint**: `ConsumeStockForOrder` (the disconnected client-side Dart stock
+-consumption primitive) remains untouched and unwired — same disclosed gap as before, not newly found.
+No UI for setting standard ingredient costs (callable-only, matching `setRecipeIngredientLink`'s own
+precedent). No custom/tenant-defined `InventoryUnit` support in the server-side cost formula — an
+unrecognized `unitCode` simply omits the cost snapshot rather than guessing a conversion ratio.
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Firestore Rules **411/411** (new
+collection folded into the existing `ap5OrgScopedCollections` parameterized loop, so the test *count*
+is unchanged while coverage grew). Cloud Functions **2005/2005** (1993 + 12 new), one clean run, no
+failures. `flutter analyze` clean. `flutter test` **3666/3666** (3656 + 10 new), no regressions.
+
+New/changed files: `lib/features/inventory/domain/stock_health_status.dart` (new),
+`lib/features/inventory/presentation/screens/inventory_screen.dart`,
+`functions/src/acceptOrderLine.ts`, `functions/src/setStandardIngredientCost.ts` (new),
+`functions/src/index.ts`, `firestore.rules`, `firestore-tests/rules.test.js`,
+`test/features/inventory/domain/stock_health_status_test.dart` (new),
+`test/features/inventory/presentation/screens/inventory_screen_test.dart` (new),
+`functions/src/test/acceptOrderLine.test.ts`, `functions/src/test/setStandardIngredientCost.test.ts`
+(new).
+
+No git commit exists yet for AP-5 Sprint 5 — nothing has been committed this session; there is no SHA
+to report until the user asks for one.

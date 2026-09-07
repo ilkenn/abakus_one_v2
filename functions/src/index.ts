@@ -228,6 +228,11 @@ export { transitionKitchenWorkItem } from "./transitionKitchenWorkItem";
 export { setRecipeIngredientLink } from "./setRecipeIngredientLink";
 export { setProductPackagingLink } from "./setProductPackagingLink";
 
+// AP-5 Sprint 5 — the real writer for `standardIngredientCosts`, closing
+// the "costing feature is 100% client-side, no server-readable unit cost
+// exists" gap `acceptOrderLine.ts`'s cost-snapshot step needs.
+export { setStandardIngredientCost } from "./setStandardIngredientCost";
+
 // AP-5 Sprint 3 — physical stock count submission; approval/rejection is
 // handled through the existing `respondToApprovalRequest` (registered in
 // remoteApproval.ts), not a separate callable.

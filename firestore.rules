@@ -1395,6 +1395,15 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // AP-5 Sprint 5 — same organization-scoped catalog shape as
+    // `recipeIngredientLinks`/`productPackagingLinks` above: no
+    // `branchId` field, `isOrgMember`-only read.
+    match /standardIngredientCosts/{costId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      // setStandardIngredientCost callable only (manager-tier).
+      allow write: if false;
+    }
+
     match /ingredients/{ingredientId} {
       allow read: if isOrgMember(resource.data.organizationId);
       allow write: if false; // Cloud Function only — no writer this sprint.

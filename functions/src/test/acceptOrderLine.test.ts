@@ -77,10 +77,24 @@ async function seedPackagingLink(
     });
 }
 
-async function seedInventoryItem(inventoryItemId: string, negativeStockPolicy: "forbid" | "warn" | "allow") {
+async function seedInventoryItem(
+  inventoryItemId: string,
+  negativeStockPolicy: "forbid" | "warn" | "allow",
+  ingredientId?: string,
+) {
   await db().collection("inventoryItems").doc(inventoryItemId).set({
     organizationId: "org-1",
     negativeStockPolicy,
+    ...(ingredientId ? { ingredientId } : {}),
+  });
+}
+
+async function seedStandardIngredientCost(ingredientId: string, unitCostAmountMinorUnits: number, unitCode: string) {
+  await db().collection("standardIngredientCosts").doc(`cost-${ingredientId}`).set({
+    organizationId: "org-1",
+    ingredientId,
+    unitCostAmountMinorUnits,
+    unitCode,
   });
 }
 
@@ -338,4 +352,213 @@ test("enqueueKitchenWorkAndConsumeStock: the same ingredient consumed by two lin
 
   const stock = await db().collection("branchStock").doc(`${branchId}_${ingredientId}`).get();
   assert.strictEqual(stock.data()?.quantityOnHand, 15); // unchanged, whole transaction rejected
+});
+
+// =========================================================================
+// AP-5 Sprint 5 — out-of-stock pre-check
+// =========================================================================
+
+test("enqueueKitchenWorkAndConsumeStock: an ingredient already at zero with 'forbid' policy is rejected with the distinct out-of-stock message, no partial writes", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const ingredientId = nextId("item");
+  const orderLineId = `${orderId}-line-0`;
+
+  await seedInventoryItem(ingredientId, "forbid");
+  await seedBranchStock(branchId, ingredientId, 0); // already exhausted, before this order
+  await seedRecipeLink(productId, [{ inventoryItemId: ingredientId, quantitySmallestUnits: 10, unitCode: "g" }]);
+
+  await assert.rejects(
+    runAccept({
+      branchId,
+      orderId,
+      channel: "dineInQr",
+      acceptedLines: [{ orderLineId, productId, quantity: 1 }],
+    }),
+    /failed-precondition|zaten stokta yok/,
+  );
+
+  const stock = await db().collection("branchStock").doc(`${branchId}_${ingredientId}`).get();
+  assert.strictEqual(stock.data()?.quantityOnHand, 0); // unchanged
+
+  const workItem = await db().collection("kitchenWorkItems").doc(`kwi-${orderLineId}`).get();
+  assert.strictEqual(workItem.exists, false);
+
+  const movements = await db().collection("stockMovements").where("relatedOrderId", "==", orderId).get();
+  assert.strictEqual(movements.size, 0);
+});
+
+test("enqueueKitchenWorkAndConsumeStock: an ingredient already negative (allowed by a prior 'warn') with 'forbid' policy is rejected the same way", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const ingredientId = nextId("item");
+  const orderLineId = `${orderId}-line-0`;
+
+  // forbid now, even though the balance was allowed to go negative earlier
+  // under a since-changed policy — the pre-check only cares about the
+  // CURRENT balance and CURRENT policy, not history.
+  await seedInventoryItem(ingredientId, "forbid");
+  await seedBranchStock(branchId, ingredientId, -5);
+  await seedRecipeLink(productId, [{ inventoryItemId: ingredientId, quantitySmallestUnits: 10, unitCode: "g" }]);
+
+  await assert.rejects(
+    runAccept({
+      branchId,
+      orderId,
+      channel: "dineInQr",
+      acceptedLines: [{ orderLineId, productId, quantity: 1 }],
+    }),
+    /failed-precondition|zaten stokta yok/,
+  );
+});
+
+test("enqueueKitchenWorkAndConsumeStock: an ingredient already at zero with 'warn'/'allow' policy is NOT newly blocked — proceeds exactly as before this sprint", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const ingredientId = nextId("item");
+  const orderLineId = `${orderId}-line-0`;
+
+  await seedInventoryItem(ingredientId, "warn");
+  await seedBranchStock(branchId, ingredientId, 0);
+  await seedRecipeLink(productId, [{ inventoryItemId: ingredientId, quantitySmallestUnits: 10, unitCode: "g" }]);
+
+  await runAccept({
+    branchId,
+    orderId,
+    channel: "dineInQr",
+    acceptedLines: [{ orderLineId, productId, quantity: 1 }],
+  });
+
+  const stock = await db().collection("branchStock").doc(`${branchId}_${ingredientId}`).get();
+  assert.strictEqual(stock.data()?.quantityOnHand, -10);
+  assert.strictEqual(stock.data()?.isNegativeStockWarning, true);
+
+  const workItem = await db().collection("kitchenWorkItems").doc(`kwi-${orderLineId}`).get();
+  assert.strictEqual(workItem.exists, true);
+});
+
+test("enqueueKitchenWorkAndConsumeStock: an ingredient with some stock left (not already out) still uses the existing 'insufficient stock' message, unchanged", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const ingredientId = nextId("item");
+  const orderLineId = `${orderId}-line-0`;
+
+  await seedInventoryItem(ingredientId, "forbid");
+  await seedBranchStock(branchId, ingredientId, 5); // some stock, just not enough for this order
+  await seedRecipeLink(productId, [{ inventoryItemId: ingredientId, quantitySmallestUnits: 10, unitCode: "g" }]);
+
+  await assert.rejects(
+    runAccept({
+      branchId,
+      orderId,
+      channel: "dineInQr",
+      acceptedLines: [{ orderLineId, productId, quantity: 1 }],
+    }),
+    /Insufficient stock/,
+  );
+});
+
+// =========================================================================
+// AP-5 Sprint 5 — cost snapshot on consumption
+// =========================================================================
+
+test("enqueueKitchenWorkAndConsumeStock: a stockMovement gets the correct costSnapshotAmountMinorUnits when a standardIngredientCosts record exists", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const ingredientId = nextId("item");
+  const orderLineId = `${orderId}-line-0`;
+
+  await seedInventoryItem(ingredientId, "allow", ingredientId); // InventoryItem.ingredientId == ingredientId here
+  await seedBranchStock(branchId, ingredientId, 1000);
+  await seedRecipeLink(productId, [{ inventoryItemId: ingredientId, quantitySmallestUnits: 100, unitCode: "g" }]);
+  // 500 minor units per 1000g (per whole kg-equivalent smallest-units-per-whole is 1 for "g")
+  await seedStandardIngredientCost(ingredientId, 500, "g");
+
+  await runAccept({
+    branchId,
+    orderId,
+    channel: "dineInQr",
+    acceptedLines: [{ orderLineId, productId, quantity: 2 }], // 2 * 100g = 200g consumed
+  });
+
+  const movements = await db().collection("stockMovements").where("relatedOrderId", "==", orderId).get();
+  assert.strictEqual(movements.size, 1);
+  // unitCost 500 minor units per 1 gram (smallestUnitsPerWhole=1 for "g") * 200g = 100000
+  assert.strictEqual(movements.docs[0].data().costSnapshotAmountMinorUnits, 100000);
+});
+
+test("enqueueKitchenWorkAndConsumeStock: costSnapshotAmountMinorUnits is omitted (never a fabricated zero) when no standardIngredientCosts record exists", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const ingredientId = nextId("item");
+  const orderLineId = `${orderId}-line-0`;
+
+  await seedInventoryItem(ingredientId, "allow", ingredientId);
+  await seedBranchStock(branchId, ingredientId, 1000);
+  await seedRecipeLink(productId, [{ inventoryItemId: ingredientId, quantitySmallestUnits: 100, unitCode: "g" }]);
+  // deliberately no seedStandardIngredientCost call
+
+  await runAccept({
+    branchId,
+    orderId,
+    channel: "dineInQr",
+    acceptedLines: [{ orderLineId, productId, quantity: 1 }],
+  });
+
+  const movements = await db().collection("stockMovements").where("relatedOrderId", "==", orderId).get();
+  assert.strictEqual(movements.size, 1);
+  assert.strictEqual(movements.docs[0].data().costSnapshotAmountMinorUnits, undefined);
+});
+
+test("enqueueKitchenWorkAndConsumeStock: costSnapshotAmountMinorUnits is omitted when the cost record's unit doesn't match the consumed unit exactly", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const ingredientId = nextId("item");
+  const orderLineId = `${orderId}-line-0`;
+
+  await seedInventoryItem(ingredientId, "allow", ingredientId);
+  await seedBranchStock(branchId, ingredientId, 5000);
+  await seedRecipeLink(productId, [{ inventoryItemId: ingredientId, quantitySmallestUnits: 100, unitCode: "g" }]);
+  await seedStandardIngredientCost(ingredientId, 50, "kg"); // mismatched unit vs. the recipe's "g"
+
+  await runAccept({
+    branchId,
+    orderId,
+    channel: "dineInQr",
+    acceptedLines: [{ orderLineId, productId, quantity: 1 }],
+  });
+
+  const movements = await db().collection("stockMovements").where("relatedOrderId", "==", orderId).get();
+  assert.strictEqual(movements.docs[0].data().costSnapshotAmountMinorUnits, undefined);
+});
+
+test("enqueueKitchenWorkAndConsumeStock: costSnapshotAmountMinorUnits is never written for a packaging line", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const boxId = nextId("packaging-item");
+  const orderLineId = `${orderId}-line-0`;
+
+  await seedInventoryItem(boxId, "allow", boxId);
+  await seedBranchStock(branchId, boxId, 50);
+  await seedPackagingLink(productId, "dineInQr", boxId, 1);
+  await seedStandardIngredientCost(boxId, 200, "piece"); // even if a cost record happens to exist
+
+  await runAccept({
+    branchId,
+    orderId,
+    channel: "dineInQr",
+    acceptedLines: [{ orderLineId, productId, quantity: 1 }],
+  });
+
+  const movements = await db().collection("stockMovements").where("relatedOrderId", "==", orderId).get();
+  assert.strictEqual(movements.size, 1);
+  assert.strictEqual(movements.docs[0].data().costSnapshotAmountMinorUnits, undefined);
 });
