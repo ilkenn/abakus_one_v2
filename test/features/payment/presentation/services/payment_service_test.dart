@@ -40,6 +40,22 @@ void main() {
       expect(result.errorMessage, contains('manuel'));
     });
 
+    test(
+        'AP-4: routes creditCard to the PAX/TEB physical terminal adapter (not configured today)',
+        () async {
+      final service = PaymentService();
+      final request = PaymentRequest(
+        orderId: 'order-1',
+        amount: Money.fromWhole(100, Currency.tryLira),
+        method:
+            PaymentMethodSnapshot.capture(PaymentMethodSeedData.creditCard),
+      );
+
+      final result = await service.executePayment(request);
+
+      expect(result.status, PaymentStatus.notConfigured);
+    });
+
     test('routes every meal-card method to its own same-named provider adapter',
         () async {
       final service = PaymentService();

@@ -4,6 +4,7 @@ import '../../data/adapters/iyzico_adapter.dart';
 import '../../data/adapters/metropol_card_adapter.dart';
 import '../../data/adapters/multinet_adapter.dart';
 import '../../data/adapters/ode_al_adapter.dart';
+import '../../data/adapters/pax_teb_adapter.dart';
 import '../../data/adapters/payment_provider_adapter.dart';
 import '../../data/adapters/pluxee_adapter.dart';
 import '../../data/adapters/setcard_adapter.dart';
@@ -39,6 +40,7 @@ class PaymentService {
           PaymentProviderId.setcard: SetcardPaymentAdapter(),
           PaymentProviderId.edenred: EdenredPaymentAdapter(),
           PaymentProviderId.metropolCard: MetropolCardPaymentAdapter(),
+          PaymentProviderId.paxTeb: PaxTebTerminalAdapter(),
         };
 
   Future<PaymentResult> executePayment(PaymentRequest request) async {

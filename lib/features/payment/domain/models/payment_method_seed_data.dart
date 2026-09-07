@@ -7,10 +7,20 @@ import 'payment_provider_id.dart';
 /// Panel is meant to add/edit/reorder/disable entries without any code
 /// change; this list is only where the *initial* set comes from.
 ///
-/// **Provider mapping is deliberately conservative**: `creditCard` has no
-/// [PaymentMethod.providerId] here — which processor (iyzico/Stripe/Adyen/
-/// Ödeal) handles card payments is a business decision this sprint doesn't
-/// make, not an oversight. Each meal-card method maps 1:1 to its own
+/// **Provider mapping is deliberately conservative**, with one exception:
+/// `creditCard` originally had no [PaymentMethod.providerId] here — which
+/// processor (iyzico/Stripe/Adyen/Ödeal) handles card payments was an
+/// explicit business decision deferred, not an oversight (AP-3-era note,
+/// preserved below for history). **AP-4 hardware-unblocking sprint**
+/// resolves that specific deferral: this restaurant's card tender is a
+/// physical, card-present PAX A910SF terminal (TEB POS), not an online
+/// processor — `creditCard.providerId` now points at
+/// [PaymentProviderId.paxTeb]. [PaxTebTerminalAdapter] is still a stub
+/// (`docs/payment_cash_fiscal_architecture.md` §14/§21's
+/// `CONTROLLED_EXTERNAL_DEPENDENCY` gate), so this changes *routing*, not
+/// *capability* — a card split still cannot complete a
+/// `PaymentSession` today (`CompletePaymentSession`'s own doc comment).
+/// Each meal-card method maps 1:1 to its own
 /// same-named [PaymentProviderId] (an unambiguous pairing — Pluxee the
 /// method is processed by Pluxee the provider). `cash`/`bankTransfer`/
 /// `giftVoucher` never carry a provider at all — manually recorded
@@ -44,6 +54,7 @@ abstract final class PaymentMethodSeedData {
     requiresApproval: false,
     sortOrder: 1,
     reportingCategory: PaymentMethodReportingCategory.card,
+    providerId: PaymentProviderId.paxTeb,
   );
 
   static const PaymentMethod pluxee = PaymentMethod(

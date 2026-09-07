@@ -19,4 +19,17 @@ enum PaymentProviderId {
   setcard,
   edenred,
   metropolCard,
+
+  /// AP-4 hardware-unblocking sprint — the physical, card-present PAX
+  /// A910SF terminal running the TEB POS Android application, triggered
+  /// via an on-device Intent (distinct in kind from the other ids above,
+  /// which are all online/API-based processors). **Still a stub, like
+  /// every other id here**: `docs/payment_cash_fiscal_architecture.md`
+  /// §14/§21 locks the exact PAX/TEB Intent contract (action, package,
+  /// extras, result schema) as a `CONTROLLED_EXTERNAL_DEPENDENCY` —
+  /// "no vendor protocol detail is written without official vendor
+  /// documentation" — so [PaxTebTerminalAdapter] fabricates none of it and
+  /// returns `PaymentStatus.notConfigured` until real PAX/TEB integration
+  /// documentation is obtained.
+  paxTeb,
 }

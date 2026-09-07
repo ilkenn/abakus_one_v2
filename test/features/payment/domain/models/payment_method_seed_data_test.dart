@@ -38,9 +38,12 @@ void main() {
     });
 
     test(
-        'credit card has no provider pinned in seed data (business decision deferred)',
+        'credit card routes to the PAX/TEB physical terminal provider (AP-4 hardware-unblocking sprint resolved the prior deferral)',
         () {
-      expect(PaymentMethodSeedData.creditCard.providerId, isNull);
+      expect(
+        PaymentMethodSeedData.creditCard.providerId?.name,
+        'paxTeb',
+      );
     });
 
     test('active returns only isActive methods (all 9 seeds today)', () {

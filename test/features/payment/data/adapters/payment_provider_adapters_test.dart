@@ -4,6 +4,7 @@ import 'package:abakus_one_v2/features/payment/data/adapters/iyzico_adapter.dart
 import 'package:abakus_one_v2/features/payment/data/adapters/metropol_card_adapter.dart';
 import 'package:abakus_one_v2/features/payment/data/adapters/multinet_adapter.dart';
 import 'package:abakus_one_v2/features/payment/data/adapters/ode_al_adapter.dart';
+import 'package:abakus_one_v2/features/payment/data/adapters/pax_teb_adapter.dart';
 import 'package:abakus_one_v2/features/payment/data/adapters/payment_provider_adapter.dart';
 import 'package:abakus_one_v2/features/payment/data/adapters/pluxee_adapter.dart';
 import 'package:abakus_one_v2/features/payment/data/adapters/setcard_adapter.dart';
@@ -27,6 +28,7 @@ void main() {
     'setcard': SetcardPaymentAdapter(),
     'edenred': EdenredPaymentAdapter(),
     'metropolCard': MetropolCardPaymentAdapter(),
+    'paxTeb': PaxTebTerminalAdapter(),
   };
 
   group('Every PaymentProviderAdapter — Money-based, not configured', () {
