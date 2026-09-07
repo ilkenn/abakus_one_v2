@@ -84,7 +84,7 @@ class EnqueueKitchenWorkItems {
         revision: 1,
         idempotencyKey: idempotencyKey,
       );
-      await _projectionRepository.save(item);
+      await _projectionRepository.createInitial(item);
       await _recordKitchenEvent(
         branchId: ticket.branchId,
         orderId: ticket.orderId,

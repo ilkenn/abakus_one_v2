@@ -143,7 +143,7 @@ const ALL_PRE_EXISTING_PERMISSIONS: readonly StaffPermission[] = [
   "moderateCustomerPhotos",
 ];
 
-test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageDineInOrders, requestDeviceRegistration, viewTenantCustomerDirectory, processPayments, and manageCashSessions — Boncuk Loyalty P7-D.1 (2026-08-24) added manageDineInOrders to staff's default grant alongside its existing takeaway/delivery permissions (was previously ['manageTakeawayOrders', 'manageDeliveryOrders'] only, before the dine-in lifecycle existed); AP-2 Stage B (2026-08-26) added requestDeviceRegistration; AP-4 Wave A (payment/cash engine) added processPayments and manageCashSessions — the cashier-tier operational actions, never the manager-tier approve/reconcile counterparts", () => {
+test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageDineInOrders, requestDeviceRegistration, viewTenantCustomerDirectory, processPayments, manageCashSessions, manageKitchenOperations, and recordStockCount — Boncuk Loyalty P7-D.1 (2026-08-24) added manageDineInOrders to staff's default grant alongside its existing takeaway/delivery permissions (was previously ['manageTakeawayOrders', 'manageDeliveryOrders'] only, before the dine-in lifecycle existed); AP-2 Stage B (2026-08-26) added requestDeviceRegistration; AP-4 Wave A (payment/cash engine) added processPayments and manageCashSessions — the cashier-tier operational actions, never the manager-tier approve/reconcile counterparts; AP-5 Sprint 1 added manageKitchenOperations; AP-5 Sprint 3 added recordStockCount, mirroring the front-line count action already staff-tier client-side", () => {
   assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, [
     "manageTakeawayOrders",
     "manageDeliveryOrders",
@@ -168,6 +168,14 @@ test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageD
     // already established above.
     "processPayments",
     "manageCashSessions",
+    // AP-5 Sprint 1 — mirrors the kitchen actions already staff-tier
+    // client-side (`PosAuthorizedAction.acknowledgeKitchenItem`/etc.,
+    // `role_permission_map.dart`).
+    "manageKitchenOperations",
+    // AP-5 Sprint 3 — staff-tier, mirrors `PosAuthorizedAction
+    // .recordStockCount` exactly (front-line count/waste recording;
+    // approving a resulting adjustment stays manager-tier).
+    "recordStockCount",
   ]);
 });
 
@@ -214,7 +222,7 @@ test("staff role does NOT have manageTakeawayOrderRefunds", () => {
   assert.strictEqual(roleHasPermission("staff", "manageTakeawayOrderRefunds"), false);
 });
 
-test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageDineInOrders, requestDeviceRegistration, viewTenantCustomerDirectory, processPayments, and manageCashSessions — re-asserted here to prove manageTakeawayOrderRefunds was not silently added to staff's grant (see the P7-D.1/AP-2/AP-4 corrections above for the expected set)", () => {
+test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageDineInOrders, requestDeviceRegistration, viewTenantCustomerDirectory, processPayments, manageCashSessions, manageKitchenOperations, and recordStockCount — re-asserted here to prove manageTakeawayOrderRefunds was not silently added to staff's grant (see the P7-D.1/AP-2/AP-4/AP-5 corrections above for the expected set)", () => {
   assert.deepStrictEqual(DEFAULT_STAFF_ROLE_PERMISSIONS.staff, [
     "manageTakeawayOrders",
     "manageDeliveryOrders",
@@ -234,6 +242,12 @@ test("staff role has EXACTLY manageTakeawayOrders, manageDeliveryOrders, manageD
     // AP-4 Wave A — see the corresponding comment on the test above.
     "processPayments",
     "manageCashSessions",
+    // AP-5 Sprint 1 — see the corresponding comment on the test above.
+    "manageKitchenOperations",
+    // AP-5 Sprint 3 — staff-tier, mirrors `PosAuthorizedAction
+    // .recordStockCount` exactly (front-line count/waste recording;
+    // approving a resulting adjustment stays manager-tier).
+    "recordStockCount",
   ]);
 });
 

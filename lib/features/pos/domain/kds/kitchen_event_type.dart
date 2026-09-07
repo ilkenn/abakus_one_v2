@@ -11,6 +11,9 @@ enum KitchenEventType {
   workItemUnavailable,
   workItemRecalled,
   workItemResumed,
+
+  /// AP-5 Sprint 3 — mirrors `KitchenAuditEventType.wasted`.
+  workItemWasted,
   orderPreparationCompleted,
   ticketDeltaFired,
   ticketCancellationFired,

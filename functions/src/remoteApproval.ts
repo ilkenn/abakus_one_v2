@@ -24,6 +24,7 @@ import {
   applyCashReconciliationApproved,
   applyCashReconciliationRejected,
 } from "./cashRegisterEngine";
+import { applyStockCountAdjustment, applyStockCountAdjustmentRejected } from "./stockCountEngine";
 
 /**
  * AP-2 Stage B — the generic, server-authoritative remote approval engine
@@ -75,7 +76,13 @@ export type ApprovalActionType =
   | "cashSessionOpen"
   | "cashMovement"
   | "cashAdjustment"
-  | "cashReconciliation";
+  | "cashReconciliation"
+  // AP-5 Sprint 3 — a physical stock count with at least one non-zero
+  // discrepancy line must go through manager approval before `branchStock`
+  // is touched (`submitStockCount.ts`). Has a REJECTION_HANDLERS entry
+  // (rejecting is a real state change — `stockCounts` -> `rejected` — not
+  // a no-op, same reasoning as the cash register actions above).
+  | "stockCountAdjustment";
 
 const APPROVAL_TIMEOUT_MINUTES = 24 * 60;
 const ESCALATION_TIMEOUT_MINUTES = 24 * 60;
@@ -138,6 +145,7 @@ const ACTION_HANDLERS: Readonly<Record<ApprovalActionType, ActionHandler>> = {
   cashMovement: applyCashMovement,
   cashAdjustment: applyCashAdjustment,
   cashReconciliation: applyCashReconciliationApproved,
+  stockCountAdjustment: applyStockCountAdjustment,
 };
 
 /**
@@ -164,6 +172,7 @@ const REJECTION_HANDLERS: Readonly<Partial<Record<ApprovalActionType, ActionHand
   cashAdjustment: applyCashAdjustmentRejected,
   cashReconciliation: applyCashReconciliationRejected,
   paymentRefund: applyPaymentRefundRejected,
+  stockCountAdjustment: applyStockCountAdjustmentRejected,
 };
 
 /** The staff permission required to RESPOND to (approve/reject) each action type — never a bare role-tier check. */
@@ -177,6 +186,7 @@ const RESPONSE_PERMISSION_BY_ACTION: Readonly<Record<ApprovalActionType, StaffPe
   cashMovement: "approveCashReconciliation",
   cashAdjustment: "approveCashReconciliation",
   cashReconciliation: "approveCashReconciliation",
+  stockCountAdjustment: "approveStockCountAdjustment",
 };
 
 /**
@@ -226,6 +236,12 @@ const BRANCH_SCOPED_RESPONSE_ACTION_TYPES: ReadonlySet<ApprovalActionType> = new
   "cashMovement",
   "cashAdjustment",
   "cashReconciliation",
+  // AP-5 Sprint 3 — a stock count is genuinely branch-scoped (unlike
+  // `boncukBalanceCorrection`'s platform-scoped exception above): it
+  // always carries a real `branchId` (`submitStockCount.ts`), so branch-
+  // scoping the response matches every other physical/operational action
+  // in this set.
+  "stockCountAdjustment",
 ]);
 
 function invalid(message: string): never {

@@ -10,6 +10,7 @@ import {
   applyDeliveryLifecycleTransition,
   writeDeliveryOrderStatusChangeAuditEvent,
 } from "./deliveryOrderLifecycle";
+import { prepareCancellationStockHandling, applyCancellationStockHandling } from "./cancelOrderLineStock";
 
 /**
  * `cancelDeliveryOrderForStaff` — Boncuk Loyalty Program P5-B (2026-08-24).
@@ -125,6 +126,24 @@ export const cancelDeliveryOrderForStaff = onCall(
         ? (rolesByOrg![organizationId] as string[])
         : null;
 
+      // AP-5 Sprint 3 — read phase must run BEFORE this transaction's
+      // first write (`applyDeliveryLifecycleTransition` below), mirroring
+      // `cancelTakeawayOrderForStaff.ts`'s own fix exactly. Delivery has no
+      // per-line cancellation either — every line's own `kitchenWorkItem`
+      // is checked independently (an order can be `outForDelivery` while
+      // its food was already `ready`/`preparing`).
+      const orderLines = Array.isArray(order.lines) ? order.lines : [];
+      const stockPlan = await prepareCancellationStockHandling({
+        tx,
+        db,
+        organizationId,
+        branchId,
+        orderId,
+        orderLineIds: orderLines.map((_: unknown, index: number) => `kt-${orderId}-line-${index}`),
+        performedByUid: actorUid,
+        now,
+      });
+
       applyDeliveryLifecycleTransition({
         tx,
         orderRef,
@@ -151,6 +170,7 @@ export const cancelDeliveryOrderForStaff = onCall(
         reasonMessage,
         now,
       });
+      applyCancellationStockHandling(tx, db, stockPlan);
 
       return { orderId, status: "cancelled", duplicate: false };
     });

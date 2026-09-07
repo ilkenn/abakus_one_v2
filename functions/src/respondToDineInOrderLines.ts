@@ -5,6 +5,7 @@ import { requireStaffPermission, requireBranchAccess } from "./staffAuthorizatio
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { writeAuditEvent } from "./auditEvents";
 import { generateCorrelationId, sanitizeClientRequestId } from "./correlationId";
+import { prepareKitchenWorkAndStockConsumption, applyKitchenWorkAndStockConsumption } from "./acceptOrderLine";
 
 /**
  * AP-3 Wave 1 — per-line accept/reject for a `guestSession`-mode
@@ -115,7 +116,38 @@ export const respondToDineInOrderLines = onCall(
         : "resolved";
 
       const now = Timestamp.now();
+
+      // AP-5 Sprint 2 — read phase must run BEFORE this transaction's
+      // first write (`tx.update(orderRef, ...)` below), per this
+      // codebase's own Firestore-transaction discipline
+      // (`submitDineInOrder.ts`'s "every tx.get() happens before its
+      // first write"). Kitchen enqueue + stock/packaging consumption is
+      // computed for exactly the line(s) THIS call just accepted — a
+      // `reject` decision never triggers either.
+      const acceptedLines = decisions
+        .filter((d) => d.decision === "accept")
+        .map((d) => ({
+          orderLineId: `kt-${orderId}-line-${d.lineIndex}`,
+          productId: lines[d.lineIndex].productId as string,
+          quantity: lines[d.lineIndex].quantity as number,
+        }));
+      const stockPlan =
+        acceptedLines.length > 0
+          ? await prepareKitchenWorkAndStockConsumption({
+              tx,
+              db,
+              organizationId: order.organizationId,
+              branchId: order.branchId,
+              orderId,
+              channel: "dineInQr",
+              acceptedLines,
+              performedByUid: request.auth!.uid,
+              now,
+            })
+          : null;
+
       tx.update(orderRef, { lines, linesDispositionSummary });
+      applyKitchenWorkAndStockConsumption(tx, db, stockPlan);
 
       writeAuditEvent({
         tx,

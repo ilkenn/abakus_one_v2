@@ -32,6 +32,7 @@ class KitchenWorkItem {
     this.cancelledAt,
     this.unavailableAt,
     this.recalledAt,
+    this.wastedAt,
     required this.revision,
     required this.idempotencyKey,
     this.sourceEventId,
@@ -69,6 +70,7 @@ class KitchenWorkItem {
   final DateTime? cancelledAt;
   final DateTime? unavailableAt;
   final DateTime? recalledAt;
+  final DateTime? wastedAt;
 
   /// Optimistic-concurrency counter — starts at 1.
   final int revision;
@@ -85,7 +87,8 @@ class KitchenWorkItem {
 
   bool get isTerminal =>
       status == KitchenLineStatus.cancelled ||
-      status == KitchenLineStatus.unavailable;
+      status == KitchenLineStatus.unavailable ||
+      status == KitchenLineStatus.wasted;
 
   KitchenWorkItem copyWith({
     int? readyQuantity,
@@ -96,6 +99,7 @@ class KitchenWorkItem {
     DateTime? cancelledAt,
     DateTime? unavailableAt,
     DateTime? recalledAt,
+    DateTime? wastedAt,
     int? revision,
     String? sourceEventId,
   }) {
@@ -116,6 +120,7 @@ class KitchenWorkItem {
       cancelledAt: cancelledAt ?? this.cancelledAt,
       unavailableAt: unavailableAt ?? this.unavailableAt,
       recalledAt: recalledAt ?? this.recalledAt,
+      wastedAt: wastedAt ?? this.wastedAt,
       revision: revision ?? this.revision,
       idempotencyKey: idempotencyKey,
       sourceEventId: sourceEventId ?? this.sourceEventId,

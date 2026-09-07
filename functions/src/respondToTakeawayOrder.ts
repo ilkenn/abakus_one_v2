@@ -10,6 +10,7 @@ import {
   applyTakeawayLifecycleTransition,
   writeTakeawayOrderStatusChangeAuditEvent,
 } from "./takeawayOrderLifecycle";
+import { prepareKitchenWorkAndStockConsumption, applyKitchenWorkAndStockConsumption } from "./acceptOrderLine";
 
 /**
  * `respondToTakeawayOrder` — Boncuk Loyalty Program P4-C-C-B (2026-08-22).
@@ -115,6 +116,34 @@ export const respondToTakeawayOrder = onCall(
         ? (rolesByOrg![organizationId] as string[])
         : null;
 
+      // AP-5 Sprint 2 — read phase must run BEFORE this transaction's
+      // first write (`applyTakeawayLifecycleTransition` below), per this
+      // codebase's own Firestore-transaction discipline
+      // (`submitDineInOrder.ts`'s "every tx.get() happens before its
+      // first write"). Takeaway has no per-line acceptance concept
+      // (unlike dine-in): a `confirm` accepts every line on the order at
+      // once.
+      const stockPlan =
+        decision === "confirm"
+          ? await prepareKitchenWorkAndStockConsumption({
+              tx,
+              db,
+              organizationId,
+              branchId,
+              orderId,
+              channel: "takeaway",
+              acceptedLines: (Array.isArray(order.lines) ? order.lines : []).map(
+                (line: Record<string, unknown>, index: number) => ({
+                  orderLineId: `kt-${orderId}-line-${index}`,
+                  productId: line.productId as string,
+                  quantity: line.quantity as number,
+                }),
+              ),
+              performedByUid: actorUid,
+              now,
+            })
+          : null;
+
       applyTakeawayLifecycleTransition({
         tx,
         orderRef,
@@ -141,6 +170,8 @@ export const respondToTakeawayOrder = onCall(
         reasonMessage: decision === "reject" ? reasonMessage : null,
         now,
       });
+
+      applyKitchenWorkAndStockConsumption(tx, db, stockPlan);
 
       return { orderId, status: targetStatus, duplicate: false };
     });

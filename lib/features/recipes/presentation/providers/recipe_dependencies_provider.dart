@@ -1,12 +1,16 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../application/identity/product_packaging_link_id_generator.dart';
 import '../../application/identity/recipe_id_generator.dart';
+import '../../application/identity/recipe_ingredient_link_id_generator.dart';
 import '../../application/identity/recipe_ingredient_snapshot_id_generator.dart';
 import '../../application/identity/recipe_modifier_impact_id_generator.dart';
 import '../../application/identity/recipe_version_id_generator.dart';
 import '../../application/identity/sub_recipe_id_generator.dart';
 import '../../application/identity/sub_recipe_version_id_generator.dart';
+import '../../data/product_packaging_link_repository.dart';
 import '../../data/recipe_audit_entry_repository.dart';
+import '../../data/recipe_ingredient_link_repository.dart';
 import '../../data/recipe_ingredient_snapshot_repository.dart';
 import '../../data/recipe_modifier_impact_repository.dart';
 import '../../data/recipe_repository.dart';
@@ -83,4 +87,29 @@ final recipeModifierImpactIdGeneratorProvider =
 final recipeAuditEntryRepositoryProvider =
     Provider<RecipeAuditEntryRepository>((ref) {
   return InMemoryRecipeAuditEntryRepository();
+});
+
+// AP-5 Sprint 2 — product<->recipe/packaging linking. Still in-memory
+// today: the real writers are the new `setRecipeIngredientLink`/
+// `setProductPackagingLink` Cloud Functions, called directly (no Dart
+// use case wraps them yet — no screen consumes this feature this sprint,
+// callable-only per the confirmed scope).
+final recipeIngredientLinkRepositoryProvider =
+    Provider<RecipeIngredientLinkRepository>((ref) {
+  return InMemoryRecipeIngredientLinkRepository();
+});
+
+final recipeIngredientLinkIdGeneratorProvider =
+    Provider<RecipeIngredientLinkIdGenerator>((ref) {
+  return SequentialRecipeIngredientLinkIdGenerator();
+});
+
+final productPackagingLinkRepositoryProvider =
+    Provider<ProductPackagingLinkRepository>((ref) {
+  return InMemoryProductPackagingLinkRepository();
+});
+
+final productPackagingLinkIdGeneratorProvider =
+    Provider<ProductPackagingLinkIdGenerator>((ref) {
+  return SequentialProductPackagingLinkIdGenerator();
 });

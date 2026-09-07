@@ -23,6 +23,17 @@ enum KitchenLineStatus {
   /// explicitly-audited state a line must pass through before resuming
   /// preparation (`ResumeRecalledKitchenWorkItem`).
   recalled,
+
+  /// AP-5 Sprint 3 — the line was already [preparing] or [ready] (real
+  /// food/packaging already consumed from stock) when its order/line was
+  /// cancelled — terminal. Deliberately distinct from [cancelled] (which
+  /// means nothing was ever consumed, so stock is reversible): [wasted]
+  /// means the already-deducted stock stays deducted, recorded as real
+  /// loss (`WasteRecord`), never returned to `branchStock`. Reachable
+  /// from [preparing]/[ready] only — [queued]/[acknowledged] still
+  /// terminate via the existing [cancelled], never [wasted], since
+  /// nothing was consumed yet for them to waste.
+  wasted,
 }
 
 /// The kitchen-line state machine: which [KitchenLineStatus] transitions
@@ -51,15 +62,18 @@ abstract final class KitchenLineStatusTransitions {
       KitchenLineStatus.ready,
       KitchenLineStatus.cancelled,
       KitchenLineStatus.unavailable,
+      KitchenLineStatus.wasted,
     },
     KitchenLineStatus.ready: {
       KitchenLineStatus.recalled,
+      KitchenLineStatus.wasted,
     },
     KitchenLineStatus.recalled: {
       KitchenLineStatus.preparing,
     },
     KitchenLineStatus.cancelled: {},
     KitchenLineStatus.unavailable: {},
+    KitchenLineStatus.wasted: {},
   };
 
   static bool canTransition(KitchenLineStatus from, KitchenLineStatus to) {

@@ -1284,6 +1284,176 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // AP-5 Sprint 1/2 — KDS / Printer / Stock & Recipe collection surface.
+    // Branch-operational collections (kitchenWorkItems, kitchenRoutingRules,
+    // printerConfigs, printJobs, branchStock, stockMovements, stockCounts,
+    // wasteRecords, stockConsumptionRecords) require `isOrgMember` +
+    // `hasBranchAccess`, mirroring `orders`' own staff branch — organization
+    // membership alone is insufficient for branch-operational data.
+    // Organization-scoped **catalog** collections (recipes, recipeVersions,
+    // recipeIngredientLinks, productPackagingLinks, ingredients,
+    // inventoryItems — corrected Sprint 2 after confirming their Dart models
+    // carry no `branchId` at all) require `isOrgMember` only. Every
+    // collection here denies direct client write for everyone including
+    // staff — mirrors `RecordKitchenEvent`/`RecordStockMovement`'s "single
+    // write path" precedent (BR-STOCK-005): all writes go through a Cloud
+    // Function/Admin SDK. Real writers as of Sprint 2: `kitchenWorkItems`
+    // (client `create` only, Sprint 1) and `transitionKitchenWorkItem`,
+    // `setRecipeIngredientLink`/`setProductPackagingLink`, and
+    // `enqueueKitchenWorkAndConsumeStock` (server-side, Admin SDK, called
+    // from inside the real order-acceptance transactions). The rest still
+    // open read access ahead of their own writer landing in a later sprint.
+    //
+    // `KitchenTicket` deliberately has NO collection here — it stays
+    // derived, read-only, from `orders` (`firestore_kitchen_ticket_
+    // repository.dart`), whose own staff branch (`isOrgMember` +
+    // `hasBranchAccess`, above) already covers kitchen staff's read need.
+    // `KitchenStation` deliberately has no collection either — it is a
+    // fixed 6-value enum, not a persisted entity; the real persisted
+    // entity is `kitchenRoutingRules` (`KitchenRoutingRule`).
+    // ---------------------------------------------------------------------
+
+    match /kitchenWorkItems/{workItemId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      // `create` only, matching `EnqueueKitchenWorkItems`'s existing real,
+      // idempotent client-side use case (`enqueue_kitchen_work_items.dart`)
+      // — it derives a work item deterministically 1:1 from a KitchenTicket
+      // line the client already legitimately reads from `orders` (there is
+      // no separate server-side enqueue trigger yet, so requiring this
+      // through a callable this sprint would just break the KDS board
+      // instead of tightening anything real). Constrained to the initial
+      // state only (`status == 'queued'`, `revision == 1`) so a client can
+      // materialize the projection but never fabricate a mid-flight or
+      // already-`ready` item. Every subsequent transition is `update`,
+      // permanently denied below — `transitionKitchenWorkItem` (Cloud
+      // Function/Admin SDK) is the only path past the initial `queued` doc.
+      allow create: if isOrgMember(request.resource.data.organizationId) &&
+        hasBranchAccess(request.resource.data.organizationId, request.resource.data.branchId) &&
+        request.resource.data.status == 'queued' &&
+        request.resource.data.revision == 1;
+      allow update, delete: if false; // transitionKitchenWorkItem callable only.
+    }
+
+    match /kitchenRoutingRules/{ruleId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function only — no writer this sprint.
+    }
+
+    match /printerConfigs/{printerId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function only — no writer this sprint.
+    }
+
+    match /printJobs/{printJobId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function only — no writer this sprint.
+    }
+
+    // AP-5 Sprint 2 correction: `recipes`/`recipeVersions`/
+    // `recipeIngredientLinks`/`ingredients`/`inventoryItems` were checked
+    // against `Recipe`/`RecipeVersion`/`Ingredient`/`InventoryItem`
+    // directly (read from source, not assumed) — all five are
+    // **organization-scoped catalog data with no `branchId` field at
+    // all**. The Sprint 1 rules below required `hasBranchAccess`, a field
+    // that will never exist on these documents — every real read would
+    // always have failed once a real reader existed (masked in Sprint 1's
+    // rules test, which seeded synthetic `branchId` values that don't
+    // reflect the real schema). Corrected to `isOrgMember`-only.
+    // `inventoryItems` had no rule at all in Sprint 1; added now since the
+    // new stock-deduction function reads `InventoryItem
+    // .negativeStockPolicy`.
+    match /recipes/{recipeId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      // Cloud Function only — no direct client write for recipe catalog
+      // data.
+      allow write: if false;
+    }
+
+    match /recipeVersions/{versionId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function only.
+    }
+
+    match /recipeIngredientLinks/{linkId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      // setRecipeIngredientLink callable only (manager-tier).
+      allow write: if false;
+    }
+
+    match /productPackagingLinks/{linkId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      // setProductPackagingLink callable only (manager-tier).
+      allow write: if false;
+    }
+
+    match /ingredients/{ingredientId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function only — no writer this sprint.
+    }
+
+    match /inventoryItems/{inventoryItemId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow write: if false; // Cloud Function only — no writer this sprint.
+    }
+
+    match /branchStock/{stockId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function only — no writer this sprint.
+    }
+
+    match /stockMovements/{movementId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function only, append-only (BR-STOCK-006).
+    }
+
+    match /stockCounts/{countId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      // AP-5 Sprint 3 — real writer now: `submitStockCount`/`respondToApprovalRequest`
+      // (stockCountAdjustment). Still Cloud Function only — no direct client write.
+      allow write: if false;
+    }
+
+    match /wasteRecords/{wasteId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function only, append-only (BR-STOCK-006).
+    }
+
+    // AP-5 Sprint 2 — the idempotency ledger `enqueueKitchenWorkAndConsumeStock`
+    // checks/writes per accepted order line. Genuinely branch-scoped
+    // (mirrors the existing Dart `StockConsumptionRecord` shape, which does
+    // carry `branchId`) — unlike the catalog collections corrected above.
+    match /stockConsumptionRecords/{recordId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function only, append-only.
+    }
+
+    // AP-5 Sprint 3 — one doc per counted item within a `stockCounts`
+    // session (`submitStockCount.ts`); `inventoryAuditEntries` — the
+    // immutable before/after trail `respondToApprovalRequest`
+    // (stockCountAdjustment approval) writes. Both branch-scoped, same
+    // shape as every other AP-5 branch-operational collection.
+    match /stockCountLines/{lineId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function only.
+    }
+
+    match /inventoryAuditEntries/{entryId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false; // Cloud Function only, append-only.
+    }
+
+    // ---------------------------------------------------------------------
     // Default deny — anything not explicitly matched above (including any
     // future collection someone adds without also adding a rule for it)
     // is denied by default, never implicitly readable/writable. "Fail

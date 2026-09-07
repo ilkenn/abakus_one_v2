@@ -19396,3 +19396,62 @@ FUNCTIONS_FULL_SUITE=PASS (1941/1941)
 FIRESTORE_RULES_FULL_SUITE=PASS (403/403)
 STORAGE_RULES_FULL_SUITE=PASS (35/35)
 ```
+
+## ADR-048 — AP-4 closure framing and AP-5 kickoff scoping (2026-09-07)
+
+- Tarih: 2026-09-07
+- Durum: Accepted
+
+### Context
+
+The instruction closing out AP-4 asked for status language of "Software-Complete, Vendor/Hardware
+Pending." That framing is not accurate against the record above: `CRITICAL_ISSUES_OPEN=0` and
+`HIGH_ISSUES_OPEN=0` are both true (ADR-047, Wave F closure), but not every remaining open item is
+hardware-blocked. Two categories exist and were kept distinct rather than merged into one label:
+
+- **Hardware/vendor-blocked**: PAX A910SF/GMP-3 fiscal acceptance; visual-evidence items #1–6/#9–10
+  (need a real Android/iOS/Windows/macOS device — none available in this environment).
+- **Open, not hardware-blocked**: the rest of the 22-item E2E flow matrix beyond Flow #1 and
+  `E2E-PARTIAL-REFUND`; visual-evidence items #12–13 (blocked on a `connectivity_plus`
+  injectable-seam gap in test code, not hardware); offline UI-round-trip verification.
+
+Calling all of this "software-complete" would misrepresent the second category as done when it is
+real, uncompleted, controllable work. `docs/feature_status.md`'s "AP-4 Closure (2026-09-07)" entry
+records the distinction; this ADR is the decision record for using that framing instead of the
+literal requested wording.
+
+### Decision
+
+Register `HIGH_ISSUES_OPEN=0`/`CRITICAL_ISSUES_OPEN=0` as closed (both true, verified by the fresh
+1941/1941 Functions / 403/403 Firestore Rules / 35/35 Storage Rules run in ADR-047). Do not assert
+`AP4_CONTROLLABLE_SOFTWARE_COMPLETE=YES`. `NEXT_PHASE=AP-5 KDS/Printer/Stock`, per explicit
+instruction — the remaining AP-4 items above stay open and tracked, not silently dropped.
+
+### AP-5 scope handoff
+
+Before any AP-5 implementation, the existing canonical target architecture
+(`docs/kds_printer_stock_architecture.md`, AP-1) and the locked business rules
+(`docs/business_rules.md` BR-KITCHEN-001–017, BR-STOCK-001–007, BR-RECIPE-001–002, BR-COSTING-001–002)
+were re-read against current source to confirm no drift:
+
+- Confirmed real, tested, in-memory-only domain code already exists for the entire KDS/printer/stock
+  surface — `lib/features/pos/domain/{kitchen,kds}/*` (including the newer `KitchenWorkItem`/
+  `KitchenStation`/`kitchen_routing_resolver.dart` model, which supersedes BR-KITCHEN-001/002's older
+  ticket-line-only description — `KitchenStation` already has `shared/hot/cold/beverage/dessert/
+  packing`, defaulting every line to `shared` as a configuration choice, not a code gap),
+  `lib/features/{inventory,recipes,costing,profitability,stock_consumption}/*`, and print-provider
+  scaffolding (`print_kitchen_ticket_with_retry.dart`, `kitchen_ticket_print_provider.dart`,
+  `receipt_print_provider.dart`) with honest `NoOp` defaults.
+- Confirmed zero backend exists for any of it: `functions/src` has only the four `advance*OrderStatus`
+  Cloud Functions in this domain area; `firestore.rules` has no rule for any KDS/print/stock
+  collection; `kitchen_display_board_screen.dart` never calls a real `advance*OrderStatus` function —
+  exactly the gap the architecture doc's §11 already identifies as "the single highest-value,
+  lowest-novelty fix in the entire AP-1 architecture set."
+- No printer package dependency exists in `pubspec.yaml` — ESC/POS integration is genuinely
+  greenfield, not a wiring gap in existing code.
+
+This confirms the architecture doc's own "Current-State Evidence" section is still accurate — the
+AP-5 Phase 1 plan can be built directly on it rather than re-deriving the design. Per the governing
+"Plan Before Implementation"/"Wait for Approval" rule, no AP-5 code was written this entry — the
+Phase 1 implementation plan is presented separately for explicit approval before any implementation
+begins.

@@ -216,3 +216,19 @@ export {
   listFiscalOperationsForBranch,
   listOfflineLeasesForBranch,
 } from "./adminFinancialView";
+
+// AP-5 Sprint 1 — the real, server-authoritative KitchenWorkItem state
+// transition, closing the AP-0/AP-1-confirmed "KDS state is entirely
+// in-memory" gap.
+export { transitionKitchenWorkItem } from "./transitionKitchenWorkItem";
+
+// AP-5 Sprint 2 — the real writers for product<->recipe/packaging
+// linking, closing "no menu product currently references a recipe id at
+// all" (`ConsumeStockForOrder`'s own disclosure).
+export { setRecipeIngredientLink } from "./setRecipeIngredientLink";
+export { setProductPackagingLink } from "./setProductPackagingLink";
+
+// AP-5 Sprint 3 — physical stock count submission; approval/rejection is
+// handled through the existing `respondToApprovalRequest` (registered in
+// remoteApproval.ts), not a separate callable.
+export { submitStockCount } from "./submitStockCount";

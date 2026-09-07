@@ -92,7 +92,33 @@ export type StaffPermission =
   // legally-consequential configuration change, never a routine staff
   // action (deliberately NOT granted to `manager`, unlike most permissions
   // above — mirrors `manageStaffAdminRole`'s admin-only boundary).
-  | "manageFiscalDevices";
+  | "manageFiscalDevices"
+  // AP-5 Sprint 1 — the server-side mirror of the client-side
+  // `PosAuthorizedAction.acknowledgeKitchenItem`/`startKitchenPreparation`/
+  // `markKitchenItemReady`/`cancelKitchenLine`/`recallKitchenLine`/
+  // `changeKitchenStation`, all already `_staffTier` in
+  // `role_permission_map.dart` — this permission mirrors an already-decided
+  // client tier, not a new authorization decision. Staff-tier: a line cook
+  // must never need a manager present to advance a kitchen ticket.
+  | "manageKitchenOperations"
+  // AP-5 Sprint 2 — server-side mirrors of the client-side
+  // `PosAuthorizedAction.manageRecipes`/`manageInventory`, both already
+  // `_managerTier` in `role_permission_map.dart` (never staff-tier,
+  // unlike `manageKitchenOperations` above — recipe/stock configuration
+  // is a supervisory action, day-to-day kitchen execution is not).
+  | "manageRecipes"
+  | "manageInventory"
+  // AP-5 Sprint 3 — server-side mirrors of the client-side
+  // `PosAuthorizedAction.recordStockCount` (staff-tier — front-line count
+  // recording) and `.approveStockCountAdjustment` (manager-tier —
+  // "cashier/counter cannot approve their own material variance," same
+  // request-vs-approve split as every other approval permission in this
+  // file). Also used for cancellation-triggered `wasteRecords`, which is a
+  // trusted internal side effect of an already-authorized cancellation
+  // action (mirrors Sprint 2's stock consumption at acceptance) — it does
+  // not need its own separate permission check.
+  | "recordStockCount"
+  | "approveStockCountAdjustment";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -207,6 +233,13 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "viewTenantCustomerDirectory",
     "processPayments",
     "manageCashSessions",
+    // AP-5 Sprint 1 — staff-tier, mirrors the kitchen actions already
+    // staff-tier client-side (see the permission's own doc comment above).
+    "manageKitchenOperations",
+    // AP-5 Sprint 3 — staff-tier, mirrors `PosAuthorizedAction
+    // .recordStockCount` exactly (front-line count/waste recording;
+    // approving a resulting adjustment stays manager-tier below).
+    "recordStockCount",
   ],
   manager: [
     "manageReservations",
@@ -234,6 +267,21 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approvePaymentRefund",
     "manageCashSessions",
     "approveCashReconciliation",
+    // AP-5 Sprint 2 fix: these three were only ever added to `admin`/
+    // `tenantOwner` (anchored on the `manageFiscalDevices` line neither
+    // of Sprint 1/2's edits realized `manager` doesn't have) — `manager`
+    // was silently left without `manageKitchenOperations` since Sprint 1
+    // and without `manageRecipes`/`manageInventory` since introduction
+    // here, contradicting this file's own documented "staff ⊂ manager ⊂
+    // admin" tiering rule for all three (staff-tier-and-above for
+    // kitchen ops, manager-tier-and-above for recipes/inventory — manager
+    // must have both categories either way). Confirmed by directly
+    // reproducing the failure against a live emulator, not assumed.
+    "manageKitchenOperations",
+    "manageRecipes",
+    "manageInventory",
+    "recordStockCount",
+    "approveStockCountAdjustment",
   ],
   admin: [
     "manageReservations",
@@ -264,6 +312,11 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageCashSessions",
     "approveCashReconciliation",
     "manageFiscalDevices",
+    "manageKitchenOperations",
+    "manageRecipes",
+    "manageInventory",
+    "recordStockCount",
+    "approveStockCountAdjustment",
   ],
   tenantOwner: [
     "manageReservations",
@@ -294,6 +347,11 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageCashSessions",
     "approveCashReconciliation",
     "manageFiscalDevices",
+    "manageKitchenOperations",
+    "manageRecipes",
+    "manageInventory",
+    "recordStockCount",
+    "approveStockCountAdjustment",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must

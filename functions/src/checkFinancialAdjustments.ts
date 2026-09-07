@@ -17,6 +17,7 @@ import {
   type LoyaltyLedgerEntry,
 } from "./loyaltyLedger";
 import type { LoyaltyAccountData } from "./getCustomerLoyaltySnapshot";
+import { prepareCancellationStockHandling, applyCancellationStockHandling } from "./cancelOrderLineStock";
 
 /**
  * AP-3 Wave 2C/2D — asynchronous, remote-approval-gated typed actions
@@ -401,6 +402,24 @@ export async function applyAcceptedLineCancellation(params: ActionHandlerParams)
   // this phase). AP-5 owns building a real per-line signal.
   const preparationStarted = ["preparing", "ready", "served", "completed"].includes(String(order.status));
 
+  // AP-5 Sprint 3 — the real consumer this handler's own doc comment
+  // forecast. Read phase must run BEFORE this function's first write
+  // (`tx.update(orderRef, ...)` below), per this codebase's own
+  // Firestore-transaction discipline. Uses the real per-line
+  // `kitchenWorkItem` status, not the `preparationStarted` proxy above
+  // (kept only for `orderLineCancellationEvents`' own existing shape).
+  const orderLineId = `kt-${cancellationRequest.orderId}-line-${cancellationRequest.lineIndex}`;
+  const stockPlan = await prepareCancellationStockHandling({
+    tx,
+    db,
+    organizationId: cancellationRequest.organizationId,
+    branchId: cancellationRequest.branchId,
+    orderId: cancellationRequest.orderId,
+    orderLineIds: [orderLineId],
+    performedByUid: respondedByActorUid,
+    now,
+  });
+
   lines[cancellationRequest.lineIndex] = {
     ...line,
     status: "cancelledAfterAcceptance",
@@ -416,6 +435,7 @@ export async function applyAcceptedLineCancellation(params: ActionHandlerParams)
   };
   tx.update(orderRef, { lines });
   tx.update(requestRef, { status: "applied", version: cancellationRequest.version + 1 });
+  applyCancellationStockHandling(tx, db, stockPlan);
 
   // Idempotent downstream event — deterministic id, `.set()` not `.create()`
   // (mirrors `reservationEvents.ts`'s own "no retrigger source, no
@@ -430,7 +450,10 @@ export async function applyAcceptedLineCancellation(params: ActionHandlerParams)
     preparationStarted,
     approvalRequestRef: approval.requestId,
     recordedAt: now,
-    consumedByStockReconciliation: false,
+    // AP-5 Sprint 3 — this handler IS the consumer this field was always
+    // meant for; processed inline, so this is set true immediately, never
+    // left for a separate sweep to pick up.
+    consumedByStockReconciliation: true,
   });
 
   return { newValue: { lineIndex: cancellationRequest.lineIndex, preparationStarted } };

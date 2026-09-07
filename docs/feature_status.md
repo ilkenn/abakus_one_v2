@@ -5508,3 +5508,223 @@ the 22-item matrix (exact count not independently verifiable without the origina
 evidence items, offline UI-round-trip verification, genuine native Android POS evidence (device access
 still the one missing resource). A comprehensive `gemini_handoff.md` was created at the repository
 root for onward handoff.
+
+## AP-4 Closure (2026-09-07)
+
+`CRITICAL_ISSUES_OPEN=0`, `HIGH_ISSUES_OPEN=0` — both confirmed true as of Wave F closure above, fresh
+suite run **1941/1941** Functions, **403/403** Firestore Rules, **35/35** Storage Rules. This entry
+records the closure status precisely rather than as a single "software-complete" label, because the
+remaining open items are not uniformly hardware-blocked and conflating them would misstate what is
+actually still controllable work:
+
+- **Hardware/vendor-blocked (genuine external dependency, not a software gap)**: PAX A910SF/GMP-3
+  fiscal-device acceptance; visual-evidence items requiring a real Android/iOS/Windows/macOS device
+  (items #1–6, #9–10 of the 14-item matrix) — none of these can proceed without physical device access,
+  which remains unavailable in this environment.
+- **Open, NOT hardware-blocked (real remaining software work)**: the rest of the 22-item E2E flow
+  matrix beyond Flow #1 and `E2E-PARTIAL-REFUND` (exact remaining count unverifiable — the original
+  enumeration doesn't exist in committed form, per the 2026-09-06 correction above); visual-evidence
+  items #12–13, blocked on a `connectivity_plus` injectable-seam gap in test harness code, not on
+  hardware; offline UI-round-trip verification.
+
+`AP4_CONTROLLABLE_SOFTWARE_COMPLETE` is therefore not asserted `YES` outright — the two HIGH findings
+that were the last known correctness defects are closed, but the open E2E/visual-evidence items above
+are real, uncompleted, non-hardware-blocked work, not paperwork. `NEXT_PHASE=AP-5 KDS/Printer/Stock`
+per explicit instruction; the items above remain open and should be picked up opportunistically or
+explicitly re-scoped, not treated as done. See ADR-048 for the decision record and `gemini_handoff.md`
+for the full handoff context.
+
+## AP-5 Sprint 1 — KDS Firestore Rules, backend binding, printer skeleton (2026-09-07)
+
+First real backend slice of AP-5 (`docs/kds_printer_stock_architecture.md`, CANONICAL), built on the
+existing real, tested, in-memory-only domain code confirmed by this session's reuse-first audit — no
+domain model rewritten, only backed by a real Firestore/Cloud Functions layer for the first time.
+
+**Firestore Rules**: eleven new collections added (`kitchenWorkItems`, `kitchenRoutingRules`,
+`printerConfigs`, `printJobs`, `recipes`, `recipeVersions`, `recipeIngredientLinks`, `ingredients`,
+`branchStock`, `stockMovements`, `stockCounts`, `wasteRecords`), all branch-scoped staff read
+(`isOrgMember` + `hasBranchAccess`, mirroring `orders`' own staff branch). Ten of the eleven deny every
+client write outright (Cloud Function/Admin SDK only — no writer lands until a later sprint).
+`kitchenWorkItems` is the one exception: `create` is allowed for branch-scoped staff, constrained to
+`status == 'queued'`/`revision == 1` only, matching the existing real, idempotent
+`EnqueueKitchenWorkItems` client use case exactly (there is no separate server-side enqueue trigger
+yet — denying `create` outright would have broken the KDS board instead of tightening anything real);
+`update`/`delete` remain Cloud-Function-only. `kitchenTickets`/`kitchenStations` were deliberately never
+created as collections: `KitchenTicket` stays derived, read-only, from `orders`
+(`FirestoreKitchenTicketRepository`'s existing, unchanged behavior), and `KitchenStation` is a fixed
+enum with no persisted entity of its own — the real persisted routing entity is `kitchenRoutingRules`.
+One new composite index (`kitchenWorkItems`: `organizationId/branchId/status/queuedAt`).
+
+**KDS backend binding**: new `manageKitchenOperations` `StaffPermission` (staff-tier, mirroring the
+kitchen actions already staff-tier client-side in `role_permission_map.dart`), new
+`transitionKitchenWorkItem` Cloud Function porting `KitchenLineStatusTransitions`'s exact state machine
+and optimistic-concurrency check server-side, new Dart `KitchenActionGateway`/
+`FirestoreKitchenWorkItemRepository`, `kds_dependencies_provider.dart`'s
+`kitchenProjectionRepositoryProvider` now `firebaseReadyProvider`-gated (mirrors
+`kitchenTicketRepositoryProvider`'s existing split exactly).
+`kitchen_display_board_screen.dart`'s advance action now calls the real callable once Firebase is
+ready, and — when every work item for an order becomes `ready` — calls the already-real, already-tested
+`advance*OrderStatus` callable for that order's channel, closing the single highest-value gap the
+architecture doc's own audit identified (the board never called it at all). The local in-memory
+`TransitionKitchenWorkItem` path is preserved unconditionally for `flutter test`/pre-bootstrap.
+
+**Printer skeleton**: `lib/features/printing/domain/{print_job,printer_config}.dart` — `PrintJob`/
+`PrintJobStatus`/`PrinterConfig` models and a deterministic print-job idempotency-key deriver, matching
+the architecture doc's own explicit sprint-1 scope (model + queue shape only). No `PrinterAdapter`
+transport exists — still gated on the target printer hardware vendor's ESC/POS reference manual (§24),
+the same class of controlled external dependency PAX/GMP-3 was for AP-4.
+
+**Explicitly not done this sprint** (disclosed, not silently implied complete): no server-side
+`EnqueueKitchenWorkItems` trigger exists yet — `kitchenWorkItems` documents are still created
+client-side (now for real, in Firestore, but the enqueue call itself remains a client action, not the
+architecture doc's own target "server-triggered only" design); no recipe/stock/printer **writers** land
+this sprint (Rules + skeleton shapes only); no printer transport. `docs/decisions.md` was not given a
+new ADR this entry (no architecture decision beyond what ADR-048 already recorded) — this is an
+implementation-status entry only.
+
+**Verification, all fresh full runs**: Firestore Rules **409/409** (406 baseline + 3 new AP-5 blocks,
+2 corrected to account for `kitchenWorkItems`' distinct create-rule shape). Cloud Functions **1951/1951**
+(1941 baseline + 9 new `transitionKitchenWorkItem` tests + 1 corrected pre-existing exact-permission-set
+regression test that was designed to catch exactly this kind of staff-tier addition). `flutter analyze`
+clean. `flutter test` **3647/3647** (3639 baseline + new `PrintJob` domain tests, 12 pre-existing
+skips unchanged).
+
+## AP-5 Sprint 2 — Recipe/packaging linking, server-authoritative stock deduction, server-side kitchen enqueue (2026-09-07)
+
+Closes the two gaps the architecture doc's §15/§16 identified as the real "no menu product references
+a recipe id" problem, built on Sprint 1's KDS backend and this session's reuse-first audit.
+
+**Recipe/packaging linking**: new `lib/features/recipes/domain/{recipe_ingredient_link,
+product_packaging_link}.dart` (+ repositories/id-generators/providers, in-memory today — no screen
+consumes them yet). New manager-tier callables `setRecipeIngredientLink`/`setProductPackagingLink`
+(`manageRecipes`/`manageInventory`, both newly added `StaffPermission`s). **Discovered and disclosed
+mid-implementation, not silently designed around**: `RecipeVersion`/`SubRecipe`/`SubRecipeVersion` have
+no real Firestore data at all (100% Dart in-memory) — a server-side function cannot read and flatten
+one. Per your explicit confirmation, `RecipeIngredientLink` instead carries an already-flattened
+`ingredients: [{inventoryItemId, quantitySmallestUnits, unitCode}]` list supplied directly by the
+setter's caller; nested sub-recipe recalculation server-side remains out of scope until
+`recipes`/`recipeVersions` get a real Firestore writer of their own. Ingredient/packaging lines
+reference `inventoryItemId` directly (not `ingredientId`) for the same reason — `Ingredient`/
+`InventoryItem` have no real Firestore data either.
+
+**Server-authoritative stock deduction + server-side kitchen enqueue**: new
+`functions/src/acceptOrderLine.ts` — `prepareKitchenWorkAndStockConsumption` (reads) /
+`applyKitchenWorkAndStockConsumption` (writes), split specifically to respect this codebase's own
+Firestore-transaction discipline (see Root-caused defect below). Ports `EnqueueKitchenWorkItems` +
+`ConsumeStockForOrder` + `RecordStockMovement` server-side: idempotent per accepted line
+(`stockConsumptionRecords`), aggregates consumption across multiple lines needing the same ingredient
+within one order before checking `NegativeStockPolicy` (`forbid` throws and aborts the whole
+transaction — no kitchen item and no partial movement for any line in the call; `warn` applies and
+flags; `allow` applies silently; **defaults to `forbid`** when no real `inventoryItems/{id}` document
+exists, matching `InventoryItem`'s own Dart constructor default). Packaging consumption is
+channel-specific (`productPackagingLinks` keyed by `productId`+`channelCode`). Wired into all four real
+order-acceptance points, confirmed by reading each file directly: `submitDineInOrder.ts` (`staffEntry`
+create, immediate accept), `respondToDineInOrderLines.ts` (`guestSession` per-line accept),
+`respondToTakeawayOrder.ts`/`respondToDeliveryOrder.ts` (order-level confirm). Reservation-preorder
+wiring deliberately excluded this sprint (its acceptance shape wasn't verified against this pattern).
+
+**Three real defects found and fixed while building this, none assumed away**:
+1. Sprint 1's `FirestoreKitchenWorkItemRepository` never wrote `organizationId` on create, but its own
+   Firestore rule requires it — every real client create was silently guaranteed to fail (Sprint 1's
+   rules test masked this with synthetic seed data). Fixed: writes `kSingleTenantOrganizationId`.
+2. Sprint 1's Firestore rules required `hasBranchAccess` on `recipes`/`recipeVersions`/
+   `recipeIngredientLinks`/`ingredients` — confirmed directly against source that none of
+   `Recipe`/`RecipeVersion`/`Ingredient`/`InventoryItem` carry a `branchId` field at all. Corrected to
+   `isOrgMember`-only; `inventoryItems` (same org-scoped shape, missing a rule entirely) added.
+3. **Root-caused via a real regression, not assumed**: the first wiring attempt called the stock/kitchen
+   function *after* each acceptance callable's own writes had already been queued in the same
+   transaction — violating Firestore's "every read before the first write" rule (which
+   `submitDineInOrder.ts` already documents explicitly) the moment the new function's own internal
+   reads ran. Caught by `takeawayOrderLifecycle.test.ts`'s existing regression suite
+   (`respondToTakeawayOrder` started failing its own happy-path chain). Fixed by splitting into
+   `prepare`/`apply` and calling `prepare` before each transaction's first write.
+4. `manageKitchenOperations` (Sprint 1) and `manageRecipes`/`manageInventory` (this sprint) were only
+   ever added to `admin`/`tenantOwner` — the TS permission map is explicit per-tier (not computed by
+   union like the Dart `RolePermissionMap`), and every edit anchored on the `manageFiscalDevices` line,
+   which `manager` never had. `manager` was silently left without all three, contradicting this file's
+   own documented "staff ⊂ manager ⊂ admin" tiering intent. Caught by directly reproducing a `manager`
+   call against a live emulator (not assumed from the passing test suite alone) and fixed.
+
+**Explicitly not done this sprint**: no UI for managing recipe/packaging links (callable-only, per your
+confirmed answer). No printer transport (unchanged, still vendor-doc-gated). No nested sub-recipe
+flattening server-side (see above). Reservation-preorder acceptance not wired.
+
+**Verification, all fresh full runs**: Firestore Rules **411/411** (409 baseline + corrected scoping +
+new `inventoryItems`/`productPackagingLinks`/`stockConsumptionRecords` collections). Cloud Functions
+**1962/1962** (1951 baseline + new `acceptOrderLine`/`orderAcceptanceStockIntegration` test files, zero
+regressions in the existing suite after the two root-caused fixes above). `flutter analyze` clean.
+`flutter test` **3647/3647** (unchanged — no new Dart tests this sprint; simple data-class additions
+follow this codebase's existing convention of not requiring dedicated tests for plain repositories).
+
+## AP-5 Sprint 3 — Cancellation reversal/waste, stock count & manager-approval reconciliation (2026-09-07)
+
+Closes what happens to Sprint 2's consumed stock when an accepted line is later cancelled (reverse it
+pre-prep, waste it post-prep), and wires physical stock-count reconciliation through the existing AP-4
+`remoteApprovalRequests` matrix.
+
+**`KitchenLineStatus` gains a new terminal value `wasted`** (Dart `kitchen_line_status.dart` +
+TS `transitionKitchenWorkItem.ts`, kept identical), reachable only from `preparing`/`ready` — per your
+confirmed answer, chosen over overloading `cancelled` for two different meanings and over touching the
+locked BR-KITCHEN-002 `ready → recalled`-only rule. `queued`/`acknowledged` still terminate via the
+existing `cancelled`. Added `wastedAt` to `KitchenWorkItem` and two new enum values
+(`KitchenAuditEventType.wasted`, `KitchenEventType.workItemWasted`) to keep every exhaustive Dart switch
+total — `flutter analyze` caught all four fallout sites (`transition_kitchen_work_item.dart` ×3,
+`kitchen_display_board_screen.dart` ×1), fixed, plus two non-exhaustive-but-semantically-relevant
+"is this line resolved" boolean checks (`kitchen_display_board_screen.dart`,
+`kitchen_completed_history_screen.dart`) updated to treat `wasted` as resolved too.
+
+**Cancellation reversal/waste** — new `functions/src/cancelOrderLineStock.ts`
+(`prepareCancellationStockHandling`/`applyCancellationStockHandling`, same read-then-write split as
+Sprint 2's `acceptOrderLine.ts`). Reuses the existing per-line `stockConsumptionRecords` doc for
+idempotency (new `disposition: 'consumed'|'reversed'|'wasted'` field) rather than a parallel ledger.
+Branches on the line's real `kitchenWorkItem` status — `queued`/`acknowledged` → reverses `branchStock`
+via an offsetting `stockMovements` doc (`type: 'reversal'`, the real existing enum value) and transitions
+to `cancelled`; `preparing`/`ready` → writes `wasteRecords` (ingredient **and** packaging, per your
+confirmed answer) without a second stock deduction (the stock was already correctly reduced at
+acceptance — waste means it stays reduced, not reduced again) and transitions to `wasted`. Wired into
+the three real post-acceptance cancellation points, confirmed by reading each: `checkFinancialAdjustments
+.ts`'s `applyAcceptedLineCancellation` (dine-in per-line — this handler's own doc comment had already
+forecast this exact sprint as "AP-5's own future consumer"; its `orderLineCancellationEvents
+.consumedByStockReconciliation` flag is now set `true` here, fulfilling that field's original intent),
+`cancelTakeawayOrderForStaff.ts`/`cancelDeliveryOrderForStaff.ts` (whole-order cancellation — loops every
+line's own work item independently, since takeaway/delivery have no per-line acceptance concept).
+
+**Stock count & manager-approval reconciliation** — new `submitStockCount.ts` (staff-tier
+`recordStockCount`, new `StaffPermission` mirroring `PosAuthorizedAction.recordStockCount`) ports the
+real, already-tested Dart `SubmitStockCount`/`ApproveStockCount`
+(`lib/features/inventory/application/use_cases/`) logic server-side: zero-discrepancy counts
+auto-approve immediately (no approval request — nothing to reconcile); any non-zero-variance line leaves
+the whole count `submitted` (real `StockCountStatus` enum value, not a spec-suggested string) and creates
+a `stockCountAdjustment` request via the existing `createApprovalRequest`. New
+`functions/src/stockCountEngine.ts` (`applyStockCountAdjustment`/`applyStockCountAdjustmentRejected`)
+registered into `remoteApproval.ts`'s `ACTION_HANDLERS`/`REJECTION_HANDLERS`/
+`RESPONSE_PERMISSION_BY_ACTION` (new manager-tier `approveStockCountAdjustment` permission, mirroring
+the Dart permission of the same name) /`BRANCH_SCOPED_RESPONSE_ACTION_TYPES` — approving applies
+`StockMovementType.countCorrection` (the real enum value) + updates `branchStock` + writes an
+`inventoryAuditEntries` doc (before/after, approver uid); rejecting touches no stock at all.
+Self-approval and wrong-branch approval are already prevented structurally by
+`respondToApprovalRequest` itself — no duplicate check needed.
+
+**Real bug found and fixed (not assumed away), same class as the last two sprints**: `manageKitchenOperations`/
+`manageRecipes`/`manageInventory` were only ever present on `admin`/`tenantOwner` — every prior edit
+anchored on the `manageFiscalDevices` line, which `manager` has never had, so `manager` silently never
+received any of the three despite this file's own "staff ⊂ manager ⊂ admin" tiering intent. Found and
+fixed this sprint (added to `manager` too) *before* it could bite a fourth time: this sprint's own new
+`recordStockCount`/`approveStockCountAdjustment` were added to all four tiers explicitly and verified
+individually via `grep`, not just "did the tests pass."
+
+**Explicitly not done this sprint**: no UI for stock count submission/approval (callable-only). No
+printer transport (unchanged). Reservation-preorder cancellation not wired (never wired into stock
+consumption in Sprint 2 either, so nothing to reverse/waste there yet).
+
+**Verification, all fresh full runs**: Firestore Rules **411/411** (two new branch-scoped collections,
+`stockCountLines`/`inventoryAuditEntries`). Cloud Functions **1979/1979**, achieved twice (one exact
+back-to-back pair interrupted by two single-test failures in files this sprint never touched —
+`completeCustomerProfile.test.ts` `HeadersTimeoutError` on a `fetch` call, and a `submitReservation
+.test.ts` assertion mismatch — both confirmed via direct import-graph inspection to have zero dependency
+on any file this sprint changed, consistent with transient load on a ~23-minute, ~1979-test sequential
+emulator run rather than a real regression; disclosed here rather than silently re-run past without
+comment). `flutter analyze` clean. `flutter test` **3647/3647**, no regressions.
+
+No git commit exists yet for AP-5 Sprint 1/2/3 — nothing has been committed this session (confirmed via
+`git status`); there is no SHA to report until the user asks for one.

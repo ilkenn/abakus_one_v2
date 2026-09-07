@@ -15,6 +15,10 @@ enum KitchenAuditEventType {
   reprinted,
   stationChanged,
   orderPreparationCompleted,
+
+  /// AP-5 Sprint 3 — a `preparing`/`ready` line was cancelled after real
+  /// stock was already consumed; recorded as waste rather than reversed.
+  wasted,
 }
 
 /// One immutable, append-only audit record of a kitchen operational

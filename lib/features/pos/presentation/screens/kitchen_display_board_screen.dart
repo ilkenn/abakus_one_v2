@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart' as fs;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
@@ -17,6 +18,7 @@ import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../application/use_cases/enqueue_kitchen_work_items.dart';
 import '../../application/use_cases/record_kitchen_event.dart';
 import '../../application/use_cases/transition_kitchen_work_item.dart';
+import '../../data/kitchen_action_gateway.dart';
 import '../../domain/authorization/pos_authorization_policy.dart';
 import '../../domain/kds/kitchen_delay_state.dart';
 import '../../domain/kds/kitchen_line_status.dart';
@@ -186,7 +188,46 @@ class _KitchenDisplayBoardScreenState
     await _load();
   }
 
+  /// AP-5 Sprint 1: once Firebase is ready, the real
+  /// `transitionKitchenWorkItem` callable (`KitchenActionGateway`) is the
+  /// only path a transition takes — `TransitionKitchenWorkItem`'s local
+  /// use case now sits behind a Firestore-backed
+  /// `kitchenProjectionRepositoryProvider` whose `save()` is a deliberate
+  /// no-op (see `FirestoreKitchenWorkItemRepository`'s doc comment), so
+  /// calling it directly here would silently stop persisting anything the
+  /// moment Firebase becomes ready. When the callable reports
+  /// `allSiblingsReady`, this also advances the canonical order's own
+  /// status via the already-real, already-tested `advance*OrderStatus`
+  /// callable for that order's channel — closing the confirmed AP-0/AP-1
+  /// gap where the board never called it at all.
   Future<void> _advanceLine(KitchenWorkItem item, KitchenLineStatus to) async {
+    if (ref.read(firebaseReadyProvider)) {
+      try {
+        final gateway = ref.read(kitchenActionGatewayProvider);
+        final result = await gateway.transitionWorkItem(
+          workItemId: item.id,
+          to: to,
+          expectedRevision: item.revision,
+        );
+        final orderId = result.orderId;
+        final orderChannel = result.orderChannel;
+        if (result.allSiblingsReady &&
+            orderId != null &&
+            orderChannel != null) {
+          await gateway.advanceOrderStatus(
+            orderId: orderId,
+            channel: orderChannel,
+            targetStatus: 'ready',
+          );
+        }
+        setState(() => _message = null);
+        await _load();
+      } on KitchenActionException catch (e) {
+        setState(() => _message = e.message);
+      }
+      return;
+    }
+
     final policy = widget.authorizationPolicy;
     if (policy == null) {
       setState(() => _message = 'Yetki politikası tanımlı değil.');
@@ -476,6 +517,7 @@ class KitchenOrderCard extends StatelessWidget {
       case KitchenLineStatus.ready:
       case KitchenLineStatus.cancelled:
       case KitchenLineStatus.unavailable:
+      case KitchenLineStatus.wasted:
         return null;
     }
   }
@@ -501,7 +543,8 @@ class KitchenOrderCard extends StatelessWidget {
     final allReady = workItems.every((i) =>
         i.status == KitchenLineStatus.ready ||
         i.status == KitchenLineStatus.cancelled ||
-        i.status == KitchenLineStatus.unavailable);
+        i.status == KitchenLineStatus.unavailable ||
+        i.status == KitchenLineStatus.wasted);
 
     return AppCard(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -602,6 +645,7 @@ class _WorkItemTile extends StatelessWidget {
     KitchenLineStatus.cancelled: 'İptal',
     KitchenLineStatus.unavailable: 'Yok',
     KitchenLineStatus.recalled: 'Geri Çağrıldı',
+    KitchenLineStatus.wasted: 'Fireye Ayrıldı',
   };
 
   @override

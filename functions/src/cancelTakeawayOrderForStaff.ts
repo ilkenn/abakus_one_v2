@@ -10,6 +10,7 @@ import {
   applyTakeawayLifecycleTransition,
   writeTakeawayOrderStatusChangeAuditEvent,
 } from "./takeawayOrderLifecycle";
+import { prepareCancellationStockHandling, applyCancellationStockHandling } from "./cancelOrderLineStock";
 
 /**
  * `cancelTakeawayOrderForStaff` — Boncuk Loyalty Program P4-C-C-B
@@ -114,6 +115,24 @@ export const cancelTakeawayOrderForStaff = onCall(
         ? (rolesByOrg![organizationId] as string[])
         : null;
 
+      // AP-5 Sprint 3 — read phase must run BEFORE this transaction's
+      // first write (`applyTakeawayLifecycleTransition` below). Takeaway
+      // has no per-line cancellation (unlike dine-in) — the whole order is
+      // cancelled at once, so every line's own `kitchenWorkItem` is
+      // checked, each reversed or wasted independently based on its real
+      // status.
+      const orderLines = Array.isArray(order.lines) ? order.lines : [];
+      const stockPlan = await prepareCancellationStockHandling({
+        tx,
+        db,
+        organizationId,
+        branchId,
+        orderId,
+        orderLineIds: orderLines.map((_: unknown, index: number) => `kt-${orderId}-line-${index}`),
+        performedByUid: actorUid,
+        now,
+      });
+
       applyTakeawayLifecycleTransition({
         tx,
         orderRef,
@@ -140,6 +159,7 @@ export const cancelTakeawayOrderForStaff = onCall(
         reasonMessage,
         now,
       });
+      applyCancellationStockHandling(tx, db, stockPlan);
 
       return { orderId, status: "cancelled", duplicate: false };
     });

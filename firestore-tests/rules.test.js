@@ -5177,3 +5177,199 @@ test('AP-4 fiscal/offline collections (fiscalOperationJournal/offlineLeases): no
   await assertFails(setDoc(doc(admin, 'fiscalOperationJournal/entry-2'), { organizationId: 'org-1' }));
   await assertFails(setDoc(doc(admin, 'offlineLeases/lease-2'), { organizationId: 'org-1' }));
 });
+
+// AP-5 Sprint 1/2 — KDS / Printer / Stock & Recipe collection surface
+// (firestore.rules). `kitchenWorkItems` is excluded from both loops below
+// and gets its own dedicated tests: unlike everything else here, it
+// allows a constrained `create` (mirrors the existing, real, idempotent
+// `EnqueueKitchenWorkItems` client-side use case). `kitchenTickets`/
+// `kitchenStations` are deliberately absent entirely: KitchenTicket stays
+// derived from `orders` (no own collection), and KitchenStation is a
+// fixed enum, not a persisted entity — the real persisted routing entity
+// is `kitchenRoutingRules`.
+//
+// AP-5 Sprint 2 correction: `recipes`/`recipeVersions`/
+// `recipeIngredientLinks`/`ingredients` moved OUT of the branch-scoped
+// group into a new org-scoped group (with `productPackagingLinks`/
+// `inventoryItems` added) — confirmed directly against source that
+// `Recipe`/`RecipeVersion`/`Ingredient`/`InventoryItem` carry no
+// `branchId` field at all, so the Sprint 1 `hasBranchAccess` requirement
+// on them would always have failed once a real reader existed.
+const ap5BranchScopedCollections = [
+  'kitchenRoutingRules',
+  'printerConfigs',
+  'printJobs',
+  'branchStock',
+  'stockMovements',
+  'stockCounts',
+  'wasteRecords',
+  'stockConsumptionRecords',
+  // AP-5 Sprint 3
+  'stockCountLines',
+  'inventoryAuditEntries',
+];
+
+const ap5OrgScopedCollections = [
+  'recipes',
+  'recipeVersions',
+  'recipeIngredientLinks',
+  'productPackagingLinks',
+  'ingredients',
+  'inventoryItems',
+];
+
+test('AP-5 branch-scoped collections: same-branch staff can read, no client (staff or otherwise) can write', async () => {
+  await seed(async (db) => {
+    for (const name of ap5BranchScopedCollections) {
+      await setDoc(doc(db, `${name}/seed-1`), { organizationId: 'org-1', branchId: 'branch-1' });
+    }
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-ap5-branch-1', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  for (const name of ap5BranchScopedCollections) {
+    await assertSucceeds(getDoc(doc(branchStaff, `${name}/seed-1`)));
+    await assertFails(setDoc(doc(branchStaff, `${name}/seed-2`), { organizationId: 'org-1', branchId: 'branch-1' }));
+    await assertFails(updateDoc(doc(branchStaff, `${name}/seed-1`), { organizationId: 'org-1' }));
+    await assertFails(deleteDoc(doc(branchStaff, `${name}/seed-1`)));
+  }
+});
+
+test('AP-5 branch-scoped collections: a different branch\'s staff cannot read — org membership alone is never sufficient', async () => {
+  await seed(async (db) => {
+    for (const name of ap5BranchScopedCollections) {
+      await setDoc(doc(db, `${name}/seed-3`), { organizationId: 'org-1', branchId: 'branch-1' });
+    }
+  });
+  const wrongBranchStaff = testEnv
+    .authenticatedContext('staff-ap5-branch-2', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-2'] },
+    })
+    .firestore();
+  const orgOnlyStaff = testEnv
+    .authenticatedContext('staff-ap5-org-only', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  for (const name of ap5BranchScopedCollections) {
+    await assertFails(getDoc(doc(wrongBranchStaff, `${name}/seed-3`)));
+    await assertFails(getDoc(doc(orgOnlyStaff, `${name}/seed-3`)));
+  }
+});
+
+test('AP-5 branch-scoped collections: a different organization\'s staff and an anonymous client are both denied', async () => {
+  await seed(async (db) => {
+    for (const name of ap5BranchScopedCollections) {
+      await setDoc(doc(db, `${name}/seed-4`), { organizationId: 'org-1', branchId: 'branch-1' });
+    }
+  });
+  const otherOrgStaff = testEnv
+    .authenticatedContext('staff-ap5-other-org', {
+      organizationAccess: ['org-2'],
+      branchAccess: { 'org-2': ['branch-1'] },
+    })
+    .firestore();
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  for (const name of ap5BranchScopedCollections) {
+    await assertFails(getDoc(doc(otherOrgStaff, `${name}/seed-4`)));
+    await assertFails(getDoc(doc(anon, `${name}/seed-4`)));
+    await assertFails(setDoc(doc(anon, `${name}/seed-5`), { organizationId: 'org-1', branchId: 'branch-1' }));
+  }
+});
+
+test('AP-5 org-scoped catalog collections: any org member can read regardless of branch access (even with none at all), no client can write', async () => {
+  await seed(async (db) => {
+    for (const name of ap5OrgScopedCollections) {
+      await setDoc(doc(db, `${name}/seed-1`), { organizationId: 'org-1' });
+    }
+  });
+  const orgOnlyStaff = testEnv
+    .authenticatedContext('staff-ap5-catalog-org-only', { organizationAccess: ['org-1'] })
+    .firestore();
+
+  for (const name of ap5OrgScopedCollections) {
+    await assertSucceeds(getDoc(doc(orgOnlyStaff, `${name}/seed-1`)));
+    await assertFails(setDoc(doc(orgOnlyStaff, `${name}/seed-2`), { organizationId: 'org-1' }));
+    await assertFails(updateDoc(doc(orgOnlyStaff, `${name}/seed-1`), { organizationId: 'org-1' }));
+    await assertFails(deleteDoc(doc(orgOnlyStaff, `${name}/seed-1`)));
+  }
+});
+
+test('AP-5 org-scoped catalog collections: a different organization\'s staff and an anonymous client are both denied', async () => {
+  await seed(async (db) => {
+    for (const name of ap5OrgScopedCollections) {
+      await setDoc(doc(db, `${name}/seed-3`), { organizationId: 'org-1' });
+    }
+  });
+  const otherOrgStaff = testEnv
+    .authenticatedContext('staff-ap5-catalog-other-org', { organizationAccess: ['org-2'] })
+    .firestore();
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  for (const name of ap5OrgScopedCollections) {
+    await assertFails(getDoc(doc(otherOrgStaff, `${name}/seed-3`)));
+    await assertFails(getDoc(doc(anon, `${name}/seed-3`)));
+    await assertFails(setDoc(doc(anon, `${name}/seed-4`), { organizationId: 'org-1' }));
+  }
+});
+
+test('kitchenWorkItems: same-branch staff can create a fresh queued/revision-1 item, and can read it back', async () => {
+  const branchStaff = testEnv
+    .authenticatedContext('staff-kwi-create', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertSucceeds(setDoc(doc(branchStaff, 'kitchenWorkItems/kwi-1'), {
+    organizationId: 'org-1', branchId: 'branch-1', orderId: 'order-1', status: 'queued', revision: 1,
+  }));
+  await assertSucceeds(getDoc(doc(branchStaff, 'kitchenWorkItems/kwi-1')));
+});
+
+test('kitchenWorkItems: create is rejected unless status is exactly "queued" and revision is exactly 1 — no client-fabricated mid-flight or ready item', async () => {
+  const branchStaff = testEnv
+    .authenticatedContext('staff-kwi-shape', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertFails(setDoc(doc(branchStaff, 'kitchenWorkItems/kwi-bad-status'), {
+    organizationId: 'org-1', branchId: 'branch-1', orderId: 'order-1', status: 'ready', revision: 1,
+  }));
+  await assertFails(setDoc(doc(branchStaff, 'kitchenWorkItems/kwi-bad-revision'), {
+    organizationId: 'org-1', branchId: 'branch-1', orderId: 'order-1', status: 'queued', revision: 2,
+  }));
+});
+
+test('kitchenWorkItems: a different branch\'s staff cannot create, and no client can ever update or delete — transitionKitchenWorkItem callable only', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'kitchenWorkItems/kwi-2'), {
+      organizationId: 'org-1', branchId: 'branch-1', orderId: 'order-1', status: 'queued', revision: 1,
+    });
+  });
+  const wrongBranchStaff = testEnv
+    .authenticatedContext('staff-kwi-wrong-branch', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-2'] },
+    })
+    .firestore();
+  const branchStaff = testEnv
+    .authenticatedContext('staff-kwi-no-update', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertFails(setDoc(doc(wrongBranchStaff, 'kitchenWorkItems/kwi-3'), {
+    organizationId: 'org-1', branchId: 'branch-1', orderId: 'order-1', status: 'queued', revision: 1,
+  }));
+  await assertFails(updateDoc(doc(branchStaff, 'kitchenWorkItems/kwi-2'), { status: 'acknowledged', revision: 2 }));
+  await assertFails(deleteDoc(doc(branchStaff, 'kitchenWorkItems/kwi-2')));
+});

@@ -44,7 +44,8 @@ class _KitchenCompletedHistoryScreenState
         .where((i) =>
             i.status == KitchenLineStatus.ready ||
             i.status == KitchenLineStatus.cancelled ||
-            i.status == KitchenLineStatus.unavailable)
+            i.status == KitchenLineStatus.unavailable ||
+            i.status == KitchenLineStatus.wasted)
         .toList()
       ..sort((a, b) {
         final aAt = a.readyAt ?? a.cancelledAt ?? a.unavailableAt ?? a.queuedAt;

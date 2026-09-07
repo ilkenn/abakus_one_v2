@@ -66,6 +66,7 @@ import {
 import { isCampaignScheduleCurrentlyOpen, DEFAULT_ORGANIZATION_TIMEZONE } from "./campaignScheduling";
 import { resolveCampaignDiscount, type CampaignPriceableLine } from "./campaignPricing";
 import { reserveCampaignUsage } from "./campaignUsage";
+import { prepareKitchenWorkAndStockConsumption, applyKitchenWorkAndStockConsumption } from "./acceptOrderLine";
 
 /**
  * `submitDineInOrder` — Boncuk Loyalty Program P7-D.1 (2026-08-24).
@@ -1123,6 +1124,31 @@ export const submitDineInOrder = onCall(
         };
       }
 
+      // AP-5 Sprint 2 — the LAST tx.get()-performing step before the write
+      // phase below: `staffEntry` orders are written `accepted`
+      // immediately (trusted staff entry IS the approval, per this file's
+      // own precedent), so kitchen enqueue + stock/packaging consumption
+      // must be prepared (read-only) here, before ANY write in this
+      // transaction, exactly like every other read this function performs.
+      const stockPlan =
+        lineStatus === "accepted"
+          ? await prepareKitchenWorkAndStockConsumption({
+              tx,
+              db,
+              organizationId,
+              branchId,
+              orderId,
+              channel: "dineInQr",
+              acceptedLines: lines.map((line, index) => ({
+                orderLineId: `kt-${orderId}-line-${index}`,
+                productId: line.productId,
+                quantity: line.quantity,
+              })),
+              performedByUid: uid,
+              now: Timestamp.now(),
+            })
+          : null;
+
       // ---------------------------------------------------------------
       // Write phase — every tx.get() this transaction will ever perform
       // has already happened above.
@@ -1249,6 +1275,14 @@ export const submitDineInOrder = onCall(
           now: nowTs,
         });
       }
+
+      // AP-5 Sprint 2 — write phase only (plan already prepared above,
+      // before this transaction's first write); a `staffEntry` order is
+      // written `accepted` at create time (trusted, permission-checked
+      // staff entry IS the approval, per this file's own precedent), so
+      // kitchen enqueue + stock/packaging consumption commit in this SAME
+      // transaction, not a later step that may never come.
+      applyKitchenWorkAndStockConsumption(tx, db, stockPlan);
 
       return { orderId, orderNumber, duplicate: false, subAccountId: resolvedSubAccountId, tableSessionId: resolvedTableSessionId };
     });

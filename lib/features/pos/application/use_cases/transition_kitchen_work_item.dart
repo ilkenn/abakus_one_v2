@@ -61,6 +61,13 @@ class TransitionKitchenWorkItem {
         return PosAuthorizedAction.recallKitchenLine;
       case KitchenLineStatus.queued:
         return PosAuthorizedAction.startKitchenPreparation;
+      case KitchenLineStatus.wasted:
+        // AP-5 Sprint 3 — same action family as cancelled/unavailable; in
+        // practice this transition is always server-triggered
+        // (`cancelOrderLineStock.ts`, on post-prep cancellation), never
+        // invoked through this local use case, but the mapping must still
+        // be total.
+        return PosAuthorizedAction.cancelKitchenLine;
     }
   }
 
@@ -80,6 +87,8 @@ class TransitionKitchenWorkItem {
         return KitchenAuditEventType.recalled;
       case KitchenLineStatus.queued:
         return KitchenAuditEventType.resumed;
+      case KitchenLineStatus.wasted:
+        return KitchenAuditEventType.wasted;
     }
   }
 
@@ -99,6 +108,8 @@ class TransitionKitchenWorkItem {
         return KitchenEventType.workItemRecalled;
       case KitchenLineStatus.queued:
         return KitchenEventType.workItemResumed;
+      case KitchenLineStatus.wasted:
+        return KitchenEventType.workItemWasted;
     }
   }
 
@@ -158,6 +169,7 @@ class TransitionKitchenWorkItem {
       cancelledAt: to == KitchenLineStatus.cancelled ? now : null,
       unavailableAt: to == KitchenLineStatus.unavailable ? now : null,
       recalledAt: to == KitchenLineStatus.recalled ? now : null,
+      wastedAt: to == KitchenLineStatus.wasted ? now : null,
       revision: item.revision + 1,
     );
     await _projectionRepository.save(updated);

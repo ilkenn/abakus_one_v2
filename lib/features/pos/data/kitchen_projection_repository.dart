@@ -9,6 +9,16 @@ import '../domain/kds/kitchen_work_item.dart';
 abstract interface class KitchenProjectionRepository {
   Future<void> save(KitchenWorkItem item);
 
+  /// Creates a brand-new work item (`revision == 1`, `status == queued`)
+  /// — what [EnqueueKitchenWorkItems] calls, distinct from [save]'s use for
+  /// persisting a transition. AP-5 Sprint 1: the Firestore-backed
+  /// implementation's [save] is a documented no-op (every transition goes
+  /// through the real `transitionKitchenWorkItem` callable instead), so
+  /// the one legitimate client write — materializing the initial item —
+  /// needs its own interface method rather than overloading [save]'s
+  /// meaning.
+  Future<void> createInitial(KitchenWorkItem item);
+
   /// The latest revision for [workItemId], or `null` if unknown.
   Future<KitchenWorkItem?> findById(String workItemId);
 
@@ -40,6 +50,9 @@ class InMemoryKitchenProjectionRepository
   Future<void> save(KitchenWorkItem item) async {
     _historyById.putIfAbsent(item.id, () => []).add(item);
   }
+
+  @override
+  Future<void> createInitial(KitchenWorkItem item) => save(item);
 
   @override
   Future<KitchenWorkItem?> findById(String workItemId) async {

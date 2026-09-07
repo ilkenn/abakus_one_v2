@@ -10,6 +10,7 @@ import {
   applyDeliveryLifecycleTransition,
   writeDeliveryOrderStatusChangeAuditEvent,
 } from "./deliveryOrderLifecycle";
+import { prepareKitchenWorkAndStockConsumption, applyKitchenWorkAndStockConsumption } from "./acceptOrderLine";
 
 /**
  * `respondToDeliveryOrder` — Boncuk Loyalty Program P5-B (2026-08-24).
@@ -85,6 +86,30 @@ export const respondToDeliveryOrder = onCall(
         ? (rolesByOrg![organizationId] as string[])
         : null;
 
+      // AP-5 Sprint 2 — read phase must run BEFORE this transaction's
+      // first write (`applyDeliveryLifecycleTransition` below), mirroring
+      // `respondToTakeawayOrder.ts`'s own fix exactly.
+      const stockPlan =
+        decision === "confirm"
+          ? await prepareKitchenWorkAndStockConsumption({
+              tx,
+              db,
+              organizationId,
+              branchId,
+              orderId,
+              channel: "delivery",
+              acceptedLines: (Array.isArray(order.lines) ? order.lines : []).map(
+                (line: Record<string, unknown>, index: number) => ({
+                  orderLineId: `kt-${orderId}-line-${index}`,
+                  productId: line.productId as string,
+                  quantity: line.quantity as number,
+                }),
+              ),
+              performedByUid: actorUid,
+              now,
+            })
+          : null;
+
       applyDeliveryLifecycleTransition({
         tx,
         orderRef,
@@ -111,6 +136,8 @@ export const respondToDeliveryOrder = onCall(
         reasonMessage,
         now,
       });
+
+      applyKitchenWorkAndStockConsumption(tx, db, stockPlan);
 
       return { orderId, status: targetStatus, duplicate: false };
     });
