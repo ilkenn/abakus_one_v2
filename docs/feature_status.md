@@ -5880,3 +5880,131 @@ New/changed files: `lib/features/inventory/domain/stock_health_status.dart` (new
 
 No git commit exists yet for AP-5 Sprint 5 — nothing has been committed this session; there is no SHA
 to report until the user asks for one.
+
+**Correction (AP-5 Sprint 6, below)**: Sprint 5 was in fact committed and pushed later the same
+session as `2c578b2` on `phase-7/profile-redesign` — the line above is a stale snapshot from before
+that commit, left as-is rather than silently rewritten.
+
+## AP-5 Sprint 6 (final) — Reconciliation approval UI, recipe linking surface & E2E closure (2026-09-08)
+
+Closes the three remaining UI/verification gaps before AP-5 can be marked done: managers had no way to
+see or act on a pending stock-count discrepancy from the UI; nobody could link a menu product to its
+stock-consuming ingredients through a UI (the callable existed, nothing called it); and no single test
+proved the whole Sprint 1-5 chain interoperates end-to-end rather than just passing in isolation.
+
+**Research findings that changed scope from the request's literal wording** (plan researched and
+approved before any code was written): a real, generic, already-working Approval Inbox already existed
+(`approval_inbox_screen.dart`) — `ApprovalGateway.respond()` already called the real
+`respondToApprovalRequest` callable for *any* action type, so no new callable/gateway was needed for
+approve/reject. What was missing: the Dart `ApprovalActionType` enum was never given a
+`stockCountAdjustment` case (added server-side in Sprint 3, never mirrored to Dart — the inbox would
+have thrown `ArgumentError` on a real stock-count approval before this sprint), and the generic card
+showed no payload detail at all (by design). No screen edited a `MenuProduct`'s recipe/ingredient
+binding at all — `RecipesScreen` manages a different domain concept (`Recipe`/`RecipeLine`), not
+`RecipeIngredientLink` (Sprint 2's product-to-inventory-item stock-consumption binding) — so a new,
+single-purpose screen was built rather than conflating the two. `setRecipeIngredientLink` had no Dart
+caller anywhere, closing a gap disclosed since Sprint 2.
+
+**Stock Reconciliation Approval UI** — `ApprovalActionType.stockCountAdjustment` added (enum + wire
+mapping + label). New `FirestoreStockCountRepository`/`FirestoreStockCountLineRepository`
+(`lib/features/inventory/data/`), Firebase-gated, mirroring `FirestoreApprovalRepository`'s exact
+direct-read shape — the interfaces already declared `findById`/`findByCountId`, only the Firestore
+-backed implementation was missing. New `_StockCountDiscrepancyDetail` widget in
+`approval_inbox_screen.dart`: parses the count id from `targetAggregateRef` (same pattern
+`targetDeviceId` already uses), fetches the `StockCount`/`StockCountLine`s once, and renders each
+line's system-vs-counted quantity and signed variance, color-coded via existing tokens only. New
+`InventoryUnit.byCode` lookup (reconstructs a `Quantity` from Firestore's separate `unitCode` +
+smallest-units fields). Approve/Reject buttons needed no changes — already fully generic.
+
+**Recipe Ingredient Linkage Management UI** — new `RecipeIngredientLinkGateway`
+(`lib/features/recipes/data/recipe_ingredient_link_gateway.dart`), mirroring `PrintJobActionGateway`'s
+exact interface+Firebase-impl+Unavailable-impl+`firebaseReadyProvider`-gated-provider shape. New
+`RecipeIngredientLinksScreen` (`lib/features/recipes/presentation/screens/`) lists `MenuProduct`s (via
+the existing, shared `menuProductRepositoryProvider`) with their current link status; tapping a product
+opens a repeatable ingredient-line form (inventory item id text field + quantity + unit dropdown —
+mirrors `RecipesScreen`'s own plain-text-field precedent, since no real `InventoryItem` picker data
+source exists yet) that calls the new gateway, then mirrors the saved link into the local
+`RecipeIngredientLinkRepository` so the list reflects the change immediately. Registered into
+`admin_shell_screen.dart` as a new nav item alongside `RecipesScreen`, same `EntitlementModule.recipes`
+gate.
+
+**Comprehensive AP-5 E2E Integration Suite** — new `functions/src/test/ap5EndToEndLifecycle.test.ts`,
+composing the already-tested prepare/apply primitives from Sprints 2-4 directly against ONE continuous
+branch/ingredient across all five stages (accept+cost snapshot → idempotent print job → pre-prep
+cancellation reversal → post-prep cancellation waste → stock count submission + manager approval +
+correction), with the on-hand balance tracked explicitly at each step. Stage 5 goes through the real
+HTTP callable wire protocol for `submitStockCount`/`respondToApprovalRequest` (neither has a separately
+-exported pure function to call directly) — every other stage calls the exported prepare/apply
+functions directly, mirroring `acceptOrderLine.test.ts`'s own style.
+
+**Two real regressions found and fixed during verification, not assumed away**: (1) my own new
+`_RecipeIngredientLinkFormScreen._save()` called the gateway but never updated the local
+`RecipeIngredientLinkRepository`, so the list never reflected a save without a full external reload —
+fixed by mirroring the saved link locally, exactly as originally planned but initially missed in
+implementation. (2) `admin_shell_screen_test.dart`'s pre-existing "Device Registry" test used a
+hand-tuned fixed-pixel scroll-then-nudge to reach a sidebar item below where this sprint's new nav item
+was inserted — adding one more row shifted the sidebar's content past what several nudge-magnitude
+attempts could reliably reach (confirmed by three different drag magnitudes producing the identical
+failing hit-test offset, meaning the drag itself had no effect once the list's real scroll extent was
+already reached). Fixed by giving that one test a taller viewport instead of chasing a pixel constant —
+robust to the sidebar's exact item count going forward, not just this sprint's count.
+
+**Explicitly not done this sprint**: no live-stream on the stock-count discrepancy detail (one-shot
+fetch, matching the card's own non-streaming shape). `inventoryItemId`/ingredient-name resolution in
+both new screens stays text-field/id-based — no real `InventoryItem`/`Ingredient` picker data source
+exists yet (same gap Sprint 5 disclosed). `menuProductRepositoryProvider` starts empty in a fresh
+environment unless products exist via Smart Import — pre-existing, not a new gap.
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Firestore Rules **411/411** (no
+rule changes this sprint). Cloud Functions **2006/2006** (2005 + 1 new), one clean run, no failures
+(one transient Windows emulator-load failure on the first attempt, unrelated to code — confirmed by an
+immediately-clean retry, same class of environment flakiness disclosed in Sprint 4/5's own reports).
+`flutter analyze` clean. `flutter test` **3678/3678** (3666 + 12 new), no regressions after the two
+fixes above.
+
+New/changed files: `lib/features/admin/domain/approval/approval_request.dart`,
+`lib/features/admin/presentation/screens/approval_inbox_screen.dart`,
+`lib/features/inventory/data/{stock_count_repository,stock_count_line_repository}.dart`,
+`lib/features/inventory/domain/inventory_unit.dart`,
+`lib/features/inventory/presentation/providers/inventory_dependencies_provider.dart`,
+`lib/features/recipes/data/recipe_ingredient_link_gateway.dart` (new),
+`lib/features/recipes/presentation/{providers/recipe_dependencies_provider,
+screens/recipe_ingredient_links_screen}.dart` (screen new),
+`lib/features/admin/presentation/screens/admin_shell_screen.dart`,
+`functions/src/test/ap5EndToEndLifecycle.test.ts` (new),
+`test/features/admin/{domain/approval/approval_request_test,
+presentation/screens/approval_inbox_screen_test,presentation/admin_shell_screen_test}.dart`,
+`test/features/inventory/domain/inventory_unit_test.dart` (new),
+`test/features/recipes/{data/recipe_ingredient_link_gateway_test,
+presentation/screens/recipe_ingredient_links_screen_test}.dart` (new).
+
+No git commit exists yet for AP-5 Sprint 6 — nothing has been committed this session; there is no SHA
+to report until the user asks for one.
+
+---
+
+## AP-5 — STATUS: COMPLETED / DONE (2026-09-08)
+
+All six sprints of AP-5 (KDS routing, server-authoritative stock/cost, cancellation reversal/waste,
+stock count reconciliation, the printer queue, low-stock alerts, and the reconciliation/recipe-linking
+UI + E2E closure) are implemented, tested, and — as of Sprint 6's own commit, once made — captured in
+git history. Sprint-by-sprint commit record on `phase-7/profile-redesign`:
+
+- **Sprints 1-3** (KDS Firestore rules/backend binding/printer skeleton; recipe/packaging linking +
+  server-authoritative stock deduction; cancellation reversal/waste + stock count & manager-approval
+  reconciliation): `caba0851e45051f8a147d825fc1dfd95ab6cc704`.
+- **Sprint 4** (KDS UI refinement, wasted badge, print job queue integration): `d1a71b11282f9adb745fb9117e6c25cb2e76469c`.
+- **Sprint 5** (low stock alerts, out-of-stock guard, ingredient cost snapshot): `2c578b21f33ce12d9ae6f8df5759e302942a2f03`.
+- **Sprint 6** (reconciliation approval UI, recipe linking surface, E2E closure): pending commit as of
+  this entry — see the section above.
+
+**Residual, explicitly out-of-scope items carried forward past AP-5's own closure** (each already
+disclosed in its originating sprint, not new): `ConsumeStockForOrder` (the disconnected client-side
+Dart stock-consumption primitive) remains unwired to any real order-acceptance path — `acceptOrderLine
+.ts` is the real path, not this. No UI for setting standard ingredient costs (callable-only). No real
+`InventoryItem`/`Ingredient` catalog picker anywhere (every ingredient-identity input across every
+AP-5 screen is a plain text field) — no Cloud Function writes that catalog data yet. No custom/tenant
+-defined `InventoryUnit` support server-side. No real PAX A910SF/TEB POS hardware integration (AP-4,
+tracked separately, gated on official vendor documentation per `docs/payment_cash_fiscal_architecture
+.md` §14/§21). These are legitimate next-phase or explicitly-deferred items, not silently-abandoned
+AP-5 scope.

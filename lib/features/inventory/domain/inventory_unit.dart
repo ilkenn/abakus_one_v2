@@ -99,6 +99,18 @@ class InventoryUnit {
     bottle,
   ];
 
+  /// AP-5 Sprint 6 — resolves one of [builtIn] back from its persisted
+  /// [code] (e.g. reconstructing a [Quantity] from a Firestore document
+  /// that only stores `unitCode` + a smallest-units integer, never the
+  /// full unit object). `null` for a tenant-defined custom unit (this
+  /// extensibility point's own documented case, above) — never guessed.
+  static InventoryUnit? byCode(String code) {
+    for (final unit in builtIn) {
+      if (unit.code == code) return unit;
+    }
+    return null;
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) || (other is InventoryUnit && other.code == code);

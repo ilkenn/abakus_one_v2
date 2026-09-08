@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../application/identity/product_packaging_link_id_generator.dart';
 import '../../application/identity/recipe_id_generator.dart';
 import '../../application/identity/recipe_ingredient_link_id_generator.dart';
@@ -10,6 +11,7 @@ import '../../application/identity/sub_recipe_id_generator.dart';
 import '../../application/identity/sub_recipe_version_id_generator.dart';
 import '../../data/product_packaging_link_repository.dart';
 import '../../data/recipe_audit_entry_repository.dart';
+import '../../data/recipe_ingredient_link_gateway.dart';
 import '../../data/recipe_ingredient_link_repository.dart';
 import '../../data/recipe_ingredient_snapshot_repository.dart';
 import '../../data/recipe_modifier_impact_repository.dart';
@@ -102,6 +104,20 @@ final recipeIngredientLinkRepositoryProvider =
 final recipeIngredientLinkIdGeneratorProvider =
     Provider<RecipeIngredientLinkIdGenerator>((ref) {
   return SequentialRecipeIngredientLinkIdGenerator();
+});
+
+/// AP-5 Sprint 6 — the real backend boundary for `setRecipeIngredientLink`,
+/// closing the "callable-only, no Dart caller" gap the comment above
+/// disclosed since Sprint 2. Same fail-closed, `firebaseReadyProvider`
+/// -gated shape as `printJobActionGatewayProvider`
+/// (`pos/presentation/providers/kds_dependencies_provider.dart`).
+final recipeIngredientLinkGatewayProvider =
+    Provider<RecipeIngredientLinkGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return const UnavailableRecipeIngredientLinkGateway();
+  }
+  return const FirebaseRecipeIngredientLinkGateway();
 });
 
 final productPackagingLinkRepositoryProvider =

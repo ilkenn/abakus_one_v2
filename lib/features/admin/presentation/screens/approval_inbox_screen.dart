@@ -2,12 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../inventory/domain/stock_count.dart';
+import '../../../inventory/domain/stock_count_line.dart';
+import '../../../inventory/presentation/providers/inventory_dependencies_provider.dart';
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
 import '../../../pos/domain/authorization/staff_role.dart';
 import '../../../pos/presentation/providers/actor_session_provider.dart';
@@ -35,6 +39,8 @@ const _actionTypeLabels = {
   ApprovalActionType.cashMovement: 'Kasa Hareketi',
   ApprovalActionType.cashAdjustment: 'Kasa Düzeltmesi',
   ApprovalActionType.cashReconciliation: 'Kasa Sayım Onayı',
+  // AP-5 Sprint 6.
+  ApprovalActionType.stockCountAdjustment: 'Stok Sayım Düzeltmesi',
 };
 
 const _eligibleResponderRoles = {
@@ -258,6 +264,13 @@ class _ApprovalCardState extends ConsumerState<_ApprovalCard> {
               style: AppTypography.bodySmall
                   .copyWith(color: AppColors.textSecondary),
             ),
+            if (request.actionType == ApprovalActionType.stockCountAdjustment &&
+                request.stockCountId != null)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.sm),
+                child: _StockCountDiscrepancyDetail(
+                    stockCountId: request.stockCountId!),
+              ),
             if (widget.isSelfRequest)
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.xs),
@@ -288,6 +301,138 @@ class _ApprovalCardState extends ConsumerState<_ApprovalCard> {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// AP-5 Sprint 6 — the "Sayılan vs Sistem Miktarı" discrepancy detail for
+/// a `stockCountAdjustment` request, fetched once (not a live stream —
+/// this card is already a one-off, non-streaming widget) from the real
+/// `stockCounts`/`stockCountLines` collections `submitStockCount.ts`
+/// (Sprint 3) writes. Never reads `payloadHash` — `ApprovalRequest`'s own
+/// doc comment excludes it from the client model entirely; this widget
+/// fetches the target aggregate's own documents instead, the same
+/// pattern every other approval-detail view in this codebase would use.
+class _StockCountDiscrepancyDetail extends ConsumerStatefulWidget {
+  const _StockCountDiscrepancyDetail({required this.stockCountId});
+
+  final String stockCountId;
+
+  @override
+  ConsumerState<_StockCountDiscrepancyDetail> createState() =>
+      _StockCountDiscrepancyDetailState();
+}
+
+class _StockCountDiscrepancyDetailState
+    extends ConsumerState<_StockCountDiscrepancyDetail> {
+  StockCount? _count;
+  List<StockCountLine>? _lines;
+  bool _loadFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final count = await ref
+          .read(stockCountRepositoryProvider)
+          .findById(widget.stockCountId);
+      final lines = await ref
+          .read(stockCountLineRepositoryProvider)
+          .findByCountId(widget.stockCountId);
+      if (!mounted) return;
+      setState(() {
+        _count = count;
+        _lines = lines;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadFailed = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loadFailed) {
+      return Text(
+        'Sayım detayı yüklenemedi.',
+        style: AppTypography.bodySmall.copyWith(color: AppColors.error),
+      );
+    }
+    final count = _count;
+    final lines = _lines;
+    if (count == null || lines == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        child: SizedBox(
+          height: 16,
+          width: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (lines.isEmpty) {
+      return Text(
+        'Sayım satırı bulunamadı.',
+        style: AppTypography.bodySmall
+            .copyWith(color: AppColors.textSecondary),
+      );
+    }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: const BoxDecoration(
+        color: AppColors.surfaceVariant,
+        borderRadius: AppRadius.kSmall,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Sayan: ${count.startedByStaffId}',
+              style: AppTypography.bodySmall
+                  .copyWith(color: AppColors.textSecondary)),
+          const SizedBox(height: AppSpacing.xs),
+          for (final line in lines)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: Text(line.inventoryItemId,
+                        style: AppTypography.bodySmall,
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                  Expanded(
+                    child: Text('Sistem: ${line.expectedQuantity}',
+                        style: AppTypography.bodySmall
+                            .copyWith(color: AppColors.textSecondary)),
+                  ),
+                  Expanded(
+                    child: Text('Sayılan: ${line.countedQuantity}',
+                        style: AppTypography.bodySmall
+                            .copyWith(color: AppColors.textSecondary)),
+                  ),
+                  Text(
+                    line.varianceQuantity.isZero
+                        ? '±0'
+                        : '${line.varianceQuantity.isPositive ? '+' : ''}${line.varianceQuantity}',
+                    style: AppTypography.labelLarge.copyWith(
+                      color: line.varianceQuantity.isZero
+                          ? AppColors.success
+                          : line.varianceQuantity.isNegative
+                              ? AppColors.error
+                              : AppColors.warning,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

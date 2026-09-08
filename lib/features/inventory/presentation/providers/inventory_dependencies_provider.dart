@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../application/identity/expiry_record_id_generator.dart';
 import '../../application/identity/ingredient_id_generator.dart';
 import '../../application/identity/inventory_item_id_generator.dart';
@@ -102,8 +103,18 @@ final stockAdjustmentIdGeneratorProvider =
   return SequentialStockAdjustmentIdGenerator();
 });
 
+/// AP-5 Sprint 6 — Firebase-gated, mirroring
+/// `kitchenProjectionRepositoryProvider`'s exact shape: real
+/// `FirestoreStockCountRepository` once Firebase is ready (so the
+/// Approval Inbox's stock-count discrepancy detail sees Sprint 3's real
+/// `submitStockCount.ts` data), `InMemoryStockCountRepository` fallback
+/// otherwise (`flutter test`, pre-bootstrap).
 final stockCountRepositoryProvider = Provider<StockCountRepository>((ref) {
-  return InMemoryStockCountRepository();
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return InMemoryStockCountRepository();
+  }
+  return FirestoreStockCountRepository();
 });
 
 final stockCountIdGeneratorProvider = Provider<StockCountIdGenerator>((ref) {
@@ -112,7 +123,11 @@ final stockCountIdGeneratorProvider = Provider<StockCountIdGenerator>((ref) {
 
 final stockCountLineRepositoryProvider =
     Provider<StockCountLineRepository>((ref) {
-  return InMemoryStockCountLineRepository();
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return InMemoryStockCountLineRepository();
+  }
+  return FirestoreStockCountLineRepository();
 });
 
 final stockCountLineIdGeneratorProvider =

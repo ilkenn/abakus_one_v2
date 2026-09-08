@@ -21,6 +21,12 @@ enum ApprovalActionType {
   cashMovement,
   cashAdjustment,
   cashReconciliation,
+  // AP-5 Sprint 6 — mirrors the server-side `ApprovalActionType` union
+  // (`functions/src/remoteApproval.ts`) added in Sprint 3 alongside
+  // `submitStockCount`. Never wired into this Dart enum until now — the
+  // Approval Inbox would have thrown `ArgumentError` on any real stock
+  // -count approval request before this addition.
+  stockCountAdjustment,
 }
 
 enum ApprovalStatus {
@@ -52,6 +58,8 @@ ApprovalActionType approvalActionTypeFromWire(String value) {
       return ApprovalActionType.cashAdjustment;
     case 'cashReconciliation':
       return ApprovalActionType.cashReconciliation;
+    case 'stockCountAdjustment':
+      return ApprovalActionType.stockCountAdjustment;
     default:
       throw ArgumentError('Unknown approval action type: $value');
   }
@@ -121,5 +129,18 @@ class ApprovalRequest {
       if (docIdParts.length >= 3) return docIdParts.last;
     }
     return targetAggregateRef;
+  }
+
+  /// AP-5 Sprint 6 — same "safe summary from the ref's own path" shape as
+  /// [targetDeviceId], for a [ApprovalActionType.stockCountAdjustment]
+  /// request's `targetAggregateRef` (`stockCounts/{countId}`, set by
+  /// `submitStockCount.ts`'s own `createApprovalRequest` call). `null`
+  /// when the ref doesn't match that shape (any other action type).
+  String? get stockCountId {
+    final parts = targetAggregateRef.split('/');
+    if (parts.length == 2 && parts[0] == 'stockCounts') {
+      return parts[1];
+    }
+    return null;
   }
 }

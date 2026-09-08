@@ -635,6 +635,18 @@ void main() {
       (tester) async {
     await pumpShell(
       tester,
+      // AP-5 Sprint 6 added one more nav item ahead of "Cihazlar"
+      // ("Reçete-Malzeme Bağlantıları"), and the previous fixed-pixel
+      // drag-then-nudge approach turned out to be fragile in a way tuning
+      // the nudge amount didn't fix (the sidebar `ListView`'s own natural
+      // height was already close to the default 900px viewport, so drag
+      // deltas past its real scroll extent are simply clamped and never
+      // move "Cihazlar" at all — confirmed by the identical failure at
+      // three different drag magnitudes). A taller viewport, only for
+      // this test, makes the whole sidebar fit without needing to scroll
+      // to reach it at all — robust to the sidebar's exact item count
+      // going forward, not just this specific count.
+      size: const Size(1400, 1600),
       session: const ActorSession(
         actorId: 'manager-1',
         roles: {StaffRole.manager},
@@ -642,15 +654,7 @@ void main() {
       ),
     );
 
-    await tester.dragUntilVisible(
-      find.text('Cihazlar'),
-      find.byType(ListView).first,
-      const Offset(0, -300),
-    );
-    // dragUntilVisible stops as soon as the finder matches, even if only
-    // partially scrolled into the viewport — nudge further so the tap's
-    // hit-test point lands inside the 900px-tall test viewport.
-    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
+    await tester.ensureVisible(find.text('Cihazlar'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Cihazlar'));
     await tester.pumpAndSettle();

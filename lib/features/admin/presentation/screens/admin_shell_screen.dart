@@ -20,6 +20,7 @@ import '../../../inventory/presentation/screens/ingredient_catalog_screen.dart';
 import '../../../inventory/presentation/screens/inventory_screen.dart';
 import '../../../inventory/presentation/screens/stock_counts_screen.dart';
 import '../../../purchasing/presentation/screens/suppliers_screen.dart';
+import '../../../recipes/presentation/screens/recipe_ingredient_links_screen.dart';
 import '../../../recipes/presentation/screens/recipes_screen.dart';
 import '../../../restaurant_setup/presentation/screens/setup_templates_screen.dart';
 import '../../../smart_import/presentation/screens/import_jobs_screen.dart';
@@ -503,6 +504,21 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
                 organizationId: 'org-1',
                 authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
                 performedByStaffId: actorId,
+              ),
+            ),
+          ),
+          _AdminNavItem(
+            id: 'recipe-ingredient-links',
+            label: 'Reçete-Malzeme Bağlantıları',
+            icon: Icons.link,
+            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            builder: (context, ref) => ModuleEntitlementGate(
+              module: EntitlementModule.recipes,
+              scopeType: EntitlementScopeType.branch,
+              scopeId: branchId,
+              actorStaffId: actorId,
+              child: const RecipeIngredientLinksScreen(
+                organizationId: 'org-1',
               ),
             ),
           ),
