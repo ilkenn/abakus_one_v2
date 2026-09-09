@@ -91,6 +91,19 @@ abstract final class OrderFirestoreMapper {
       // `pickupTime` doesn't already have, it's just typed differently for
       // the one consumer (Security Rules) that needs a native Timestamp.
       'pickupTimeTimestamp': order.pickupTime,
+      // AP-6 Sprint 1 — ISO-string, matching pickupTime's own convention;
+      // same write-only native-Timestamp shadow-field pattern as
+      // pickupTimeTimestamp above (`takeawayOperationsSweep.ts`'s candidate
+      // query range-filters on this Timestamp field, never on the ISO
+      // string — `functions/src/submitTakeawayOrder.ts`'s own
+      // `buildOrderDocument` writes both together server-side). No real
+      // client write path sets [Order.scheduledFor] today (only
+      // `submitTakeawayOrder`/`takeawayOperationsSweep` ever do), but this
+      // keeps the mapper's own write path complete rather than silently
+      // divergent from the server's document shape.
+      'scheduledFor': order.scheduledFor?.toIso8601String(),
+      'scheduledForTimestamp': order.scheduledFor,
+      'estimatedReadyAt': order.estimatedReadyAt?.toIso8601String(),
       'contactFirstName': order.contactFirstName,
       'contactLastName': order.contactLastName,
       'contactPhone': order.contactPhone,
@@ -136,6 +149,12 @@ abstract final class OrderFirestoreMapper {
       takeawayEntrySessionId: data['takeawayEntrySessionId'] as String?,
       pickupMode: _pickupModeFromName(data['pickupMode'] as String?),
       pickupTime: _parseNullableDateTime(data['pickupTime'] as String?),
+      // AP-6 Sprint 1 — additive/nullable, same backward-compatibility
+      // contract as boncukRedemption/catalogReward/campaign above: a
+      // pre-AP-6 order document simply has no keys, both parse to null.
+      scheduledFor: _parseNullableDateTime(data['scheduledFor'] as String?),
+      estimatedReadyAt:
+          _parseNullableDateTime(data['estimatedReadyAt'] as String?),
       contactFirstName: data['contactFirstName'] as String?,
       contactLastName: data['contactLastName'] as String?,
       contactPhone: data['contactPhone'] as String?,

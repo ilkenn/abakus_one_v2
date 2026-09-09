@@ -1467,6 +1467,17 @@ service cloud.firestore {
       allow write: if false; // Cloud Function only, append-only.
     }
 
+    // AP-6 Sprint 1 — one doc per branch, same 1:1-branch-keyed shape as
+    // `branchOperatingHours` (that collection has no rule block at all —
+    // Cloud-Function/Admin-SDK read only; this one is client-readable so
+    // the takeaway status badge can render without a callable round trip).
+    // updateTakeawayOperationStatus.ts is the only writer.
+    match /branchTakeawaySettings/{branchId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, branchId);
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------------------
     // Default deny — anything not explicitly matched above (including any
     // future collection someone adds without also adding a rule for it)

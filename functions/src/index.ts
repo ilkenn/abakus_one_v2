@@ -246,3 +246,11 @@ export { submitStockCount } from "./submitStockCount";
 // -real-printer-worker seam.
 export { requestPrintJob } from "./requestPrintJob";
 export { recordPrintOutcome } from "./recordPrintOutcome";
+
+// AP-6 Sprint 1 — Takeaway Operational States, Busy Mode & Scheduled
+// Orders. `updateTakeawayOperationStatus` is the sole writer of
+// `branchTakeawaySettings/{branchId}`; `takeawayOperationsSweep` is the
+// second `onSchedule` function in this codebase (see its own doc comment
+// for why it mirrors `reservationSweep`'s bundled-concerns shape).
+export { updateTakeawayOperationStatus } from "./updateTakeawayOperationStatus";
+export { takeawayOperationsSweep } from "./takeawayOperationsSweep";

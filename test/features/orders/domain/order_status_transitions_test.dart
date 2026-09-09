@@ -15,6 +15,8 @@ void main() {
       OrderStatus.cancelled,
       OrderStatus.rejected,
       OrderStatus.refunded,
+      // AP-6 Sprint 1.
+      OrderStatus.scheduled,
     ]);
   });
 
@@ -33,6 +35,10 @@ void main() {
       [OrderStatus.outForDelivery, OrderStatus.served],
       [OrderStatus.served, OrderStatus.completed],
       [OrderStatus.completed, OrderStatus.refunded],
+      // AP-6 Sprint 1.
+      [OrderStatus.scheduled, OrderStatus.confirmed],
+      [OrderStatus.scheduled, OrderStatus.rejected],
+      [OrderStatus.scheduled, OrderStatus.cancelled],
     ];
 
     for (final pair in validTransitions) {
@@ -58,6 +64,9 @@ void main() {
       // Geriye donus olamaz.
       [OrderStatus.preparing, OrderStatus.confirmed],
       [OrderStatus.ready, OrderStatus.preparing],
+      // scheduled asamalari atlayamaz (AP-6 Sprint 1).
+      [OrderStatus.scheduled, OrderStatus.preparing],
+      [OrderStatus.scheduled, OrderStatus.ready],
     ];
 
     for (final pair in invalidTransitions) {

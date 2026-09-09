@@ -6008,3 +6008,103 @@ AP-5 screen is a plain text field) — no Cloud Function writes that catalog dat
 tracked separately, gated on official vendor documentation per `docs/payment_cash_fiscal_architecture
 .md` §14/§21). These are legitimate next-phase or explicitly-deferred items, not silently-abandoned
 AP-5 scope.
+
+---
+
+## AP-6 Sprint 1 — Takeaway Operational States, Busy Mode & Scheduled Orders (2026-09-08)
+
+Gives a branch a real, staff-controlled takeaway operational mode (active/busy/paused) that actually
+affects order timing/acceptance, plus the engine that lets a paused branch keep accepting orders
+(deferred to a later service time) instead of shutting off ordering entirely, plus the first-ever
+staff-facing takeaway UI in this codebase.
+
+**Domain**: `OrderStatus.scheduled` added to the canonical 12-state machine (Dart `order_status.dart` +
+TS `orderStatus.ts` mirror, transitions `scheduled -> {confirmed, rejected, cancelled}`) — a takeaway
+order accepted while the branch was `paused`, held back from the kitchen until `scheduledFor`.
+Deliberately distinct from the pre-existing `PickupMode.scheduled` (the customer's own chosen pickup
+time) — both can coexist on one order, kept clearly separate in naming everywhere. `Order` gained two
+new additive/nullable fields, `scheduledFor`/`estimatedReadyAt`, mirrored into
+`OrderFirestoreMapper`/`buildOrderDocument` (including a `scheduledForTimestamp` native-Timestamp
+shadow field — same dual-representation precedent as `pickupTime`/`pickupTimeTimestamp` and
+`kitchenReleaseAt`/`kitchenReleaseAtTimestamp` — needed so `takeawayOperationsSweep.ts`'s candidate
+query can range-filter on it).
+
+**New `branchTakeawaySettings/{branchId}` collection**: `TakeawayOperationStatus {active, busy, paused}`
+domain (Dart `lib/features/takeaway/domain/models/branch_takeaway_settings.dart`, TS
+`functions/src/branchTakeawaySettings.ts`) — mirrors `branchOperatingHours`'s 1:1-branch-keyed shape but
+is client-readable (`isOrgMember && hasBranchAccess`) unlike that collection, since the staff UI badge
+needs to render without a callable round trip. "Missing document = active" (the opposite fail-safe
+direction from `branchOperatingHours`'s "missing = closed") — an override on top of pre-AP-6 default
+behavior, not the sole gate on availability. New callable `updateTakeawayOperationStatus.ts`
+(`manageTakeawayOrders`, already staff-tier — no new permission), validates `busyDelayMinutes` against
+`{0,15,30,45,60}` and a fully-resolved future `pausedUntil`; all duration math (30 min/1 hr/2 hr/
+end-of-day/custom date) happens client-side in the mode-change dialog before the call, mirroring
+`updateBranchOperatingHours`/`setStandardIngredientCost`'s "resolved values in" precedent.
+
+**`submitTakeawayOrder.ts` hook** (both the guest and authenticated paths): reads
+`branchTakeawaySettings/{branchId}` in the transaction's read phase. `busy` — order proceeds through the
+unchanged `pendingConfirmation` flow, but stamps a new `estimatedReadyAt = now + 20 (reused
+`PICKUP_MINIMUM_LEAD_MINUTES`) + busyDelayMinutes`. `paused` — order is written directly at `scheduled`
+(never `pendingConfirmation`) with `scheduledFor` = the later of the branch's `pausedUntil` or the
+customer's own `pickupTime` (a customer-chosen later pickup always wins). `active` — unchanged. Kitchen
+work items/print jobs are never created at submission time for either case (confirmed: the pre-existing
+`respondToTakeawayOrder.ts` confirm branch was already the only call site for
+`prepareKitchenWorkAndStockConsumption`/`preparePrintJobForAcceptance`, so this was already naturally
+true — no new guard needed there).
+
+**New `takeawayOperationsSweep.ts`** (`onSchedule`, the second one in this codebase, mirroring
+`reservationSweep.ts`'s exact per-document-transaction/precondition-revalidation discipline and its
+"bundle related concerns into one scheduled function" reasoning): (1) reverts an expired `paused`
+`branchTakeawaySettings` doc back to `active`; (2) promotes a due `scheduled` order to `confirmed`,
+calling `prepareKitchenWorkAndStockConsumption`/`applyKitchenWorkAndStockConsumption` and
+`preparePrintJobForAcceptance`/`applyPrintJobPlan` VERBATIM — the same primitives the manual `confirm`
+path already uses, not a parallel one. **Scope note**: `busy` mode has no auto-expiry this sprint — the
+approved plan's own design section floated a computed `busyUntil`, but the UI's own `busyDelayMinutes`
+chip picker never asks staff to choose a busy-mode duration, so there is no client-supplied instant to
+sweep on; staff switches back to `active` manually. Flagged as a deliberate, scoped-down deviation from
+the plan text, not a silently dropped requirement.
+
+**Dart UI**: `TakeawayOperationsGateway` (Firebase/Unavailable, `firebaseReadyProvider`-gated, mirrors
+`PrintJobActionGateway`), `TakeawayOperationsRepository` (direct Firestore stream reads — the collection
+is client-readable, so no callable round trip needed for the read side). `TakeawayOperationStatusBadge`
+(pure/presentational: Aktif/success, Yoğun +Ndk/warning, Kapalı/error, `AppColors`/`AppTypography`/
+`AppSpacing` only) + `TakeawayOperationStatusControl` (the live, provider-wired widget a screen actually
+mounts) + `TakeawayModeChangeDialog` (three-way `ChoiceChip` selector; the pause duration's "özel tarih"
+option reuses the bespoke `SignatureCalendar` — never the stock Material date picker, per this
+codebase's hard UI rule) + `ScheduledOrdersCountBadge`/`ScheduledOrdersCountIndicator` (hidden entirely
+when the count is `0`). No pre-existing takeaway console screen exists yet to embed these in beyond the
+widgets themselves (confirmed — this sprint's UI scope is genuinely new, not an extension).
+
+**Two real test bugs found and fixed during verification, not assumed away** (both in this sprint's own
+new test file, never in production code): the sweep promotion test's "due" order initially used a
+1-minute-out `pickupTime`, violating `submitTakeawayOrder`'s own pre-existing 20-minute minimum lead
+time (fixed by using a `pausedUntil`/`pickupTime` combination that both clears the 20-minute floor and
+still resolves to a near-term `scheduledFor`); the same test's "not-due" branch's order reused the first
+branch's own `productId`, which doesn't belong to the second branch's restaurant (fixed by seeding a
+second product for the second chain).
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Firestore Rules **413/413** (411 +
+2 new `branchTakeawaySettings` tests). Cloud Functions **2020/2020** (2020 total after 3 build/fix
+iterations settled — 14 new AP-6 tests all green, zero regressions). `flutter analyze` clean.
+`flutter test` **3698/3698** (one pre-existing exhaustive `OrderStatus.values` list assertion updated
+for the new `scheduled` member — not a regression, an expected/required update), zero other failures.
+
+New/changed files: `lib/features/orders/domain/models/{order_status,order,order_timestamps,
+order_tracking_step}.dart`, `lib/features/orders/data/order_firestore_mapper.dart`,
+`functions/src/{orderStatus,submitTakeawayOrder,branchTakeawaySettings (new),
+updateTakeawayOperationStatus (new),takeawayOperationsSweep (new),index}.ts`, `firestore.rules`,
+`firestore.indexes.json`, `firestore-tests/rules.test.js`,
+`lib/features/takeaway/domain/models/branch_takeaway_settings.dart` (new),
+`lib/features/takeaway/data/{takeaway_operations_gateway,takeaway_operations_repository}.dart` (new),
+`lib/features/takeaway/presentation/providers/takeaway_operations_dependencies_provider.dart` (new),
+`lib/features/takeaway/presentation/widgets/{takeaway_operation_status_badge,
+takeaway_mode_change_dialog,scheduled_orders_count_badge}.dart` (new),
+`functions/src/test/ap6TakeawayOperations.test.ts` (new),
+`test/features/orders/domain/order_status_transitions_test.dart`,
+`test/features/takeaway/domain/models/branch_takeaway_settings_test.dart` (new),
+`test/features/takeaway/data/takeaway_operations_gateway_test.dart` (new),
+`test/features/takeaway/presentation/widgets/{takeaway_operation_status_badge_test,
+scheduled_orders_count_badge_test}.dart` (new).
+
+No git commit exists yet for AP-6 Sprint 1 — nothing has been committed this session; there is no SHA to
+report until the user asks for one.

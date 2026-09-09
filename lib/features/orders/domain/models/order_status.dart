@@ -18,6 +18,18 @@ enum OrderStatus {
   cancelled,
   rejected,
   refunded,
+
+  /// AP-6 Sprint 1 — a takeaway order accepted while the branch's
+  /// [BranchTakeawaySettings] was `paused`. Distinct from
+  /// [pendingConfirmation]: nobody is being asked to make a staff
+  /// decision — the order is already accepted, just deliberately held
+  /// back from the kitchen until `scheduledFor` (a server-side sweep,
+  /// `takeawayOperationsSweep.ts`, promotes it to [confirmed] once due).
+  /// Never confused with `PickupMode.scheduled`
+  /// (`lib/features/orders/domain/models/pickup_mode.dart`) — that's the
+  /// customer's own chosen pickup time, a completely different axis that
+  /// can be set independently of this status.
+  scheduled,
 }
 
 /// The order state machine: which [OrderStatus] transitions are valid.
@@ -68,6 +80,11 @@ abstract final class OrderStatusTransitions {
     OrderStatus.cancelled: {},
     OrderStatus.rejected: {},
     OrderStatus.refunded: {},
+    OrderStatus.scheduled: {
+      OrderStatus.confirmed,
+      OrderStatus.rejected,
+      OrderStatus.cancelled,
+    },
   };
 
   /// Whether moving from [from] directly to [to] is a valid transition.
@@ -113,6 +130,12 @@ abstract final class OrderStatusLegacyLabel {
     switch (status) {
       case OrderStatus.created:
       case OrderStatus.pendingConfirmation:
+      // AP-6 Sprint 1 — a scheduled order is already accepted, but from
+      // the customer's own legacy-screen perspective ("has this started
+      // being made yet?") the honest answer is still no, same as
+      // pendingConfirmation — including the same cancel-eligibility
+      // behavior those screens already gate on this exact string.
+      case OrderStatus.scheduled:
         return 'Onay Bekliyor';
       case OrderStatus.confirmed:
         return 'Onaylandı';

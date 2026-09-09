@@ -5320,6 +5320,60 @@ test('AP-5 org-scoped catalog collections: a different organization\'s staff and
   }
 });
 
+// AP-6 Sprint 1 — branchTakeawaySettings/{branchId}: same branch-scoped
+// read shape as the AP-5 collections above (isOrgMember + hasBranchAccess),
+// but a genuinely different write story — updateTakeawayOperationStatus.ts
+// is the only writer, no client write under any role.
+test('branchTakeawaySettings: same-branch staff can read, no client (staff or otherwise) can write', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'branchTakeawaySettings/branch-1'), {
+      organizationId: 'org-1', branchId: 'branch-1', status: 'active',
+    });
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-ap6-branch-1', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(branchStaff, 'branchTakeawaySettings/branch-1')));
+  await assertFails(setDoc(doc(branchStaff, 'branchTakeawaySettings/branch-2'), {
+    organizationId: 'org-1', branchId: 'branch-2', status: 'active',
+  }));
+  await assertFails(updateDoc(doc(branchStaff, 'branchTakeawaySettings/branch-1'), { status: 'busy' }));
+  await assertFails(deleteDoc(doc(branchStaff, 'branchTakeawaySettings/branch-1')));
+});
+
+test('branchTakeawaySettings: a different branch\'s staff, a different organization\'s staff, and an anonymous client are all denied read', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'branchTakeawaySettings/branch-1'), {
+      organizationId: 'org-1', branchId: 'branch-1', status: 'active',
+    });
+  });
+  const wrongBranchStaff = testEnv
+    .authenticatedContext('staff-ap6-wrong-branch', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-2'] },
+    })
+    .firestore();
+  const orgOnlyStaff = testEnv
+    .authenticatedContext('staff-ap6-org-only', { organizationAccess: ['org-1'] })
+    .firestore();
+  const otherOrgStaff = testEnv
+    .authenticatedContext('staff-ap6-other-org', {
+      organizationAccess: ['org-2'],
+      branchAccess: { 'org-2': ['branch-1'] },
+    })
+    .firestore();
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  await assertFails(getDoc(doc(wrongBranchStaff, 'branchTakeawaySettings/branch-1')));
+  await assertFails(getDoc(doc(orgOnlyStaff, 'branchTakeawaySettings/branch-1')));
+  await assertFails(getDoc(doc(otherOrgStaff, 'branchTakeawaySettings/branch-1')));
+  await assertFails(getDoc(doc(anon, 'branchTakeawaySettings/branch-1')));
+});
+
 test('kitchenWorkItems: same-branch staff can create a fresh queued/revision-1 item, and can read it back', async () => {
   const branchStaff = testEnv
     .authenticatedContext('staff-kwi-create', {

@@ -22,7 +22,13 @@ export type OrderStatus =
   | "completed"
   | "cancelled"
   | "rejected"
-  | "refunded";
+  | "refunded"
+  // AP-6 Sprint 1 — mirrors the Dart addition (order_status.dart) exactly:
+  // a takeaway order accepted while the branch was `paused`, held back
+  // from the kitchen until `scheduledFor`. Never the same thing as
+  // `pickupMode: "scheduled"` (submitTakeawayOrder.ts) — that's the
+  // customer's own chosen pickup time, an independent field.
+  | "scheduled";
 
 export const ORDER_STATUSES: readonly OrderStatus[] = [
   "created",
@@ -36,6 +42,7 @@ export const ORDER_STATUSES: readonly OrderStatus[] = [
   "cancelled",
   "rejected",
   "refunded",
+  "scheduled",
 ];
 
 const ALLOWED_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
@@ -50,6 +57,7 @@ const ALLOWED_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
   cancelled: [],
   rejected: [],
   refunded: [],
+  scheduled: ["confirmed", "rejected", "cancelled"],
 };
 
 export function canTransition(from: OrderStatus, to: OrderStatus): boolean {

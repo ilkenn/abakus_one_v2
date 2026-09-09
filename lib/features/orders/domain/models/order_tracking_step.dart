@@ -54,6 +54,11 @@ abstract final class OrderTrackingTimeline {
     switch (status) {
       case OrderStatus.created:
       case OrderStatus.pendingConfirmation:
+      // AP-6 Sprint 1 — a scheduled order is already accepted but not yet
+      // promoted to confirmed; from the customer's own tracking-stepper
+      // perspective it reads identically to pendingConfirmation ("received,
+      // not yet being made").
+      case OrderStatus.scheduled:
       case OrderStatus.confirmed:
         return OrderTrackingStep.received;
       case OrderStatus.preparing:

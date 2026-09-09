@@ -53,6 +53,8 @@ class Order {
     this.takeawayEntrySessionId,
     this.pickupMode,
     this.pickupTime,
+    this.scheduledFor,
+    this.estimatedReadyAt,
     this.contactFirstName,
     this.contactLastName,
     this.contactPhone,
@@ -172,6 +174,27 @@ class Order {
   /// future work (`docs/business_rules.md` BR-PRICE-002's same
   /// not-yet-enforced caveat applies here).
   final DateTime? pickupTime;
+
+  /// AP-6 Sprint 1 — set only when [status] is [OrderStatus.scheduled]: the
+  /// time `takeawayOperationsSweep.ts` is allowed to promote this order to
+  /// [OrderStatus.confirmed] and enqueue kitchen work for it. Resolved
+  /// server-side at submission time from the branch's paused
+  /// `BranchTakeawaySettings.pausedUntil` (or the customer's own later
+  /// [pickupTime], whichever is further out — a customer-chosen later pickup
+  /// always wins). **Not the same axis as [pickupMode]/[pickupTime]**: those
+  /// describe when the *customer* wants to receive the order; this describes
+  /// when the *branch* is allowed to start working on it. `null` for every
+  /// order that was never accepted while the branch was paused.
+  final DateTime? scheduledFor;
+
+  /// AP-6 Sprint 1 — set only for a takeaway order accepted while the
+  /// branch's [BranchTakeawaySettings.status] was `busy`: the standard
+  /// prep/delivery estimate plus the branch's own
+  /// `BranchTakeawaySettings.busyDelayMinutes`, computed once at acceptance
+  /// time. Purely informational (no state-machine effect, unlike
+  /// [scheduledFor]) — `null` for every order accepted while the branch was
+  /// `active`, and for every non-takeaway order.
+  final DateTime? estimatedReadyAt;
 
   /// Immutable contact-data snapshot for a guest Gel Al order (Scenario
   /// 1 — no account, no `customerId`) — **not** an identity or
@@ -346,6 +369,8 @@ class Order {
     String? takeawayEntrySessionId,
     PickupMode? pickupMode,
     DateTime? pickupTime,
+    DateTime? scheduledFor,
+    DateTime? estimatedReadyAt,
     String? contactFirstName,
     String? contactLastName,
     String? contactPhone,
@@ -382,6 +407,8 @@ class Order {
           takeawayEntrySessionId ?? this.takeawayEntrySessionId,
       pickupMode: pickupMode ?? this.pickupMode,
       pickupTime: pickupTime ?? this.pickupTime,
+      scheduledFor: scheduledFor ?? this.scheduledFor,
+      estimatedReadyAt: estimatedReadyAt ?? this.estimatedReadyAt,
       contactFirstName: contactFirstName ?? this.contactFirstName,
       contactLastName: contactLastName ?? this.contactLastName,
       contactPhone: contactPhone ?? this.contactPhone,

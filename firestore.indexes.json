@@ -82,6 +82,22 @@
       ]
     },
     {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "scheduledForTimestamp", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "branchTakeawaySettings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "pausedUntil", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "reservationSlotOccupancy",
       "queryScope": "COLLECTION",
       "fields": [

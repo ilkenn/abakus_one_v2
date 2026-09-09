@@ -49,6 +49,11 @@ class OrderTimestamps {
       case OrderStatus.outForDelivery:
       case OrderStatus.rejected:
       case OrderStatus.refunded:
+      // AP-6 Sprint 1 — not one of the 7 tracked stages, same bucket as
+      // pendingConfirmation: a scheduled order has no dedicated timestamp
+      // slot of its own (its eventual confirmed/preparing/... timestamps
+      // are recorded normally once takeawayOperationsSweep.ts promotes it).
+      case OrderStatus.scheduled:
         return this;
     }
   }

@@ -63,6 +63,7 @@ import {
   type CampaignPriceableLine,
 } from "./campaignPricing";
 import { reserveCampaignUsage } from "./campaignUsage";
+import { loadBranchTakeawaySettings, busyDelayMinutesAt } from "./branchTakeawaySettings";
 
 /**
  * Boncuk Loyalty P7-C.1 (2026-08-24) — the real, server-derived commercial
@@ -113,6 +114,17 @@ const TAKEAWAY_TAX_BASIS_POINTS = 1000;
 
 /** Mirrors `PickupTimePolicy.minimumLeadTime` (`Duration(minutes: 20)`). */
 const PICKUP_MINIMUM_LEAD_MINUTES = 20;
+
+/**
+ * AP-6 Sprint 1 — the standard prep/delivery estimate a `busy`-mode order's
+ * `estimatedReadyAt` is computed from (`now + BASE_PREP_MINUTES +
+ * busyDelayMinutes`). Reuses `PICKUP_MINIMUM_LEAD_MINUTES`'s existing
+ * 20-minute figure rather than inventing a second, unrelated "how long does
+ * an order take" constant — this app already promises customers a 20-minute
+ * minimum lead time for a self-chosen pickup slot, so it doubles as the
+ * baseline "normal" preparation estimate here.
+ */
+const BASE_PREP_MINUTES = PICKUP_MINIMUM_LEAD_MINUTES;
 
 /** New server-side safety policy this phase adds — `OrderLine.create` itself has no upper bound in Dart; an authoritative backend does need one against an abusive/mistaken request. */
 const MAX_ITEM_QUANTITY = 20;
@@ -600,6 +612,12 @@ async function submitGuestOrder(
     const branchId = String(session.branchId);
     const organizationId = String(session.organizationId);
 
+    // AP-6 Sprint 1 — read before any write in this transaction (Firestore's
+    // own tx.get()-before-tx.set() ordering requirement); see
+    // `branchTakeawaySettings.ts`'s own doc comment for why a missing
+    // document resolves to `active`, not a thrown error.
+    const takeawaySettings = await loadBranchTakeawaySettings(db, branchId, tx);
+
     const policy = await loadCanonicalChannelPricingPolicy(db, restaurantId);
     const { lines, normalizedItems } = await buildLines(db, rawItems, { restaurantId }, policy);
     const pricing = computeOrderPriceBreakdown(lines);
@@ -628,6 +646,29 @@ async function submitGuestOrder(
     }
 
     const now = new Date();
+
+    // AP-6 Sprint 1 — a guest counter order has no customer-chosen
+    // pickupTime (always `asap`/null), so `scheduledFor` is simply the
+    // branch's own `pausedUntil`. Deliberately NOT `isPausedAt` here: that
+    // helper treats a `paused` doc with a null `pausedUntil` as "paused
+    // indefinitely" for read-side (badge) purposes, but an order can only
+    // be deferred to `scheduled` when there is a concrete instant to sweep
+    // on — `updateTakeawayOperationStatus` always requires `pausedUntil`
+    // for `paused`, so this only ever falls back for pre-existing/malformed
+    // data, and does so by simply not deferring the order.
+    const guestPausedUntil =
+      takeawaySettings?.status === "paused" ? takeawaySettings.pausedUntil : null;
+    const guestPaused = guestPausedUntil !== null && now.getTime() < guestPausedUntil.getTime();
+    const guestBusyDelay = busyDelayMinutesAt(takeawaySettings);
+    const orderStatus: "pendingConfirmation" | "scheduled" = guestPaused
+      ? "scheduled"
+      : "pendingConfirmation";
+    const scheduledFor = guestPaused ? guestPausedUntil : null;
+    const estimatedReadyAt =
+      !guestPaused && guestBusyDelay > 0
+        ? new Date(now.getTime() + (BASE_PREP_MINUTES + guestBusyDelay) * 60 * 1000)
+        : null;
+
     tx.set(
       orderRef,
       buildOrderDocument({
@@ -642,6 +683,9 @@ async function submitGuestOrder(
         takeawayEntrySessionId: params.takeawaySessionId,
         pickupMode: "asap",
         pickupTime: null,
+        status: orderStatus,
+        scheduledFor,
+        estimatedReadyAt,
         contactFirstName,
         contactLastName,
         contactPhone,
@@ -783,6 +827,9 @@ async function submitAuthenticatedOrder(
         `pickupTime must be at least ${PICKUP_MINIMUM_LEAD_MINUTES} minutes from now.`,
       );
     }
+
+    // AP-6 Sprint 1 — read before any write in this transaction.
+    const takeawaySettings = await loadBranchTakeawaySettings(db, branchId, tx);
 
     // -------------------------------------------------------------
     // Boncuk Loyalty P7-C (2026-08-24) — catalog-reward PRE-resolution.
@@ -1393,6 +1440,27 @@ async function submitAuthenticatedOrder(
       });
     }
 
+    // AP-6 Sprint 1 — same "concrete pausedUntil required to defer" guard
+    // as `submitGuestOrder`'s own. A customer-chosen `pickupTime` that is
+    // already later than `pausedUntil` always wins (the sweep only needs to
+    // fire once the order can actually start being worked on, never earlier
+    // than the customer's own requested time) — see this callable's own
+    // Design §2 doc comment.
+    const authPausedUntil =
+      takeawaySettings?.status === "paused" ? takeawaySettings.pausedUntil : null;
+    const authPaused = authPausedUntil !== null && now.getTime() < authPausedUntil.getTime();
+    const authBusyDelay = busyDelayMinutesAt(takeawaySettings);
+    const authOrderStatus: "pendingConfirmation" | "scheduled" = authPaused
+      ? "scheduled"
+      : "pendingConfirmation";
+    const authScheduledFor = authPaused
+      ? (authPausedUntil!.getTime() > pickupTime.getTime() ? authPausedUntil : pickupTime)
+      : null;
+    const authEstimatedReadyAt =
+      !authPaused && authBusyDelay > 0
+        ? new Date(now.getTime() + (BASE_PREP_MINUTES + authBusyDelay) * 60 * 1000)
+        : null;
+
     tx.set(
       orderRef,
       buildOrderDocument({
@@ -1407,6 +1475,9 @@ async function submitAuthenticatedOrder(
         takeawayEntrySessionId: null,
         pickupMode: "scheduled",
         pickupTime,
+        status: authOrderStatus,
+        scheduledFor: authScheduledFor,
+        estimatedReadyAt: authEstimatedReadyAt,
         contactFirstName,
         contactLastName,
         contactPhone,
@@ -1568,6 +1639,21 @@ function buildOrderDocument(params: {
   takeawayEntrySessionId: string | null;
   pickupMode: "asap" | "scheduled";
   pickupTime: Date | null;
+  /**
+   * AP-6 Sprint 1 — the order-STATUS this document is written directly at
+   * (never the intermediate `created` state, matching this function's
+   * pre-existing `pendingConfirmation` behavior). `"scheduled"` only when
+   * the branch was `paused` at submission time; `pendingConfirmation` for
+   * every other case (`active` and `busy` both proceed through the normal
+   * staff-confirms-it flow, unchanged from before this sprint). Never
+   * confused with [pickupMode] — see `OrderStatus.scheduled`'s own Dart doc
+   * comment for why these are independent axes.
+   */
+  status: "pendingConfirmation" | "scheduled";
+  /** Set only when [status] is `"scheduled"`. */
+  scheduledFor: Date | null;
+  /** Set only when the branch was `busy` at submission time. */
+  estimatedReadyAt: Date | null;
   contactFirstName: string;
   contactLastName: string;
   contactPhone: string;
@@ -1611,7 +1697,7 @@ function buildOrderDocument(params: {
     organizationId: params.organizationId,
     orderId: params.orderId,
     orderNumber: params.orderNumber,
-    status: "pendingConfirmation",
+    status: params.status,
     channel: params.channel,
     // Boncuk Loyalty P2A security fix (2026-08-21) — server-stamped only,
     // never accepted from a request parameter. See
@@ -1629,6 +1715,20 @@ function buildOrderDocument(params: {
     pickupMode: params.pickupMode,
     pickupTime: params.pickupTime ? params.pickupTime.toISOString() : null,
     pickupTimeTimestamp: params.pickupTime,
+    // AP-6 Sprint 1 — ISO-string, matching pickupTime's own convention
+    // (`OrderFirestoreMapper.toFirestore`'s Dart-side mirror reads these
+    // the same way).
+    scheduledFor: params.scheduledFor ? params.scheduledFor.toISOString() : null,
+    // A native Firestore `Timestamp` companion field — mirrors
+    // `kitchenReleaseAt`/`kitchenReleaseAtTimestamp`'s own established
+    // dual-representation precedent (`reservationPreorder.ts`): the ISO
+    // string above stays for display/the Dart mapper, this is what
+    // `takeawayOperationsSweep.ts`'s candidate query actually range-filters/
+    // orders on (a string field cannot be compared against a `Timestamp`
+    // query bound). Always set/cleared together with `scheduledFor`, never
+    // independently.
+    scheduledForTimestamp: params.scheduledFor,
+    estimatedReadyAt: params.estimatedReadyAt ? params.estimatedReadyAt.toISOString() : null,
     contactFirstName: params.contactFirstName,
     contactLastName: params.contactLastName,
     contactPhone: params.contactPhone,
@@ -1691,11 +1791,11 @@ function buildOrderDocument(params: {
       {
         id: `${params.orderId}-transition-1`,
         type: "statusChange",
-        description: "Status changed from created to pendingConfirmation",
+        description: `Status changed from created to ${params.status}`,
         actor: "customer",
         timestamp: params.now.toISOString(),
         previousValue: "created",
-        newValue: "pendingConfirmation",
+        newValue: params.status,
       },
     ],
     version: 1,
