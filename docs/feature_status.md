@@ -6311,5 +6311,63 @@ consortium_settlement_status}.dart` (new), `firestore.rules`, `firestore-tests/r
 `test/features/pos/presentation/screens/delivery_order_dispatch_screen_test.dart` (new),
 `test/features/orders/domain/order_status_transitions_test.dart`, `docs/feature_status.md`.
 
-No git commit exists yet for AP-6 Sprint 3 — nothing has been committed this session; there is no SHA to
-report until the user asks for one.
+**Committed**: `ded4c1141ecf233cf42c571225c2e6e92d78ebe8` (pushed to `origin/phase-7/profile-redesign`).
+
+---
+
+## AP-6 — STATUS: COMPLETED / DONE (2026-09-10)
+
+All three sprints of AP-6 (takeaway operational states/busy-paused/scheduled orders; courier registry,
+FIFO rotation, and single-order manual dispatch; neighborhood clustering, multi-merchant consortium
+dispatch, batch assignment, and settlement) are implemented, individually tested, and captured in git
+history — plus a new canonical end-to-end integration test proving the whole surface interoperates as
+one continuous branch-operations story, not merely per-sprint in isolation. Sprint-by-sprint commit
+record on `phase-7/profile-redesign`:
+
+- **Sprint 1 — Takeaway Operational States, Busy Mode & Scheduled Orders**: `OrderStatus.scheduled`,
+  `BranchTakeawaySettings` (active/busy/paused), `updateTakeawayOperationStatus.ts`,
+  `takeawayOperationsSweep.ts` (auto-revert + auto-promote), the takeaway status badge/mode dialog and
+  scheduled-order-count badge. `c1d621fb81dedb3790598db39dc33183bd234267`.
+- **Sprint 2 — Courier Dispatch, FIFO Rotation & Tracking Isolation**: extended the existing 220-file
+  in-memory `Courier` domain additively with `type`/`dispatchStatus`/`returnedAt`/`activeOrderIds` and
+  ported it to a real `couriers` Firestore collection; `setCourier.ts`, `assignCourierToOrder.ts`
+  (`MarketplaceCourierImmutableViolation`, opaque `trackingToken` generation), `markCourierReturned.ts`;
+  `CourierAssignmentDialog` + `DeliveryOrderDispatchScreen` (new — no prior delivery-order-detail screen
+  existed). `1283d529b10af8e14dee46b6e81a15abc4981729`.
+- **Sprint 3 — Neighborhood Clustering, Multi-Merchant Dispatch & Settlement**: `OrderStatus
+  .readyForPickup`, `registerConsortiumOrder.ts` (external-merchant orders that never touch our own
+  kitchen — enforced both structurally and via a new Firestore Rules guard on `kitchenWorkItems`),
+  `batchAssignCourierToOrders.ts` (fail-closed multi-pickup/multi-drop batch dispatch),
+  `ConsortiumDeliverySettlement` auto-created on delivery completion, `DeliveryNeighborhoodClusterer`,
+  and the dispatch screen's cluster cards/pickup-source indicator/batch-assign UI.
+  `ded4c1141ecf233cf42c571225c2e6e92d78ebe8`.
+- **Closure — Comprehensive E2E Lifecycle Suite**: `functions/src/test/ap6EndToEndLifecycle.test.ts`
+  (new) — one continuous narrative test walking busy-mode delay → paused-mode scheduled acceptance →
+  dual KDS-isolation proof (scheduled order + consortium order, neither ever enqueues kitchen work) →
+  FIFO courier-return data ordering → neighborhood-clustered batch dispatch (3 orders, 1 courier, one
+  accumulated `activeOrderIds` write) → completion → automatic settlement creation → physical courier
+  return — against one continuous branch, asserting Firestore state explicitly at every stage. This
+  entry's own commit — see the section below once made.
+
+**Residual, explicitly out-of-scope items carried forward past AP-6's own closure** (each already
+disclosed in its originating sprint, not new): no dedicated end-of-day settlement-reconciliation report
+screen (the `consortiumDeliverySettlements` collection and its branch-scoped read query exist; no UI
+consumes it yet). No managed `consortiumMerchants` roster — `merchantId`/`merchantName` stay free-form,
+staff-entered strings. No route optimization/reordering — a courier's `activeOrderIds` append order is
+the only "sequence" this phase models. `busy` mode has no auto-expiry sweep (no UI ever collects a busy
+-mode duration, only a per-order delay). The much larger, still-100%-in-memory pre-existing courier
+domain (`Delivery`/`DeliveryAssignment`/shifts/earnings/fraud/geofencing/live map,
+`lib/features/courier/**`) remains unported to Firestore — this phase only ported the `Courier`
+identity/registry entity itself, per the explicit scope decision made at Sprint 2's own kickoff. No real
+PAX A910SF/TEB POS hardware integration (AP-4, tracked separately). These are legitimate next-phase or
+explicitly-deferred items, not silently-abandoned AP-6 scope.
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Cloud Functions **2042/2042**
+(2041 + 1 new end-to-end test, one clean retry after a transient Windows working-directory resolution
+issue in the emulator-exec harness — unrelated to code, confirmed by an immediately-clean retry once the
+shell's cwd was corrected, same class of environment flakiness disclosed in prior sprints' own reports).
+Firestore Rules **418/418** (unchanged — no rules changes this closure step). `flutter analyze` clean.
+`flutter test` **3728/3728** (unchanged — no Dart/UI changes this closure step). Zero regressions.
+
+New/changed files this closure step: `functions/src/test/ap6EndToEndLifecycle.test.ts` (new),
+`docs/feature_status.md`.
