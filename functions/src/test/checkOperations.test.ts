@@ -313,6 +313,73 @@ test("finalizeCheckReadyForPayment: rejected with zero active allocations, then 
   assert.strictEqual(reopen.httpStatus, 200, JSON.stringify(reopen.body));
 });
 
+test("finalizeCheckReadyForPayment/reopenCheck: sets and clears the table's billRequested statusOverride, visible through both operational-view callables", async () => {
+  const f = await setupFixture();
+  const { subAccountId } = await placeAcceptedOrder(
+    { organizationId: f.organizationId, branchId: f.branchId, tableId: f.tableId, deviceId: f.deviceId, deviceSessionId: f.deviceSessionId },
+    f.staff.idToken, [{ kind: "product", productId: f.productId, quantity: 1 }], { mode: "staffGeneral" },
+  );
+  const open = await callCallable(OPEN_CHECK_URL, { ...checkCtx(f), tableSessionId: f.tableSessionId }, f.staff.idToken);
+  const checkId = open.body.result?.checkId as string;
+  const orderDoc = await db().collection("orders").where("dineInSessionGroupId", "==", f.tableSessionId).limit(1).get();
+  const orderId = orderDoc.docs[0].id;
+  await callCallable(SPLIT_PRODUCT_URL, { ...checkCtx(f), checkId, subAccountId, sourceOrderId: orderId, sourceLineIndex: 0 }, f.staff.idToken);
+
+  const beforeTable = await db().collection("restaurantTables").doc(f.tableId).get();
+  assert.strictEqual(beforeTable.data()?.statusOverride, undefined);
+
+  const finalize = await callCallable(FINALIZE_CHECK_URL, { ...checkCtx(f), checkId }, f.staff.idToken);
+  assert.strictEqual(finalize.httpStatus, 200, JSON.stringify(finalize.body));
+  const afterFinalizeTable = await db().collection("restaurantTables").doc(f.tableId).get();
+  assert.strictEqual(afterFinalizeTable.data()?.statusOverride, "billRequested");
+
+  const tableView = await callCallable(VIEW_URL, { organizationId: f.organizationId, branchId: f.branchId, tableId: f.tableId, deviceId: f.deviceId, deviceSessionId: f.deviceSessionId }, f.staff.idToken);
+  assert.strictEqual(tableView.body.result?.status, "billRequested");
+  const branchOverview = await callCallable(fn("getPosBranchTableOverview"), { organizationId: f.organizationId, branchId: f.branchId, deviceId: f.deviceId, deviceSessionId: f.deviceSessionId }, f.staff.idToken);
+  const overviewTables = branchOverview.body.result?.tables as Array<{ tableId: string; status: string }>;
+  assert.strictEqual(overviewTables.find((t) => t.tableId === f.tableId)?.status, "billRequested");
+
+  const reopen = await callCallable(REOPEN_CHECK_URL, { ...checkCtx(f), checkId }, f.staff.idToken);
+  assert.strictEqual(reopen.httpStatus, 200, JSON.stringify(reopen.body));
+  const afterReopenTable = await db().collection("restaurantTables").doc(f.tableId).get();
+  assert.strictEqual(afterReopenTable.data()?.statusOverride, null);
+});
+
+test("finalizeCheckReadyForPayment/reopenCheck: a second still-readyForPayment split check keeps billRequested set until BOTH are reopened", async () => {
+  const f = await setupFixture();
+  const order1 = await placeAcceptedOrder(
+    { organizationId: f.organizationId, branchId: f.branchId, tableId: f.tableId, deviceId: f.deviceId, deviceSessionId: f.deviceSessionId },
+    f.staff.idToken, [{ kind: "product", productId: f.productId, quantity: 1 }], { mode: "staffGeneral" },
+  );
+  const order2 = await placeAcceptedOrder(
+    { organizationId: f.organizationId, branchId: f.branchId, tableId: f.tableId, deviceId: f.deviceId, deviceSessionId: f.deviceSessionId },
+    f.staff.idToken, [{ kind: "product", productId: f.productId, quantity: 1 }], { mode: "staffGeneral" },
+  );
+
+  const openA = await callCallable(OPEN_CHECK_URL, { ...checkCtx(f), tableSessionId: f.tableSessionId }, f.staff.idToken);
+  const checkIdA = openA.body.result?.checkId as string;
+  const openB = await callCallable(OPEN_CHECK_URL, { ...checkCtx(f), tableSessionId: f.tableSessionId }, f.staff.idToken);
+  const checkIdB = openB.body.result?.checkId as string;
+
+  await callCallable(SPLIT_PRODUCT_URL, { ...checkCtx(f), checkId: checkIdA, subAccountId: order1.subAccountId, sourceOrderId: order1.orderId, sourceLineIndex: 0 }, f.staff.idToken);
+  await callCallable(SPLIT_PRODUCT_URL, { ...checkCtx(f), checkId: checkIdB, subAccountId: order2.subAccountId, sourceOrderId: order2.orderId, sourceLineIndex: 0 }, f.staff.idToken);
+
+  const finalizeA = await callCallable(FINALIZE_CHECK_URL, { ...checkCtx(f), checkId: checkIdA }, f.staff.idToken);
+  assert.strictEqual(finalizeA.httpStatus, 200, JSON.stringify(finalizeA.body));
+  const finalizeB = await callCallable(FINALIZE_CHECK_URL, { ...checkCtx(f), checkId: checkIdB }, f.staff.idToken);
+  assert.strictEqual(finalizeB.httpStatus, 200, JSON.stringify(finalizeB.body));
+
+  const reopenA = await callCallable(REOPEN_CHECK_URL, { ...checkCtx(f), checkId: checkIdA }, f.staff.idToken);
+  assert.strictEqual(reopenA.httpStatus, 200, JSON.stringify(reopenA.body));
+  const afterReopenA = await db().collection("restaurantTables").doc(f.tableId).get();
+  assert.strictEqual(afterReopenA.data()?.statusOverride, "billRequested", "check B is still readyForPayment — override must stay set");
+
+  const reopenB = await callCallable(REOPEN_CHECK_URL, { ...checkCtx(f), checkId: checkIdB }, f.staff.idToken);
+  assert.strictEqual(reopenB.httpStatus, 200, JSON.stringify(reopenB.body));
+  const afterReopenB = await db().collection("restaurantTables").doc(f.tableId).get();
+  assert.strictEqual(afterReopenB.data()?.statusOverride, null);
+});
+
 // -----------------------------------------------------------------------
 // Split modes + conservation
 // -----------------------------------------------------------------------

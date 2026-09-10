@@ -183,6 +183,7 @@ class _TableTile extends ConsumerWidget {
   Color get _statusColor => switch (table.status) {
         'available' => AppColors.primary,
         'occupied' => AppColors.warning,
+        'billRequested' => AppColors.secondary,
         'cleaning' => AppColors.textSecondary,
         'disabled' => AppColors.error,
         _ => AppColors.textSecondary,
@@ -191,6 +192,7 @@ class _TableTile extends ConsumerWidget {
   String get _statusLabel => switch (table.status) {
         'available' => 'Boş',
         'occupied' => 'Dolu',
+        'billRequested' => 'Hesap İstendi',
         'cleaning' => 'Temizleniyor',
         'disabled' => 'Kapalı',
         _ => table.status,

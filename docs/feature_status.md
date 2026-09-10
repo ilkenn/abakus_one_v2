@@ -6371,3 +6371,49 @@ Firestore Rules **418/418** (unchanged — no rules changes this closure step). 
 
 New/changed files this closure step: `functions/src/test/ap6EndToEndLifecycle.test.ts` (new),
 `docs/feature_status.md`.
+
+## Dine-in Sprint 1 — `billRequested` Table Status (2026-09-10)
+
+Gemini's kickoff asked for a new `TableStatus` enum/table model, new Firestore rules for direct
+staff read/write on `restaurantTables`, new `transferTable`/`mergeTables` callables, and a rebuilt
+Salon/Kasa UI. Research before writing code found all of that already real and reused elsewhere:
+`functions/src/tableSessionTransfer.ts`'s `transferTableSession`/`mergeTableSessions` (wired into
+`pos_table_workspace_screen.dart`'s "Masa Transfer Et"/"Masa Birleştir" buttons already), and
+ADR-038/BR-TABLE-009/010/011's locked decision that POS-operational table data is only ever read
+through device-session-gated callables (`posOperationalView.ts`'s own doc comment: Firestore Rules
+cannot verify AP-2's trusted-device proof). Confirmed with the user (`AskUserQuestion`) and narrowed
+to: add `billRequested` as a real status value on top of the existing `statusOverride` read-path seam
+(`posOperationalView.ts` already derived `statusOverride ?? status`, but nothing had ever written
+`statusOverride` before this sprint) — no new callables, no new Firestore rules, no new domain model.
+
+**Correction found mid-planning**: the originally-assumed reconnection target,
+`lib/features/restaurant/presentation/screens/live_floor_map_screen.dart`, is a confirmed orphan
+(zero real references in `lib/`, reads an in-memory repository and a separate QR-module-only
+`TableStatus` enum the real POS screens never touch). The actual real, live, Firestore-backed,
+color-coded table grid is `lib/features/pos/presentation/screens/pos_branch_overview_screen.dart`
+(already polls the real `getPosBranchTableOverview` callable, already device-session gated). This
+sprint targets that screen instead, per CLAUDE.md §3's "prefer the canonical, don't extend the
+obsolete" rule. `live_floor_map_screen.dart` is left untouched — orphan cleanup needs its own
+separate explicit approval.
+
+**What changed**: `functions/src/checkOperations.ts`'s `finalizeCheckReadyForPayment` now sets
+`restaurantTables/{tableId}.statusOverride = "billRequested"` (resolved via the check's
+`tableSessionId` → `tableSessions.tableId`), and `reopenCheck` clears it back to `null` — but only
+when no OTHER split check on the same table session is still `readyForPayment`, so reopening one
+split doesn't drop the "bill requested" signal while a sibling split still awaits payment. All reads
+happen before any write inside each function's existing transaction. `pos_branch_overview_screen
+.dart`'s `_TableTile._statusColor`/`_statusLabel` gained a `billRequested` case (`AppColors.secondary`
+deep-orange / "Hesap İstendi"). No changes needed to `pos_table_workspace_screen.dart` (already
+renders the raw status string), `pos_action_gateway.dart` (already calls the real transfer/merge
+callables), or `posOperationalView.ts` (its derivation already handled this).
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Cloud Functions **2044/2044**
+(2042 + 2 new `billRequested` tests in `checkOperations.test.ts`). Firestore Rules **418/418**
+(unchanged — no rules changes). `flutter analyze` clean. `flutter test` **3728/3728** (one existing
+widget test in `pos_branch_overview_screen_test.dart` extended in place with a `billRequested` tile
+case, no new test count). Zero regressions.
+
+New/changed files: `functions/src/checkOperations.ts`, `functions/src/test/checkOperations.test.ts`,
+`lib/features/pos/presentation/screens/pos_branch_overview_screen.dart`,
+`test/features/pos/presentation/screens/pos_branch_overview_screen_test.dart`,
+`docs/feature_status.md`.

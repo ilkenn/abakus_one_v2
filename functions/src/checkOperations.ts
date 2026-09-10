@@ -227,6 +227,50 @@ async function sumActiveAllocations(db: Firestore, tx: Transaction, checkId: str
   return snap.docs.reduce((sum, d) => sum + (d.data().allocatedAmountMinorUnits as number), 0);
 }
 
+/**
+ * Reads-then-writes the `billRequested` override on the check's physical
+ * table (`restaurantTables/{tableId}.statusOverride`), which
+ * `posOperationalView.ts` already derives `status` from
+ * (`statusOverride ?? status`). All reads here happen before any caller
+ * write, matching this transaction's own read-before-write discipline.
+ *
+ * A table session can have multiple split checks — clearing the override
+ * (finalizing -> false) only clears it when no OTHER check on the same
+ * table session is still `readyForPayment`, so reopening one split check
+ * doesn't drop the "bill requested" signal while a sibling split is still
+ * awaiting payment.
+ */
+async function syncTableBillRequestedOverride(
+  db: Firestore,
+  tx: Transaction,
+  check: CheckDoc,
+  checkId: string,
+  wantsBillRequested: boolean,
+): Promise<void> {
+  const tableSessionId = check.tableSessionId;
+  if (!tableSessionId) return;
+
+  const tableSessionSnap = await tx.get(db.collection(TABLE_SESSIONS_COLLECTION).doc(tableSessionId));
+  const tableId = tableSessionSnap.data()?.tableId as string | undefined;
+  if (!tableId) return;
+  const tableRef = db.collection("restaurantTables").doc(tableId);
+  const tableSnap = await tx.get(tableRef);
+  if (!tableSnap.exists) return;
+
+  if (wantsBillRequested) {
+    tx.update(tableRef, { statusOverride: "billRequested" });
+    return;
+  }
+
+  const otherReadyChecksSnap = await tx.get(
+    db.collection(CHECKS_COLLECTION).where("tableSessionId", "==", tableSessionId).where("status", "==", "readyForPayment"),
+  );
+  const stillHasOtherReadyCheck = otherReadyChecksSnap.docs.some((d) => d.id !== checkId);
+  if (!stillHasOtherReadyCheck) {
+    tx.update(tableRef, { statusOverride: null });
+  }
+}
+
 /** Writes one new allocation + its ledger updates + the check's recomputed total, inside the caller's already-open transaction. Assumes every read the caller needs has already happened. */
 function writeAllocation(
   tx: Transaction,
@@ -376,6 +420,7 @@ export const finalizeCheckReadyForPayment = onCall({ enforceAppCheck: shouldEnfo
     }
 
     const subAccountIds = new Set(allocationsSnap.docs.map((d) => d.data().subAccountId as string));
+    await syncTableBillRequestedOverride(db, tx, check, checkId, true);
     const now = Timestamp.now();
     tx.update(ref, { status: "readyForPayment", readyForPaymentAt: now, version: check.version + 1 });
     for (const subAccountId of subAccountIds) {
@@ -398,6 +443,7 @@ export const reopenCheck = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, 
     if (check.paymentActivityStarted) {
       throw new HttpsError("failed-precondition", "Payment activity has already started on this check — reopening requires manager remote approval (not yet reachable through this callable).");
     }
+    await syncTableBillRequestedOverride(db, tx, check, checkId, false);
     tx.update(ref, { status: "open", readyForPaymentAt: null, version: check.version + 1 });
     auditCheckEvent(tx, db, { type: "check.reopened", targetRef: ref.path, organizationId: ctx.organizationId, branchId: ctx.branchId, actorUid: ctx.uid });
     return { checkId, status: "open" };

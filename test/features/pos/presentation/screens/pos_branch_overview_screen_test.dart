@@ -152,6 +152,13 @@ void main() {
           activeTableSessionId: 'tsess-1',
           pendingQrLineCount: 2,
         ),
+        const PosBranchTableSummary(
+          tableId: 'table-3',
+          displayName: 'Masa 3',
+          status: 'billRequested',
+          activeTableSessionId: 'tsess-2',
+          pendingQrLineCount: 0,
+        ),
       ];
 
     await tester.pumpWidget(
@@ -175,8 +182,10 @@ void main() {
 
     expect(find.text('Masa 1'), findsOneWidget);
     expect(find.text('Masa 2'), findsOneWidget);
+    expect(find.text('Masa 3'), findsOneWidget);
     expect(find.text('Boş'), findsOneWidget);
     expect(find.text('Dolu'), findsOneWidget);
+    expect(find.text('Hesap İstendi'), findsOneWidget);
     expect(find.textContaining('2 bekleyen'), findsOneWidget);
   });
 }
