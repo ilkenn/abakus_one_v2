@@ -28,7 +28,16 @@ export type OrderStatus =
   // from the kitchen until `scheduledFor`. Never the same thing as
   // `pickupMode: "scheduled"` (submitTakeawayOrder.ts) — that's the
   // customer's own chosen pickup time, an independent field.
-  | "scheduled";
+  | "scheduled"
+  // AP-6 Sprint 3 — a consortium/external-merchant delivery order
+  // (Order.merchantId set), written directly here by
+  // registerConsortiumOrder.ts: our own kitchen never touches it, so it
+  // never passes through pendingConfirmation/confirmed/preparing/ready at
+  // all. Never confused with the unrelated PackagePreparationStatus/
+  // PackageNotReadyForPickupViolation vocabulary in the courier module's
+  // own Delivery aggregate — that's a courier's own pickup-confirmation
+  // action, a different axis entirely.
+  | "readyForPickup";
 
 export const ORDER_STATUSES: readonly OrderStatus[] = [
   "created",
@@ -43,6 +52,7 @@ export const ORDER_STATUSES: readonly OrderStatus[] = [
   "rejected",
   "refunded",
   "scheduled",
+  "readyForPickup",
 ];
 
 const ALLOWED_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
@@ -58,6 +68,7 @@ const ALLOWED_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
   rejected: [],
   refunded: [],
   scheduled: ["confirmed", "rejected", "cancelled"],
+  readyForPickup: ["outForDelivery", "cancelled", "rejected"],
 };
 
 export function canTransition(from: OrderStatus, to: OrderStatus): boolean {

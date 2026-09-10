@@ -30,5 +30,33 @@ void main() {
         throwsA(isA<CourierDispatchException>()),
       );
     });
+
+    test('registerConsortiumOrder fails closed', () async {
+      await expectLater(
+        gateway.registerConsortiumOrder(
+          organizationId: 'org-1',
+          branchId: 'branch-1',
+          merchantId: 'merchant-a',
+          merchantName: 'Dış Restoran A',
+          pickupAddress: 'Test address',
+          consortiumDeliveryFeeMinorUnits: 5000,
+          contactFirstName: 'Ada',
+          contactLastName: 'Yılmaz',
+          contactPhone: '+905551112233',
+          dropoffAddressDescription: 'Test dropoff',
+        ),
+        throwsA(isA<CourierDispatchException>()),
+      );
+    });
+
+    test('batchAssignCourierToOrders fails closed', () async {
+      await expectLater(
+        gateway.batchAssignCourierToOrders(
+          orderIds: const ['order-1', 'order-2'],
+          courierId: 'courier-1',
+        ),
+        throwsA(isA<CourierDispatchException>()),
+      );
+    });
   });
 }

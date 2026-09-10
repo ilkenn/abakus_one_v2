@@ -19,22 +19,46 @@ import '../../domain/identity/courier.dart';
 /// If [courierType] is already [CourierType.marketplace], the whole dialog
 /// renders a locked, no-action state instead — see `assignCourierToOrder.ts`'s
 /// own `MarketplaceCourierImmutableViolation` doc comment for why.
+///
+/// AP-6 Sprint 3 — [CourierAssignmentDialog.batch] is the multi-pickup/
+/// multi-drop variant: the same FIFO-sorted courier list, but "Ata" calls
+/// `batchAssignCourierToOrders` for every id in [orderIds] at once. A
+/// marketplace-carried order is filtered out of the dispatch screen's own
+/// multi-select before this dialog ever opens (see
+/// `DeliveryOrderDispatchScreen`) — the batch variant therefore has no
+/// `courierType`-locked state of its own.
 class CourierAssignmentDialog extends ConsumerStatefulWidget {
   const CourierAssignmentDialog({
     super.key,
     required this.organizationId,
     required this.branchId,
-    required this.orderId,
+    required String orderId,
     required this.courierType,
-  });
+  })  : orderIds = null,
+        _singleOrderId = orderId;
+
+  const CourierAssignmentDialog.batch({
+    super.key,
+    required this.organizationId,
+    required this.branchId,
+    required List<String> this.orderIds,
+  })  : courierType = null,
+        _singleOrderId = null;
 
   final String organizationId;
   final String branchId;
-  final String orderId;
+  final String? _singleOrderId;
 
-  /// The order's current `courierType` — `null`/non-marketplace means
-  /// assignment is allowed.
+  /// Set only by [CourierAssignmentDialog.batch].
+  final List<String>? orderIds;
+
+  /// The (single-mode) order's current `courierType` — `null`/non-marketplace
+  /// means assignment is allowed. Always `null` in batch mode.
   final CourierType? courierType;
+
+  bool get isBatch => orderIds != null;
+
+  List<String> get _targetOrderIds => orderIds ?? [_singleOrderId!];
 
   @override
   ConsumerState<CourierAssignmentDialog> createState() =>
@@ -64,10 +88,18 @@ class _CourierAssignmentDialogState
       _error = null;
     });
     try {
-      await ref.read(courierDispatchGatewayProvider).assignCourierToOrder(
-            orderId: widget.orderId,
-            courierId: courier.id,
-          );
+      final gateway = ref.read(courierDispatchGatewayProvider);
+      if (widget.isBatch) {
+        await gateway.batchAssignCourierToOrders(
+          orderIds: widget._targetOrderIds,
+          courierId: courier.id,
+        );
+      } else {
+        await gateway.assignCourierToOrder(
+          orderId: widget._targetOrderIds.single,
+          courierId: courier.id,
+        );
+      }
       if (!mounted) return;
       Navigator.pop(context);
     } on CourierDispatchException catch (error) {
@@ -116,7 +148,11 @@ class _CourierAssignmentDialogState
         ref.watch(availableCouriersForBranchProvider(widget.branchId));
 
     return AlertDialog(
-      title: const Text('Kurye Ata'),
+      title: Text(
+        widget.isBatch
+            ? 'Kurye Ata (${widget._targetOrderIds.length} Paket)'
+            : 'Kurye Ata',
+      ),
       content: SizedBox(
         width: 380,
         child: SingleChildScrollView(

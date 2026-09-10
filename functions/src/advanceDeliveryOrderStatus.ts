@@ -46,6 +46,17 @@ import {
  * discipline above stays unchanged, just with one more conditional
  * read/write pair. Still never flips the courier back to `available`/
  * stamps `returnedAt` — see `markCourierReturned.ts`.
+ *
+ * **AP-6 Sprint 3 addition**: independently of the courier-release side
+ * effect above, when `targetStatus` is `completed` and the order carries a
+ * `merchantId` (`registerConsortiumOrder.ts`), this callable ALSO creates a
+ * `ConsortiumDeliverySettlement` (`consortiumDeliverySettlements/{orderId}`
+ * — the order's own id, so a retried/duplicate call can never double-create
+ * one; belt-and-suspenders on top of the existing `duplicate: true`
+ * short-circuit above). `deliveryFeeMinorUnits` is copied verbatim from
+ * `order.consortiumDeliveryFeeMinorUnits`, captured once at registration —
+ * never recomputed here. No extra read is needed for this — every field it
+ * needs is already on the `order` document already loaded above.
  */
 
 const DELIVERY_NEXT_STATUS: Partial<Record<OrderStatus, OrderStatus>> = {
@@ -180,6 +191,24 @@ export const advanceDeliveryOrderStatus = onCall(
           },
           { merge: true },
         );
+      }
+
+      const merchantId = order.merchantId as string | null | undefined;
+      if (targetStatus === "completed" && merchantId) {
+        const settlementRef = db.collection("consortiumDeliverySettlements").doc(orderId);
+        tx.set(settlementRef, {
+          organizationId,
+          branchId,
+          merchantId,
+          merchantName: order.merchantName ?? null,
+          orderId,
+          courierId: assignedCourierId ?? null,
+          deliveryFeeMinorUnits: Number(order.consortiumDeliveryFeeMinorUnits ?? 0),
+          status: "pending",
+          createdAt: now,
+          settledAt: null,
+          revision: 1,
+        });
       }
 
       return { orderId, status: targetStatus, duplicate: false };

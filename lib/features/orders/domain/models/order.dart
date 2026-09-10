@@ -59,6 +59,10 @@ class Order {
     this.assignedCourierId,
     this.courierType,
     this.trackingToken,
+    this.merchantId,
+    this.merchantName,
+    this.pickupAddress,
+    this.consortiumDeliveryFeeMinorUnits,
     this.contactFirstName,
     this.contactLastName,
     this.contactPhone,
@@ -227,6 +231,41 @@ class Order {
   /// first assigned; this sprint only issues and stores it — no
   /// tracking-link screen consumes it yet.
   final String? trackingToken;
+
+  /// AP-6 Sprint 3 — the single discriminator for a consortium/
+  /// external-merchant delivery order: `null` means "our own restaurant"
+  /// (the normal case, every pre-Sprint-3 order included); non-null marks
+  /// an order whose food was prepared by [merchantName], never by our own
+  /// kitchen — our own courier fleet only carries it. Written once, at
+  /// registration, by `registerConsortiumOrder.ts`; never set by any
+  /// other order-creation path. Free-form, staff-entered identifier this
+  /// sprint — no managed `consortiumMerchants` roster collection exists
+  /// (out of scope, see `registerConsortiumOrder.ts`'s own doc comment).
+  final String? merchantId;
+
+  /// Display label for [merchantId] (e.g. "Dış Restoran A") — the
+  /// dispatch console's own pickup-location indicator reads this directly
+  /// rather than resolving [merchantId] against any roster. `null`
+  /// whenever [merchantId] is `null`.
+  final String? merchantName;
+
+  /// Where a courier collects a consortium order from — the external
+  /// merchant's own address, a plain descriptive string (no geocoding/
+  /// neighborhood-clustering data needed for a pickup point, unlike
+  /// [deliveryAddressSnapshot], which stays the CUSTOMER's own drop-off
+  /// address for every order regardless of who cooked it). `null`
+  /// whenever [merchantId] is `null` — an in-house order's pickup point
+  /// is always simply "our own kitchen," never stored as a string.
+  final String? pickupAddress;
+
+  /// The delivery fee owed to/from [merchantId] for this one order,
+  /// captured once at registration and never recomputed — copied
+  /// verbatim into the `ConsortiumDeliverySettlement` record
+  /// `advanceDeliveryOrderStatus.ts`'s completion hook creates once this
+  /// order reaches [OrderStatus.completed]. `null` whenever [merchantId]
+  /// is `null`. Minor units, matching every other monetary amount in this
+  /// codebase (`pricing`'s own fields) — never a raw `double`.
+  final int? consortiumDeliveryFeeMinorUnits;
 
   /// Immutable contact-data snapshot for a guest Gel Al order (Scenario
   /// 1 — no account, no `customerId`) — **not** an identity or
@@ -406,6 +445,10 @@ class Order {
     String? assignedCourierId,
     CourierType? courierType,
     String? trackingToken,
+    String? merchantId,
+    String? merchantName,
+    String? pickupAddress,
+    int? consortiumDeliveryFeeMinorUnits,
     String? contactFirstName,
     String? contactLastName,
     String? contactPhone,
@@ -447,6 +490,11 @@ class Order {
       assignedCourierId: assignedCourierId ?? this.assignedCourierId,
       courierType: courierType ?? this.courierType,
       trackingToken: trackingToken ?? this.trackingToken,
+      merchantId: merchantId ?? this.merchantId,
+      merchantName: merchantName ?? this.merchantName,
+      pickupAddress: pickupAddress ?? this.pickupAddress,
+      consortiumDeliveryFeeMinorUnits:
+          consortiumDeliveryFeeMinorUnits ?? this.consortiumDeliveryFeeMinorUnits,
       contactFirstName: contactFirstName ?? this.contactFirstName,
       contactLastName: contactLastName ?? this.contactLastName,
       contactPhone: contactPhone ?? this.contactPhone,

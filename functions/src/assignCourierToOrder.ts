@@ -86,7 +86,15 @@ export const assignCourierToOrder = onCall(
 
       const currentStatus = order.status as OrderStatus;
       const alreadyOutForDelivery = currentStatus === "outForDelivery";
-      if (!alreadyOutForDelivery && currentStatus !== "ready") {
+      // AP-6 Sprint 3 — "readyForPickup" is the consortium-order analogue
+      // of "ready" (our own kitchen never produced it, but it's equally
+      // eligible for courier assignment) — both are valid sources for the
+      // exact same outForDelivery target below.
+      if (
+        !alreadyOutForDelivery &&
+        currentStatus !== "ready" &&
+        currentStatus !== "readyForPickup"
+      ) {
         throw new HttpsError(
           "failed-precondition",
           `Order is not eligible for courier assignment (current status: "${currentStatus}").`,

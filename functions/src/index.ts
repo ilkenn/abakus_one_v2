@@ -264,3 +264,14 @@ export { takeawayOperationsSweep } from "./takeawayOperationsSweep";
 export { setCourier } from "./setCourier";
 export { assignCourierToOrder } from "./assignCourierToOrder";
 export { markCourierReturned } from "./markCourierReturned";
+
+// AP-6 Sprint 3 — Neighborhood Clustering, Multi-Merchant Dispatch &
+// Settlement. `registerConsortiumOrder` creates an external-merchant
+// delivery order directly at `readyForPickup`, never touching our own
+// kitchen; `batchAssignCourierToOrders` is the multi-pickup/multi-drop
+// sibling of `assignCourierToOrder` for assigning several orders to one
+// courier at once. `ConsortiumDeliverySettlement` creation is a side
+// effect of `advanceDeliveryOrderStatus.ts`'s existing completion hook,
+// not a separate callable.
+export { registerConsortiumOrder } from "./registerConsortiumOrder";
+export { batchAssignCourierToOrders } from "./batchAssignCourierToOrders";

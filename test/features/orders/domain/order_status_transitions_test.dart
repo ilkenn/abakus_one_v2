@@ -17,6 +17,8 @@ void main() {
       OrderStatus.refunded,
       // AP-6 Sprint 1.
       OrderStatus.scheduled,
+      // AP-6 Sprint 3.
+      OrderStatus.readyForPickup,
     ]);
   });
 
@@ -39,6 +41,10 @@ void main() {
       [OrderStatus.scheduled, OrderStatus.confirmed],
       [OrderStatus.scheduled, OrderStatus.rejected],
       [OrderStatus.scheduled, OrderStatus.cancelled],
+      // AP-6 Sprint 3.
+      [OrderStatus.readyForPickup, OrderStatus.outForDelivery],
+      [OrderStatus.readyForPickup, OrderStatus.cancelled],
+      [OrderStatus.readyForPickup, OrderStatus.rejected],
     ];
 
     for (final pair in validTransitions) {
@@ -67,6 +73,10 @@ void main() {
       // scheduled asamalari atlayamaz (AP-6 Sprint 1).
       [OrderStatus.scheduled, OrderStatus.preparing],
       [OrderStatus.scheduled, OrderStatus.ready],
+      // readyForPickup asamalari atlayamaz (AP-6 Sprint 3) — kendi mutfagimiz
+      // bu siparisi hic gormedigi icin preparing/ready gecisi olamaz.
+      [OrderStatus.readyForPickup, OrderStatus.preparing],
+      [OrderStatus.readyForPickup, OrderStatus.ready],
     ];
 
     for (final pair in invalidTransitions) {

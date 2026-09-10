@@ -112,6 +112,14 @@ abstract final class OrderFirestoreMapper {
       'assignedCourierId': order.assignedCourierId,
       'courierType': order.courierType?.name,
       'trackingToken': order.trackingToken,
+      // AP-6 Sprint 3 — no real client write path sets these today either
+      // (only `registerConsortiumOrder.ts` does); same "mapper's own
+      // write path stays complete" reasoning as the Sprint 1/2 additions
+      // above.
+      'merchantId': order.merchantId,
+      'merchantName': order.merchantName,
+      'pickupAddress': order.pickupAddress,
+      'consortiumDeliveryFeeMinorUnits': order.consortiumDeliveryFeeMinorUnits,
       'contactFirstName': order.contactFirstName,
       'contactLastName': order.contactLastName,
       'contactPhone': order.contactPhone,
@@ -168,6 +176,13 @@ abstract final class OrderFirestoreMapper {
       assignedCourierId: data['assignedCourierId'] as String?,
       courierType: _courierTypeFromName(data['courierType'] as String?),
       trackingToken: data['trackingToken'] as String?,
+      // AP-6 Sprint 3 — same additive/nullable backward-compatibility
+      // contract as assignedCourierId/courierType/trackingToken above.
+      merchantId: data['merchantId'] as String?,
+      merchantName: data['merchantName'] as String?,
+      pickupAddress: data['pickupAddress'] as String?,
+      consortiumDeliveryFeeMinorUnits:
+          (data['consortiumDeliveryFeeMinorUnits'] as num?)?.toInt(),
       contactFirstName: data['contactFirstName'] as String?,
       contactLastName: data['contactLastName'] as String?,
       contactPhone: data['contactPhone'] as String?,

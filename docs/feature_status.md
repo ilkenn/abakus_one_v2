@@ -6213,5 +6213,103 @@ New/changed files: `lib/shared/models/courier_type.dart` (new),
 `test/features/courier/presentation/widgets/courier_assignment_dialog_test.dart` (new),
 `test/features/admin/presentation/admin_shell_screen_test.dart`.
 
-No git commit exists yet for AP-6 Sprint 2 — nothing has been committed this session; there is no SHA to
+**Committed**: `1283d529b10af8e14dee46b6e81a15abc4981729` (pushed to `origin/phase-7/profile-redesign`).
+
+---
+
+## AP-6 Sprint 3 — Neighborhood Clustering, Multi-Merchant Dispatch & Settlement (2026-09-10)
+
+Lets the branch's courier fleet also carry deliveries for other, independent restaurants
+("consortium" orders) that never touch our own kitchen, groups the dispatch console's orders by
+delivery neighborhood so a cashier can batch nearby drops onto one courier run, and records a
+per-delivery fee owed to/from each external merchant for end-of-day reconciliation.
+
+**Research findings that shaped the plan**: no "external restaurant"/"consortium" concept existed
+anywhere — `CourierType.marketplace` (Sprint 2) is the opposite direction (their courier carrying our
+order); this sprint's model (our courier carrying their order) was undocumented in `docs/` entirely.
+`DeliveryAddressSnapshot.neighborhoodName` already existed (provider-sourced) — work package 1's "add a
+zone field" ask was already satisfied by existing data; only a grouping engine was needed.
+`kitchenWorkItems` has one legitimate client-side `create` path (`EnqueueKitchenWorkItems`) alongside
+five server-side creators — the "consortium orders never enqueue kitchen work" guarantee therefore
+needed a Firestore-rules-level guard, not just a callable-level one (the callable-level half is already
+structural: `registerConsortiumOrder.ts` never routes an order through any confirm callable at all).
+
+**Domain**: `OrderStatus.readyForPickup` (new, 13th value; Dart + TS mirror) — a consortium order's own
+starting status, written directly by `registerConsortiumOrder.ts`, skipping
+`pendingConfirmation`/`confirmed`/`preparing`/`ready` entirely since our own kitchen never touches it.
+Explicitly distinguished in its own doc comment from the courier module's unrelated
+`PackagePreparationStatus`/`PackageNotReadyForPickupViolation` vocabulary. `Order` gained four new
+additive/nullable fields: `merchantId` (the single discriminator), `merchantName`, `pickupAddress`,
+`consortiumDeliveryFeeMinorUnits`. New `DeliveryNeighborhoodClusterer`
+(`lib/features/pos/domain/delivery_neighborhood_clusterer.dart`) — a pure, stateless grouping of orders
+by their existing `deliveryAddressSnapshot?.neighborhoodName`, largest cluster first, ungrouped bucket
+always last. New `ConsortiumDeliverySettlement`/`ConsortiumSettlementStatus`
+(`lib/features/courier/domain/settlement/`) — mirrors `PaymentSettlementRecord`'s flat shape, not the
+much heavier, still-in-memory `CourierSettlementSession` family (a different problem — a courier's own
+cash-on-hand reconciliation, not an inter-business fee ledger). No new pickup/drop sequencing field —
+`Courier.activeOrderIds`'s own append order already is the route sequence.
+
+**Server** (`functions/src/`): `registerConsortiumOrder.ts` (new) — creates a minimal order directly at
+`readyForPickup`, empty `lines`, pricing carrying only the delivery fee, a lightweight manually-entered
+drop-off address (not full geocoding — only `neighborhoodName`/`addressDescription` are meaningfully
+collected, every other `DeliveryAddressSnapshot` field defaulted so the doc still round-trips through
+the existing mapper). `assignCourierToOrder.ts` extended to accept `readyForPickup` as a valid source
+status alongside `ready`. `batchAssignCourierToOrders.ts` (new) — the multi-pickup/multi-drop sibling:
+assigns N orders to one courier in a single transaction, fails the whole batch closed on any single
+invalid order, writes exactly one accumulated `activeOrderIds` update to the courier doc (never N
+separate writes to the same path). `advanceDeliveryOrderStatus.ts`'s existing completion hook (Sprint 2)
+gained a second, independent condition: a consortium order reaching `completed` auto-creates a
+`ConsortiumDeliverySettlement` (deterministic id = the order's own id), with `deliveryFeeMinorUnits`
+copied verbatim from registration — never recomputed. All three new/changed callables reuse the existing
+`manageCourierDispatch` permission (Sprint 2) — no new permission needed.
+
+**Firestore**: new `consortiumDeliverySettlements/{settlementId}` collection (branch-scoped read,
+Cloud-Function-only write). `kitchenWorkItems`'s existing client `create` rule gained one condition: the
+referenced order's `merchantId` must be `null` (via a `get()` lookup) — the rules-level half of the
+KDS-isolation guarantee. No new order-query composite index — clustering/filtering stays client-side,
+consistent with the dispatch repository's own existing rationale.
+
+**UI**: `DeliveryOrderDispatchScreen` gained neighborhood cluster cards ("Fulya Bölgesi (3 Paket)"), a
+zone filter chip row, a pickup-location indicator per row ("Kendi Dükkanımız" vs. the merchant name), a
+checkbox per row, and a bottom batch-assign action bar. `CourierAssignmentDialog` gained a `.batch`
+named constructor (same FIFO-sorted courier list, calling `batchAssignCourierToOrders`). A lightweight
+inline "Dış Restoran Siparişi Kaydet" quick-add dialog registers a consortium order, mirroring Sprint
+2's own inline-quick-add precedent rather than a new full screen.
+
+**One real regression found and fixed during verification**: the new `kitchenWorkItems` rules guard
+broke a pre-existing rules test that referenced an order id without ever seeding that order document —
+fixed by seeding a real (non-consortium) order first, matching what real usage always has anyway (a
+work item is always derived from a real KitchenTicket line on a real, already-existing order).
+
+**Explicitly out of scope this sprint** (not requested, avoids scope creep): a dedicated end-of-day
+reconciliation/settlement report screen (the collection + branch-scoped read query exists; no UI
+consumes it yet — same "forward groundwork" disclosure as the Sprint 2 marketplace guard); route
+optimization/reordering; a managed `consortiumMerchants` roster (`merchantId`/`merchantName` are
+free-form, staff-entered strings this sprint).
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Cloud Functions **2041/2041**
+(2033 + 8 new). Firestore Rules **418/418** (415 + 3 new, after fixing the one pre-existing test the new
+`kitchenWorkItems` guard exposed). `flutter analyze` clean. `flutter test` **3728/3728** (3711 + 17 new),
+zero regressions after the one fix above.
+
+New/changed files: `lib/features/orders/domain/models/order_status.dart`, `functions/src/orderStatus.ts`,
+`lib/features/orders/domain/models/{order,order_timestamps,order_tracking_step}.dart`,
+`lib/features/orders/data/order_firestore_mapper.dart`,
+`lib/features/pos/domain/delivery_neighborhood_clusterer.dart` (new),
+`lib/features/courier/domain/settlement/{consortium_delivery_settlement,
+consortium_settlement_status}.dart` (new), `firestore.rules`, `firestore-tests/rules.test.js`,
+`functions/src/registerConsortiumOrder.ts` (new), `functions/src/batchAssignCourierToOrders.ts` (new),
+`functions/src/assignCourierToOrder.ts`, `functions/src/advanceDeliveryOrderStatus.ts`,
+`functions/src/index.ts`, `lib/features/courier/data/courier_dispatch_gateway.dart`,
+`lib/features/pos/data/delivery_dispatch_order_repository.dart`,
+`lib/features/pos/presentation/screens/delivery_order_dispatch_screen.dart`,
+`lib/features/courier/presentation/widgets/courier_assignment_dialog.dart`,
+`functions/src/test/ap6ConsortiumDispatch.test.ts` (new),
+`test/features/pos/domain/delivery_neighborhood_clusterer_test.dart` (new),
+`test/features/courier/domain/settlement/consortium_delivery_settlement_test.dart` (new),
+`test/features/courier/data/courier_dispatch_gateway_test.dart`,
+`test/features/pos/presentation/screens/delivery_order_dispatch_screen_test.dart` (new),
+`test/features/orders/domain/order_status_transitions_test.dart`, `docs/feature_status.md`.
+
+No git commit exists yet for AP-6 Sprint 3 — nothing has been committed this session; there is no SHA to
 report until the user asks for one.

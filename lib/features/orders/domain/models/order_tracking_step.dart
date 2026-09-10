@@ -64,6 +64,11 @@ abstract final class OrderTrackingTimeline {
       case OrderStatus.preparing:
         return OrderTrackingStep.preparing;
       case OrderStatus.ready:
+      // AP-6 Sprint 3 — same "ready, waiting for a courier" meaning as
+      // ready; a consortium order has no real customer-facing tracking
+      // screen today (no customerId), but the honest projection is
+      // identical either way.
+      case OrderStatus.readyForPickup:
         return OrderTrackingStep.readyForService;
       case OrderStatus.outForDelivery:
         return OrderTrackingStep.courierEnRoute;

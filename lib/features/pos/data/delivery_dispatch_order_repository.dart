@@ -11,10 +11,12 @@ import '../../orders/domain/models/order_status.dart';
 /// minimal/shared across many callers, not screen-specific queries).
 ///
 /// Queries `branchId + channel` only (one composite index,
-/// `orders(branchId ASC, channel ASC)`) and filters to the two
-/// courier-assignable statuses (`ready`/`outForDelivery`) client-side from
-/// the small per-branch result set — avoids a 3-field composite index for a
-/// list that's never large for one branch.
+/// `orders(branchId ASC, channel ASC)`) and filters to the three
+/// courier-assignable statuses (`ready`/`readyForPickup`/`outForDelivery` —
+/// `readyForPickup` added AP-6 Sprint 3 for consortium orders, which skip
+/// `ready` entirely since our own kitchen never touches them) client-side
+/// from the small per-branch result set — avoids a 3-field composite index
+/// for a list that's never large for one branch.
 abstract interface class DeliveryDispatchOrderRepository {
   Stream<List<Order>> watchAssignableDeliveryOrders(String branchId);
 }
@@ -30,6 +32,7 @@ class FirestoreDeliveryDispatchOrderRepository
 
   static const _assignableStatuses = {
     OrderStatus.ready,
+    OrderStatus.readyForPickup,
     OrderStatus.outForDelivery,
   };
 

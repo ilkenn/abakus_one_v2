@@ -1331,7 +1331,16 @@ service cloud.firestore {
       allow create: if isOrgMember(request.resource.data.organizationId) &&
         hasBranchAccess(request.resource.data.organizationId, request.resource.data.branchId) &&
         request.resource.data.status == 'queued' &&
-        request.resource.data.revision == 1;
+        request.resource.data.revision == 1 &&
+        // AP-6 Sprint 3 — a consortium/external-merchant order
+        // (`orders/{orderId}.merchantId` set) must never enqueue kitchen
+        // work — it never touches our own kitchen at all. This is the
+        // rules-level half of that guard (the callable-level half is
+        // structural: `registerConsortiumOrder.ts` never routes an order
+        // through any of the confirm callables that call
+        // `prepareKitchenWorkAndStockConsumption`). A failed/missing
+        // lookup denies the write — fail closed, never fail open.
+        get(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.merchantId == null;
       allow update, delete: if false; // transitionKitchenWorkItem callable only.
     }
 
@@ -1482,6 +1491,16 @@ service cloud.firestore {
     // `branchStock`/`stockCounts`/etc. above. setCourier.ts/
     // assignCourierToOrder.ts/markCourierReturned.ts are the only writers.
     match /couriers/{courierId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false;
+    }
+
+    // AP-6 Sprint 3 — one doc per consortium-order completion, same
+    // branch-scoped shape as `couriers` above. Auto-created by
+    // `advanceDeliveryOrderStatus.ts`'s completion hook only — no client
+    // writer, no other callable writer.
+    match /consortiumDeliverySettlements/{settlementId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
       allow write: if false;

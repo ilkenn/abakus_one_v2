@@ -54,6 +54,9 @@ class OrderTimestamps {
       // slot of its own (its eventual confirmed/preparing/... timestamps
       // are recorded normally once takeawayOperationsSweep.ts promotes it).
       case OrderStatus.scheduled:
+      // AP-6 Sprint 3 — same reasoning: readyForPickup has no dedicated
+      // timestamp slot of its own.
+      case OrderStatus.readyForPickup:
         return this;
     }
   }

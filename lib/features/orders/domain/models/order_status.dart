@@ -30,6 +30,20 @@ enum OrderStatus {
   /// customer's own chosen pickup time, a completely different axis that
   /// can be set independently of this status.
   scheduled,
+
+  /// AP-6 Sprint 3 — a consortium/external-merchant delivery order
+  /// (`Order.merchantId` set), written directly at this status by
+  /// `registerConsortiumOrder.ts`: our own kitchen never touches it, so it
+  /// never passes through [pendingConfirmation]/[confirmed]/[preparing]/
+  /// [ready] at all — it starts life already ready for a courier to pick
+  /// up from the external merchant's own [Order.pickupAddress]. **Never
+  /// confused with the unrelated `PackagePreparationStatus`/
+  /// `PackageNotReadyForPickupViolation` vocabulary in
+  /// `features/courier/application/use_cases/confirm_package_pickup.dart`**
+  /// — that's a courier's own pickup-confirmation action on a `Delivery`
+  /// aggregate, an entirely different axis from this order-lifecycle
+  /// status.
+  readyForPickup,
 }
 
 /// The order state machine: which [OrderStatus] transitions are valid.
@@ -84,6 +98,11 @@ abstract final class OrderStatusTransitions {
       OrderStatus.confirmed,
       OrderStatus.rejected,
       OrderStatus.cancelled,
+    },
+    OrderStatus.readyForPickup: {
+      OrderStatus.outForDelivery,
+      OrderStatus.cancelled,
+      OrderStatus.rejected,
     },
   };
 
@@ -141,6 +160,11 @@ abstract final class OrderStatusLegacyLabel {
         return 'Onaylandı';
       case OrderStatus.preparing:
       case OrderStatus.ready:
+      // AP-6 Sprint 3 — a consortium order has no real customer-facing
+      // legacy screen (no customerId at all), but the honest nearest
+      // legacy bucket is the same "being made ready" string as
+      // preparing/ready.
+      case OrderStatus.readyForPickup:
         return 'Hazırlanıyor';
       case OrderStatus.outForDelivery:
         return 'Yolda';

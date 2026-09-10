@@ -5428,7 +5428,96 @@ test('couriers: a different branch\'s staff, a different organization\'s staff, 
   await assertFails(getDoc(doc(anon, 'couriers/courier-1')));
 });
 
+// AP-6 Sprint 3 — consortiumDeliverySettlements/{settlementId}: same
+// branch-scoped read shape as couriers above. advanceDeliveryOrderStatus.ts's
+// completion hook is the only writer, no client write under any role.
+test('consortiumDeliverySettlements: same-branch staff can read, no client (staff or otherwise) can write', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'consortiumDeliverySettlements/settlement-1'), {
+      organizationId: 'org-1', branchId: 'branch-1', merchantId: 'merchant-1', orderId: 'order-1',
+      deliveryFeeMinorUnits: 5000, status: 'pending',
+    });
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-ap6-settlement-branch-1', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertSucceeds(getDoc(doc(branchStaff, 'consortiumDeliverySettlements/settlement-1')));
+  await assertFails(setDoc(doc(branchStaff, 'consortiumDeliverySettlements/settlement-2'), {
+    organizationId: 'org-1', branchId: 'branch-1', merchantId: 'merchant-1', orderId: 'order-2',
+    deliveryFeeMinorUnits: 5000, status: 'pending',
+  }));
+  await assertFails(updateDoc(doc(branchStaff, 'consortiumDeliverySettlements/settlement-1'), { status: 'settled' }));
+  await assertFails(deleteDoc(doc(branchStaff, 'consortiumDeliverySettlements/settlement-1')));
+});
+
+test('consortiumDeliverySettlements: a different branch\'s staff, a different organization\'s staff, and an anonymous client are all denied read', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'consortiumDeliverySettlements/settlement-1'), {
+      organizationId: 'org-1', branchId: 'branch-1', merchantId: 'merchant-1', orderId: 'order-1',
+      deliveryFeeMinorUnits: 5000, status: 'pending',
+    });
+  });
+  const wrongBranchStaff = testEnv
+    .authenticatedContext('staff-ap6-settlement-wrong-branch', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-2'] },
+    })
+    .firestore();
+  const otherOrgStaff = testEnv
+    .authenticatedContext('staff-ap6-settlement-other-org', {
+      organizationAccess: ['org-2'],
+      branchAccess: { 'org-2': ['branch-1'] },
+    })
+    .firestore();
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  await assertFails(getDoc(doc(wrongBranchStaff, 'consortiumDeliverySettlements/settlement-1')));
+  await assertFails(getDoc(doc(otherOrgStaff, 'consortiumDeliverySettlements/settlement-1')));
+  await assertFails(getDoc(doc(anon, 'consortiumDeliverySettlements/settlement-1')));
+});
+
+// AP-6 Sprint 3 — the kitchenWorkItems client-create path's new consortium
+// guard: a work item referencing a merchantId-carrying order is denied even
+// though the create otherwise satisfies every pre-existing condition.
+test('kitchenWorkItems: create is denied when the referenced order is a consortium (merchantId-carrying) order', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/order-consortium-1'), {
+      organizationId: 'org-1', branchId: 'branch-1', channel: 'delivery', status: 'readyForPickup',
+      merchantId: 'merchant-1',
+    });
+    await setDoc(doc(db, 'orders/order-normal-1'), {
+      organizationId: 'org-1', branchId: 'branch-1', channel: 'delivery', status: 'ready',
+      merchantId: null,
+    });
+  });
+  const branchStaff = testEnv
+    .authenticatedContext('staff-ap6-kwi-consortium', {
+      organizationAccess: ['org-1'],
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  await assertFails(setDoc(doc(branchStaff, 'kitchenWorkItems/kwi-consortium-1'), {
+    organizationId: 'org-1', branchId: 'branch-1', orderId: 'order-consortium-1', status: 'queued', revision: 1,
+  }));
+  await assertSucceeds(setDoc(doc(branchStaff, 'kitchenWorkItems/kwi-normal-1'), {
+    organizationId: 'org-1', branchId: 'branch-1', orderId: 'order-normal-1', status: 'queued', revision: 1,
+  }));
+});
+
 test('kitchenWorkItems: same-branch staff can create a fresh queued/revision-1 item, and can read it back', async () => {
+  // AP-6 Sprint 3 — the referenced order must now exist (the kitchenWorkItems
+  // create rule reads its merchantId), matching real usage: a work item is
+  // always derived from a real KitchenTicket line on a real order.
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/order-1'), {
+      organizationId: 'org-1', branchId: 'branch-1', channel: 'delivery', status: 'ready', merchantId: null,
+    });
+  });
   const branchStaff = testEnv
     .authenticatedContext('staff-kwi-create', {
       organizationAccess: ['org-1'],
@@ -5443,6 +5532,11 @@ test('kitchenWorkItems: same-branch staff can create a fresh queued/revision-1 i
 });
 
 test('kitchenWorkItems: create is rejected unless status is exactly "queued" and revision is exactly 1 — no client-fabricated mid-flight or ready item', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/order-1'), {
+      organizationId: 'org-1', branchId: 'branch-1', channel: 'delivery', status: 'ready', merchantId: null,
+    });
+  });
   const branchStaff = testEnv
     .authenticatedContext('staff-kwi-shape', {
       organizationAccess: ['org-1'],
