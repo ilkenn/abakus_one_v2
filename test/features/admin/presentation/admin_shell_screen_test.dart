@@ -427,6 +427,14 @@ void main() {
       find.byType(ListView).first,
       const Offset(0, -300),
     );
+    // AP-6 Sprint 2 added a new "Teslimat Dağıtımı" destination in an
+    // earlier group, pushing this one further down — same fix as "Menü
+    // İçe Aktarma" above: dragUntilVisible's own "any part on screen"
+    // check now leaves this item's center still a little below the
+    // viewport by the time it stops; ensureVisible scrolls precisely
+    // enough for the tap's own center-point hit test to land on it.
+    await tester.ensureVisible(find.text('Kurulum Şablonları').first);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Kurulum Şablonları').first);
     await tester.pumpAndSettle();
 

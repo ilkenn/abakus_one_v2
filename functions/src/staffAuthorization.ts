@@ -118,7 +118,19 @@ export type StaffPermission =
   // action (mirrors Sprint 2's stock consumption at acceptance) — it does
   // not need its own separate permission check.
   | "recordStockCount"
-  | "approveStockCountAdjustment";
+  | "approveStockCountAdjustment"
+  // AP-6 Sprint 2 — manually assigning a delivery order to an in-house/pool
+  // courier, and confirming a courier's physical return to the branch.
+  // `_managerTier`-and-above only, mirroring the client-side-only
+  // `PosAuthorizedAction.manuallyAssignDelivery`'s own tier in
+  // `role_permission_map.dart` (that Dart permission is enforced only
+  // against a local `ActorSession`, never by this real backend — this is
+  // its first real server-side enforcement). Deliberately one permission
+  // for both actions (assign + confirm-return) rather than two — they are
+  // the same class of manager-supervised dispatch decision, and splitting
+  // them would not map to any distinct real-world approval boundary the
+  // way e.g. `manageDeliveryOrders` vs. `manageDeliveryOrderRefunds` does.
+  | "manageCourierDispatch";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -209,6 +221,14 @@ export type StaffPermission =
  *   delivery); the same manager-tier gate other channels apply to
  *   preparing/ready-stage cancellation can be layered on later without any
  *   callable redesign.
+ * - `manageCourierDispatch` (AP-6 Sprint 2): manually assigning a delivery
+ *   order to an in-house/pool courier (`assignCourierToOrder.ts`) and
+ *   confirming a courier's physical return to the branch
+ *   (`markCourierReturned.ts`). `_managerTier`-and-above only — `staff` is
+ *   deliberately NOT granted this one (mirrors the client-side-only
+ *   `PosAuthorizedAction.manuallyAssignDelivery`'s own manager-tier grant).
+ *   `courier` is granted NONE of this phase's courier-dispatch permissions
+ *   either — see this map's own closing comment on why.
  *
  * Role name strings match `StaffRole.name` / the custom-claims `roles` map
  * convention already established by `platformAuthorization.ts`/
@@ -282,6 +302,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageInventory",
     "recordStockCount",
     "approveStockCountAdjustment",
+    "manageCourierDispatch",
   ],
   admin: [
     "manageReservations",
@@ -317,6 +338,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageInventory",
     "recordStockCount",
     "approveStockCountAdjustment",
+    "manageCourierDispatch",
   ],
   tenantOwner: [
     "manageReservations",
@@ -352,6 +374,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "manageInventory",
     "recordStockCount",
     "approveStockCountAdjustment",
+    "manageCourierDispatch",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must

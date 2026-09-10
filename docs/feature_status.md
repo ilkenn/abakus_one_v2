@@ -6106,5 +6106,112 @@ takeaway_mode_change_dialog,scheduled_orders_count_badge}.dart` (new),
 `test/features/takeaway/presentation/widgets/{takeaway_operation_status_badge_test,
 scheduled_orders_count_badge_test}.dart` (new).
 
-No git commit exists yet for AP-6 Sprint 1 — nothing has been committed this session; there is no SHA to
+**Committed**: `c1d621fb81dedb3790598db39dc33183bd234267` (pushed to `origin/phase-7/profile-redesign`).
+
+---
+
+## AP-6 Sprint 2 — Courier Dispatch, FIFO Rotation & Tracking Isolation (2026-09-10)
+
+Gives staff a real way to manually dispatch a `delivery`-channel order to an in-house/pool courier,
+following a fair "first back to the shop, first out again" rotation, while structurally protecting
+orders already carried by a marketplace courier from manual override, plus issuing an opaque
+per-assignment tracking token.
+
+**Research finding that reshaped the plan, and the explicit decision it produced**: `lib/features/
+courier/**` already contains a huge (~220-file), fully-built, well-tested, but **100% in-memory**
+courier/delivery domain (`Courier`, `Delivery`, `DeliveryAssignment`, an event-log-based FIFO dispatch
+queue, shifts, earnings, fraud, geofencing) — zero Firestore rules, zero Cloud Functions, zero wiring to
+the real `Order`/`submitDeliveryOrder.ts` lifecycle. `docs/restaurant_operations_architecture.md` §8
+calls this domain "the real starting point... not a rewrite target" for AP-6. Presented this fork to the
+user via `AskUserQuestion`; **chose to extend the existing domain** over building a parallel, narrower
+primitive. Scope stayed deliberately bounded to what this sprint's four work packages actually ask for:
+only the `Courier` identity/registry entity was extended and ported to Firestore — `Delivery`/
+`DeliveryAssignment`/the event-log FIFO queue/shifts/earnings/fraud/geofencing were not touched, not
+wired, not ported.
+
+**Domain**: `Courier` (`lib/features/courier/domain/identity/courier.dart`) extended additively — new
+`type: CourierType` (`internal`/`pool`/`marketplace`, moved to `shared/models/courier_type.dart` since
+both `features/courier` and `features/orders` need it — cross-feature need per `CLAUDE.md` §3, not a
+feature-to-feature import), new `dispatchStatus: CourierStatus` (`available`/`delivering`/`offline` —
+a new, separate field/enum from the existing `CourierRegistryStatus` and the heavier, shift-gated
+`CourierAvailabilityStatus`; doc comments explicitly distinguish all three), new `returnedAt`/
+`activeOrderIds`. `vehicleType`/`capacity` relaxed from required to optional-with-defaults so the new
+minimal quick-add flow doesn't need to collect them; every existing 220-file-domain caller is
+unaffected. New `CourierReturnFifo.sortAvailableByReturnTime` (`domain/dispatch/courier_return_fifo.dart`)
+— a plain, separate, purpose-built FIFO sort, deliberately not reusing the existing heavier
+event-log-based `CourierDispatchQueueBuilder`. `Order` gained `assignedCourierId`/`courierType`/
+`trackingToken` (additive/nullable, mirrors Sprint 1's `scheduledFor`/`estimatedReadyAt` precedent),
+wired into `OrderFirestoreMapper`.
+
+**New `couriers/{courierId}` Firestore collection** — branch-scoped read (`isOrgMember` +
+`hasBranchAccess`), Cloud-Function-only write, same shape as every other AP-5/6 collection. New
+composite index `orders(branchId ASC, channel ASC)` for the dispatch screen's own order list.
+
+**Cloud Functions**: `setCourier.ts` (new, upsert-with-revision, mirrors `setStandardIngredientCost.ts`
+— the minimal roster-seeding plumbing; no full roster-management screen was built, per explicit scope
+note). `assignCourierToOrder.ts` (new) — staff callable (`manageCourierDispatch`, new manager-tier
+permission), loads the order first (org/branch derived from it), rejects non-`delivery` orders, guards
+`MarketplaceCourierImmutableViolation` (stable `details.reason: "courier/marketplace-immutable"`) when
+the order already carries `courierType: "marketplace"`, rejects assigning a `type: "marketplace"`
+courier, generates an opaque `trackingToken` (`crypto.randomUUID()`, reusing `correlationId.ts`'s own
+mechanism), and reuses `canTransition`/`applyOrderLifecycleTransition`/`writeOrderStatusChangeAuditEvent`
+exactly as `advanceDeliveryOrderStatus.ts` does to move `ready -> outForDelivery` (idempotent no-op if
+already `outForDelivery`). `markCourierReturned.ts` (new) — flips `dispatchStatus: "available"` +
+stamps `returnedAt`, rejecting while `activeOrderIds` is still non-empty. `advanceDeliveryOrderStatus.ts`
+gained a completion-hook side effect: reaching `completed` removes the order from its courier's
+`activeOrderIds` in the same transaction — deliberately never auto-flips `dispatchStatus`/`returnedAt`
+(that stays `markCourierReturned.ts`'s own separate, physical-return confirmation — "delivered" and
+"back at the shop" are two different events).
+
+**Explicitly disclosed, not hidden**: `MarketplaceCourierImmutableViolation` is real, tested code, but
+no live path in this codebase can currently set `order.courierType = "marketplace"` — no marketplace
+order-intake/webhook exists yet (`docs/business_rules.md` BR-MKT-003). Verified in tests by directly
+seeding the field, the same class of forward-groundwork disclosure the AP-4 PAX/TEB adapter stub used.
+
+**UI**: `CourierAssignmentDialog` (new) — FIFO-sorted available-courier list, first entry tagged
+"Önerilen (İlk Dönen)", every other courier still selectable (staff override, no restriction), a
+lightweight inline "+ Yeni Kurye Ekle" quick-add, and a locked "Pazaryeri Kuryesi Taşımaktadır" state
+when the order is marketplace-carried. New `DeliveryOrderDispatchScreen` (`lib/features/pos/presentation/
+screens/`) — no existing delivery-order-detail screen existed anywhere in POS/Admin to extend (confirmed
+by research); lists the branch's `ready`/`outForDelivery` orders with courier-assignment state and a
+"Kurye Ata" action. Registered as a new "Teslimat Dağıtımı" nav item in `admin_shell_screen.dart`
+(`EntitlementModule.courier`-gated), distinct from the pre-existing, unrelated "Kurye / Sevkiyat" nav
+item that opens the old in-memory `CourierDispatchDashboardScreen`. Design tokens only.
+
+**One real regression found and fixed during verification**: inserting the new nav item shifted
+`admin_shell_screen.dart`'s sidebar by one row, breaking the pre-existing "Kurulum Şablonları" test's
+`dragUntilVisible`-based tap (same root cause class as AP-5 Sprint 6's "Device Registry" test fragility)
+— fixed by adding `tester.ensureVisible()` after the drag, mirroring the identical fix already applied
+to the adjacent "Menü İçe Aktarma" test in an earlier sprint.
+
+**Explicitly out of scope this sprint** (not requested, avoids scope creep): a full courier
+roster-management screen beyond the dialog's inline quick-add; any customer-facing tracking page that
+reads `trackingToken` (only issued/stored this sprint); porting `Delivery`/`DeliveryAssignment`/shifts/
+earnings/fraud/geofencing to Firestore.
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Cloud Functions **2033/2033**
+(2020 + 13 new). Firestore Rules **415/415** (413 + 2 new `couriers` tests). `flutter analyze` clean.
+`flutter test` **3711/3711** (3698 + 13 new), zero regressions after the one fix above.
+
+New/changed files: `lib/shared/models/courier_type.dart` (new),
+`lib/features/courier/domain/identity/{courier,courier_status (new)}.dart`,
+`lib/features/courier/domain/dispatch/courier_return_fifo.dart` (new),
+`lib/features/courier/data/{firestore_courier_repository,courier_dispatch_gateway}.dart` (new),
+`lib/features/courier/presentation/widgets/courier_assignment_dialog.dart` (new),
+`lib/features/pos/data/delivery_dispatch_order_repository.dart` (new),
+`lib/features/pos/presentation/providers/courier_dispatch_dependencies_provider.dart` (new),
+`lib/features/pos/presentation/screens/delivery_order_dispatch_screen.dart` (new),
+`lib/features/orders/domain/models/order.dart`, `lib/features/orders/data/order_firestore_mapper.dart`,
+`lib/features/admin/presentation/screens/admin_shell_screen.dart`,
+`functions/src/{setCourier,assignCourierToOrder,markCourierReturned}.ts` (new),
+`functions/src/advanceDeliveryOrderStatus.ts`, `functions/src/staffAuthorization.ts`,
+`functions/src/index.ts`, `firestore.rules`, `firestore.indexes.json`, `firestore-tests/rules.test.js`,
+`functions/src/test/ap6CourierDispatch.test.ts` (new),
+`test/features/courier/domain/dispatch/courier_return_fifo_test.dart` (new),
+`test/features/courier/domain/identity/courier_ap6_test.dart` (new),
+`test/features/courier/data/courier_dispatch_gateway_test.dart` (new),
+`test/features/courier/presentation/widgets/courier_assignment_dialog_test.dart` (new),
+`test/features/admin/presentation/admin_shell_screen_test.dart`.
+
+No git commit exists yet for AP-6 Sprint 2 — nothing has been committed this session; there is no SHA to
 report until the user asks for one.

@@ -1,3 +1,4 @@
+import '../../../shared/models/courier_type.dart';
 import '../../../shared/models/currency.dart';
 import '../../../shared/models/money.dart';
 import '../../payment/domain/models/payment_method_reporting_category.dart';
@@ -104,6 +105,13 @@ abstract final class OrderFirestoreMapper {
       'scheduledFor': order.scheduledFor?.toIso8601String(),
       'scheduledForTimestamp': order.scheduledFor,
       'estimatedReadyAt': order.estimatedReadyAt?.toIso8601String(),
+      // AP-6 Sprint 2 — no real client write path sets these today either
+      // (only `assignCourierToOrder.ts` does); kept here for the same
+      // "mapper's own write path stays complete" reasoning as scheduledFor
+      // above.
+      'assignedCourierId': order.assignedCourierId,
+      'courierType': order.courierType?.name,
+      'trackingToken': order.trackingToken,
       'contactFirstName': order.contactFirstName,
       'contactLastName': order.contactLastName,
       'contactPhone': order.contactPhone,
@@ -155,6 +163,11 @@ abstract final class OrderFirestoreMapper {
       scheduledFor: _parseNullableDateTime(data['scheduledFor'] as String?),
       estimatedReadyAt:
           _parseNullableDateTime(data['estimatedReadyAt'] as String?),
+      // AP-6 Sprint 2 — same additive/nullable backward-compatibility
+      // contract as scheduledFor/estimatedReadyAt above.
+      assignedCourierId: data['assignedCourierId'] as String?,
+      courierType: _courierTypeFromName(data['courierType'] as String?),
+      trackingToken: data['trackingToken'] as String?,
       contactFirstName: data['contactFirstName'] as String?,
       contactLastName: data['contactLastName'] as String?,
       contactPhone: data['contactPhone'] as String?,
@@ -534,6 +547,9 @@ abstract final class OrderFirestoreMapper {
   /// this mapper already relies on (see [fromFirestore]'s `String?` casts).
   static PickupMode? _pickupModeFromName(String? name) =>
       name == null ? null : PickupMode.values.byName(name);
+
+  static CourierType? _courierTypeFromName(String? name) =>
+      name == null ? null : CourierType.values.byName(name);
 
   static DateTime? _parseNullableDateTime(String? iso) =>
       iso == null ? null : DateTime.parse(iso);

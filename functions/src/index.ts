@@ -254,3 +254,13 @@ export { recordPrintOutcome } from "./recordPrintOutcome";
 // for why it mirrors `reservationSweep`'s bundled-concerns shape).
 export { updateTakeawayOperationStatus } from "./updateTakeawayOperationStatus";
 export { takeawayOperationsSweep } from "./takeawayOperationsSweep";
+
+// AP-6 Sprint 2 — Courier Dispatch, FIFO Rotation & Tracking Isolation.
+// `setCourier` is the minimal roster-seeding upsert; `assignCourierToOrder`
+// is the manual FIFO-informed dispatch callable; `markCourierReturned`
+// confirms a courier's physical return to the branch (see its own doc
+// comment for why this is deliberately separate from delivery completion,
+// which `advanceDeliveryOrderStatus.ts` already handles as a side effect).
+export { setCourier } from "./setCourier";
+export { assignCourierToOrder } from "./assignCourierToOrder";
+export { markCourierReturned } from "./markCourierReturned";

@@ -1,4 +1,5 @@
 import '../../../../core/errors/business_rule_violation.dart';
+import '../../../../shared/models/courier_type.dart';
 import '../../../payment/domain/models/payment_method_snapshot.dart';
 import '../pricing/price_breakdown.dart';
 import 'boncuk_redemption_snapshot.dart';
@@ -55,6 +56,9 @@ class Order {
     this.pickupTime,
     this.scheduledFor,
     this.estimatedReadyAt,
+    this.assignedCourierId,
+    this.courierType,
+    this.trackingToken,
     this.contactFirstName,
     this.contactLastName,
     this.contactPhone,
@@ -195,6 +199,34 @@ class Order {
   /// [scheduledFor]) — `null` for every order accepted while the branch was
   /// `active`, and for every non-takeaway order.
   final DateTime? estimatedReadyAt;
+
+  /// AP-6 Sprint 2 — the `Courier` (`features/courier/domain/identity/
+  /// courier.dart`) currently carrying this order, written by
+  /// `assignCourierToOrder.ts`. `null` until first assigned; `null` for
+  /// every non-[OrderChannel.delivery] order. Independent of
+  /// [courierVisibility] — assignment and customer-visibility are separate
+  /// concerns (see [courierVisibility]'s own doc comment).
+  final String? assignedCourierId;
+
+  /// AP-6 Sprint 2 — who is delivering this order. Set alongside
+  /// [assignedCourierId] for an internal/pool assignment; **may also be set
+  /// to [CourierType.marketplace] independently of [assignedCourierId]**
+  /// (no internal roster entry exists for a third-party courier) — see
+  /// [CourierType]'s own doc comment for why no live path sets this to
+  /// [CourierType.marketplace] yet. Once set to [CourierType.marketplace],
+  /// `assignCourierToOrder.ts` refuses to ever change it
+  /// (`MarketplaceCourierImmutableViolation`).
+  final CourierType? courierType;
+
+  /// AP-6 Sprint 2 — an opaque, server-generated (`crypto.randomUUID()`,
+  /// mirrors `correlationId.ts`'s own precedent), never client-derivable
+  /// token minted at assignment time — the "tracking isolation" this
+  /// sprint's name refers to: a future customer-facing tracking link is
+  /// meant to resolve by this token, never by the raw [OrderId], so an
+  /// order can never be enumerated/guessed from its own id. `null` until
+  /// first assigned; this sprint only issues and stores it — no
+  /// tracking-link screen consumes it yet.
+  final String? trackingToken;
 
   /// Immutable contact-data snapshot for a guest Gel Al order (Scenario
   /// 1 — no account, no `customerId`) — **not** an identity or
@@ -371,6 +403,9 @@ class Order {
     DateTime? pickupTime,
     DateTime? scheduledFor,
     DateTime? estimatedReadyAt,
+    String? assignedCourierId,
+    CourierType? courierType,
+    String? trackingToken,
     String? contactFirstName,
     String? contactLastName,
     String? contactPhone,
@@ -409,6 +444,9 @@ class Order {
       pickupTime: pickupTime ?? this.pickupTime,
       scheduledFor: scheduledFor ?? this.scheduledFor,
       estimatedReadyAt: estimatedReadyAt ?? this.estimatedReadyAt,
+      assignedCourierId: assignedCourierId ?? this.assignedCourierId,
+      courierType: courierType ?? this.courierType,
+      trackingToken: trackingToken ?? this.trackingToken,
       contactFirstName: contactFirstName ?? this.contactFirstName,
       contactLastName: contactLastName ?? this.contactLastName,
       contactPhone: contactPhone ?? this.contactPhone,

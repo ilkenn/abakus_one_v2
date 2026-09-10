@@ -1,4 +1,6 @@
+import '../../../../shared/models/courier_type.dart';
 import 'courier_registry_status.dart';
+import 'courier_status.dart';
 import 'courier_vehicle_type.dart';
 
 /// A courier's registry entry — the first `Courier` entity of any kind in
@@ -27,11 +29,17 @@ class Courier {
     this.eligibleBranchIds = const [],
     required this.displayName,
     required this.phoneNumber,
-    required this.vehicleType,
+    this.vehicleType = CourierVehicleType.motorcycle,
     this.vehicleIdentifier = '',
-    required this.capacity,
+    this.capacity = 1,
     this.status = CourierRegistryStatus.active,
     required this.registeredAt,
+    // AP-6 Sprint 2 — additive, defaulted so every existing caller in this
+    // 220-file domain keeps compiling unchanged.
+    this.type = CourierType.internal,
+    this.dispatchStatus = CourierStatus.offline,
+    this.returnedAt,
+    this.activeOrderIds = const [],
   });
 
   final String id;
@@ -54,6 +62,29 @@ class Courier {
   final CourierRegistryStatus status;
   final DateTime registeredAt;
 
+  /// AP-6 Sprint 2 — who actually delivers for this courier record. See
+  /// [CourierType]'s own doc comment for the [CourierType.marketplace]
+  /// caveat.
+  final CourierType type;
+
+  /// AP-6 Sprint 2 — this courier's current real-time dispatch standing.
+  /// See [CourierStatus]'s own doc comment for why this is a new field,
+  /// never conflated with [status] (registry) or the separate, shift-gated
+  /// `CourierAvailabilityStatus`.
+  final CourierStatus dispatchStatus;
+
+  /// AP-6 Sprint 2 — this courier's last confirmed physical return to
+  /// [primaryBranchId], stamped by `markCourierReturned.ts`. `null` until
+  /// the first confirmed return. The FIFO dispatch sort key
+  /// (`courier_return_fifo.dart`) — oldest first, "first back, first out."
+  final DateTime? returnedAt;
+
+  /// AP-6 Sprint 2 — order ids this courier currently has out for
+  /// delivery, appended by `assignCourierToOrder.ts` and removed by
+  /// `advanceDeliveryOrderStatus.ts`'s completion hook. Must be empty
+  /// before `markCourierReturned.ts` will accept a return.
+  final List<String> activeOrderIds;
+
   bool eligibleForBranch(String branchId) =>
       branchId == primaryBranchId || eligibleBranchIds.contains(branchId);
 
@@ -65,6 +96,10 @@ class Courier {
     String? vehicleIdentifier,
     int? capacity,
     CourierRegistryStatus? status,
+    CourierType? type,
+    CourierStatus? dispatchStatus,
+    DateTime? returnedAt,
+    List<String>? activeOrderIds,
   }) {
     return Courier(
       id: id,
@@ -77,6 +112,10 @@ class Courier {
       capacity: capacity ?? this.capacity,
       status: status ?? this.status,
       registeredAt: registeredAt,
+      type: type ?? this.type,
+      dispatchStatus: dispatchStatus ?? this.dispatchStatus,
+      returnedAt: returnedAt ?? this.returnedAt,
+      activeOrderIds: activeOrderIds ?? this.activeOrderIds,
     );
   }
 }

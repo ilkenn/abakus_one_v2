@@ -38,6 +38,14 @@ import {
  * including the final `-> completed` requires `manageDeliveryOrders`
  * (staff/manager/admin/tenantOwner); courier has no lifecycle permission at
  * all.**
+ *
+ * **AP-6 Sprint 2 addition**: when `targetStatus` is `completed` and the
+ * order carries an `assignedCourierId` (`assignCourierToOrder.ts`), this
+ * callable ALSO removes the order from that courier's `activeOrderIds`, in
+ * the same transaction as the completion transition — the read-before-write
+ * discipline above stays unchanged, just with one more conditional
+ * read/write pair. Still never flips the courier back to `available`/
+ * stamps `returnedAt` — see `markCourierReturned.ts`.
  */
 
 const DELIVERY_NEXT_STATUS: Partial<Record<OrderStatus, OrderStatus>> = {
@@ -119,6 +127,21 @@ export const advanceDeliveryOrderStatus = onCall(
         ? (rolesByOrg![organizationId] as string[])
         : null;
 
+      // AP-6 Sprint 2 — the completion-hook read, still in the read phase
+      // (before any write below): if this order carries an
+      // `assignedCourierId`, release it from that courier's
+      // `activeOrderIds` in the SAME transaction as the completion
+      // transition, so the two can never drift apart. Deliberately does
+      // NOT flip the courier back to `available`/stamp `returnedAt` — see
+      // `markCourierReturned.ts`'s own doc comment for why that stays a
+      // separate, physical-return confirmation.
+      const assignedCourierId = order.assignedCourierId as string | undefined;
+      const courierRef =
+        targetStatus === "completed" && assignedCourierId
+          ? db.collection("couriers").doc(assignedCourierId)
+          : null;
+      const courierSnap = courierRef ? await tx.get(courierRef) : null;
+
       applyDeliveryLifecycleTransition({
         tx,
         orderRef,
@@ -142,6 +165,22 @@ export const advanceDeliveryOrderStatus = onCall(
         actorRoles,
         now,
       });
+
+      if (courierRef && courierSnap && courierSnap.exists) {
+        const courier = courierSnap.data()!;
+        const activeOrderIds: string[] = Array.isArray(courier.activeOrderIds)
+          ? courier.activeOrderIds
+          : [];
+        tx.set(
+          courierRef,
+          {
+            activeOrderIds: activeOrderIds.filter((id) => id !== orderId),
+            updatedAt: now,
+            revision: (Number(courier.revision) || 1) + 1,
+          },
+          { merge: true },
+        );
+      }
 
       return { orderId, status: targetStatus, duplicate: false };
     });

@@ -1478,6 +1478,15 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // AP-6 Sprint 2 — one doc per courier, same branch-scoped shape as
+    // `branchStock`/`stockCounts`/etc. above. setCourier.ts/
+    // assignCourierToOrder.ts/markCourierReturned.ts are the only writers.
+    match /couriers/{courierId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------------------
     // Default deny — anything not explicitly matched above (including any
     // future collection someone adds without also adding a rule for it)
