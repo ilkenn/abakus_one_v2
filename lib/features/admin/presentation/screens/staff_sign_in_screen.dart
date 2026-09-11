@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/config/app_environment_config.dart';
 import '../../../../core/services/auth/email_password_auth_client.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -42,6 +44,32 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
   String? _error;
   bool _busy = false;
   bool _showBootstrap = false;
+
+  /// PC Yönetici İnceleme Modu — a local-development-only shortcut onto
+  /// this screen's own real `_signIn()` (real Firebase email/password
+  /// auth, real server-side custom-claims sync — nothing about
+  /// authorization itself is bypassed). Gated on BOTH `kDebugMode` (never
+  /// compiled into a release binary) AND `AppEnvironmentConfig.current
+  /// .allowsDebugTooling` (`false` for staging/production even in a debug
+  /// build pointed at the wrong project) — defense in depth, matching this
+  /// codebase's own established fail-closed discipline.
+  ///
+  /// The credentials are the real dev admin account
+  /// `functions/scripts/seed_dev_staff.mjs` seeds into the local Firebase
+  /// emulator (`admin@abakus.dev` / hand-synced password, documented
+  /// there) — this button only pre-fills and submits them through the
+  /// exact same form `_signIn()` already validates.
+  static bool get _devAdminShortcutAvailable =>
+      kDebugMode && AppEnvironmentConfig.current.allowsDebugTooling;
+
+  static const String _devAdminEmail = 'admin@abakus.dev';
+  static const String _devAdminPassword = 'abakus-dev-admin-2026';
+
+  Future<void> _signInAsDevAdmin() async {
+    _emailController.text = _devAdminEmail;
+    _passwordController.text = _devAdminPassword;
+    await _signIn();
+  }
 
   @override
   void dispose() {
@@ -186,6 +214,20 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
                         )
                       : const Text('Giriş Yap'),
                 ),
+                if (_devAdminShortcutAvailable) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _signInAsDevAdmin,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.warning,
+                      side: const BorderSide(color: AppColors.warning),
+                      padding:
+                          const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                    ),
+                    icon: const Icon(Icons.bug_report_outlined),
+                    label: const Text('Dev Admin ile Gir (Yalnızca Development)'),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.xl),
                 TextButton(
                   onPressed: _busy

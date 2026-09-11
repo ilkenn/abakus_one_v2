@@ -6558,3 +6558,105 @@ remains UNRESOLVED per BR-TABLE-004, deferred to a future `OrderLine`-identity c
 **Verification, all fresh runs**: same as Sprint 3's own report above — Cloud Functions 2051/2051,
 Firestore Rules 418/418, `flutter analyze` clean, `flutter test` 3730/3730. Zero regressions across all
 three sprints combined.
+
+## Kasa Kapanışı / Gün Sonu (Z Raporu) (2026-09-11)
+
+A separate spec ("mimarımızın hazırladığı şartname") asked for a whole new cash-register/Z-report
+domain under `lib/domain/` and `lib/presentation/` — paths that don't exist anywhere in this codebase.
+Research before writing code found the entire cash-register system already real, server-authoritative,
+and tested: `functions/src/cashRegisterEngine.ts` (drawer creation, session open with opening float,
+movements, adjustments, manager-approval-gated count/reconciliation/close — BR-CASH-001–010), a real
+Dart gateway (`cash_register_gateway.dart`), and a real working screen (`pos_cash_register_screen.dart`).
+There is no "BR-EOD-*" numbering in this repo. Confirmed with the user (`AskUserQuestion`) to extend
+this real system rather than build a parallel one.
+
+**Genuine gaps closed this pass** (confirmed by reading the server code, not assumed):
+1. `closeCashSession` never checked for open dine-in tables — now fails closed
+   (`details.code: "openTables"`) while any `restaurantTables` document for the branch still has a
+   non-null `activeTableSessionId`, composing with BR-TABLE-012's own release logic.
+2. No revenue-by-tender-type summary existed — new `getDailyRevenueSummary` callable buckets
+   `paymentAttempts` (scoped to the session's own lifetime, `createdAt >= session.openedAt`) into
+   Nakit/Kredi Kartı/Diğer (`cash`/`card`/`{mealCard,boncuk}`).
+3. New `lib/features/pos/presentation/screens/end_of_day_screen.dart` — feature-first path (not
+   `lib/presentation/`), reachable from the POS operational rail's new "Gün Sonu" button
+   (`pos_operational_rail.dart`). Reuses `PosCashRegisterScreen`'s own `ConsumerStatefulWidget` +
+   direct-gateway-call pattern (no Bloc — this app has none, only Riverpod). Open-table warning card
+   locks the flow; otherwise shows the revenue summary, a count-entry field with a live variance
+   preview (mirrors `computeCashVariance`'s formula client-side using `CashSessionView.movements`, per
+   BR-CASH-004's own "expected = openingFloat + Σmovements" definition — display-only, the server
+   response from `submitCashCount` stays authoritative), then "Günü Kapat ve Z Raporu Al" — which
+   submits the count, waits for/surfaces manager approval if needed (BR-CASH-006/007, never
+   re-implementing `ApprovalInboxScreen`), closes the session, and shows a real, verifiable receipt
+   text preview.
+4. **No real ESC/POS printer transport exists in this app** (confirmed: no thermal-printer package in
+   `pubspec.yaml`; `requestPrintJob.ts` is kitchen-ticket-shaped only). New
+   `lib/features/pos/data/z_report_printer_adapter.dart` mirrors `functions/src/fiscalAdapter.ts`'s own
+   honest "real groundwork, no live hardware trigger" stub pattern — `ZReportContent.toReceiptText()`
+   produces real, verifiable receipt content; `UnconfiguredZReportPrinterAdapter` always honestly
+   reports `succeeded: false`. Adding a printer package is a separate, unapproved dependency decision.
+
+New business rule: `docs/business_rules.md` BR-CASH-011.
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Cloud Functions **2053/2053**
+(2051 + 2 new tests in `cashRegisterEngine.test.ts`: open-table close guard, revenue bucketing).
+Firestore Rules **418/418** (unchanged — no rules changes). `flutter analyze` clean. `flutter test`
+**3733/3733** (3730 + 3 new `end_of_day_screen_test.dart` cases). New composite index added:
+`firestore.indexes.json` (`paymentAttempts`: `branchId`, `status`, `createdAt`). Zero regressions.
+
+New/changed files: `functions/src/cashRegisterEngine.ts`, `functions/src/index.ts`,
+`functions/src/test/cashRegisterEngine.test.ts`, `firestore.indexes.json`,
+`lib/features/pos/data/cash_register_gateway.dart`,
+`lib/features/pos/data/z_report_printer_adapter.dart` (new),
+`lib/features/pos/presentation/screens/end_of_day_screen.dart` (new),
+`lib/features/pos/presentation/screens/pos_branch_overview_screen.dart`,
+`lib/features/pos/presentation/widgets/pos_operational_rail.dart`,
+`test/features/pos/presentation/screens/end_of_day_screen_test.dart` (new),
+`docs/business_rules.md`, `docs/feature_status.md`.
+
+## PC Yönetici İnceleme Modu — Dev Admin Shortcut & POS Showcase Seeder (2026-09-11)
+
+A request to add a one-tap "Admin Bypass" login shortcut and an auto-seeding mock-data initializer for
+local PC testing (`flutter run -d windows`/chrome) was scoped down after research, per this codebase's
+own established fail-closed/server-authoritative discipline (confirmed with the user via
+`AskUserQuestion` before writing any code):
+
+- **A literal client-side "unlock all permissions" bypass was rejected.** Every privileged action in
+  this app is enforced server-side (`requireStaffPermission`/`requireActiveDeviceSession`); a
+  client-side flag can't actually grant real access without either doing nothing or becoming a real
+  authorization-bypass surface. `DevelopmentLocalAuthRepository`'s own doc comment already records a
+  prior, deliberate decision to pull a similar shortcut back OUT of this app's real auth path — this
+  request would have reversed that.
+- **What shipped instead**: `functions/scripts/seed_dev_staff.mjs` already seeds a REAL dev admin
+  account (`admin@abakus.dev`) into the local emulator via real Firebase Auth + real custom-claims
+  sync. `staff_sign_in_screen.dart` gained a "Dev Admin ile Gir" button that pre-fills those exact
+  credentials and submits them through the screen's own real `_signIn()` — going through the exact
+  same server-side authorization every other sign-in does, nothing bypassed. Gated on BOTH
+  `kDebugMode` (never compiled into a release binary) AND the existing
+  `AppEnvironmentConfig.current.allowsDebugTooling` flag (already `false` for staging/production even
+  in a debug build pointed at the wrong project) — defense in depth, reusing an existing flag rather
+  than inventing a new one.
+- **Mock data**: new `functions/scripts/seed_dev_pos_showcase.mjs` (npm script
+  `seed:dev-pos-showcase`), extending the existing `seed:dev-*` family rather than adding any
+  data-writing logic to the Flutter app itself. Every write goes through the real callables
+  (`openTableGuestSession`, `submitDineInOrder`, `submitTakeawayOrder`, `requestCashSessionOpen`,
+  etc.) — mirrors `seed_dev_tenant.mjs`'s own explicit reasoning: routing through real callables means
+  the script can never silently produce a document shape the functions themselves would reject.
+  Populates: a real dine-in order on `table-12` with both lines accepted (→ 2 real `kitchenWorkItems`
+  in KDS), two more tables in varied states (`available`/`cleaning`), two takeaway orders (one
+  `preparing`, one `pendingConfirmation`), and an open cash drawer session with an approved cash
+  movement. Emulator-verified end to end (dry run, not a permanent automated test — a seed script, not
+  test code).
+- **Root-caused during the dry run**: the bootstrap admin's org-level "admin" role membership does not
+  itself imply branch access — `requireBranchAccess`-gated calls (device registration, cash register)
+  still need an explicit `grantStaffBranchAccess` grant, exactly like any other role. Fixed by granting
+  it to the dev admin at the start of the script, before any branch-scoped call.
+
+**Verification**: `flutter analyze` clean. `flutter test` **3734/3734** (3733 + 1 new
+`staff_sign_in_screen_test.dart` case covering the shortcut). Cloud Functions/Firestore Rules
+unaffected (no `functions/src/*.ts` or `firestore.rules` changes this pass — only a new dev-only
+script and `package.json`'s `scripts` section) — the new seed script itself was run end-to-end against
+the emulator and verified to complete cleanly.
+
+New/changed files: `functions/scripts/seed_dev_pos_showcase.mjs` (new), `functions/package.json`,
+`lib/features/admin/presentation/screens/staff_sign_in_screen.dart`,
+`test/features/admin/presentation/screens/staff_sign_in_screen_test.dart`, `docs/feature_status.md`.

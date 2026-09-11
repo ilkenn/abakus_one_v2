@@ -193,6 +193,7 @@ export {
   requestCashAdjustment,
   submitCashCount,
   closeCashSession,
+  getDailyRevenueSummary,
 } from "./cashRegisterEngine";
 
 // AP-4 Wave C — the fiscal operation journal + offline authorization lease

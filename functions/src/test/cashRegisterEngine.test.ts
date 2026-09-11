@@ -30,6 +30,7 @@ const REQUEST_MOVEMENT_URL = fn("requestCashMovement");
 const REQUEST_ADJUSTMENT_URL = fn("requestCashAdjustment");
 const SUBMIT_COUNT_URL = fn("submitCashCount");
 const CLOSE_SESSION_URL = fn("closeCashSession");
+const GET_DAILY_REVENUE_URL = fn("getDailyRevenueSummary");
 
 let app: admin.app.App;
 before(() => { app = admin.initializeApp({ projectId: EMULATOR_PROJECT_ID }); });
@@ -430,4 +431,83 @@ test("close: rejected outright unless the session is \"approved\"", async () => 
   const sessionId = await openSessionAsManager(f, drawerId, 5000);
   const close = await callCallable(CLOSE_SESSION_URL, { ...ctx(f), sessionId }, f.staff.idToken);
   assert.strictEqual(close.httpStatus, 400, JSON.stringify(close.body));
+});
+
+// -----------------------------------------------------------------------
+// Gün Sonu — open-table close guard (BR-CASH-011)
+// -----------------------------------------------------------------------
+
+async function approveSessionForClose(f: Fixture, sessionId: string, actualAmountMinorUnits: number): Promise<void> {
+  const count = await callCallable(SUBMIT_COUNT_URL, { ...ctx(f), sessionId, actualAmountMinorUnits, notes: "" }, f.staff.idToken);
+  assert.strictEqual(count.httpStatus, 200, JSON.stringify(count.body));
+  const approve = await callCallable(RESPOND_APPROVAL_URL, { requestId: count.body.result?.approvalRequestId, decision: "approved" }, f.manager.idToken);
+  assert.strictEqual(approve.httpStatus, 200, JSON.stringify(approve.body));
+}
+
+test("close: rejected while ANY table in the branch is still occupied, succeeds once released", async () => {
+  const f = await setupFixture();
+  const drawerId = await createDrawer(f);
+  const sessionId = await openSessionAsManager(f, drawerId, 5000);
+  await approveSessionForClose(f, sessionId, 5000);
+
+  const tableId = nextId("table");
+  await db().collection("restaurantTables").doc(tableId).set({
+    organizationId: f.organizationId, branchId: f.branchId, isActive: true,
+    activeTableSessionId: nextId("tsess"), status: "occupied", displayName: "Masa 3",
+  });
+
+  const closeWhileOpen = await callCallable(CLOSE_SESSION_URL, { ...ctx(f), sessionId }, f.staff.idToken);
+  assert.strictEqual(closeWhileOpen.httpStatus, 400, JSON.stringify(closeWhileOpen.body));
+  assert.strictEqual(closeWhileOpen.body.error?.status, "FAILED_PRECONDITION");
+  let sessionDoc = await db().collection("cashSessions").doc(sessionId).get();
+  assert.strictEqual(sessionDoc.data()!.status, "approved", "a rejected close must never leave the session partially closed");
+
+  await db().collection("restaurantTables").doc(tableId).set({ activeTableSessionId: null, status: "cleaning" }, { merge: true });
+
+  const closeAfterRelease = await callCallable(CLOSE_SESSION_URL, { ...ctx(f), sessionId }, f.staff.idToken);
+  assert.strictEqual(closeAfterRelease.httpStatus, 200, JSON.stringify(closeAfterRelease.body));
+  sessionDoc = await db().collection("cashSessions").doc(sessionId).get();
+  assert.strictEqual(sessionDoc.data()!.status, "closed");
+});
+
+// -----------------------------------------------------------------------
+// getDailyRevenueSummary — Nakit/Kredi Kartı/Diğer bucketing (BR-CASH-011)
+// -----------------------------------------------------------------------
+
+async function seedPaymentAttempt(f: Fixture, opts: {
+  tenderType: string; amountMinorUnits: number; status: string; createdAt: FirebaseFirestore.Timestamp; currencyCode?: string;
+}): Promise<void> {
+  const attemptId = nextId("attempt");
+  await db().collection("paymentAttempts").doc(attemptId).set({
+    organizationId: f.organizationId, branchId: f.branchId, checkId: nextId("check"), sessionId: nextId("paysess"),
+    intentId: nextId("intent"), tenderType: opts.tenderType, status: opts.status, amountMinorUnits: opts.amountMinorUnits,
+    currencyCode: opts.currencyCode ?? "TRY", allocations: [], idempotencyKey: attemptId, providerRef: null,
+    providerResponseSummary: null, loyaltyLedgerEntryId: null, declineReason: null, createdAt: opts.createdAt,
+    createdByStaffUid: f.staff.uid, resolvedAt: opts.createdAt, correlationId: nextId("corr"),
+  });
+}
+
+test("getDailyRevenueSummary: buckets cash/card/{mealCard,boncuk->other}, excludes non-settled attempts and attempts from before the session opened", async () => {
+  const f = await setupFixture();
+  const drawerId = await createDrawer(f);
+  const sessionId = await openSessionAsManager(f, drawerId, 5000);
+  const sessionDoc = await db().collection("cashSessions").doc(sessionId).get();
+  const openedAt = sessionDoc.data()!.openedAt as FirebaseFirestore.Timestamp;
+  const afterOpen = admin.firestore.Timestamp.fromMillis(openedAt.toMillis() + 1000);
+  const beforeOpen = admin.firestore.Timestamp.fromMillis(openedAt.toMillis() - 60000);
+
+  await seedPaymentAttempt(f, { tenderType: "cash", amountMinorUnits: 10000, status: "succeeded", createdAt: afterOpen });
+  await seedPaymentAttempt(f, { tenderType: "card", amountMinorUnits: 20000, status: "succeeded", createdAt: afterOpen });
+  await seedPaymentAttempt(f, { tenderType: "mealCard", amountMinorUnits: 3000, status: "resolvedSucceeded", createdAt: afterOpen });
+  await seedPaymentAttempt(f, { tenderType: "boncuk", amountMinorUnits: 500, status: "succeeded", createdAt: afterOpen });
+  await seedPaymentAttempt(f, { tenderType: "card", amountMinorUnits: 99999, status: "declined", createdAt: afterOpen });
+  await seedPaymentAttempt(f, { tenderType: "cash", amountMinorUnits: 88888, status: "succeeded", createdAt: beforeOpen });
+
+  const res = await callCallable(GET_DAILY_REVENUE_URL, { ...ctx(f), sessionId }, f.staff.idToken);
+  assert.strictEqual(res.httpStatus, 200, JSON.stringify(res.body));
+  assert.strictEqual(res.body.result?.cashMinorUnits, 10000);
+  assert.strictEqual(res.body.result?.cardMinorUnits, 20000);
+  assert.strictEqual(res.body.result?.otherMinorUnits, 3500);
+  assert.strictEqual(res.body.result?.totalMinorUnits, 33500);
+  assert.strictEqual(res.body.result?.currencyCode, "TRY");
 });

@@ -3270,6 +3270,35 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Owner Agent**: security_engineer
 - **Related Modules**: POS, Payments, Courier
 
+### BR-CASH-011 — Gün Sonu: open-table close guard + revenue-by-tender summary (Kasa Kapanışı / Z Raporu)
+- **Status**: IMPLEMENTED (2026-09-11) — `functions/src/cashRegisterEngine.ts` (`closeCashSession`'s
+  open-table guard, new `getDailyRevenueSummary`), `lib/features/pos/presentation/screens/
+  end_of_day_screen.dart`, emulator-tested (close rejected while a table is occupied then succeeds
+  once released; revenue correctly bucketed and scoped).
+- **Rule**: `closeCashSession` fails closed (`failed-precondition`, `details.code: "openTables"` +
+  the offending table ids/display names) while any `restaurantTables` document for the branch has a
+  non-null `activeTableSessionId` — first decided here; no prior rule addressed it. This composes
+  with, never duplicates, BR-TABLE-012's own table-release logic (Dine-in Sprint 2): a table only
+  clears `activeTableSessionId` once every check on it is paid/cancelled, so this guard transitively
+  requires every open tab to be settled before the day can close.
+  `getDailyRevenueSummary` reads `paymentAttempts` scoped to `branchId == branch && status in
+  ("succeeded", "resolvedSucceeded") && createdAt >= session.openedAt` — the session's own lifetime,
+  not a re-derived calendar business-date window (`computeBusinessDate`'s own timezone/cutover math
+  stays authoritative for the session's `businessDate` field itself, never independently reconstructed
+  here) — and groups by `TenderType` into three buckets: `cash` → Nakit, `card` → Kredi Kartı,
+  `{mealCard, boncuk}` → Diğer. A currency-mismatched attempt (`attempt.currencyCode !=
+  session.currencyCode`) is excluded, a disclosed single-currency simplification.
+  **No real ESC/POS printer transport exists in this app** (confirmed: no thermal-printer package in
+  `pubspec.yaml`, and `requestPrintJob.ts`/`printJobEngine.ts` are kitchen-ticket-shaped only, no
+  concept applicable to a cash-session report) — `end_of_day_screen.dart` builds real, verifiable
+  receipt text (`ZReportContent.toReceiptText`, `lib/features/pos/data/z_report_printer_adapter.dart`)
+  and shows it on-screen; `UnconfiguredZReportPrinterAdapter` always honestly reports
+  `succeeded: false`, mirroring `functions/src/fiscalAdapter.ts`'s own established "real groundwork,
+  no live hardware trigger yet" precedent. Adding a printer package is a separate, unapproved
+  dependency/architecture change (CLAUDE.md §5/§15).
+- **Owner Agent**: restaurant_domain / security_engineer
+- **Related Modules**: POS, Payments, Tables
+
 **AP-4 Wave B correction (2026-08-31, `docs/decisions.md` ADR-045)**: BR-CASH-001 through BR-CASH-009
 above cite only the Flutter prototype (`lib/features/pos/domain/cash/*.dart`, still 100% in-memory,
 unchanged this wave). A real, server-authoritative Cloud Functions backend now ALSO enforces every rule

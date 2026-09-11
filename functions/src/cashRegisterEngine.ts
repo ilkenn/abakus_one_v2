@@ -9,7 +9,7 @@ import { writeAuditEvent } from "./auditEvents";
 import { generateCorrelationId, sanitizeClientRequestId } from "./correlationId";
 import { createApprovalRequest } from "./remoteApproval";
 import type { ActionHandlerParams, ActionHandlerResult } from "./remoteApproval";
-import { BRANCH_PAYMENT_CONFIG_COLLECTION, type BranchPaymentConfigDoc } from "./paymentDomain";
+import { BRANCH_PAYMENT_CONFIG_COLLECTION, PAYMENT_ATTEMPTS_COLLECTION, type BranchPaymentConfigDoc, type PaymentAttemptDoc } from "./paymentDomain";
 import {
   CASH_DRAWERS_COLLECTION,
   CASH_SESSIONS_COLLECTION,
@@ -714,6 +714,24 @@ export const closeCashSession = onCall({ enforceAppCheck: shouldEnforceAppCheck(
     }
     requireSessionOperableByActor(session, uid);
 
+    // Gün sonu kilidi — herhangi bir masa hâlâ açıksa kasa kapanışı reddedilir
+    // (BR-CASH-011). `restaurantTables` bu branch için sınırlı sayıda belge
+    // taşır (aynı sayfalama disiplemi `getPosBranchTableOverview` içinde de
+    // kullanılıyor) — sınırsız bir tarama değil.
+    const branchTablesSnap = await tx.get(db.collection("restaurantTables").where("branchId", "==", branchId));
+    const openTables = branchTablesSnap.docs.filter((d) => (d.data().activeTableSessionId ?? null) !== null);
+    if (openTables.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `${openTables.length} masa hâlâ açık — gün sonu kapanışından önce tüm masalar kapatılmalı.`,
+        {
+          code: "openTables",
+          tableIds: openTables.map((d) => d.id),
+          tableDisplayNames: openTables.map((d) => (d.data().displayName as string | undefined) ?? d.id),
+        },
+      );
+    }
+
     const now = Timestamp.now();
     tx.update(sessionRef, { status: "closed", closedByStaffUid: uid, closedAt: now, updatedAt: now, version: session.version + 1 });
     writeAuditEvent({
@@ -725,4 +743,72 @@ export const closeCashSession = onCall({ enforceAppCheck: shouldEnforceAppCheck(
     });
     return { sessionId, status: "closed" as const };
   });
+});
+
+// -----------------------------------------------------------------------
+// getDailyRevenueSummary — Gün Sonu (BR-CASH-011) revenue-by-tender-type
+// read, feeding the End of Day screen's Nakit/Kredi Kartı/Diğer summary.
+// -----------------------------------------------------------------------
+
+/** A branch realistically settles nowhere near this many payment attempts
+ * within one drawer session — a generous, disclosed bound, not a silent
+ * truncation risk (mirrors `getPosBranchTableOverview`'s own bounded-read
+ * discipline elsewhere in this codebase). */
+const DAILY_REVENUE_ATTEMPT_LIMIT = 5000;
+
+export const getDailyRevenueSummary = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
+  const data = (request.data ?? {}) as Record<string, unknown>;
+  const ctx = await authorizeCashCommand(request, data);
+  const sessionId = requireNonEmptyString(data.sessionId, "sessionId");
+
+  const db = getFirestore();
+  const sessionSnap = await db.collection(CASH_SESSIONS_COLLECTION).doc(sessionId).get();
+  if (!sessionSnap.exists) throw new HttpsError("not-found", "Cash session not found.");
+  const session = sessionSnap.data() as CashSessionDoc;
+  if (session.organizationId !== ctx.organizationId || session.branchId !== ctx.branchId) {
+    throw new HttpsError("not-found", "Cash session not found.");
+  }
+  if (!session.openedAt) {
+    throw new HttpsError("failed-precondition", "This cash session has not opened yet.");
+  }
+
+  // Reused verbatim from `paymentDomain.ts`'s own `isAttemptSettled` set
+  // (`"succeeded" | "resolvedSucceeded"`) — a Firestore query needs literal
+  // values, so the two are spelled out here rather than calling the
+  // function, but they are exactly what it defines as settled money.
+  const attemptsSnap = await db.collection(PAYMENT_ATTEMPTS_COLLECTION)
+    .where("branchId", "==", ctx.branchId)
+    .where("status", "in", ["succeeded", "resolvedSucceeded"])
+    .where("createdAt", ">=", session.openedAt)
+    .limit(DAILY_REVENUE_ATTEMPT_LIMIT)
+    .get();
+
+  let cashMinorUnits = 0;
+  let cardMinorUnits = 0;
+  let otherMinorUnits = 0;
+  for (const doc of attemptsSnap.docs) {
+    const attempt = doc.data() as PaymentAttemptDoc;
+    if (attempt.currencyCode !== session.currencyCode) continue; // single-currency summary, disclosed simplification
+    switch (attempt.tenderType) {
+      case "cash":
+        cashMinorUnits += attempt.amountMinorUnits;
+        break;
+      case "card":
+        cardMinorUnits += attempt.amountMinorUnits;
+        break;
+      case "mealCard":
+      case "boncuk":
+        otherMinorUnits += attempt.amountMinorUnits;
+        break;
+    }
+  }
+
+  return {
+    sessionId,
+    currencyCode: session.currencyCode,
+    cashMinorUnits,
+    cardMinorUnits,
+    otherMinorUnits,
+    totalMinorUnits: cashMinorUnits + cardMinorUnits + otherMinorUnits,
+  };
 });

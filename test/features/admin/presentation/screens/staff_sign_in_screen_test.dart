@@ -19,12 +19,16 @@ class _ScriptedStaffAuthRepository implements StaffAuthRepository {
   _ScriptedStaffAuthRepository(this._script);
   final List<Future<ActorSession?> Function()> _script;
   int callCount = 0;
+  String? lastEmail;
+  String? lastPassword;
 
   @override
   Future<ActorSession?> signIn({
     required String email,
     required String password,
   }) {
+    lastEmail = email;
+    lastPassword = password;
     final step = _script[callCount.clamp(0, _script.length - 1)];
     callCount++;
     return step();
@@ -153,6 +157,31 @@ void main() {
     await _fillAndSubmit(tester);
     await tester.pump(const Duration(milliseconds: 50));
 
+    expect(find.byType(AdminShellScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'PC Yönetici İnceleme Modu: the dev-admin shortcut submits the real '
+      'seed_dev_staff.mjs credentials through the same _signIn() path — '
+      'never a fabricated session — and reaches the real Admin shell',
+      (tester) async {
+    final repository = _ScriptedStaffAuthRepository([() async => _session]);
+    await _pump(tester, repository);
+
+    final button = find.widgetWithText(
+        OutlinedButton, 'Dev Admin ile Gir (Yalnızca Development)');
+    expect(button, findsOneWidget,
+        reason:
+            'flutter test always runs debug + AppEnvironment.development, '
+            'so the shortcut must be visible here');
+
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(repository.callCount, 1);
+    expect(repository.lastEmail, 'admin@abakus.dev');
+    expect(repository.lastPassword, 'abakus-dev-admin-2026');
     expect(find.byType(AdminShellScreen), findsOneWidget);
   });
 }

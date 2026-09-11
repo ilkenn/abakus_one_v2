@@ -19,6 +19,7 @@ import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
+import 'end_of_day_screen.dart';
 import 'pos_cash_register_screen.dart';
 import 'pos_table_workspace_screen.dart';
 
@@ -133,6 +134,9 @@ class _PosBranchOverviewScreenState
               onCashRegister: () => Navigator.of(context).push(
                 MaterialPageRoute(
                     builder: (_) => const PosCashRegisterScreen()),
+              ),
+              onEndOfDay: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const EndOfDayScreen()),
               ),
             ),
             Expanded(child: _buildContent()),

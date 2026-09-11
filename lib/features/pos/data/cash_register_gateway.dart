@@ -239,6 +239,39 @@ class CashSessionView {
   }
 }
 
+/// Gün Sonu — Nakit/Kredi Kartı/Diğer revenue breakdown for one cash
+/// session's lifetime (since it opened), server-computed. Mirrors
+/// `functions/src/cashRegisterEngine.ts`'s `getDailyRevenueSummary` response
+/// exactly.
+class DailyRevenueSummary {
+  const DailyRevenueSummary({
+    required this.sessionId,
+    required this.currencyCode,
+    required this.cashMinorUnits,
+    required this.cardMinorUnits,
+    required this.otherMinorUnits,
+    required this.totalMinorUnits,
+  });
+
+  final String sessionId;
+  final String currencyCode;
+  final int cashMinorUnits;
+  final int cardMinorUnits;
+  final int otherMinorUnits;
+  final int totalMinorUnits;
+
+  factory DailyRevenueSummary.fromWire(Map<String, dynamic> data) {
+    return DailyRevenueSummary(
+      sessionId: data['sessionId'] as String,
+      currencyCode: data['currencyCode'] as String,
+      cashMinorUnits: data['cashMinorUnits'] as int,
+      cardMinorUnits: data['cardMinorUnits'] as int,
+      otherMinorUnits: data['otherMinorUnits'] as int,
+      totalMinorUnits: data['totalMinorUnits'] as int,
+    );
+  }
+}
+
 abstract interface class CashRegisterGateway {
   Future<String> createCashDrawer({
     required PosDeviceContext ctx,
@@ -287,6 +320,11 @@ abstract interface class CashRegisterGateway {
   });
 
   Future<void> closeCashSession({
+    required PosDeviceContext ctx,
+    required String sessionId,
+  });
+
+  Future<DailyRevenueSummary> getDailyRevenueSummary({
     required PosDeviceContext ctx,
     required String sessionId,
   });
@@ -482,6 +520,22 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
       _rethrow(error);
     }
   }
+
+  @override
+  Future<DailyRevenueSummary> getDailyRevenueSummary({
+    required PosDeviceContext ctx,
+    required String sessionId,
+  }) async {
+    try {
+      final result = await _fn('getDailyRevenueSummary').call<Map<String, dynamic>>({
+        ...ctx.toWire(),
+        'sessionId': sessionId,
+      });
+      return DailyRevenueSummary.fromWire(result.data);
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
 }
 
 /// Fail-closed fallback — mirrors `UnavailablePosActionGateway`.
@@ -553,6 +607,13 @@ class UnavailableCashRegisterGateway implements CashRegisterGateway {
 
   @override
   Future<void> closeCashSession({
+    required PosDeviceContext ctx,
+    required String sessionId,
+  }) async =>
+      _unavailable();
+
+  @override
+  Future<DailyRevenueSummary> getDailyRevenueSummary({
     required PosDeviceContext ctx,
     required String sessionId,
   }) async =>
