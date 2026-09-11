@@ -49,6 +49,151 @@ class _FakePosOperationalViewGateway implements PosOperationalViewGateway {
   }
 }
 
+class _FakePosActionGateway implements PosActionGateway {
+  String? lastResolvedRequestId;
+  int resolveCallCount = 0;
+
+  @override
+  Future<void> resolveServiceRequest({
+    required PosDeviceContext ctx,
+    required String requestId,
+  }) async {
+    resolveCallCount += 1;
+    lastResolvedRequestId = requestId;
+  }
+
+  @override
+  Future<void> respondToOrderLines({
+    required String orderId,
+    required List<({int lineIndex, bool accept})> decisions,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> proposeLineReplacement({
+    required PosDeviceContext ctx,
+    required String orderId,
+    required int lineIndex,
+    required String proposedProductId,
+    required int proposedQuantity,
+    required String reasonCode,
+    required String reasonMessage,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> submitStaffEntryOrder({
+    required PosDeviceContext ctx,
+    required String tableId,
+    required Map<String, dynamic> subAccountSelection,
+    required List<Map<String, dynamic>> items,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> openCheck({
+    required PosDeviceContext ctx,
+    required String tableSessionId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> finalizeCheckReadyForPayment({
+    required PosDeviceContext ctx,
+    required String checkId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> splitByProduct({
+    required PosDeviceContext ctx,
+    required String checkId,
+    required String subAccountId,
+    required String sourceOrderId,
+    required int sourceLineIndex,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> splitByQuantity({
+    required PosDeviceContext ctx,
+    required String checkId,
+    required String subAccountId,
+    required String sourceOrderId,
+    required int sourceLineIndex,
+    required int quantity,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> splitByCustomer({
+    required PosDeviceContext ctx,
+    required String checkId,
+    required String subAccountId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<String>> splitEqualByHeadcount({
+    required PosDeviceContext ctx,
+    required String checkId,
+    required List<String> subAccountIds,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> splitFreeAmount({
+    required PosDeviceContext ctx,
+    required String checkId,
+    required String subAccountId,
+    required int amountMinorUnits,
+    required String sourceOrderId,
+    required int sourceLineIndex,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> transferTable({
+    required PosDeviceContext ctx,
+    required String sourceTableId,
+    required String targetTableId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> mergeTables({
+    required PosDeviceContext ctx,
+    required String sourceTableId,
+    required String targetTableId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> requestAcceptedLineCancellation({
+    required PosDeviceContext ctx,
+    required String orderId,
+    required int lineIndex,
+    required String reasonCode,
+    required String reasonMessage,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> requestCheckFinancialAdjustment({
+    required PosDeviceContext ctx,
+    required String checkId,
+    required String scope,
+    String? allocationId,
+    String? subAccountId,
+    required String adjustmentType,
+    int? percentageBasisPoints,
+    int? fixedAmountMinorUnits,
+    required String reasonCode,
+    required String reasonMessage,
+  }) async =>
+      throw UnimplementedError();
+}
+
 /// A trivially-fake [DeviceKeyStore] that reports platform support and does
 /// nothing else meaningful — this test only needs
 /// [posDeviceContextProvider] to resolve to a non-null value, which happens
@@ -187,5 +332,56 @@ void main() {
     expect(find.text('Dolu'), findsOneWidget);
     expect(find.text('Hesap İstendi'), findsOneWidget);
     expect(find.textContaining('2 bekleyen'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a pending service request badge is shown and one tap resolves it, refreshing the grid',
+      (tester) async {
+    final gateway = _FakePosOperationalViewGateway()
+      ..tables = [
+        const PosBranchTableSummary(
+          tableId: 'table-1',
+          displayName: 'Masa 1',
+          status: 'occupied',
+          activeTableSessionId: 'tsess-1',
+          pendingQrLineCount: 0,
+          pendingServiceRequests: [
+            PosPendingServiceRequest(requestId: 'req-1', type: 'callWaiter'),
+          ],
+        ),
+      ];
+    final actionGateway = _FakePosActionGateway();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          posOperationalViewGatewayProvider.overrideWithValue(gateway),
+          posActionGatewayProvider.overrideWithValue(actionGateway),
+          posDeviceContextProvider.overrideWithValue(
+            const PosDeviceContext(
+              organizationId: 'org-1',
+              branchId: 'branch-1',
+              deviceId: 'device-1',
+              deviceSessionId: 'session-1',
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: PosBranchOverviewScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.byIcon(Icons.room_service_outlined), findsOneWidget);
+    final callCountBeforeTap = gateway.callCount;
+
+    await tester.tap(find.byIcon(Icons.room_service_outlined));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(actionGateway.resolveCallCount, 1);
+    expect(actionGateway.lastResolvedRequestId, 'req-1');
+    expect(gateway.callCount, greaterThan(callCountBeforeTap),
+        reason: 'resolving must trigger a grid refresh');
   });
 }

@@ -39,6 +39,14 @@ class _FakeTableGuestSessionGateway implements TableGuestSessionGateway {
     if (openError != null) throw openError!;
     return openResult!;
   }
+
+  @override
+  Future<void> createServiceRequest({
+    required String guestSessionId,
+    required ServiceRequestType type,
+  }) async {
+    throw UnimplementedError('Not used by OpenTableGuestSessionFromQrScan.');
+  }
 }
 
 void main() {

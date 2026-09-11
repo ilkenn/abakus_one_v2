@@ -6454,3 +6454,107 @@ Rules **418/418** (unchanged — no rules changes). `flutter analyze` clean. `fl
 New/changed files: `functions/src/tableSessionClosure.ts` (new), `functions/src/checkOperations.ts`,
 `functions/src/paymentEngine.ts`, `functions/src/test/checkOperations.test.ts`,
 `functions/src/test/paymentEngine.test.ts`, `docs/business_rules.md`, `docs/feature_status.md`.
+
+## Dine-in Sprint 3 — Service Requests (Waiter Call / Bill Request) & Phase Closure (2026-09-11)
+
+Gemini's kickoff asked for a `ServiceRequest` model/lifecycle (waiter call / bill request), a customer
+trigger, a staff-facing badge + one-tap resolve on the branch overview grid, and a canonical Dine-in
+E2E test sealing the phase. Unlike Sprints 1-2, an audit found **zero** existing infrastructure for
+this — a genuinely new feature, not a reuse exercise.
+
+**What was built**: `functions/src/serviceRequests.ts` (new) — `createServiceRequest` (guest-gated,
+verifies the caller's uid against the named `tableGuestSessions` document's `guestAuthUid`, exactly
+mirroring `submitDineInOrder.ts`'s own `mode: "guestSession"` branch; idempotent per
+`(tableSessionId, type)`; a `requestBill` creation sets `restaurantTables.statusOverride =
+"billRequested"`, reusing Dine-in Sprint 1's exact field) and `resolveServiceRequest` (staff-device-
+gated, mirrors `tableSessionTransfer.ts`'s own locally-duplicated authorization helper; deliberately
+never touches `statusOverride`). `getPosBranchTableOverview` (`posOperationalView.ts`) extended with a
+`pendingServiceRequests` field per table, folded into its existing version hash. New Firestore rules
+block for `serviceRequests` (staff read, `write: if false`, mirroring `couriers`/
+`branchTakeawaySettings`). Client: `TableGuestSessionGateway.createServiceRequest()` (new), two tap
+targets added to `TableContextBadge` (already the one reused "active table" indicator across
+`MenuScreen`/`CartScreen`/`DineInCheckoutScreen`); `pos_action_gateway.dart`'s
+`resolveServiceRequest()`, and badge icons + one-tap resolve on `pos_branch_overview_screen.dart`'s
+`_TableTile`. New business rule: `docs/business_rules.md` BR-TABLE-013.
+
+**Correction made mid-implementation**: the plan's `guestSessionId` source
+(`ActiveTableContext.guestSession.id`) turned out to be a local-only sequential id
+(`SequentialGuestSessionIdGenerator`), never the real `tableGuestSessions` document id — the real value
+is `ActiveTableContext.session.id` (`TableSession.id`, set to `opened.sessionId` in
+`OpenTableGuestSessionFromQrScan`). Caught and fixed before shipping; a dedicated widget test
+(`table_context_badge_test.dart`) asserts the correct field is used by seeding the fixture with two
+deliberately different ids for `session.id` vs `guestSession.id`.
+
+**Canonical E2E**: `functions/src/test/dineInCanonicalLifecycle.test.ts` (new) — one continuous
+narrative: guest seated at a table places an order → calls a waiter (appears on/clears from the branch
+overview) → requests the bill (`billRequested` override set, reflected in the overview) → staff splits
+the bill into two checks (Sprint 1's own split-bill primitives) → pays the first (table stays occupied —
+Sprint 2's sibling-check guard) → pays the second (table session closes, table releases to `"cleaning"`,
+`billRequested` override clears — Sprint 2's `releaseTableIfReady`, closing the loop this sprint's own
+step opened).
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Cloud Functions **2051/2051**
+(2045 + 5 new `serviceRequests.test.ts` + 1 new `dineInCanonicalLifecycle.test.ts`; one unrelated
+pre-existing flaky concurrency test — `submitReservation.test.ts`'s Boncuk double-spend race — failed
+once under full-suite load then passed cleanly in isolation on retry, confirmed unrelated: none of this
+sprint's files touch Boncuk/loyalty/reservation code). Firestore Rules **418/418** (unchanged — the new
+collection's rule is exercised only via Admin-SDK Functions tests, which bypass Rules). `flutter
+analyze` clean. `flutter test` **3730/3730** (3728 + 1 new `table_context_badge_test.dart` case + 1 new
+`pos_branch_overview_screen_test.dart` case).
+
+New/changed files: `functions/src/serviceRequests.ts` (new),
+`functions/src/test/serviceRequests.test.ts` (new),
+`functions/src/test/dineInCanonicalLifecycle.test.ts` (new), `functions/src/posOperationalView.ts`,
+`functions/src/index.ts`, `firestore.rules`, `lib/features/qr/data/table_guest_session_gateway.dart`,
+`lib/features/qr/presentation/widgets/table_context_badge.dart`,
+`lib/features/pos/data/pos_operational_view_gateway.dart`,
+`lib/features/pos/data/pos_action_gateway.dart`,
+`lib/features/pos/presentation/screens/pos_branch_overview_screen.dart`,
+`test/features/qr/presentation/widgets/table_context_badge_test.dart`,
+`test/features/qr/presentation/screens/table_guest_entry_screen_test.dart`,
+`test/features/qr/application/use_cases/open_table_guest_session_from_qr_scan_test.dart`,
+`test/features/pos/presentation/screens/pos_branch_overview_screen_test.dart`,
+`test/features/pos/presentation/screens/pos_table_workspace_screen_test.dart`,
+`docs/business_rules.md`, `docs/feature_status.md`.
+
+## Dine-in — STATUS: COMPLETED / DONE (2026-09-11)
+
+All three Dine-in sprints (table `billRequested` status; split-bill audit + atomic table-closure guard;
+service requests + canonical E2E closure) are implemented, individually tested, and captured in git
+history. Sprint-by-sprint commit record on `phase-7/profile-redesign`:
+
+- **Sprint 1 — `billRequested` Table Status**: `checkOperations.ts`'s `syncTableBillRequestedOverride`
+  wired into `finalizeCheckReadyForPayment`/`reopenCheck`; `pos_branch_overview_screen.dart`'s
+  color-coded grid extended with the new status. Reused the real, already-tested
+  `transferTableSession`/`mergeTableSessions` transfer/merge engine and `pos_table_workspace_screen
+  .dart`'s existing split-bill UI rather than duplicating them, per ADR-038/BR-TABLE-009/010/011's
+  locked "no direct client Firestore read of POS-operational data" decision. Corrected the sprint's own
+  assumed reconnection target mid-flight: `live_floor_map_screen.dart` was found to be an orphaned,
+  zero-reference duplicate; `pos_branch_overview_screen.dart` is the real, live, Firestore-backed grid.
+  `b679e6e`.
+- **Sprint 2 — Split Bill Audit & Table Closure Guard**: audited itemized/amount/equal split and
+  partial payment and found them already fully real (BR-TABLE-004/009) — the actual gap was table
+  auto-release on payment completion, closed by the new `tableSessionClosure.ts`
+  (`loadTableClosureContext`/`releaseTableIfReady`), wired into `cancelCheck` and all three
+  `finalizeSessionIfComplete` call sites in `paymentEngine.ts`. New rule: BR-TABLE-012. `3cc90ed`.
+- **Sprint 3 — Service Requests & Closure**: the one genuinely new feature this phase (`serviceRequests
+  .ts`, guest-triggered/staff-resolved), plus the canonical `dineInCanonicalLifecycle.test.ts` proving
+  the whole phase interoperates as one continuous visit — table open, order, waiter call, bill request,
+  split payment, auto-release — not merely per-sprint in isolation. New rule: BR-TABLE-013. This
+  entry's own commit — see the section below once made.
+
+**Residual, explicitly out-of-scope items carried forward past Dine-in's own closure** (each already
+disclosed in its originating sprint, not new): `live_floor_map_screen.dart` remains an orphaned,
+unreferenced duplicate (Sprint 1 finding) — left untouched, not deleted, pending separate explicit
+cleanup approval. No customer-side live confirmation UI for a service request beyond the initial
+snackbar (no "a waiter is on the way" status the guest can watch update). No service-request
+analytics/SLA timing (how long a request sat pending). A released table sits in `"cleaning"`, not
+`"available"` — matching `transferTableSession`'s own pre-existing convention — and there is still no
+staff "mark table clean/available again" callable anywhere in the codebase; this is a pre-existing gap
+from before this phase, not introduced by it. Post-submission item-level bill splitting (splitting a
+single already-fired order line's value, as opposed to pre-submission per-line/whole-check splitting)
+remains UNRESOLVED per BR-TABLE-004, deferred to a future `OrderLine`-identity change.
+
+**Verification, all fresh runs**: same as Sprint 3's own report above — Cloud Functions 2051/2051,
+Firestore Rules 418/418, `flutter analyze` clean, `flutter test` 3730/3730. Zero regressions across all
+three sprints combined.

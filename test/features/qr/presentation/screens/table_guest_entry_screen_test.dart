@@ -53,6 +53,14 @@ class _FakeTableGuestSessionGateway implements TableGuestSessionGateway {
       expiresAt: DateTime.now().add(const Duration(hours: 6)),
     );
   }
+
+  @override
+  Future<void> createServiceRequest({
+    required String guestSessionId,
+    required ServiceRequestType type,
+  }) async {
+    throw UnimplementedError('Not used by TableGuestEntryScreen.');
+  }
 }
 
 class _FakeTechnicalIdentityProvider implements TechnicalIdentityProvider {

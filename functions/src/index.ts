@@ -136,6 +136,9 @@ export {
 // AP-3 Wave 2 remainder — physical table transfer/merge.
 export { transferTableSession, mergeTableSessions } from "./tableSessionTransfer";
 
+// Dine-in Sprint 3 — service requests (waiter call / bill request).
+export { createServiceRequest, resolveServiceRequest } from "./serviceRequests";
+
 // AP-3 Wave 2 remainder — QR replacement/counter-proposal backend.
 export {
   proposeDineInLineReplacement,

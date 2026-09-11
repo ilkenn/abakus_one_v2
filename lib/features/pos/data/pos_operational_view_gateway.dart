@@ -9,6 +9,24 @@ import 'package:cloud_functions/cloud_functions.dart' as functions;
 /// client-side) — the server independently re-verifies all of it
 /// (`requireActiveDeviceSession`) regardless of what this gateway sends.
 
+/// One pending waiter-call/bill-request ping on a table — Dine-in Sprint 3.
+/// [type] is kept as a raw `String` (mirrors this file's own
+/// `PosTableOperationalView.status` precedent) — `'callWaiter'` or
+/// `'requestBill'`, forward-compatible with an unrecognized future value.
+class PosPendingServiceRequest {
+  const PosPendingServiceRequest({required this.requestId, required this.type});
+
+  final String requestId;
+  final String type;
+
+  factory PosPendingServiceRequest.fromWire(Map<String, dynamic> data) {
+    return PosPendingServiceRequest(
+      requestId: data['requestId'] as String,
+      type: data['type'] as String,
+    );
+  }
+}
+
 class PosBranchTableSummary {
   const PosBranchTableSummary({
     required this.tableId,
@@ -16,6 +34,7 @@ class PosBranchTableSummary {
     required this.status,
     required this.activeTableSessionId,
     required this.pendingQrLineCount,
+    this.pendingServiceRequests = const [],
   });
 
   final String tableId;
@@ -23,6 +42,7 @@ class PosBranchTableSummary {
   final String status;
   final String? activeTableSessionId;
   final int pendingQrLineCount;
+  final List<PosPendingServiceRequest> pendingServiceRequests;
 
   factory PosBranchTableSummary.fromWire(Map<String, dynamic> data) {
     return PosBranchTableSummary(
@@ -31,6 +51,10 @@ class PosBranchTableSummary {
       status: data['status'] as String,
       activeTableSessionId: data['activeTableSessionId'] as String?,
       pendingQrLineCount: data['pendingQrLineCount'] as int,
+      pendingServiceRequests: [
+        for (final raw in (data['pendingServiceRequests'] as List? ?? const []))
+          PosPendingServiceRequest.fromWire(Map<String, dynamic>.from(raw as Map)),
+      ],
     );
   }
 }

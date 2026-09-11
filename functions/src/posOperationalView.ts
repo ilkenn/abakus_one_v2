@@ -7,6 +7,7 @@ import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { createHash } from "crypto";
 import { TABLE_SESSIONS_COLLECTION, GUEST_SUB_ACCOUNTS_COLLECTION } from "./tableSessionConfig";
 import { CHECKS_COLLECTION, CHECK_ALLOCATIONS_COLLECTION } from "./checkAllocationConfig";
+import { SERVICE_REQUESTS_COLLECTION } from "./serviceRequests";
 
 /**
  * AP-3 Wave 1 SECURITY CORRECTION — the sole staff/POS read path for
@@ -194,6 +195,22 @@ export const getPosBranchTableOverview = onCall(
       }),
     );
 
+    // Pending service requests (waiter call / bill request, Dine-in Sprint
+    // 3) — one branch-scoped query, grouped by table. Realistically a small
+    // live set (staff resolve these quickly), same "bounded, never an
+    // unbounded scan" reasoning as the pendingQrLineCount lookup above.
+    const pendingServiceRequestsSnap = await db.collection(SERVICE_REQUESTS_COLLECTION)
+      .where("branchId", "==", branchId)
+      .where("status", "==", "pending")
+      .get();
+    const pendingServiceRequestsByTableId = new Map<string, Array<{ requestId: string; type: string }>>();
+    for (const doc of pendingServiceRequestsSnap.docs) {
+      const tableId = doc.data().tableId as string;
+      const list = pendingServiceRequestsByTableId.get(tableId) ?? [];
+      list.push({ requestId: doc.id, type: String(doc.data().type) });
+      pendingServiceRequestsByTableId.set(tableId, list);
+    }
+
     const tables = tablesSnap.docs.map((d) => {
       const table = d.data();
       const activeTableSessionId = (table.activeTableSessionId as string | null | undefined) ?? null;
@@ -203,11 +220,14 @@ export const getPosBranchTableOverview = onCall(
         status: (table.statusOverride as string | undefined) ?? String(table.status ?? "available"),
         activeTableSessionId,
         pendingQrLineCount: activeTableSessionId ? (pendingCountsBySessionId.get(activeTableSessionId) ?? 0) : 0,
+        pendingServiceRequests: pendingServiceRequestsByTableId.get(d.id) ?? [],
         version: table.revision ?? null,
       };
     });
 
-    const versionSource = tables.map((t) => `${t.tableId}:${t.status}:${t.activeTableSessionId ?? ""}:${t.pendingQrLineCount}`).join("|");
+    const versionSource = tables
+      .map((t) => `${t.tableId}:${t.status}:${t.activeTableSessionId ?? ""}:${t.pendingQrLineCount}:${t.pendingServiceRequests.map((r) => r.requestId).sort().join(",")}`)
+      .join("|");
     const version = createHash("sha256").update(versionSource).digest("hex").slice(0, 24);
 
     if (ifNoneMatchVersion && ifNoneMatchVersion === version) {

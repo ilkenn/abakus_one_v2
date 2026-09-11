@@ -15,6 +15,7 @@ import '../../../admin/presentation/providers/admin_context_provider.dart';
 import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../../admin/presentation/providers/trusted_device_session_providers.dart';
 import '../../../admin/presentation/screens/trusted_device_status_screen.dart';
+import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
@@ -170,17 +171,28 @@ class _PosBranchOverviewScreenState
           childAspectRatio: 1.1,
         ),
         itemCount: tables.length,
-        itemBuilder: (context, index) => _TableTile(table: tables[index]),
+        itemBuilder: (context, index) => _TableTile(
+          table: tables[index],
+          onResolved: () => _load(),
+        ),
       ),
     );
   }
 }
 
-class _TableTile extends ConsumerWidget {
-  const _TableTile({required this.table});
+class _TableTile extends ConsumerStatefulWidget {
+  const _TableTile({required this.table, required this.onResolved});
   final PosBranchTableSummary table;
+  final VoidCallback onResolved;
 
-  Color get _statusColor => switch (table.status) {
+  @override
+  ConsumerState<_TableTile> createState() => _TableTileState();
+}
+
+class _TableTileState extends ConsumerState<_TableTile> {
+  String? _resolvingRequestId;
+
+  Color get _statusColor => switch (widget.table.status) {
         'available' => AppColors.primary,
         'occupied' => AppColors.warning,
         'billRequested' => AppColors.secondary,
@@ -189,17 +201,43 @@ class _TableTile extends ConsumerWidget {
         _ => AppColors.textSecondary,
       };
 
-  String get _statusLabel => switch (table.status) {
+  String get _statusLabel => switch (widget.table.status) {
         'available' => 'Boş',
         'occupied' => 'Dolu',
         'billRequested' => 'Hesap İstendi',
         'cleaning' => 'Temizleniyor',
         'disabled' => 'Kapalı',
-        _ => table.status,
+        _ => widget.table.status,
       };
 
+  IconData _iconFor(String type) => switch (type) {
+        'callWaiter' => Icons.room_service_outlined,
+        'requestBill' => Icons.receipt_long_outlined,
+        _ => Icons.notifications_active_outlined,
+      };
+
+  Future<void> _resolve(PosPendingServiceRequest request) async {
+    final deviceCtx = ref.read(posDeviceContextProvider);
+    if (deviceCtx == null || _resolvingRequestId != null) return;
+    setState(() => _resolvingRequestId = request.requestId);
+    try {
+      await ref.read(posActionGatewayProvider).resolveServiceRequest(
+            ctx: deviceCtx,
+            requestId: request.requestId,
+          );
+      widget.onResolved();
+    } on PosActionException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _resolvingRequestId = null);
+    }
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    final table = widget.table;
     return InkWell(
       borderRadius: AppRadius.kMedium,
       onTap: () {
@@ -235,6 +273,40 @@ class _TableTile extends ConsumerWidget {
                     .copyWith(color: _statusColor, fontWeight: FontWeight.bold),
               ),
             ),
+            if (table.pendingServiceRequests.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Wrap(
+                spacing: AppSpacing.xs,
+                children: [
+                  for (final request in table.pendingServiceRequests)
+                    InkWell(
+                      borderRadius: AppRadius.kPill,
+                      onTap: () => _resolve(request),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: AppColors.secondary.withValues(alpha: 0.14),
+                          shape: BoxShape.circle,
+                        ),
+                        child: _resolvingRequestId == request.requestId
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.secondary,
+                                ),
+                              )
+                            : Icon(
+                                _iconFor(request.type),
+                                size: 14,
+                                color: AppColors.secondary,
+                              ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
             const Spacer(),
             if (table.pendingQrLineCount > 0)
               Row(

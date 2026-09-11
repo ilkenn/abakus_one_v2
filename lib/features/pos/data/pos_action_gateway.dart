@@ -128,6 +128,12 @@ abstract interface class PosActionGateway {
     required String targetTableId,
   });
 
+  // --- Service requests (Dine-in Sprint 3) ------------------------------
+  Future<void> resolveServiceRequest({
+    required PosDeviceContext ctx,
+    required String requestId,
+  });
+
   // --- Accepted-line cancellation / financial adjustment (remote-approval-gated) ---
   Future<String> requestAcceptedLineCancellation({
     required PosDeviceContext ctx,
@@ -415,6 +421,21 @@ class FirebasePosActionGateway implements PosActionGateway {
   }
 
   @override
+  Future<void> resolveServiceRequest({
+    required PosDeviceContext ctx,
+    required String requestId,
+  }) async {
+    try {
+      await _fn('resolveServiceRequest').call<Map<String, dynamic>>({
+        ...ctx.toWire(),
+        'requestId': requestId,
+      });
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
+
+  @override
   Future<String> requestAcceptedLineCancellation({
     required PosDeviceContext ctx,
     required String orderId,
@@ -584,6 +605,13 @@ class UnavailablePosActionGateway implements PosActionGateway {
     required PosDeviceContext ctx,
     required String sourceTableId,
     required String targetTableId,
+  }) async =>
+      _unavailable();
+
+  @override
+  Future<void> resolveServiceRequest({
+    required PosDeviceContext ctx,
+    required String requestId,
   }) async =>
       _unavailable();
 

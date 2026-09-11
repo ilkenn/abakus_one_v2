@@ -118,6 +118,12 @@ class _FakePosActionGateway implements PosActionGateway {
   }) async {}
 
   @override
+  Future<void> resolveServiceRequest({
+    required PosDeviceContext ctx,
+    required String requestId,
+  }) async {}
+
+  @override
   Future<void> proposeLineReplacement({
     required PosDeviceContext ctx,
     required String orderId,

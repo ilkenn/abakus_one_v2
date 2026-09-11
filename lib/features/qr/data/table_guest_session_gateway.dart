@@ -1,5 +1,16 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
 
+/// Dine-in Sprint 3 — mirrors `functions/src/serviceRequests.ts`'s
+/// `ServiceRequestType` verbatim.
+enum ServiceRequestType { callWaiter, requestBill }
+
+extension ServiceRequestTypeWire on ServiceRequestType {
+  String toWire() => switch (this) {
+        ServiceRequestType.callWaiter => 'callWaiter',
+        ServiceRequestType.requestBill => 'requestBill',
+      };
+}
+
 /// The minimized, public-safe QR preview — mirrors the Cloud Function's
 /// own `TableQrPublicPreview` response shape exactly (Table Guest Session
 /// Phase 1/2 review fix): no `organizationId`/`restaurantId`/`branchId`/
@@ -87,6 +98,16 @@ class TableGuestSessionException implements Exception {
 abstract interface class TableGuestSessionGateway {
   Future<TableQrPreview> resolveToken(String token);
   Future<OpenedTableGuestSession> openSession(String token);
+
+  /// Dine-in Sprint 3 — a guest-triggered waiter call / bill request.
+  /// [guestSessionId] is the real `tableGuestSessions` document id (i.e.
+  /// [ActiveTableContext.session]'s `id`, which is `opened.sessionId` —
+  /// `ActiveTableContext.guestSession.id` is a LOCAL-only sequential id,
+  /// never this document id, and must never be sent here).
+  Future<void> createServiceRequest({
+    required String guestSessionId,
+    required ServiceRequestType type,
+  });
 }
 
 class FirebaseTableGuestSessionGateway implements TableGuestSessionGateway {
@@ -128,6 +149,26 @@ class FirebaseTableGuestSessionGateway implements TableGuestSessionGateway {
       throw TableGuestSessionException(
         error.code,
         error.message ?? 'Table guest session could not be opened.',
+      );
+    }
+  }
+
+  @override
+  Future<void> createServiceRequest({
+    required String guestSessionId,
+    required ServiceRequestType type,
+  }) async {
+    final callable = functions.FirebaseFunctions.instance
+        .httpsCallable('createServiceRequest');
+    try {
+      await callable.call<Map<String, dynamic>>({
+        'guestSessionId': guestSessionId,
+        'type': type.toWire(),
+      });
+    } on functions.FirebaseFunctionsException catch (error) {
+      throw TableGuestSessionException(
+        error.code,
+        error.message ?? 'İstek gönderilemedi.',
       );
     }
   }

@@ -1506,6 +1506,19 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Dine-in Sprint 3 — one doc per waiter-call/bill-request ping, same
+    // branch-scoped shape as `couriers`/`consortiumDeliverySettlements`
+    // above. `createServiceRequest`/`resolveServiceRequest`
+    // (`serviceRequests.ts`) are the only writers — a guest's own creation
+    // is ownership-verified server-side (`tableGuestSessions.guestAuthUid`),
+    // never something a Rule could verify, matching BR-SUBACCOUNT-008's own
+    // reasoning for every other POS-operational collection.
+    match /serviceRequests/{requestId} {
+      allow read: if isOrgMember(resource.data.organizationId) &&
+        hasBranchAccess(resource.data.organizationId, resource.data.branchId);
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------------------
     // Default deny — anything not explicitly matched above (including any
     // future collection someone adds without also adding a rule for it)

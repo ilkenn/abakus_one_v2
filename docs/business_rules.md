@@ -6882,6 +6882,28 @@ neither restated in full here nor duplicated between the two.
 - **Related Modules**: Orders, POS, Tables, Payments
 - **Business Rule IDs**: ADR-028, ADR-038, BR-CHECK-001, BR-TABLE-011
 
+### BR-TABLE-013 — Service requests (waiter call / bill request) — guest-triggered, staff-resolved (Dine-in Sprint 3)
+- **Status**: IMPLEMENTED (2026-09-11) — `functions/src/serviceRequests.ts`
+  (`createServiceRequest`/`resolveServiceRequest`), `getPosBranchTableOverview`
+  (`posOperationalView.ts`) extended with `pendingServiceRequests` per table, emulator-tested
+  (idempotent create, guest-ownership rejection, staff resolve, canonical lifecycle E2E).
+- **Rule**: A `serviceRequests` document (`type: "callWaiter" | "requestBill"`, `status: "pending" |
+  "resolved"`) is created only by `createServiceRequest`, which verifies the caller's Firebase Auth uid
+  against the named `tableGuestSessions` document's `guestAuthUid` — never a trusted-device/staff
+  check, since the caller is a guest. Creation is idempotent per `(tableSessionId, type)`: a second tap
+  while one is still `pending` returns the existing request rather than creating a duplicate. A
+  `requestBill` creation additionally sets `restaurantTables.statusOverride = "billRequested"` — the
+  same field/value BR-TABLE-012-adjacent Sprint 1 logic (`syncTableBillRequestedOverride`) already
+  uses, a second legitimate trigger for it, not a competing one; both compose cleanly because
+  BR-TABLE-012's `releaseTableIfReady` clears the override unconditionally on full table release
+  regardless of which trigger set it. `resolveServiceRequest` is staff-device-gated (mirrors
+  BR-SUBACCOUNT-008's reasoning — a Rule cannot verify device-session proof either) and deliberately
+  never touches `statusOverride`: acknowledging a service ping is distinct from the underlying
+  payment-pending state Sprint 1/2 already govern.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS, Tables
+- **Business Rule IDs**: ADR-028, ADR-038, BR-TABLE-012, BR-SUBACCOUNT-008
+
 ### BR-DIRECTORY-001 — Two structurally separate Customer Directory projections (AP-3 continuation)
 - **Status**: IMPLEMENTED (2026-08-27) — `functions/src/customerDirectoryConfig.ts`/
   `customerDirectory.ts`/`completeCustomerProfile.ts`, emulator-tested (platform de-duplication,
