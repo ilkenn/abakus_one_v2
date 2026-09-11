@@ -6417,3 +6417,40 @@ New/changed files: `functions/src/checkOperations.ts`, `functions/src/test/check
 `lib/features/pos/presentation/screens/pos_branch_overview_screen.dart`,
 `test/features/pos/presentation/screens/pos_branch_overview_screen_test.dart`,
 `docs/feature_status.md`.
+
+## Dine-in Sprint 2 — Split Bill Audit & Table Closure Guard (2026-09-10)
+
+Gemini's kickoff asked for itemized split-to-new-check, amount/equal split with partial payment, and a
+guard so a table can't release until every split check on it is paid, auto-releasing once the last one
+closes. Audit before writing code (mirroring Dine-in Sprint 1's own research-first discipline) found
+the first two items **already fully real, tested, and wired**: `openCheck` has no uniqueness
+constraint (any number of checks per `tableSessionId`), `splitCheckByProduct`/`splitCheckByQuantity`/
+`splitCheckByCustomer`/`splitCheckEqualByHeadcount`/`splitCheckFreeAmount` all exist and are DECIDED
+per `docs/business_rules.md` BR-TABLE-004/BR-TABLE-009, `recordPaymentAttempt` already accepts
+unlimited tenders per check (BR-PAY-014), and `pos_table_workspace_screen.dart`'s `_CheckPanel` already
+has all 5 split buttons wired to these real callables. The one genuine gap: nothing in the codebase
+ever released a table session as a result of ordinary payment completion —
+`transferTableSession`/`mergeTableSessions` only release a table as a side effect of relocating it, not
+as a normal end-of-dining path. This sprint closes exactly that gap, no more.
+
+**What changed**: new shared module `functions/src/tableSessionClosure.ts`
+(`loadTableClosureContext`/`releaseTableIfReady`, split read-phase/write-phase per this codebase's own
+Firestore transaction discipline) — wired into `checkOperations.ts`'s `cancelCheck` and
+`paymentEngine.ts`'s `finalizeSessionIfComplete` (all three call sites: cash, Boncuk, and the
+card/mealCard provider-resolution phase). Once every check on a `tableSessionId` reaches a terminal
+state (`paid`/`cancelled`), the table session closes and the table releases to `"cleaning"`
+(`activeTableSessionId: null`) — matching `transferTableSession`'s own existing "cleaning, not
+available" convention. Release also clears any Dine-in-Sprint-1 `billRequested` override, fixing a
+latent gap where a fully-paid check's override could never otherwise clear (`reopenCheck` was the only
+other place that cleared it, and a `paid` check can never be reopened). New business rule recorded:
+`docs/business_rules.md` BR-TABLE-012.
+
+**Verification, all fresh runs**: `functions` TypeScript build clean. Cloud Functions **2045/2045**
+(2044 + 1 new two-split-check release test in `paymentEngine.test.ts`; the single-check and
+cancellation scenarios extended two existing tests in place rather than adding new ones). Firestore
+Rules **418/418** (unchanged — no rules changes). `flutter analyze` clean. `flutter test` **3728/3728**
+(unchanged — no Dart/UI changes this sprint). Zero regressions.
+
+New/changed files: `functions/src/tableSessionClosure.ts` (new), `functions/src/checkOperations.ts`,
+`functions/src/paymentEngine.ts`, `functions/src/test/checkOperations.test.ts`,
+`functions/src/test/paymentEngine.test.ts`, `docs/business_rules.md`, `docs/feature_status.md`.

@@ -34,6 +34,7 @@ import {
 import { resolveProviderAdapter } from "./paymentProviderAdapter";
 import { CASH_SESSIONS_COLLECTION, CASH_MOVEMENTS_COLLECTION, type CashSessionDoc, type CashMovementDoc } from "./cashDomain";
 import { OFFLINE_LEASES_COLLECTION, validateOfflineLeaseForOperation, type OfflineLease } from "./fiscalDomain";
+import { loadTableClosureContext, releaseTableIfReady, NOT_READY_TABLE_CLOSURE, type TableClosureContext } from "./tableSessionClosure";
 
 /**
  * AP-4 Wave A — the canonical, server-authoritative payment engine. Builds
@@ -217,8 +218,9 @@ function sumReserved(attempts: PaymentAttemptDoc[]): number {
 function finalizeSessionIfComplete(params: {
   tx: Transaction; sessionRef: FirebaseFirestore.DocumentReference; session: PaymentSessionDoc;
   checkRef: FirebaseFirestore.DocumentReference; now: Timestamp; attempts: PaymentAttemptDoc[];
+  closureCtx: TableClosureContext;
 }): void {
-  const { tx, sessionRef, session, checkRef, now, attempts } = params;
+  const { tx, sessionRef, session, checkRef, now, attempts, closureCtx } = params;
   const settled = sumSettled(attempts);
   tx.update(sessionRef, { settledAmountMinorUnits: settled, updatedAt: now });
   if (settled >= session.payableAmountMinorUnits) {
@@ -226,6 +228,7 @@ function finalizeSessionIfComplete(params: {
     if (completedStatus === "completed") {
       tx.update(sessionRef, { status: "completed" });
       tx.update(checkRef, { status: "paid" });
+      releaseTableIfReady(tx, closureCtx, now);
     }
   }
 }
@@ -396,6 +399,13 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
       cashSessionId: tenderType === "cash" ? cashSessionId : null,
     };
 
+    // Read (never write yet), unconditionally — only the cash/boncuk branches
+    // below actually settle synchronously and might complete the session,
+    // but this must happen here regardless, before any write in this
+    // transaction (Dine-in Sprint 2 — table auto-release once every check on
+    // the session is terminal).
+    const closureCtx = await loadTableClosureContext(db, tx, check.tableSessionId, checkId, "paid");
+
     // Firestore transactions require every read across the WHOLE transaction
     // to happen before any write — so every tender branch below must finish
     // its own reads (if any) before this point is reached, and every write
@@ -427,7 +437,7 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
           version: offlineLease.version + 1,
         });
       }
-      finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: [...existingAttempts, attempt] });
+      finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: [...existingAttempts, attempt], closureCtx });
       return { replay: false as const, attemptId, status: "succeeded" as const, tenderType };
     }
 
@@ -528,7 +538,7 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
         loyaltyLedgerEntryId: ledgerEntryId, declineReason: null, resolvedAt: now,
       };
       tx.set(attemptRef, attempt);
-      finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: [...existingAttempts, attempt] });
+      finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: [...existingAttempts, attempt], closureCtx });
       return { replay: false as const, attemptId, status: "succeeded" as const, tenderType, boncukUsed: calc.boncukUsed };
     }
 
@@ -591,17 +601,23 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
     // this attempt's about-to-be-written update since Firestore hasn't
     // seen it yet.
     let attemptsForFinalize: PaymentAttemptDoc[] | null = null;
+    let closureCtx: TableClosureContext | null = null;
     if (nextStatus === "succeeded") {
       const attemptsSnap = await tx.get(db.collection(PAYMENT_ATTEMPTS_COLLECTION).where("sessionId", "==", sessionId));
       attemptsForFinalize = attemptsSnap.docs.map((d) =>
         d.id === attemptId ? { ...(d.data() as PaymentAttemptDoc), ...update } : (d.data() as PaymentAttemptDoc),
       );
+      const checkSnap = await tx.get(checkRef);
+      const checkTableSessionId = checkSnap.data()?.tableSessionId as string | undefined;
+      closureCtx = checkTableSessionId
+        ? await loadTableClosureContext(db, tx, checkTableSessionId, checkId, "paid")
+        : NOT_READY_TABLE_CLOSURE;
     }
 
     tx.update(attemptRef, update);
 
-    if (nextStatus === "succeeded" && attemptsForFinalize) {
-      finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: attemptsForFinalize });
+    if (nextStatus === "succeeded" && attemptsForFinalize && closureCtx) {
+      finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: attemptsForFinalize, closureCtx });
     }
 
     return { replay: false as const, attemptId, status: nextStatus, tenderType: attempt.tenderType };

@@ -21,6 +21,7 @@ import {
   type SplitMethod,
 } from "./checkAllocationConfig";
 import { allocateProportionally } from "./campaignPricing";
+import { loadTableClosureContext, releaseTableIfReady } from "./tableSessionClosure";
 
 /**
  * AP-3 Wave 2 — money-safe Check/allocation operations (corrected AP-3
@@ -383,7 +384,10 @@ export const cancelCheck = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, 
     if (activeCount > 0) {
       throw new HttpsError("failed-precondition", "This check still has active allocations — remove them before cancelling.");
     }
-    tx.update(ref, { status: "cancelled", cancelledAt: Timestamp.now(), version: check.version + 1 });
+    const closureCtx = await loadTableClosureContext(db, tx, check.tableSessionId, checkId, "cancelled");
+    const now = Timestamp.now();
+    tx.update(ref, { status: "cancelled", cancelledAt: now, version: check.version + 1 });
+    releaseTableIfReady(tx, closureCtx, now);
     auditCheckEvent(tx, db, { type: "check.cancelled", targetRef: ref.path, organizationId: ctx.organizationId, branchId: ctx.branchId, actorUid: ctx.uid });
     return { checkId, status: "cancelled" };
   });

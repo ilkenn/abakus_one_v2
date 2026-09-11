@@ -283,6 +283,15 @@ test("openCheck / cancelCheck: an open check with zero allocations can be cancel
   assert.strictEqual(cancel.httpStatus, 200, JSON.stringify(cancel.body));
   const doc = await db().collection("checks").doc(checkId).get();
   assert.strictEqual(doc.data()!.status, "cancelled");
+
+  // Dine-in Sprint 2 — this was the only check on the table session, so
+  // cancelling it (a terminal transition, same as paying) must also
+  // auto-release the table, exactly like a full payment would.
+  const tableSessionDoc = await db().collection("tableSessions").doc(f.tableSessionId).get();
+  assert.strictEqual(tableSessionDoc.data()!.status, "closed");
+  const tableDoc = await db().collection("restaurantTables").doc(f.tableId).get();
+  assert.strictEqual(tableDoc.data()!.status, "cleaning");
+  assert.strictEqual(tableDoc.data()!.activeTableSessionId, null);
 });
 
 test("finalizeCheckReadyForPayment: rejected with zero active allocations, then succeeds once an allocation exists, closing the referenced sub-account", async () => {

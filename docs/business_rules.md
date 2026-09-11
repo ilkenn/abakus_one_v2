@@ -6859,6 +6859,29 @@ neither restated in full here nor duplicated between the two.
 - **Related Modules**: Orders, POS, Tables
 - **Business Rule IDs**: ADR-028, ADR-038, `docs/order_operations_architecture.md` §6
 
+### BR-TABLE-012 — Table auto-release only once every split check is terminal (Dine-in Sprint 2)
+- **Status**: IMPLEMENTED (2026-09-10) — `functions/src/tableSessionClosure.ts`
+  (`loadTableClosureContext`/`releaseTableIfReady`), wired into `checkOperations.ts`'s `cancelCheck`
+  and `paymentEngine.ts`'s `finalizeSessionIfComplete` (cash/Boncuk synchronous settlement and the
+  card/mealCard provider-resolution phase), emulator-tested (single-check release, two-split-check
+  table only releasing once BOTH are terminal, cancellation-triggered release).
+- **Rule**: A `TableSession` (and the `restaurantTables` document pointing at it) is never released
+  while any `checks` document tied to it is still `open` or `readyForPayment` — first decided here; no
+  prior rule addressed it. The moment a check reaches a terminal state (`paid` via
+  `recordPaymentAttempt`, or `cancelled` via `cancelCheck`), the transaction checks every sibling check
+  on the same `tableSessionId`; only once ALL of them are terminal does the session close
+  (`tableSessions.status = "closed"`) and the table release (`restaurantTables.activeTableSessionId =
+  null`, `status = "cleaning"` — not `"available"`, matching BR-TABLE-011's own transfer/merge
+  convention: a table still needs a separate staff bussing step before accepting a new QR session).
+  Release also clears any `billRequested` override (`checkOperations.ts`'s
+  `syncTableBillRequestedOverride`, Dine-in Sprint 1) — closing a fixed latent gap where a fully-paid
+  table's override could never otherwise clear, since `reopenCheck` is the only other place that clears
+  it and a `paid` check can never be reopened. Composes with, never duplicates, BR-CHECK-001's own
+  terminal-state boundary and BR-TABLE-011's transfer/merge release.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS, Tables, Payments
+- **Business Rule IDs**: ADR-028, ADR-038, BR-CHECK-001, BR-TABLE-011
+
 ### BR-DIRECTORY-001 — Two structurally separate Customer Directory projections (AP-3 continuation)
 - **Status**: IMPLEMENTED (2026-08-27) — `functions/src/customerDirectoryConfig.ts`/
   `customerDirectory.ts`/`completeCustomerProfile.ts`, emulator-tested (platform de-duplication,

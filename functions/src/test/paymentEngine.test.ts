@@ -224,6 +224,44 @@ test("cash: a full cash payment settles the session and marks the check paid", a
   const sessionDoc = await db().collection("paymentSessions").doc(sessionId).get();
   assert.strictEqual(sessionDoc.data()!.status, "completed");
   assert.strictEqual(sessionDoc.data()!.settledAmountMinorUnits, 10000);
+
+  // Dine-in Sprint 2 — the check being the only one on this table session,
+  // full payment must auto-release the table.
+  const tableSessionDoc = await db().collection("tableSessions").doc(f.tableSessionId).get();
+  assert.strictEqual(tableSessionDoc.data()!.status, "closed");
+  const tableDoc = await db().collection("restaurantTables").doc(f.tableId).get();
+  assert.strictEqual(tableDoc.data()!.status, "cleaning");
+  assert.strictEqual(tableDoc.data()!.activeTableSessionId, null);
+  assert.strictEqual(tableDoc.data()!.statusOverride, null);
+});
+
+test("Dine-in Sprint 2 — a table with TWO split checks only releases once BOTH are paid", async () => {
+  const f = await setupFixture(10000);
+  const first = await checkReadyForPayment(f);
+  const second = await checkReadyForPayment(f);
+
+  const payFirst = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId: first.checkId, sessionId: first.sessionId, tenderType: "cash", idempotencyKey: nextId("idem"),
+    allocations: [{ subAccountId: await checkReadyForPaymentSubAccount(first.checkId), amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(payFirst.httpStatus, 200, JSON.stringify(payFirst.body));
+
+  const afterFirstTableSession = await db().collection("tableSessions").doc(f.tableSessionId).get();
+  assert.strictEqual(afterFirstTableSession.data()!.status, "active", "the second check is still open — the session must not close yet");
+  const afterFirstTable = await db().collection("restaurantTables").doc(f.tableId).get();
+  assert.strictEqual(afterFirstTable.data()!.activeTableSessionId, f.tableSessionId, "the table must not be released while a sibling check is still open");
+
+  const paySecond = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId: second.checkId, sessionId: second.sessionId, tenderType: "cash", idempotencyKey: nextId("idem"),
+    allocations: [{ subAccountId: await checkReadyForPaymentSubAccount(second.checkId), amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(paySecond.httpStatus, 200, JSON.stringify(paySecond.body));
+
+  const afterSecondTableSession = await db().collection("tableSessions").doc(f.tableSessionId).get();
+  assert.strictEqual(afterSecondTableSession.data()!.status, "closed");
+  const afterSecondTable = await db().collection("restaurantTables").doc(f.tableId).get();
+  assert.strictEqual(afterSecondTable.data()!.status, "cleaning");
+  assert.strictEqual(afterSecondTable.data()!.activeTableSessionId, null);
 });
 
 // helper: re-derive the subAccountId from an already-created check's allocations (avoids threading it through every call site above)
