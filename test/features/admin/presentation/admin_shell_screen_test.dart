@@ -21,6 +21,7 @@ import 'package:abakus_one_v2/features/inventory/presentation/screens/stock_coun
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
+import 'package:abakus_one_v2/features/pos/presentation/screens/pos_branch_overview_screen.dart';
 import 'package:abakus_one_v2/features/purchasing/presentation/screens/suppliers_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/reservation_operations_screen.dart';
 import 'package:abakus_one_v2/features/recipes/presentation/screens/recipes_screen.dart';
@@ -37,6 +38,7 @@ void main() {
     ActorSession? session,
     Size size = const Size(1400, 900),
     List<Override> extraOverrides = const [],
+    String? initialNavItemId,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -50,7 +52,9 @@ void main() {
             actorSessionProvider.overrideWith((ref) => session),
           ...extraOverrides,
         ],
-        child: const MaterialApp(home: AdminShellScreen()),
+        child: MaterialApp(
+          home: AdminShellScreen(initialNavItemId: initialNavItemId),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -117,6 +121,39 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(CustomerSegmentationAdminScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'PC Yönetici İnceleme Modu: initialNavItemId "pos" opens the POS '
+      'branch overview directly, with no tap needed — the dev-admin '
+      'shortcut\'s own landing target', (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'admin-1',
+        roles: {StaffRole.admin},
+        activeRole: StaffRole.admin,
+      ),
+      initialNavItemId: 'pos',
+    );
+
+    expect(find.byType(PosBranchOverviewScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'a null initialNavItemId (every real sign-in) keeps the existing '
+      'default landing behavior unchanged — never POS unless requested',
+      (tester) async {
+    await pumpShell(
+      tester,
+      session: const ActorSession(
+        actorId: 'admin-1',
+        roles: {StaffRole.admin},
+        activeRole: StaffRole.admin,
+      ),
+    );
+
+    expect(find.byType(PosBranchOverviewScreen), findsNothing);
   });
 
   testWidgets(

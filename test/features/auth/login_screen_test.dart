@@ -41,6 +41,15 @@ GoRouter _testRouter() {
         path: AppRoutes.main,
         builder: (context, state) => const MainNavigationScreen(),
       ),
+      // A minimal stand-in for AdminShellScreen — the real screen needs its
+      // own heavy provider setup this file has no reason to duplicate; this
+      // test only cares that the shortcut navigates to AppRoutes.admin at
+      // all, not what that real screen itself then does.
+      GoRoute(
+        path: AppRoutes.admin,
+        builder: (context, state) =>
+            const Scaffold(body: Center(child: Text('ADMIN_SHELL_STUB'))),
+      ),
     ],
   );
 }
@@ -103,6 +112,27 @@ void main() {
 
       expect(find.byType(MainNavigationScreen), findsOneWidget);
       expect(find.byType(LoginScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'PC Yönetici İnceleme Modu: the debug-only staff-entry shortcut is '
+    'visible (flutter test always runs debug + AppEnvironment.development) '
+    'and navigates to AppRoutes.admin, never touching the customer OTP flow',
+    (tester) async {
+      await _pumpLogin(tester);
+
+      expect(
+        find.byTooltip('Personel / POS Girişi (Yalnızca Development)'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byIcon(Icons.admin_panel_settings_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ADMIN_SHELL_STUB'), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
+      expect(find.byType(OtpScreen), findsNothing);
     },
   );
 }

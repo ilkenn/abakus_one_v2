@@ -6660,3 +6660,123 @@ the emulator and verified to complete cleanly.
 New/changed files: `functions/scripts/seed_dev_pos_showcase.mjs` (new), `functions/package.json`,
 `lib/features/admin/presentation/screens/staff_sign_in_screen.dart`,
 `test/features/admin/presentation/screens/staff_sign_in_screen_test.dart`, `docs/feature_status.md`.
+
+## PC Yönetici İnceleme Modu — Customer-Login Staff-Entry Shortcut (2026-09-11)
+
+A follow-up: on Windows/Desktop the app's default entry is still the real customer phone/OTP
+`LoginScreen` (correct, unchanged), with no quick path from there to the staff/POS flow the previous
+pass's "Dev Admin ile Gir" button lives behind. Two options were offered — a debug-only corner icon on
+`LoginScreen`, or branching the app's own startup route by platform (desktop -> straight to staff
+entry). Chose the corner-icon option: branching startup routing by OS would make `LoginScreen`'s own
+default reachability depend on platform, a real change to the entry-flow router's behavior
+(`core/router/app_router.dart`) for every desktop build, not just a debug convenience — the icon
+option changes nothing about default behavior at all.
+
+**Implementation note**: the natural approach (`LoginScreen` importing `StaffSignInScreen` directly)
+was rejected mid-implementation — a presentation file reaching into another feature's presentation
+layer directly is exactly what CLAUDE.md's layering rules forbid (`core -> feature`/cross-feature
+presentation imports). Used the already-existing `AppRoutes.admin` route instead (already wired in
+`app_router.dart` to `AdminShellScreen`, which itself already shows `StaffSignInScreen` internally
+whenever there's no active `actorSessionProvider` session) — zero new imports, zero router changes,
+reusing exactly what already exists.
+
+The icon (`Icons.admin_panel_settings_outlined`, top-right corner) uses the same defense-in-depth gate
+as the previous pass's shortcut: `kDebugMode` AND `AppEnvironmentConfig.current.allowsDebugTooling`.
+Deliberately distinct from the screen's existing "Geliştirici Girişi" (`DevLoginConfig`-gated
+phone+PIN customer dev-login) section — a different gate, a different purpose (staff/POS entry, not a
+customer session shortcut), never a second competing mechanism for the same thing that section's own
+doc comment warns against.
+
+**Verification**: `flutter analyze` clean. `flutter test` **3735/3735** (3734 + 1 new
+`login_screen_test.dart` case). No Cloud Functions/Firestore changes.
+
+New/changed files: `lib/features/auth/presentation/screens/login_screen.dart`,
+`test/features/auth/login_screen_test.dart`, `docs/feature_status.md`.
+
+## PC Yönetici İnceleme Modu — Dev-Admin Landing Screen Fix (2026-09-11)
+
+A follow-up bug report: after "Dev Admin ile Gir" on Windows desktop, no transition to a POS/operations
+screen was observed despite `syncOwnStaffClaims`/Auth succeeding against the emulator. Investigated
+per the report's own 3 points before writing any fix.
+
+**What the trace found**: every step of sign-in → session → shell was read end to end —
+`StaffSignInScreen._signIn` (real `Navigator.pushReplacement` to `AdminShellScreen`, unconditional on
+success), `StaffSessionController.signIn`, `FirebaseStaffAuthRepository.signIn`
+(`ActorSession.tryFromRaw` — `roleNames: ['admin']` matches `StaffRole.admin` directly, no branch
+requirement to produce a session), `DefaultStaffClaimsSyncClient.syncAndRefresh` (already correctly
+force-refreshes the ID token via `getIdTokenResult(true)` after calling `syncOwnStaffClaims` — not a
+bug), `AdminShellScreen`'s session/`AdminContextGate` checks, and `resolveActorContext`'s own
+membership-based org/branch resolution — all consistent with what `seed_dev_pos_showcase.mjs` already
+sets up for `admin@abakus.dev` (org-1/branch-1, single org, single branch, auto-selected). App Check
+was also ruled out: `shouldEnforceAppCheck()` is unconditionally `false` under the local emulator.
+**No logic bug was found in this chain** — this is disclosed honestly, not papered over with a guessed
+fix (this session has no way to actually run `flutter run -d windows` and observe live behavior).
+
+**What was found and fixed instead, matching the report's own explicit point 3**: `AdminShellScreen`
+had no way to land anywhere but its own default (`_DesktopShell`'s first group's first item — not
+necessarily POS at all; `_TabletShell`/`_MobileShell` defaulted to no selection whatsoever, prompting a
+manual pick). A successful dev-admin sign-in was very likely reaching a real, working `AdminShellScreen`
+— just not showing what the user expected (the POS branch overview specifically), which could easily
+read as "no transition happened." Added `AdminShellScreen.initialNavItemId` (`null` by default,
+preserving every existing sign-in's behavior unchanged) and threaded it through all three shells;
+`StaffSignInScreen._signInAsDevAdmin()` is the one caller that passes `'pos'`, so a successful dev
+sign-in now opens directly on `PosBranchOverviewScreen`, with zero taps.
+
+**If this doesn't fully resolve it**: the remaining candidates this session could not verify without
+live reproduction are a Firebase Auth Emulator custom-claims propagation quirk specific to the
+`firebase_auth`/`cloud_functions` Windows desktop plugin build, or `Firebase.initializeApp` itself
+silently failing on Windows (ruled out as *likely* by the report's own confirmation that Auth calls do
+reach the emulator, but not fully excluded) — worth checking `firebaseReadyProvider`'s value and any
+`FirebaseBootstrapService` emulator-connection log lines on next reproduction if the landing-screen fix
+alone isn't sufficient.
+
+**Verification**: `flutter analyze` clean. `flutter test` **3737/3737** (3735 + 2 new
+`admin_shell_screen_test.dart` cases, `staff_sign_in_screen_test.dart`'s existing dev-admin-shortcut
+case extended in place). No Cloud Functions/Firestore changes.
+
+New/changed files: `lib/features/admin/presentation/screens/admin_shell_screen.dart`,
+`lib/features/admin/presentation/screens/staff_sign_in_screen.dart`,
+`test/features/admin/presentation/admin_shell_screen_test.dart`,
+`test/features/admin/presentation/screens/staff_sign_in_screen_test.dart`, `docs/feature_status.md`.
+
+## PC Yönetici İnceleme Modu — Chrome-Evidence Root Causes (2026-09-11)
+
+A further follow-up, this time with real browser console evidence (not static-analysis inference like
+the previous pass): on Chrome, signing in via "Dev Admin ile Gir" while a customer/B2C (or a different
+staff member's) Firebase Auth session was still active threw
+`[cloud_firestore/permission-denied]` at two `firestore.rules` lines while `StaffSignInScreen` was
+mid-flow — the client kept reading admin-scoped collections under the stale identity while the new
+sign-in was in flight. Separately, `[firebase_messaging/permission-blocked]` was thrown on web when the
+browser's notification permission was already denied/blocked by policy, uncaught, blocking the flow.
+
+**Fix 1 — stale-session clear before sign-in** (`staff_sign_in_screen.dart`): `_signIn()` now calls
+`ref.read(staffSessionControllerProvider).signOut()` (which reaches the real, already-existing
+`StaffAuthRepository.signOut()` → `FirebaseAuth.instance.signOut()`) as the first action inside its
+try block, before `signIn(...)`. Firebase Auth has no separate "customer" vs. "staff" scope — both
+flows share the same `FirebaseAuth.instance` — so this removes the identity ambiguity structurally
+rather than racing it. Wrapped in its own inner try/catch (swallowed): a failed sign-out must never
+block the sign-in attempt that follows it. No new dependency or raw `FirebaseAuth` call in the
+presentation layer — reuses the existing repository abstraction.
+
+**Fix 2 — FCM registration made fully best-effort** (`fcm_registration_service.dart`):
+`FirebaseFcmRegistrationService.registerForUid`'s entire body (previously only the inner
+`_registerRemote` callable call) is now wrapped in try/catch. `requestPermission()`/`getToken()` can
+both throw (e.g. web's `permission-blocked`), and the one call site (`app.dart`'s
+`_maybeRegisterDeviceToken`) never awaits or catches the returned Future — an uncaught exception here
+became an unhandled async error surfacing as a blocking overlay in debug web builds. Matches the
+class's own pre-existing "best-effort, never disrupt the caller's flow" philosophy, now applied to the
+whole method, not just the remote-registration half.
+
+**Disclosed gap**: Fix 2 has no dedicated automated test. `FirebaseMessaging`/`FirebaseFunctions` are
+concrete Firebase SDK classes, not interfaces behind this codebase's own seam — writing one would
+require introducing a mockable wrapper around them, a refactor out of scope for this bug-fix pass. Not
+silently skipped — stated here per this session's disclosure discipline.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3738/3738** (3737 + 1 new
+`staff_sign_in_screen_test.dart` case asserting `signOut` happens, and completes, before `signIn`).
+Cloud Functions/Firestore Rules unaffected — no `functions/src/*.ts` or `firestore.rules` files
+touched this pass.
+
+New/changed files: `lib/core/notifications/fcm_registration_service.dart`,
+`lib/features/admin/presentation/screens/staff_sign_in_screen.dart`,
+`test/features/admin/presentation/screens/staff_sign_in_screen_test.dart`, `docs/feature_status.md`.

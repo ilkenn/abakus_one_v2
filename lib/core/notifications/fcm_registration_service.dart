@@ -53,18 +53,33 @@ class FirebaseFcmRegistrationService implements FcmRegistrationService {
 
   @override
   Future<void> registerForUid({required String uid}) async {
-    await _messaging.requestPermission();
+    // Best-effort, whole-method: `requestPermission()`/`getToken()` can
+    // both throw (e.g. web's `[firebase_messaging/permission-blocked]`
+    // when the browser's own notification permission was already denied,
+    // or is blocked by browser/OS policy) — this call site (`app.dart`)
+    // fires this Future without awaiting or catching it, so an uncaught
+    // exception here becomes an unhandled async error that can surface as
+    // a blocking overlay in a debug web build. Same "a failed registration
+    // only means this device misses push notifications, never a reason to
+    // disrupt the caller's own flow" reasoning `_registerRemote` already
+    // documents below, now covering the whole method, not just the
+    // callable call.
+    try {
+      await _messaging.requestPermission();
 
-    final token = await _messaging.getToken();
-    if (token != null) {
-      await _registerRemote(token: token);
-    }
+      final token = await _messaging.getToken();
+      if (token != null) {
+        await _registerRemote(token: token);
+      }
 
-    if (!_refreshListenerAttached) {
-      _refreshListenerAttached = true;
-      _messaging.onTokenRefresh.listen((refreshedToken) {
-        _registerRemote(token: refreshedToken);
-      });
+      if (!_refreshListenerAttached) {
+        _refreshListenerAttached = true;
+        _messaging.onTokenRefresh.listen((refreshedToken) {
+          _registerRemote(token: refreshedToken);
+        });
+      }
+    } catch (_) {
+      // Swallowed deliberately — see doc comment above.
     }
   }
 

@@ -21,12 +21,19 @@ class _ScriptedStaffAuthRepository implements StaffAuthRepository {
   int callCount = 0;
   String? lastEmail;
   String? lastPassword;
+  int signOutCallCount = 0;
+
+  /// Records `'signOut'`/`'signIn'` in call order — used to prove a stale
+  /// session is cleared BEFORE the new sign-in attempt, not merely that
+  /// both happened at some point.
+  final List<String> callOrder = [];
 
   @override
   Future<ActorSession?> signIn({
     required String email,
     required String password,
   }) {
+    callOrder.add('signIn');
     lastEmail = email;
     lastPassword = password;
     final step = _script[callCount.clamp(0, _script.length - 1)];
@@ -38,7 +45,10 @@ class _ScriptedStaffAuthRepository implements StaffAuthRepository {
   Future<ActorSession?> refreshSession(ActorSession current) async => current;
 
   @override
-  Future<void> signOut() async {}
+  Future<void> signOut() async {
+    callOrder.add('signOut');
+    signOutCallCount++;
+  }
 }
 
 const _session = ActorSession(
@@ -161,6 +171,22 @@ void main() {
   });
 
   testWidgets(
+      'a stale session (customer or different staff) left over from '
+      'before is cleared (signOut) BEFORE the new sign-in attempt — closes '
+      'the real-world "[cloud_firestore/permission-denied]" this session\'s '
+      'own PC Yönetici İnceleme Modu report found on Chrome', (tester) async {
+    final repository = _ScriptedStaffAuthRepository([() async => _session]);
+    await _pump(tester, repository);
+    await _fillAndSubmit(tester);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(repository.signOutCallCount, 1);
+    expect(repository.callOrder, ['signOut', 'signIn'],
+        reason: 'signOut must complete before signIn is attempted, not '
+            'merely happen at some point');
+  });
+
+  testWidgets(
       'PC Yönetici İnceleme Modu: the dev-admin shortcut submits the real '
       'seed_dev_staff.mjs credentials through the same _signIn() path — '
       'never a fabricated session — and reaches the real Admin shell',
@@ -183,5 +209,11 @@ void main() {
     expect(repository.lastEmail, 'admin@abakus.dev');
     expect(repository.lastPassword, 'abakus-dev-admin-2026');
     expect(find.byType(AdminShellScreen), findsOneWidget);
+    expect(
+      tester.widget<AdminShellScreen>(find.byType(AdminShellScreen)).initialNavItemId,
+      'pos',
+      reason: 'the dev-admin shortcut must land directly on the POS branch '
+          'overview, never the shell\'s general default landing item',
+    );
   });
 }

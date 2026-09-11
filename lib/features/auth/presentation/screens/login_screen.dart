@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../../core/config/app_environment_config.dart';
 import '../../../../core/router/app_route_guard.dart';
 import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -116,161 +118,198 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     context.go(sanitizedReturnTo ?? AppRoutes.main);
   }
 
+  /// PC Yönetici İnceleme Modu — a debug-only corner shortcut onto the real
+  /// staff/admin entry point (`AppRoutes.admin` -> `AdminShellScreen`,
+  /// which already shows `StaffSignInScreen` internally whenever there is
+  /// no active `actorSessionProvider` session — reused as-is, never a
+  /// direct cross-feature import of that screen from here, which this
+  /// codebase's own layering rules forbid). Same defense-in-depth gate as
+  /// `StaffSignInScreen`'s own "Dev Admin ile Gir" shortcut: `kDebugMode`
+  /// (never compiled into a release binary) AND `AppEnvironmentConfig
+  /// .current.allowsDebugTooling` (already `false` for staging/production
+  /// even in a debug build pointed at the wrong project).
+  static bool get _staffEntryShortcutAvailable =>
+      kDebugMode && AppEnvironmentConfig.current.allowsDebugTooling;
+
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
 
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(AppSpacing.xl),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: FadeTransition(
-                      opacity: _logoFade,
-                      child: SlideTransition(
-                        position: _logoSlide,
-                        child: ScaleTransition(
-                          scale: _logoScale,
-                          child: Image.asset(
-                            _logoAssetPath,
-                            width: 220,
-                            filterQuality: FilterQuality.high,
-                            isAntiAlias: true,
-                            errorBuilder: (context, error, stackTrace) {
-                              return const Text(
-                                'abaküs',
-                                style: AppTypography.headlineLarge,
-                              );
-                            },
+        child: Stack(
+          children: [
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(AppSpacing.xl),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: FadeTransition(
+                          opacity: _logoFade,
+                          child: SlideTransition(
+                            position: _logoSlide,
+                            child: ScaleTransition(
+                              scale: _logoScale,
+                              child: Image.asset(
+                                _logoAssetPath,
+                                width: 220,
+                                filterQuality: FilterQuality.high,
+                                isAntiAlias: true,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return const Text(
+                                    'abaküs',
+                                    style: AppTypography.headlineLarge,
+                                  );
+                                },
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
-                  const Text(
-                    'Abaküs\'e Hoş Geldiniz',
-                    style: AppTypography.headlineLarge,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    'Giriş yapmak için telefon numaranı gir, sana bir kod gönderelim.',
-                    style: AppTypography.bodyMedium.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.xxl),
-                  TextFormField(
-                    controller: _phoneController,
-                    keyboardType: TextInputType.phone,
-                    autofillHints: const [AutofillHints.telephoneNumber],
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(10),
-                    ],
-                    style: AppTypography.bodyLarge,
-                    decoration: const InputDecoration(
-                      labelText: 'Telefon Numarası',
-                      prefixText: '+90 ',
-                      prefixIcon: Icon(Icons.phone_iphone_rounded),
-                      hintText: '5XX XXX XX XX',
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: AppSpacing.xl,
-                        vertical: AppSpacing.lg,
+                      const SizedBox(height: AppSpacing.xl),
+                      const Text(
+                        'Abaküs\'e Hoş Geldiniz',
+                        style: AppTypography.headlineLarge,
+                        textAlign: TextAlign.center,
                       ),
-                      border: OutlineInputBorder(
-                        borderRadius: AppRadius.kExtraLarge,
-                        borderSide: BorderSide(color: AppColors.border),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: AppRadius.kExtraLarge,
-                        borderSide: BorderSide(color: AppColors.border),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: AppRadius.kExtraLarge,
-                        borderSide: BorderSide(
-                          color: AppColors.primary,
-                          width: 1.5,
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        'Giriş yapmak için telefon numaranı gir, sana bir kod gönderelim.',
+                        style: AppTypography.bodyMedium.copyWith(
+                          color: AppColors.textSecondary,
                         ),
+                        textAlign: TextAlign.center,
                       ),
-                    ),
-                    validator: (value) {
-                      final digits = value ?? '';
-                      if (digits.isEmpty) {
-                        return 'Lütfen telefon numaranızı giriniz';
-                      }
-                      if (!TurkishPhoneNumber.isValidLocalNumber(digits)) {
-                        return 'Lütfen geçerli bir telefon numarası giriniz';
-                      }
-                      return null;
-                    },
-                  ),
-                  if (authState.error != null) ...[
-                    const SizedBox(height: AppSpacing.sm),
-                    Text(
-                      authState.error!,
-                      style: AppTypography.bodySmall.copyWith(
-                        color: AppColors.error,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                  const SizedBox(height: AppSpacing.xl),
-                  ElevatedButton(
-                    onPressed: authState.isLoading ? null : _submit,
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(56),
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: AppRadius.kExtraLarge,
-                      ),
-                    ),
-                    child: authState.isLoading
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
+                      const SizedBox(height: AppSpacing.xxl),
+                      TextFormField(
+                        controller: _phoneController,
+                        keyboardType: TextInputType.phone,
+                        autofillHints: const [AutofillHints.telephoneNumber],
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(10),
+                        ],
+                        style: AppTypography.bodyLarge,
+                        decoration: const InputDecoration(
+                          labelText: 'Telefon Numarası',
+                          prefixText: '+90 ',
+                          prefixIcon: Icon(Icons.phone_iphone_rounded),
+                          hintText: '5XX XXX XX XX',
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: AppSpacing.xl,
+                            vertical: AppSpacing.lg,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: AppRadius.kExtraLarge,
+                            borderSide: BorderSide(color: AppColors.border),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: AppRadius.kExtraLarge,
+                            borderSide: BorderSide(color: AppColors.border),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: AppRadius.kExtraLarge,
+                            borderSide: BorderSide(
+                              color: AppColors.primary,
+                              width: 1.5,
                             ),
-                          )
-                        : const Text('Devam Et'),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  OutlinedButton(
-                    onPressed: authState.isLoading ? null : _continueAsGuest,
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(56),
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: AppRadius.kExtraLarge,
+                          ),
+                        ),
+                        validator: (value) {
+                          final digits = value ?? '';
+                          if (digits.isEmpty) {
+                            return 'Lütfen telefon numaranızı giriniz';
+                          }
+                          if (!TurkishPhoneNumber.isValidLocalNumber(digits)) {
+                            return 'Lütfen geçerli bir telefon numarası giriniz';
+                          }
+                          return null;
+                        },
                       ),
-                    ),
-                    child: const Text('Misafir Olarak Devam Et'),
+                      if (authState.error != null) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        Text(
+                          authState.error!,
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.error,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                      const SizedBox(height: AppSpacing.xl),
+                      ElevatedButton(
+                        onPressed: authState.isLoading ? null : _submit,
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(56),
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: AppRadius.kExtraLarge,
+                          ),
+                        ),
+                        child: authState.isLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text('Devam Et'),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      OutlinedButton(
+                        onPressed:
+                            authState.isLoading ? null : _continueAsGuest,
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(56),
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: AppRadius.kExtraLarge,
+                          ),
+                        ),
+                        child: const Text('Misafir Olarak Devam Et'),
+                      ),
+                      if (DevLoginConfig.isAvailable) ...[
+                        const SizedBox(height: AppSpacing.lg),
+                        _DevLoginSection(onSuccess: _onDevLoginSuccess),
+                      ],
+                      const SizedBox(height: AppSpacing.xl),
+                      Text(
+                        'Devam ederek Kullanım Koşulları ve Gizlilik Politikası\'nı kabul etmiş olursun.',
+                        style: AppTypography.caption.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
                   ),
-                  if (DevLoginConfig.isAvailable) ...[
-                    const SizedBox(height: AppSpacing.lg),
-                    _DevLoginSection(onSuccess: _onDevLoginSuccess),
-                  ],
-                  const SizedBox(height: AppSpacing.xl),
-                  Text(
-                    'Devam ederek Kullanım Koşulları ve Gizlilik Politikası\'nı kabul etmiş olursun.',
-                    style: AppTypography.caption.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
+            // Painted (and hit-tested) LAST so it sits above the scrollable
+            // form beneath it — a Stack child earlier in this list would
+            // have its taps swallowed by the form's own scroll gesture
+            // detector, even where nothing is visibly drawn over it.
+            if (_staffEntryShortcutAvailable)
+              Positioned(
+                top: AppSpacing.sm,
+                right: AppSpacing.sm,
+                child: Tooltip(
+                  message: 'Personel / POS Girişi (Yalnızca Development)',
+                  child: IconButton(
+                    onPressed: () => context.push(AppRoutes.admin),
+                    icon: const Icon(
+                      Icons.admin_panel_settings_outlined,
+                      color: AppColors.warning,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

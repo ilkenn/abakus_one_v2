@@ -96,7 +96,17 @@ class _AdminNavGroup {
 /// this shell's own group-visibility filtering is a UX convenience, not
 /// the security boundary.
 class AdminShellScreen extends ConsumerStatefulWidget {
-  const AdminShellScreen({super.key});
+  const AdminShellScreen({super.key, this.initialNavItemId});
+
+  /// PC Yönetici İnceleme Modu — when non-null, the shell opens directly on
+  /// the nav item with this `_AdminNavItem.id` instead of its own default
+  /// (Desktop: the first group's first item; Tablet/Mobile: no item,
+  /// prompting a manual pick) — `null` preserves that exact existing
+  /// behavior unchanged for every real staff/manager/admin sign-in.
+  /// `StaffSignInScreen`'s "Dev Admin ile Gir" shortcut is the one caller
+  /// that ever passes a value (`'pos'`), so a successful dev sign-in lands
+  /// directly on the POS branch overview, never the general dashboard.
+  final String? initialNavItemId;
 
   @override
   ConsumerState<AdminShellScreen> createState() => _AdminShellScreenState();
@@ -692,12 +702,26 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
               final width = constraints.maxWidth;
               if (width >= 1000) {
                 return _DesktopShell(
-                    groups: groups, session: session, ref: ref);
+                  groups: groups,
+                  session: session,
+                  ref: ref,
+                  initialNavItemId: widget.initialNavItemId,
+                );
               }
               if (width >= 600) {
-                return _TabletShell(groups: groups, session: session, ref: ref);
+                return _TabletShell(
+                  groups: groups,
+                  session: session,
+                  ref: ref,
+                  initialNavItemId: widget.initialNavItemId,
+                );
               }
-              return _MobileShell(groups: groups, session: session, ref: ref);
+              return _MobileShell(
+                groups: groups,
+                session: session,
+                ref: ref,
+                initialNavItemId: widget.initialNavItemId,
+              );
             },
           );
         },
@@ -866,11 +890,13 @@ class _DesktopShell extends StatefulWidget {
     required this.groups,
     required this.session,
     required this.ref,
+    this.initialNavItemId,
   });
 
   final List<_AdminNavGroup> groups;
   final ActorSession session;
   final WidgetRef ref;
+  final String? initialNavItemId;
 
   @override
   State<_DesktopShell> createState() => _DesktopShellState();
@@ -882,7 +908,12 @@ class _DesktopShellState extends State<_DesktopShell> {
   @override
   void initState() {
     super.initState();
-    if (widget.groups.isNotEmpty && widget.groups.first.items.isNotEmpty) {
+    final requested = widget.initialNavItemId;
+    final requestedExists = requested != null &&
+        widget.groups.any((g) => g.items.any((item) => item.id == requested));
+    if (requestedExists) {
+      _selected = requested;
+    } else if (widget.groups.isNotEmpty && widget.groups.first.items.isNotEmpty) {
       _selected = widget.groups.first.items.first.id;
     }
   }
@@ -942,11 +973,13 @@ class _TabletShell extends StatefulWidget {
     required this.groups,
     required this.session,
     required this.ref,
+    this.initialNavItemId,
   });
 
   final List<_AdminNavGroup> groups;
   final ActorSession session;
   final WidgetRef ref;
+  final String? initialNavItemId;
 
   @override
   State<_TabletShell> createState() => _TabletShellState();
@@ -955,6 +988,20 @@ class _TabletShell extends StatefulWidget {
 class _TabletShellState extends State<_TabletShell> {
   int _groupIndex = 0;
   String? _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    final requested = widget.initialNavItemId;
+    if (requested == null) return;
+    for (var i = 0; i < widget.groups.length; i++) {
+      if (widget.groups[i].items.any((item) => item.id == requested)) {
+        _groupIndex = i;
+        _selected = requested;
+        break;
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1017,11 +1064,13 @@ class _MobileShell extends StatefulWidget {
     required this.groups,
     required this.session,
     required this.ref,
+    this.initialNavItemId,
   });
 
   final List<_AdminNavGroup> groups;
   final ActorSession session;
   final WidgetRef ref;
+  final String? initialNavItemId;
 
   @override
   State<_MobileShell> createState() => _MobileShellState();
@@ -1030,6 +1079,22 @@ class _MobileShell extends StatefulWidget {
 class _MobileShellState extends State<_MobileShell> {
   String? _selected;
   String _selectedLabel = 'Yönetici Paneli';
+
+  @override
+  void initState() {
+    super.initState();
+    final requested = widget.initialNavItemId;
+    if (requested == null) return;
+    for (final group in widget.groups) {
+      final match =
+          group.items.where((item) => item.id == requested).firstOrNull;
+      if (match != null) {
+        _selected = match.id;
+        _selectedLabel = match.label;
+        break;
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

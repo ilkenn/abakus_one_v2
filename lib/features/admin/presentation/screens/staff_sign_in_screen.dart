@@ -68,7 +68,11 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
   Future<void> _signInAsDevAdmin() async {
     _emailController.text = _devAdminEmail;
     _passwordController.text = _devAdminPassword;
-    await _signIn();
+    // Lands directly on the POS branch overview — see AdminShellScreen's
+    // own doc comment on `initialNavItemId`. Only this dev shortcut ever
+    // passes a value; a real staff/manager/admin sign-in below keeps the
+    // shell's existing default landing behavior unchanged.
+    await _signIn(initialAdminNavItemId: 'pos');
   }
 
   @override
@@ -78,7 +82,7 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
     super.dispose();
   }
 
-  Future<void> _signIn() async {
+  Future<void> _signIn({String? initialAdminNavItemId}) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() {
       _busy = true;
@@ -86,6 +90,20 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
     });
     bool success = false;
     try {
+      // A stale customer/B2C (or different-staff) Firebase Auth session
+      // left over in the browser makes the client keep reading
+      // admin-scoped Firestore collections under the WRONG identity while
+      // this new sign-in is in flight, which `firestore.rules` correctly
+      // denies (`[cloud_firestore/permission-denied]`) — clearing it first
+      // removes that ambiguity structurally rather than racing it.
+      // Best-effort: a failed sign-out must never block the sign-in
+      // attempt that follows it.
+      try {
+        await ref.read(staffSessionControllerProvider).signOut();
+      } catch (_) {
+        // Swallowed deliberately — see comment above.
+      }
+
       success = await ref.read(staffSessionControllerProvider).signIn(
             email: _emailController.text.trim(),
             password: _passwordController.text,
@@ -107,7 +125,10 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
     }
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const AdminShellScreen()),
+      MaterialPageRoute(
+        builder: (_) =>
+            AdminShellScreen(initialNavItemId: initialAdminNavItemId),
+      ),
     );
   }
 
