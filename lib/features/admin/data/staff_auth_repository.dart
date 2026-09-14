@@ -288,8 +288,15 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     final syncWatch = Stopwatch()..start();
     _logging.log(LogLevel.debug, '[AUTH-TRACE] syncAndRefresh: start');
     try {
-      claims =
-          await _claimsSyncClient.syncAndRefresh().timeout(_networkTimeout);
+      // `allowCachedTokenFallback: true` is safe here specifically: this
+      // token was just minted moments ago by the real credential check
+      // above, so it already carries whatever claims exist server-side at
+      // this instant — see the parameter's own doc comment on
+      // `StaffClaimsSyncClient.syncAndRefresh` for why `refreshSession`
+      // below must NOT pass this.
+      claims = await _claimsSyncClient
+          .syncAndRefresh(allowCachedTokenFallback: true)
+          .timeout(_networkTimeout);
       _logging.log(LogLevel.debug,
           '[AUTH-TRACE] syncAndRefresh: end (${syncWatch.elapsedMilliseconds}ms)');
     } on TimeoutException catch (e, st) {
@@ -362,6 +369,14 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
   Future<ActorSession?> refreshSession(ActorSession current) async {
     final StaffAuthorizationClaims? claims;
     try {
+      // Deliberately NOT `allowCachedTokenFallback: true` — this call's
+      // entire purpose is detecting a role revoked since [current] was
+      // issued ("removed role takes effect immediately after session
+      // refresh," this class's own doc comment above). Silently trusting
+      // a stale cached token here on a forced-refresh failure would defeat
+      // that guarantee; see `StaffClaimsSyncClient.syncAndRefresh`'s own
+      // doc comment for why only a just-minted token (`signIn`, above) may
+      // opt into that fallback.
       claims =
           await _claimsSyncClient.syncAndRefresh().timeout(_networkTimeout);
     } on TimeoutException {

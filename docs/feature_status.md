@@ -6958,3 +6958,46 @@ exercises). No Cloud Functions/Firestore Rules changes.
 
 New/changed files: `lib/app.dart`, `lib/core/services/auth/staff_claims_sync_client.dart`,
 `lib/features/admin/presentation/providers/admin_dependencies_provider.dart`, `docs/feature_status.md`.
+
+## PC Yönetici İnceleme Modu — Windows Forced-Token-Refresh Fallback, Scoped for Safety (2026-09-14)
+
+Reported: Windows desktop's `firebase_auth` C++/Pigeon layer throws
+`[firebase_auth/unknown-error] An internal error has occurred.` out of
+`FirebaseAuthUserHostApi.getIdToken` on a **forced** refresh (`getIdTokenResult(true)`) against the
+Auth Emulator specifically — distinct from the earlier `cloud_functions` finding: `firebase_auth` IS
+registered for Windows (`generated_plugin_registrant.cc`), so this is one specific call failing, not an
+entirely absent plugin. The requested fix (catch the error, fall back to the cached, non-forced token)
+was checked for a real correctness risk before implementing, since it wasn't obviously safe as a
+blanket change.
+
+**The risk found**: `DefaultStaffClaimsSyncClient.syncAndRefresh` is the single shared implementation
+both `FirebaseStaffAuthRepository.signIn` (called right after a fresh credential check — the token was
+just minted, so it already carries current server-side claims) **and** `refreshSession` (revalidating a
+long-lived session — its entire purpose is forcing a refresh to catch a role revoked *since* the
+session began, per this class's own "removed role takes effect immediately after session refresh" doc
+comment) call into. A blanket "on failure, silently trust the cached token" fallback would be safe for
+the former but would silently defeat the revocation guarantee for the latter on whichever platform this
+failure occurs — a real, disclosed security regression risk, not implemented as requested.
+
+**Fix actually applied**: `StaffClaimsSyncClient.syncAndRefresh` gained an opt-in
+`allowCachedTokenFallback` parameter (default `false`, strict — unchanged behavior everywhere unless a
+caller explicitly opts in). Only `FirebaseStaffAuthRepository.signIn` passes `true` (safe: a just-minted
+token). `refreshSession` deliberately does not — a forced-refresh failure there still throws
+`StaffAuthUnavailableException` as before, never silently trusting a possibly-stale token. The catch is
+reactive (any thrown error), not a proactive Windows check, so a genuine failure on a platform where
+forced refresh normally works still surfaces normally instead of being silently absorbed by this same
+branch.
+
+**No dedicated test** — `FakeStaffClaimsSyncClient` was updated only to keep the interface change
+compiling (accepts and ignores the new parameter); the real fallback branch lives inside
+`DefaultStaffClaimsSyncClient`, which needs the real `firebase_auth` SDK (unavailable under
+`flutter test`, same disclosed limitation as this session's other Firebase-SDK-adjacent fixes).
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3738/3738** (unchanged — the
+fake's signature change is source-compatible with every existing call site, and the new fallback branch
+in `DefaultStaffClaimsSyncClient` isn't exercised by any test). No Cloud Functions/Firestore Rules
+changes.
+
+New/changed files: `lib/core/services/auth/staff_claims_sync_client.dart`,
+`lib/features/admin/data/staff_auth_repository.dart`,
+`test/core/services/auth/fake_staff_claims_sync_client.dart`, `docs/feature_status.md`.

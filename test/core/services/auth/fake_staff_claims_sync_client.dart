@@ -25,7 +25,9 @@ class FakeStaffClaimsSyncClient implements StaffClaimsSyncClient {
   final bool neverResolves;
 
   @override
-  Future<StaffAuthorizationClaims?> syncAndRefresh() async {
+  Future<StaffAuthorizationClaims?> syncAndRefresh({
+    bool allowCachedTokenFallback = false,
+  }) async {
     callCount++;
     if (neverResolves) return Completer<StaffAuthorizationClaims?>().future;
     return claimsToReturn;

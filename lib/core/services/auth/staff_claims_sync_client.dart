@@ -81,7 +81,25 @@ abstract interface class StaffClaimsSyncClient {
   /// user is currently signed in (never a signal about permission; that's
   /// [StaffAuthorizationClaims.empty]'s job). Safe to call even when no
   /// user is signed in — callers don't need their own guard.
-  Future<StaffAuthorizationClaims?> syncAndRefresh();
+  ///
+  /// [allowCachedTokenFallback] (default `false`, strict): if the forced
+  /// refresh itself throws (observed on Windows desktop against the Auth
+  /// Emulator — `[firebase_auth/unknown-error]` out of
+  /// `FirebaseAuthUserHostApi.getIdToken`, PC Yönetici İnceleme Modu,
+  /// 2026-09-14) and this is `true`, falls back to the current CACHED
+  /// token (`getIdTokenResult(false)`) instead of rethrowing. **Only ever
+  /// pass `true` when the token was just minted moments ago by a real
+  /// credential check** (a freshly-issued token already carries whatever
+  /// claims exist server-side at that instant — `FirebaseStaffAuthRepository
+  /// .signIn`'s own case) — never for a long-lived session's periodic
+  /// [FirebaseStaffAuthRepository.refreshSession], whose entire security
+  /// purpose is forcing a refresh to catch a role revoked *after* the
+  /// session began; silently trusting a stale cached token there would
+  /// defeat "a removed role takes effect immediately after session
+  /// refresh" on whichever platform this failure occurs.
+  Future<StaffAuthorizationClaims?> syncAndRefresh({
+    bool allowCachedTokenFallback = false,
+  });
 }
 
 class DefaultStaffClaimsSyncClient implements StaffClaimsSyncClient {
@@ -98,7 +116,9 @@ class DefaultStaffClaimsSyncClient implements StaffClaimsSyncClient {
   fb.FirebaseAuth get _auth => _providedAuth ?? fb.FirebaseAuth.instance;
 
   @override
-  Future<StaffAuthorizationClaims?> syncAndRefresh() async {
+  Future<StaffAuthorizationClaims?> syncAndRefresh({
+    bool allowCachedTokenFallback = false,
+  }) async {
     final user = _auth.currentUser;
     if (user == null) return null;
     // The official `cloud_functions` plugin ships no native Windows desktop
@@ -129,7 +149,24 @@ class DefaultStaffClaimsSyncClient implements StaffClaimsSyncClient {
           .httpsCallable('syncOwnStaffClaims')
           .call<Map<String, dynamic>>();
     }
-    final tokenResult = await user.getIdTokenResult(true);
+    fb.IdTokenResult tokenResult;
+    try {
+      tokenResult = await user.getIdTokenResult(true);
+    } catch (e) {
+      if (!allowCachedTokenFallback) rethrow;
+      // Windows desktop's `firebase_auth` C++/Pigeon layer has been
+      // observed throwing `[firebase_auth/unknown-error] An internal
+      // error has occurred.` out of `FirebaseAuthUserHostApi.getIdToken`
+      // specifically on a forced refresh against the Auth Emulator (PC
+      // Yönetici İnceleme Modu, 2026-09-14) — caught reactively, not a
+      // proactive platform check, so a genuine forced-refresh failure on
+      // a platform where it normally works (web, Android, iOS) still
+      // surfaces normally instead of being silently absorbed here. Safe
+      // only because every caller passing `allowCachedTokenFallback: true`
+      // does so right after minting this exact token — see this
+      // parameter's own doc comment on [StaffClaimsSyncClient.syncAndRefresh].
+      tokenResult = await user.getIdTokenResult(false);
+    }
     return parseStaffAuthorizationClaims(tokenResult.claims);
   }
 }
