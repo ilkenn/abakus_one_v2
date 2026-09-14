@@ -1,5 +1,7 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
 import 'package:firebase_auth/firebase_auth.dart' as fb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
 /// The parsed shape of the `organizationAccess`/`roles`/`branchAccess`
 /// custom claims `syncOwnStaffClaims` writes (`functions/src/
@@ -99,9 +101,34 @@ class DefaultStaffClaimsSyncClient implements StaffClaimsSyncClient {
   Future<StaffAuthorizationClaims?> syncAndRefresh() async {
     final user = _auth.currentUser;
     if (user == null) return null;
-    await _functions
-        .httpsCallable('syncOwnStaffClaims')
-        .call<Map<String, dynamic>>();
+    // The official `cloud_functions` plugin ships no native Windows desktop
+    // implementation (confirmed: absent from `windows/flutter/
+    // generated_plugin_registrant.cc`, unlike `firebase_auth`, which is
+    // present there) — `httpsCallable(...).call()` on Windows throws
+    // `[firebase_functions/unknown] Unable to establish connection on
+    // channel...`. Root-caused via this session's own `[AUTH-TRACE]`
+    // diagnostic logging (PC Yönetici İnceleme Modu, 2026-09-14).
+    //
+    // Skipped on Windows rather than caught reactively, so a genuine
+    // `syncOwnStaffClaims` failure on a platform where it DOES run (web,
+    // Android, iOS) still surfaces normally, never silently absorbed by
+    // this same branch. Relies on the claims already having been synced
+    // server-side by some other means (a dev seed script's Admin SDK
+    // write, or a prior sign-in from a platform where the callable works)
+    // — `getIdTokenResult(true)` still forces a real refresh against the
+    // Auth server itself (`firebase_auth` IS supported on Windows),
+    // returning whatever claims are already stored there. This does NOT
+    // make any other Cloud-Functions-backed screen work on Windows — every
+    // other `httpsCallable` call site in this app (resolveActorContext,
+    // order/cash/staff mutations, ...) remains equally unsupported; see
+    // this pass's own disclosure in `docs/feature_status.md`.
+    final canCallFunctions =
+        kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
+    if (canCallFunctions) {
+      await _functions
+          .httpsCallable('syncOwnStaffClaims')
+          .call<Map<String, dynamic>>();
+    }
     final tokenResult = await user.getIdTokenResult(true);
     return parseStaffAuthorizationClaims(tokenResult.claims);
   }

@@ -52,6 +52,7 @@ const DEV_ADMIN_PASSWORD = "abakus-dev-admin-2026";
 const ORGANIZATION_ID = "org-1";
 
 const app = admin.initializeApp({ projectId: PROJECT_ID });
+const db = admin.firestore();
 
 async function callCallable(url, data, idToken) {
   const response = await fetch(url, {
@@ -97,11 +98,46 @@ async function main() {
   const { idToken, uid, created } = await signUpOrSignInWithEmail(DEV_ADMIN_EMAIL, DEV_ADMIN_PASSWORD);
   console.log(`[seed_dev_staff] Firebase Auth account: ${created ? "created" : "already existed (signed in)"} (uid=${uid})`);
 
+  const membershipId = `${ORGANIZATION_ID}_${uid}`;
   const bootstrap = await callCallable(BOOTSTRAP_URL, { organizationId: ORGANIZATION_ID }, idToken);
   if (bootstrap.httpStatus === 200) {
-    console.log(`[seed_dev_staff] memberships/${ORGANIZATION_ID}_${uid}: bootstrapped as admin.`);
+    console.log(`[seed_dev_staff] memberships/${membershipId}: bootstrapped as admin.`);
   } else if (bootstrap.body?.error?.status === "FAILED_PRECONDITION") {
-    console.log(`[seed_dev_staff] organization "${ORGANIZATION_ID}" already has a membership — skipping bootstrap (already seeded).`);
+    // `bootstrapFirstAdminAccount`'s FAILED_PRECONDITION only means org-1
+    // has SOME membership — not necessarily one for THIS uid. If the Auth
+    // emulator ever re-created `admin@abakus.dev` under a new uid (e.g. a
+    // restart without `--import` while an old org-1 membership document
+    // survived), this account would otherwise be silently left with no
+    // matching membership at all: `syncOwnStaffClaims` legitimately derives
+    // empty claims for a uid Firestore has never heard of, and every
+    // manageReservations/manageBranch/manageStaffAccounts-gated call then
+    // fails `permission-denied` even though sign-in itself "succeeds."
+    // Root-caused via [AUTH-TRACE] diagnostic logging (PC Yönetici
+    // İnceleme Modu, 2026-09-14) — reproduced exactly by this mismatch.
+    const existingForThisUid = await db.doc(`memberships/${membershipId}`).get();
+    if (existingForThisUid.exists) {
+      console.log(
+        `[seed_dev_staff] memberships/${membershipId}: already exists for this uid — skipping bootstrap (already seeded).`,
+      );
+    } else {
+      console.log(
+        `[seed_dev_staff] organization "${ORGANIZATION_ID}" has a membership, but none for the current uid "${uid}" — ` +
+          "stale/mismatched Auth-emulator state detected. Self-healing: writing a fresh admin membership for this uid " +
+          "directly (mirrors seed_dev_pos_showcase.mjs's own established direct-Firestore-write precedent for exactly " +
+          "this class of dev-only fixture creation — bootstrapFirstAdminAccount's own callable cannot be reused here, " +
+          "since its whole point is refusing to run a second time for an org that already has staff).",
+      );
+      await db.doc(`memberships/${membershipId}`).set({
+        organizationId: ORGANIZATION_ID,
+        uid,
+        roles: ["admin"],
+        branchAccess: [],
+        restaurantAccess: [],
+        status: "active",
+        version: 1,
+      });
+      console.log(`[seed_dev_staff] memberships/${membershipId}: created directly (self-heal).`);
+    }
   } else {
     throw new Error(`[seed_dev_staff] bootstrapFirstAdminAccount failed: ${JSON.stringify(bootstrap.body)}`);
   }
@@ -111,6 +147,22 @@ async function main() {
     throw new Error(`[seed_dev_staff] syncOwnStaffClaims failed: ${JSON.stringify(sync.body)}`);
   }
   console.log("[seed_dev_staff] custom claims synced.");
+
+  // Never declare success on faith — verify the claims this script's own
+  // entire purpose depends on actually landed, so a future mismatch of
+  // this same shape fails loudly here instead of surfacing later as a
+  // confusing "invalid credential" inside the Flutter app.
+  const userRecord = await admin.auth().getUser(uid);
+  const rolesForOrg = userRecord.customClaims?.roles?.[ORGANIZATION_ID] ?? [];
+  if (!rolesForOrg.includes("admin")) {
+    throw new Error(
+      `[seed_dev_staff] verification failed: uid "${uid}" has no "admin" role claim for ` +
+        `"${ORGANIZATION_ID}" after syncing (got roles=${JSON.stringify(rolesForOrg)}). ` +
+        "The membership write above did not take effect as expected — inspect the Firestore " +
+        `emulator's memberships/${membershipId} document directly.`,
+    );
+  }
+  console.log(`[seed_dev_staff] verified: uid "${uid}" holds "admin" for "${ORGANIZATION_ID}".`);
 
   console.log(
     `[seed_dev_staff] done. Sign in to the admin app with email="${DEV_ADMIN_EMAIL}" password="${DEV_ADMIN_PASSWORD}" ` +

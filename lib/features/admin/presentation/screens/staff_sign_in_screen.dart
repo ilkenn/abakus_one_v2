@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/config/app_environment_config.dart';
 import '../../../../core/services/auth/email_password_auth_client.dart';
+import '../../../../core/services/logging/log_level.dart';
+import '../../../../core/services/logging/logging_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -84,6 +86,14 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
 
   Future<void> _signIn({String? initialAdminNavItemId}) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    // Temporary diagnostic tracing (PC Yönetici İnceleme Modu — Chrome
+    // latency report, 2026-09-11) — see `FirebaseStaffAuthRepository`'s own
+    // `_logging` doc comment for why this goes through `LoggingService`
+    // rather than a raw print. Remove once the latency question this was
+    // added to answer is settled.
+    final logging = ref.read(loggingServiceProvider);
+    final overallWatch = Stopwatch()..start();
+    logging.log(LogLevel.debug, '[AUTH-TRACE] _signIn: start');
     setState(() {
       _busy = true;
       _error = null;
@@ -98,9 +108,20 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
       // removes that ambiguity structurally rather than racing it.
       // Best-effort: a failed sign-out must never block the sign-in
       // attempt that follows it.
+      final signOutWatch = Stopwatch()..start();
+      logging.log(LogLevel.debug, '[AUTH-TRACE] signOut: start');
       try {
         await ref.read(staffSessionControllerProvider).signOut();
-      } catch (_) {
+        logging.log(LogLevel.debug,
+            '[AUTH-TRACE] signOut: end (${signOutWatch.elapsedMilliseconds}ms)');
+      } catch (e, st) {
+        logging.log(
+          LogLevel.error,
+          '[AUTH-TRACE] signOut: failed, ignored '
+          '(${signOutWatch.elapsedMilliseconds}ms)',
+          error: e,
+          stackTrace: st,
+        );
         // Swallowed deliberately — see comment above.
       }
 
@@ -108,11 +129,25 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
             email: _emailController.text.trim(),
             password: _passwordController.text,
           );
-    } on StaffAuthUnavailableException catch (e) {
+    } on StaffAuthUnavailableException catch (e, st) {
+      logging.log(
+        LogLevel.error,
+        '[AUTH-TRACE] _signIn: StaffAuthUnavailableException '
+        '(${overallWatch.elapsedMilliseconds}ms)',
+        error: e,
+        stackTrace: st,
+      );
       if (!mounted) return;
       setState(() => _error = e.message);
       return;
-    } catch (e) {
+    } catch (e, st) {
+      logging.log(
+        LogLevel.error,
+        '[AUTH-TRACE] _signIn: unexpected exception '
+        '(${overallWatch.elapsedMilliseconds}ms)',
+        error: e,
+        stackTrace: st,
+      );
       if (!mounted) return;
       setState(() => _error = 'Beklenmeyen bir sorun oluştu — tekrar deneyin.');
       return;
@@ -120,10 +155,18 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
       if (mounted) setState(() => _busy = false);
     }
     if (!success) {
+      logging.log(LogLevel.debug,
+          '[AUTH-TRACE] _signIn: signIn() returned false — invalid credential '
+          '(${overallWatch.elapsedMilliseconds}ms)');
       setState(() => _error = 'Giriş başarısız. Bilgilerinizi kontrol edin.');
       return;
     }
     if (!mounted) return;
+    logging.log(LogLevel.debug,
+        '[AUTH-TRACE] _signIn: success (${overallWatch.elapsedMilliseconds}ms) '
+        '— Navigating to AdminShellScreen');
+    logging.log(
+        LogLevel.debug, '[AUTH-TRACE] Navigating to AdminShellScreen');
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) =>

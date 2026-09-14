@@ -2,6 +2,9 @@ import 'dart:async';
 
 import '../../../core/services/auth/email_password_auth_client.dart';
 import '../../../core/services/auth/staff_claims_sync_client.dart';
+import '../../../core/services/logging/log_level.dart';
+import '../../../core/services/logging/logging_provider.dart';
+import '../../../core/services/logging/logging_service.dart';
 import '../../pos/domain/authorization/actor_session.dart';
 import '../domain/staff/staff_member.dart';
 import '../domain/staff/staff_member_status.dart';
@@ -190,12 +193,14 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     required StaffClaimsSyncClient claimsSyncClient,
     required String Function() organizationId,
     Duration networkTimeout = staffAuthNetworkTimeout,
+    LoggingService? logging,
   })  : _authClient = authClient,
         _staffMemberRepository = staffMemberRepository,
         _sessionDuration = sessionDuration,
         _claimsSyncClient = claimsSyncClient,
         _organizationId = organizationId,
-        _networkTimeout = networkTimeout;
+        _networkTimeout = networkTimeout,
+        _logging = logging ?? defaultLoggingService();
 
   final EmailPasswordAuthClient _authClient;
   final StaffMemberRepository _staffMemberRepository;
@@ -203,6 +208,19 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
   final Duration Function() _sessionDuration;
   final StaffClaimsSyncClient _claimsSyncClient;
   final String Function() _organizationId;
+
+  /// **Temporary diagnostic tracing** (PC Yönetici İnceleme Modu — Chrome
+  /// latency report, 2026-09-11): logs a start/end timestamp pair around
+  /// each network-dependent step of [signIn] under the `[AUTH-TRACE]` tag,
+  /// so a real, measured per-step duration is visible in the console
+  /// instead of inferred. Routed through [LoggingService] (never a raw
+  /// `print`/`debugPrint`) specifically so [LogRedactor] still sanitizes
+  /// anything step-identifying that gets interpolated — the trace messages
+  /// themselves never carry the email/password/token values. `debug`-level
+  /// and silent in release builds ([defaultLoggingService]'s own
+  /// [kReleaseMode] gate) — remove once the latency question this was
+  /// added to answer is settled.
+  final LoggingService _logging;
 
   // Faz R.3A.2 — the backend's own real authorization
   // (`manageReservations`/`manageBranch`/etc.) is derived entirely from
@@ -237,13 +255,29 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     required String password,
   }) async {
     final EmailPasswordAuthResult result;
+    final signInWatch = Stopwatch()..start();
+    _logging.log(LogLevel.debug, '[AUTH-TRACE] signIn: start');
     try {
       result = await _authClient
           .signIn(email: email, password: password)
           .timeout(_networkTimeout);
-    } on EmailPasswordAuthClientException {
+      _logging.log(LogLevel.debug,
+          '[AUTH-TRACE] signIn: end (${signInWatch.elapsedMilliseconds}ms)');
+    } on EmailPasswordAuthClientException catch (e, st) {
+      _logging.log(
+        LogLevel.error,
+        '[AUTH-TRACE] signIn: rejected (${signInWatch.elapsedMilliseconds}ms)',
+        error: e,
+        stackTrace: st,
+      );
       return null;
-    } on TimeoutException {
+    } on TimeoutException catch (e, st) {
+      _logging.log(
+        LogLevel.error,
+        '[AUTH-TRACE] signIn: timeout (${signInWatch.elapsedMilliseconds}ms)',
+        error: e,
+        stackTrace: st,
+      );
       throw const StaffAuthUnavailableException(
         'Giriş isteği zaman aşımına uğradı — bağlantınızı kontrol edip '
         'tekrar deneyin.',
@@ -251,15 +285,41 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     }
 
     final StaffAuthorizationClaims? claims;
+    final syncWatch = Stopwatch()..start();
+    _logging.log(LogLevel.debug, '[AUTH-TRACE] syncAndRefresh: start');
     try {
       claims =
           await _claimsSyncClient.syncAndRefresh().timeout(_networkTimeout);
-    } on TimeoutException {
+      _logging.log(LogLevel.debug,
+          '[AUTH-TRACE] syncAndRefresh: end (${syncWatch.elapsedMilliseconds}ms)');
+    } on TimeoutException catch (e, st) {
+      _logging.log(
+        LogLevel.error,
+        '[AUTH-TRACE] syncAndRefresh: timeout (${syncWatch.elapsedMilliseconds}ms)',
+        error: e,
+        stackTrace: st,
+      );
       throw const StaffAuthUnavailableException(
         'Yetki bilgileri alınamadı (zaman aşımı) — tekrar deneyin.',
       );
     }
-    if (claims == null) return null; // no Firebase user actually signed in
+    if (claims == null) {
+      _logging.log(LogLevel.debug,
+          '[AUTH-TRACE] syncAndRefresh: no Firebase user actually signed in');
+      return null;
+    }
+    // Role-name/org-id strings only — never a token, email, or password —
+    // so this is safe to print. Pinpoints whether an "invalid credential"
+    // result traces back to genuinely empty claims for this organization
+    // (e.g. an Auth-emulator/Firestore-emulator data mismatch across
+    // restarts leaving no matching `memberships` doc for this uid) versus
+    // something else further down `signIn`.
+    _logging.log(
+      LogLevel.debug,
+      '[AUTH-TRACE] syncAndRefresh: claims for org=${_organizationId()} -> '
+      'organizationAccess=${claims.organizationAccess}, '
+      'roles=${claims.rolesFor(_organizationId())}',
+    );
 
     // Profile/display metadata only — see the class-level note above. A
     // failed/unavailable/slow directory lookup must never deny or hang a
@@ -267,11 +327,22 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     // timeout so a hanging query degrades to "no metadata" rather than an
     // indefinite wait.
     StaffMember? member;
+    final lookupWatch = Stopwatch()..start();
+    _logging.log(LogLevel.debug, '[AUTH-TRACE] staff-member lookup: start');
     try {
       member = await _staffMemberRepository
           .findByAuthUid(result.uid)
           .timeout(_networkTimeout);
-    } catch (_) {
+      _logging.log(LogLevel.debug,
+          '[AUTH-TRACE] staff-member lookup: end (${lookupWatch.elapsedMilliseconds}ms)');
+    } catch (e, st) {
+      _logging.log(
+        LogLevel.error,
+        '[AUTH-TRACE] staff-member lookup: failed, ignored — metadata-only '
+        '(${lookupWatch.elapsedMilliseconds}ms)',
+        error: e,
+        stackTrace: st,
+      );
       member = null;
     }
 

@@ -6780,3 +6780,181 @@ touched this pass.
 New/changed files: `lib/core/notifications/fcm_registration_service.dart`,
 `lib/features/admin/presentation/screens/staff_sign_in_screen.dart`,
 `test/features/admin/presentation/screens/staff_sign_in_screen_test.dart`, `docs/feature_status.md`.
+
+## PC Yönetici İnceleme Modu — Auth-Latency Investigation + Temporary [AUTH-TRACE] Logging (2026-09-11)
+
+A follow-up asked to bypass claims/sync delays entirely with a static, fully in-memory `ActorSession`
+that never calls Firebase Auth (hardcoded `admin@abakus.local`/`123456`, `kDebugMode`-only gate). Raised
+as a Decision Review before writing code: the fabricated session would have no real Firebase ID token
+behind it, so every real Firestore/Cloud Functions call the POS/KDS/Kasa screens actually make would
+either fail `permission-denied` or run under a stale leftover identity — reopening the exact
+cross-session bug the previous pass just closed — and it reintroduces the same client-side-authorization
+anti-pattern this session already declined once (the earlier "Admin Bypass" request). User chose the
+real-flow-plus-investigation alternative.
+
+**Investigation (before any code change)**: traced every network-dependent step of sign-in →
+`AdminShellScreen` for an actual artificial delay. `FirebaseStaffAuthRepository.signIn`'s 3 steps
+(sign-in, `syncAndRefresh`, staff-member lookup — `staff_auth_repository.dart`) are each already
+individually timeout-guarded (`staffAuthNetworkTimeout`, 20s) with no polling/sleep. `syncOwnStaffClaims`
+(`staffMembership.ts`'s `resyncClaimsForUid`) awaits `setCustomUserClaims` before returning — the
+claims are guaranteed already written before the client's `getIdTokenResult(true)` forced refresh runs,
+so there's no eventual-consistency gap to race. `AdminContextGate`'s `resolveActorContext` call
+(`admin_dependencies_provider.dart`) is a single plain `FutureProvider` fetch, no retry loop. **No
+artificial delay exists anywhere in this chain** — what reads as "delay" is the real, expected
+cumulative time of 4 sequential, necessarily-sequential emulator round trips. No fix was applied because
+none was warranted; inventing a speculative retry/backoff for a problem not demonstrated to exist was
+explicitly avoided.
+
+**What was added instead**: temporary `[AUTH-TRACE]` diagnostic logging around exactly those 4 steps
+(`signIn`, `syncAndRefresh`, `staff-member lookup`, `resolveActorContext`) plus the screen-level
+`signOut`/`_signIn` boundaries and the `Navigator.pushReplacement` call, each with a real
+`Stopwatch`-measured start/end millisecond duration and, in every catch block, the caught error +
+stack trace — so the next reproduction shows exactly which step (if any) is actually slow, in the
+console, instead of being inferred from static analysis. Routed entirely through the existing
+`LoggingService` seam (`core/services/logging/*`, P1-013) — never a raw `print`/`debugPrint` — so
+`LogRedactor`'s sanitization still applies and the trace is automatically silent in release builds
+(`defaultLoggingService()`'s existing `kReleaseMode` gate), on top of the screen's own
+`kDebugMode`/`allowsDebugTooling` gate for the dev-admin shortcut itself. Explicitly marked as temporary
+in each touched file's doc comments — intended for removal once the latency question is answered, not a
+permanent addition.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3738/3738** (unchanged from
+the previous pass — logging calls only, no behavior change). No Cloud Functions/Firestore Rules changes.
+
+New/changed files: `lib/features/admin/data/staff_auth_repository.dart`,
+`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`,
+`lib/features/admin/presentation/screens/staff_sign_in_screen.dart`, `docs/feature_status.md`.
+
+## PC Yönetici İnceleme Modu — [AUTH-TRACE] Findings + Claims-Content Diagnostic (2026-09-11)
+
+The `[AUTH-TRACE]` logging from the previous pass caught a real error:
+`StaffDirectoryException(permission-denied): manageStaffAccounts or manageStaffRoles authorization is
+required to list staff`, immediately followed by `signIn() returned false`. Two fixes were proposed —
+both were checked against the actual code before implementing, and both turned out to be no-ops that
+would not have fixed anything:
+
+- **"Add `manageStaffAccounts`/`manageStaffRoles` to `admin@abakus.dev` in `seed_dev_staff.mjs`"**:
+  this system's permission model is role-based, not per-account — there is no per-user permission list
+  anywhere to edit. `DEFAULT_STAFF_ROLE_PERMISSIONS.admin` (`staffAuthorization.ts`) already includes
+  both permissions, and the seed script already bootstraps the account with `roles: ["admin"]` via the
+  real `bootstrapFirstAdminAccount` callable. Nothing to add.
+- **"Make `staff-member lookup` failure not return `false` from `signIn()`"**: it already doesn't.
+  Re-read the exact code: the lookup's `catch` already swallows the exception and sets `member = null`;
+  the following `ActorSession.tryFromRaw(...)` only ever uses `member` as best-effort, null-safe
+  metadata — it never affects the null/non-null result. `tryFromRaw` returns `null` only when
+  `roleNames` (from `claims.rolesFor(organizationId)`) is empty. This was already true before the
+  previous pass's tracing, unchanged by it.
+
+**Real implication**: since both symptoms trace back to the same token, the common cause is almost
+certainly that the signed-in user's custom claims genuinely carry empty `roles`/`organizationAccess`
+for `org-1` at that moment — most plausibly an Auth-emulator/Firestore-emulator data mismatch across
+restarts (the Auth emulator issuing a fresh uid for `admin@abakus.dev` with no matching
+`memberships/org-1_<uid>` Firestore document left over), not a code defect in either step.
+
+**What was added instead of the two no-op changes**: one further `[AUTH-TRACE]` line in
+`staff_auth_repository.dart`, right after `syncAndRefresh()` succeeds, printing the resolved
+`organizationAccess`/`roles` for the current organization (role-name/org-id strings only — never a
+token, email, or password). This will show directly on the next reproduction whether claims are
+genuinely empty for `org-1` (confirming the theory above) or not (meaning something else is happening).
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3738/3738** (unchanged —
+one more logging call, no behavior change). No Cloud Functions/Firestore Rules changes.
+
+New/changed files: `lib/features/admin/data/staff_auth_repository.dart`, `docs/feature_status.md`.
+
+## PC Yönetici İnceleme Modu — `seed_dev_staff.mjs` Stale-Membership Self-Heal (2026-09-14)
+
+The claims-content `[AUTH-TRACE]` line confirmed the root cause directly: `roles=[]`,
+`organizationAccess=[]` for `admin@abakus.dev` on `org-1`, immediately followed by the
+`listStaffMembersForOrganization` `permission-denied` and the "invalid credential" sign-in result —
+all three explained by one real defect.
+
+**Root cause**: `bootstrapFirstAdminAccount`'s `FAILED_PRECONDITION` means "org-1 has *some*
+membership" — not "org-1 has a membership for *this* uid." `seed_dev_staff.mjs` treated the two as
+equivalent (`seed_dev_staff.mjs:100-107`, pre-fix): if the Auth-emulator account for
+`admin@abakus.dev` was ever recreated (a restart without `--import`, while an old org-1 membership
+document survived), the script silently logged "already seeded — skipping bootstrap" for a membership
+belonging to a completely different, now-orphaned uid. `syncOwnStaffClaims` then legitimately derived
+empty claims for the real, current uid, since Firestore genuinely had no membership document for it.
+Two follow-up asks did not apply as stated (checked against the real code before touching anything,
+matching this pass's own established discipline): `bootstrapFirstAdminAccount` already derives `uid`
+from the verified token server-side, never a client-supplied string (no typo/write-mismatch bug in
+that path); and this permission model is role-based, not per-account — `admin` already structurally
+carries `manageStaffAccounts`/`manageStaffRoles`, nothing to separately assign.
+
+**Fix (self-healing, per explicit approval — this reverses the script's own original "never a direct
+Firestore write" comment, deliberately, for this dev/emulator-only tool)**: on `FAILED_PRECONDITION`,
+the script now checks specifically for `memberships/{orgId}_{uid}` (the current signed-in uid). If it
+already exists, genuinely idempotent — unchanged behavior. If it doesn't (the actual failure mode
+found), the script now writes it directly via the Admin SDK — mirroring `seed_dev_pos_showcase.mjs`'s
+own already-established direct-Firestore-write precedent for dev-fixture creation (same collection,
+same doc-id convention, same document shape) — then proceeds to `syncOwnStaffClaims` as before. A new
+final verification step (`admin.auth().getUser(uid).customClaims`) confirms the `admin` role for
+`org-1` actually landed before the script declares success, so this exact failure mode can never again
+be silently mis-reported as "done."
+
+**Verification**: `node --check scripts/seed_dev_staff.mjs` — valid syntax. **No live emulator dry run
+this pass** — the local Firebase emulator was already running (port 9099/8080 conflict on
+`firebase emulators:exec`), almost certainly the user's own active Chrome-testing session; deliberately
+did not stop or share it to avoid disrupting that session. Verified instead by careful manual trace
+against `seed_dev_pos_showcase.mjs`'s already-proven-working identical write pattern and the Admin SDK
+APIs already exercised throughout `functions/src/test/*.test.ts`. No Dart files changed this pass —
+`flutter analyze`/`flutter test` not applicable; no `functions/src/*.ts`/`firestore.rules` changes
+either (only a `scripts/*.mjs` dev-tooling file, never shipped/deployed).
+
+New/changed files: `functions/scripts/seed_dev_staff.mjs`, `docs/feature_status.md`.
+
+## PC Yönetici İnceleme Modu — Windows Desktop `cloud_functions`/`firebase_messaging` Gap (2026-09-14)
+
+Root cause confirmed for the Windows-only `[firebase_functions/unknown] Unable to establish connection
+on channel: "...CloudFunctionsHostApi.call"` crash. Verified with hard evidence (not assumed):
+`windows/flutter/generated_plugin_registrant.cc` registers `firebase_auth`, `cloud_firestore`,
+`firebase_storage`, `firebase_app_check`, `firebase_remote_config` for Windows — `cloud_functions` and
+`firebase_messaging` are **entirely absent** from that file. Both plugins genuinely ship no native
+Windows desktop implementation at this pinned version (`cloud_functions: ^6.3.6`,
+`firebase_messaging: ^16.5.0`) — every `httpsCallable(...).call()` and every `firebase_messaging` API
+on Windows throws this same class of platform-channel failure.
+
+**Disclosed before implementing (this affects far more than the two requested call sites)**: this
+app's admin/POS functionality is built almost entirely on Cloud Functions callables — order
+submission, cash sessions, staff management, device registration, `resolveActorContext`, everything
+under `functions/src/*`. None of it can work on Windows with this plugin set, no matter how many
+individual call sites are guarded. Fixing this call-site-by-call-site is real but bounded scope, not a
+platform-wide fix — flagged explicitly via a Decision Review before extending past the two originally
+requested fixes.
+
+**Fixes applied** (both proactively check the platform before attempting the call, never reactively
+catch-and-guess — so a genuine failure on a platform where the call SHOULD work, e.g. web/Android/iOS,
+still surfaces normally):
+1. `DefaultStaffClaimsSyncClient.syncAndRefresh` (`staff_claims_sync_client.dart`): skips the
+   `syncOwnStaffClaims` callable on Windows, proceeding straight to `getIdTokenResult(true)` — still a
+   real forced refresh against the Auth server itself (`firebase_auth` IS supported on Windows),
+   returning whatever claims are already stored there (from a dev seed script's Admin SDK write, or a
+   prior sign-in from a working platform).
+2. `app.dart`'s `_AbakusAppState.initState`: both `FirebaseMessaging.onMessageOpenedApp.listen(...)`
+   and `getInitialMessage()` are now skipped on Windows (extended one line beyond what was asked — the
+   `onMessageOpenedApp` subscription on the line directly above `getInitialMessage()` has the identical
+   exposure and runs first, so guarding only the second line would never have been reached in a crash
+   scenario). A missed notification tap is the correct, disclosed degradation there, mirroring
+   `FcmRegistrationService`'s own established "best-effort, never disrupt the app" precedent.
+3. **Extended scope, approved via Decision Review**: `resolvedActorContextProvider`
+   (`admin_dependencies_provider.dart`) — the very next Cloud Functions call `AdminContextGate` makes
+   immediately after a successful Windows sign-in, which would otherwise crash identically one frame
+   later, defeating fix #1's purpose entirely. Skipped on Windows, falling back to a single-org/
+   single-branch entry built from the client's own existing `currentOrganizationIdProvider`/
+   `currentBranchIdProvider` default. This unblocks `AdminContextGate`'s auto-select for read-only,
+   `cloud_firestore`-backed screens only — every mutating admin/POS action remains unusable on Windows,
+   not silently "fixed."
+
+**No dedicated test for any of the three** — matches this session's already-established, disclosed
+precedent (`FirebaseFcmRegistrationService`'s earlier fix): `cloud_functions`/`firebase_messaging` are
+concrete Firebase SDK classes, not mockable through an existing seam; `staff_claims_sync_client_test.dart`
+only ever tested the pure `parseStaffAuthorizationClaims` function, never `DefaultStaffClaimsSyncClient`
+itself, unchanged by this pass.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3738/3738** (unchanged — all
+three changes are platform-branch additions with no effect on the non-Windows path the test suite
+exercises). No Cloud Functions/Firestore Rules changes.
+
+New/changed files: `lib/app.dart`, `lib/core/services/auth/staff_claims_sync_client.dart`,
+`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`, `docs/feature_status.md`.

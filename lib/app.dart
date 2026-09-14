@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'bootstrap/firebase_ready_provider.dart';
@@ -40,14 +42,30 @@ class _AbakusAppState extends ConsumerState<AbakusApp> {
     });
     _maybeRegisterDeviceToken(ref.read(authProvider));
 
-    // A push tapped while the app was already running.
-    _notificationTapSubscription =
-        FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
-    // A push tapped while the app was fully terminated — the message that
-    // actually launched this run.
-    FirebaseMessaging.instance.getInitialMessage().then((message) {
-      if (message != null) _handleNotificationTap(message);
-    });
+    // The official `firebase_messaging` plugin ships no native Windows
+    // desktop implementation (confirmed: absent from `windows/flutter/
+    // generated_plugin_registrant.cc`, unlike `firebase_auth`/
+    // `cloud_firestore`, which are present there) — both
+    // `onMessageOpenedApp` and `getInitialMessage()` go through platform
+    // channels with no handler registered on that platform, throwing the
+    // same class of `Unable to establish connection on channel` failure
+    // this session's own `[AUTH-TRACE]` investigation found for
+    // `cloud_functions` on Windows. A missed notification tap is the
+    // correct, disclosed degradation there (mirrors
+    // `FcmRegistrationService`'s own "best-effort, never disrupt the app"
+    // precedent) — never a startup crash.
+    final messagingSupported =
+        kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
+    if (messagingSupported) {
+      // A push tapped while the app was already running.
+      _notificationTapSubscription =
+          FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+      // A push tapped while the app was fully terminated — the message that
+      // actually launched this run.
+      FirebaseMessaging.instance.getInitialMessage().then((message) {
+        if (message != null) _handleNotificationTap(message);
+      });
+    }
   }
 
   void _maybeRegisterDeviceToken(AuthState authState) {

@@ -5,8 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/services/auth/email_password_auth_client.dart';
 import '../../../../core/services/auth/staff_claims_sync_client.dart';
+import '../../../../core/services/logging/log_level.dart';
+import '../../../../core/services/logging/logging_provider.dart';
 import '../../data/firebase_staff_member_repository.dart';
 import '../../../courier/presentation/providers/courier_core_dependencies_provider.dart';
+import '../../../navigation/presentation/providers/current_branch_provider.dart';
 import '../../../pos/presentation/providers/kds_dependencies_provider.dart';
 import '../../../restaurant/presentation/providers/restaurant_operations_dependencies_provider.dart';
 import '../../application/identity/admin_device_registration_id_generator.dart';
@@ -212,13 +215,63 @@ final resolvedActorContextProvider =
     FutureProvider<List<Map<String, dynamic>>>((ref) async {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
   if (!isFirebaseReady) return const [];
+
+  // The official `cloud_functions` plugin ships no native Windows desktop
+  // implementation (confirmed: absent from `windows/flutter/
+  // generated_plugin_registrant.cc`) — `resolveActorContext` would throw
+  // the same `[firebase_functions/unknown] Unable to establish connection
+  // on channel...` this session's own `[AUTH-TRACE]` investigation found
+  // for `syncOwnStaffClaims` on Windows (PC Yönetici İnceleme Modu,
+  // 2026-09-14). Skipped there, falling back to a single-org/single-branch
+  // entry built from the client's own existing
+  // `currentOrganizationIdProvider`/`currentBranchIdProvider` default —
+  // genuinely safe as UI-only routing (see those providers' own doc
+  // comment: every real backend command re-verifies this locator
+  // server-side regardless of what the client believes), and on Windows no
+  // real backend command reaches the server at all anyway, since every
+  // other `httpsCallable` in this app has the identical platform gap. This
+  // unblocks `AdminContextGate`'s auto-select for read-only,
+  // `cloud_firestore`-backed screens only — every mutating admin/POS
+  // action remains unusable on Windows (disclosed in
+  // `docs/feature_status.md`, never silently presented as "fixed").
+  final canCallFunctions =
+      kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
+  if (!canCallFunctions) {
+    return [
+      {
+        'organizationId': ref.read(currentOrganizationIdProvider),
+        'roles': const <String>[],
+        'branchIds': [ref.read(currentBranchIdProvider)],
+      },
+    ];
+  }
+
+  // Temporary diagnostic tracing (PC Yönetici İnceleme Modu — Chrome
+  // latency report, 2026-09-11) — see FirebaseStaffAuthRepository's own
+  // `_logging` doc comment for why this goes through LoggingService rather
+  // than a raw print. Remove once the latency question is settled.
+  final logging = ref.read(loggingServiceProvider);
+  final watch = Stopwatch()..start();
+  logging.log(LogLevel.debug, '[AUTH-TRACE] resolveActorContext: start');
   final callable =
       functions.FirebaseFunctions.instance.httpsCallable('resolveActorContext');
-  final result = await callable.call<Map<String, dynamic>>();
-  return List<Map<String, dynamic>>.from(
-    (result.data['organizations'] as List)
-        .map((e) => Map<String, dynamic>.from(e as Map)),
-  );
+  try {
+    final result = await callable.call<Map<String, dynamic>>();
+    logging.log(LogLevel.debug,
+        '[AUTH-TRACE] resolveActorContext: end (${watch.elapsedMilliseconds}ms)');
+    return List<Map<String, dynamic>>.from(
+      (result.data['organizations'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map)),
+    );
+  } catch (e, st) {
+    logging.log(
+      LogLevel.error,
+      '[AUTH-TRACE] resolveActorContext: failed (${watch.elapsedMilliseconds}ms)',
+      error: e,
+      stackTrace: st,
+    );
+    rethrow;
+  }
 });
 
 final restaurantRepositoryProvider = Provider<RestaurantRepository>((ref) {
