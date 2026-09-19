@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,6 +10,8 @@ import '../../../../core/services/logging/logging_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../pos/domain/authorization/actor_session.dart';
+import '../../../pos/domain/authorization/staff_role.dart';
 import '../../application/use_cases/bootstrap_first_admin_account.dart';
 import '../../data/staff_auth_repository.dart';
 import 'admin_shell_screen.dart';
@@ -67,9 +70,60 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
   static const String _devAdminEmail = 'admin@abakus.dev';
   static const String _devAdminPassword = 'abakus-dev-admin-2026';
 
+  /// Windows-only: `firebase_auth`'s Windows C++ SDK has been reported
+  /// unable to complete a forced token refresh against the Auth Emulator,
+  /// starving the real claims-derived session `_signIn` below builds (PC
+  /// Yönetici İnceleme Modu, 2026-09-20). Explicitly NOT extended to
+  /// web/Android/iOS — the real chain already works there and is left
+  /// unchanged. See `StaffSessionController.debugForceSession`'s own doc
+  /// comment for the one thing this shortcut does NOT fix: a role/branch-
+  /// gated Firestore read still evaluates the real (possibly empty) ID
+  /// token claims, not this fabricated local session.
+  static bool get _windowsClaimsBypassNeeded =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
   Future<void> _signInAsDevAdmin() async {
     _emailController.text = _devAdminEmail;
     _passwordController.text = _devAdminPassword;
+
+    if (_windowsClaimsBypassNeeded) {
+      // Best-effort real credential-only sign-in (no claims sync involved —
+      // that's the broken part) so `FirebaseAuth.currentUser` is genuinely
+      // populated where possible, matching `_bootstrapFirstAdmin`'s own
+      // established use of this same client below. Never blocks
+      // navigation on failure — the user's own explicit instruction for
+      // this shortcut (PC Yönetici İnceleme Modu, 2026-09-20).
+      String actorId = 'dev-admin-uid';
+      try {
+        final result = await DefaultEmailPasswordAuthClient().signIn(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+        );
+        actorId = result.uid;
+      } catch (_) {
+        // Swallowed deliberately — see comment above.
+      }
+      ref.read(staffSessionControllerProvider).debugForceSession(
+            ActorSession(
+              actorId: actorId,
+              roles: const {StaffRole.admin},
+              activeRole: StaffRole.admin,
+              branchAccess: const {'branch-1'},
+              organizationAccess: const {'org-1'},
+              activeBranchId: 'branch-1',
+              issuedAt: DateTime.now(),
+              expiresAt: DateTime.now().add(const Duration(hours: 12)),
+            ),
+          );
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => const AdminShellScreen(initialNavItemId: 'pos'),
+        ),
+      );
+      return;
+    }
+
     // Lands directly on the POS branch overview — see AdminShellScreen's
     // own doc comment on `initialNavItemId`. Only this dev shortcut ever
     // passes a value; a real staff/manager/admin sign-in below keeps the

@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+
 import '../../../core/services/auth/email_password_auth_client.dart';
 import '../../../core/services/auth/staff_claims_sync_client.dart';
 import '../../../core/services/logging/log_level.dart';
@@ -335,23 +338,52 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     // indefinite wait.
     StaffMember? member;
     final lookupWatch = Stopwatch()..start();
-    _logging.log(LogLevel.debug, '[AUTH-TRACE] staff-member lookup: start');
-    try {
-      member = await _staffMemberRepository
-          .findByAuthUid(result.uid)
-          .timeout(_networkTimeout);
+    // `findByAuthUid` -> `findById` -> `findAll` calls
+    // `listStaffMembersForOrganization` via `cloud_functions`, which has no
+    // native Windows desktop implementation (same absence from
+    // `windows/flutter/generated_plugin_registrant.cc` already established
+    // for `syncOwnStaffClaims`/`resolveActorContext`) — it would always
+    // throw there. Skipped proactively rather than attempted-and-caught:
+    // the outcome is identical (`member` stays `null`, already harmless —
+    // see below), but this avoids a guaranteed-to-fail network round trip
+    // and a scary-looking but inert `ERROR`-level log line on every single
+    // Windows sign-in (PC Yönetici İnceleme Modu, 2026-09-14).
+    final canCallFunctions =
+        kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
+    if (canCallFunctions) {
+      _logging.log(LogLevel.debug, '[AUTH-TRACE] staff-member lookup: start');
+      try {
+        member = await _staffMemberRepository
+            .findByAuthUid(result.uid)
+            .timeout(_networkTimeout);
+        _logging.log(LogLevel.debug,
+            '[AUTH-TRACE] staff-member lookup: end (${lookupWatch.elapsedMilliseconds}ms)');
+      } catch (e, st) {
+        _logging.log(
+          LogLevel.error,
+          '[AUTH-TRACE] staff-member lookup: failed, ignored — metadata-only '
+          '(${lookupWatch.elapsedMilliseconds}ms)',
+          error: e,
+          stackTrace: st,
+        );
+        member = null;
+      }
+    } else {
       _logging.log(LogLevel.debug,
-          '[AUTH-TRACE] staff-member lookup: end (${lookupWatch.elapsedMilliseconds}ms)');
-    } catch (e, st) {
-      _logging.log(
-        LogLevel.error,
-        '[AUTH-TRACE] staff-member lookup: failed, ignored — metadata-only '
-        '(${lookupWatch.elapsedMilliseconds}ms)',
-        error: e,
-        stackTrace: st,
-      );
-      member = null;
+          '[AUTH-TRACE] staff-member lookup: skipped on Windows (cloud_functions unsupported)');
     }
+    // `member` staying `null` here is ALREADY harmless to this method's
+    // result, on every platform — it only ever feeds `actorId`/
+    // `restaurantAccessIds` below as best-effort, null-safe metadata, never
+    // the role/authorization decision (that's `claims`, from `syncAndRefresh`
+    // above, derived from real custom claims regardless of this step).
+    // `ActorSession.tryFromRaw` returns `null` only when `roleNames` is
+    // empty — if `signIn()` is still returning `false` on Windows after
+    // this pass, check the `[AUTH-TRACE] syncAndRefresh: claims for
+    // org=...` line logged just above this block: an empty `roles=[]`
+    // there means the account's real custom claims don't carry the
+    // expected role yet (e.g. `seed_dev_staff.mjs` needs a re-run against
+    // the currently running emulator), not a bug in this lookup step.
 
     final now = DateTime.now();
     return ActorSession.tryFromRaw(

@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../pos/domain/authorization/actor_session.dart';
 import '../../../pos/domain/authorization/staff_role.dart';
 import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../data/staff_auth_repository.dart';
@@ -30,6 +32,25 @@ class StaffSessionController {
   Future<void> signOut() async {
     await _authRepository.signOut();
     _ref.read(actorSessionProvider.notifier).state = null;
+  }
+
+  /// **Debug-only escape hatch — PC Yönetici İnceleme Modu, 2026-09-20.**
+  /// Injects [session] directly, bypassing [StaffAuthRepository] entirely
+  /// (no real credential check, no real claims derivation). Added
+  /// specifically for Windows desktop's "Dev Admin ile Gir" shortcut,
+  /// where `firebase_auth`'s Windows C++ SDK has been reported unable to
+  /// complete a forced token refresh against the Auth Emulator. Kept as a
+  /// method on this controller (never a raw `actorSessionProvider` write
+  /// from a screen) so "the one place session state is ever written"
+  /// stays true even for this shortcut — but it is still fundamentally a
+  /// bypass: `firestore.rules`'s `hasRole`/`hasBranchAccess` evaluate the
+  /// REAL signed-in user's ID token custom claims, never this fabricated
+  /// local state, so a role/branch-gated Firestore read can still be
+  /// denied after this call succeeds. Asserts in debug mode if ever
+  /// reached in a release build — this must never ship reachable.
+  void debugForceSession(ActorSession session) {
+    assert(kDebugMode, 'debugForceSession must never be called outside kDebugMode.');
+    _ref.read(actorSessionProvider.notifier).state = session;
   }
 
   /// Re-validates the current session against its underlying
