@@ -1,4 +1,10 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+
+import '../../../bootstrap/app_environment.dart';
+import '../../../bootstrap/firebase_functions_emulator_config.dart';
+import '../../../core/services/functions/rest_callable_client.dart';
 
 /// The real, device-gated read boundary onto `functions/src
 /// /posOperationalView.ts` — AP-3 continuation (`docs/decisions.md`
@@ -243,13 +249,53 @@ abstract interface class PosOperationalViewGateway {
 }
 
 class FirebasePosOperationalViewGateway implements PosOperationalViewGateway {
-  const FirebasePosOperationalViewGateway();
+  FirebasePosOperationalViewGateway({RestCallableClient? restClient})
+      : _restClient = restClient ?? RestCallableClient();
+
+  final RestCallableClient _restClient;
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
     throw PosOperationalViewException(
       error.code,
       error.message ?? 'İşlem gerçekleştirilemedi.',
     );
+  }
+
+  /// The official `cloud_functions` plugin ships no native Windows desktop
+  /// implementation at all (confirmed absent from `windows/flutter/
+  /// generated_plugin_registrant.cc`) — every `httpsCallable(...).call()`
+  /// on Windows throws `[firebase_functions/unknown] Unable to establish
+  /// connection on channel...`. Unlike this session's earlier Windows
+  /// fixes (skip the call, fall back to a safe default), these two
+  /// callables have no such fallback — there is no non-callable source
+  /// for real table data — so on Windows-plus-local-emulator specifically,
+  /// this routes through [RestCallableClient] instead: the same real
+  /// backend, reached via plain HTTP rather than the broken native plugin
+  /// (PC Yönetici İnceleme Modu, 2026-09-20). Every other platform, and
+  /// Windows against a real deployed project, takes the exact same
+  /// `cloud_functions` path as before — byte-for-byte unchanged.
+  Future<Map<String, dynamic>> _call(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    final useRest = !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.windows &&
+        FirebaseFunctionsEmulatorConfig.shouldUseEmulator(
+            AppEnvironment.current);
+    if (useRest) {
+      try {
+        return await _restClient.call(name, data);
+      } on RestCallableException catch (error) {
+        throw PosOperationalViewException(error.code, error.message);
+      }
+    }
+    final callable = functions.FirebaseFunctions.instance.httpsCallable(name);
+    try {
+      final result = await callable.call<Map<String, dynamic>>(data);
+      return result.data;
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
   }
 
   @override
@@ -261,36 +307,27 @@ class FirebasePosOperationalViewGateway implements PosOperationalViewGateway {
     String? cursor,
     String? ifNoneMatchVersion,
   }) async {
-    final callable = functions.FirebaseFunctions.instance.httpsCallable(
-      'getPosBranchTableOverview',
+    final data = await _call('getPosBranchTableOverview', {
+      'organizationId': organizationId,
+      'branchId': branchId,
+      'deviceId': deviceId,
+      'deviceSessionId': deviceSessionId,
+      if (cursor != null) 'cursor': cursor,
+      if (ifNoneMatchVersion != null) 'ifNoneMatchVersion': ifNoneMatchVersion,
+    });
+    final unchanged = data['unchanged'] as bool;
+    return PosBranchOverviewPage(
+      tables: unchanged
+          ? const []
+          : [
+              for (final raw in (data['tables'] as List))
+                PosBranchTableSummary.fromWire(
+                    Map<String, dynamic>.from(raw as Map)),
+            ],
+      nextCursor: data['nextCursor'] as String?,
+      version: data['version'] as String,
+      unchanged: unchanged,
     );
-    try {
-      final result = await callable.call<Map<String, dynamic>>({
-        'organizationId': organizationId,
-        'branchId': branchId,
-        'deviceId': deviceId,
-        'deviceSessionId': deviceSessionId,
-        if (cursor != null) 'cursor': cursor,
-        if (ifNoneMatchVersion != null)
-          'ifNoneMatchVersion': ifNoneMatchVersion,
-      });
-      final data = result.data;
-      final unchanged = data['unchanged'] as bool;
-      return PosBranchOverviewPage(
-        tables: unchanged
-            ? const []
-            : [
-                for (final raw in (data['tables'] as List))
-                  PosBranchTableSummary.fromWire(
-                      Map<String, dynamic>.from(raw as Map)),
-              ],
-        nextCursor: data['nextCursor'] as String?,
-        version: data['version'] as String,
-        unchanged: unchanged,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
   }
 
   @override
@@ -301,21 +338,14 @@ class FirebasePosOperationalViewGateway implements PosOperationalViewGateway {
     required String deviceId,
     required String deviceSessionId,
   }) async {
-    final callable = functions.FirebaseFunctions.instance.httpsCallable(
-      'getPosTableOperationalView',
-    );
-    try {
-      final result = await callable.call<Map<String, dynamic>>({
-        'organizationId': organizationId,
-        'branchId': branchId,
-        'tableId': tableId,
-        'deviceId': deviceId,
-        'deviceSessionId': deviceSessionId,
-      });
-      return PosTableOperationalView.fromWire(result.data);
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('getPosTableOperationalView', {
+      'organizationId': organizationId,
+      'branchId': branchId,
+      'tableId': tableId,
+      'deviceId': deviceId,
+      'deviceSessionId': deviceSessionId,
+    });
+    return PosTableOperationalView.fromWire(data);
   }
 }
 

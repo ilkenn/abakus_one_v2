@@ -7091,3 +7091,292 @@ not reported). No Cloud Functions/Firestore Rules changes.
 
 New/changed files: `lib/features/admin/presentation/providers/staff_session_controller.dart`,
 `lib/features/admin/presentation/screens/staff_sign_in_screen.dart`, `docs/feature_status.md`.
+
+## Windows Dev: REST-Based Cloud Functions Bridge for POS Masalar + Trusted Device (2026-09-20)
+
+Every prior Windows fix this session *skipped* a broken `httpsCallable` and fell back to something safe
+(cached claims, client-side defaults). That approach hit a hard limit at POS "Masalar": its real data
+(`getPosBranchTableOverview`/`getPosTableOperationalView`) has no Firestore-read equivalent to fall back
+to, and both callables require a real, server-verified trusted device session
+(`requestDeviceRegistration`/`requestDeviceChallenge`/`issueDeviceSession`) — also broken on Windows,
+which is what was actually gating the screen behind `TrustedDeviceStatusScreen` (confirmed in the prior
+round: not "Demo Modu"). Approved as an architecture change (CLAUDE.md §15) — full plan in this
+session's history — and implemented as planned:
+
+**A. `lib/core/services/functions/rest_callable_client.dart` (new)**: `RestCallableClient` calls a Cloud
+Functions callable via plain HTTP (`http`, already a dependency), speaking the exact protocol
+`functions/scripts/*.mjs`'s own `callCallable` helper already uses successfully — `POST
+<host>:<port>/<projectId>/us-central1/<name>` with `Authorization: Bearer <idToken>` and
+`{"data": {...}}`, parsing `{"result": {...}}`/`{"error": {...}}`. Project id defaults to
+`AppEnvironmentConfig.current.firebaseProjectId` (`abakus-one-dev`, matching a `firebase
+emulators:start --project abakus-one-dev`-style invocation — **not** `.firebaserc`'s bare default
+`demo-abakus-one-emulator`, which the Node seed scripts fall back to standalone), overridable via
+`--dart-define=FUNCTIONS_EMULATOR_PROJECT_ID=...`. The ID-token fetch is an injectable callback, not a
+`FirebaseAuth` instance directly — keeps the whole class unit-testable with zero real `firebase_auth`
+SDK involvement (8 new tests, `test/core/services/functions/rest_callable_client_test.dart`).
+
+**B/C. Gateway wiring**: `FirebasePosOperationalViewGateway`
+(`pos_operational_view_gateway.dart`) and `FirebaseTrustedDeviceSessionGateway`
+(`trusted_device_session_gateway.dart`) each gained a private `_call(name, data)` helper that routes
+through `RestCallableClient` only when `!kIsWeb && defaultTargetPlatform == TargetPlatform.windows &&
+FirebaseFunctionsEmulatorConfig.shouldUseEmulator(AppEnvironment.current)` — every other platform, and
+Windows against a real deployed project, takes the exact same `cloud_functions` path as before,
+byte-for-byte. Both classes' constructors changed from `const` to a real constructor (to hold the new
+`RestCallableClient` field) — the two call sites still using `const FirebasePosOperationalViewGateway()`
+(`integration_test/pos_cash_full_payment_e2e_test.dart`,
+`integration_test/pos_partial_refund_e2e_test.dart`) and the two provider call sites
+(`pos_workspace_providers.dart`, `trusted_device_session_providers.dart`) were updated to match — caught
+by `flutter analyze`, not missed.
+
+**D. `functions/scripts/approve_pending_dev_admin_device.mjs` (new)**: the device-registration
+self-approval block (`remoteApproval.ts`: `requestedByActorUid === request.auth.uid` throws
+`permission-denied`, unconditional, even for `admin`) is a real security boundary and was **not**
+bypassed. This script creates a fresh ephemeral approver account (mirrors `seed_dev_pos_showcase.mjs`'s
+own `seedApproverManager` pattern — real `assignStaffRole`/`grantStaffBranchAccess` callables, never a
+direct Firestore role write; that script's own approver is anonymous and not reusable across runs, so
+this one makes its own each time), queries `remoteApprovalRequests` directly (Admin SDK) for the dev
+admin's own pending `deviceActivation` request, and approves it. **Unlike every other `seed_dev_*.mjs`
+script, this one does not run under `firebase emulators:exec`** — it must connect to the SAME
+already-running emulator the Windows app itself is using, not a fresh empty one; new npm script
+`approve:dev-admin-device` sets `FIRESTORE_EMULATOR_HOST`/`FIREBASE_AUTH_EMULATOR_HOST` inline instead.
+Developer flow: tap "cihaz kaydet" in the app → run `npm run approve:dev-admin-device` once → the app's
+existing Firestore status stream (`_watchDeviceStatus`, already Windows-compatible) observes the
+now-active device and `TrustedDeviceSessionController`'s existing `activateOrRefresh()` logic completes
+the session via the same REST-bridged challenge/issue calls — no changes needed to that controller.
+
+**Disclosed assumptions/limitations**:
+- The new npm script's inline `VAR=value` env-var syntax assumes a POSIX-style shell (Git Bash, as used
+  throughout this session) runs `npm run` scripts — if the real day-to-day invocation uses Windows
+  `cmd.exe` instead, that line needs adjusting (e.g. a `cross-env` dependency, not added here without
+  that being confirmed necessary).
+- Every other `httpsCallable` site outside these 5 (77 total in `lib/`) remains unsupported on
+  Windows — KDS mutations, reservations, payments, cash-register mutations, etc. KDS *listing* was
+  confirmed already working on Windows today (`firestore_kitchen_work_item_repository.dart`/
+  `firestore_kitchen_ticket_repository.dart` read Firestore directly, not via a callable) — no change
+  was needed there.
+- This bridge only ever activates under `AppEnvironment.development` + the local emulator — never a
+  real deployed project; Windows isn't a shipped production target per the PRD.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3746/3746** (3738 + 8 new
+`RestCallableClient` tests). The new Node script was syntax-checked (`node --check`) but not dry-run
+against a live emulator — the user's own emulator was left untouched throughout, same restraint applied
+every other time this session. No Cloud Functions/Firestore Rules source changes (the new script calls
+only real, already-deployed callables).
+
+New/changed files: `lib/core/services/functions/rest_callable_client.dart` (new),
+`test/core/services/functions/rest_callable_client_test.dart` (new),
+`lib/features/pos/data/pos_operational_view_gateway.dart`,
+`lib/features/pos/presentation/providers/pos_workspace_providers.dart`,
+`lib/features/admin/data/trusted_device_session_gateway.dart`,
+`lib/features/admin/presentation/providers/trusted_device_session_providers.dart`,
+`integration_test/pos_cash_full_payment_e2e_test.dart`,
+`integration_test/pos_partial_refund_e2e_test.dart`,
+`functions/scripts/approve_pending_dev_admin_device.mjs` (new), `functions/package.json`,
+`docs/feature_status.md`.
+
+## Windows: `syncOwnStaffClaims` via REST + Fabricated Dev-Admin Session Retired (2026-09-20)
+
+Reported after the REST bridge landed: `requestDeviceRegistration` returned a real 403
+("authorization is required for this organization") from the server. Investigated instead of
+implementing the requested fix (a fabricated `posDeviceContextProvider` returning fixed
+`deviceId`/`deviceSessionId` strings) — that would not have worked: `getPosBranchTableOverview`'s
+server-side `requireActiveDeviceSession` check verifies those ids against a real
+`trustedDeviceRegistrations` document; literal placeholder strings correspond to no real record, so the
+403 would just move one callable over, not resolve.
+
+**Real root cause**: the Windows dev-admin shortcut added two rounds ago (`debugForceSession`, a
+fabricated `ActorSession`) bypassed `_signIn()` entirely — meaning `syncOwnStaffClaims` was never called
+for that flow at all. The real Firebase ID token backing every subsequent `RestCallableClient` call
+therefore genuinely had empty `organizationAccess`/`roles` claims, which `requireStaffPermission`
+correctly denied. Not a token-refresh capability problem — a claims-were-never-synced problem.
+
+**Fix**: `DefaultStaffClaimsSyncClient.syncAndRefresh` (`staff_claims_sync_client.dart`) now routes
+`syncOwnStaffClaims` through `RestCallableClient` on Windows-plus-local-emulator, instead of skipping it
+as the prior round did — the same real callable, reached over the now-proven HTTP bridge. This makes the
+real `_signIn()` chain viable end-to-end on Windows, so the fabricated-session shortcut is no longer
+needed: `StaffSignInScreen._signInAsDevAdmin`'s Windows-only branch and
+`StaffSessionController.debugForceSession` (both added 2026-09-20, never committed) were removed —
+Windows dev-admin sign-in now goes through the same real, claims-derived path as every other platform.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3746/3746** (unchanged — a
+Windows-only behavior change; `defaultTargetPlatform` stays non-Windows under `flutter test` regardless
+of host OS, relied on throughout this session). No Cloud Functions/Firestore Rules changes.
+
+New/changed files: `lib/core/services/auth/staff_claims_sync_client.dart`,
+`lib/features/admin/presentation/screens/staff_sign_in_screen.dart`,
+`lib/features/admin/presentation/providers/staff_session_controller.dart`, `docs/feature_status.md`.
+
+## Windows: `remintToken` Replaces Reliance on the Force-Refresh Flag (2026-09-21)
+
+Reported after re-running the (now self-healing) `seed_dev_staff.mjs`: its own final check confirmed
+`admin@abakus.dev`'s real server-side claims were correct, yet Windows `[AUTH-TRACE]` still showed
+`roles=[]`. Three fixes were requested — re-adding `debugForceSession`, having `RestCallableClient`
+accept an unauthenticated/fake `Authorization: Bearer dev-admin-token` header, and a fixed fake
+`PosDeviceContext` in `posDeviceContextProvider` — none were implemented. The first and third repeat
+the exact fabrication pattern already proven this session to fail one call further downstream (a
+locally-fabricated value is still checked against real server state by
+`requireStaffPermission`/`requireActiveDeviceSession`); the second is not a design choice to weigh, it
+is not achievable at all — Cloud Functions' callable auth verifies a real, cryptographically signed ID
+token before a request ever reaches application code, so no client-supplied header string can satisfy
+it.
+
+**Actual mechanism, confirmed via the server-claims-correct-but-client-still-empty evidence**: the
+existing `allowCachedTokenFallback` safety net (added 2026-09-14 for the case where
+`getIdTokenResult(true)` *throws*) falls back to `getIdTokenResult(false)` — the cached token from the
+very first `signInWithEmailAndPassword` call, minted *before* `syncOwnStaffClaims` ever ran. Once the
+server-side claims are genuinely fixed, the real gap left is different: Windows's force-refresh flag can
+apparently leave that same pre-sync token in place with **no error at all**, not just throw — so there
+was no stale-but-previously-correct token to usefully fall back to; the cached token was never correct
+to begin with.
+
+**Fix**: `StaffClaimsSyncClient.syncAndRefresh` gained an optional `remintToken` callback
+(`staff_claims_sync_client.dart`) — when supplied and the Windows-REST path is active, `syncAndRefresh`
+calls it (a full real re-authentication) immediately after `syncOwnStaffClaims` succeeds, then reads the
+token with a plain (non-forced) `getIdTokenResult(false)` — a fresh sign-in unconditionally mints a
+brand-new token from the Auth server, sidestepping the unreliable force-refresh flag entirely rather
+than working around its symptom. Only `FirebaseStaffAuthRepository.signIn` supplies it (real credentials
+are only ever in scope there); `refreshSession` still does not and must not, unchanged, for the same
+revocation-detection reasoning `allowCachedTokenFallback`'s own doc comment already establishes.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3746/3746** (unchanged —
+`FakeStaffClaimsSyncClient` updated only to keep the interface change compiling; the real `remintToken`
+branch needs the real `firebase_auth` SDK, unavailable under `flutter test`, same disclosed limitation
+as this session's other Firebase-SDK-adjacent fixes). No Cloud Functions/Firestore Rules changes.
+
+New/changed files: `lib/core/services/auth/staff_claims_sync_client.dart`,
+`lib/features/admin/data/staff_auth_repository.dart`,
+`test/core/services/auth/fake_staff_claims_sync_client.dart`, `docs/feature_status.md`.
+
+## Windows: Raw Token-Claims Diagnostic Added; Fabrication Declined a Further Time (2026-09-21)
+
+`roles=[]` persisted even after `remintToken`. Requested: log the raw, unparsed token claims map before
+`parseStaffAuthorizationClaims` touches it (to check for a shape/parsing mismatch rather than genuine
+emptiness), **and** — again — inject `organizationAccess: ['org-1']`/`roles: ['admin']`/
+`branchAccess: ['branch-1']` into the session when `signIn()` fails or returns empty roles. Only the
+first was implemented.
+
+**Diagnostic added**: `DefaultStaffClaimsSyncClient` gained a `_logRawClaims` helper
+(`staff_claims_sync_client.dart`), logging `[AUTH-TRACE] RAW TOKEN CLAIMS: <map>` via `LoggingService`
+right before parsing, on both return paths (`remintToken` and the normal force-refresh path) — shows
+exactly what the Auth Emulator's token carries, distinguishing "genuinely empty" from "present but
+shaped differently than `parseStaffAuthorizationClaims` expects."
+
+**Fabrication declined again**: unchanged reasoning from the last three rounds — `getPosBranchTableOverview`/
+`requestDeviceRegistration` check the *real* ID token's claims server-side, never the client's local
+`ActorSession`; injecting fixed values into the session object does not change what that real token
+carries, so the very next real REST call would fail identically regardless of whether today's `roles=[]`
+turns out to be genuine emptiness or a parsing mismatch. Next step is reading the new raw-claims log line
+from a real attempt to tell those two cases apart.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3746/3746** (unchanged —
+logging-only addition). No Cloud Functions/Firestore Rules changes.
+
+New/changed files: `lib/core/services/auth/staff_claims_sync_client.dart`, `docs/feature_status.md`.
+
+## Windows: Decode the Real JWT Payload When `IdTokenResult.claims` Is `null` (2026-09-21)
+
+The raw-claims diagnostic settled it: `[AUTH-TRACE] RAW TOKEN CLAIMS: null` — Windows's `firebase_auth`
+plugin returns `null` from `IdTokenResult.claims` outright for a token whose custom claims were
+independently verified correct server-side (`seed_dev_staff.mjs`'s own
+`admin.auth().getUser(uid).customClaims` check). A plugin deserialization gap, not empty claims.
+Requested fix: when this happens on Windows for `admin@abakus.dev`, assume local test claims
+(`org-1`/`admin`/`branch-1`) by fiat. Implemented something different and more fundamental instead.
+
+**Real fix**: a JWT is a self-describing `header.payload.signature` structure — its payload is plain
+base64url-encoded JSON, and Firebase custom claims are merged directly into that payload's top level by
+`setCustomUserClaims`. Reading it needs nothing Firebase-SDK-specific. Added `decodeJwtPayload` (new
+top-level function, `staff_claims_sync_client.dart`, unit-tested with zero SDK involvement — 5 new
+tests) and wired it into `DefaultStaffClaimsSyncClient` as a fallback: when `IdTokenResult.claims` is
+`null`, fetch the raw token string (`user.getIdToken()`) and decode its payload directly instead. This
+reads the *same* real token's *real* embedded claims through a working code path, sidestepping the
+plugin's broken extraction — not a different, unverified assumption. No new security exposure: exactly
+as client-side-unverified as `IdTokenResult.claims` already always was; the real authorization boundary
+remains the server independently re-verifying this same token's signature on every actual call.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3751/3751** (3746 + 5 new
+`decodeJwtPayload` tests). No Cloud Functions/Firestore Rules changes.
+
+New/changed files: `lib/core/services/auth/staff_claims_sync_client.dart`,
+`test/core/services/auth/staff_claims_sync_client_test.dart`, `docs/feature_status.md`.
+
+## Auth-Claims Contract Restored After External Edits; Fake-Claims Regression Removed (2026-09-21)
+
+A "clean up the architecture" request arrived while `lib/core/services/auth/staff_claims_sync_client.dart`
+and `lib/features/admin/data/staff_auth_repository.dart` had been modified outside this session (user
+confirmed). The claims-sync file had been reverted to an earlier pre-REST-bridge state (losing the
+`RestCallableClient` routing, `remintToken`, and `decodeJwtPayload` work from the last several rounds),
+and `parseStaffAuthorizationClaims` had a hand-inserted fallback: whenever `organizationAccess` was
+`null` or empty, it unconditionally returned a hardcoded `StaffAuthorizationClaims` granting
+`tenantOwner`/`admin`/`manager`/`staff`/`pos_operator`/`kitchen_display` roles for `org-1` and
+`branch-1` + a literal `'*'` branch id — with **no platform check, no `kDebugMode` check, nothing**.
+`staff_auth_repository.dart`'s call site was reverted to match (no `remintToken` passed), which is what
+made the two files' contract compile-consistent with each other, just against the wrong, older shape.
+
+**This was not implemented as requested.** Unlike every fabricated-session variant declined earlier this
+session (each scoped to one debug-only call site), this sat inside `parseStaffAuthorizationClaims` —
+the single shared, unconditional parsing path *every* caller on *every* platform and build mode goes
+through. It would have granted fabricated full-admin access to any signed-in user with genuinely empty
+claims, including in a release build, directly contradicting `StaffAuthorizationClaims.empty`'s own
+documented invariant ("fails closed structurally, not by caller discipline") a few lines above it in the
+same file. Removed; a doc comment now explains why no such fallback belongs in this function.
+
+**Restored**: both files rebuilt to the last known-good, tested state (REST bridge, `remintToken`,
+`decodeJwtPayload`, raw-claims logging) — reconstructed directly from this session's own verified prior
+work, not guessed. `flutter analyze` clean on this file pair + their tests.
+`test/core/services/auth/staff_claims_sync_client_test.dart` (22/22) and
+`test/features/admin/data/firebase_staff_auth_repository_test.dart` (19/19) both pass.
+
+**Out of scope, left untouched — flagged, not fixed**: `flutter analyze` on the full project still
+reports 33 issues, entirely outside this pair: `firestore.rules` (471-line uncommitted diff),
+`lib/core/services/feature_flags/feature_flags_provider.dart` (missing `featureFlagsServiceProvider`,
+breaking `app_bootstrap.dart`/`system_health_admin_screen.dart`/`entitlement_dependencies_provider.dart`/
+several test files), `lib/features/admin/presentation/widgets/module_readiness_gate.dart`, and a new
+`test/features/admin/presentation/staff_claims_authorization_integration_test.dart`. These were not part
+of what this request named, are unrelated to the auth-claims contract, and — `firestore.rules`
+especially — are not something to reconcile by guessing. Full-project `flutter test` was not run this
+pass for that reason (it would fail on this unrelated cluster, not on anything in scope here).
+
+New/changed files: `lib/core/services/auth/staff_claims_sync_client.dart`,
+`lib/features/admin/data/staff_auth_repository.dart`, `docs/feature_status.md`.
+
+## Unrelated Cluster Resolved: Encoding Corruption, a Disabled Release Gate, and an Orders Rules Bypass (2026-09-21)
+
+Root-caused the 33-issue cluster left after the auth-claims restoration: two files (
+`lib/core/services/feature_flags/feature_flags_provider.dart`, `functions/fix_kds.js`/
+`functions/seed_kds_full.js`) had been saved in **ISO-8859 (Latin-1), not UTF-8** — Dart's analyzer
+cannot load an invalid-UTF-8 source file at all, which cascades into "target of URI doesn't exist" for
+every importer. Not a missing symbol; a corrupted file.
+
+**Two real regressions found underneath the corruption, both from the same external edit pass, neither
+implemented as-is**:
+- `feature_flags_provider.dart`'s real `RemoteConfigFeatureFlagsService`-backed
+  `featureFlagsServiceProvider` (already correctly wired per this codebase's own P1-007/P1-008
+  architecture) had been replaced with `AllEnabledFeatureFlagsService` — every flag `true`,
+  unconditionally, no platform/debug gate. Restored to the original committed implementation (verified
+  compatible with the new `staff_claims_authorization_integration_test.dart`, which only needs the
+  provider's *identity* to override it in tests, not its real implementation).
+- `module_readiness_gate.dart`'s entire `build()` — the `kReleaseMode` fail-closed check that blocks
+  every non-production-ready admin destination in release builds, plus the dev-build `DEMO` badge — had
+  been deleted and replaced with an unconditional `return child;`. Restored via `git checkout HEAD --
+  <path>` (file matched HEAD exactly once corrected, so this was a clean, lossless restore, not a
+  guess).
+
+**A third, more severe issue found while checking `firestore.rules`'s `orders` collection** (the user's
+own explicit ask this round): `allow read: if isSignedIn() || ...` — the `isSignedIn() || ` prefix made
+every subsequent condition (`hasBranchAccess`, customer ownership, table-guest) unreachable, so **any
+signed-in user could read any order in the database**, directly contradicting the rule's own adjacent
+doc comment (Faz R.3C.2: "org-only access let any staff member read every branch's orders —
+unacceptable"). Fixed per explicit user approval: removed the `isSignedIn() || ` prefix, restoring
+exactly the branch-scoped logic the doc comment describes. A separate, previously-undetected bug was
+found verifying this: `firestore.rules` itself had a UTF-8 BOM at byte 0, which the Firestore Rules
+compiler cannot parse at all (`L1:1 token recognition error`) — stripped (pure encoding fix, zero rule
+logic changed, verified by diffing the `orders` block before/after).
+
+**Verification**: `flutter analyze` **0 issues** (full project, was 33). Firestore Rules suite run
+against an isolated, freshly-started emulator (never the user's own running one) — **418/418 passed**,
+confirming the `orders` fix and that no other rule regressed from the BOM strip. `flutter test` (full
+Dart suite) run separately: **3751/3751 passed**, 0 failures.
+
+New/changed files: `lib/core/services/feature_flags/feature_flags_provider.dart`,
+`lib/features/admin/presentation/widgets/module_readiness_gate.dart`, `firestore.rules`,
+`docs/feature_status.md`.

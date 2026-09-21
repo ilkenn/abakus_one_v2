@@ -65,7 +65,7 @@ final trustedDeviceSessionGatewayProvider =
     Provider<TrustedDeviceSessionGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
   if (isFirebaseReady) {
-    return const FirebaseTrustedDeviceSessionGateway();
+    return FirebaseTrustedDeviceSessionGateway();
   }
   return const UnavailableTrustedDeviceSessionGateway();
 });

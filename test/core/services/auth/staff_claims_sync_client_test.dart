@@ -1,5 +1,18 @@
+import 'dart:convert';
+
 import 'package:abakus_one_v2/core/services/auth/staff_claims_sync_client.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// Builds a syntactically-real (unsigned) JWT string for [decodeJwtPayload]
+/// to decode — the signature segment's actual content doesn't matter here,
+/// since this function never verifies it (that's the server's job, always);
+/// only the header/payload segments' base64url-JSON shape does.
+String _fakeJwt(Map<String, dynamic> payload, {String header = 'header'}) {
+  String segment(Object value) =>
+      base64Url.encode(utf8.encode(value is String ? value : jsonEncode(value)))
+          .replaceAll('=', '');
+  return '${segment(header)}.${segment(payload)}.signature';
+}
 
 /// Faz R.3A.2 — proves `parseStaffAuthorizationClaims` degrades to
 /// [StaffAuthorizationClaims.empty] on any missing/malformed shape rather
@@ -170,6 +183,58 @@ void main() {
           reason: 'even an admin role must not implicitly grant every branch — '
               'this membership model has no role-based branch bypass');
       expect(claims.branchAccessFor('unknown-org'), isEmpty);
+    });
+  });
+
+  group('decodeJwtPayload', () {
+    test(
+        'decodes a real-shaped JWT\'s payload, including custom claims '
+        'merged at the top level — the exact fallback path for Windows\'s '
+        'null IdTokenResult.claims (PC Yönetici İnceleme Modu, 2026-09-21)',
+        () {
+      final jwt = _fakeJwt({
+        'iss': 'https://securetoken.google.com/demo-project',
+        'sub': 'uid-123',
+        'organizationAccess': ['org-1'],
+        'roles': {
+          'org-1': ['admin'],
+        },
+      });
+
+      final result = decodeJwtPayload(jwt);
+
+      expect(result, isNotNull);
+      expect(result!['organizationAccess'], ['org-1']);
+      expect(result['roles'], {
+        'org-1': ['admin'],
+      });
+    });
+
+    test('a payload segment missing base64 padding still decodes', () {
+      // base64url.normalize's whole job — a real JWT payload's length is
+      // essentially never a multiple of 4, so padding is routinely absent.
+      final jwt = _fakeJwt({'a': 1});
+
+      expect(decodeJwtPayload(jwt), {'a': 1});
+    });
+
+    test('a string with the wrong number of dot-separated segments returns '
+        'null, never throws', () {
+      expect(decodeJwtPayload('not-a-jwt'), isNull);
+      expect(decodeJwtPayload('only.two'), isNull);
+      expect(decodeJwtPayload('four.segments.here.oops'), isNull);
+    });
+
+    test('a payload segment that decodes to non-base64/non-JSON returns '
+        'null, never throws', () {
+      expect(decodeJwtPayload('header.!!!not-base64!!!.signature'), isNull);
+    });
+
+    test('a payload that is valid JSON but not a JSON object returns null',
+        () {
+      final arrayPayload =
+          base64Url.encode(utf8.encode('[1,2,3]')).replaceAll('=', '');
+      expect(decodeJwtPayload('header.$arrayPayload.signature'), isNull);
     });
   });
 }

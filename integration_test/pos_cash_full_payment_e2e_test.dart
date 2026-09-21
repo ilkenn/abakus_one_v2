@@ -207,7 +207,7 @@ void main() {
         .httpsCallable('finalizeCheckReadyForPayment')
         .call<Map<String, dynamic>>({...ctx.toWire(), 'checkId': checkId});
 
-    final view = await const FirebasePosOperationalViewGateway().getTableView(
+    final view = await FirebasePosOperationalViewGateway().getTableView(
       organizationId: organizationId,
       branchId: branchId,
       tableId: tableId,

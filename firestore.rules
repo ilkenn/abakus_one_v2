@@ -1,8 +1,8 @@
 rules_version = '2';
 
-// Phase 9 (docs/decisions.md ADR-026) — see docs/firestore_data_model.md for
+// Phase 9 (docs/decisions.md ADR-026) â€” see docs/firestore_data_model.md for
 // the full collection strategy and the requirement -> mechanism table this
-// file implements. NOT YET DEPLOYED to any real Firebase project — emulator-
+// file implements. NOT YET DEPLOYED to any real Firebase project â€” emulator-
 // verified only (firestore-tests/), per the Phase 9 kickoff's own stop
 // condition on requiring real console/deployment access to go further.
 //
@@ -10,7 +10,7 @@ rules_version = '2';
 // scope id for the authorization DECISION. request.resource.data.organizationId
 // is validated (must match a real, resolved value) on write, but the
 // decision itself always reads request.auth.token (custom claims) or a
-// server-controlled membership document — never the client's own claim
+// server-controlled membership document â€” never the client's own claim
 // about its own scope.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -23,10 +23,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Tenant-hierarchy membership check — the fast path. organizationAccess
+    // Tenant-hierarchy membership check â€” the fast path. organizationAccess
     // is a custom claim (a list of organization ids), synced from
     // memberships/{organizationId}_{uid} by a Cloud Function (Sprint 9F).
-    // No role exemption of any kind lives in this helper — mirrors
+    // No role exemption of any kind lives in this helper â€” mirrors
     // RealPosAuthorizationPolicy's own "no role exemption" organization
     // check (docs/decisions.md ADR-025) exactly: every tenant role,
     // however senior within one tenant, must appear in this list for the
@@ -37,7 +37,7 @@ service cloud.firestore {
         (organizationId in request.auth.token.organizationAccess);
     }
 
-    // A specific tenant role for a specific organization — e.g.
+    // A specific tenant role for a specific organization â€” e.g.
     // hasRole('org-1', 'tenantOwner'). roles is a custom claim map:
     // { [organizationId]: [roleName, ...] }.
     function hasRole(organizationId, roleName) {
@@ -47,15 +47,15 @@ service cloud.firestore {
         (roleName in request.auth.token.roles[organizationId]);
     }
 
-    // Faz R.3C.2 — branch-operational-data authorization. Mirrors hasRole's
+    // Faz R.3C.2 â€” branch-operational-data authorization. Mirrors hasRole's
     // exact shape: branchAccess is a custom claim map { [organizationId]:
     // [branchId, ...] }, synced from memberships/{organizationId}_{uid}'s
     // own branchAccess field by resyncClaimsForUid
-    // (functions/src/staffMembership.ts) — never a client-supplied value.
+    // (functions/src/staffMembership.ts) â€” never a client-supplied value.
     // Organization membership alone is NOT sufficient for branch-scoped
-    // operational data (e.g. Orders/KDS) — see the `orders` match block
+    // operational data (e.g. Orders/KDS) â€” see the `orders` match block
     // below. No role-based bypass exists here for any role, including
-    // admin/tenantOwner — this mirrors the canonical membership model
+    // admin/tenantOwner â€” this mirrors the canonical membership model
     // itself, which has no wildcard/"all branches" semantics (confirmed by
     // direct inspection of staffMembership.ts before writing this: even
     // bootstrapFirstAdminAccount's own admin membership starts with
@@ -71,7 +71,7 @@ service cloud.firestore {
     }
 
     // Platform-level authorization uses a wholly separate claim namespace
-    // from tenant roles/organizationAccess — mirrors PlatformActorSession's
+    // from tenant roles/organizationAccess â€” mirrors PlatformActorSession's
     // "zero shared types with the tenant stack" design (ADR-025) at the
     // rules layer too.
     function isPlatformRole(roleName) {
@@ -85,7 +85,7 @@ service cloud.firestore {
     }
 
     // Time-limited, reasoned, audited platform-support access to one
-    // tenant's data — a platform member's read access to organizationId
+    // tenant's data â€” a platform member's read access to organizationId
     // is granted only while a matching, non-expired supportGrants document
     // exists (created by a Cloud Function, never a client).
     function hasActiveSupportGrant(organizationId) {
@@ -98,24 +98,24 @@ service cloud.firestore {
       return isOrgMember(organizationId) || hasActiveSupportGrant(organizationId);
     }
 
-    // P.4.1 (Profile photo architecture prep) — mirrors storage.rules'
+    // P.4.1 (Profile photo architecture prep) â€” mirrors storage.rules'
     // own isOwner(uid) helper exactly. Introduced here (no prior
     // firestore.rules collection needed an "owner OR org-member" combined
     // check; customerAddresses/deviceTokens are owner-only, tenantCustomers/
-    // mediaMetadata are org-member-only) — customerPhotos below is the
+    // mediaMetadata are org-member-only) â€” customerPhotos below is the
     // first collection needing both.
     function isOwner(uid) {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    // P.4.1 — "authenticated customers within the SAME organization/
+    // P.4.1 â€” "authenticated customers within the SAME organization/
     // tenant" for the customerPublicProfiles projection below.
     // tenantCustomers/{organizationId}_{uid} is the existing per-tenant
-    // CRM record (docs/firestore_data_model.md) — its mere existence for
+    // CRM record (docs/firestore_data_model.md) â€” its mere existence for
     // this uid/organizationId pair is exactly "this customer belongs to
     // this tenant," so this reuses it rather than inventing a new claim.
     // Ordinary customers never carry an organizationAccess custom claim
-    // (that's a staff-only claim, isOrgMember's own doc comment) — this
+    // (that's a staff-only claim, isOrgMember's own doc comment) â€” this
     // is the customer-side equivalent, existence-based instead of claim-
     // based, mirroring hasActiveSupportGrant's exists()-lookup shape.
     function isTenantCustomer(organizationId) {
@@ -123,7 +123,7 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/tenantCustomers/$(organizationId + '_' + request.auth.uid));
     }
 
-    // organizationId must never change after creation — the denormalized
+    // organizationId must never change after creation â€” the denormalized
     // tenant-boundary field is verified once at create time (see each
     // collection's own create rule) and trusted, never re-derived, on
     // every subsequent read; this is what keeps it immutable.
@@ -131,16 +131,16 @@ service cloud.firestore {
       return request.resource.data.organizationId == resource.data.organizationId;
     }
 
-    // Boncuk Loyalty P2A security fix (2026-08-21) — `pricingAuthority` is
+    // Boncuk Loyalty P2A security fix (2026-08-21) â€” `pricingAuthority` is
     // a distinct concept from `channel` (see `functions/src/
     // orderPricingAuthority.ts` for the full reasoning): `channel` alone
     // never proves an order's persisted pricing came from a trusted SERVER
-    // pricing pipeline — a staff/POS client can (legitimately, for other
+    // pricing pipeline â€” a staff/POS client can (legitimately, for other
     // reasons) create a direct-Firestore order with `channel: 'takeaway'`
     // or `channel: 'reservationPreorder'` via the `isOrgMember` branch
     // below, and a table-guest client can create one with `channel:
     // 'dineInQr'`. No client create path may ever claim server pricing
-    // authority for itself, for ANY channel — only `submitTakeawayOrder`/
+    // authority for itself, for ANY channel â€” only `submitTakeawayOrder`/
     // `submitDeliveryOrder`/`reservationPreorder` (Admin SDK, bypasses
     // these rules entirely) ever write this field.
     function clientOrderCreateOmitsPricingAuthority() {
@@ -148,7 +148,7 @@ service cloud.firestore {
     }
 
     // Boncuk Loyalty P4-B (2026-08-22) / P7-D (2026-08-24) / P7-D.1
-    // (2026-08-24) —
+    // (2026-08-24) â€”
     // `boncukRedemption`/`catalogReward` and
     // `selectedBenefitType: 'boncukRedemption'|'catalogReward'` are
     // settlement/redemption facts computed exclusively inside
@@ -162,13 +162,13 @@ service cloud.firestore {
     //
     // **P7-D.1 update**: as of this phase, `submitDineInOrder` IS the real
     // server-authoritative writer of `catalogReward` for the `dineInQr`
-    // channel — the direct-client-create paths that used to make this
+    // channel â€” the direct-client-create paths that used to make this
     // function's dine-in coverage purely defensive
     // (`isValidGuestTableOrder`/`isValidAuthenticatedCustomerTableOrder`)
     // are REMOVED this phase (see this file's own removal note further up).
     // This function's job for `dineInQr` is now identical to every other
     // channel's: the ONE remaining client-create path for this channel
-    // (the `isOrgMember` staff/POS branch, deliberately left untouched —
+    // (the `isOrgMember` staff/POS branch, deliberately left untouched â€”
     // POS is out of scope) must still never be able to forge these fields
     // for itself. `'coupon'` remains unimplemented anywhere and is
     // intentionally not listed here yet.
@@ -191,11 +191,11 @@ service cloud.firestore {
 
     match /supportGrants/{grantId} {
       allow read: if isPlatformMember();
-      allow write: if false; // Cloud Function (Admin SDK) only — every grant
+      allow write: if false; // Cloud Function (Admin SDK) only â€” every grant
                               // is itself recorded as an auditEvents entry.
     }
 
-    // AP-2 Stage B — written only by the out-of-band
+    // AP-2 Stage B â€” written only by the out-of-band
     // functions/scripts/bootstrap_platform_owner.mjs script (Admin SDK,
     // bypasses these rules entirely). Readable by any platform member so a
     // later audit can see exactly when/for whom bootstrap ran.
@@ -204,10 +204,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // AP-2 Stage B — Trusted Device Lifecycle (Correction #5). Registration
+    // AP-2 Stage B â€” Trusted Device Lifecycle (Correction #5). Registration
     // records are readable by org/branch staff (they need to see their own
     // branch's device roster); challenges and sessions are NEVER
-    // client-readable or writable at all — Firestore Rules cannot express
+    // client-readable or writable at all â€” Firestore Rules cannot express
     // "this is a valid, unexpired, signature-verified session," so this
     // does not pretend to: every device-restricted callable re-verifies a
     // session server-side (`trustedDevice.ts`'s `requireActiveDeviceSession`),
@@ -225,10 +225,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // AP-2 final wiring — Remote Approval Engine (Correction #10),
+    // AP-2 final wiring â€” Remote Approval Engine (Correction #10),
     // completing the gap the prior comment (preserved below) explicitly
     // deferred. The record itself carries no secrets (a payload HASH, a
-    // target document PATH, actor uids — never a device public key,
+    // target document PATH, actor uids â€” never a device public key,
     // nonce, or signature), so a scoped read here is a genuinely sanitized
     // projection, not the "full canonical payload opened to every branch
     // staff member" the prior comment warned against. Two disjoint,
@@ -239,16 +239,16 @@ service cloud.firestore {
     //      eligible-approver set). This mirrors
     //      `remoteApproval.ts`'s own `RESPONSE_PERMISSION_BY_ACTION` map
     //      role-for-role (today: `deviceActivation` -> `approveDeviceRegistration`
-    //      -> manager/admin/tenantOwner, per `staffAuthorization.ts`) — a
+    //      -> manager/admin/tenantOwner, per `staffAuthorization.ts`) â€” a
     //      closed mirror, not a re-derivation. Adding a second
     //      `ApprovalActionType` in AP-3+ means adding its matching role
     //      set here too, exactly as that file's own top comment already
     //      requires for its `ACTION_HANDLERS`/`RESPONSE_PERMISSION_BY_ACTION`
-    //      maps — never widened to a bare isOrgMember/hasBranchAccess check.
+    //      maps â€” never widened to a bare isOrgMember/hasBranchAccess check.
     //
-    // (Prior comment, preserved for history — the gap it named is now closed:)
+    // (Prior comment, preserved for history â€” the gap it named is now closed:)
     // "The full canonical request payload is deliberately NOT exposed to
-    // ordinary branch staff via a direct query — 'eligible approver' is a
+    // ordinary branch staff via a direct query â€” 'eligible approver' is a
     // permission-derived set this rules language cannot safely re-derive
     // without duplicating staffAuthorization.ts's own logic, and a naive
     // isOrgMember-only rule would leak every pending request to every
@@ -263,14 +263,14 @@ service cloud.firestore {
         );
       allow write: if false;
     }
-    // Immutable approval history — minimum-data-principle fields only
+    // Immutable approval history â€” minimum-data-principle fields only
     // (no device public keys/payload details), same read shape as the
     // existing auditEvents collection.
     match /approvalEvents/{eventId} {
       allow read: if isOrgMember(resource.data.organizationId);
       allow write: if false;
     }
-    // Backend-only delivery-tracking outbox — never end-user-facing.
+    // Backend-only delivery-tracking outbox â€” never end-user-facing.
     match /notificationOutbox/{entryId} {
       allow read, write: if false;
     }
@@ -279,20 +279,20 @@ service cloud.firestore {
     // Tenant hierarchy
     // ---------------------------------------------------------------------
 
-    // AP-2 final wiring — a Platform Owner console needs a real tenant
-    // picker. Deliberately narrow: ONLY this collection (name/status —
+    // AP-2 final wiring â€” a Platform Owner console needs a real tenant
+    // picker. Deliberately narrow: ONLY this collection (name/status â€”
     // low-sensitivity, needed for any tenant-selection UI to function at
     // all) gets blanket platform-member read; `canReadOrg` itself is left
     // untouched below, so `restaurants`/`branches`/`staffMembers` (every
     // OTHER collection gated by it) still require a real, reasoned,
     // time-limited `supportGrants` document for a platform member to read
-    // — this does not quietly widen that existing, audited mechanism.
+    // â€” this does not quietly widen that existing, audited mechanism.
     // Deeper tenant drill-down from the console (branches/staff) is a
     // deliberate scope boundary this phase, disclosed in docs, not solved
     // by loosening this shared helper.
     match /organizations/{organizationId} {
       allow read: if canReadOrg(organizationId) || isPlatformMember();
-      allow write: if false; // Cloud Function only — clients cannot assign
+      allow write: if false; // Cloud Function only â€” clients cannot assign
                               // themselves an organization.
     }
 
@@ -303,14 +303,14 @@ service cloud.firestore {
 
     match /branches/{branchId} {
       allow read: if canReadOrg(resource.data.organizationId);
-      allow write: if false; // Cloud Function only — see docs/firestore_data_model.md
+      allow write: if false; // Cloud Function only â€” see docs/firestore_data_model.md
                               // for how the Cloud Function itself verifies the
                               // branch -> restaurant -> organization chain
                               // before denormalizing organizationId here.
     }
 
     // ---------------------------------------------------------------------
-    // Identity & membership — the collections "clients cannot promote
+    // Identity & membership â€” the collections "clients cannot promote
     // roles" / "clients cannot assign themselves an organization" apply to
     // most directly.
     // ---------------------------------------------------------------------
@@ -319,7 +319,7 @@ service cloud.firestore {
       // A client may read only their own membership document (the id
       // encodes {organizationId}_{uid}, so ownership is a suffix check).
       allow read: if isSignedIn() && membershipId == resource.data.organizationId + '_' + request.auth.uid;
-      allow write: if false; // Cloud Function only — the literal, direct
+      allow write: if false; // Cloud Function only â€” the literal, direct
                               // enforcement of "clients cannot assign
                               // themselves an organization" and "clients
                               // cannot promote roles."
@@ -340,38 +340,38 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
 
     match /customers/{uid} {
-      // The canonical global identity — keyed by the real Firebase Auth
+      // The canonical global identity â€” keyed by the real Firebase Auth
       // UID, never a phone-number-derived string (closes the identity
       // fragmentation docs/phase9_architecture_analysis.md documents).
       allow read: if isSignedIn() && request.auth.uid == uid;
       // A signed-in user may update their own profile fields, but never
-      // role/status/verification fields — enforced by an explicit
+      // role/status/verification fields â€” enforced by an explicit
       // allow-list rather than a deny-list, so a new sensitive field added
       // later defaults to NOT client-writable.
       //
       // P.4.1 (2026-08-19): `profilePicturePath` removed from this
-      // allow-list — "the selected profile photo must be server-
+      // allow-list â€” "the selected profile photo must be server-
       // authoritative" (locked product rule). It was previously client-
       // writable here even though nothing in the app ever actually wrote
       // it (Profile's own avatar-edit UI only ever mutated local Riverpod
-      // state, never Firestore) — closing the rule now, before any real
+      // state, never Firestore) â€” closing the rule now, before any real
       // write path exists, rather than after. Once a real
       // `selectCustomerProfilePhoto` Cloud Function exists, it will set
       // this field via the Admin SDK, which bypasses these rules entirely
-      // — no allow-list entry is ever needed for a server-only writer.
+      // â€” no allow-list entry is ever needed for a server-only writer.
       //
       // CR.1.1 (2026-08-20): `birthDate` is deliberately excluded from
-      // this allow-list too, and always will be — it is PII, required
+      // this allow-list too, and always will be â€” it is PII, required
       // once, and immutable after its first write (only
       // `completeCustomerProfile`, via the Admin SDK, ever sets it, and
       // only when the document doesn't already carry one). A customer-
       // requested correction is intended to go through a future admin-
-      // approval flow (documented, not yet built — see `docs/decisions.md`'s
+      // approval flow (documented, not yet built â€” see `docs/decisions.md`'s
       // CR.1.1 entry), never a direct client write here.
       allow update: if isSignedIn() && request.auth.uid == uid &&
         request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(['displayName', 'email']);
-      allow create: if false; // Cloud Function only — a customer profile
+      allow create: if false; // Cloud Function only â€” a customer profile
                                // document is provisioned by the same
                                // trusted process that verifies the OTP,
                                // never a bare client write.
@@ -380,15 +380,15 @@ service cloud.firestore {
 
     match /tenantCustomers/{tenantCustomerId} {
       allow read: if isOrgMember(resource.data.organizationId);
-      allow write: if false; // Cloud Function only — loyalty/visit data is
+      allow write: if false; // Cloud Function only â€” loyalty/visit data is
                               // server-computed, never client-writable.
     }
 
     // ---------------------------------------------------------------------
-    // Customer photos (P.4.1, Profile photo architecture prep) — private
+    // Customer photos (P.4.1, Profile photo architecture prep) â€” private
     // moderation records mirroring `CustomerPhoto` (`lib/features/admin/
     // domain/customer/customer_photo.dart`). Read-only for the owning
-    // customer and same-org staff/admin — "another customer," "another
+    // customer and same-org staff/admin â€” "another customer," "another
     // tenant," and "guest/anonymous" must never read this collection, and
     // none of the three can: a different customer's `customerId` won't
     // match `request.auth.uid`, a different tenant's staff/customer won't
@@ -396,12 +396,12 @@ service cloud.firestore {
     // `organizationId`, and an unauthenticated caller fails `isSignedIn()`
     // inside every helper.
     //
-    // ALL direct client writes are denied, full stop — status/selected/
+    // ALL direct client writes are denied, full stop â€” status/selected/
     // reviewer fields "cannot be forged by client" only if the client has
     // no write path at all, not merely a restricted one (mirrors
     // `mediaMetadata`'s identical "Cloud Function only" shape exactly).
     // `customerId`/`organizationId` are therefore also implicitly
-    // immutable after creation — there is no client update path through
+    // immutable after creation â€” there is no client update path through
     // which they (or anything else) could change; only a trusted Cloud
     // Function/Admin SDK process (which bypasses these rules entirely)
     // ever mutates a document here, and is responsible for preserving
@@ -415,29 +415,29 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Customer public profiles (P.4.1) — the ONE minimal, explicitly
+    // Customer public profiles (P.4.1) â€” the ONE minimal, explicitly
     // public-safe projection of a customer's identity within one tenant
     // (see `CustomerPublicProfile`'s own doc comment for the full
     // reasoning). Per-tenant document id `{organizationId}_{uid}`,
-    // mirroring `tenantCustomers`' composite-key shape exactly — a
+    // mirroring `tenantCustomers`' composite-key shape exactly â€” a
     // customer active in more than one tenant gets one projection per
     // tenant, never one global document.
     //
     // Readable by: same-org staff/admin (`isOrgMember`) and same-tenant
-    // authenticated customers (`isTenantCustomer`) — never a guest
+    // authenticated customers (`isTenantCustomer`) â€” never a guest
     // (`isSignedIn()` fails inside both helpers) and never a cross-tenant
     // caller (neither helper is satisfied for an organizationId the
     // caller has no membership/tenantCustomers record for). This is
-    // deliberately NOT a global public-read collection — "do not invent a
+    // deliberately NOT a global public-read collection â€” "do not invent a
     // cross-tenant global-public read model" (locked instruction).
     //
-    // Write is Cloud-Function-only, full stop — no client, including the
+    // Write is Cloud-Function-only, full stop â€” no client, including the
     // customer the projection is about, may ever write here directly.
     // This is what makes "a pending/rejected/removed photo must never be
     // written to the public projection" true structurally: only the
     // (not-yet-built) `selectCustomerProfilePhoto` Function writes this
     // document, and it only ever runs after re-verifying the source
-    // `CustomerPhoto.status == approved` server-side — there is no
+    // `CustomerPhoto.status == approved` server-side â€” there is no
     // client-reachable path that could write an unapproved ref here.
     // ---------------------------------------------------------------------
 
@@ -448,19 +448,19 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Customer photo upload grants (P.4.2A) — short-lived, server-issued
+    // Customer photo upload grants (P.4.2A) â€” short-lived, server-issued
     // authorization for exactly one Storage object path
     // (`requestCustomerPhotoUploadGrant`, `functions/src/
     // customerPhotoUploadGrants.ts`). `storage.rules`' own `customerPhotos`
     // write rule reads this collection cross-service (`firestore.get(...)`)
     // to verify a genuine grant exists before allowing the actual byte
-    // upload — this collection is the authorization record, never the
+    // upload â€” this collection is the authorization record, never the
     // photo data itself.
     //
-    // Client reads are denied — "prefer DENIED unless genuinely required"
+    // Client reads are denied â€” "prefer DENIED unless genuinely required"
     // (locked instruction), and nothing requires it: the callable already
     // returns every field the client needs (grantId/objectPath/expiresAt)
-    // directly in its response. Client writes are denied unconditionally —
+    // directly in its response. Client writes are denied unconditionally â€”
     // the whole point of this collection is that a client cannot forge its
     // own authorization to upload.
     // ---------------------------------------------------------------------
@@ -471,38 +471,38 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Boncuk Loyalty Program (P1, 2026-08-20) — `loyaltyAccounts` is the
+    // Boncuk Loyalty Program (P1, 2026-08-20) â€” `loyaltyAccounts` is the
     // server-maintained materialized balance view; `loyaltyLedgerEntries`
     // is the append-only audit/provenance truth. Neither is ever
-    // client-writable — `getCustomerLoyaltySnapshot.ts` (Admin SDK) is the
+    // client-writable â€” `getCustomerLoyaltySnapshot.ts` (Admin SDK) is the
     // sole writer of `loyaltyAccounts` this phase; nothing writes
     // `loyaltyLedgerEntries` yet (P2+).
     //
     // **Tenant isolation security fix (P1, same day)**: `customerId ==
-    // request.auth.uid` alone is NOT sufficient tenant authorization — a
+    // request.auth.uid` alone is NOT sufficient tenant authorization â€” a
     // Firebase Auth uid is global, so the same uid could (once real
     // multi-tenant customer membership exists) legitimately have a loyalty
     // record in more than one organization. Owner identity proves "this
     // record is mine"; it does NOT prove "I actually belong to this
     // record's own `organizationId`." Read therefore requires ALL of:
-    // (1) `isRealCustomerAuth()` — real phone-verified customer, never a
+    // (1) `isRealCustomerAuth()` â€” real phone-verified customer, never a
     //     guest/anonymous technical identity;
-    // (2) `isOwner(resource.data.customerId)` — the record's `customerId`
+    // (2) `isOwner(resource.data.customerId)` â€” the record's `customerId`
     //     is this caller's own uid;
-    // (3)+(4) `isTenantCustomer(resource.data.organizationId)` — a genuine
+    // (3)+(4) `isTenantCustomer(resource.data.organizationId)` â€” a genuine
     //     `tenantCustomers/{organizationId}_{uid}` membership document
     //     exists for EXACTLY the record's own `organizationId`, proving
     //     both that the org is one this specific customer actually
     //     belongs to and that it isn't an arbitrary/forged value. Reused
     //     verbatim from its existing definition (`customerPublicProfiles`'
-    //     own rule already relies on it) — no new rule pattern invented,
+    //     own rule already relies on it) â€” no new rule pattern invented,
     //     and `tenantCustomers` itself is not made more broadly readable:
     //     `exists()` inside a rule evaluation is not a client read of that
     //     collection, exactly as `isTenantCustomer`'s own doc comment
     //     already establishes for its existing caller.
     //
     // Deliberately narrower than `customerPhotos`' `isOwner || isOrgMember`
-    // shape: no staff/org-member branch exists yet (locked instruction —
+    // shape: no staff/org-member branch exists yet (locked instruction â€”
     // staff/admin access is a future, separately-designed permission
     // model, not added here).
     //
@@ -514,7 +514,7 @@ service cloud.firestore {
     // `resource.data.customerId`/`resource.data.organizationId` before
     // evaluating the rule (so `isTenantCustomer`'s `exists()` check
     // resolves against one fixed, query-pinned organizationId for the
-    // whole request, not a per-document one) — a query omitting either
+    // whole request, not a per-document one) â€” a query omitting either
     // filter, or pinning `organizationId` to a tenant this customer
     // doesn't belong to (even with a correct `customerId == request.auth
     // .uid`), can never be proven true for its whole result set and is
@@ -536,79 +536,79 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Reward Catalog — Boncuk Loyalty Program P7-B (2026-08-24). No client,
+    // Reward Catalog â€” Boncuk Loyalty Program P7-B (2026-08-24). No client,
     // including the reward's own owning customer, ever reads either
     // collection directly: `getCustomerLoyaltyRewardCatalog` (Cloud
     // Function) is the sole customer-facing read path, since it must apply
     // real filtering (active/archived/validity-window/tenant) a Firestore
-    // Rule would have to duplicate for no benefit — the same reasoning
+    // Rule would have to duplicate for no benefit â€” the same reasoning
     // already governing `menuProducts`/`reservationAreas`/
     // `reservationPolicies` (no rule for any of them either; served only
     // via callables). `loyaltyRewardCatalogVersions` is a pure, permanent
     // audit trail with no customer-facing reader at all. Trusted writers
     // only: `loyaltyRewardCatalogAdminService.ts`'s functions, invoked from
     // the local dev-seed script this phase, a real Admin-authorized
-    // callable in a future phase — never a direct client write, ever.
+    // callable in a future phase â€” never a direct client write, ever.
     // ---------------------------------------------------------------------
 
     match /loyaltyRewardCatalog/{rewardId} {
-      allow read, write: if false; // Cloud Function / Admin SDK only — see getCustomerLoyaltyRewardCatalog.
+      allow read, write: if false; // Cloud Function / Admin SDK only â€” see getCustomerLoyaltyRewardCatalog.
     }
 
     match /loyaltyRewardCatalogVersions/{versionId} {
-      allow read, write: if false; // Cloud Function / Admin SDK only — permanent audit trail, no client reader.
+      allow read, write: if false; // Cloud Function / Admin SDK only â€” permanent audit trail, no client reader.
     }
 
     // ---------------------------------------------------------------------
-    // Campaigns — Server-Authoritative Campaign Engine P8-B (2026-08-25).
+    // Campaigns â€” Server-Authoritative Campaign Engine P8-B (2026-08-25).
     // Mirrors the Reward Catalog block immediately above, exactly: no
     // client, including an authenticated customer or a real staff member,
-    // ever reads a campaign document directly — `getCustomerActiveCampaigns`
+    // ever reads a campaign document directly â€” `getCustomerActiveCampaigns`
     // (Cloud Function) is the sole customer-facing read path, since it must
     // apply real filtering (active/archived/schedule/tenant) a Firestore
     // Rule would have to duplicate for no benefit. `campaignVersions` is a
     // pure, permanent audit trail with no reader at all. `campaignUsage
     // Counters`/`campaignCustomerUsage`/`campaignUsageReservations` are
-    // internal accounting state — never customer-facing, never client-
+    // internal accounting state â€” never customer-facing, never client-
     // writable; a forged usage-counter write is exactly the kind of
     // "client authority over usage count" the locked P8-A requirement
     // forbids. Trusted writers only: `campaignAdminService.ts`'s functions
-    // (Admin SDK), and — once a future checkout-integration phase wires
-    // redemption — the relevant `submit*Order.ts` transaction and its
+    // (Admin SDK), and â€” once a future checkout-integration phase wires
+    // redemption â€” the relevant `submit*Order.ts` transaction and its
     // terminal-lifecycle release consumer (also Admin SDK). No client
     // write path exists for any of these five collections, today or after
     // that future phase, ever.
     // ---------------------------------------------------------------------
 
     match /campaigns/{campaignId} {
-      allow read, write: if false; // Cloud Function / Admin SDK only — see getCustomerActiveCampaigns.
+      allow read, write: if false; // Cloud Function / Admin SDK only â€” see getCustomerActiveCampaigns.
     }
 
     match /campaignVersions/{versionId} {
-      allow read, write: if false; // Cloud Function / Admin SDK only — permanent audit trail, no client reader.
+      allow read, write: if false; // Cloud Function / Admin SDK only â€” permanent audit trail, no client reader.
     }
 
     match /campaignUsageCounters/{counterId} {
-      allow read, write: if false; // Cloud Function / Admin SDK only — internal accounting state.
+      allow read, write: if false; // Cloud Function / Admin SDK only â€” internal accounting state.
     }
 
     match /campaignCustomerUsage/{usageId} {
-      allow read, write: if false; // Cloud Function / Admin SDK only — internal accounting state.
+      allow read, write: if false; // Cloud Function / Admin SDK only â€” internal accounting state.
     }
 
     match /campaignUsageReservations/{reservationId} {
-      allow read, write: if false; // Cloud Function / Admin SDK only — internal accounting state.
+      allow read, write: if false; // Cloud Function / Admin SDK only â€” internal accounting state.
     }
 
     // ---------------------------------------------------------------------
-    // Entitlements — "clients cannot write arbitrary entitlement grants."
+    // Entitlements â€” "clients cannot write arbitrary entitlement grants."
     // ---------------------------------------------------------------------
 
-    // AP-2 final wiring — a Platform Owner grants/renews/suspends/revokes
+    // AP-2 final wiring â€” a Platform Owner grants/renews/suspends/revokes
     // through `entitlementAdmin.ts`'s callables (all `requirePlatformMember`
     // -gated already), but needs a direct read of current state first to
     // render the console (what's already granted, current status/grace
-    // window) before choosing an action — the callables themselves have no
+    // window) before choosing an action â€” the callables themselves have no
     // "read" variant. `isPlatformMember()` here is read-only and mirrors
     // this file's own `organizations` narrow-scope precedent, not a general
     // widening: every mutation still goes exclusively through the callables.
@@ -618,27 +618,27 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Table Guest Session (QR table ordering, Phase 1) — a short-lived,
+    // Table Guest Session (QR table ordering, Phase 1) â€” a short-lived,
     // server-authoritative record binding one anonymous (or later
     // account-linked) Firebase Auth uid to exactly one organization/
     // restaurant/branch/table for the duration of one physical table
     // visit. Created exclusively by the `openTableGuestSession` Cloud
     // Function, which independently re-resolves the scanned QR token
-    // server-side — a client's own organizationId/branchId/tableId claim
+    // server-side â€” a client's own organizationId/branchId/tableId claim
     // is never the authorization source. `tableQrCodes`/`restaurantTables`
     // (the collections that Function reads from) have no rule of their
     // own here and are therefore covered by the fail-closed catch-all
-    // below — clients never read them directly, only through that
+    // below â€” clients never read them directly, only through that
     // Function's response.
     //
     // `orders` `create`/`read` are extended below (Phase 3) to accept a
-    // Table Guest Session in addition to — never instead of —
+    // Table Guest Session in addition to â€” never instead of â€”
     // `isOrgMember`-based staff authorization, which is completely
     // untouched by this block.
     // ---------------------------------------------------------------------
 
     match /tableGuestSessions/{sessionId} {
-      // Only the session's own guest may ever read it — not org members,
+      // Only the session's own guest may ever read it â€” not org members,
       // not other guests. A future staff "who's connected to this table"
       // view would need its own, separately-approved read rule.
       allow read: if isSignedIn() && resource.data.guestAuthUid == request.auth.uid;
@@ -646,39 +646,39 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // AP-3 Wave 1 — Table Session (the NEW, table-level dining-visit
+    // AP-3 Wave 1 â€” Table Session (the NEW, table-level dining-visit
     // aggregate; deliberately a distinct collection from the pre-existing
     // `tableGuestSessions` above, which represents one guest's own visit
     // record, not the table-level session several guests/sub-accounts
-    // share) and Guest Sub-Account (corrected AP-3 Stage A report §1/§6/
-    // §8). `openTableGuestSession`/`submitDineInOrder` (Admin SDK) are the
-    // sole writers of both — every write bypasses this file by
+    // share) and Guest Sub-Account (corrected AP-3 Stage A report Â§1/Â§6/
+    // Â§8). `openTableGuestSession`/`submitDineInOrder` (Admin SDK) are the
+    // sole writers of both â€” every write bypasses this file by
     // construction.
     //
     // **Corrected ownership model**: `guestSubAccounts.ownerAuthUid` is the
     // caller's real Firebase Auth uid, denormalized at creation exactly
     // like `tableGuestSessions.guestAuthUid`/`orders.guestAuthUid` already
-    // are — never a session document id (which a rule cannot compare
+    // are â€” never a session document id (which a rule cannot compare
     // against `request.auth.uid` in any meaningful way). `null` only for
     // the unattributed `staffGeneral`/staff-created `namedWalkIn` types.
     // ---------------------------------------------------------------------
 
-    // AP-3 Wave 1 SECURITY CORRECTION (2026-08-27) — the original Wave 1 rule
+    // AP-3 Wave 1 SECURITY CORRECTION (2026-08-27) â€” the original Wave 1 rule
     // granted staff read access to `tableSessions`/`guestSubAccounts` on
     // `isOrgMember && hasBranchAccess` alone. That is insufficient: AP-2's
     // trusted-device model is a real, load-bearing operational control
     // (`docs/decisions.md` ADR-030) whose proof is a signed challenge-
     // response verified only inside `requireActiveDeviceSession` (Admin
-    // SDK) — a Firestore Rule has no way to re-derive or check that proof,
+    // SDK) â€” a Firestore Rule has no way to re-derive or check that proof,
     // so a rule granting staff read on membership/branch claims alone is a
     // real bypass of the device requirement for these two sensitive,
     // POS-operational collections. Corrected: staff have NO direct client
-    // read path to either collection at all, in any form — the sole staff
+    // read path to either collection at all, in any form â€” the sole staff
     // read path is the new `getPosTableOperationalView` callable
     // (`functions/src/posOperationalView.ts`), which requires
     // `requireStaffPermission` AND `requireActiveDeviceSession` together,
     // server-side, before returning anything. This mirrors this file's own
-    // pre-existing `restaurantTables` precedent (no match block at all —
+    // pre-existing `restaurantTables` precedent (no match block at all â€”
     // fail-closed catch-all; clients only ever see it through a callable's
     // own minimized response).
     match /tableSessions/{tableSessionId} {
@@ -687,7 +687,7 @@ service cloud.firestore {
     }
 
     match /guestSubAccounts/{subAccountId} {
-      // The owner's own direct read is UNCHANGED and correct — this is a
+      // The owner's own direct read is UNCHANGED and correct â€” this is a
       // customer/guest reading their OWN record, not a POS/staff action,
       // so it never needed device-session verification (mirrors
       // `tableGuestSessions`'s own owner-only precedent exactly). Only the
@@ -696,12 +696,12 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
-    // AP-3 Wave 2 — Check/allocation model (corrected report §2, Stage B
+    // AP-3 Wave 2 â€” Check/allocation model (corrected report Â§2, Stage B
     // mandatory refinement #3). No customer/guest ever reads any of these
-    // four directly — a check is a staff/POS-operational construct, not a
+    // four directly â€” a check is a staff/POS-operational construct, not a
     // customer-visible one this phase. Same "no direct client read at all"
     // discipline as `tableSessions` above and `restaurantTables` before
-    // it — `getPosTableOperationalView` is the sole read path.
+    // it â€” `getPosTableOperationalView` is the sole read path.
     match /checks/{checkId} {
       allow read: if false;
       allow write: if false; // Cloud Function (Admin SDK) only.
@@ -715,19 +715,19 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
     match /orderLineAllocationLedgers/{ledgerId} {
-      allow read: if false; // Internal accounting only — never client-readable, not even via the operational-view callable's own response shape.
+      allow read: if false; // Internal accounting only â€” never client-readable, not even via the operational-view callable's own response shape.
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
-    // AP-4 Wave A — the canonical payment/tender/refund engine
+    // AP-4 Wave A â€” the canonical payment/tender/refund engine
     // (paymentDomain.ts). Same total-lockdown pattern as checks/
     // checkAllocations above: every field (payable amount, tender
     // status, provider reference, Boncuk ledger link) is server-
-    // authoritative money data — no client, staff or customer, ever
+    // authoritative money data â€” no client, staff or customer, ever
     // reads or writes these directly. Staff-facing POS UI is expected to
     // consume payment state through a purpose-built operational-view
     // callable (mirrors getPosTableOperationalView), not built this
-    // wave — not a gap introduced by this rule, a Wave D UI item.
+    // wave â€” not a gap introduced by this rule, a Wave D UI item.
     match /paymentIntents/{intentId} {
       allow read: if false;
       allow write: if false;
@@ -745,11 +745,11 @@ service cloud.firestore {
       allow write: if false;
     }
     match /branchPaymentConfig/{branchId} {
-      allow read: if false; // Server-resolved policy only — never client-trusted (cover/service charge, refund window, cash model).
+      allow read: if false; // Server-resolved policy only â€” never client-trusted (cover/service charge, refund window, cash model).
       allow write: if false;
     }
 
-    // AP-4 Wave B (ADR-045) — cash register/business-day money data, same
+    // AP-4 Wave B (ADR-045) â€” cash register/business-day money data, same
     // total-lockdown pattern as the payment collections above. A purpose-
     // built operational-view callable for POS/Admin cash screens is a
     // Wave D UI item, not a gap introduced here.
@@ -786,7 +786,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // AP-4 Wave C (ADR-046) — fiscal operation journal + offline
+    // AP-4 Wave C (ADR-046) â€” fiscal operation journal + offline
     // authorization leases, same total-lockdown pattern. No PAN/PIN/OTP/
     // provider-secret material is ever stored in either collection.
     match /fiscalOperationJournal/{entryId} {
@@ -798,10 +798,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // AP-3 Wave 2C/2D — asynchronous remote-approval-gated typed actions.
+    // AP-3 Wave 2C/2D â€” asynchronous remote-approval-gated typed actions.
     // The requester's own status visibility comes from the ALREADY-real
     // `remoteApprovalRequests` read rule below (requester or eligible
-    // responder) — these three collections hold the action-specific
+    // responder) â€” these three collections hold the action-specific
     // payload/effect record, not client-readable directly this phase (no
     // UI consumes them yet).
     match /acceptedLineCancellationRequests/{requestId} {
@@ -813,13 +813,13 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
     match /orderLineCancellationEvents/{eventId} {
-      allow read: if false; // Outbox marker for AP-5's future stock/waste consumer — internal only.
+      allow read: if false; // Outbox marker for AP-5's future stock/waste consumer â€” internal only.
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
-    // AP-3 Wave 3 — Customer Directory (corrected report §4/§5/§7). Neither
+    // AP-3 Wave 3 â€” Customer Directory (corrected report Â§4/Â§5/Â§7). Neither
     // projection, nor either restriction collection, is ever directly
-    // client-readable — every read API is a permission/capability-gated
+    // client-readable â€” every read API is a permission/capability-gated
     // callable (`customerDirectory.ts`) that returns a minimized
     // projection, never the raw document (which carries `phoneNumber`/
     // `phoneSearchHash`, neither ever exposed to any client).
@@ -840,12 +840,12 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
-    // Boncuk Loyalty P7-D.1 (2026-08-24) — `isActiveTableGuestSession`/
+    // Boncuk Loyalty P7-D.1 (2026-08-24) â€” `isActiveTableGuestSession`/
     // `tableGuestSessionMatchesOrderScope`/`reservationContextIsOrderable`
     // (Phase 3/Faz R.3B) REMOVED. They existed only to validate the two
     // direct-client-create `orders` branches below
     // (`isValidGuestTableOrder`/`isValidAuthenticatedCustomerTableOrder`),
-    // also removed this phase — dine-in order creation is no longer a
+    // also removed this phase â€” dine-in order creation is no longer a
     // rules-validated direct write at all. `submitDineInOrder` (Admin SDK,
     // bypasses this file by construction) is now the sole creation path
     // for both an anonymous table guest and a phone-verified customer at a
@@ -853,22 +853,22 @@ service cloud.firestore {
     // (own-session ownership, active/expiry, scope derivation, and the
     // linked-reservation orderable check all reimplemented inside that
     // callable's transaction) with full canonical catalog/pricing/Loyalty
-    // validation no rules-only shape check could ever provide — the exact
+    // validation no rules-only shape check could ever provide â€” the exact
     // same removal shape Faz D.3.1 already applied to takeaway's own
     // `isValidAuthenticatedTakeawayOrder` (see that removal's own note
-    // below). The staff (`isOrgMember`) branch is completely untouched —
+    // below). The staff (`isOrgMember`) branch is completely untouched â€”
     // POS/staff-assisted dine-in order creation remains explicitly out of
     // this phase's scope.
 
-    // Phase 3.1 — whether the caller's Firebase Auth token was issued by a
+    // Phase 3.1 â€” whether the caller's Firebase Auth token was issued by a
     // real phone-verification sign-in, never by `signInAnonymously()`.
     // Empirically verified (this phase's own report) against the local
     // Auth Emulator: `sign_in_provider` is `'anonymous'` for an anonymous
-    // sign-in and `'phone'` for a real phone sign-in — a claim Firebase
+    // sign-in and `'phone'` for a real phone sign-in â€” a claim Firebase
     // itself issues based on the actual auth flow used, never something a
     // client can set or fake. Checked as `== 'phone'` rather than the
     // broader `!= 'anonymous'`: this app has exactly one real customer
-    // sign-in method today (phone OTP — `FirebaseAuthClient`), so the
+    // sign-in method today (phone OTP â€” `FirebaseAuthClient`), so the
     // narrower, explicit allow-list doesn't silently start trusting some
     // future sign-in method (e.g. email/password) without this rule being
     // deliberately revisited.
@@ -879,40 +879,40 @@ service cloud.firestore {
         request.auth.token.firebase.sign_in_provider == 'phone';
     }
 
-    // Boncuk Loyalty P7-D.1 (2026-08-24) — `isValidGuestTableOrder`
+    // Boncuk Loyalty P7-D.1 (2026-08-24) â€” `isValidGuestTableOrder`
     // (anonymous table guest) and `isValidAuthenticatedCustomerTableOrder`
-    // (phone-verified customer at a table) REMOVED — see this file's own
+    // (phone-verified customer at a table) REMOVED â€” see this file's own
     // removal note further up (immediately after `isActiveTableGuestSession`
     // used to live). `submitDineInOrder` now validates both identity
     // variants server-side, inside its own transaction.
 
-    // Faz C originally added `isValidAuthenticatedTakeawayOrder` here — a
+    // Faz C originally added `isValidAuthenticatedTakeawayOrder` here â€” a
     // direct-client-create path for an authenticated in-app Gel Al order,
     // validated entirely by rules-level shape checks (no session to
     // anchor scope against, an `organizationId == 'org-1'` placeholder,
     // no canonical catalog/pricing check possible from rules at all).
     // **Removed, Faz D.3.1**: `submitTakeawayOrder` (Faz D.3, Admin SDK,
     // bypasses rules by construction) is now the sole create path for an
-    // authenticated takeaway order — full server-authoritative canonical
+    // authenticated takeaway order â€” full server-authoritative canonical
     // scope/pricing validation that no rules-only branch could ever
     // provide. `docs/decisions.md` ADR-027 Faz D.3.1 records the removal.
     // Every other branch below (staff, dine-in guest/authenticated) is
-    // completely unchanged — this was the one, isolated removal.
+    // completely unchanged â€” this was the one, isolated removal.
 
     // Whether the caller may read `data` as the Table Guest Session
-    // identity who placed it — Phase 3.1: an immutable ownership snapshot
+    // identity who placed it â€” Phase 3.1: an immutable ownership snapshot
     // on the order itself (`guestAuthUid`, set at create time regardless
     // of whether the order also carries a real `customerId`), never a
     // live join to `tableGuestSessions`. This is deliberately independent
     // of that session document's continued existence or active/expired
-    // status — losing/expiring/cleaning up the session must never
+    // status â€” losing/expiring/cleaning up the session must never
     // retroactively hide a guest's own order history for their visit.
     function canReadAsTableGuest(data) {
       return isSignedIn() && data.guestAuthUid == request.auth.uid;
     }
 
     // ---------------------------------------------------------------------
-    // Takeaway Guest Session (Gel Al QR, Faz D.2) — the takeaway analogue
+    // Takeaway Guest Session (Gel Al QR, Faz D.2) â€” the takeaway analogue
     // of the Table Guest Session block above, deliberately a SEPARATE
     // collection rather than a reuse of `tableGuestSessions`: a takeaway
     // visit has no table, and `isValidGuestTableOrder`/
@@ -921,31 +921,31 @@ service cloud.firestore {
     // by the `openTakeawayGuestSession` Cloud Function, which independently
     // re-resolves the scanned QR token server-side against the real
     // `organizations`/`restaurants`/`branches` canonical chain (Faz D.1/
-    // D.1.1) — a client's own organizationId/branchId claim is never the
+    // D.1.1) â€” a client's own organizationId/branchId claim is never the
     // authorization source. `takeawayQrCodes` (the collection that
     // Function reads from) has no rule of its own here either, for the
-    // exact same reason `tableQrCodes`/`restaurantTables` don't — both are
+    // exact same reason `tableQrCodes`/`restaurantTables` don't â€” both are
     // therefore covered by the fail-closed catch-all below; clients never
     // read them directly, only through that Function's minimized preview
     // response.
     //
     // No `orders` branch is extended for takeaway guest sessions this
-    // phase — Faz D.2 is QR resolution + session creation only, no order
+    // phase â€” Faz D.2 is QR resolution + session creation only, no order
     // create (that's Faz D.3, `submitTakeawayOrder`).
     // ---------------------------------------------------------------------
 
     match /takeawayGuestSessions/{sessionId} {
-      // Only the session's own guest may ever read it — mirrors
+      // Only the session's own guest may ever read it â€” mirrors
       // `tableGuestSessions`'s exact same ownership rule.
       allow read: if isSignedIn() && resource.data.guestAuthUid == request.auth.uid;
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
     // ---------------------------------------------------------------------
-    // Reservations — Faz R.1A (`docs/decisions.md` ADR-027 Faz R.0–R.0.7
+    // Reservations â€” Faz R.1A (`docs/decisions.md` ADR-027 Faz R.0â€“R.0.7
     // design). Unlike `orders`, there is deliberately **no** direct-client-
     // create path here at all, not even a session-anchored one like
-    // `isValidGuestTableOrder` — Faz R.0.5 §14 made this an explicit
+    // `isValidGuestTableOrder` â€” Faz R.0.5 Â§14 made this an explicit
     // backend-boundary decision: concurrency-safe capacity checking
     // (`reservationSlotOccupancy`), the multi-step approval/hold workflow,
     // and canonical scope resolution cannot be safely expressed as a
@@ -954,29 +954,29 @@ service cloud.firestore {
     // is the sole writer.
     //
     // `reservationAreas`/`reservationPolicies`/`reservationHolds`/
-    // `reservationSlotOccupancy` have no match block of their own below —
+    // `reservationSlotOccupancy` have no match block of their own below â€”
     // covered by the fail-closed catch-all, mirroring `tableQrCodes`/
     // `takeawayQrCodes`'s own precedent exactly: clients never read/write
     // them directly, only through `submitReservation`'s own response.
     // (`reservationAreas`/`reservationPolicies` client-read may be opened in
-    // a later phase once real UI needs to render them — not needed yet,
+    // a later phase once real UI needs to render them â€” not needed yet,
     // not opened speculatively.)
     // ---------------------------------------------------------------------
 
     match /reservations/{reservationId} {
       // A customer may read only their own reservation; org staff may read
-      // any reservation belonging to their tenant — mirrors `orders`' own
+      // any reservation belonging to their tenant â€” mirrors `orders`' own
       // dual read rule exactly (same two branches, same reasoning).
       allow read: if isOrgMember(resource.data.organizationId) ||
         (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow write: if false; // Cloud Function (Admin SDK) only — submitReservation.
+      allow write: if false; // Cloud Function (Admin SDK) only â€” submitReservation.
     }
 
-    // Reservation change proposals — Faz R.1B (`docs/decisions.md` ADR-027
+    // Reservation change proposals â€” Faz R.1B (`docs/decisions.md` ADR-027
     // Faz R.1B design). Immutable audit trail; `respondToReservation`
     // (create) / `respondToProposedChange` (accept/reject) /
     // `reservationSweep` (expire) are the sole writers, all Admin SDK. Org
-    // staff may read a proposal belonging to their tenant — the same
+    // staff may read a proposal belonging to their tenant â€” the same
     // dual-read shape `reservations` uses is deliberately not extended to
     // the owning customer here: no UI exists yet to consume it (Faz R.1B's
     // own explicit "UI YAZMA" constraint), so customer-facing read access
@@ -988,14 +988,14 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
-    // Physical table assignment data — Faz R.1C.1 (`docs/decisions.md`
+    // Physical table assignment data â€” Faz R.1C.1 (`docs/decisions.md`
     // ADR-027 Faz R.1C.1 design). `assignReservationTable` (Admin SDK) is
-    // the sole writer of all three. Org-staff read only — same reasoning
+    // the sole writer of all three. Org-staff read only â€” same reasoning
     // as `reservationChangeProposals` above (no UI exists yet; customer-
     // facing read is deliberately not opened). `reservationTableOccupancy`/
     // `tableProtectionMinuteBuckets` carry no `organizationId` field of
     // their own read-cheaply-available at the document (they do carry one,
-    // denormalized at write time) — read is still org-scoped exactly like
+    // denormalized at write time) â€” read is still org-scoped exactly like
     // every other collection here.
     match /reservationTableOccupancy/{bucketId} {
       allow read: if isOrgMember(resource.data.organizationId);
@@ -1010,9 +1010,9 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
-    // Active reservation table context — Faz R.1C.2 §4/§19.
+    // Active reservation table context â€” Faz R.1C.2 Â§4/Â§19.
     // `openReservationTable`/`closeReservationTable` (Admin SDK) are the
-    // sole writers. Org-staff read only — the customer never needs to read
+    // sole writers. Org-staff read only â€” the customer never needs to read
     // this collection directly; `tableGuestSessions.reservationContextId`
     // (an immutable snapshot taken server-side at session-open time) is
     // the only place this context's existence is ever visible to a client,
@@ -1025,37 +1025,37 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Orders — the one canonical Order aggregate (Sprint 9D). Creation is
+    // Orders â€” the one canonical Order aggregate (Sprint 9D). Creation is
     // client-initiated (staff at POS, an authenticated customer, a QR
     // guest session) but every field is validated server-side by shape;
     // status transitions after creation are Cloud-Function-only, matching
     // "order status transitions must be server-authoritative"
-    // (docs/phase9_architecture_analysis.md §9).
+    // (docs/phase9_architecture_analysis.md Â§9).
     // ---------------------------------------------------------------------
 
     match /orders/{orderId} {
       // A customer may read their own order (Phase 9K, `docs/decisions.md`
-      // ADR-026) — the customer-facing Orders/Order-Detail screens query
+      // ADR-026) â€” the customer-facing Orders/Order-Detail screens query
       // `CanonicalOrderRepository.findByCustomerId(uid)`, which requires
       // this. This same branch already covers a real customer's Table
       // Guest Session order too (Phase 3.1 Variant B sets `customerId ==
-      // request.auth.uid`, exactly like any other customer order — no
+      // request.auth.uid`, exactly like any other customer order â€” no
       // separate read logic needed for it). An anonymous Table Guest order
       // (`customerId == null`) instead reads via `canReadAsTableGuest`'s
       // immutable `guestAuthUid` ownership snapshot. Neither of these two
-      // branches is affected by the staff branch below — write
+      // branches is affected by the staff branch below â€” write
       // (`create`/`update`/`delete`) remains completely untouched by this
       // whole match block.
       //
-      // **Staff branch — Faz R.3C.2, tightened.** Organization membership
+      // **Staff branch â€” Faz R.3C.2, tightened.** Organization membership
       // alone is no longer sufficient for this branch-operational
       // collection: audited and confirmed (Faz R.3C.1) that org-only
       // access let any staff member in an organization read every branch's
       // orders, including branches they have no operational reason to see
-      // — unacceptable for the multi-branch SaaS architecture. Now also
+      // â€” unacceptable for the multi-branch SaaS architecture. Now also
       // requires `hasBranchAccess` for the order's own `branchId`, sourced
       // from the same canonical `memberships`-derived custom claim
-      // `hasRole` already uses, never a client-supplied query parameter —
+      // `hasRole` already uses, never a client-supplied query parameter â€”
       // a caller cannot expand their own authority by choosing what
       // `branchId` to query for; the rule checks the DOCUMENT's own
       // `branchId`, not anything the query claimed to be scoped to.
@@ -1064,7 +1064,7 @@ service cloud.firestore {
         (isSignedIn() && resource.data.customerId == request.auth.uid) ||
         canReadAsTableGuest(resource.data);
       // Both 'created' and 'pendingConfirmation' are accepted at create
-      // time — closed during the Phase 9 adversarial security review:
+      // time â€” closed during the Phase 9 adversarial security review:
       // the real Dart client (SubmitPosOrder/SubmitCustomerOrder) builds
       // the order at 'created' then immediately applies the one valid
       // 'created -> pendingConfirmation' transition in-memory before the
@@ -1078,40 +1078,40 @@ service cloud.firestore {
       // reach any further state on its own.
       //
       // Phase 3/3.1 had added two more independent ways to satisfy this
-      // rule here — an anonymous Table Guest order
+      // rule here â€” an anonymous Table Guest order
       // (`isValidGuestTableOrder`) and a real-customer Table Guest order
       // (`isValidAuthenticatedCustomerTableOrder`). **Removed, Boncuk
       // Loyalty P7-D.1 (2026-08-24)**: both customer-facing dine-in order
       // types are now created exclusively via `submitDineInOrder` (Admin
-      // SDK, bypasses this rule entirely) — full canonical catalog/
+      // SDK, bypasses this rule entirely) â€” full canonical catalog/
       // pricing/Loyalty validation no rules-only shape check could ever
       // provide, mirroring Faz D.3.1's own takeaway removal immediately
       // below. The `isOrgMember` staff branch is DELIBERATELY left
-      // unmodified (unlike the `delivery` exclusion further down) — a
+      // unmodified (unlike the `delivery` exclusion further down) â€” a
       // staff/POS direct-write dine-in order create is explicitly out of
       // this phase's scope, not removed.
       //
-      // Faz C had added one more independent branch here —
+      // Faz C had added one more independent branch here â€”
       // `isValidAuthenticatedTakeawayOrder`, for an authenticated in-app
-      // Gel Al order — **removed, Faz D.3.1**: that order type is now
+      // Gel Al order â€” **removed, Faz D.3.1**: that order type is now
       // created exclusively via `submitTakeawayOrder` (Admin SDK, bypasses
       // this rule entirely), never a direct client `create`. No takeaway
       // channel value can satisfy this rule anymore, from any actor.
       //
-      // **Paket Servis P.3 — same tightening, extended to `channel ==
+      // **Paket Servis P.3 â€” same tightening, extended to `channel ==
       // 'delivery'`.** A delivery order is created exclusively via
       // `submitDeliveryOrder` (Admin SDK, bypasses this rule entirely):
       // server-authoritative address ownership/service-area eligibility/
       // channel pricing/payment-method validation/FRAUD-F.2 evidence all
       // happen inside that one callable. Without this exclusion, an
       // org-member staff actor (the `isOrgMember` branch has no
-      // `hasBranchAccess` check — a separate, pre-existing gap this phase
+      // `hasBranchAccess` check â€” a separate, pre-existing gap this phase
       // does not otherwise touch, see the read branch above for the
       // narrower fix already applied there) could write a `channel:
       // 'delivery'` document directly, skipping every one of those checks
       // entirely. No other channel's staff/table-guest branches below are
       // affected. `!('channel' in request.resource.data) || ... != 'delivery'`
-      // — not a bare `!= 'delivery'` — because several pre-existing legacy
+      // â€” not a bare `!= 'delivery'` â€” because several pre-existing legacy
       // test fixtures (and, potentially, older client write shapes) create
       // an order with no `channel` field at all; a bare `!=` throws
       // ("Property channel is undefined on object") rather than evaluating
@@ -1120,11 +1120,11 @@ service cloud.firestore {
       // therefore treated as "not delivery" here, same fail-open-only-for-
       // already-allowed-shapes discipline as `hasBranchAccess`'s own
       // `'branchAccess' in request.auth.token` guard above.
-      // Boncuk Loyalty P2A security fix (2026-08-21) —
+      // Boncuk Loyalty P2A security fix (2026-08-21) â€”
       // `clientOrderCreateOmitsPricingAuthority()` applies uniformly across
       // every branch below: no client-authored order, on any channel, via
       // any of the three creation paths, may ever supply the server
-      // pricing-authority marker. This is additive — it forbids one new
+      // pricing-authority marker. This is additive â€” it forbids one new
       // field, it does not relax any existing branch's own checks.
       allow create: if
         clientOrderCreateOmitsPricingAuthority() &&
@@ -1135,7 +1135,7 @@ service cloud.firestore {
             (request.resource.data.status == 'created' ||
               request.resource.data.status == 'pendingConfirmation'))
         );
-      allow update: if false; // Cloud Function only — every status
+      allow update: if false; // Cloud Function only â€” every status
                                // transition after creation is
                                // server-authoritative (Sprint 9F).
       allow delete: if false; // Orders are never deleted, only transitioned
@@ -1144,17 +1144,17 @@ service cloud.firestore {
 
     match /orderEvents/{eventId} {
       allow read: if isOrgMember(resource.data.organizationId);
-      allow write: if false; // Cloud Function only — the event/outbox
+      allow write: if false; // Cloud Function only â€” the event/outbox
                               // records themselves (Sprint 9F).
     }
 
     // ---------------------------------------------------------------------
-    // Audit — append-only everywhere, no client write path of any kind.
+    // Audit â€” append-only everywhere, no client write path of any kind.
     // ---------------------------------------------------------------------
 
     match /auditEvents/{auditEventId} {
       allow read: if isOrgMember(resource.data.organizationId);
-      allow write: if false; // Cloud Function only — create-only in
+      allow write: if false; // Cloud Function only â€” create-only in
                               // practice (Admin SDK never calls update/
                               // delete on this collection either).
     }
@@ -1167,7 +1167,7 @@ service cloud.firestore {
       allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid &&
         request.resource.data.status == 'pendingVerification';
-      allow update: if false; // Cloud Function only — every subsequent
+      allow update: if false; // Cloud Function only â€” every subsequent
                                // status transition (verification, cooling-
                                // off, processing, completion, cancellation)
                                // is server-authoritative.
@@ -1175,20 +1175,20 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Device tokens (Sprint 9H) — a user manages only their own tokens.
+    // Device tokens (Sprint 9H) â€” a user manages only their own tokens.
     // ---------------------------------------------------------------------
 
     match /deviceTokens/{tokenId} {
       allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
-      // Faz R.3C.1 — `create` moved Cloud-Function-only (`registerDeviceToken.ts`).
-      // A direct client create — even scoped to the caller's own uid, as
-      // this rule previously allowed — cannot detect that another,
+      // Faz R.3C.1 â€” `create` moved Cloud-Function-only (`registerDeviceToken.ts`).
+      // A direct client create â€” even scoped to the caller's own uid, as
+      // this rule previously allowed â€” cannot detect that another,
       // already-existing document holds the identical `token` *value*
       // under a different owner: per-document rules have no primitive for
       // "is there another document anywhere in this collection with this
       // field value," only a server-side transaction across the whole
       // collection can check that. Client `create` here would silently
-      // reintroduce a token active under two customers at once — the
+      // reintroduce a token active under two customers at once â€” the
       // exact defect this Faz fixed. `read`/`update`/`delete` for a
       // caller's own uid are unchanged: `RevokeDeviceTokensForUser`'s
       // logout-time self-revocation still only ever touches a caller's
@@ -1200,23 +1200,23 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Customer delivery addresses (Faz P.2) — a customer manages only
+    // Customer delivery addresses (Faz P.2) â€” a customer manages only
     // their own saved addresses. Provider-verification fields
     // (verificationStatus/verifiedAt/providerSource/providerPlaceId/
     // provinceName/districtName/neighborhoodName/streetName/buildingNo/
     // buildingNoSource/latitude/longitude/formattedAddress) are
-    // server-owned — only `saveDeliveryAddress` (Admin SDK, bypasses
+    // server-owned â€” only `saveDeliveryAddress` (Admin SDK, bypasses
     // these rules entirely) ever writes them. A direct client write can
     // only touch the explicitly listed user-owned metadata fields, so a
     // client can never self-mark an address `verified` or forge any
-    // canonical/provider field — see `docs/decisions.md` Faz P.2 for the
+    // canonical/provider field â€” see `docs/decisions.md` Faz P.2 for the
     // full reasoning (mirrors `customers/{uid}`'s own allow-list-not-
     // deny-list update pattern above).
     // ---------------------------------------------------------------------
 
     match /customerAddresses/{addressId} {
       allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
-      allow create: if false; // Cloud Function only — saveDeliveryAddress.
+      allow create: if false; // Cloud Function only â€” saveDeliveryAddress.
       allow update: if isSignedIn() && resource.data.uid == request.auth.uid &&
         request.resource.data.uid == resource.data.uid &&
         request.resource.data.diff(resource.data).affectedKeys()
@@ -1225,7 +1225,7 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Media metadata (Sprint 9H) — refs only, never raw bytes (that's
+    // Media metadata (Sprint 9H) â€” refs only, never raw bytes (that's
     // Storage's job, see storage.rules once it exists). A Cloud Function
     // validates the actual upload before a ref is trusted, so this stays
     // server-write-only even though the underlying file was client-
@@ -1238,11 +1238,11 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Delivery service areas (Paket Servis P.3) — server-controlled
+    // Delivery service areas (Paket Servis P.3) â€” server-controlled
     // coverage/minimum-order configuration `checkDeliveryEligibility`/
     // `submitDeliveryOrder` resolve against. No client, including staff,
     // reads or writes this collection directly today (no admin UI exists
-    // yet per P.3's own explicit scope boundary) — Cloud-Function/ops-
+    // yet per P.3's own explicit scope boundary) â€” Cloud-Function/ops-
     // tooling only, same default-deny discipline as every other server-
     // controlled collection in this file.
     // ---------------------------------------------------------------------
@@ -1252,11 +1252,11 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Delivery Fraud Location Evidence — shared foundation (FRAUD-F.0,
+    // Delivery Fraud Location Evidence â€” shared foundation (FRAUD-F.0,
     // docs/decisions.md, docs/fraud_evidence_architecture.md).
     //
-    // No human client — customer, courier, staff, manager, admin,
-    // unrelated tenant, platformAdministrator, or EVEN platformOwner — may
+    // No human client â€” customer, courier, staff, manager, admin,
+    // unrelated tenant, platformAdministrator, or EVEN platformOwner â€” may
     // read or write any of these four collections directly. This is
     // deliberate and absolute, not an oversight to relax later:
     // `getPreciseFraudEvidence` (Cloud Function/Admin SDK) is the sole
@@ -1264,11 +1264,11 @@ service cloud.firestore {
     // Rule cannot itself produce the mandatory access-audit side effect
     // FRAUD-F.0 requires on every read. Granting even platformOwner a
     // rules-based `allow read` here would create a silent bypass of that
-    // audit guarantee — so no such branch exists, for any role.
+    // audit guarantee â€” so no such branch exists, for any role.
     // ---------------------------------------------------------------------
 
     match /fraudEvidence/{evidenceId} {
-      allow read, write: if false; // Cloud Function only — no direct client access, ever.
+      allow read, write: if false; // Cloud Function only â€” no direct client access, ever.
     }
 
     match /fraudRiskContexts/{contextId} {
@@ -1276,7 +1276,7 @@ service cloud.firestore {
     }
 
     match /fraudEvidenceAccessLog/{logId} {
-      allow read, write: if false; // Cloud Function only — append-only audit trail.
+      allow read, write: if false; // Cloud Function only â€” append-only audit trail.
     }
 
     match /fraudEvidenceRetentionPolicies/{policyId} {
@@ -1284,18 +1284,18 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // AP-5 Sprint 1/2 — KDS / Printer / Stock & Recipe collection surface.
+    // AP-5 Sprint 1/2 â€” KDS / Printer / Stock & Recipe collection surface.
     // Branch-operational collections (kitchenWorkItems, kitchenRoutingRules,
     // printerConfigs, printJobs, branchStock, stockMovements, stockCounts,
     // wasteRecords, stockConsumptionRecords) require `isOrgMember` +
-    // `hasBranchAccess`, mirroring `orders`' own staff branch — organization
+    // `hasBranchAccess`, mirroring `orders`' own staff branch â€” organization
     // membership alone is insufficient for branch-operational data.
     // Organization-scoped **catalog** collections (recipes, recipeVersions,
     // recipeIngredientLinks, productPackagingLinks, ingredients,
-    // inventoryItems — corrected Sprint 2 after confirming their Dart models
+    // inventoryItems â€” corrected Sprint 2 after confirming their Dart models
     // carry no `branchId` at all) require `isOrgMember` only. Every
     // collection here denies direct client write for everyone including
-    // staff — mirrors `RecordKitchenEvent`/`RecordStockMovement`'s "single
+    // staff â€” mirrors `RecordKitchenEvent`/`RecordStockMovement`'s "single
     // write path" precedent (BR-STOCK-005): all writes go through a Cloud
     // Function/Admin SDK. Real writers as of Sprint 2: `kitchenWorkItems`
     // (client `create` only, Sprint 1) and `transitionKitchenWorkItem`,
@@ -1304,11 +1304,11 @@ service cloud.firestore {
     // from inside the real order-acceptance transactions). The rest still
     // open read access ahead of their own writer landing in a later sprint.
     //
-    // `KitchenTicket` deliberately has NO collection here — it stays
+    // `KitchenTicket` deliberately has NO collection here â€” it stays
     // derived, read-only, from `orders` (`firestore_kitchen_ticket_
     // repository.dart`), whose own staff branch (`isOrgMember` +
     // `hasBranchAccess`, above) already covers kitchen staff's read need.
-    // `KitchenStation` deliberately has no collection either — it is a
+    // `KitchenStation` deliberately has no collection either â€” it is a
     // fixed 6-value enum, not a persisted entity; the real persisted
     // entity is `kitchenRoutingRules` (`KitchenRoutingRule`).
     // ---------------------------------------------------------------------
@@ -1318,7 +1318,7 @@ service cloud.firestore {
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
       // `create` only, matching `EnqueueKitchenWorkItems`'s existing real,
       // idempotent client-side use case (`enqueue_kitchen_work_items.dart`)
-      // — it derives a work item deterministically 1:1 from a KitchenTicket
+      // â€” it derives a work item deterministically 1:1 from a KitchenTicket
       // line the client already legitimately reads from `orders` (there is
       // no separate server-side enqueue trigger yet, so requiring this
       // through a callable this sprint would just break the KDS board
@@ -1326,20 +1326,20 @@ service cloud.firestore {
       // state only (`status == 'queued'`, `revision == 1`) so a client can
       // materialize the projection but never fabricate a mid-flight or
       // already-`ready` item. Every subsequent transition is `update`,
-      // permanently denied below — `transitionKitchenWorkItem` (Cloud
+      // permanently denied below â€” `transitionKitchenWorkItem` (Cloud
       // Function/Admin SDK) is the only path past the initial `queued` doc.
       allow create: if isOrgMember(request.resource.data.organizationId) &&
         hasBranchAccess(request.resource.data.organizationId, request.resource.data.branchId) &&
         request.resource.data.status == 'queued' &&
         request.resource.data.revision == 1 &&
-        // AP-6 Sprint 3 — a consortium/external-merchant order
+        // AP-6 Sprint 3 â€” a consortium/external-merchant order
         // (`orders/{orderId}.merchantId` set) must never enqueue kitchen
-        // work — it never touches our own kitchen at all. This is the
+        // work â€” it never touches our own kitchen at all. This is the
         // rules-level half of that guard (the callable-level half is
         // structural: `registerConsortiumOrder.ts` never routes an order
         // through any of the confirm callables that call
         // `prepareKitchenWorkAndStockConsumption`). A failed/missing
-        // lookup denies the write — fail closed, never fail open.
+        // lookup denies the write â€” fail closed, never fail open.
         get(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.merchantId == null;
       allow update, delete: if false; // transitionKitchenWorkItem callable only.
     }
@@ -1347,22 +1347,22 @@ service cloud.firestore {
     match /kitchenRoutingRules/{ruleId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
-      allow write: if false; // Cloud Function only — no writer this sprint.
+      allow write: if false; // Cloud Function only â€” no writer this sprint.
     }
 
     match /printerConfigs/{printerId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
-      allow write: if false; // Cloud Function / Admin SDK only — still no client writer this sprint.
+      allow write: if false; // Cloud Function / Admin SDK only â€” still no client writer this sprint.
     }
 
     match /printJobs/{printJobId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
-      // AP-5 Sprint 4 — real writers exist now (`acceptOrderLine.ts`'s
+      // AP-5 Sprint 4 â€” real writers exist now (`acceptOrderLine.ts`'s
       // four call sites via `printJobEngine.ts`, plus the
       // `requestPrintJob`/`recordPrintOutcome` callables), all Admin SDK
-      // (bypasses Security Rules entirely) — client-side writes stay
+      // (bypasses Security Rules entirely) â€” client-side writes stay
       // denied, matching every other AP-5 collection's own convention.
       allow write: if false;
     }
@@ -1370,10 +1370,10 @@ service cloud.firestore {
     // AP-5 Sprint 2 correction: `recipes`/`recipeVersions`/
     // `recipeIngredientLinks`/`ingredients`/`inventoryItems` were checked
     // against `Recipe`/`RecipeVersion`/`Ingredient`/`InventoryItem`
-    // directly (read from source, not assumed) — all five are
+    // directly (read from source, not assumed) â€” all five are
     // **organization-scoped catalog data with no `branchId` field at
     // all**. The Sprint 1 rules below required `hasBranchAccess`, a field
-    // that will never exist on these documents — every real read would
+    // that will never exist on these documents â€” every real read would
     // always have failed once a real reader existed (masked in Sprint 1's
     // rules test, which seeded synthetic `branchId` values that don't
     // reflect the real schema). Corrected to `isOrgMember`-only.
@@ -1382,7 +1382,7 @@ service cloud.firestore {
     // .negativeStockPolicy`.
     match /recipes/{recipeId} {
       allow read: if isOrgMember(resource.data.organizationId);
-      // Cloud Function only — no direct client write for recipe catalog
+      // Cloud Function only â€” no direct client write for recipe catalog
       // data.
       allow write: if false;
     }
@@ -1404,7 +1404,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // AP-5 Sprint 5 — same organization-scoped catalog shape as
+    // AP-5 Sprint 5 â€” same organization-scoped catalog shape as
     // `recipeIngredientLinks`/`productPackagingLinks` above: no
     // `branchId` field, `isOrgMember`-only read.
     match /standardIngredientCosts/{costId} {
@@ -1415,18 +1415,18 @@ service cloud.firestore {
 
     match /ingredients/{ingredientId} {
       allow read: if isOrgMember(resource.data.organizationId);
-      allow write: if false; // Cloud Function only — no writer this sprint.
+      allow write: if false; // Cloud Function only â€” no writer this sprint.
     }
 
     match /inventoryItems/{inventoryItemId} {
       allow read: if isOrgMember(resource.data.organizationId);
-      allow write: if false; // Cloud Function only — no writer this sprint.
+      allow write: if false; // Cloud Function only â€” no writer this sprint.
     }
 
     match /branchStock/{stockId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
-      allow write: if false; // Cloud Function only — no writer this sprint.
+      allow write: if false; // Cloud Function only â€” no writer this sprint.
     }
 
     match /stockMovements/{movementId} {
@@ -1438,8 +1438,8 @@ service cloud.firestore {
     match /stockCounts/{countId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
-      // AP-5 Sprint 3 — real writer now: `submitStockCount`/`respondToApprovalRequest`
-      // (stockCountAdjustment). Still Cloud Function only — no direct client write.
+      // AP-5 Sprint 3 â€” real writer now: `submitStockCount`/`respondToApprovalRequest`
+      // (stockCountAdjustment). Still Cloud Function only â€” no direct client write.
       allow write: if false;
     }
 
@@ -1449,18 +1449,18 @@ service cloud.firestore {
       allow write: if false; // Cloud Function only, append-only (BR-STOCK-006).
     }
 
-    // AP-5 Sprint 2 — the idempotency ledger `enqueueKitchenWorkAndConsumeStock`
+    // AP-5 Sprint 2 â€” the idempotency ledger `enqueueKitchenWorkAndConsumeStock`
     // checks/writes per accepted order line. Genuinely branch-scoped
     // (mirrors the existing Dart `StockConsumptionRecord` shape, which does
-    // carry `branchId`) — unlike the catalog collections corrected above.
+    // carry `branchId`) â€” unlike the catalog collections corrected above.
     match /stockConsumptionRecords/{recordId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
         hasBranchAccess(resource.data.organizationId, resource.data.branchId);
       allow write: if false; // Cloud Function only, append-only.
     }
 
-    // AP-5 Sprint 3 — one doc per counted item within a `stockCounts`
-    // session (`submitStockCount.ts`); `inventoryAuditEntries` — the
+    // AP-5 Sprint 3 â€” one doc per counted item within a `stockCounts`
+    // session (`submitStockCount.ts`); `inventoryAuditEntries` â€” the
     // immutable before/after trail `respondToApprovalRequest`
     // (stockCountAdjustment approval) writes. Both branch-scoped, same
     // shape as every other AP-5 branch-operational collection.
@@ -1476,8 +1476,8 @@ service cloud.firestore {
       allow write: if false; // Cloud Function only, append-only.
     }
 
-    // AP-6 Sprint 1 — one doc per branch, same 1:1-branch-keyed shape as
-    // `branchOperatingHours` (that collection has no rule block at all —
+    // AP-6 Sprint 1 â€” one doc per branch, same 1:1-branch-keyed shape as
+    // `branchOperatingHours` (that collection has no rule block at all â€”
     // Cloud-Function/Admin-SDK read only; this one is client-readable so
     // the takeaway status badge can render without a callable round trip).
     // updateTakeawayOperationStatus.ts is the only writer.
@@ -1487,7 +1487,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // AP-6 Sprint 2 — one doc per courier, same branch-scoped shape as
+    // AP-6 Sprint 2 â€” one doc per courier, same branch-scoped shape as
     // `branchStock`/`stockCounts`/etc. above. setCourier.ts/
     // assignCourierToOrder.ts/markCourierReturned.ts are the only writers.
     match /couriers/{courierId} {
@@ -1496,9 +1496,9 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // AP-6 Sprint 3 — one doc per consortium-order completion, same
+    // AP-6 Sprint 3 â€” one doc per consortium-order completion, same
     // branch-scoped shape as `couriers` above. Auto-created by
-    // `advanceDeliveryOrderStatus.ts`'s completion hook only — no client
+    // `advanceDeliveryOrderStatus.ts`'s completion hook only â€” no client
     // writer, no other callable writer.
     match /consortiumDeliverySettlements/{settlementId} {
       allow read: if isOrgMember(resource.data.organizationId) &&
@@ -1506,10 +1506,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Dine-in Sprint 3 — one doc per waiter-call/bill-request ping, same
+    // Dine-in Sprint 3 â€” one doc per waiter-call/bill-request ping, same
     // branch-scoped shape as `couriers`/`consortiumDeliverySettlements`
     // above. `createServiceRequest`/`resolveServiceRequest`
-    // (`serviceRequests.ts`) are the only writers — a guest's own creation
+    // (`serviceRequests.ts`) are the only writers â€” a guest's own creation
     // is ownership-verified server-side (`tableGuestSessions.guestAuthUid`),
     // never something a Rule could verify, matching BR-SUBACCOUNT-008's own
     // reasoning for every other POS-operational collection.
@@ -1520,7 +1520,7 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Default deny — anything not explicitly matched above (including any
+    // Default deny â€” anything not explicitly matched above (including any
     // future collection someone adds without also adding a rule for it)
     // is denied by default, never implicitly readable/writable. "Fail
     // Closed" (ENGINEERING_CONSTITUTION.md) applies structurally here.

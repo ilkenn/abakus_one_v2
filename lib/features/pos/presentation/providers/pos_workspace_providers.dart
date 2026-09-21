@@ -24,7 +24,7 @@ import '../../data/pos_operational_view_gateway.dart';
 final posOperationalViewGatewayProvider =
     Provider<PosOperationalViewGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
-  if (isFirebaseReady) return const FirebasePosOperationalViewGateway();
+  if (isFirebaseReady) return FirebasePosOperationalViewGateway();
   return const UnavailablePosOperationalViewGateway();
 });
 

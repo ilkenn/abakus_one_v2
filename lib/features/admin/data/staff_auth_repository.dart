@@ -298,7 +298,17 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
       // `StaffClaimsSyncClient.syncAndRefresh` for why `refreshSession`
       // below must NOT pass this.
       claims = await _claimsSyncClient
-          .syncAndRefresh(allowCachedTokenFallback: true)
+          .syncAndRefresh(
+            allowCachedTokenFallback: true,
+            // Real credentials are only ever in scope here (a fresh
+            // sign-in) — `refreshSession` has none and must never supply
+            // this. See `StaffClaimsSyncClient.syncAndRefresh`'s own doc
+            // comment on `remintToken` for why Windows needs it at all
+            // (PC Yönetici İnceleme Modu, 2026-09-21).
+            remintToken: () async {
+              await _authClient.signIn(email: email, password: password);
+            },
+          )
           .timeout(_networkTimeout);
       _logging.log(LogLevel.debug,
           '[AUTH-TRACE] syncAndRefresh: end (${syncWatch.elapsedMilliseconds}ms)');
