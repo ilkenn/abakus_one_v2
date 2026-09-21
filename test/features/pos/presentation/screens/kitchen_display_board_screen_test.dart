@@ -1,6 +1,7 @@
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_ticket_repository.dart';
+import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_station.dart';
 import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_line_status.dart';
 import 'package:abakus_one_v2/features/pos/domain/kitchen/kitchen_ticket.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
@@ -72,12 +73,23 @@ void main() {
   });
 
   testWidgets(
-      'auto-enqueues work items for a fired ticket and shows its '
-      'line', (tester) async {
+      // **2026-09-21**: this screen is now a pure reader of
+      // `kitchenWorkItems` (`functions/src/acceptOrderLine.ts` is the sole
+      // writer of fresh work items in production) — it no longer creates
+      // one from a ticket on its own, so the work item is seeded directly
+      // here instead of relying on the screen's own former enqueue call.
+      'shows a ticket line whose real kitchenWorkItems doc already exists',
+      (tester) async {
     final ticketRepository = InMemoryKitchenTicketRepository();
     await ticketRepository.save(buildTestKitchenTicket());
+    final projectionRepository = InMemoryKitchenProjectionRepository();
+    await projectionRepository.createInitial(buildTestKitchenWorkItem());
 
-    await pumpScreen(tester, ticketRepository: ticketRepository);
+    await pumpScreen(
+      tester,
+      ticketRepository: ticketRepository,
+      projectionRepository: projectionRepository,
+    );
 
     expect(find.text('ORD-1'), findsOneWidget);
     expect(find.textContaining('Ürün 0'), findsOneWidget);
@@ -87,7 +99,15 @@ void main() {
       (tester) async {
     final ticketRepository = InMemoryKitchenTicketRepository();
     await ticketRepository.save(buildTestKitchenTicket());
-    await pumpScreen(tester, ticketRepository: ticketRepository);
+    final projectionRepository = InMemoryKitchenProjectionRepository();
+    await projectionRepository.createInitial(
+      buildTestKitchenWorkItem(station: KitchenStation.shared),
+    );
+    await pumpScreen(
+      tester,
+      ticketRepository: ticketRepository,
+      projectionRepository: projectionRepository,
+    );
 
     // AP-5 Sprint 4 — the new status filter bar also has its own 'Tümü'
     // chip, so there are now two: one per filter dimension.
@@ -113,12 +133,25 @@ void main() {
       'a ticket that becomes active after the screen is already showing appears with no manual reload',
       (tester) async {
     final ticketRepository = InMemoryKitchenTicketRepository();
-    await pumpScreen(tester, ticketRepository: ticketRepository);
+    final projectionRepository = InMemoryKitchenProjectionRepository();
+    await pumpScreen(
+      tester,
+      ticketRepository: ticketRepository,
+      projectionRepository: projectionRepository,
+    );
 
     expect(find.text('Bekleyen sipariş yok'), findsOneWidget);
     expect(find.text('ORD-1'), findsNothing);
 
+    // A real accepted order produces both facts near-simultaneously
+    // (`acceptOrderLine.ts` writes the work item as part of the same
+    // transition that makes the order — and therefore its derived
+    // ticket — active) — mirrored here rather than saving the ticket
+    // alone, which this screen no longer materializes a work item for
+    // on its own.
     await ticketRepository.save(buildTestKitchenTicket());
+    await projectionRepository.createInitial(buildTestKitchenWorkItem());
+    await tester.pump();
     await tester.pumpAndSettle();
 
     expect(find.text('ORD-1'), findsOneWidget);
@@ -150,7 +183,13 @@ void main() {
       (tester) async {
     final ticketRepository = InMemoryKitchenTicketRepository();
     await ticketRepository.save(buildTestKitchenTicket());
-    await pumpScreen(tester, ticketRepository: ticketRepository);
+    final projectionRepository = InMemoryKitchenProjectionRepository();
+    await projectionRepository.createInitial(buildTestKitchenWorkItem());
+    await pumpScreen(
+      tester,
+      ticketRepository: ticketRepository,
+      projectionRepository: projectionRepository,
+    );
 
     expect(find.widgetWithText(ChoiceChip, 'Bekleyen'), findsOneWidget);
     expect(find.widgetWithText(ChoiceChip, 'Hazırlanıyor'), findsOneWidget);
@@ -169,7 +208,13 @@ void main() {
       (tester) async {
     final ticketRepository = InMemoryKitchenTicketRepository();
     await ticketRepository.save(buildTestKitchenTicket());
-    await pumpScreen(tester, ticketRepository: ticketRepository);
+    final projectionRepository = InMemoryKitchenProjectionRepository();
+    await projectionRepository.createInitial(buildTestKitchenWorkItem());
+    await pumpScreen(
+      tester,
+      ticketRepository: ticketRepository,
+      projectionRepository: projectionRepository,
+    );
 
     // `buildTestKitchenTicket`'s fixture: channelLabel 'Masa',
     // receivedAt DateTime(2026, 1, 1, 12) -> '12:00'.
@@ -202,7 +247,13 @@ void main() {
       (tester) async {
     final ticketRepository = InMemoryKitchenTicketRepository();
     await ticketRepository.save(buildTestKitchenTicket());
-    await pumpScreen(tester, ticketRepository: ticketRepository);
+    final projectionRepository = InMemoryKitchenProjectionRepository();
+    await projectionRepository.createInitial(buildTestKitchenWorkItem());
+    await pumpScreen(
+      tester,
+      ticketRepository: ticketRepository,
+      projectionRepository: projectionRepository,
+    );
 
     await tester.tap(find.byIcon(Icons.print_outlined));
     await tester.pumpAndSettle();

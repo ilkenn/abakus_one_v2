@@ -28,6 +28,11 @@ export interface CatalogExportCategory {
   name: string;
   sortOrder: number;
   isActive: boolean;
+  /** `KitchenStation` name string (e.g. `"beverage"`), or `null`/absent
+   * when unset — mirrors `MenuCategory.defaultStation`'s own "no
+   * override, falls back to shared" semantics. KDS station-based routing
+   * (2026-09-21). */
+  defaultStation?: string | null;
 }
 
 export interface CatalogExportProduct {
@@ -112,6 +117,7 @@ export async function migrateCanonicalCatalog(
         name: category.name,
         sortOrder: category.sortOrder,
         isActive: category.isActive,
+        defaultStation: category.defaultStation ?? null,
       },
     }),
   );

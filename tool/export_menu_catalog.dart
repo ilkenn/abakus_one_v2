@@ -43,6 +43,10 @@ Future<void> main() async {
         'name': category.name,
         'sortOrder': category.sortOrder,
         'isActive': category.isActive,
+        // KDS station-based routing (2026-09-21) — `null` when unset,
+        // matching `MenuCategory.defaultStation`'s own "no override,
+        // falls back to shared" semantics.
+        'defaultStation': category.defaultStation?.name,
       },
   ];
 

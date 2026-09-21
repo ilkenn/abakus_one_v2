@@ -127,6 +127,12 @@ test("migrateCanonicalCatalog: a real beverage product migrated under cat_icecek
 
   const doc = await db.collection("menuProducts").doc(drink!.id).get();
   assert.ok(doc.exists);
+
+  // KDS station-based routing (2026-09-21) — İçecekler's real Dart
+  // MenuCategory.defaultStation (KitchenStation.beverage) round-trips
+  // through the export/migration pipeline intact.
+  const categoryDoc = await db.collection("menuCategories").doc("cat_icecekler").get();
+  assert.strictEqual(categoryDoc.data()!.defaultStation, "beverage");
   assert.strictEqual(doc.data()!.categoryId, "cat_icecekler");
   assert.strictEqual(doc.data()!.basePriceMinorUnits, drink!.basePriceMinorUnits);
 });

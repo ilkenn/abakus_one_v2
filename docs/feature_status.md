@@ -7380,3 +7380,56 @@ Dart suite) run separately: **3751/3751 passed**, 0 failures.
 New/changed files: `lib/core/services/feature_flags/feature_flags_provider.dart`,
 `lib/features/admin/presentation/widgets/module_readiness_gate.dart`, `firestore.rules`,
 `docs/feature_status.md`.
+
+## KDS: Real Station-Based Routing Activated; Dual-Writer Duplication Fixed (2026-09-21)
+
+Analyzed the current state of KDS station filtering (Bar/Sıcak/Soğuk) and item-level status management
+per request. Found the station feature almost entirely built but non-functional (every work item hard-
+coded to `station: 'shared'` by both of `kitchenWorkItems`' writers, so any non-"Tümü" filter chip
+returned an empty board) and a real, independent "double ticket" risk: two uncoordinated writers of
+fresh work items (server `acceptOrderLine.ts`, the real order-acceptance path; client
+`EnqueueKitchenWorkItems`, re-triggered every time `KitchenDisplayBoardScreen` opened) with incompatible
+id/idempotencyKey schemes. Item-level status management (`KitchenLineStatus`, `transitionKitchenWorkItem`)
+was confirmed already fully correct — untouched this pass. Full plan/analysis in this session's own
+history; both open design questions (writer authority, assignment mechanism) were confirmed by the user
+before implementation: server becomes sole writer; station assignment via a simple `MenuCategory
+.defaultStation` default (not the full, still-unwired `KitchenRoutingRule` engine), starting with
+`drinkCategory → beverage` only, everything else left `null` (→ `shared`) pending the real kitchen
+hot/cold layout.
+
+**1. Removed the client-side writer**: `KitchenDisplayBoardScreen._load()` no longer constructs
+`EnqueueKitchenWorkItems`/calls `enqueue()` on every board open — the screen is now a pure reader of
+`kitchenWorkItems` via `kitchenProjectionRepositoryProvider.findByBranch(...)`, unchanged.
+`EnqueueKitchenWorkItems` itself stays in the codebase (still real, tested application logic — just no
+longer invoked from production UI). Updated `kitchen_display_board_screen_test.dart`: every test that
+previously relied on the screen's own enqueue call to materialize a work item from a bare ticket now
+seeds the work item directly (`InMemoryKitchenProjectionRepository.createInitial(buildTestKitchenWorkItem())`),
+matching how a real accepted order actually produces both facts together server-side.
+
+**2. Real station assignment**: `MenuCategory` gained `final KitchenStation? defaultStation`
+(`lib/features/menu/domain/models/menu_category.dart`) — `null` falls back to `shared`. Set on
+`AbakusMenuCatalog.drinkCategory` only (`defaultStation: KitchenStation.beverage`). Threaded through the
+existing Dart→JSON→Firestore catalog pipeline: `tool/export_menu_catalog.dart` (JSON export) →
+`functions/src/catalogMigration.ts`'s `CatalogExportCategory`/`migrateCanonicalCatalog` (Firestore
+`menuCategories/{id}.defaultStation`) — the committed `functions/scripts/data/menu_catalog_export.json`
+was regenerated to carry it. `functions/src/acceptOrderLine.ts`'s `stationForLine()` (previously a
+hardcoded-`"shared"` stub that already received — and ignored — a `kitchenRoutingRules` read) now does a
+real per-line lookup: `AcceptedLine.productId` → `menuProducts/{id}.categoryId` → `menuCategories/{id}
+.defaultStation`, defaulting to `"shared"` when the product, its category, or an override is missing.
+The now-unused `kitchenRoutingRules` read was dropped from this function; `KitchenRoutingRule`/
+`KitchenRoutingResolver` stay in the codebase untouched as a real, tested, still-available future
+extension point for finer-grained (per-product/modifier) overrides.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3751/3751** (unchanged count —
+one test renamed/re-seeded, not added). Cloud Functions: `npm test` under an isolated emulator (never the
+user's own running one), `GOOGLE_MAPS_PROVIDER_MODE=fixture` — **2055/2055 passed**, including 2 new
+`acceptOrderLine.test.ts` cases (defaultStation-carrying category → `station: "beverage"`; no override →
+`"shared"`) and a new `catalogMigration.test.ts` assertion (İçecekler's `defaultStation` round-trips
+through the real export/migration pipeline intact). No `firestore.rules` changes this pass.
+
+New/changed files: `lib/features/pos/presentation/screens/kitchen_display_board_screen.dart`,
+`test/features/pos/presentation/screens/kitchen_display_board_screen_test.dart`,
+`lib/features/menu/domain/models/menu_category.dart`, `lib/features/menu/data/abakus_menu_catalog.dart`,
+`tool/export_menu_catalog.dart`, `functions/src/catalogMigration.ts`, `functions/src/acceptOrderLine.ts`,
+`functions/src/test/acceptOrderLine.test.ts`, `functions/src/test/catalogMigration.test.ts`,
+`functions/scripts/data/menu_catalog_export.json`, `docs/feature_status.md`.

@@ -1,3 +1,4 @@
+import '../../pos/domain/kds/kitchen_station.dart';
 import '../domain/models/menu_category.dart';
 import '../domain/models/menu_product.dart';
 
@@ -69,6 +70,11 @@ abstract final class AbakusMenuCatalog {
     name: 'İçecekler',
     sortOrder: 6,
     isActive: true,
+    // KDS station-based routing (2026-09-21) — the only category with a
+    // confirmed real-kitchen station assignment so far; every other
+    // category stays unset (-> KitchenStation.shared) until the real
+    // hot/cold prep split is confirmed.
+    defaultStation: KitchenStation.beverage,
   );
 
   static const List<MenuCategory> categories = [

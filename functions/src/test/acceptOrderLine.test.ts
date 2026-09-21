@@ -98,6 +98,24 @@ async function seedStandardIngredientCost(ingredientId: string, unitCostAmountMi
   });
 }
 
+async function seedMenuProduct(productId: string, categoryId: string) {
+  await db().collection("menuProducts").doc(productId).set({
+    organizationId: "org-1",
+    categoryId,
+    name: productId,
+  });
+}
+
+async function seedMenuCategory(categoryId: string, defaultStation: string | null) {
+  await db().collection("menuCategories").doc(categoryId).set({
+    organizationId: "org-1",
+    name: categoryId,
+    sortOrder: 0,
+    isActive: true,
+    defaultStation,
+  });
+}
+
 async function seedBranchStock(branchId: string, inventoryItemId: string, quantityOnHand: number) {
   await db().collection("branchStock").doc(`${branchId}_${inventoryItemId}`).set({
     inventoryItemId,
@@ -151,6 +169,52 @@ test("enqueueKitchenWorkAndConsumeStock: a line with no RecipeIngredientLink sti
 
   const record = await db().collection("stockConsumptionRecords").doc(`accept-${orderId}-${orderLineId}`).get();
   assert.strictEqual(record.exists, true);
+
+  // KDS station-based routing (2026-09-21) — no menuProducts/menuCategories
+  // doc exists for this product at all, so the safe default applies.
+  assert.strictEqual(workItem.data()?.station, "shared");
+});
+
+test("enqueueKitchenWorkAndConsumeStock: a product in a category with a defaultStation produces a kitchenWorkItems doc carrying that station", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const categoryId = nextId("category");
+  const orderLineId = `${orderId}-line-0`;
+
+  await seedMenuCategory(categoryId, "beverage");
+  await seedMenuProduct(productId, categoryId);
+
+  await runAccept({
+    branchId,
+    orderId,
+    channel: "dineInQr",
+    acceptedLines: [{ orderLineId, productId, quantity: 1 }],
+  });
+
+  const workItem = await db().collection("kitchenWorkItems").doc(`kwi-${orderLineId}`).get();
+  assert.strictEqual(workItem.data()?.station, "beverage");
+});
+
+test("enqueueKitchenWorkAndConsumeStock: a product whose category has no defaultStation falls back to 'shared'", async () => {
+  const branchId = nextId("branch");
+  const orderId = nextId("order");
+  const productId = nextId("product");
+  const categoryId = nextId("category");
+  const orderLineId = `${orderId}-line-0`;
+
+  await seedMenuCategory(categoryId, null);
+  await seedMenuProduct(productId, categoryId);
+
+  await runAccept({
+    branchId,
+    orderId,
+    channel: "dineInQr",
+    acceptedLines: [{ orderLineId, productId, quantity: 1 }],
+  });
+
+  const workItem = await db().collection("kitchenWorkItems").doc(`kwi-${orderLineId}`).get();
+  assert.strictEqual(workItem.data()?.station, "shared");
 });
 
 test("enqueueKitchenWorkAndConsumeStock: a linked recipe deducts the exact scaled quantity from branchStock and records a StockMovement", async () => {

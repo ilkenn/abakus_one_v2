@@ -103,17 +103,17 @@ export interface KitchenWorkAndStockConsumptionPlan {
   writes: FirestoreWrite[];
 }
 
-function stationForLine(
-  routingRuleDocs: FirebaseFirestore.QueryDocumentSnapshot[],
-): string {
-  // V1 default: single `shared` station (architecture doc §13) — no
-  // dynamic rule-matching ported server-side this sprint (no real
-  // `KitchenRoutingRule` writer exists yet either); every rule document,
-  // if any ever exist, is currently ignored in favor of the same default
-  // the client resolver already applies when no rule matches.
-  void routingRuleDocs;
-  return "shared";
-}
+// KDS station-based routing (2026-09-21) — real category-default
+// resolution. `KitchenRoutingRule`/`kitchenRoutingRules` (priority-ordered
+// productId/categoryId/modifierCode/channel matching) stays a real,
+// tested Dart domain model for a future, more granular pass, but nothing
+// server-side reads it yet — this is the coarser "every product in
+// category X routes to station Y" default, driven by `MenuCategory
+// .defaultStation` (migrated into `menuCategories/{id}.defaultStation` by
+// `catalogMigration.ts`). Falls back to `"shared"` whenever the product
+// or its category is missing, or the category has no override — the
+// same safe default the client's own `KitchenRoutingResolver` already
+// applies for a no-match line.
 
 /** Read phase only — must be called before the enclosing transaction's
  * first write. Returns `null` when every accepted line was already
@@ -131,9 +131,28 @@ export async function prepareKitchenWorkAndStockConsumption(
   const pendingLines = acceptedLines.filter((_, i) => !recordSnaps[i].exists);
   if (pendingLines.length === 0) return null; // Every line already processed.
 
-  const routingRulesSnap = await tx.get(
-    db.collection("kitchenRoutingRules").where("branchId", "==", branchId),
-  );
+  const productRefs = pendingLines.map((l) => db.collection("menuProducts").doc(l.productId));
+  const productSnaps = await Promise.all(productRefs.map((ref) => tx.get(ref)));
+  const categoryIdByProductId = new Map<string, string>();
+  productSnaps.forEach((snap, i) => {
+    const categoryId = snap.exists ? (snap.data()!.categoryId as string | undefined) : undefined;
+    if (categoryId) categoryIdByProductId.set(pendingLines[i].productId, categoryId);
+  });
+
+  const distinctCategoryIds = [...new Set([...categoryIdByProductId.values()])];
+  const categoryRefs = distinctCategoryIds.map((id) => db.collection("menuCategories").doc(id));
+  const categorySnaps = await Promise.all(categoryRefs.map((ref) => tx.get(ref)));
+  const stationByCategoryId = new Map<string, string>();
+  categorySnaps.forEach((snap, i) => {
+    const defaultStation = snap.exists ? (snap.data()!.defaultStation as string | null | undefined) : undefined;
+    if (defaultStation) stationByCategoryId.set(distinctCategoryIds[i], defaultStation);
+  });
+
+  function stationForLine(line: AcceptedLine): string {
+    const categoryId = categoryIdByProductId.get(line.productId);
+    if (!categoryId) return "shared";
+    return stationByCategoryId.get(categoryId) ?? "shared";
+  }
 
   const recipeLinkRefs = pendingLines.map((l) =>
     db.collection("recipeIngredientLinks").doc(`link-${l.productId}`),
@@ -290,7 +309,7 @@ export async function prepareKitchenWorkAndStockConsumption(
       data: {
         organizationId,
         branchId,
-        station: stationForLine(routingRulesSnap.docs),
+        station: stationForLine(line),
         orderId,
         kitchenTicketId: `kt-${orderId}`,
         kitchenTicketLineId: line.orderLineId,

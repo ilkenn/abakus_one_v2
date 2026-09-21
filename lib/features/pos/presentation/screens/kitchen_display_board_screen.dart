@@ -15,7 +15,6 @@ import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
-import '../../application/use_cases/enqueue_kitchen_work_items.dart';
 import '../../application/use_cases/record_kitchen_event.dart';
 import '../../application/use_cases/transition_kitchen_work_item.dart';
 import '../../data/kitchen_action_gateway.dart';
@@ -163,21 +162,17 @@ class _KitchenDisplayBoardScreenState
       return;
     }
 
-    final enqueue = EnqueueKitchenWorkItems(
-      clock: clock,
-      idGenerator: ref.read(kitchenWorkItemIdGeneratorProvider),
-      projectionRepository: ref.read(kitchenProjectionRepositoryProvider),
-      routingRuleRepository: ref.read(kitchenRoutingRuleRepositoryProvider),
-      recordKitchenEvent: RecordKitchenEvent(
-        idGenerator: ref.read(kitchenEventIdGeneratorProvider),
-        eventRepository: ref.read(kitchenEventRepositoryProvider),
-        eventPublisher: ref.read(kitchenEventPublisherProvider),
-      ),
-    );
-    for (final ticket in tickets) {
-      await enqueue(ticket: ticket);
-    }
-
+    // **2026-09-21**: this screen no longer creates `kitchenWorkItems`
+    // documents itself. `functions/src/acceptOrderLine.ts` (the real
+    // dine-in/takeaway/delivery acceptance path) is the sole writer of
+    // fresh work items now — this screen previously also called
+    // `EnqueueKitchenWorkItems` here, on every board open, using a
+    // different id/idempotencyKey scheme than the server path; neither
+    // side could deduplicate against the other, so simply opening this
+    // screen could create a second, duplicate work item for a line the
+    // server had already enqueued. `EnqueueKitchenWorkItems` itself stays
+    // in the codebase (still real, tested application logic) — it's just
+    // no longer invoked from production UI.
     final workItems =
         await ref.read(kitchenProjectionRepositoryProvider).findByBranch(
               branchId: widget.branchId,
