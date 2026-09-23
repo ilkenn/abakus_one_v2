@@ -34,46 +34,59 @@ abstract final class AbakusMenuCatalog {
     name: 'Bowl',
     sortOrder: 0,
     isActive: true,
+    // KDS station-based routing (2026-09-23) — always centered on a
+    // cooked protein, assembled at the hot line.
+    defaultStation: KitchenStation.hot,
   );
   static const MenuCategory saladCategory = MenuCategory(
     id: 'cat_salata',
     name: 'Salata',
     sortOrder: 1,
     isActive: true,
+    // KDS station-based routing (2026-09-23) — cold-assembled base; any
+    // grilled protein is prepped separately at the hot line before being
+    // placed on the salad.
+    defaultStation: KitchenStation.cold,
   );
   static const MenuCategory wrapCategory = MenuCategory(
     id: 'cat_wrap',
     name: 'Wrap',
     sortOrder: 2,
     isActive: true,
+    // KDS station-based routing (2026-09-23) — grilled/fried fillings,
+    // tortilla typically warmed/pressed.
+    defaultStation: KitchenStation.hot,
   );
   static const MenuCategory burgerCategory = MenuCategory(
     id: 'cat_hamburger',
     name: 'Hamburger',
     sortOrder: 3,
     isActive: true,
+    // KDS station-based routing (2026-09-23) — grilled patty, toasted bun.
+    defaultStation: KitchenStation.hot,
   );
   static const MenuCategory pastaCategory = MenuCategory(
     id: 'cat_makarna',
     name: 'Makarna',
     sortOrder: 4,
     isActive: true,
+    // KDS station-based routing (2026-09-23) — cooked-to-order hot dishes.
+    defaultStation: KitchenStation.hot,
   );
   static const MenuCategory snackCategory = MenuCategory(
     id: 'cat_atistirmalik',
     name: 'Atıştırmalık',
     sortOrder: 5,
     isActive: true,
+    // KDS station-based routing (2026-09-23) — fried items.
+    defaultStation: KitchenStation.hot,
   );
   static const MenuCategory drinkCategory = MenuCategory(
     id: 'cat_icecekler',
     name: 'İçecekler',
     sortOrder: 6,
     isActive: true,
-    // KDS station-based routing (2026-09-21) — the only category with a
-    // confirmed real-kitchen station assignment so far; every other
-    // category stays unset (-> KitchenStation.shared) until the real
-    // hot/cold prep split is confirmed.
+    // KDS station-based routing (2026-09-21).
     defaultStation: KitchenStation.beverage,
   );
 

@@ -1,47 +1,47 @@
 {
-  "exportedAt": "2026-09-21T15:51:30.388528",
+  "exportedAt": "2026-09-23T16:38:50.398873",
   "categories": [
     {
       "id": "cat_bowl",
       "name": "Bowl",
       "sortOrder": 0,
       "isActive": true,
-      "defaultStation": null
+      "defaultStation": "hot"
     },
     {
       "id": "cat_salata",
       "name": "Salata",
       "sortOrder": 1,
       "isActive": true,
-      "defaultStation": null
+      "defaultStation": "cold"
     },
     {
       "id": "cat_wrap",
       "name": "Wrap",
       "sortOrder": 2,
       "isActive": true,
-      "defaultStation": null
+      "defaultStation": "hot"
     },
     {
       "id": "cat_hamburger",
       "name": "Hamburger",
       "sortOrder": 3,
       "isActive": true,
-      "defaultStation": null
+      "defaultStation": "hot"
     },
     {
       "id": "cat_makarna",
       "name": "Makarna",
       "sortOrder": 4,
       "isActive": true,
-      "defaultStation": null
+      "defaultStation": "hot"
     },
     {
       "id": "cat_atistirmalik",
       "name": "Atıştırmalık",
       "sortOrder": 5,
       "isActive": true,
-      "defaultStation": null
+      "defaultStation": "hot"
     },
     {
       "id": "cat_icecekler",

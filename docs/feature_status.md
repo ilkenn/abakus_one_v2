@@ -7479,3 +7479,41 @@ New/changed files: `lib/features/pos/presentation/screens/kitchen_display_board_
 `lib/features/pos/presentation/screens/kitchen_completed_history_screen.dart`,
 `test/features/pos/presentation/screens/kitchen_completed_history_screen_test.dart`,
 `docs/feature_status.md`.
+
+## KDS: Category-to-Station Mapping Expanded to All 7 Real Categories (2026-09-23)
+
+Requested to expand the `MenuCategory.defaultStation` mapping (previously only `drinkCategory →
+beverage`, everything else `null → shared`, per the 2026-09-21 entry above) to the remaining 6 real
+menu categories. Two real gaps were disclosed and confirmed with the user before touching any code:
+`KitchenStation` has no distinct "Izgara" (grill) value (only `shared/hot/cold/beverage/dessert/
+packing`) — user confirmed keeping everything under the existing `hot` value rather than adding a new
+enum member this pass; and the real catalog (`AbakusMenuCatalog.categories`, confirmed exactly 7,
+transcribed from the live menu) has no dessert/"Tatlı" category at all, so `dessert` remains unassigned
+to anything real. This is a category-level (not product-level) default — several categories genuinely
+mix hot- and cold-prepared components in the same dish (e.g. a grilled protein on a cold salad base);
+`KitchenRoutingRule` remains the disclosed, still-unwired future extension point for per-product
+overrides.
+
+Confirmed mapping applied to `lib/features/menu/data/abakus_menu_catalog.dart`: `bowlCategory → hot`
+(always centered on a cooked protein), `saladCategory → cold` (cold-assembled base; a real kitchen's
+salad station is conventionally cold even when it plates a grilled protein prepped elsewhere),
+`wrapCategory → hot`, `burgerCategory → hot`, `pastaCategory → hot`, `snackCategory → hot` (fried
+items) — `drinkCategory → beverage` unchanged. Regenerated the committed
+`functions/scripts/data/menu_catalog_export.json` via `dart run tool/export_menu_catalog.dart` so the
+new values round-trip through the existing Dart→JSON→Firestore pipeline
+(`functions/src/catalogMigration.ts`, unchanged this pass — already threads `defaultStation` through
+from the 2026-09-21 work). No Cloud Functions source changed: `acceptOrderLine.ts`'s `stationForLine()`
+lookup logic is unchanged, and neither `acceptOrderLine.test.ts` nor `catalogMigration.test.ts` assert
+on the specific categories touched here (both use synthetic fixture categories or assert only on
+`cat_icecekler`), so no test updates were needed.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3757/3757** (unchanged count
+— data-only change, no new Dart logic/tests). Cloud Functions emulator suite (`npm test` under an
+isolated `firebase emulators:exec`) could not be re-run this pass — a pre-existing environment blocker
+(installed JDK is 17; `firebase-tools` now requires 21+) unrelated to this change; flagged to the user
+rather than worked around silently (no JDK install/firebase-tools downgrade attempted). This doesn't
+block correctness for this specific change since no Cloud Functions source was touched and no existing
+CF test asserts on the categories that changed.
+
+New/changed files: `lib/features/menu/data/abakus_menu_catalog.dart`,
+`functions/scripts/data/menu_catalog_export.json`, `docs/feature_status.md`.
