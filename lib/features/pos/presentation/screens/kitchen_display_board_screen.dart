@@ -34,13 +34,15 @@ import 'delayed_orders_screen.dart';
 import 'kitchen_completed_history_screen.dart';
 import 'kitchen_order_details_screen.dart';
 
-/// The default Phase 4 delay thresholds — 10 minutes warning, 20 minutes
-/// critical, no per-channel override. Branch-configurable in principle
-/// (`KitchenDelayThresholds`); this is the seam's default value, not a
-/// hardcoded business rule.
+/// The default delay thresholds — 5 minutes warning (yellow/orange), 10
+/// minutes critical (red, pulsing highlight), no per-channel override.
+/// Branch-configurable in principle (`KitchenDelayThresholds`); this is
+/// the seam's default value, not a hardcoded business rule. Tightened from
+/// the prior 10/20-minute values (2026-09-22) to match the real kitchen's
+/// expected turnaround.
 const _defaultThresholds = KitchenDelayThresholds(
-  warningThreshold: Duration(minutes: 10),
-  criticalThreshold: Duration(minutes: 20),
+  warningThreshold: Duration(minutes: 5),
+  criticalThreshold: Duration(minutes: 10),
 );
 
 /// AP-5 Sprint 4 — the board's status filter tabs (Tümü/Bekleyen/
@@ -427,8 +429,12 @@ class _KitchenDisplayBoardScreenState
             tooltip: 'Tamamlanan Geçmişi',
             onPressed: () {
               Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) =>
-                    KitchenCompletedHistoryScreen(branchId: widget.branchId),
+                builder: (_) => KitchenCompletedHistoryScreen(
+                  branchId: widget.branchId,
+                  authorizationPolicy: widget.authorizationPolicy,
+                  deviceId: widget.deviceId,
+                  performedByStaffId: widget.performedByStaffId,
+                ),
               ));
             },
           ),
@@ -620,7 +626,7 @@ class _SyncStatusBar extends StatelessWidget {
 
 /// One order's board card — every [KitchenWorkItem] for the ticket, each
 /// tappable to advance to its next natural [KitchenLineStatus].
-class KitchenOrderCard extends StatelessWidget {
+class KitchenOrderCard extends StatefulWidget {
   const KitchenOrderCard({
     super.key,
     required this.ticket,
@@ -658,9 +664,17 @@ class KitchenOrderCard extends StatelessWidget {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final worstDelay = workItems
+  /// The worst (longest-elapsed) [KitchenDelayState] across every active
+  /// line on this ticket — the single figure the card's timer/color/pulse
+  /// all key off, so a ticket with even one badly-delayed line is never
+  /// masked by its other, on-time lines.
+  static KitchenDelayState? _worstDelayFor(
+    KitchenTicket ticket,
+    List<KitchenWorkItem> workItems,
+    DateTime now,
+    KitchenDelayThresholds thresholds,
+  ) {
+    return workItems
         .map((item) => KitchenDelayState.compute(
               workItemId: item.id,
               queuedAt: item.queuedAt,
@@ -674,6 +688,76 @@ class KitchenOrderCard extends StatelessWidget {
       if (worst == null) return state;
       return state.totalDuration > worst.totalDuration ? state : worst;
     });
+  }
+
+  @override
+  State<KitchenOrderCard> createState() => _KitchenOrderCardState();
+}
+
+class _KitchenOrderCardState extends State<KitchenOrderCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    if (_isCritical) _startPulse();
+  }
+
+  @override
+  void didUpdateWidget(covariant KitchenOrderCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_isCritical) {
+      // Re-trigger the attention-grabbing pulse whenever this card's
+      // worst delay is still critical on a later rebuild (a new poll, a
+      // new ticket arriving) — never left permanently mid-animation from
+      // a stale trigger, and never running for a card that has since
+      // recovered (recalled/completed/no longer worst-critical).
+      _startPulse();
+    } else {
+      _pulseController.stop();
+    }
+  }
+
+  /// Finite — 3 pulses (~3s), never an infinite `repeat()`. A KDS card
+  /// left rendered without a fresh reload for a long stretch must not
+  /// leave an animation looping forever (real cost on a screen meant to
+  /// run unattended for hours; also the reason every `flutter test`
+  /// widget test using `pumpAndSettle()` on this screen would otherwise
+  /// hang — `pumpAndSettle` waits for scheduled frames to stop, which an
+  /// infinite `repeat()` never does). Settles back on the steady critical
+  /// border/glow (still clearly red) once the pulses finish, not a
+  /// plain/unhighlighted state — the ongoing critical delay itself is
+  /// still communicated by the static red border regardless.
+  void _startPulse() {
+    _pulseController
+      ..stop()
+      ..repeat(reverse: true, count: 3);
+  }
+
+  bool get _isCritical =>
+      (KitchenOrderCard._worstDelayFor(
+                  widget.ticket, widget.workItems, widget.now, widget.thresholds)
+              ?.isCritical) ??
+      false;
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ticket = widget.ticket;
+    final workItems = widget.workItems;
+    final onOpenDetails = widget.onOpenDetails;
+    final worstDelay = KitchenOrderCard._worstDelayFor(
+        ticket, workItems, widget.now, widget.thresholds);
     final isCritical = worstDelay?.isCritical ?? false;
     final isWarning = worstDelay?.isWarning ?? false;
     final allReady = workItems.every((i) =>
@@ -681,14 +765,32 @@ class KitchenOrderCard extends StatelessWidget {
         i.status == KitchenLineStatus.cancelled ||
         i.status == KitchenLineStatus.unavailable ||
         i.status == KitchenLineStatus.wasted);
+    final delayColor = isCritical
+        ? AppColors.error
+        : isWarning
+            ? AppColors.warning
+            : AppColors.success;
 
-    return AppCard(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      borderColor: isCritical
-          ? AppColors.error
-          : isWarning
-              ? AppColors.warning
+    return AnimatedBuilder(
+      animation: _pulseController,
+      builder: (context, child) {
+        final pulseAlpha = isCritical ? _pulseController.value : 0.0;
+        return AppCard(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          borderColor: delayColor,
+          boxShadow: isCritical
+              ? [
+                  BoxShadow(
+                    color: AppColors.error
+                        .withValues(alpha: 0.25 + (0.35 * pulseAlpha)),
+                    blurRadius: 6 + (10 * pulseAlpha),
+                    spreadRadius: 1 + (2 * pulseAlpha),
+                  ),
+                ]
               : null,
+          child: child!,
+        );
+      },
       child: InkWell(
         onTap: onOpenDetails,
         child: Column(
@@ -720,7 +822,7 @@ class KitchenOrderCard extends StatelessWidget {
                       tooltip: 'Fiş Yazdır / Tekrar Yazdır',
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
-                      onPressed: onPrintRequested,
+                      onPressed: widget.onPrintRequested,
                     ),
                   ],
                 ),
@@ -763,8 +865,8 @@ class KitchenOrderCard extends StatelessWidget {
                         ),
                       ),
                       onTap: () {
-                        final next = nextStatus(item.status);
-                        if (next != null) onLineTap(item, next);
+                        final next = KitchenOrderCard.nextStatus(item.status);
+                        if (next != null) widget.onLineTap(item, next);
                       },
                     ),
                 ],

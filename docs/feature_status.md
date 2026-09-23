@@ -7433,3 +7433,49 @@ New/changed files: `lib/features/pos/presentation/screens/kitchen_display_board_
 `tool/export_menu_catalog.dart`, `functions/src/catalogMigration.ts`, `functions/src/acceptOrderLine.ts`,
 `functions/src/test/acceptOrderLine.test.ts`, `functions/src/test/catalogMigration.test.ts`,
 `functions/scripts/data/menu_catalog_export.json`, `docs/feature_status.md`.
+
+## KDS: Delay Timer/Color Scale + Recall-from-History (2026-09-22)
+
+Requested: delay timers + a 3-tier color scale (0-5dk normal/green, 5-10dk warning/orange, 10dk+
+critical/red + pulsing highlight) on KDS cards, and a "Geri Çağır" (recall) path for mistakenly-completed
+tickets. Research found most of the underlying machinery already real and tested
+(`KitchenDelayState`/`KitchenDelayThresholds`, and a full `ready → recalled → preparing` transition
+already wired end-to-end through `KitchenOrderDetailsScreen`) — but two concrete gaps: the existing
+2-tier color scale used 10dk/20dk thresholds (not the requested 5dk/10dk) with no distinct "normal"
+color and no pulse at all, and recall was only reachable while the order's overall status was still
+active — once an order moved past `ready` (the actual "mistakenly completed" case), `KitchenOrderDetails
+Screen`'s own ticket lookup (`FirestoreKitchenTicketRepository.findById`'s `_kitchenEligibleStatuses`
+check) legitimately returns `null` for it, leaving no way to reach recall at all.
+
+**1. Delay timer & 3-tier color**: `_defaultThresholds` (`kitchen_display_board_screen.dart`) changed
+from `(10min, 20min)` to `(5min, 10min)`. `KitchenOrderCard` converted from `StatelessWidget` to
+`StatefulWidget` (only production call site; safe) so it can host a bounded pulse animation. Colors:
+`AppColors.success` (green, <5dk) / `.warning` (orange, 5-10dk) / `.error` (red, 10dk+) — no new design
+tokens. The critical state also gets a pulsing red glow (`AppCard`'s existing `boxShadow` prop, animated
+via `AnimatedBuilder`) — **deliberately finite** (`AnimationController.repeat(count: 3)`, ~3 pulses),
+never an infinite `repeat()`: an unbounded loop would (a) run forever on a screen meant to stay open for
+hours, and (b) make every `pumpAndSettle()`-based widget test in this file hang, since `pumpAndSettle`
+waits for scheduled frames to stop — confirmed this matters in practice, since every existing fixture
+item in this test file is already "critical" under the ambient real `SystemClock` those tests never
+override (months of elapsed time), yet all 9 pre-existing tests still pass unchanged. 3 new tests pin a
+real `FakeClock` via `clockProvider` to verify each tier's exact border/shadow at a controlled elapsed
+time.
+
+**2. Recall-from-history**: `KitchenCompletedHistoryScreen` gained `authorizationPolicy`/`deviceId`/
+`performedByStaffId` params (mirroring `KitchenOrderDetailsScreen`'s exact shape) and a "Geri Çağır"
+button on each `ready`-status row — calling `TransitionKitchenWorkItem` directly (no ticket/order
+dependency at all, unlike the existing details-screen path) with the same reason-prompt dialog pattern.
+On success the item drops out of the list (no longer ready/terminal); a missing `authorizationPolicy`
+fails closed with a clear message before ever opening the dialog, mirroring `KitchenOrderDetailsScreen
+._transition`'s own precedent exactly. `KitchenDisplayBoardScreen`'s navigation to this screen now threads
+its own `authorizationPolicy`/`deviceId`/`performedByStaffId` through (previously only `branchId`).
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3757/3757** (3751 + 6 new:
+3 delay-tier tests in `kitchen_display_board_screen_test.dart`, 3 recall tests in
+`kitchen_completed_history_screen_test.dart`). No Cloud Functions/Firestore Rules changes.
+
+New/changed files: `lib/features/pos/presentation/screens/kitchen_display_board_screen.dart`,
+`test/features/pos/presentation/screens/kitchen_display_board_screen_test.dart`,
+`lib/features/pos/presentation/screens/kitchen_completed_history_screen.dart`,
+`test/features/pos/presentation/screens/kitchen_completed_history_screen_test.dart`,
+`docs/feature_status.md`.

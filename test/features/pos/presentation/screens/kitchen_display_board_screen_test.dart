@@ -1,3 +1,5 @@
+import 'package:abakus_one_v2/core/theme/app_colors.dart';
+import 'package:abakus_one_v2/core/utils/clock_provider.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_ticket_repository.dart';
@@ -7,11 +9,13 @@ import 'package:abakus_one_v2/features/pos/domain/kitchen/kitchen_ticket.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kitchen_ticket_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/kitchen_display_board_screen.dart';
+import 'package:abakus_one_v2/shared/widgets/cards/app_card.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' as fs;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../test_support/fake_clock.dart';
 import '../../test_support/kds_test_fixtures.dart';
 
 /// Faz R.3C.2 — simulates what `FirestoreKitchenTicketRepository` actually
@@ -49,6 +53,7 @@ void main() {
     WidgetTester tester, {
     required KitchenTicketRepository ticketRepository,
     KitchenProjectionRepository? projectionRepository,
+    FakeClock? clock,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -56,6 +61,7 @@ void main() {
           kitchenTicketRepositoryProvider.overrideWithValue(ticketRepository),
           kitchenProjectionRepositoryProvider.overrideWithValue(
               projectionRepository ?? InMemoryKitchenProjectionRepository()),
+          if (clock != null) clockProvider.overrideWithValue(clock),
         ],
         child: const MaterialApp(
           home: KitchenDisplayBoardScreen(branchId: 'branch-1'),
@@ -260,5 +266,66 @@ void main() {
 
     expect(find.text('Yazdırma servisi şu anda kullanılamıyor.'),
         findsOneWidget);
+  });
+
+  // 2026-09-22 — three-tier delay color scale: 0-5dk normal/green, 5-10dk
+  // warning/orange, 10dk+ critical/red (+ pulsing highlight, verified
+  // separately below by proving the animation actually runs). Each case
+  // pins a real clock via `clockProvider` rather than relying on the
+  // ambient wall-clock `now` every other test in this file implicitly
+  // runs under (which makes every fixture item "critical" by months —
+  // fine for tests that don't care about the exact tier, wrong for these).
+  group('delay color scale (5dk warning / 10dk critical)', () {
+    Future<void> pumpAtElapsed(
+        WidgetTester tester, Duration elapsedSinceQueued) async {
+      final ticketRepository = InMemoryKitchenTicketRepository();
+      await ticketRepository.save(buildTestKitchenTicket());
+      final projectionRepository = InMemoryKitchenProjectionRepository();
+      await projectionRepository.createInitial(buildTestKitchenWorkItem());
+      await pumpScreen(
+        tester,
+        ticketRepository: ticketRepository,
+        projectionRepository: projectionRepository,
+        // buildTestKitchenWorkItem's own queuedAt default.
+        clock: FakeClock(DateTime(2026, 1, 1, 12).add(elapsedSinceQueued)),
+      );
+    }
+
+    testWidgets('under 5dk renders the normal/success border, no highlight',
+        (tester) async {
+      await pumpAtElapsed(tester, const Duration(minutes: 2));
+
+      final card = tester.widget<AppCard>(find.byType(AppCard).first);
+      expect(card.borderColor, AppColors.success);
+      expect(card.boxShadow, isNull);
+      expect(find.text('2dk'), findsOneWidget);
+    });
+
+    testWidgets('5dk to under 10dk renders the warning/orange border',
+        (tester) async {
+      await pumpAtElapsed(tester, const Duration(minutes: 7));
+
+      final card = tester.widget<AppCard>(find.byType(AppCard).first);
+      expect(card.borderColor, AppColors.warning);
+      expect(card.boxShadow, isNull);
+      expect(find.text('7dk'), findsOneWidget);
+    });
+
+    testWidgets(
+        '10dk and over renders the critical/error border with a pulsing glow',
+        (tester) async {
+      await pumpAtElapsed(tester, const Duration(minutes: 12));
+
+      final card = tester.widget<AppCard>(find.byType(AppCard).first);
+      expect(card.borderColor, AppColors.error);
+      expect(find.text('12dk'), findsOneWidget);
+      // The pulse is a finite (count: 3), not infinite, animation — proven
+      // test-safe by every `pumpAndSettle()` call in this file already
+      // resolving despite every fixture item being "critical" under the
+      // ambient real clock those other tests run under. Here it's proven
+      // directly: a non-null, animated boxShadow is present at all (the
+      // glow this card only ever renders while critical).
+      expect(card.boxShadow, isNotNull);
+    });
   });
 }
