@@ -7612,3 +7612,51 @@ New/changed files: `lib/features/pos/data/kitchen_projection_repository.dart`,
 `test/features/pos/data/kitchen_projection_repository_test.dart`,
 `test/features/pos/presentation/screens/pos_table_workspace_screen_test.dart`,
 `docs/feature_status.md`.
+
+## Masa/QR Misafir Akışı Denetimi: Eksik Uçtan-Uca Test Kapatıldı (2026-09-28)
+
+Requested: audit the end-to-end QR table-guest ordering flow (scan → `submitDineInOrder` as
+`guestSession` → staff `respondToDineInOrderLines` → kitchen ticket/KDS) for real gaps in
+Firestore rules, auth claims, or state sync. Three parallel research passes (client Flutter flow,
+server Cloud Functions flow, Firestore rules/auth claims) confirmed the core authorization chain is
+real and solid: real Firebase Anonymous Auth before every guest callable, real Cloud Functions
+(never a direct client Firestore write) for session-open/order-submit, `canReadAsTableGuest`
+(`firestore.rules:910-912`) is a plain `guestAuthUid == request.auth.uid` field comparison (not a
+custom claim — none is ever set for guests) reachable by a real anonymous session and covered by 5
+passing emulator rule tests, and table-claiming races are prevented by a real Firestore transaction
+in `openTableGuestSession.ts`, not client trust.
+
+Five real gaps were found and reported to the user, ranked by severity; **confirmed scope for this
+pass: only the highest-value, lowest-risk one.** The other four (kitchen work items dropping
+guest-origin `mode`/`channel`; `tableGuestSessions.status`'s `closed`/`revoked`/`expired` values
+declared but never written by any function, pure lazy-TTL; client-side `ActiveTableContext` only
+re-checked for staleness at checkout, not while browsing; anonymous-auth identity churn on app
+reinstall orphaning the prior guest session) are disclosed, not fixed this pass — explicitly
+deferred, not silently dropped.
+
+**The gap closed**: no single test proved the *entire* real chain — `dineInCanonicalLifecycle
+.test.ts` exercises real guest auth through real staff acceptance but never asserts a
+`kitchenWorkItems` doc actually gets created; `orderAcceptanceStockIntegration.test.ts` asserts the
+`kitchenWorkItems` doc but seeds the order directly via the Admin SDK and mints the staff token via
+`setCustomUserClaims` directly, bypassing `submitDineInOrder`'s own guest-ownership check and the
+real membership/role-grant pipeline entirely. New
+`functions/src/test/dineInGuestKitchenIntegration.test.ts` closes this: real anonymous guest signs
+up → `submitDineInOrder` (`mode: "guestSession"`) → real staff (via `bootstrapFirstAdminAccount`/
+`assignStaffRole`/`grantStaffBranchAccess`/`syncOwnStaffClaims`, the real permission-grant pipeline)
+calls `respondToDineInOrderLines` → asserts `kitchenWorkItems/kwi-kt-${orderId}-line-0` exists with
+the correct `orderId`/`branchId`/`status`/`quantity` **and** `station` — seeding a real
+`menuCategories.defaultStation` (`"hot"`) so the assertion proves real category-based routing, not
+just the `"shared"` fallback every other integration test happens to exercise by omission.
+
+**Verification**: `npm run build` (tsc) clean — confirms the new test compiles against the real
+`submitDineInOrder`/`respondToDineInOrderLines`/Firestore doc shapes. **Could not be executed** —
+the same pre-existing environment blocker as the 2026-09-23 entry above (`firebase-tools` now
+requires JDK 21+, installed JDK is 17); this is a local-environment issue the user has said to defer
+separately, not something this test or any recent change caused. No Flutter files touched, so no
+`flutter analyze`/`flutter test` run for this change. **This new test has not been run and its
+assertions are unconfirmed by real execution** — flagging explicitly rather than claiming a pass
+count that wasn't observed; run it once the JDK is upgraded (`cd functions && npm test` under
+`firebase emulators:exec`, this repo's own established isolated-emulator practice).
+
+New/changed files: `functions/src/test/dineInGuestKitchenIntegration.test.ts`,
+`docs/feature_status.md`.
