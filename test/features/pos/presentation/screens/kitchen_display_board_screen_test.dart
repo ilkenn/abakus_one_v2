@@ -1,6 +1,7 @@
 import 'package:abakus_one_v2/core/theme/app_colors.dart';
 import 'package:abakus_one_v2/core/utils/clock_provider.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
+import 'package:abakus_one_v2/features/pos/data/kds_station_lock_store.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_ticket_repository.dart';
 import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_station.dart';
@@ -8,6 +9,7 @@ import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_line_status.dart';
 import 'package:abakus_one_v2/features/pos/domain/kitchen/kitchen_ticket.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kitchen_ticket_dependencies_provider.dart';
+import 'package:abakus_one_v2/features/pos/presentation/screens/kds_station_lock_settings_screen.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/kitchen_display_board_screen.dart';
 import 'package:abakus_one_v2/shared/widgets/cards/app_card.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' as fs;
@@ -54,6 +56,7 @@ void main() {
     required KitchenTicketRepository ticketRepository,
     KitchenProjectionRepository? projectionRepository,
     FakeClock? clock,
+    KdsStationLockStore? stationLockStore,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -61,6 +64,8 @@ void main() {
           kitchenTicketRepositoryProvider.overrideWithValue(ticketRepository),
           kitchenProjectionRepositoryProvider.overrideWithValue(
               projectionRepository ?? InMemoryKitchenProjectionRepository()),
+          kdsStationLockStoreProvider.overrideWith(
+              (ref) async => stationLockStore ?? InMemoryKdsStationLockStore()),
           if (clock != null) clockProvider.overrideWithValue(clock),
         ],
         child: const MaterialApp(
@@ -264,8 +269,8 @@ void main() {
     await tester.tap(find.byIcon(Icons.print_outlined));
     await tester.pumpAndSettle();
 
-    expect(find.text('Yazdırma servisi şu anda kullanılamıyor.'),
-        findsOneWidget);
+    expect(
+        find.text('Yazdırma servisi şu anda kullanılamıyor.'), findsOneWidget);
   });
 
   // 2026-09-22 — three-tier delay color scale: 0-5dk normal/green, 5-10dk
@@ -326,6 +331,81 @@ void main() {
       // directly: a non-null, animated boxShadow is present at all (the
       // glow this card only ever renders while critical).
       expect(card.boxShadow, isNotNull);
+    });
+  });
+
+  // 2026-09-28 — KDS Device Station Locking: a physical device's persisted
+  // station lock (`KdsStationLockStore`) pre-filters the board on open and
+  // replaces the station chip row with a locked indicator, so the board
+  // can't be accidentally switched away from the station it's mounted at.
+  group('device station lock', () {
+    testWidgets(
+        'a locked station opens the board pre-filtered and hides the station chips',
+        (tester) async {
+      final ticketRepository = InMemoryKitchenTicketRepository();
+      await ticketRepository.save(buildTestKitchenTicket());
+      final projectionRepository = InMemoryKitchenProjectionRepository();
+      await projectionRepository.createInitial(
+        buildTestKitchenWorkItem(station: KitchenStation.hot),
+      );
+
+      await pumpScreen(
+        tester,
+        ticketRepository: ticketRepository,
+        projectionRepository: projectionRepository,
+        stationLockStore: InMemoryKdsStationLockStore(KitchenStation.hot),
+      );
+
+      expect(find.text('ORD-1'), findsOneWidget,
+          reason: 'the hot work item matches the hot lock');
+      expect(find.textContaining('Sıcak (Kilitli)'), findsOneWidget);
+      expect(find.text('Kilidi Kaldır'), findsOneWidget);
+      // Only the status filter's own 'Tümü' chip remains — the station
+      // filter bar renders no chips at all while locked.
+      expect(find.widgetWithText(ChoiceChip, 'Tümü'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Sıcak'), findsNothing);
+    });
+
+    testWidgets(
+        'tapping Kilidi Kaldır clears the lock and restores the full station chip row',
+        (tester) async {
+      final ticketRepository = InMemoryKitchenTicketRepository();
+      await ticketRepository.save(buildTestKitchenTicket());
+      final projectionRepository = InMemoryKitchenProjectionRepository();
+      await projectionRepository.createInitial(
+        buildTestKitchenWorkItem(station: KitchenStation.hot),
+      );
+      final lockStore = InMemoryKdsStationLockStore(KitchenStation.hot);
+
+      await pumpScreen(
+        tester,
+        ticketRepository: ticketRepository,
+        projectionRepository: projectionRepository,
+        stationLockStore: lockStore,
+      );
+
+      await tester.tap(find.text('Kilidi Kaldır'));
+      await tester.pumpAndSettle();
+
+      expect(await lockStore.currentLock(), isNull);
+      expect(find.widgetWithText(ChoiceChip, 'Tümü'), findsNWidgets(2),
+          reason:
+              'both filter dimensions render their own Tümü chip once unlocked');
+      expect(find.widgetWithText(ChoiceChip, 'Sıcak'), findsOneWidget);
+      expect(find.text('ORD-1'), findsOneWidget);
+    });
+
+    testWidgets('tapping the İstasyon Ayarları icon opens the settings screen',
+        (tester) async {
+      await pumpScreen(
+        tester,
+        ticketRepository: InMemoryKitchenTicketRepository(),
+      );
+
+      await tester.tap(find.byTooltip('İstasyon Ayarları'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(KdsStationLockSettingsScreen), findsOneWidget);
     });
   });
 }

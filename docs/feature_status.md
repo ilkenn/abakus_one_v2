@@ -7517,3 +7517,52 @@ CF test asserts on the categories that changed.
 
 New/changed files: `lib/features/menu/data/abakus_menu_catalog.dart`,
 `functions/scripts/data/menu_catalog_export.json`, `docs/feature_status.md`.
+
+## KDS: Device Station Locking (Local Device Preference) (2026-09-28)
+
+Requested: let a physical KDS screen "lock" itself to a single kitchen station (e.g. only show
+Sıcak) so the board's filter survives an app restart, plus a small settings UI to set/clear that
+lock. `KitchenDisplayDevice.stationScope` (`Set<KitchenStation>?`) already existed in the domain
+model but was entirely dead — set once at optional construction time, never read by anything,
+never persisted (`KitchenDisplayDeviceRepository` has only an in-memory implementation, reset
+every app restart). Two real architecture forks were confirmed with the user before any code:
+(1) both the in-memory and Firestore `KitchenProjectionRepository.findByBranch` implementations
+filter by a single `stationName` equality check (no `whereIn`), so a real multi-station lock would
+mean changing the query layer on both — **confirmed single-station lock only**, reusing the
+existing single-value filter unchanged; (2) `KitchenDisplayDeviceRepository`/`KitchenDisplayDevice`
+is a separate, deliberately-deferred, server-facing multi-device registry — the real production
+navigation path (`admin_shell_screen.dart`) doesn't even pass a `deviceId` into
+`KitchenDisplayBoardScreen` today — **confirmed persisted as a local-only device preference** via
+`SharedPreferences` instead; `KitchenDisplayDeviceRepository` was not touched.
+
+New `KdsStationLockStore`/`SharedPreferencesKdsStationLockStore`
+(`lib/features/pos/data/kds_station_lock_store.dart`) mirrors `OfflineLeaseStore`'s exact shape,
+simplified for a single enum value (`station.name`, key `kds_station_lock_v1`).
+`KitchenDisplayBoardScreen` now reads the lock once on load (`_syncStationLockAndReload`, called
+from the existing `initState` `addPostFrameCallback`) and applies it as `_selectedStation`'s
+initial value; when locked, `_StationFilterBar` hides every station chip entirely and shows a lock
+icon + station label + an inline "Kilidi Kaldır" button instead, rather than merely disabling or
+highlighting chips — the simplest, least ambiguous way to communicate "this board only shows one
+station." A new `Icons.lock_outline` AppBar action ("İstasyon Ayarları") opens the new
+`KdsStationLockSettingsScreen` — a pick-then-"Kaydet" flow (not apply-on-tap, since locking a
+kiosk is consequential) reusing the existing shared `OptionSelectionCard` widget for each station
+row rather than inventing a new picker pattern. The Turkish station labels previously private to
+`_StationFilterBar` were promoted to a new shared `lib/features/pos/domain/kds/
+kitchen_station_labels.dart` const so the filter bar and the settings screen can't drift apart.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3767/3767** (3757 + 10
+new: 4 unit tests for `SharedPreferencesKdsStationLockStore`, 3 widget tests for
+`KdsStationLockSettingsScreen`, 3 widget tests in `kitchen_display_board_screen_test.dart` covering
+the locked/unlocked board states and the settings entry point). No Cloud Functions/Firestore Rules
+changes — purely local Flutter-side persistence.
+
+New/changed files: `lib/features/pos/data/kds_station_lock_store.dart`,
+`lib/features/pos/domain/kds/kitchen_station_labels.dart`,
+`lib/features/pos/presentation/screens/kds_station_lock_settings_screen.dart`,
+`lib/features/pos/presentation/screens/kitchen_display_board_screen.dart`,
+`lib/features/pos/presentation/providers/kds_dependencies_provider.dart`,
+`test/features/pos/data/kds_station_lock_store_test.dart`,
+`test/features/pos/test_support/kds_test_fixtures.dart`,
+`test/features/pos/presentation/screens/kitchen_display_board_screen_test.dart`,
+`test/features/pos/presentation/screens/kds_station_lock_settings_screen_test.dart`,
+`docs/feature_status.md`.

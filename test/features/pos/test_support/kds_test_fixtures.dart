@@ -2,6 +2,7 @@ import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/pos/application/identity/kitchen_event_id_generator.dart';
 import 'package:abakus_one_v2/features/pos/application/use_cases/record_kitchen_event.dart';
 import 'package:abakus_one_v2/features/pos/data/in_memory_kitchen_event_bus.dart';
+import 'package:abakus_one_v2/features/pos/data/kds_station_lock_store.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_event_repository.dart';
 import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_line_status.dart';
 import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_station.dart';
@@ -91,4 +92,21 @@ RecordKitchenEvent buildTestRecordKitchenEvent({
     eventRepository: eventRepository ?? InMemoryKitchenEventRepository(),
     eventPublisher: InMemoryKitchenEventBus(),
   );
+}
+
+/// In-memory [KdsStationLockStore] fake — for widget tests that need to
+/// control/observe a device's station lock without touching real
+/// `SharedPreferences`.
+class InMemoryKdsStationLockStore implements KdsStationLockStore {
+  InMemoryKdsStationLockStore([this._lock]);
+  KitchenStation? _lock;
+
+  @override
+  Future<KitchenStation?> currentLock() async => _lock;
+
+  @override
+  Future<void> setLock(KitchenStation station) async => _lock = station;
+
+  @override
+  Future<void> clearLock() async => _lock = null;
 }

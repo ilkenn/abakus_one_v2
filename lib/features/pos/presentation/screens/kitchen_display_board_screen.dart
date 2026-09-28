@@ -22,6 +22,7 @@ import '../../domain/authorization/pos_authorization_policy.dart';
 import '../../domain/kds/kitchen_delay_state.dart';
 import '../../domain/kds/kitchen_line_status.dart';
 import '../../domain/kds/kitchen_station.dart';
+import '../../domain/kds/kitchen_station_labels.dart';
 import '../../domain/kds/kitchen_synchronization_state.dart';
 import '../../domain/kds/kitchen_work_item.dart';
 import '../../domain/kitchen/kitchen_ticket.dart';
@@ -31,6 +32,7 @@ import '../providers/kitchen_ticket_dependencies_provider.dart';
 import '../../../printing/data/print_job_action_gateway.dart';
 import '../../../printing/domain/print_job.dart';
 import 'delayed_orders_screen.dart';
+import 'kds_station_lock_settings_screen.dart';
 import 'kitchen_completed_history_screen.dart';
 import 'kitchen_order_details_screen.dart';
 
@@ -104,6 +106,7 @@ class _KitchenDisplayBoardScreenState
   KitchenSynchronizationState? _syncState;
   DateTime? _now;
   KitchenStation? _selectedStation;
+  KitchenStation? _lockedStation;
   _KdsStatusFilter _statusFilter = _KdsStatusFilter.all;
   bool _isFullscreen = false;
   String? _message;
@@ -119,7 +122,8 @@ class _KitchenDisplayBoardScreenState
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _syncStationLockAndReload());
     // Faz R.3C: subscribe to the repository's live ticket stream so a
     // reservation-preorder release (or any other order reaching a
     // kitchen-eligible status) refreshes the board with no manual
@@ -137,6 +141,23 @@ class _KitchenDisplayBoardScreenState
   void dispose() {
     _ticketSubscription?.cancel();
     super.dispose();
+  }
+
+  Future<void> _syncStationLockAndReload() async {
+    final store = await ref.read(kdsStationLockStoreProvider.future);
+    final lock = await store.currentLock();
+    if (!mounted) return;
+    setState(() {
+      _lockedStation = lock;
+      _selectedStation = lock;
+    });
+    await _load();
+  }
+
+  Future<void> _clearStationLock() async {
+    final store = await ref.read(kdsStationLockStoreProvider.future);
+    await store.clearLock();
+    await _syncStationLockAndReload();
   }
 
   void _handleLoadError(Object error) {
@@ -255,7 +276,8 @@ class _KitchenDisplayBoardScreenState
   /// Always the shared station (V1 default — see `acceptOrderLine.ts`'s
   /// `stationForLine`); [isCopy] is true only for an explicit reprint of an
   /// already-fired ticket, mirroring `KitchenTicket.isCopy`.
-  Future<void> _requestPrint(KitchenTicket ticket, {bool isCopy = false}) async {
+  Future<void> _requestPrint(KitchenTicket ticket,
+      {bool isCopy = false}) async {
     if (!ref.read(firebaseReadyProvider)) {
       setState(() => _message = 'Yazdırma servisi şu anda kullanılamıyor.');
       return;
@@ -369,10 +391,12 @@ class _KitchenDisplayBoardScreenState
                   children: [
                     _StationFilterBar(
                       selected: _selectedStation,
+                      lockedStation: _lockedStation,
                       onSelected: (station) {
                         setState(() => _selectedStation = station);
                         _load();
                       },
+                      onUnlock: _clearStationLock,
                     ),
                     _StatusFilterBar(
                       selected: _statusFilter,
@@ -424,6 +448,17 @@ class _KitchenDisplayBoardScreenState
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.lock_outline),
+            tooltip: 'İstasyon Ayarları',
+            onPressed: () {
+              Navigator.of(context)
+                  .push(MaterialPageRoute(
+                    builder: (_) => const KdsStationLockSettingsScreen(),
+                  ))
+                  .then((_) => _syncStationLockAndReload());
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Tamamlanan Geçmişi',
@@ -527,23 +562,44 @@ class _KitchenDisplayBoardScreenState
 }
 
 class _StationFilterBar extends StatelessWidget {
-  const _StationFilterBar({required this.selected, required this.onSelected});
+  const _StationFilterBar({
+    required this.selected,
+    required this.lockedStation,
+    required this.onSelected,
+    required this.onUnlock,
+  });
 
   final KitchenStation? selected;
+  final KitchenStation? lockedStation;
   final ValueChanged<KitchenStation?> onSelected;
+  final VoidCallback onUnlock;
 
-  static const _labels = {
-    null: 'Tümü',
-    KitchenStation.hot: 'Sıcak',
-    KitchenStation.cold: 'Soğuk',
-    KitchenStation.beverage: 'İçecek',
-    KitchenStation.dessert: 'Tatlı',
-    KitchenStation.packing: 'Paketleme',
-    KitchenStation.shared: 'Ortak',
-  };
+  static const _labels = {null: 'Tümü', ...kitchenStationLabels};
 
   @override
   Widget build(BuildContext context) {
+    final locked = lockedStation;
+    if (locked != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
+        child: Row(
+          children: [
+            const Icon(Icons.lock_outline,
+                size: 16, color: AppColors.textSecondary),
+            const SizedBox(width: AppSpacing.xs),
+            Text('${kitchenStationLabels[locked]} (Kilitli)',
+                style: AppTypography.bodySmall
+                    .copyWith(color: AppColors.textSecondary)),
+            const Spacer(),
+            TextButton(
+              onPressed: onUnlock,
+              child: const Text('Kilidi Kaldır'),
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
@@ -741,8 +797,8 @@ class _KitchenOrderCardState extends State<KitchenOrderCard>
 
   bool get _isCritical =>
       (KitchenOrderCard._worstDelayFor(
-                  widget.ticket, widget.workItems, widget.now, widget.thresholds)
-              ?.isCritical) ??
+              widget.ticket, widget.workItems, widget.now, widget.thresholds)
+          ?.isCritical) ??
       false;
 
   @override

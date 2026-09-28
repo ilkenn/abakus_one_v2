@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/utils/clock_provider.dart';
@@ -12,6 +13,7 @@ import '../../application/services/in_memory_kitchen_connection_monitor.dart';
 import '../../application/services/in_memory_kitchen_synchronization_service.dart';
 import '../../data/firestore_kitchen_work_item_repository.dart';
 import '../../data/in_memory_kitchen_event_bus.dart';
+import '../../data/kds_station_lock_store.dart';
 import '../../data/kitchen_action_gateway.dart';
 import '../../data/kitchen_audit_entry_repository.dart';
 import '../../data/kitchen_display_device_repository.dart';
@@ -47,6 +49,16 @@ final kitchenProjectionRepositoryProvider =
     return InMemoryKitchenProjectionRepository();
   }
   return FirestoreKitchenWorkItemRepository();
+});
+
+/// KDS Device Station Locking — the physical device's local, restart-
+/// durable station filter lock. Deliberately NOT gated by
+/// [firebaseReadyProvider]: `SharedPreferences` works standalone whether or
+/// not Firebase is ready, unlike every other provider in this file.
+final kdsStationLockStoreProvider =
+    FutureProvider<KdsStationLockStore>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  return SharedPreferencesKdsStationLockStore(prefs);
 });
 
 /// AP-5 Sprint 1 — the real backend boundary for kitchen work-item
