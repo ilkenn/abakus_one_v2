@@ -68,5 +68,67 @@ void main() {
       final branch1Items = await repository.findByBranch(branchId: 'branch-1');
       expect(branch1Items.map((i) => i.id), ['w1']);
     });
+
+    group('watchByOrderId', () {
+      test('emits the current snapshot immediately on subscription',
+          () async {
+        final repository = InMemoryKitchenProjectionRepository();
+        await repository.save(_item(id: 'w1', orderId: 'order-a'));
+
+        final first =
+            await repository.watchByOrderId(OrderId('order-a')).first;
+
+        expect(first.map((i) => i.id), ['w1']);
+      });
+
+      test('re-emits when a new item is saved for the watched order',
+          () async {
+        final repository = InMemoryKitchenProjectionRepository();
+        final emissions = <List<KitchenWorkItem>>[];
+        final subscription = repository
+            .watchByOrderId(OrderId('order-a'))
+            .listen(emissions.add);
+        await Future<void>.delayed(Duration.zero);
+
+        await repository.save(_item(id: 'w1', orderId: 'order-a'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(emissions.last.map((i) => i.id), ['w1']);
+        await subscription.cancel();
+      });
+
+      test(
+          'a save for a different order does not emit on this order\'s stream',
+          () async {
+        final repository = InMemoryKitchenProjectionRepository();
+        final emissions = <List<KitchenWorkItem>>[];
+        final subscription = repository
+            .watchByOrderId(OrderId('order-a'))
+            .listen(emissions.add);
+        await Future<void>.delayed(Duration.zero);
+        final countAfterInitial = emissions.length;
+
+        await repository.save(_item(id: 'w2', orderId: 'order-b'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(emissions.length, countAfterInitial);
+        await subscription.cancel();
+      });
+
+      test(
+          'a duplicate save (new revision) does not produce two entries for one work item',
+          () async {
+        final repository = InMemoryKitchenProjectionRepository();
+        await repository.save(_item(id: 'w1', orderId: 'order-a'));
+        await repository
+            .save(_item(id: 'w1', orderId: 'order-a', revision: 2));
+
+        final results =
+            await repository.watchByOrderId(OrderId('order-a')).first;
+
+        expect(results, hasLength(1));
+        expect(results.single.revision, 2);
+      });
+    });
   });
 }

@@ -19,6 +19,7 @@ import '../../../menu/presentation/providers/menu_catalog_provider.dart';
 import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../providers/actor_session_provider.dart';
+import '../providers/kds_dependencies_provider.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
 import 'pos_cash_register_screen.dart';
@@ -534,11 +535,17 @@ class _OrderCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              order.mode == 'staffEntry'
-                  ? 'Personel Girişi'
-                  : 'Misafir Siparişi',
-              style: AppTypography.labelLarge,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  order.mode == 'staffEntry'
+                      ? 'Personel Girişi'
+                      : 'Misafir Siparişi',
+                  style: AppTypography.labelLarge,
+                ),
+                _KitchenStatusBadge(orderId: order.orderId),
+              ],
             ),
             const SizedBox(height: AppSpacing.xs),
             for (var i = 0; i < order.lines.length; i++)
@@ -1833,3 +1840,48 @@ final _myPendingApprovalsProvider =
       .watch(approvalRepositoryProvider)
       .watchMyRequests(actorUid: actorUid);
 });
+
+/// A live, order-level kitchen-readiness badge — `"3/5 hazır"`/`"Hazır"` —
+/// so staff can see prep status without walking to the physical KDS
+/// screen. Order-level only, deliberately not per-line: `PosOrderLineSummary`
+/// has no stable per-line id (ADR-013), while `KitchenTicketLine`/
+/// `KitchenWorkItem` ids are derived from the fired ticket's line index —
+/// a per-line badge could show the wrong line's status after a split/
+/// propose-replacement reorders `order.lines`. Renders nothing while
+/// loading, on error, or before any kitchen ticket exists for this order
+/// (a normal state, not an error) — mirrors `_PendingApprovalBanner`'s
+/// exact "only this sliver rebuilds on stream emission" isolation.
+class _KitchenStatusBadge extends ConsumerWidget {
+  const _KitchenStatusBadge({required this.orderId});
+
+  final String orderId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final viewAsync = ref.watch(kdsOrderStatusProvider(orderId));
+    return viewAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (view) {
+        if (view == null || view.lines.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final ready = view.lines.where((l) => l.isFullyReady).length;
+        final total = view.lines.length;
+        final color = view.isFullyReady ? AppColors.success : AppColors.info;
+        return Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: AppRadius.kPill,
+          ),
+          child: Text(
+            view.isFullyReady ? 'Hazır' : '$ready/$total hazır',
+            style: AppTypography.labelMedium.copyWith(color: color),
+          ),
+        );
+      },
+    );
+  }
+}

@@ -7566,3 +7566,49 @@ New/changed files: `lib/features/pos/data/kds_station_lock_store.dart`,
 `test/features/pos/presentation/screens/kitchen_display_board_screen_test.dart`,
 `test/features/pos/presentation/screens/kds_station_lock_settings_screen_test.dart`,
 `docs/feature_status.md`.
+
+## KDS & POS Çift Yönlü Entegrasyon: Order-Level Kitchen Status Badge (2026-09-28)
+
+Requested: show live kitchen prep status on POS's single-table detail screen
+(`PosTableWorkspaceScreen`) so staff don't have to walk to the physical KDS screen. Research
+confirmed table/dine-in orders already produce real kitchen tickets (`respondToDineInOrderLines.ts`
+→ `acceptOrderLine.ts`), but the POS table screen showed zero kitchen-status information — a real,
+confirmed gap, not a guess. A second finding shaped the scope: `PosOrderLineSummary` (POS side) has
+no stable per-line id (ADR-013 — `OrderLine` itself has none), while `KitchenTicketLine`/
+`KitchenWorkItem` ids are derived from the fired ticket's line index — a per-line status badge could
+show the wrong line's status after a split/propose-replacement reorders `order.lines`. **Confirmed
+with the user: order-level aggregate only** (`"3/5 hazır"` / `"Hazır"`), which eliminates this risk
+entirely since no line-level matching is ever attempted.
+
+Reused `KitchenOrderView.build` (`lib/features/pos/domain/kds/kitchen_order_view.dart`) unchanged —
+already real, tested-shape order-readiness aggregation, previously only consumed by the KDS-side
+`kitchen_order_details_screen.dart`. The one missing piece was a live per-order stream: added
+`Stream<List<KitchenWorkItem>> watchByOrderId(OrderId)` to `KitchenProjectionRepository`
+(`lib/features/pos/data/kitchen_projection_repository.dart`), implemented in
+`InMemoryKitchenProjectionRepository` (broadcast `StreamController` per orderId, mirroring
+`InMemoryKitchenTicketRepository.watchActiveByBranch`'s exact established shape) and
+`FirestoreKitchenWorkItemRepository` (`.snapshots()` on the same single-field `orderId` equality
+query `findByOrderId` already used — no new Firestore index needed, confirmed against
+`firestore.indexes.json`; no `firestore.rules` change needed, the existing `kitchenWorkItems` read
+rule already covers `.snapshots()`). New `kdsOrderStatusProvider`
+(`StreamProvider.family<KitchenOrderView?, String>`) in `kds_dependencies_provider.dart` — `null`
+when no kitchen ticket exists yet for the order (a normal state, not an error). New private
+`_KitchenStatusBadge extends ConsumerWidget` in `pos_table_workspace_screen.dart`, mirroring
+`_PendingApprovalBanner`'s exact "only this sliver rebuilds on stream emission" isolation pattern —
+wired into `_OrderCard`'s title row. Colors: `AppColors.success` when fully ready,
+`AppColors.info` while in progress (deliberately not `AppColors.warning`, which already carries a
+distinct "5-10dk delay" meaning on the KDS board's 3-tier scale). No change to `_load()`/
+`_runAction`/`initState` — the rest of the screen stays one-shot-fetched.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3774/3774** (3767 + 7
+new: 4 stream tests in `kitchen_projection_repository_test.dart`, 3 widget tests in
+`pos_table_workspace_screen_test.dart`). No Cloud Functions changes. No `firestore.rules`/index
+changes.
+
+New/changed files: `lib/features/pos/data/kitchen_projection_repository.dart`,
+`lib/features/pos/data/firestore_kitchen_work_item_repository.dart`,
+`lib/features/pos/presentation/providers/kds_dependencies_provider.dart`,
+`lib/features/pos/presentation/screens/pos_table_workspace_screen.dart`,
+`test/features/pos/data/kitchen_projection_repository_test.dart`,
+`test/features/pos/presentation/screens/pos_table_workspace_screen_test.dart`,
+`docs/feature_status.md`.

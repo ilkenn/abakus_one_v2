@@ -26,7 +26,9 @@ import '../../data/kitchen_routing_rule_repository.dart';
 import '../../domain/kds/kitchen_connection_monitor.dart';
 import '../../domain/kds/kitchen_event_publisher.dart';
 import '../../domain/kds/kitchen_event_subscriber.dart';
+import '../../domain/kds/kitchen_order_view.dart';
 import '../../domain/kds/kitchen_synchronization_service.dart';
+import '../../../orders/domain/models/order_id.dart';
 import '../../../printing/data/print_job_action_gateway.dart';
 
 /// Every Phase 4 KDS repository/id-generator/service currently in use.
@@ -179,4 +181,25 @@ final kitchenRoutingRuleIdGeneratorProvider =
 final kitchenPrintAttemptIdGeneratorProvider =
     Provider<KitchenPrintAttemptIdGenerator>((ref) {
   return SequentialKitchenPrintAttemptIdGenerator();
+});
+
+/// KDS & POS Çift Yönlü Entegrasyon — a live, order-level kitchen-
+/// readiness view (`"3/5 hazır"`/`"Hazır"`), reusable by any screen that
+/// needs to show an order's kitchen prep status without walking the caller
+/// through `kitchenWorkItems` directly. `null` means no kitchen ticket
+/// exists yet for this order (a normal state, e.g. still pending
+/// approval), not an error.
+final kdsOrderStatusProvider =
+    StreamProvider.family<KitchenOrderView?, String>((ref, orderId) {
+  return ref
+      .watch(kitchenProjectionRepositoryProvider)
+      .watchByOrderId(OrderId(orderId))
+      .map((workItems) {
+    if (workItems.isEmpty) return null;
+    return KitchenOrderView.build(
+      orderId: OrderId(orderId),
+      kitchenTicketId: workItems.first.kitchenTicketId,
+      workItems: workItems,
+    );
+  });
 });

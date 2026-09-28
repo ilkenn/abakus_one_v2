@@ -84,6 +84,21 @@ class FirestoreKitchenWorkItemRepository
   }
 
   @override
+  Stream<List<KitchenWorkItem>> watchByOrderId(OrderId orderId) {
+    return _firestore
+        .collection(_collection)
+        .where('orderId', isEqualTo: orderId.value)
+        .snapshots()
+        .map((snapshot) {
+      final items = [
+        for (final doc in snapshot.docs) _fromFirestore(doc.id, doc.data()),
+      ];
+      items.sort((a, b) => a.queuedAt.compareTo(b.queuedAt));
+      return List.unmodifiable(items);
+    });
+  }
+
+  @override
   Future<List<KitchenWorkItem>> findByBranch({
     required String branchId,
     String? stationName,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../orders/domain/models/order_id.dart';
 import '../domain/kds/kitchen_work_item.dart';
 
@@ -31,6 +33,12 @@ abstract interface class KitchenProjectionRepository {
   /// what `KitchenOrderView.build` reads to derive order-level readiness.
   Future<List<KitchenWorkItem>> findByOrderId(OrderId orderId);
 
+  /// A live view of [findByOrderId] for [orderId] — re-emits whenever the
+  /// order's kitchen work items change. Every implementation must emit the
+  /// current snapshot immediately on subscription, matching
+  /// `KitchenTicketRepository.watchActiveByBranch`'s own contract.
+  Stream<List<KitchenWorkItem>> watchByOrderId(OrderId orderId);
+
   /// Every work item for [branchId], optionally filtered to [stationName]
   /// (`KitchenStation.name`, `null` = every station) — what a KDS screen's
   /// board query reads.
@@ -45,10 +53,13 @@ abstract interface class KitchenProjectionRepository {
 class InMemoryKitchenProjectionRepository
     implements KitchenProjectionRepository {
   final Map<String, List<KitchenWorkItem>> _historyById = {};
+  final _orderControllers =
+      <String, StreamController<List<KitchenWorkItem>>>{};
 
   @override
   Future<void> save(KitchenWorkItem item) async {
     _historyById.putIfAbsent(item.id, () => []).add(item);
+    await _emitOrder(item.orderId);
   }
 
   @override
@@ -81,6 +92,26 @@ class InMemoryKitchenProjectionRepository
     }
     result.sort((a, b) => a.queuedAt.compareTo(b.queuedAt));
     return List.unmodifiable(result);
+  }
+
+  @override
+  Stream<List<KitchenWorkItem>> watchByOrderId(OrderId orderId) {
+    final controller = _orderControllers.putIfAbsent(
+      orderId.value,
+      () => StreamController<List<KitchenWorkItem>>.broadcast(),
+    );
+    scheduleMicrotask(() async {
+      if (controller.hasListener) {
+        controller.add(await findByOrderId(orderId));
+      }
+    });
+    return controller.stream;
+  }
+
+  Future<void> _emitOrder(OrderId orderId) async {
+    final controller = _orderControllers[orderId.value];
+    if (controller == null || !controller.hasListener) return;
+    controller.add(await findByOrderId(orderId));
   }
 
   @override

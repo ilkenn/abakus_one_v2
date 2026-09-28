@@ -2,10 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
+import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_line_status.dart';
+import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/pos_table_workspace_screen.dart';
+
+import '../../test_support/kds_test_fixtures.dart';
 
 class _FakePosOperationalViewGateway implements PosOperationalViewGateway {
   PosTableOperationalView? viewToReturn;
@@ -320,10 +325,12 @@ PosTableOperationalView _acceptedLineViewTwoSubAccounts() {
 Future<_Fakes> _pump(
   WidgetTester tester, {
   required PosTableOperationalView initialView,
+  KitchenProjectionRepository? kitchenRepo,
 }) async {
   final viewGateway = _FakePosOperationalViewGateway()
     ..viewToReturn = initialView;
   final actionGateway = _FakePosActionGateway();
+  final kitchenRepository = kitchenRepo ?? InMemoryKitchenProjectionRepository();
 
   await tester.pumpWidget(
     ProviderScope(
@@ -332,19 +339,21 @@ Future<_Fakes> _pump(
         posActionGatewayProvider.overrideWithValue(actionGateway),
         posDeviceContextProvider.overrideWithValue(_ctx),
         selectedPosTableIdProvider.overrideWith((ref) => 'table-1'),
+        kitchenProjectionRepositoryProvider.overrideWithValue(kitchenRepository),
       ],
       child: const MaterialApp(home: PosTableWorkspaceScreen()),
     ),
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
-  return _Fakes(viewGateway, actionGateway);
+  return _Fakes(viewGateway, actionGateway, kitchenRepository);
 }
 
 class _Fakes {
-  _Fakes(this.viewGateway, this.actionGateway);
+  _Fakes(this.viewGateway, this.actionGateway, this.kitchenRepository);
   final _FakePosOperationalViewGateway viewGateway;
   final _FakePosActionGateway actionGateway;
+  final KitchenProjectionRepository kitchenRepository;
 }
 
 void main() {
@@ -536,5 +545,70 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(fakes.actionGateway.financialAdjustmentRequestCallCount, 1);
+  });
+
+  // 2026-09-28 — KDS & POS Çift Yönlü Entegrasyon: a live, order-level
+  // kitchen-readiness badge on each `_OrderCard`, so staff can see prep
+  // status without walking to the physical KDS screen. Order-level only
+  // (not per-line) — `PosOrderLineSummary` has no stable per-line id.
+  group('kitchen status badge', () {
+    testWidgets('no kitchen work items for the order shows no badge',
+        (tester) async {
+      await _pump(tester, initialView: _acceptedLineView());
+
+      expect(find.textContaining('hazır'), findsNothing);
+      expect(find.text('Hazır'), findsNothing);
+    });
+
+    testWidgets('some ready, some not shows the "X/Y hazır" badge',
+        (tester) async {
+      final kitchenRepo = InMemoryKitchenProjectionRepository();
+      await kitchenRepo.createInitial(buildTestKitchenWorkItem(
+        workItemId: 'w1',
+        kitchenTicketLineId: 'ticket-1-line-0',
+        orderId: 'order-1',
+        status: KitchenLineStatus.ready,
+        quantity: 1,
+        readyQuantity: 1,
+      ));
+      await kitchenRepo.createInitial(buildTestKitchenWorkItem(
+        workItemId: 'w2',
+        kitchenTicketLineId: 'ticket-1-line-1',
+        orderId: 'order-1',
+        status: KitchenLineStatus.preparing,
+        quantity: 1,
+        readyQuantity: 0,
+      ));
+
+      await _pump(tester,
+          initialView: _acceptedLineView(), kitchenRepo: kitchenRepo);
+
+      expect(find.text('1/2 hazır'), findsOneWidget);
+    });
+
+    testWidgets('every line ready shows the "Hazır" badge', (tester) async {
+      final kitchenRepo = InMemoryKitchenProjectionRepository();
+      await kitchenRepo.createInitial(buildTestKitchenWorkItem(
+        workItemId: 'w1',
+        kitchenTicketLineId: 'ticket-1-line-0',
+        orderId: 'order-1',
+        status: KitchenLineStatus.ready,
+        quantity: 1,
+        readyQuantity: 1,
+      ));
+      await kitchenRepo.createInitial(buildTestKitchenWorkItem(
+        workItemId: 'w2',
+        kitchenTicketLineId: 'ticket-1-line-1',
+        orderId: 'order-1',
+        status: KitchenLineStatus.ready,
+        quantity: 1,
+        readyQuantity: 1,
+      ));
+
+      await _pump(tester,
+          initialView: _acceptedLineView(), kitchenRepo: kitchenRepo);
+
+      expect(find.text('Hazır'), findsOneWidget);
+    });
   });
 }
