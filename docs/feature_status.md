@@ -7660,3 +7660,83 @@ count that wasn't observed; run it once the JDK is upgraded (`cd functions && np
 
 New/changed files: `functions/src/test/dineInGuestKitchenIntegration.test.ts`,
 `docs/feature_status.md`.
+
+## Kasa (Sprint 3E) & Kurye Mutabakatı (Sprint 3F) Denetimi: Onaylanan Ölü Kod Kaldırıldı (2026-09-29)
+
+Requested: audit whether Cash Register/Shift Management or Courier Settlement have the same
+"mock/in-memory prototype coexisting undisclosed alongside a real backend" risk already found in
+the Table/QR guest flow audit. Multiple research passes (fast risk scan, then a definitive
+reachability audit, then a final pre-deletion verification pass) confirmed:
+
+- **Cash Management**: two parallel implementations existed. The real one (AP-4 Wave B,
+  `pos_cash_register_screen.dart`/`cash_register_gateway.dart`/`functions/src/cashRegisterEngine.ts`,
+  reached from `pos_branch_overview_screen.dart`/`pos_table_workspace_screen.dart`) is untouched by
+  this cleanup and remains the sole real implementation. A separate Sprint 3E prototype chain
+  (`CashDrawerListScreen → CashDrawerDetailScreen → CashSessionScreen → CashCountScreen →
+  CashReconciliationScreen`), fully in-memory (`cash_dependencies_provider.dart`, every provider an
+  `InMemory*Repository`), was confirmed to have **zero reachable references anywhere in `lib/`**
+  outside its own internal chain and its own widget tests (tested-but-unrouted, not tested-and-live)
+  — no `go_router` entry, no `AdminShellScreen` nav item, no debug-only path.
+- **Courier Settlement (Sprint 3F)**: confirmed to have **no real backend anywhere** —
+  `functions/src/` has zero files for this feature (unlike Cash Management, no AP-4-equivalent wave
+  was ever built). All 5 screens (`CourierSettlementListScreen`/`CourierSettlementDetailScreen`/
+  `CourierCashDeclarationScreen`/`ManagerSettlementReviewScreen`/`CourierSettlementHistoryScreen`)
+  confirmed unreachable from any real navigation. This exact finding had already been independently
+  reported twice by prior sessions (`docs/decisions.md:~18055`, `docs/feature_status.md:5174-5178`)
+  under the "discovered, not touched... fate is a decision for the human" rule — never previously
+  acted on.
+- **Critical correction caught before deletion**: a final verification pass found the initial
+  "delete both prototypes wholesale" scope was wrong for a 13-file subset of Sprint 3F — a real,
+  live courier-delivery feature (`lib/features/courier/application/use_cases/
+  declare_courier_cash_collection_for_delivery.dart`, self-documented as "Sprint 3F's existing
+  `RecordCourierCashCollection`... called directly and unchanged") and a real integration test
+  (`test/features/courier/integration/courier_delivery_flow_test.dart`) genuinely import and use a
+  specific subset of the Sprint 3F domain/data/use-case/identity layer. Deleting those 13 files
+  would have broken live courier-delivery code. **User confirmed the corrected, narrower scope.**
+
+**Deleted** (44 files: 28 `lib/` + 16 `test/`, `git rm`):
+- 5 dead Cash screens + `cash_dependencies_provider.dart`
+- 5 dead Courier Settlement screens + `courier_settlement_dependencies_provider.dart`
+- 16 Courier Settlement domain/data/use-case/identity files confirmed used only by the dead screens
+  (the 13-file subset reused by live courier-delivery code was excluded, see below)
+- 16 corresponding test files
+
+**Two follow-on fixes required by the deletion** (found via `flutter analyze` after the `git rm`,
+not pre-planned — both are direct, unavoidable consequences, not scope creep):
+- `test/features/pos/test_support/courier_settlement_test_fixtures.dart` — trimmed: removed its
+  `submitTestCourierCashDeclaration` function (the only one referencing now-deleted types), kept
+  `buildTestCourierSettlementSession`/`seedTestPaymentSession` (still real, still used by the KEEP
+  test `record_courier_cash_collection_test.dart`).
+- `test/features/pos/integration/payment_cash_courier_settlement_flow_test.dart` — deleted (with
+  explicit user confirmation, not pre-approved in the original 44-file list): its entire premise was
+  proving Cash Management + Courier Settlement interoperate, so it broke irreparably once the
+  Courier Settlement half was removed.
+
+**Deliberately NOT deleted this pass** (explicit, disclosed, not silently skipped):
+- The 13 Courier Settlement files reused by live courier-delivery code (6 domain, 3 data, 2 use
+  case, 2 identity — `courier_cash_collection.dart`, `courier_collection_type.dart`,
+  `courier_settlement_audit_entry.dart`, `courier_settlement_audit_event_type.dart`,
+  `courier_settlement_session.dart`, `courier_settlement_session_status.dart`,
+  `courier_cash_collection_repository.dart`, `courier_settlement_audit_entry_repository.dart`,
+  `courier_settlement_session_repository.dart`, `open_courier_settlement_session.dart`,
+  `record_courier_cash_collection.dart`, `courier_cash_collection_id_generator.dart`,
+  `courier_settlement_session_id_generator.dart`) and their tests.
+- Cash Management's own Sprint 3E domain/data/use-case/identity layer (~19 lib files under
+  `lib/features/pos/domain/cash/*`, `cash_*_repository.dart` (not `cash_register_gateway.dart`,
+  which is the real AP-4 file), `cash_*_id_generator.dart`, plus ~11 use-case files, plus ~19 test
+  files) — confirmed to share the same "dead, used only by itself and its own tests" fate, but was
+  never part of the approved scope; flagged as a separate future decision. **One file in that set,
+  `capture_offline_cash_payment.dart`, is NOT dead** (real usage via `pos_workspace_providers.dart`'s
+  `captureOfflineCashPaymentProvider`) — must be excluded if that cleanup ever happens.
+- `ConsortiumDeliverySettlement` (`lib/features/courier/domain/settlement/`, AP-6 Sprint 3) — a
+  completely unrelated, real, Firestore-backed feature (inter-business delivery-fee ledger, not
+  courier cash-on-hand reconciliation); confirmed not to share any code with either deleted
+  prototype.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3727/3727** (3774 − 47,
+consistent with the 17 deleted test files' worth of test cases).
+
+New/changed files: 44 files deleted (`git rm`, see lists above) plus
+`test/features/pos/integration/payment_cash_courier_settlement_flow_test.dart` deleted,
+`test/features/pos/test_support/courier_settlement_test_fixtures.dart` trimmed,
+`docs/feature_status.md`.
