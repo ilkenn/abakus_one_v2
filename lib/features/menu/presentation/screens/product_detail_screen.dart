@@ -10,6 +10,7 @@ import '../../../../shared/widgets/cards/option_selection_card.dart';
 import '../../../../shared/widgets/images/product_image.dart';
 import '../../../../shared/widgets/layout/app_section_header.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
+import '../../../qr/presentation/widgets/table_context_badge.dart';
 import '../../../cart/presentation/providers/shopping_channel_provider.dart';
 import '../../../favorites/presentation/providers/favorites_provider.dart';
 import '../../domain/models/menu_product.dart';
@@ -231,6 +232,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            const TableContextBadge(),
                             Text(
                               widget.product.name,
                               style: AppTypography.headlineMedium,

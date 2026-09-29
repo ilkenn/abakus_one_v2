@@ -132,4 +132,53 @@ void main() {
       isFalse,
     );
   });
+
+  // 2026-09-29 — Client Staleness Check: expiresAt is optional (many
+  // construction sites unrelated to QR guest sessions never set it) but
+  // must round-trip correctly wherever it is set.
+  group('expiresAt', () {
+    test('varsayilan olarak null doner', () {
+      expect(buildSession().expiresAt, isNull);
+    });
+
+    test('kurucudan verilen deger dogru saklanir', () {
+      final expiresAt = DateTime(2026, 6, 1, 18, 0);
+      final session = TableSession(
+        id: 'session_1',
+        restaurantId: 'restaurant_1',
+        branchId: 'branch_1',
+        tableId: 'table_1',
+        status: TableSessionStatus.active,
+        openedAt: DateTime(2026, 6, 1, 12, 0),
+        guestSessionIds: const [],
+        activeOrderIds: const [],
+        expiresAt: expiresAt,
+      );
+
+      expect(session.expiresAt, expiresAt);
+    });
+
+    test('copyWith ile guncellenebilir, verilmezse korunur', () {
+      final expiresAt = DateTime(2026, 6, 1, 18, 0);
+      final session = TableSession(
+        id: 'session_1',
+        restaurantId: 'restaurant_1',
+        branchId: 'branch_1',
+        tableId: 'table_1',
+        status: TableSessionStatus.active,
+        openedAt: DateTime(2026, 6, 1, 12, 0),
+        guestSessionIds: const [],
+        activeOrderIds: const [],
+        expiresAt: expiresAt,
+      );
+
+      expect(session.copyWith().expiresAt, expiresAt);
+
+      final laterExpiry = DateTime(2026, 6, 1, 20, 0);
+      expect(
+        session.copyWith(expiresAt: laterExpiry).expiresAt,
+        laterExpiry,
+      );
+    });
+  });
 }

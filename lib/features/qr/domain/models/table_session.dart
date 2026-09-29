@@ -28,6 +28,15 @@ class TableSession {
   final List<String> activeOrderIds;
   final List<String> checkIds;
 
+  /// When this table-guest session (the real `tableGuestSessions` doc [id]
+  /// refers to) stops being usable — `null` for every construction path
+  /// except [OpenTableGuestSessionFromQrScan], which is the only one with a
+  /// real server-issued expiry to carry. Deliberately optional rather than
+  /// required: this class is also constructed by several POS/check flows
+  /// with no relationship to a QR guest session's TTL, and making this
+  /// required would force an unrelated change onto all of them.
+  final DateTime? expiresAt;
+
   const TableSession({
     required this.id,
     required this.restaurantId,
@@ -39,6 +48,7 @@ class TableSession {
     required this.guestSessionIds,
     required this.activeOrderIds,
     this.checkIds = const [],
+    this.expiresAt,
   });
 
   /// Whether the session currently represents a live table visit (as
@@ -95,6 +105,7 @@ class TableSession {
     List<String>? guestSessionIds,
     List<String>? activeOrderIds,
     List<String>? checkIds,
+    DateTime? expiresAt,
   }) {
     return TableSession(
       id: id ?? this.id,
@@ -107,6 +118,7 @@ class TableSession {
       guestSessionIds: guestSessionIds ?? this.guestSessionIds,
       activeOrderIds: activeOrderIds ?? this.activeOrderIds,
       checkIds: checkIds ?? this.checkIds,
+      expiresAt: expiresAt ?? this.expiresAt,
     );
   }
 }

@@ -201,6 +201,11 @@ class _FakeTableGuestSessionFirestoreClient
   Future<TableGuestSessionSnapshot?> findById(String sessionId) async {
     return _sessions[sessionId];
   }
+
+  @override
+  Stream<TableGuestSessionSnapshot?> watchById(String sessionId) {
+    return Stream.value(_sessions[sessionId]);
+  }
 }
 
 class _FakeLoyaltyGateway implements LoyaltyGateway {

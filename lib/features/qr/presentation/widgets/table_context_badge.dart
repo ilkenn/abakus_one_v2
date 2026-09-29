@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -34,6 +36,25 @@ class TableContextBadge extends ConsumerStatefulWidget {
 
 class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
   ServiceRequestType? _busyType;
+  Timer? _tickTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Client Staleness Check — forces a rebuild every minute so the local
+    // `expiresAt` comparison (DateTime.now()) is re-evaluated even when
+    // nothing about the live Firestore stream changes. A no-op setState
+    // when the badge is currently hidden (no active table context).
+    _tickTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tickTimer?.cancel();
+    super.dispose();
+  }
 
   Future<void> _requestService(String guestSessionId, ServiceRequestType type) async {
     if (_busyType != null) return;
@@ -70,6 +91,20 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
     if (tableContext == null) return const SizedBox.shrink();
     final guestSessionId = tableContext.session.id;
 
+    final localExpired = tableContext.session.expiresAt != null &&
+        DateTime.now().isAfter(tableContext.session.expiresAt!);
+    final liveAsync = ref.watch(tableGuestSessionLivenessProvider(guestSessionId));
+    // The stream not having delivered data yet (loading/error, e.g. a
+    // transient reconnect) must never itself read as stale — only a real
+    // snapshot saying so does. `orElse` deliberately stays `false`.
+    final liveStale = liveAsync.maybeWhen(
+      data: (snapshot) => snapshot == null || !snapshot.isActive,
+      orElse: () => false,
+    );
+    final isStale = localExpired || liveStale;
+
+    final accentColor = isStale ? AppColors.error : AppColors.primary;
+
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.sm),
       child: Container(
@@ -77,50 +112,58 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
           horizontal: AppSpacing.md,
           vertical: AppSpacing.sm,
         ),
-        decoration: const BoxDecoration(
-          color: AppColors.primaryExtraLight,
+        decoration: BoxDecoration(
+          color: isStale
+              ? AppColors.error.withValues(alpha: 0.1)
+              : AppColors.primaryExtraLight,
           borderRadius: AppRadius.kPill,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.table_restaurant_rounded,
+            Icon(
+              isStale
+                  ? Icons.warning_amber_rounded
+                  : Icons.table_restaurant_rounded,
               size: 16,
-              color: AppColors.primary,
+              color: accentColor,
             ),
             const SizedBox(width: AppSpacing.xs),
             Flexible(
               child: Text(
-                '${tableContext.branchName} · ${tableContext.tableName}',
+                isStale
+                    ? 'Oturum süresi doldu — QR kodu tekrar okutun'
+                    : '${tableContext.branchName} · ${tableContext.tableName}',
                 style: AppTypography.labelLarge.copyWith(
-                  color: AppColors.primary,
+                  color: accentColor,
                   fontWeight: FontWeight.bold,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            const SizedBox(width: AppSpacing.sm),
-            _ServiceRequestTapTarget(
-              icon: Icons.room_service_outlined,
-              tooltip: 'Garson Çağır',
-              busy: _busyType == ServiceRequestType.callWaiter,
-              onTap: () => _requestService(
-                guestSessionId,
-                ServiceRequestType.callWaiter,
+            if (!isStale) ...[
+              const SizedBox(width: AppSpacing.sm),
+              _ServiceRequestTapTarget(
+                icon: Icons.room_service_outlined,
+                tooltip: 'Garson Çağır',
+                busy: _busyType == ServiceRequestType.callWaiter,
+                onTap: () => _requestService(
+                  guestSessionId,
+                  ServiceRequestType.callWaiter,
+                ),
               ),
-            ),
-            const SizedBox(width: AppSpacing.xs),
-            _ServiceRequestTapTarget(
-              icon: Icons.receipt_long_outlined,
-              tooltip: 'Hesap İste',
-              busy: _busyType == ServiceRequestType.requestBill,
-              onTap: () => _requestService(
-                guestSessionId,
-                ServiceRequestType.requestBill,
+              const SizedBox(width: AppSpacing.xs),
+              _ServiceRequestTapTarget(
+                icon: Icons.receipt_long_outlined,
+                tooltip: 'Hesap İste',
+                busy: _busyType == ServiceRequestType.requestBill,
+                onTap: () => _requestService(
+                  guestSessionId,
+                  ServiceRequestType.requestBill,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),

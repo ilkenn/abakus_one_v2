@@ -29,6 +29,13 @@ class TableGuestSessionSnapshot {
 abstract interface class TableGuestSessionFirestoreClient {
   /// `null` if no `tableGuestSessions` document exists at [sessionId].
   Future<TableGuestSessionSnapshot?> findById(String sessionId);
+
+  /// A live view of [findById] for [sessionId] — re-emits whenever the
+  /// session document changes (e.g. staff closes the table before natural
+  /// TTL expiry), so a UI can warn a browsing guest without waiting for
+  /// them to reach checkout. `null` if the document doesn't exist (matches
+  /// [findById]'s own contract).
+  Stream<TableGuestSessionSnapshot?> watchById(String sessionId);
 }
 
 class DefaultTableGuestSessionFirestoreClient
@@ -50,8 +57,19 @@ class DefaultTableGuestSessionFirestoreClient
     final snapshot =
         await _firestore.collection('tableGuestSessions').doc(sessionId).get();
     if (!snapshot.exists) return null;
+    return _parse(snapshot.data()!);
+  }
 
-    final data = snapshot.data()!;
+  @override
+  Stream<TableGuestSessionSnapshot?> watchById(String sessionId) {
+    return _firestore
+        .collection('tableGuestSessions')
+        .doc(sessionId)
+        .snapshots()
+        .map((snapshot) => snapshot.exists ? _parse(snapshot.data()!) : null);
+  }
+
+  TableGuestSessionSnapshot _parse(Map<String, dynamic> data) {
     final rawExpiresAt = data['expiresAt'];
     final expiresAt = rawExpiresAt is fs.Timestamp
         ? rawExpiresAt.toDate()

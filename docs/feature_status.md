@@ -7740,3 +7740,51 @@ New/changed files: 44 files deleted (`git rm`, see lists above) plus
 `test/features/pos/integration/payment_cash_courier_settlement_flow_test.dart` deleted,
 `test/features/pos/test_support/courier_settlement_test_fixtures.dart` trimmed,
 `docs/feature_status.md`.
+
+## Masa/QR İstemci Bayatlık Kontrolü (Client Staleness Check) (2026-09-29)
+
+Requested: warn a QR table guest early — while browsing the menu or adding items to cart — that
+their table session has expired or been closed, instead of only finding out at checkout. Research
+found two real gaps: `ActiveTableContext`/`TableSession` carried no `expiresAt` at all (the server
+genuinely returns it at session-open time, `OpenedTableGuestSession.expiresAt`, but
+`OpenTableGuestSessionFromQrScan` read and discarded it); and `TableGuestSessionFirestoreClient` had
+only a one-shot `findById`, no live/stream method, so early server-side closure (staff manually
+closing the table before natural TTL expiry) had no detection path at all. **Confirmed scope: visual
+warning only** — cart actions are never blocked; the real, correct enforcement already exists at
+`dine_in_checkout_screen.dart`'s submit-time check and is untouched.
+
+`TableSession.expiresAt` added as **optional** (`DateTime?`), not required — its constructor is
+called from 16 files across the codebase (several entirely unrelated POS check/table-session flows),
+and making it required would have forced an unrelated change onto every one of them. Only
+`OpenTableGuestSessionFromQrScan` now populates it (`opened.expiresAt`); every other call site is
+unaffected. `TableGuestSessionFirestoreClient` gained `watchById` (`.snapshots()`-based, mirroring
+`findById`'s exact parsing via a shared private helper) plus a new
+`tableGuestSessionLivenessProvider` (`StreamProvider.family`, the same established idiom used twice
+already this session for `kdsOrderStatusProvider`/`_myPendingApprovalsProvider`). `TableContextBadge`
+(already the one place every dine-in guest screen renders a persistent table indicator — now also
+added to `product_detail_screen.dart`, which previously had none at all despite being the actual
+add-to-cart screen) gained a 60-second `Timer.periodic` (re-evaluates the local `expiresAt`
+comparison, since a plain `DateTime.now()` check doesn't trigger its own rebuilds) combined with the
+live stream (for early closure) — while stale, the badge swaps to a warning icon/color and
+`'Oturum süresi doldu — QR kodu tekrar okutun'`, hiding the garson/hesap service-request buttons
+(which would fail server-side anyway). A stream still in `loading`/`error` state deliberately never
+reads as stale on its own — only a real snapshot saying so does, to avoid a false-positive warning
+from a transient reconnect.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3735/3735**. No Cloud
+Functions/Firestore Rules changes — `watchById` needs no new index (single-document read), and the
+existing `tableGuestSessions` read rule (`guestAuthUid == request.auth.uid`) already covers
+`.snapshots()` the same as `.get()` (confirmed in the earlier Masa/QR audit).
+
+New/changed files: `lib/features/qr/domain/models/table_session.dart`,
+`lib/features/qr/application/use_cases/open_table_guest_session_from_qr_scan.dart`,
+`lib/features/qr/data/table_guest_session_firestore_client.dart`,
+`lib/features/qr/presentation/providers/table_guest_session_dependencies_provider.dart`,
+`lib/features/qr/presentation/widgets/table_context_badge.dart`,
+`lib/features/menu/presentation/screens/product_detail_screen.dart`,
+`test/features/qr/domain/table_session_test.dart`,
+`test/features/qr/application/use_cases/open_table_guest_session_from_qr_scan_test.dart`,
+`test/features/qr/presentation/widgets/table_context_badge_test.dart`,
+`test/features/menu/product_detail_screen_test.dart`,
+`test/features/cart/presentation/screens/dine_in_checkout_screen_test.dart`,
+`docs/feature_status.md`.

@@ -37,3 +37,14 @@ final openTableGuestSessionFromQrScanProvider =
     guestSessionIdGenerator: ref.watch(guestSessionIdGeneratorProvider),
   );
 });
+
+/// Client Staleness Check — a live view of the guest's own
+/// `tableGuestSessions` doc, so `TableContextBadge` can warn a browsing
+/// guest as soon as the session closes/expires, not only at checkout.
+final tableGuestSessionLivenessProvider =
+    StreamProvider.family<TableGuestSessionSnapshot?, String>(
+        (ref, sessionId) {
+  return ref
+      .watch(tableGuestSessionFirestoreClientProvider)
+      .watchById(sessionId);
+});

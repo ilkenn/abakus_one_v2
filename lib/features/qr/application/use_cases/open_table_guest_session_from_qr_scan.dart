@@ -60,6 +60,7 @@ class OpenTableGuestSessionFromQrScan {
       openedAt: now,
       guestSessionIds: const [],
       activeOrderIds: const [],
+      expiresAt: opened.expiresAt,
     );
     final guestSession = GuestSession(
       id: _guestSessionIdGenerator.nextGuestSessionId(),

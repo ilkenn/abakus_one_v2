@@ -6,6 +6,24 @@ import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_group.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_option.dart';
 import 'package:abakus_one_v2/features/menu/presentation/screens/product_detail_screen.dart';
+import 'package:abakus_one_v2/features/qr/data/table_guest_session_firestore_client.dart';
+import 'package:abakus_one_v2/features/qr/domain/models/active_table_context.dart';
+import 'package:abakus_one_v2/features/qr/domain/models/guest_session.dart';
+import 'package:abakus_one_v2/features/qr/domain/models/table_session.dart';
+import 'package:abakus_one_v2/features/qr/presentation/providers/active_table_context_provider.dart';
+import 'package:abakus_one_v2/features/qr/presentation/providers/table_guest_session_dependencies_provider.dart';
+import 'package:abakus_one_v2/features/qr/presentation/widgets/table_context_badge.dart';
+
+class _NeverEmittingTableGuestSessionFirestoreClient
+    implements TableGuestSessionFirestoreClient {
+  @override
+  Future<TableGuestSessionSnapshot?> findById(String sessionId) async =>
+      throw UnimplementedError();
+
+  @override
+  Stream<TableGuestSessionSnapshot?> watchById(String sessionId) =>
+      const Stream.empty();
+}
 
 const _sauceGroup = ModifierGroup(
   id: 'test_sauce',
@@ -176,4 +194,61 @@ void main() {
       expect(item.totalRowPrice, 120); // 100 + 20 (Hellim), adet 1
     },
   );
+
+  // 2026-09-29 — Client Staleness Check: this is the screen a guest actually
+  // adds an item to cart from, so it needs the same table-context/staleness
+  // indicator MenuScreen/CartScreen already show, not just presence in the
+  // menu list.
+  testWidgets(
+      'aktif masa baglami varken TableContextBadge gosterilir (sepete ekleme sirasinda erken uyari)',
+      (tester) async {
+    final now = DateTime(2026, 8, 9);
+    final tableContext = ActiveTableContext(
+      restaurantId: 'restaurant-1',
+      branchId: 'branch-1',
+      branchName: 'Abaküs Ortaköy',
+      tableId: 'dev-table-12',
+      tableName: 'Masa 12',
+      session: TableSession(
+        id: 'tsession-1',
+        restaurantId: 'restaurant-1',
+        branchId: 'branch-1',
+        tableId: 'dev-table-12',
+        status: TableSessionStatus.active,
+        openedAt: now,
+        guestSessionIds: const [],
+        activeOrderIds: const [],
+      ),
+      guestSession: GuestSession(
+        id: 'gsession-1',
+        tableSessionId: 'tsession-1',
+        branchId: 'branch-1',
+        tableId: 'dev-table-12',
+        detectedLanguageCode: 'tr',
+        selectedLanguageCode: 'tr',
+        createdAt: now,
+        lastSeenAt: now,
+        status: GuestSessionStatus.active,
+      ),
+    );
+    final container = ProviderContainer(overrides: [
+      tableGuestSessionFirestoreClientProvider
+          .overrideWithValue(_NeverEmittingTableGuestSessionFirestoreClient()),
+    ]);
+    addTearDown(container.dispose);
+    container.read(activeTableContextProvider.notifier).set(tableContext);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: ProductDetailScreen(product: _testProduct),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TableContextBadge), findsOneWidget);
+    expect(find.text('Abaküs Ortaköy · Masa 12'), findsOneWidget);
+  });
 }

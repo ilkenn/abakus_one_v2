@@ -86,6 +86,9 @@ void main() {
     expect(context.session.branchId, 'branch-1');
     expect(context.session.tableId, 'table-1');
     expect(context.guestSession.tableSessionId, 'tgs-1');
+    // Client Staleness Check (2026-09-29): previously discarded, now
+    // threaded through so a browsing guest can be warned before checkout.
+    expect(context.session.expiresAt, opened.expiresAt);
   });
 
   test(
