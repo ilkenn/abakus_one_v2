@@ -132,6 +132,15 @@ Restaurant 1───* Branch 1───* RestaurantTable 1───* TableQrCod
    not yet enforced by any code (there is no session-orchestration code in this phase to enforce
    it in) — it is documented here so the future orchestration layer is built against it from the
    start.
+   > **Corrected 2026-10-16**: stale — real orchestration now exists and enforces exactly this rule.
+   > `openTableGuestSession.ts` only reuses `restaurantTables/{id}.activeTableSessionId` while that
+   > session's own doc still has `status === "active"`; otherwise it mints a brand-new
+   > `tableSessionId`, and a fresh session's `subAccountId` is deterministically scoped to that new
+   > id, never a prior guest's. `tableSessionClosure.ts`'s `releaseTableIfReady` (called from
+   > `paymentEngine.ts` on full payment) marks the old `TableSession` `closed` (immutable
+   > thereafter) and sets the table's own status to `"cleaning"`, not `"available"` —
+   > `qrTokenResolution.ts` then refuses to resolve a new QR scan against a `"cleaning"` table at
+   > all until staff explicitly reset it. No prior guest's cart/order/identity can carry forward.
 
 ## 8. Order channel relationship
 

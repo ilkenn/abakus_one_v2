@@ -229,6 +229,23 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "refundRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "checkId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "customerId", "order": "ASCENDING" },
+        { "fieldPath": "timestamps.created", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -986,7 +986,7 @@ judgment call, including the three real gaps found and closed by dedicated verif
 | 7L — Automatic menu labels | DONE | `features/menu_labels`: `MenuLabelRule` (nutrition-threshold and free-from-allergen evaluators), `EvaluateMenuLabelSuggestions` — always a suggestion requiring `ApproveMenuLabelSuggestion`, never auto-published (BR-MENULABEL-001). |
 | 7M — Costing engine | DONE | `features/costing`: `PurchasePrice`/`StandardIngredientCost` (append-only — BR-COSTING-002), three `IngredientCostResolver` strategies (latest purchase, weighted average, standard), `CalculateRecipeCost` follows the same missing-not-fabricated rule as nutrition (BR-COSTING-001). |
 | 7N — Profitability engine | DONE | `features/profitability`: `CalculateRecipeProfitability` — deliberately never uses the term "net profit," reports "Estimated Gross Contribution"/"Contribution Margin" only, and propagates an incomplete underlying cost calculation rather than understating it (BR-PROFIT-003/004). |
-| 7O — Automatic stock consumption | DONE (engine only, honest gap) | `features/stock_consumption`: `ConsumeStockForOrder` — idempotent by key, resolves against the exact historical recipe version. No live trigger exists anywhere in this codebase to call it from a real dine-in/takeaway order completion (no `MenuProduct`↔`Recipe` linkage exists) — reported explicitly, mirrors Sprint 5E's own dine-in-visit-trigger gap (BR-STOCK-002). |
+| 7O — Automatic stock consumption | DONE (engine only, honest gap) | `features/stock_consumption`: `ConsumeStockForOrder` — idempotent by key, resolves against the exact historical recipe version. No live trigger exists anywhere in this codebase to call it from a real dine-in/takeaway order completion (no `MenuProduct`↔`Recipe` linkage exists) — reported explicitly, mirrors Sprint 5E's own dine-in-visit-trigger gap (BR-STOCK-002). **Corrected 2026-10-16**: this specific Dart primitive (`ConsumeStockForOrder`) remains genuinely unwired, but real stock consumption now exists through a different, later-built path — `acceptOrderLine.ts`'s `prepareKitchenWorkAndStockConsumption`/`applyKitchenWorkAndStockConsumption`, wired into every real order-acceptance entry point since AP-5 (see the AP-5 closure entry's own "Residual" note below, which already disclosed this distinction — this row is corrected only so a reader scanning chronologically doesn't stop here believing stock consumption is unwired altogether). |
 | 7P — Purchasing & suppliers | DONE | `features/purchasing`: `Supplier`/`SupplierProduct`/`SupplierPrice` (append-only), `PurchaseOrder` lifecycle, `ReceiveGoods` (real `RecordStockMovement` integration; idempotency gap found and closed in 7U — BR-PURCHASE-001), `RecordPurchaseReturn`. |
 | 7Q — Stock counts, waste & expiry | DONE | `StartStockCount`/`AddStockCountLine`/`SubmitStockCount`/`ApproveStockCount` (self-approval blocked, mirrors `ApproveStockAdjustment`), `RecordWaste`, `DisposeExpiredLot`, `GetExpiryWarnings`. |
 | 7R — Admin UI wiring | DONE (partial, honest gap) | 7 of ~20 brief-named screens built (Ingredient Catalog, Inventory, Import Jobs/Review, Setup Templates, Recipes, Suppliers, Stock Counts), each wrapped in `ModuleEntitlementGate`. The remaining ~13 (nutrition admin, allergen review queue, menu-label rule builder, costing configuration, profitability dashboards, and others) are real, tested engines with no screen yet — named explicitly, not silently skipped. |
@@ -1038,9 +1038,13 @@ CSV/JSON only); a production media/storage backend for any future recipe-photo w
 **What remains deferred** (explicitly, not silently narrowed): ~13 of ~20 brief-named admin screens
 (nutrition admin, allergen review queue, menu-label rule builder, costing configuration,
 profitability dashboards, and others — real engines, no UI); no live trigger connects automatic
-stock consumption to a real dine-in/takeaway order completion, only Bowl Builder's add-to-cart path
-is live; labor/overhead/packaging/delivery-fee cost allocation is unbuilt foundation only; no real
-payment/subscription backend drives module entitlements (seeded plan data only); no real AI-assisted
+stock consumption to a real dine-in/takeaway order completion via *this feature's own*
+`ConsumeStockForOrder` primitive, only Bowl Builder's add-to-cart path is live for it — **corrected
+2026-10-16**: this no longer means stock consumption itself is unwired end-to-end; a separate, real
+path (`acceptOrderLine.ts`, AP-5) does consume real stock on every dine-in/takeaway/delivery
+acceptance, see the AP-5 closure entry; labor/overhead/packaging/delivery-fee cost allocation is
+unbuilt foundation only; no real payment/subscription backend drives module entitlements (seeded
+plan data only); no real AI-assisted
 menu parsing (deterministic CSV/JSON parsing only).
 
 **Production limitations, stated plainly:** every repository remains `InMemory*` — no real backend
@@ -7848,3 +7852,69 @@ New/changed files: `lib/features/orders/data/order_firestore_client.dart`,
 37 `lib/` + 20 `test/` Cash (Sprint 3E) files deleted (`git rm`, full list in the prior cleanup
 round's own entry pattern — domain/cash/*, cash_*_repository.dart, cash_*_id_generator.dart,
 cash-prefixed use cases, cash_test_fixtures.dart); `docs/business_rules.md`, `docs/feature_status.md`.
+
+## Hafta Kapanışı Faz 1 (Pazartesi): Index Düzeltmeleri, İki Mimari Çatışma Bulgusu (2026-10-16)
+
+Requested as Day 1 of a weekend production-readiness push's 4-task list, following a comprehensive
+"Eksikler & Hafta Sonu Kapanış Denetimi" (4 parallel research agents across mock-module scope,
+integration chain, Firestore rules/auth, and technical debt/environment — see that audit's own
+findings). Two of the four tasks shipped as planned; two surfaced genuine architecture conflicts
+that were disclosed and deferred rather than forced through, matching this session's own
+established "stop and ask when a fix reveals a prior deliberate decision" discipline.
+
+**1. Firestore composite indexes — DONE.** Added the 2 confirmed-missing indexes to
+`firestore.indexes.json`: `refundRequests` (`checkId` ASC, `status` ASC — matches
+`paymentRefund.ts:99`'s `.where("checkId","==",...).where("status","!=","failed")`) and `orders`
+(`organizationId` ASC, `customerId` ASC, `timestamps.created` DESC — matches
+`customerDirectory.ts:296-300`'s address-visibility query). Both would have thrown
+`FAILED_PRECONDITION` the first time they ran against real (non-emulator) Firestore.
+
+**2. KDS device-session check — ATTEMPTED, REVERTED, DEFERRED (real architecture conflict found).**
+The audit found `transitionKitchenWorkItem.ts` has no `requireActiveDeviceSession` call despite
+ADR-030's "POS/KDS device-restricted operational modes" rule. Implementing it was started, then
+reverted on discovering `lib/features/pos/data/kitchen_action_gateway.dart`'s own doc comment
+explicitly documents the opposite as a deliberate decision: *"kitchen line transitions are a
+staff+branch-authorized action only... which has never required a device session either... folding
+them into `PosActionGateway` would silently violate that class's own documented 'every method is
+device-gated' contract."* Separately, `KitchenDisplayBoardScreen`'s real production call site
+(`admin_shell_screen.dart`) never passes a `deviceId` at all today — so closing this gap for real
+would mean building a whole new trusted-device-registration flow for physical KDS screens from
+scratch (days of work, not a two-line fix), not just adding two callable parameters. **User decision:
+keep the current client-side design (no device gating for kitchen actions) as the accepted scope for
+this week; ADR-030's "POS/KDS" phrasing vs. this specific, documented exception is a real
+inconsistency worth a deliberate future decision, not a bug to silently patch now.**
+
+**3. Fiscal operation journal wiring — INVESTIGATED, DEFERRED (real architecture conflict found).**
+The audit found `recordPaymentAttempt` never calls the real, tested `recordFiscalOperation`, so no
+Firestore trace of any fiscal event exists for any payment today. Investigation found this is not a
+simple oversight: `recordFiscalOperation`'s authorization (`authorizeFiscalCommand`) requires the
+`"manageFiscalDevices"` permission, which per `staffAuthorization.ts`'s role matrix is **admin/
+tenantOwner-tier only** — neither `staff` nor `manager` has it — while `recordPaymentAttempt` (the
+routine sale-completion path) only requires `"processPayments"`, held from `staff`-tier up. Wiring
+the two directly would make every ordinary cashier's payment fail with `permission-denied`. Properly
+resolving this needs either lowering `manageFiscalDevices`'s tier (risks opening fiscal-device
+*management*, not just sale-time recording, to cashiers) or extracting `recordFiscalOperation`'s
+core logic into an internal, non-`onCall` function that inherits the payment's own already-
+established authority instead of re-checking a stricter permission — a real design decision, not a
+connect-the-wires fix. Also relevant to any future decision here: with no real PAX A910SF/GMP-3
+adapter, every wired call would resolve `"unavailable"` in production today regardless — closing
+this gap creates an honest paper trail of "fiscal recording was attempted, no device existed," not
+actual fiscal compliance (that remains hardware-vendor-blocked, tracked separately). **User decision:
+deferred, out of this week's scope, disclosed rather than forced through.**
+
+**4. Stale documentation corrected.** `docs/table_qr_architecture.md` §7.4 ("closing a session must
+isolate the next visit... not yet enforced by any code") and `docs/feature_status.md`'s Phase 7O/
+"What remains deferred" entries (stock-consumption trigger) both predate real backend work
+(`openTableGuestSession.ts`/`tableSessionClosure.ts`/`qrTokenResolution.ts` for session isolation;
+`acceptOrderLine.ts` for stock consumption) that already resolved what they describe as open. Added
+inline "Corrected 2026-10-16" notes at each stale claim (not rewriting the historical record, per
+this doc's own established convention) pointing to the real, already-shipped resolution.
+
+**Verification**: `flutter analyze` clean (full project). `flutter test` **3685/3685** (unchanged —
+no Dart logic changed this pass; items 2/3 were reverted/never implemented). Cloud Functions
+`npm run build` (tsc) clean, confirming the item-2 revert left no residue. `firestore.indexes.json`
+validated as well-formed JSON. No Firestore Rules changes.
+
+New/changed files: `firestore.indexes.json`, `docs/table_qr_architecture.md`,
+`docs/feature_status.md`. (`functions/src/transitionKitchenWorkItem.ts` was edited then reverted to
+its committed state — not part of the final diff.)
