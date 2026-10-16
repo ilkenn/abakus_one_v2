@@ -7,6 +7,7 @@ import 'package:abakus_one_v2/features/orders/domain/models/order.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_line_approval_state.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/dine_in_counter_proposal_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
 import 'package:abakus_one_v2/features/orders/presentation/screens/active_order_screen.dart';
@@ -46,6 +47,9 @@ class _ThrowingOnceRepository implements CanonicalOrderRepository {
     if (shouldThrow) throw Exception('simulated repository failure');
     return _delegate.findById(orderId);
   }
+
+  @override
+  Stream<Order?> watchById(OrderId orderId) => _delegate.watchById(orderId);
 }
 
 Future<Order> _buildDineInOrder({
@@ -327,6 +331,39 @@ void main() {
         find.text('Şu anda takip edebileceğiniz aktif bir siparişiniz yok.'),
         findsOneWidget,
       );
+    },
+  );
+
+  // 2026-09-29 — Client Order Tracking: the status badge now reflects a
+  // live orders.status change, not just a one-shot read/6s poll.
+  testWidgets(
+    'canli guncelleme: siparis preparing durumuna gectiginde rozet '
+    'yeniden sorgulamadan Hazirlaniyor gosterir',
+    (tester) async {
+      final repository = InMemoryCanonicalOrderRepository();
+      final order = await _buildDineInOrder(repository: repository);
+      await repository.submitOrder(order.copyWith(status: OrderStatus.confirmed));
+
+      await _pump(tester, repository: repository, orderId: order.id.value);
+
+      // Scoped via the badge's own Semantics widget/label directly in the
+      // widget tree (not the merged accessibility tree) — the full
+      // timeline stepper below it also renders 'Sipariş Alındı' as a
+      // completed step's own label, so a bare find.text would be
+      // ambiguous between the two.
+      Finder statusBadgeSemantics(String label) => find.byWidgetPredicate(
+            (widget) =>
+                widget is Semantics &&
+                widget.properties.label == 'Sipariş durumu: $label',
+          );
+
+      expect(statusBadgeSemantics('Sipariş Alındı'), findsOneWidget);
+
+      await repository.submitOrder(order.copyWith(status: OrderStatus.preparing));
+      await tester.pump();
+
+      expect(statusBadgeSemantics('Hazırlanıyor'), findsOneWidget);
+      expect(statusBadgeSemantics('Sipariş Alındı'), findsNothing);
     },
   );
 }

@@ -88,6 +88,7 @@ class _ActiveOrderById extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final canonicalAsync = ref.watch(canonicalOrderByIdProvider(orderId));
+    final liveStatusAsync = ref.watch(orderStatusStreamProvider(orderId));
 
     return canonicalAsync.when(
       loading: () => const LoadingView(),
@@ -97,15 +98,20 @@ class _ActiveOrderById extends ConsumerWidget {
         onRetry: () => ref.invalidate(canonicalOrderByIdProvider(orderId)),
       ),
       data: (order) {
-        return order == null
-            ? EmptyView(
-                icon: Icons.receipt_long_rounded,
-                message:
-                    'Şu anda takip edebileceğiniz aktif bir siparişiniz yok.',
-                actionLabel: 'Menüye Göz At',
-                onAction: () => Navigator.pop(context),
-              )
-            : _ActiveOrderBody(order: OrderModel.fromCanonicalOrder(order));
+        if (order == null) {
+          return EmptyView(
+            icon: Icons.receipt_long_rounded,
+            message: 'Şu anda takip edebileceğiniz aktif bir siparişiniz yok.',
+            actionLabel: 'Menüye Göz At',
+            onAction: () => Navigator.pop(context),
+          );
+        }
+        var model = OrderModel.fromCanonicalOrder(order);
+        final liveStatus = liveStatusAsync.valueOrNull;
+        if (liveStatus != null) {
+          model = model.copyWith(lifecycleStatus: liveStatus);
+        }
+        return _ActiveOrderBody(order: model);
       },
     );
   }
@@ -129,15 +135,20 @@ class _ActiveOrderByCurrentSession extends ConsumerWidget {
         onRetry: () => ref.invalidate(ordersProvider),
       ),
       data: (_) {
-        return active == null
-            ? EmptyView(
-                icon: Icons.receipt_long_rounded,
-                message:
-                    'Şu anda takip edebileceğiniz aktif bir siparişiniz yok.',
-                actionLabel: 'Menüye Göz At',
-                onAction: () => Navigator.pop(context),
-              )
-            : _ActiveOrderBody(order: active);
+        if (active == null) {
+          return EmptyView(
+            icon: Icons.receipt_long_rounded,
+            message: 'Şu anda takip edebileceğiniz aktif bir siparişiniz yok.',
+            actionLabel: 'Menüye Göz At',
+            onAction: () => Navigator.pop(context),
+          );
+        }
+        final liveStatus =
+            ref.watch(orderStatusStreamProvider(active.id)).valueOrNull;
+        final model = liveStatus == null
+            ? active
+            : active.copyWith(lifecycleStatus: liveStatus);
+        return _ActiveOrderBody(order: model);
       },
     );
   }

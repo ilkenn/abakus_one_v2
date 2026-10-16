@@ -65,6 +65,9 @@ class _SlowCanonicalOrderRepository implements CanonicalOrderRepository {
 
   @override
   Future<List<Order>> findAll() async => _orders;
+
+  @override
+  Stream<Order?> watchById(OrderId orderId) => const Stream.empty();
 }
 
 Order _buildOrder({

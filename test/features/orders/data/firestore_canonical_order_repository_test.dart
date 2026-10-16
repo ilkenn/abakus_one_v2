@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:abakus_one_v2/features/cart/domain/models/cart_item.dart';
 import 'package:abakus_one_v2/features/orders/application/use_cases/submit_customer_order.dart';
 import 'package:abakus_one_v2/features/orders/data/canonical_order_repository.dart';
@@ -13,10 +15,12 @@ import '../../pos/test_support/fake_clock.dart';
 /// Firestore SDK involved.
 class _FakeOrderFirestoreClient implements OrderFirestoreClient {
   final Map<String, Map<String, dynamic>> _byId = {};
+  final _watchers = <String, StreamController<Map<String, dynamic>?>>{};
 
   @override
   Future<void> setOrder(String orderId, Map<String, dynamic> data) async {
     _byId[orderId] = data;
+    _emit(orderId);
   }
 
   @override
@@ -35,6 +39,24 @@ class _FakeOrderFirestoreClient implements OrderFirestoreClient {
   @override
   Future<List<Map<String, dynamic>>> getAllOrders() async =>
       List.unmodifiable(_byId.values);
+
+  @override
+  Stream<Map<String, dynamic>?> watchOrder(String orderId) {
+    final controller = _watchers.putIfAbsent(
+      orderId,
+      () => StreamController<Map<String, dynamic>?>.broadcast(),
+    );
+    scheduleMicrotask(() {
+      if (controller.hasListener) controller.add(_byId[orderId]);
+    });
+    return controller.stream;
+  }
+
+  void _emit(String orderId) {
+    final controller = _watchers[orderId];
+    if (controller == null || !controller.hasListener) return;
+    controller.add(_byId[orderId]);
+  }
 }
 
 /// [idPrefix] distinguishes orders built by separate calls — each call
@@ -152,6 +174,55 @@ void main() {
           .submitOrder(await _buildOrder(customerId: null, idPrefix: 'b'));
 
       expect(await repository.findAll(), hasLength(2));
+    });
+
+    // 2026-09-29 — Client Order Tracking: watchById re-emits live, so a
+    // customer/guest tracking screen can show a status change without
+    // polling.
+    group('watchById', () {
+      test('emits the current snapshot immediately on subscription',
+          () async {
+        final client = _FakeOrderFirestoreClient();
+        final repository = FirestoreCanonicalOrderRepository(
+          client: client,
+          resolveOrganizationId: (restaurantId) async => 'org-1',
+        );
+        final order = await _buildOrder();
+        await repository.submitOrder(order);
+
+        final found = await repository.watchById(order.id).first;
+
+        expect(found?.id.value, order.id.value);
+      });
+
+      test('re-emits when the order is re-submitted (a status transition)',
+          () async {
+        final client = _FakeOrderFirestoreClient();
+        final repository = FirestoreCanonicalOrderRepository(
+          client: client,
+          resolveOrganizationId: (restaurantId) async => 'org-1',
+        );
+        final order = await _buildOrder();
+        final emissions = <Order?>[];
+        final subscription =
+            repository.watchById(order.id).listen(emissions.add);
+        await Future<void>.delayed(Duration.zero);
+
+        await repository.submitOrder(order);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(emissions.last?.id.value, order.id.value);
+        await subscription.cancel();
+      });
+
+      test('watching an unknown order emits null, not an error', () async {
+        final repository = FirestoreCanonicalOrderRepository(
+          client: _FakeOrderFirestoreClient(),
+          resolveOrganizationId: (restaurantId) async => 'org-1',
+        );
+
+        expect(await repository.watchById(OrderId('missing')).first, isNull);
+      });
     });
   });
 }

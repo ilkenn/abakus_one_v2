@@ -11,6 +11,7 @@ import '../../domain/models/courier_visibility.dart';
 import '../../domain/models/order_actor.dart';
 import '../../domain/models/order_audit_entry.dart';
 import '../../domain/models/order_cancellation.dart';
+import '../../domain/models/order_id.dart';
 import '../../domain/models/order_model.dart';
 import '../../domain/models/order_status.dart';
 import '../../domain/models/order_timestamps.dart';
@@ -63,6 +64,21 @@ final canonicalOrderRepositoryProvider =
       return restaurant?.organizationId;
     },
   );
+});
+
+/// A live view of one order's [Order.status] — Client Order Tracking. Only
+/// the status field is exposed (not the whole [Order]) since that's the
+/// one thing a tracking screen needs to update in real time; everything
+/// else about the order still comes from [canonicalOrderByIdProvider]'s
+/// existing one-shot read. Deliberately narrow, mirroring
+/// `kdsOrderStatusProvider`'s own shape — but reading `orders`, never
+/// `kitchenWorkItems` (staff-only; a guest has no access to it).
+final orderStatusStreamProvider =
+    StreamProvider.family<OrderStatus?, String>((ref, orderId) {
+  return ref
+      .watch(canonicalOrderRepositoryProvider)
+      .watchById(OrderId(orderId))
+      .map((order) => order?.status);
 });
 
 /// Builds and persists customer-checkout orders onto the canonical [Order]

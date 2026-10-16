@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../domain/models/order.dart';
 import '../domain/models/order_id.dart';
 import 'order_firestore_client.dart';
@@ -39,6 +41,11 @@ abstract interface class CanonicalOrderRepository {
   /// shared across features rather than being one feature's own test
   /// convenience getter.
   Future<List<Order>> findAll();
+
+  /// A live view of [findById] for [orderId] — re-emits whenever the
+  /// order changes, so a customer/guest tracking screen can show a status
+  /// change without polling.
+  Stream<Order?> watchById(OrderId orderId);
 }
 
 /// In-memory [CanonicalOrderRepository] — the only implementation this
@@ -46,10 +53,12 @@ abstract interface class CanonicalOrderRepository {
 /// same interface, same callers).
 class InMemoryCanonicalOrderRepository implements CanonicalOrderRepository {
   final Map<String, Order> _byId = {};
+  final _watchers = <String, StreamController<Order?>>{};
 
   @override
   Future<Order> submitOrder(Order order) async {
     _byId[order.id.value] = order;
+    _emit(order.id.value);
     return order;
   }
 
@@ -65,6 +74,24 @@ class InMemoryCanonicalOrderRepository implements CanonicalOrderRepository {
 
   @override
   Future<List<Order>> findAll() async => List.unmodifiable(_byId.values);
+
+  @override
+  Stream<Order?> watchById(OrderId orderId) {
+    final controller = _watchers.putIfAbsent(
+      orderId.value,
+      () => StreamController<Order?>.broadcast(),
+    );
+    scheduleMicrotask(() {
+      if (controller.hasListener) controller.add(_byId[orderId.value]);
+    });
+    return controller.stream;
+  }
+
+  void _emit(String orderId) {
+    final controller = _watchers[orderId];
+    if (controller == null || !controller.hasListener) return;
+    controller.add(_byId[orderId]);
+  }
 }
 
 /// The real, Firestore-backed [CanonicalOrderRepository] — Sprint 9E
@@ -120,5 +147,12 @@ class FirestoreCanonicalOrderRepository implements CanonicalOrderRepository {
   Future<List<Order>> findAll() async {
     final docs = await _client.getAllOrders();
     return [for (final doc in docs) OrderFirestoreMapper.fromFirestore(doc)];
+  }
+
+  @override
+  Stream<Order?> watchById(OrderId orderId) {
+    return _client.watchOrder(orderId.value).map(
+          (data) => data == null ? null : OrderFirestoreMapper.fromFirestore(data),
+        );
   }
 }

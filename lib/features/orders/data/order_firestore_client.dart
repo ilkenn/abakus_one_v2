@@ -16,6 +16,11 @@ abstract interface class OrderFirestoreClient {
   Future<List<Map<String, dynamic>>> queryOrdersByCustomerId(String customerId);
 
   Future<List<Map<String, dynamic>>> getAllOrders();
+
+  /// A live view of [getOrder] for [orderId] — re-emits whenever the order
+  /// document changes, so a customer/guest tracking screen can show a
+  /// status change (e.g. `preparing` -> `ready`) without polling.
+  Stream<Map<String, dynamic>?> watchOrder(String orderId);
 }
 
 /// The real implementation, wrapping the `orders` collection —
@@ -62,5 +67,10 @@ class DefaultOrderFirestoreClient implements OrderFirestoreClient {
   Future<List<Map<String, dynamic>>> getAllOrders() async {
     final snapshot = await _collection.get();
     return [for (final doc in snapshot.docs) doc.data()];
+  }
+
+  @override
+  Stream<Map<String, dynamic>?> watchOrder(String orderId) {
+    return _collection.doc(orderId).snapshots().map((snapshot) => snapshot.data());
   }
 }

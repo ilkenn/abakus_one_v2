@@ -7788,3 +7788,63 @@ New/changed files: `lib/features/qr/domain/models/table_session.dart`,
 `test/features/menu/product_detail_screen_test.dart`,
 `test/features/cart/presentation/screens/dine_in_checkout_screen_test.dart`,
 `docs/feature_status.md`.
+
+## Restaurant Operations & Guest Lifecycle Kapanış Paketi (2026-10-01)
+
+Requested as a 4-work-package consolidation: (1) live customer order tracking, (2) remaining Cash
+(Sprint 3E) dead-code cleanup, (3) BR-TABLE-004 documentation sync, (4) end-to-end verification.
+
+**WP1 — Guest Order Tracking**: `ActiveOrderScreen`'s status badge/timeline previously relied on
+`DineInLineApprovalSection`'s 6-second `Timer.invalidate` polling (dine-in-QR-only) for the
+appearance of liveness. Added real streams, never touching `kitchenWorkItems` (staff-only, no guest
+access) — the architecture boundary was fixed to `orders.status` only, already guest-readable via
+`canReadAsTableGuest`: `OrderFirestoreClient.watchOrder`/`CanonicalOrderRepository.watchById` (both
+mirroring this session's own `KitchenProjectionRepository.watchByOrderId` pattern exactly — Firestore
+`.snapshots()` for the real impl, a broadcast `StreamController` per id for the in-memory one), and a
+new narrow `orderStatusStreamProvider` (`StreamProvider.family<OrderStatus?, String>`, deliberately
+exposing just the status field, not a whole `Order`). `_ActiveOrderById`/`_ActiveOrderByCurrentSession`
+now prefer the live status over the one-shot `canonicalOrderByIdProvider` read when present
+(`OrderModel.copyWith(lifecycleStatus:)`/`Order.copyWith(lifecycleStatus:)`), covering both the guest
+dine-in-QR tracking link and a signed-in customer's own order history. `DineInLineApprovalSection`'s
+own polling is untouched — it drives a different concern (per-line staff-approval state). Turkish
+labels reused as-is from `OrderTrackingTimeline`, no new strings.
+
+**WP2 — Cash (Sprint 3E) Domain/Data Cleanup**: deleted the 37 `lib/` + 20 `test/` files (14 domain
+models, 7 repositories, 6 id generators, 10 use cases, plus `cash_test_fixtures.dart` in full) a final
+pre-deletion verification pass confirmed were used only by the already-removed Sprint 3E screens
+(deleted in the prior cash/courier-settlement cleanup round) and by themselves. `cash_register_gateway
+.dart` (the real AP-4 Wave B implementation) and `capture_offline_cash_payment.dart` (live, wired by
+`pos_workspace_providers.dart`, confirmed to share zero types with the dead set) were untouched, as
+was the separate, live Sprint 3F "courier cash collection" domain (similarly-named but confirmed
+unrelated). `flutter analyze` came back clean immediately after deletion — no fixture/test fallout
+this time, unlike the prior courier-settlement round.
+
+**WP3 — BR-TABLE-004 Documentation Sync**: found the "Unresolved Business Decisions" summary table
+in `docs/business_rules.md` still listed BR-TABLE-004 as "are table transfer, table merge, and
+split-bill supported at all?" — stale, since the canonical entry already marked this DECIDED back in
+Sprint 3D (v1.5, 2026-07-29) and Dine-in Sprint 2's own audit (2026-09-10, above) confirmed it real.
+**Deliberately did not** mark the canonical rule's "post-submission item-level splitting remains
+UNRESOLVED" sentence as resolved — code review of `checkOperations.ts`'s AP-3 Wave 2 ledger mechanism
+found it splits an already-fired line's financial VALUE across checks, but never gives the line
+itself a stable, independent identity; that is a materially different capability from what the
+UNRESOLVED sentence describes, and the same 2026-09-11 feature_status.md entry independently
+re-asserts it as still open. Narrowed the summary table's question to the real remaining gap instead
+of removing the row outright, and added a dated correction note to the canonical entry explaining
+the distinction — disclosed, not silently decided either way.
+
+**WP4 — Verification**: `flutter analyze` clean (full project, after both WP1 and WP2). `flutter
+test` **3685/3685** (3735 baseline − 20 deleted cash test files' cases + 5 new WP1 tests). No Cloud
+Functions/Firestore Rules changes (WP1 is pure Dart-side streaming over an already-guest-readable
+field; WP2/WP3 are code deletion and documentation only).
+
+New/changed files: `lib/features/orders/data/order_firestore_client.dart`,
+`lib/features/orders/data/canonical_order_repository.dart`,
+`lib/features/orders/presentation/providers/orders_provider.dart`,
+`lib/features/orders/presentation/screens/active_order_screen.dart`,
+`test/features/orders/data/firestore_canonical_order_repository_test.dart`,
+`test/features/orders/presentation/screens/active_order_screen_test.dart`,
+`test/features/orders/presentation/screens/orders_screen_test.dart`,
+`test/features/orders/presentation/providers/orders_provider_test.dart`;
+37 `lib/` + 20 `test/` Cash (Sprint 3E) files deleted (`git rm`, full list in the prior cleanup
+round's own entry pattern — domain/cash/*, cash_*_repository.dart, cash_*_id_generator.dart,
+cash-prefixed use cases, cash_test_fixtures.dart); `docs/business_rules.md`, `docs/feature_status.md`.

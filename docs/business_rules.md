@@ -296,6 +296,23 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   part of one order's total from each guest needs no new domain concept, since arbitrary multi-split
   payment collection against one order already exists. Post-submission item-level splitting remains
   UNRESOLVED, deferred to a future, separately-approved `OrderLine`-identity change.
+- **Corrected 2026-10-01**: this rule's own "Status: DECIDED" line (above) was correct but its
+  broader split-bill/transfer/merge capability wasn't reflected consistently elsewhere — the
+  "Unresolved Business Decisions" summary table still listed the whole rule as open, which was stale;
+  corrected there. Separately, AP-3 Wave 2 (`functions/src/checkOperations.ts`/
+  `checkAllocationConfig.ts`, 2026-08-27) shipped `splitCheckByProduct`/`splitCheckByQuantity`/
+  `splitCheckByCustomer`/`splitCheckEqualByHeadcount`/`splitCheckFreeAmount`, confirmed real/tested by
+  Dine-in Sprint 2's own audit (`docs/feature_status.md`, 2026-09-10). These split an already-accepted
+  (post-submission) order line's **value** across checks via a real, conservation-locked ledger
+  (`orderLineAllocationLedgers`) — genuinely solving "divide what an already-fired line is worth
+  between payers" without ever needing `OrderLine` to gain a stable id. **This is a different thing
+  from, and does not resolve,** the "post-submission item-level splitting... deferred to a future
+  OrderLine-identity change" sentence above: that sentence is about giving an already-fired line its
+  own independently-trackable identity (e.g. for the kitchen or for an item-level refund to
+  distinguish "this half" from "that half"), which the ledger approach deliberately never attempts —
+  it stays a pure financial allocation, not a domain-object split. Confirmed still genuinely open;
+  left untouched. See the "Unresolved Business Decisions" table entry for the narrowed-down open
+  question.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Table/QR, Payments, POS
 
@@ -5206,7 +5223,7 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 | ID | Question |
 |---|---|
 | BR-CHANNEL-003 | How should a marketplace order be represented — reuse `delivery` or add a new `OrderChannel` value? |
-| BR-TABLE-004 | Are table transfer, table merge, and split-bill supported at all? |
+| BR-TABLE-004 | **Narrowed 2026-10-01** (the original, broader question — "are table transfer, table merge, and split-bill supported at all?" — is DECIDED, see the canonical entry above): is post-submission *item-level* splitting (giving an already-fired order line its own stable identity, as opposed to dividing its already-settled VALUE across checks via the real `orderLineAllocationLedgers` mechanism) supported? |
 | BR-BOWL-004 | What are the real Bowl Builder "Extra" (second-unit) surcharge prices? |
 | BR-MKTPRICE-002 | How/where is a marketplace-specific price stored per product? |
 | BR-TAX-005 | Should an order-level discount proportionally reduce the reported VAT figure? |

@@ -50,6 +50,9 @@ class _PendingCanonicalOrderRepository implements CanonicalOrderRepository {
 
   @override
   Future<List<Order>> findAll() async => [];
+
+  @override
+  Stream<Order?> watchById(OrderId orderId) => const Stream.empty();
 }
 
 /// Always throws — used to assert the error state renders [ErrorView].
@@ -67,6 +70,9 @@ class _FailingCanonicalOrderRepository implements CanonicalOrderRepository {
 
   @override
   Future<List<Order>> findAll() async => [];
+
+  @override
+  Stream<Order?> watchById(OrderId orderId) => const Stream.empty();
 }
 
 Future<void> _pumpOrdersScreen(
