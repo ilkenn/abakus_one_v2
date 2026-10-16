@@ -6,6 +6,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../data/table_guest_session_gateway.dart';
 import '../providers/active_table_context_provider.dart';
 import '../providers/table_guest_session_dependencies_provider.dart';
 import 'table_confirmed_screen.dart';
@@ -76,8 +77,26 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
       _errorMessage = null;
     });
 
-    final preview =
-        await ref.read(tableGuestSessionGatewayProvider).resolveToken(token);
+    TableQrPreview preview;
+    try {
+      preview =
+          await ref.read(tableGuestSessionGatewayProvider).resolveToken(token);
+    } on TableGuestSessionException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _errorMessage = _messageForExceptionCode(error.code);
+      });
+      return;
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _errorMessage =
+            'QR kod okunurken bir sorun oluştu. Lütfen tekrar deneyin.';
+      });
+      return;
+    }
 
     if (!preview.isUsable) {
       if (!mounted) return;
@@ -104,6 +123,12 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
           ),
         ),
       );
+    } on TableGuestSessionException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _errorMessage = _messageForExceptionCode(error.code);
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -129,6 +154,19 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
       // of any kind (no time, no party size, no customer/staff info).
       'reserved' => 'Bu masa rezerve edilmiştir. Lütfen yetkili ile görüşün.',
       _ => 'Bu QR kod şu anda kullanılamıyor. Lütfen tekrar deneyin.',
+    };
+  }
+
+  /// [code] is a [TableGuestSessionException.code] verbatim — mirrors
+  /// `TableGuestEntryScreen._messageForExceptionCode`'s exact vocabulary.
+  String _messageForExceptionCode(String code) {
+    return switch (code) {
+      'not-found' => 'Bu QR kod tanınmadı. Lütfen masandaki kodu tekrar okut.',
+      'failed-precondition' =>
+        'Bu QR kod şu anda kullanılamıyor. Lütfen bir çalışana bildir.',
+      'resource-exhausted' =>
+        'Çok fazla deneme yapıldı. Lütfen biraz bekleyip tekrar deneyin.',
+      _ => 'Masa açılırken bir sorun oluştu. Lütfen tekrar deneyin.',
     };
   }
 

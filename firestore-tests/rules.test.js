@@ -4966,6 +4966,30 @@ test('deviceChallenges and deviceSessions: no client read or write at all, for a
   await assertFails(setDoc(doc(branchStaff, 'deviceSessions/session-2'), { deviceId: 'x' }));
 });
 
+test('rateLimitBuckets: ADR-049 abuse-throttle counters — no client read or write at all, for anyone, at any permission level', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'rateLimitBuckets/bucket-1'), { windowStart: new Date(), count: 1 });
+  });
+  const platformOwner = testEnv
+    .authenticatedContext('platform-1', { platformRole: 'platformOwner' })
+    .firestore();
+  const branchStaff = testEnv
+    .authenticatedContext('staff-1', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['admin'] },
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+  const anonymousGuest = testEnv.authenticatedContext('guest-1', {}).firestore();
+
+  for (const ctx of [platformOwner, branchStaff, anonymousGuest]) {
+    await assertFails(getDoc(doc(ctx, 'rateLimitBuckets/bucket-1')));
+  }
+  await assertFails(
+    setDoc(doc(anonymousGuest, 'rateLimitBuckets/bucket-2'), { windowStart: new Date(), count: 1 }),
+  );
+});
+
 test('remoteApprovalRequests: AP-2 final wiring — readable by the requester themselves, and by a branch-scoped eligible responder (manager/admin/tenantOwner); never by an unrelated org member, an org member without branch access, or an org-admin without branch access; never client-writable', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'remoteApprovalRequests/approval-1'), {

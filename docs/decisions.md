@@ -19455,3 +19455,69 @@ AP-5 Phase 1 plan can be built directly on it rather than re-deriving the design
 "Plan Before Implementation"/"Wait for Approval" rule, no AP-5 code was written this entry — the
 Phase 1 implementation plan is presented separately for explicit approval before any implementation
 begins.
+
+## ADR-049 — Guest session rate limiting: overrides the prior "no rate-limit system" decision (2026-10-16)
+
+- Tarih: 2026-10-16
+- Durum: Accepted
+
+### Context
+
+A comprehensive "Eksikler & Hafta Sonu Kapanış Denetimi" production-readiness audit (2026-10-16)
+flagged `openTableGuestSession`'s anonymous-auth-churn abuse surface as a Day-2 ("Salı: Mobil
+İmzalama, Güvenlik ve Hız Sınırları") item. Before implementing, research surfaced a genuine,
+documented prior decision directly contradicting the ask:
+
+- `docs/table_qr_architecture.md` §7: *"Rate limiting on QR resolution/session creation is
+  explicitly a backend concern, not modeled here."*
+- This doc's own Faz D.2/D.3 entries (`resolveTableQrToken`/`resolveTakeawayQrToken`): *"No custom
+  rate-limiter was built, per direct instruction against a general-purpose rate-limit system"* —
+  App Check was the only abuse mitigation deliberately shipped at that time.
+
+That decision was scoped to those two specific security-hardening phases, each explicitly choosing
+App Check over a custom rate limiter as *that phase's* mitigation — not a permanent architectural
+prohibition. This finding was surfaced explicitly (not silently built over) before any code was
+written; the user confirmed overriding it given today's production-readiness context.
+
+### Decision
+
+Build `functions/src/callableRateLimiter.ts` — a Firestore-counter, fixed-window rate limiter keyed
+independently by `uid` and by IP (either dimension alone can reject; both are checked, never just
+one) — and wire it into exactly two callables: `openTableGuestSession` (uid: 5/60s, IP: 20/60s) and
+`resolveTableQrToken` (IP: 20/60s, uid also checked when present though this callable requires no
+auth). `openTakeawayGuestSession`/`resolveTakeawayQrToken` share the identical gap but are explicitly
+**out of scope** for this change — not touched, not silently left inconsistent, tracked as a
+follow-up.
+
+**Why uid+IP, not one alone**: `openTableGuestSession` requires only anonymous Firebase Auth, freely
+mintable in a script loop — a uid-only limit is trivially bypassed. A busy restaurant's shared Wi-Fi/
+NAT can legitimately put many real, distinct diners behind one IP — an IP-only limit risks
+false-positives against them. Checking both independently means either vector alone has to reach
+real abuse volume before tripping, while a single legitimate diner retrying a few times never does.
+
+**Why Firestore-counter, not an external rate-limit service**: no Redis/cache layer exists in this
+stack; adding one for this alone would be a disproportionate new-dependency decision. A simple
+fixed-window counter transaction is sufficient for the threat model (scripted hammering, not
+sub-second precision abuse).
+
+**Emulator default is the opposite direction from `appCheckConfig.ts`'s own emulator guard,
+deliberately**: App Check needs an external provider not yet provisioned for this project, so
+defaulting it OFF outside the emulator loses no real protection today; this rate limiter has no such
+dependency, so outside the emulator it is unconditionally **on**, not an opt-in. Inside the Functions
+emulator it defaults OFF (dozens of pre-existing tests across ~19 files call these two callables
+repeatedly from the same local IP as setup, not as the subject under test — enforcing real
+thresholds there would make unrelated tests flaky for a reason unrelated to what they test); a
+`FORCE_CALLABLE_RATE_LIMIT_ENFORCEMENT` env var lets this module's own dedicated test prove the
+mechanism without affecting any other test file.
+
+**Client-side standardization (the other half of the Day-2 ask)**: `TableGuestSessionGateway
+.resolveToken` previously had no `FirebaseFunctionsException` handling at all (only `openSession`/
+`createServiceRequest` did) — a pre-existing gap, not introduced by this change, but one that
+`resource-exhausted` now makes realistically reachable rather than a rare programmer-error path. Also
+closed: `qr_scanner_screen.dart`'s `resolveToken` call had no try/catch at all. Both now mirror
+`openSession`'s existing "wrap in `TableGuestSessionException`, map the code to a Turkish message"
+pattern; `'resource-exhausted'` resolves to "Çok fazla deneme yapıldı. Lütfen biraz bekleyip tekrar
+dene(yin)." in both `table_guest_entry_screen.dart` and `qr_scanner_screen.dart`.
+
+New Firestore collection `rateLimitBuckets` — server-only (`allow read, write: if false;`, mirrors
+`deviceChallenges`/`deviceSessions`), never a client read/write target.

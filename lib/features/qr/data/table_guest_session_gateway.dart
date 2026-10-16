@@ -75,11 +75,12 @@ class OpenedTableGuestSession {
   });
 }
 
-/// Thrown by [TableGuestSessionGateway.openSession] for an expected,
-/// non-exceptional-in-nature rejection — mirrors the Cloud Function's own
-/// `HttpsError` codes (`'not-found'`/`'failed-precondition'`/
-/// `'unauthenticated'`/`'invalid-argument'`) verbatim rather than
-/// inventing a parallel taxonomy the caller would have to translate.
+/// Thrown by [TableGuestSessionGateway.resolveToken]/[openSession] for an
+/// expected, non-exceptional-in-nature rejection — mirrors the Cloud
+/// Function's own `HttpsError` codes (`'not-found'`/`'failed-precondition'`/
+/// `'unauthenticated'`/`'invalid-argument'`/`'resource-exhausted'`)
+/// verbatim rather than inventing a parallel taxonomy the caller would
+/// have to translate.
 class TableGuestSessionException implements Exception {
   final String code;
   final String message;
@@ -117,13 +118,21 @@ class FirebaseTableGuestSessionGateway implements TableGuestSessionGateway {
   Future<TableQrPreview> resolveToken(String token) async {
     final callable = functions.FirebaseFunctions.instance
         .httpsCallable('resolveTableQrToken');
-    final result = await callable.call<Map<String, dynamic>>({'token': token});
-    final data = result.data;
-    return TableQrPreview(
-      status: data['status'] as String,
-      tableDisplayName: data['tableDisplayName'] as String?,
-      branchDisplayName: data['branchDisplayName'] as String?,
-    );
+    try {
+      final result =
+          await callable.call<Map<String, dynamic>>({'token': token});
+      final data = result.data;
+      return TableQrPreview(
+        status: data['status'] as String,
+        tableDisplayName: data['tableDisplayName'] as String?,
+        branchDisplayName: data['branchDisplayName'] as String?,
+      );
+    } on functions.FirebaseFunctionsException catch (error) {
+      throw TableGuestSessionException(
+        error.code,
+        error.message ?? 'QR code could not be checked.',
+      );
+    }
   }
 
   @override

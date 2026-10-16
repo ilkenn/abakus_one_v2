@@ -178,6 +178,11 @@ intentionally left for the phase that implements order submission, not added spe
   creating a session.
 - Rate limiting on QR resolution/session creation is explicitly a backend concern, not modeled
   here.
+  > **Corrected 2026-10-16 (ADR-049)**: this is no longer fully accurate. `resolveTableQrToken`/
+  > `openTableGuestSession` are now rate-limited server-side (`functions/src/
+  > callableRateLimiter.ts` — uid+IP Firestore-counter buckets). `openTakeawayGuestSession`/
+  > `resolveTakeawayQrToken` share the identical abuse surface and remain genuinely unmodeled —
+  > tracked as a follow-up, not silently left inconsistent.
 - The customer must see the resolved table (branch + table display name) before confirming any
   order — a UI/flow requirement for the phase that builds the ordering screen, noted here so it
   isn't lost.

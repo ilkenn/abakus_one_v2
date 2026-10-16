@@ -94,6 +94,12 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
         _tableDisplayName = preview.tableDisplayName;
         _branchDisplayName = preview.branchDisplayName;
       });
+    } on TableGuestSessionException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _phase = _EntryPhase.error;
+        _errorMessage = _messageForExceptionCode(error.code);
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -165,6 +171,8 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
       'not-found' => 'Bu QR kod tanınmadı. Lütfen masandaki kodu tekrar okut.',
       'failed-precondition' =>
         'Bu QR kod şu anda kullanılamıyor. Lütfen bir çalışana bildir.',
+      'resource-exhausted' =>
+        'Çok fazla deneme yapıldı. Lütfen biraz bekleyip tekrar dene.',
       _ => 'Masa açılırken bir sorun oluştu. Lütfen tekrar dene.',
     };
   }

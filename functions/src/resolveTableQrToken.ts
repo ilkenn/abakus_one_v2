@@ -4,6 +4,7 @@ import {
   toPublicPreview,
 } from "./qrTokenResolution";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
+import { enforceCallableRateLimit } from "./callableRateLimiter";
 
 /**
  * Read-only QR token preview — Table Guest Session Phase 2
@@ -41,6 +42,13 @@ import { shouldEnforceAppCheck } from "./appCheckConfig";
  * the target project, no further code change needed; stays off in every
  * emulator/local-dev run, so this function's own existing test suite is
  * unaffected.
+ *
+ * **Rate limiting (ADR-049)** — overrides the prior "no rate-limit system"
+ * decision this same doc comment used to describe, now that this exact
+ * public, unauthenticated token-brute-forcing surface is in scope. No
+ * `request.auth` is required here at all, so the IP dimension is the
+ * primary control; the uid dimension only engages when the caller happens
+ * to already be signed in (e.g. a retry after `openTableGuestSession`).
  */
 export const resolveTableQrToken = onCall(
   { enforceAppCheck: shouldEnforceAppCheck() },
@@ -49,6 +57,14 @@ export const resolveTableQrToken = onCall(
     if (typeof token !== "string" || token.length === 0) {
       throw new HttpsError("invalid-argument", "token is required.");
     }
+
+    await enforceCallableRateLimit({
+      functionName: "resolveTableQrToken",
+      uid: request.auth?.uid ?? null,
+      ip: request.rawRequest.ip ?? null,
+      uidRule: { windowMs: 60_000, maxAttempts: 20 },
+      ipRule: { windowMs: 60_000, maxAttempts: 20 },
+    });
 
     const resolution = await resolveTableQrTokenInternal(token);
     return toPublicPreview(resolution);

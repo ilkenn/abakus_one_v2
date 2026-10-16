@@ -6,6 +6,7 @@ import {
   TABLE_GUEST_SESSION_TTL_MS,
 } from "./tableGuestSessionConfig";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
+import { enforceCallableRateLimit } from "./callableRateLimiter";
 import { activeReservationTableContextRef, readLiveReservationTableContext } from "./reservationTableContext";
 import {
   TABLE_SESSIONS_COLLECTION,
@@ -69,6 +70,19 @@ export const openTableGuestSession = onCall(
   if (typeof token !== "string" || token.length === 0) {
     throw new HttpsError("invalid-argument", "token is required.");
   }
+
+  // ADR-049 — overrides the prior "no rate-limit system" decision
+  // (docs/decisions.md Faz D.2/D.3) now that the exact anonymous-auth-churn
+  // abuse surface that decision left open is in scope. uid is always
+  // present here (auth already required above); IP comes from the real
+  // HTTPS connection, not a client-supplied value.
+  await enforceCallableRateLimit({
+    functionName: "openTableGuestSession",
+    uid: request.auth.uid,
+    ip: request.rawRequest.ip ?? null,
+    uidRule: { windowMs: 60_000, maxAttempts: 5 },
+    ipRule: { windowMs: 60_000, maxAttempts: 20 },
+  });
 
   const resolution = await resolveTableQrTokenInternal(token);
   if (resolution.validityStatus === "notFound") {

@@ -7918,3 +7918,57 @@ validated as well-formed JSON. No Firestore Rules changes.
 New/changed files: `firestore.indexes.json`, `docs/table_qr_architecture.md`,
 `docs/feature_status.md`. (`functions/src/transitionKitchenWorkItem.ts` was edited then reverted to
 its committed state — not part of the final diff.)
+
+## Hafta Kapanışı Faz 2 (Salı, Madde 1): Misafir Oturumu Hız Sınırlaması (2026-10-16)
+
+First item of Day 2 ("Salı: Mobil İmzalama, Güvenlik ve Hız Sınırları"). Before implementation,
+research surfaced a genuine, documented prior decision directly contradicting the ask — `docs/
+table_qr_architecture.md` §7 and this doc's own Faz D.2/D.3 entries both record "no custom
+rate-limiter was built, per direct instruction." Surfaced explicitly and confirmed overridden by the
+user before any code was written — see **ADR-049** (`docs/decisions.md`) for the full reasoning.
+
+**Backend**: new `functions/src/callableRateLimiter.ts` — a Firestore-counter, fixed-window limiter
+keyed independently by uid and by IP (either dimension alone can reject). Wired into
+`openTableGuestSession` (uid: 5/60s, IP: 20/60s) and `resolveTableQrToken` (IP: 20/60s, uid also
+checked when present). `openTakeawayGuestSession`/`resolveTakeawayQrToken` share the identical gap
+but are explicitly out of scope this pass — not touched, tracked as a follow-up. New Firestore
+collection `rateLimitBuckets`, server-only (`allow read, write: if false;`).
+
+Enforcement defaults OFF under the Functions Emulator (so the ~19 pre-existing files that call these
+two callables repeatedly as test setup are completely unaffected) and unconditionally ON everywhere
+else — the opposite default direction from `appCheckConfig.ts`'s own emulator guard, deliberately:
+App Check needs an unprovisioned external provider, this limiter needs nothing external, so there is
+no reason to ship it disabled in production.
+
+**Client-side standardization**: `TableGuestSessionGateway.resolveToken` had no
+`FirebaseFunctionsException` handling at all before this change (only `openSession`/
+`createServiceRequest` did), and `qr_scanner_screen.dart`'s own `resolveToken` call had no try/catch
+either — both pre-existing gaps, not introduced by this change, but realistically reachable now that
+`resource-exhausted` is a real possible response. Both call sites now mirror `openSession`'s existing
+"wrap in `TableGuestSessionException`, map the code to a Turkish message" pattern;
+`'resource-exhausted'` → "Çok fazla deneme yapıldı. Lütfen biraz bekleyip tekrar dene(yin)." in both
+`table_guest_entry_screen.dart` and `qr_scanner_screen.dart`.
+
+**Tests**: `functions/src/test/callableRateLimiter.test.ts` (pure `shouldEnforceCallableRateLimit`
+env-branching, no emulator) and `functions/src/test/callableRateLimitEnforcement.test.ts` (new,
+isolated emulator test — calls `enforceCallableRateLimit` directly in-process against the real
+Firestore emulator rather than through the deployed callables' HTTP layer, specifically so this
+file's `FORCE_CALLABLE_RATE_LIMIT_ENFORCEMENT` override can never reach, and never risk destabilizing,
+the existing `resolveTableQrToken`/`openTableGuestSession` emulator test suites). Plus 2 new Flutter
+widget tests in `table_guest_entry_screen_test.dart` proving the standardized `resource-exhausted`
+message for both `resolveToken` and `openSession` failures.
+
+**Verification**: `flutter analyze` clean (qr feature). `flutter test` — qr feature suite
+88/88 passing (2 new). Cloud Functions `npx tsc --noEmit` clean. Full `npm run test:emulator`
+Cloud Functions suite run (required locating a JDK 21 install already present on the machine but not
+first on `PATH` — the sandboxed shell's default `java` was 17, which `firebase-tools` now rejects).
+
+New/changed files: `functions/src/callableRateLimiter.ts` (new),
+`functions/src/test/callableRateLimiter.test.ts` (new),
+`functions/src/test/callableRateLimitEnforcement.test.ts` (new),
+`functions/src/openTableGuestSession.ts`, `functions/src/resolveTableQrToken.ts`,
+`firestore.rules`, `lib/features/qr/data/table_guest_session_gateway.dart`,
+`lib/features/qr/presentation/screens/table_guest_entry_screen.dart`,
+`lib/features/qr/presentation/screens/qr_scanner_screen.dart`,
+`test/features/qr/presentation/screens/table_guest_entry_screen_test.dart`,
+`docs/decisions.md`, `docs/table_qr_architecture.md`, `docs/feature_status.md`.

@@ -16,12 +16,14 @@ class _FakeTableGuestSessionGateway implements TableGuestSessionGateway {
     this.previewStatus = 'valid',
     this.tableDisplayName = 'Masa 12',
     this.branchDisplayName = 'Abaküs Ortaköy',
+    this.resolveError,
     this.openError,
   });
 
   String previewStatus;
   String? tableDisplayName;
   String? branchDisplayName;
+  Object? resolveError;
   Object? openError;
   int resolveCallCount = 0;
   int openCallCount = 0;
@@ -31,6 +33,7 @@ class _FakeTableGuestSessionGateway implements TableGuestSessionGateway {
   Future<TableQrPreview> resolveToken(String token) async {
     resolveCallCount++;
     lastToken = token;
+    if (resolveError != null) throw resolveError!;
     return TableQrPreview(
       status: previewStatus,
       tableDisplayName: previewStatus == 'valid' ? tableDisplayName : null,
@@ -90,6 +93,7 @@ Future<
   String previewStatus = 'valid',
   String tableDisplayName = 'Masa 12',
   String branchDisplayName = 'Abaküs Ortaköy',
+  Object? resolveError,
   Object? openError,
   bool firebaseReady = true,
   String? preexistingUid,
@@ -98,6 +102,7 @@ Future<
     previewStatus: previewStatus,
     tableDisplayName: tableDisplayName,
     branchDisplayName: branchDisplayName,
+    resolveError: resolveError,
     openError: openError,
   );
   final identity = _FakeTechnicalIdentityProvider(preexistingUid);
@@ -248,6 +253,45 @@ void main() {
     expect(find.byType(MenuScreen), findsNothing);
     expect(
       find.textContaining('Bu QR kod şu anda kullanılamıyor'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'resolveToken hız sınırı aşımıyla (resource-exhausted) başarısız '
+      'olursa, standartlaştırılmış Türkçe uyarı gösterilir', (tester) async {
+    await pumpEntryScreen(
+      tester,
+      resolveError: const TableGuestSessionException(
+        'resource-exhausted',
+        'Too many requests. Please wait a moment before trying again.',
+      ),
+    );
+
+    expect(
+      find.textContaining('Çok fazla deneme yapıldı'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'openSession hız sınırı aşımıyla (resource-exhausted) başarısız '
+      'olursa, standartlaştırılmış Türkçe uyarı gösterilir, MenuScreen '
+      'açılmaz', (tester) async {
+    await pumpEntryScreen(
+      tester,
+      openError: const TableGuestSessionException(
+        'resource-exhausted',
+        'Too many requests. Please wait a moment before trying again.',
+      ),
+    );
+
+    await tester.tap(find.text('Masaya Otur'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MenuScreen), findsNothing);
+    expect(
+      find.textContaining('Çok fazla deneme yapıldı'),
       findsOneWidget,
     );
   });
