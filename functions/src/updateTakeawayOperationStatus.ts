@@ -34,7 +34,7 @@ export const updateTakeawayOperationStatus = onCall(
     const branchId = requireString(data.branchId, "branchId");
     const status = requireStatus(data.status);
 
-    requireStaffPermission(request, organizationId, "manageTakeawayOrders");
+    await requireStaffPermission(request, organizationId, "manageTakeawayOrders");
 
     let busyDelayMinutes = 0;
     let pausedUntil: Date | null = null;

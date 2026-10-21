@@ -71,7 +71,7 @@ export const refundReservationPreorderOrder = onCall(
       }
       const organizationId = order.organizationId as string;
 
-      requireReservationManagerPermission(request, organizationId);
+      await requireReservationManagerPermission(request, organizationId);
 
       const currentStatus = order.status as OrderStatus;
 

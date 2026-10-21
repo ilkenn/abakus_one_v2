@@ -85,7 +85,7 @@ export const registerConsortiumOrder = onCall(
     const dropoffProvinceName = optionalString(data.dropoffProvinceName) ?? "İstanbul";
     const dropoffDistrictName = optionalString(data.dropoffDistrictName) ?? "";
 
-    requireStaffPermission(request, organizationId, "manageCourierDispatch");
+    await requireStaffPermission(request, organizationId, "manageCourierDispatch");
 
     const db = getFirestore();
     const branchDoc = await db.collection("branches").doc(branchId).get();

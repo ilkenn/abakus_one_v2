@@ -148,8 +148,8 @@ export const requestDeviceRegistration = onCall(
     );
     if (capabilities.length === 0) invalid("At least one valid capability is required.");
 
-    requireStaffPermission(request, organizationId, "requestDeviceRegistration");
-    requireBranchAccess(request, organizationId, branchId);
+    await requireStaffPermission(request, organizationId, "requestDeviceRegistration");
+    await requireBranchAccess(request, organizationId, branchId);
 
     // Correction #8 — a new AP-2 sensitive command re-checks entitlement
     // server-side; the client's own ModuleEntitlementGate is UX-only.
@@ -315,7 +315,7 @@ export const issueDeviceSession = onCall(
     const challengeId = requireNonEmptyString(data.challengeId, "challengeId");
     const signature = requireNonEmptyString(data.signature, "signature");
 
-    requireBranchAccess(request, organizationId, branchId);
+    await requireBranchAccess(request, organizationId, branchId);
 
     const db = getFirestore();
     const { ref: deviceRef, data: device } = await loadDeviceRegistration(db, organizationId, branchId, deviceId);
@@ -438,8 +438,8 @@ export const revokeTrustedDevice = onCall(
     const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
     const reason = requireNonEmptyString(data.reason, "reason");
 
-    requireStaffPermission(request, organizationId, "manageDevices");
-    requireBranchAccess(request, organizationId, branchId);
+    await requireStaffPermission(request, organizationId, "manageDevices");
+    await requireBranchAccess(request, organizationId, branchId);
 
     const db = getFirestore();
     const { ref, data: device } = await loadDeviceRegistration(db, organizationId, branchId, deviceId);
@@ -515,8 +515,8 @@ export const suspendTrustedDevice = onCall(
     const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
     const reason = requireNonEmptyString(data.reason, "reason");
 
-    requireStaffPermission(request, organizationId, "manageDevices");
-    requireBranchAccess(request, organizationId, branchId);
+    await requireStaffPermission(request, organizationId, "manageDevices");
+    await requireBranchAccess(request, organizationId, branchId);
 
     const db = getFirestore();
     const { ref, data: device } = await loadDeviceRegistration(db, organizationId, branchId, deviceId);
@@ -582,8 +582,8 @@ export const retireTrustedDevice = onCall(
     const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
     const reason = requireNonEmptyString(data.reason, "reason");
 
-    requireStaffPermission(request, organizationId, "manageDevices");
-    requireBranchAccess(request, organizationId, branchId);
+    await requireStaffPermission(request, organizationId, "manageDevices");
+    await requireBranchAccess(request, organizationId, branchId);
 
     const db = getFirestore();
     const { ref, data: device } = await loadDeviceRegistration(db, organizationId, branchId, deviceId);

@@ -74,8 +74,8 @@ export const requestPaymentRefund = onCall({ enforceAppCheck: shouldEnforceAppCh
   const reasonCode = requireNonEmptyString(data.reasonCode, "reasonCode");
   const reasonMessage = requireNonEmptyString(data.reasonMessage, "reasonMessage");
 
-  requireStaffPermission(request, organizationId, "processPayments");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "processPayments");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
   const db = getFirestore();

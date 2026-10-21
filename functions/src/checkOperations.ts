@@ -71,8 +71,8 @@ async function authorizeStaffDeviceCommand(
   const branchId = requireNonEmptyString(data.branchId, "branchId");
   const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
   const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
-  requireStaffPermission(request, organizationId, "manageDineInOrders");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "manageDineInOrders");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
   return { organizationId, branchId, uid: request.auth.uid };
 }

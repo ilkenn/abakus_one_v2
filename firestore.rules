@@ -230,6 +230,12 @@ service cloud.firestore {
     match /rateLimitBuckets/{bucketId} {
       allow read, write: if false;
     }
+    // ADR-050 — staffAuthorization.ts's claims-revocation stamps, written
+    // by revokeStaffRole/revokeStaffBranchAccess/setStaffMemberStatus.
+    // Server-only, keyed by uid; never a legitimate client read/write target.
+    match /authClaimsRevocations/{uid} {
+      allow read, write: if false;
+    }
 
     // AP-2 final wiring â€” Remote Approval Engine (Correction #10),
     // completing the gap the prior comment (preserved below) explicitly

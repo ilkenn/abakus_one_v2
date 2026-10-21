@@ -71,7 +71,7 @@ export const openReservationTable = onCall(
       }
       const reservation = reservationDoc.data()!;
 
-      requireStaffPermission(request, reservation.organizationId, "manageReservations");
+      await requireStaffPermission(request, reservation.organizationId, "manageReservations");
 
       if (reservation.status !== "confirmed") {
         throw new HttpsError(

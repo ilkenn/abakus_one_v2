@@ -30,7 +30,7 @@ export const getReservationBranchInfoForStaff = onCall(
     const organizationId = data.organizationId;
     const branchId = data.branchId;
 
-    requireStaffPermission(request, organizationId, "manageReservations");
+    await requireStaffPermission(request, organizationId, "manageReservations");
 
     const db = getFirestore();
     const branchDoc = await db.collection("branches").doc(branchId).get();

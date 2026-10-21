@@ -53,8 +53,8 @@ export const refundDineInOrder = onCall(
       const organizationId = order.organizationId as string;
       const branchId = order.branchId as string;
 
-      requireStaffPermission(request, organizationId, "manageDineInOrderRefunds");
-      requireBranchAccess(request, organizationId, branchId);
+      await requireStaffPermission(request, organizationId, "manageDineInOrderRefunds");
+      await requireBranchAccess(request, organizationId, branchId);
 
       const currentStatus = order.status as OrderStatus;
 

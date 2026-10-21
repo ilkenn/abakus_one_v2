@@ -509,7 +509,7 @@ export const respondToReservation = onCall(
       // Cross-tenant staff must fail closed — checked only once the
       // reservation's real organizationId is known server-side, never
       // trusting any client-supplied organizationId/branchId.
-      requireReservationManagerPermission(request, reservation.organizationId);
+      await requireReservationManagerPermission(request, reservation.organizationId);
 
       const now = new Date();
 

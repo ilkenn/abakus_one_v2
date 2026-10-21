@@ -349,60 +349,71 @@ test("granting the delivery permissions does not implicitly grant any pre-existi
   }
 });
 
-test("requireStaffPermission: staff role WITH manageDeliveryOrders -> succeeds", () => {
+test("requireStaffPermission: staff role WITH manageDeliveryOrders -> succeeds", async () => {
   const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["staff"] } } });
-  assert.doesNotThrow(() => requireStaffPermission(req, "org-1", "manageDeliveryOrders"));
+  await assert.doesNotReject(requireStaffPermission(req, "org-1", "manageDeliveryOrders", neverRevoked));
 });
 
-test("requireStaffPermission: staff role lacks manageDeliveryOrderCancellations -> permission-denied", () => {
+test("requireStaffPermission: staff role lacks manageDeliveryOrderCancellations -> permission-denied", async () => {
   const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["staff"] } } });
-  throwsWithCode(() => requireStaffPermission(req, "org-1", "manageDeliveryOrderCancellations"), "permission-denied");
+  await rejectsWithCode(requireStaffPermission(req, "org-1", "manageDeliveryOrderCancellations", neverRevoked), "permission-denied");
 });
 
-test("requireStaffPermission: manager role WITH manageDeliveryOrderRefunds -> succeeds", () => {
+test("requireStaffPermission: manager role WITH manageDeliveryOrderRefunds -> succeeds", async () => {
   const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["manager"] } } });
-  assert.doesNotThrow(() => requireStaffPermission(req, "org-1", "manageDeliveryOrderRefunds"));
+  await assert.doesNotReject(requireStaffPermission(req, "org-1", "manageDeliveryOrderRefunds", neverRevoked));
 });
 
 // -----------------------------------------------------------------------
-// requireStaffPermission — pure, fake-request tests.
+// requireStaffPermission — pure, fake-request tests. Both functions are
+// `async` and Firestore-backed by default (ADR-050's claims-revocation
+// check) — every call here injects [neverRevoked] as the fourth
+// (`claimsRevocationLookup`) argument so this file stays Firestore-free
+// and fast, exactly as it was before ADR-050. The real, Firestore-backed
+// default lookup is proven separately under the emulator (see
+// `claimsRevocationLookup.test.ts`).
 // -----------------------------------------------------------------------
 
 function fakeRequest(auth: null | { uid?: string; token: Record<string, unknown> }): CallableRequest {
   return {
-    auth: auth ? { uid: auth.uid ?? "fake-uid", token: auth.token } : null,
+    auth: auth
+      ? { uid: auth.uid ?? "fake-uid", token: { iat: Math.floor(Date.now() / 1000), ...auth.token } }
+      : null,
     data: {},
   } as unknown as CallableRequest;
 }
 
-function throwsWithCode(fn: () => void, code: string): void {
-  assert.throws(fn, (err: unknown) => (err as { code?: string }).code === code);
+/** Always resolves "never revoked" — the fake [ClaimsRevocationLookup] every test in this file injects to stay Firestore-free. */
+const neverRevoked = async (): Promise<number | null> => null;
+
+async function rejectsWithCode(promise: Promise<unknown>, code: string): Promise<void> {
+  await assert.rejects(promise, (err: unknown) => (err as { code?: string }).code === code);
 }
 
-test("requireStaffPermission: no auth -> unauthenticated", () => {
-  throwsWithCode(() => requireStaffPermission(fakeRequest(null), "org-1", "manageTakeawayOrders"), "unauthenticated");
+test("requireStaffPermission: no auth -> unauthenticated", async () => {
+  await rejectsWithCode(requireStaffPermission(fakeRequest(null), "org-1", "manageTakeawayOrders", neverRevoked), "unauthenticated");
 });
 
-test("requireStaffPermission: no organizationAccess for this org -> permission-denied", () => {
+test("requireStaffPermission: no organizationAccess for this org -> permission-denied", async () => {
   const req = fakeRequest({ token: { organizationAccess: [], roles: {} } });
-  throwsWithCode(() => requireStaffPermission(req, "org-1", "manageTakeawayOrders"), "permission-denied");
+  await rejectsWithCode(requireStaffPermission(req, "org-1", "manageTakeawayOrders", neverRevoked), "permission-denied");
 });
 
-test("requireStaffPermission: org member but role lacks the requested permission -> permission-denied", () => {
+test("requireStaffPermission: org member but role lacks the requested permission -> permission-denied", async () => {
   const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["staff"] } } });
-  throwsWithCode(() => requireStaffPermission(req, "org-1", "manageTakeawayOrderCancellations"), "permission-denied");
+  await rejectsWithCode(requireStaffPermission(req, "org-1", "manageTakeawayOrderCancellations", neverRevoked), "permission-denied");
 });
 
-test("requireStaffPermission: staff role WITH manageTakeawayOrders -> succeeds", () => {
+test("requireStaffPermission: staff role WITH manageTakeawayOrders -> succeeds", async () => {
   const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["staff"] } } });
-  assert.doesNotThrow(() => requireStaffPermission(req, "org-1", "manageTakeawayOrders"));
+  await assert.doesNotReject(requireStaffPermission(req, "org-1", "manageTakeawayOrders", neverRevoked));
 });
 
-test("requireStaffPermission: role claim for a DIFFERENT organization never leaks authority into this one", () => {
+test("requireStaffPermission: role claim for a DIFFERENT organization never leaks authority into this one", async () => {
   const req = fakeRequest({
     token: { organizationAccess: ["org-2"], roles: { "org-2": ["admin"] } },
   });
-  throwsWithCode(() => requireStaffPermission(req, "org-1", "manageTakeawayOrders"), "permission-denied");
+  await rejectsWithCode(requireStaffPermission(req, "org-1", "manageTakeawayOrders", neverRevoked), "permission-denied");
 });
 
 // -----------------------------------------------------------------------
@@ -410,31 +421,85 @@ test("requireStaffPermission: role claim for a DIFFERENT organization never leak
 // firestore.rules' hasBranchAccess exactly.
 // -----------------------------------------------------------------------
 
-test("requireBranchAccess: no auth -> unauthenticated", () => {
-  throwsWithCode(() => requireBranchAccess(fakeRequest(null), "org-1", "branch-1"), "unauthenticated");
+test("requireBranchAccess: no auth -> unauthenticated", async () => {
+  await rejectsWithCode(requireBranchAccess(fakeRequest(null), "org-1", "branch-1", neverRevoked), "unauthenticated");
 });
 
-test("requireBranchAccess: branch not present in the claim array -> permission-denied", () => {
+test("requireBranchAccess: branch not present in the claim array -> permission-denied", async () => {
   const req = fakeRequest({ token: { branchAccess: { "org-1": ["branch-2"] } } });
-  throwsWithCode(() => requireBranchAccess(req, "org-1", "branch-1"), "permission-denied");
+  await rejectsWithCode(requireBranchAccess(req, "org-1", "branch-1", neverRevoked), "permission-denied");
 });
 
-test("requireBranchAccess: branch present -> succeeds", () => {
+test("requireBranchAccess: branch present -> succeeds", async () => {
   const req = fakeRequest({ token: { branchAccess: { "org-1": ["branch-1"] } } });
-  assert.doesNotThrow(() => requireBranchAccess(req, "org-1", "branch-1"));
+  await assert.doesNotReject(requireBranchAccess(req, "org-1", "branch-1", neverRevoked));
 });
 
-test("requireBranchAccess: a branch grant recorded under a DIFFERENT organization never leaks across tenants", () => {
+test("requireBranchAccess: a branch grant recorded under a DIFFERENT organization never leaks across tenants", async () => {
   const req = fakeRequest({ token: { branchAccess: { "org-2": ["branch-1"] } } });
-  throwsWithCode(() => requireBranchAccess(req, "org-1", "branch-1"), "permission-denied");
+  await rejectsWithCode(requireBranchAccess(req, "org-1", "branch-1", neverRevoked), "permission-denied");
 });
 
-test("requireBranchAccess: missing branchAccess claim key entirely -> permission-denied, fails closed", () => {
+test("requireBranchAccess: missing branchAccess claim key entirely -> permission-denied, fails closed", async () => {
   const req = fakeRequest({ token: {} });
-  throwsWithCode(() => requireBranchAccess(req, "org-1", "branch-1"), "permission-denied");
+  await rejectsWithCode(requireBranchAccess(req, "org-1", "branch-1", neverRevoked), "permission-denied");
 });
 
-test("requireBranchAccess: malformed (non-array) branchAccess value -> permission-denied, fails closed", () => {
+test("requireBranchAccess: malformed (non-array) branchAccess value -> permission-denied, fails closed", async () => {
   const req = fakeRequest({ token: { branchAccess: { "org-1": "branch-1" } } });
-  throwsWithCode(() => requireBranchAccess(req, "org-1", "branch-1"), "permission-denied");
+  await rejectsWithCode(requireBranchAccess(req, "org-1", "branch-1", neverRevoked), "permission-denied");
+});
+
+// -----------------------------------------------------------------------
+// ADR-050 — claims-revocation staleness check (`rejectIfClaimsStale`,
+// exercised here only through the public functions' injected
+// [ClaimsRevocationLookup] parameter, never Firestore).
+// -----------------------------------------------------------------------
+
+test("requireStaffPermission: a token issued BEFORE the recorded revocation is rejected, even though its baked-in claims would otherwise pass", async () => {
+  const nowMs = Date.now();
+  const req = fakeRequest({
+    token: {
+      iat: Math.floor((nowMs - 10_000) / 1000),
+      organizationAccess: ["org-1"],
+      roles: { "org-1": ["admin"] },
+    },
+  });
+  const revokedAfterTokenWasIssued = async () => nowMs;
+  await rejectsWithCode(
+    requireStaffPermission(req, "org-1", "manageStaffAccounts", revokedAfterTokenWasIssued),
+    "permission-denied",
+  );
+});
+
+test("requireStaffPermission: a token issued AFTER the recorded revocation succeeds — it already carries the corrected claims", async () => {
+  const nowMs = Date.now();
+  const req = fakeRequest({
+    token: {
+      iat: Math.floor((nowMs + 10_000) / 1000),
+      organizationAccess: ["org-1"],
+      roles: { "org-1": ["admin"] },
+    },
+  });
+  const revokedBeforeTokenWasIssued = async () => nowMs;
+  await assert.doesNotReject(
+    requireStaffPermission(req, "org-1", "manageStaffAccounts", revokedBeforeTokenWasIssued),
+  );
+});
+
+test("requireBranchAccess: a token issued BEFORE the recorded revocation is rejected", async () => {
+  const nowMs = Date.now();
+  const req = fakeRequest({
+    token: { iat: Math.floor((nowMs - 10_000) / 1000), branchAccess: { "org-1": ["branch-1"] } },
+  });
+  const revokedAfterTokenWasIssued = async () => nowMs;
+  await rejectsWithCode(
+    requireBranchAccess(req, "org-1", "branch-1", revokedAfterTokenWasIssued),
+    "permission-denied",
+  );
+});
+
+test("requireStaffPermission: no revocation ever recorded for this uid (lookup resolves null) -> never rejected on staleness grounds", async () => {
+  const req = fakeRequest({ token: { organizationAccess: ["org-1"], roles: { "org-1": ["admin"] } } });
+  await assert.doesNotReject(requireStaffPermission(req, "org-1", "manageStaffAccounts", neverRevoked));
 });

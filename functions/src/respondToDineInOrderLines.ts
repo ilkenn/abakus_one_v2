@@ -77,8 +77,8 @@ export const respondToDineInOrderLines = onCall(
       }
       const order = orderSnap.data()!;
 
-      requireStaffPermission(request, order.organizationId, "manageDineInOrders");
-      requireBranchAccess(request, order.organizationId, order.branchId);
+      await requireStaffPermission(request, order.organizationId, "manageDineInOrders");
+      await requireBranchAccess(request, order.organizationId, order.branchId);
 
       if (order.channel !== "dineInQr") {
         throw new HttpsError("failed-precondition", "This order is not a dine-in table order.");

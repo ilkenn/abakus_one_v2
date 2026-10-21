@@ -67,8 +67,8 @@ async function authorizePaymentCommand(request: CallableRequest, data: Record<st
   const branchId = requireNonEmptyString(data.branchId, "branchId");
   const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
   const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
-  requireStaffPermission(request, organizationId, "processPayments");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "processPayments");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
   return { organizationId, branchId, uid: request.auth.uid };
 }

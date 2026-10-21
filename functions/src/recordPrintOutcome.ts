@@ -52,8 +52,8 @@ export const recordPrintOutcome = onCall(
         throw new HttpsError("not-found", "Print job not found.");
       }
       const job = snap.data()!;
-      requireStaffPermission(request, job.organizationId as string, "manageKitchenOperations");
-      requireBranchAccess(request, job.organizationId as string, job.branchId as string);
+      await requireStaffPermission(request, job.organizationId as string, "manageKitchenOperations");
+      await requireBranchAccess(request, job.organizationId as string, job.branchId as string);
 
       if (job.status === "success") {
         return { printJobId, status: job.status as string };

@@ -7972,3 +7972,55 @@ New/changed files: `functions/src/callableRateLimiter.ts` (new),
 `lib/features/qr/presentation/screens/qr_scanner_screen.dart`,
 `test/features/qr/presentation/screens/table_guest_entry_screen_test.dart`,
 `docs/decisions.md`, `docs/table_qr_architecture.md`, `docs/feature_status.md`.
+
+## Hafta Kapanışı Faz 2 (Salı, Madde 2): Claim-İptali Stratejisi — authClaimsRevocations (2026-10-20)
+
+Day 2's second item: closes the "~1 hour stale-token" gap after a staff member's role/branch access/
+account status is revoked. A Decision Review before implementation found `admin.auth()
+.revokeRefreshTokens` alone solves nothing (`onCall`'s built-in auth parsing never uses
+`checkRevoked`) — see **ADR-050** (`docs/decisions.md`) for the full technical finding and the chosen
+mechanism instead: every privilege-removing mutation stamps `authClaimsRevocations/{uid}.revokedAt`;
+`staffAuthorization.ts`'s `requireStaffPermission`/`requireBranchAccess` reject any token whose
+`iat` predates that stamp.
+
+**Corrected blast radius, surfaced and confirmed before proceeding**: converting these two functions
+from sync to `async` required `await` at **62 production files, ~130 call sites** — far more than the
+"one file" framing implied, including 2 previously-undiscovered indirect-wrapper layers plus 2
+file-local non-exported wrapper functions, all caught via `tsc`'s `TS1308` error and an exhaustive
+final grep sweep (zero remaining un-awaited call sites confirmed).
+
+New Firestore collection `authClaimsRevocations/{uid}`, server-only (`allow read, write: if false;`).
+`platformAuthorization.ts`'s identical gap is explicitly out of scope (user's own framing was staff-
+only) — disclosed, not silently left inconsistent.
+
+**Tests**: `staffAuthorization.test.ts`'s 14 existing pure tests all now inject a fake
+`ClaimsRevocationLookup` to stay Firestore-free, plus 4 new pure staleness-comparison tests; new
+`claimsRevocationLookup.test.ts` (isolated emulator test, in-process, proves the real Firestore-backed
+default lookup); `staffMembership.test.ts` gained 5 new tests proving the 3 mutating callables
+correctly write (or correctly withhold) the stamp.
+
+New/changed files: `functions/src/staffAuthorization.ts`, `functions/src/staffMembership.ts`,
+`functions/src/test/staffAuthorization.test.ts`, `functions/src/test/claimsRevocationLookup.test.ts`
+(new), `functions/src/test/staffMembership.test.ts`, `firestore.rules`, `firestore-tests/rules.test.js`,
+`docs/decisions.md`, `docs/feature_status.md`, plus 62 production files mechanically updated to
+`await` the now-`async` `requireStaffPermission`/`requireBranchAccess` (and their 2 indirect
+wrappers): `adminFinancialView.ts`, `advanceDeliveryOrderStatus.ts`, `advanceDineInOrderStatus.ts`,
+`advanceReservationPreorderOrderStatus.ts`, `advanceTakeawayOrderStatus.ts`, `assignCourierToOrder.ts`,
+`assignReservationTable.ts`, `batchAssignCourierToOrders.ts`, `cancelDeliveryOrderForStaff.ts`,
+`cancelReservation.ts`, `cancelReservationPreorderOrderForStaff.ts`, `cancelTakeawayOrderForStaff.ts`,
+`cashOperationalView.ts`, `cashRegisterEngine.ts`, `checkFinancialAdjustments.ts`,
+`checkOperations.ts`, `closeReservationTable.ts`, `completeReservation.ts`, `customerDirectory.ts`,
+`dineInCounterProposal.ts`, `fiscalEngine.ts`, `getBranchOperatingHours.ts`,
+`getReservationBranchInfoForStaff.ts`, `listReservationTablesForArea.ts`,
+`listReservationsForBranch.ts`, `markCourierReturned.ts`, `markReservationNoShow.ts`,
+`moderateCustomerPhoto.ts`, `openReservationTable.ts`, `paymentEngine.ts`, `paymentOperationalView.ts`,
+`paymentRefund.ts`, `posOperationalView.ts`, `recordPrintOutcome.ts`, `refundDeliveryOrder.ts`,
+`refundDineInOrder.ts`, `refundReservationPreorderOrder.ts`, `refundTakeawayOrder.ts`,
+`registerConsortiumOrder.ts`, `remoteApproval.ts`, `requestPrintJob.ts`,
+`reservationAuthorization.ts`, `reservationCancellationAuthorization.ts`,
+`respondToDeliveryOrder.ts`, `respondToDineInOrderLines.ts`, `respondToReservation.ts`,
+`respondToTakeawayOrder.ts`, `serviceRequests.ts`, `setCourier.ts`, `setProductPackagingLink.ts`,
+`setRecipeIngredientLink.ts`, `setStandardIngredientCost.ts`, `staffDirectory.ts`,
+`staffPermissionOverrides.ts`, `submitDineInOrder.ts`, `submitStockCount.ts`,
+`tableSessionTransfer.ts`, `transitionKitchenWorkItem.ts`, `trustedDevice.ts`,
+`updateBranchOperatingHours.ts`, `updateTakeawayOperationStatus.ts`.

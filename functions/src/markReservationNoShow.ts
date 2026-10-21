@@ -80,7 +80,7 @@ export const markReservationNoShow = onCall(
       }
       const reservation = reservationDoc.data()!;
 
-      requireReservationManagerPermission(request, reservation.organizationId as string);
+      await requireReservationManagerPermission(request, reservation.organizationId as string);
 
       if (reservation.status === "noShow") {
         return { reservationId, status: "noShow", duplicate: true };

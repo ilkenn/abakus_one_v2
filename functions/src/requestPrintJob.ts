@@ -51,8 +51,8 @@ export const requestPrintJob = onCall(
     const stationId = requireString(data.stationId, "stationId");
     const isCopy = data.isCopy === true;
 
-    requireStaffPermission(request, organizationId, "manageKitchenOperations");
-    requireBranchAccess(request, organizationId, branchId);
+    await requireStaffPermission(request, organizationId, "manageKitchenOperations");
+    await requireBranchAccess(request, organizationId, branchId);
 
     const db = getFirestore();
     const now = Timestamp.now();

@@ -55,8 +55,8 @@ export const getPosTableOperationalView = onCall(
     const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
     const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
 
-    requireStaffPermission(request, organizationId, "manageDineInOrders");
-    requireBranchAccess(request, organizationId, branchId);
+    await requireStaffPermission(request, organizationId, "manageDineInOrders");
+    await requireBranchAccess(request, organizationId, branchId);
     await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
     const db = getFirestore();
@@ -162,8 +162,8 @@ export const getPosBranchTableOverview = onCall(
     const cursor = typeof data.cursor === "string" && data.cursor.length > 0 ? data.cursor : null;
     const ifNoneMatchVersion = typeof data.ifNoneMatchVersion === "string" ? data.ifNoneMatchVersion : null;
 
-    requireStaffPermission(request, organizationId, "manageDineInOrders");
-    requireBranchAccess(request, organizationId, branchId);
+    await requireStaffPermission(request, organizationId, "manageDineInOrders");
+    await requireBranchAccess(request, organizationId, branchId);
     await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
     const db = getFirestore();

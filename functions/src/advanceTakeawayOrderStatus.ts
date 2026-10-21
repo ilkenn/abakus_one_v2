@@ -84,8 +84,8 @@ export const advanceTakeawayOrderStatus = onCall(
       const organizationId = order.organizationId as string;
       const branchId = order.branchId as string;
 
-      requireStaffPermission(request, organizationId, "manageTakeawayOrders");
-      requireBranchAccess(request, organizationId, branchId);
+      await requireStaffPermission(request, organizationId, "manageTakeawayOrders");
+      await requireBranchAccess(request, organizationId, branchId);
 
       const currentStatus = order.status as OrderStatus;
 

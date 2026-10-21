@@ -138,7 +138,7 @@ export const moderateCustomerPhoto = onCall(
       // Server-authoritative role check against the PHOTO's own
       // organization — never a client-supplied one. Throws
       // unauthenticated/permission-denied, which aborts the transaction.
-      requireStaffPermission(request, organizationId, "moderateCustomerPhotos");
+      await requireStaffPermission(request, organizationId, "moderateCustomerPhotos");
 
       const currentStatus = photo.status as string;
       const currentRejectionReason = (photo.rejectionReason ?? null) as string | null;

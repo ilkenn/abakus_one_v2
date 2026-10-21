@@ -123,8 +123,8 @@ export const transitionKitchenWorkItem = onCall(
       const currentStatus = item.status as KitchenLineStatus;
       const currentRevision = item.revision as number;
 
-      requireStaffPermission(request, organizationId, "manageKitchenOperations");
-      requireBranchAccess(request, organizationId, branchId);
+      await requireStaffPermission(request, organizationId, "manageKitchenOperations");
+      await requireBranchAccess(request, organizationId, branchId);
 
       if (currentRevision !== expectedRevision) {
         throw new HttpsError(

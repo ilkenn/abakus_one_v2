@@ -43,8 +43,8 @@ export const listCashDrawers = onCall({ enforceAppCheck: shouldEnforceAppCheck()
   const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
   const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
 
-  requireStaffPermission(request, organizationId, "manageCashSessions");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "manageCashSessions");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
   const db = getFirestore();
@@ -83,8 +83,8 @@ export const getCashSessionOperationalView = onCall({ enforceAppCheck: shouldEnf
   const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
   const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
 
-  requireStaffPermission(request, organizationId, "manageCashSessions");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "manageCashSessions");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
   const db = getFirestore();

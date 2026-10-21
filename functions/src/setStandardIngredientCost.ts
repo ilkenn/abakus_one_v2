@@ -50,7 +50,7 @@ export const setStandardIngredientCost = onCall(
     }
     const unitCostAmountMinorUnits = data.unitCostAmountMinorUnits;
 
-    requireStaffPermission(request, organizationId, "manageRecipes");
+    await requireStaffPermission(request, organizationId, "manageRecipes");
 
     const db = getFirestore();
     const costRef = db.collection("standardIngredientCosts").doc(`cost-${ingredientId}`);

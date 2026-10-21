@@ -123,8 +123,8 @@ export const requestCheckFinancialAdjustment = onCall({ enforceAppCheck: shouldE
   const reasonCode = requireNonEmptyString(data.reasonCode, "reasonCode");
   const reasonMessage = requireNonEmptyString(data.reasonMessage, "reasonMessage");
 
-  requireStaffPermission(request, organizationId, "manageDineInOrders");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "manageDineInOrders");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
   const db = getFirestore();
@@ -256,8 +256,8 @@ export const reverseCheckFinancialAdjustment = onCall({ enforceAppCheck: shouldE
   const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
   const adjustmentId = requireNonEmptyString(data.adjustmentId, "adjustmentId");
 
-  requireStaffPermission(request, organizationId, "approveCheckFinancialAdjustment");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "approveCheckFinancialAdjustment");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
   const db = getFirestore();
@@ -335,8 +335,8 @@ export const requestAcceptedLineCancellation = onCall({ enforceAppCheck: shouldE
   const reasonCode = requireNonEmptyString(data.reasonCode, "reasonCode");
   const reasonMessage = requireNonEmptyString(data.reasonMessage, "reasonMessage");
 
-  requireStaffPermission(request, organizationId, "manageDineInOrders");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "manageDineInOrders");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
   const db = getFirestore();
@@ -492,7 +492,7 @@ export const requestBoncukBalanceCorrection = onCall({ enforceAppCheck: shouldEn
   // scoped) financial-exception action — `approveBoncukBalanceCorrection`
   // is checked directly, mirroring `manageStaffAccounts`'s own org-only
   // (no `requireBranchAccess`) shape.
-  requireStaffPermission(request, organizationId, "manageDineInOrders");
+  await requireStaffPermission(request, organizationId, "manageDineInOrders");
 
   const db = getFirestore();
   const requestId = `boncuk-correction-${organizationId}-${customerId}-${Date.now()}`;

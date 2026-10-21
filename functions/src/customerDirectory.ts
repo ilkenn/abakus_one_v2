@@ -215,7 +215,7 @@ export const listTenantCustomers = onCall(
   async (request: CallableRequest) => {
     const data = (request.data ?? {}) as Record<string, unknown>;
     const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
-    requireStaffPermission(request, organizationId, "viewTenantCustomerDirectory");
+    await requireStaffPermission(request, organizationId, "viewTenantCustomerDirectory");
     const namePrefix = typeof data.namePrefix === "string" ? normalizeDisplayName(data.namePrefix) : null;
     const cursor = typeof data.cursor === "string" && data.cursor.length > 0 ? data.cursor : null;
 
@@ -254,7 +254,7 @@ export const searchCustomersForPos = onCall(
   async (request: CallableRequest) => {
     const data = (request.data ?? {}) as Record<string, unknown>;
     const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
-    requireStaffPermission(request, organizationId, "viewTenantCustomerDirectory");
+    await requireStaffPermission(request, organizationId, "viewTenantCustomerDirectory");
     const phoneNumber = typeof data.phoneNumber === "string" && data.phoneNumber.length > 0 ? data.phoneNumber : null;
     const namePrefix = typeof data.namePrefix === "string" && data.namePrefix.length > 0 ? normalizeDisplayName(data.namePrefix) : null;
     if (!phoneNumber && !namePrefix) invalid("Either phoneNumber or namePrefix is required.");
@@ -282,7 +282,7 @@ export const getTenantCustomerDetail = onCall(
     const data = (request.data ?? {}) as Record<string, unknown>;
     const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
     const customerId = requireNonEmptyString(data.customerId, "customerId");
-    requireStaffPermission(request, organizationId, "viewTenantCustomerDirectory");
+    await requireStaffPermission(request, organizationId, "viewTenantCustomerDirectory");
 
     const db = getFirestore();
     const entrySnap = await db.collection(CUSTOMER_DIRECTORY_ENTRIES_COLLECTION).doc(`${organizationId}_${customerId}`).get();
@@ -336,7 +336,7 @@ export const setTenantCustomerRestriction = onCall(
     const data = (request.data ?? {}) as Record<string, unknown>;
     const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
     const customerId = requireNonEmptyString(data.customerId, "customerId");
-    requireStaffPermission(request, organizationId, "manageTenantCustomerRestriction");
+    await requireStaffPermission(request, organizationId, "manageTenantCustomerRestriction");
     const status = data.status === "active" ? "active" : data.status === "none" ? "none" : invalid('status must be "active" or "none".');
     const reasonCode = requireNonEmptyString(data.reasonCode, "reasonCode");
     const reasonMessage = requireNonEmptyString(data.reasonMessage, "reasonMessage");

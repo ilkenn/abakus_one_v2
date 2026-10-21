@@ -76,7 +76,7 @@ export const completeReservation = onCall(
       }
       const reservation = reservationDoc.data()!;
 
-      requireReservationManagerPermission(request, reservation.organizationId as string);
+      await requireReservationManagerPermission(request, reservation.organizationId as string);
 
       if (reservation.status === "completed") {
         return { reservationId, status: "completed", duplicate: true };

@@ -46,8 +46,8 @@ export const markCourierReturned = onCall(
       const organizationId = courier.organizationId as string;
       const branchId = courier.branchId as string;
 
-      requireStaffPermission(request, organizationId, "manageCourierDispatch");
-      requireBranchAccess(request, organizationId, branchId);
+      await requireStaffPermission(request, organizationId, "manageCourierDispatch");
+      await requireBranchAccess(request, organizationId, branchId);
 
       const activeOrderIds: string[] = Array.isArray(courier.activeOrderIds)
         ? courier.activeOrderIds

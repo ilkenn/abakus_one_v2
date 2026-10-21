@@ -73,8 +73,8 @@ export const assignCourierToOrder = onCall(
       const organizationId = order.organizationId as string;
       const branchId = order.branchId as string;
 
-      requireStaffPermission(request, organizationId, "manageCourierDispatch");
-      requireBranchAccess(request, organizationId, branchId);
+      await requireStaffPermission(request, organizationId, "manageCourierDispatch");
+      await requireBranchAccess(request, organizationId, branchId);
 
       if (order.courierType === "marketplace") {
         throw new HttpsError(

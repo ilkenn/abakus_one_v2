@@ -4990,6 +4990,29 @@ test('rateLimitBuckets: ADR-049 abuse-throttle counters — no client read or wr
   );
 });
 
+test('authClaimsRevocations: ADR-050 claims-revocation stamps — no client read or write at all, for anyone, at any permission level', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'authClaimsRevocations/staff-1'), { revokedAt: new Date() });
+  });
+  const platformOwner = testEnv
+    .authenticatedContext('platform-1', { platformRole: 'platformOwner' })
+    .firestore();
+  const branchStaff = testEnv
+    .authenticatedContext('staff-1', {
+      organizationAccess: ['org-1'],
+      roles: { 'org-1': ['admin'] },
+      branchAccess: { 'org-1': ['branch-1'] },
+    })
+    .firestore();
+
+  for (const ctx of [platformOwner, branchStaff]) {
+    await assertFails(getDoc(doc(ctx, 'authClaimsRevocations/staff-1')));
+  }
+  await assertFails(
+    setDoc(doc(branchStaff, 'authClaimsRevocations/staff-1'), { revokedAt: new Date() }),
+  );
+});
+
 test('remoteApprovalRequests: AP-2 final wiring — readable by the requester themselves, and by a branch-scoped eligible responder (manager/admin/tenantOwner); never by an unrelated org member, an org member without branch access, or an org-admin without branch access; never client-writable', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'remoteApprovalRequests/approval-1'), {

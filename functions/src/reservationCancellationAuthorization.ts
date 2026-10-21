@@ -39,10 +39,10 @@ function toDate(value: unknown): Date {
  * it always falls through to the staff-permission check, which then
  * denies it exactly like any other non-staff caller.
  */
-export function resolveReservationCancellationActor(
+export async function resolveReservationCancellationActor(
   request: CallableRequest,
   reservation: FirebaseFirestore.DocumentData,
-): ReservationCancellationActor {
+): Promise<ReservationCancellationActor> {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign-in is required.");
   }
@@ -59,7 +59,7 @@ export function resolveReservationCancellationActor(
     return { actorType: "customer", actorId: uid };
   }
 
-  requireStaffPermission(request, reservation.organizationId as string, "manageReservations");
+  await requireStaffPermission(request, reservation.organizationId as string, "manageReservations");
   return { actorType: "staff", actorId: uid };
 }
 

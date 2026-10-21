@@ -47,7 +47,7 @@ export const setProductPackagingLink = onCall(
     );
     const quantity = requirePositiveInt(data.quantity, "quantity");
 
-    requireStaffPermission(request, organizationId, "manageInventory");
+    await requireStaffPermission(request, organizationId, "manageInventory");
 
     const db = getFirestore();
     const linkRef = db

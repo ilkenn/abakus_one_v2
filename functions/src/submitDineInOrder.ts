@@ -529,8 +529,8 @@ export const submitDineInOrder = onCall(
       staffEntryDeviceSessionId = requireNonEmptyStringLocal(data.deviceSessionId, "deviceSessionId");
       subAccountSelection = sanitizeSubAccountSelection(data.subAccountSelection);
 
-      requireStaffPermission(request, staffEntryOrganizationId, "manageDineInOrders");
-      requireBranchAccess(request, staffEntryOrganizationId, staffEntryBranchId);
+      await requireStaffPermission(request, staffEntryOrganizationId, "manageDineInOrders");
+      await requireBranchAccess(request, staffEntryOrganizationId, staffEntryBranchId);
       await requireActiveDeviceSession(
         staffEntryOrganizationId,
         staffEntryBranchId,

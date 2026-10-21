@@ -153,8 +153,8 @@ export const proposeDineInLineReplacement = onCall({ enforceAppCheck: shouldEnfo
   const reasonCode = requireNonEmptyString(data.reasonCode, "reasonCode");
   const reasonMessage = requireNonEmptyString(data.reasonMessage, "reasonMessage");
 
-  requireStaffPermission(request, organizationId, "manageDineInOrders");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "manageDineInOrders");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
   const db = getFirestore();

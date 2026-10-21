@@ -238,9 +238,9 @@ export const setStaffPermissionOverride = onCall(
     }
 
     const metaPermission = overrideMetaPermission(input.permission);
-    requireStaffPermission(request, input.organizationId, metaPermission);
+    await requireStaffPermission(request, input.organizationId, metaPermission);
     if (input.scope === "branch") {
-      requireBranchAccess(request, input.organizationId, input.branchId!);
+      await requireBranchAccess(request, input.organizationId, input.branchId!);
     }
 
     const db = getFirestore();

@@ -81,8 +81,8 @@ export const submitStockCount = onCall(
     const locationId = requireString(data.locationId, "locationId");
     const countedItems = requireCountedItems(data.countedItems);
 
-    requireStaffPermission(request, organizationId, "recordStockCount");
-    requireBranchAccess(request, organizationId, branchId);
+    await requireStaffPermission(request, organizationId, "recordStockCount");
+    await requireBranchAccess(request, organizationId, branchId);
 
     const db = getFirestore();
 

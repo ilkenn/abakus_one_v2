@@ -14,9 +14,9 @@ import { requireStaffPermission } from "./staffAuthorization";
  * `RolePermissionMap`'s own "one static mapping, many call sites ask for a
  * permission" shape.
  */
-export function requireReservationManagerPermission(
+export async function requireReservationManagerPermission(
   request: CallableRequest,
   organizationId: string,
-): void {
-  requireStaffPermission(request, organizationId, "manageReservations");
+): Promise<void> {
+  await requireStaffPermission(request, organizationId, "manageReservations");
 }

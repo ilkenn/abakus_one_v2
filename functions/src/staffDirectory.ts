@@ -42,13 +42,13 @@ export const listStaffMembersForOrganization = onCall(async (request: CallableRe
   const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
 
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
-  const hasReadPermission = (() => {
+  const hasReadPermission = await (async () => {
     try {
-      requireStaffPermission(request, organizationId, "manageStaffAccounts");
+      await requireStaffPermission(request, organizationId, "manageStaffAccounts");
       return true;
     } catch {
       try {
-        requireStaffPermission(request, organizationId, "manageStaffRoles");
+        await requireStaffPermission(request, organizationId, "manageStaffRoles");
         return true;
       } catch {
         return false;

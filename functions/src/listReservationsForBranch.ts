@@ -109,7 +109,7 @@ export const listReservationsForBranch = onCall(
     );
     const cursor = typeof data.cursor === "string" && data.cursor.length > 0 ? new Date(data.cursor) : null;
 
-    requireStaffPermission(request, organizationId, "manageReservations");
+    await requireStaffPermission(request, organizationId, "manageReservations");
 
     const db = getFirestore();
     let query = db

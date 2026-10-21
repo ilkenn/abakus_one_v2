@@ -19521,3 +19521,67 @@ dene(yin)." in both `table_guest_entry_screen.dart` and `qr_scanner_screen.dart`
 
 New Firestore collection `rateLimitBuckets` — server-only (`allow read, write: if false;`, mirrors
 `deviceChallenges`/`deviceSessions`), never a client read/write target.
+
+## ADR-050 — Claim-revocation strategy: authClaimsRevocations stamp + token-iat check (2026-10-20)
+
+- Tarih: 2026-10-20
+- Durum: Accepted
+
+### Context
+
+Day 2 ("Salı: Mobil İmzalama, Güvenlik ve Hız Sınırları") item 2: a staff member whose role/branch
+access/account status is revoked keeps using their already-issued ID token with its old, baked-in
+custom claims for up to that token's natural ~1 hour lifetime — `staffMembership.ts`'s own
+`syncOwnStaffClaims` doc comment already named this as an inherent property of Firebase custom claims
+it "cannot and does not attempt to override."
+
+Before implementing, a Decision Review surfaced a critical technical finding: `admin.auth()
+.revokeRefreshTokens(uid)` **alone solves nothing** here. `node_modules/firebase-functions`'s own
+`onCall` auth parsing calls `verifyIdToken(idToken)` **without** `checkRevoked`, so an already-issued,
+not-yet-expired ID token keeps being accepted regardless — `revokeRefreshTokens` only blocks the
+*next* silent token refresh, leaving the exact same ~1 hour exposure window as doing nothing.
+Enabling real revocation-checking would mean bypassing `onCall`'s built-in auth parsing everywhere
+and manually re-verifying every bearer token with `checkRevoked: true` — an architecture-change-sized
+rewrite of the auth pipeline itself, correctly rejected as disproportionate to this week's scope.
+
+### Decision
+
+A narrower, self-contained mechanism: every privilege-*removing* mutation
+(`revokeStaffRole`/`revokeStaffBranchAccess`/`setStaffMemberStatus` moving away from `active`) stamps
+a new `authClaimsRevocations/{uid}.revokedAt` Firestore timestamp (server-only collection, `allow
+read, write: if false;`). `staffAuthorization.ts`'s `requireStaffPermission`/`requireBranchAccess`
+— now `async`, with an injectable `ClaimsRevocationLookup` parameter defaulting to a real
+Firestore-backed lookup — reject any caller whose ID token's `iat` (issue time, not `auth_time`;
+`iat` changes on every refresh, `auth_time` only on a fresh sign-in) predates that uid's stamp. Since
+`resyncClaimsForUid` (which rebuilds the correct claims) always runs *before* the stamp is written,
+any token minted at or after the stamp is guaranteed to already carry the corrected claims — closing
+the exposure window to "the next call" instead of "up to an hour." A grant (role/branch assignment, or
+reactivating a suspended/archived membership) never stamps — a stale token merely under-privileged is
+a usability delay, not a security risk.
+
+**Corrected, much larger blast-radius than first framed**: "one file, narrow blast radius" assumed
+logic-centralization implied a small diff. In practice, converting these two functions from
+synchronous to `async` required adding `await` at every call site — **62 production files, ~130 call
+occurrences**, including two previously-undiscovered layers of non-`async` wrapper functions
+(`requireReservationManagerPermission`, `resolveReservationCancellationActor`,
+`requireAdminView` in `adminFinancialView.ts`, and an IIFE in `staffDirectory.ts`) that a first,
+narrower grep missed entirely — found only because `tsc` flagged two of them (`TS1308: 'await'
+expressions are only allowed within async functions`) once `await` was mechanically inserted and
+their enclosing functions hadn't yet been converted. An exhaustive final sweep (grepping for every
+occurrence of all 4 function names immediately followed by `await`, across the whole codebase)
+confirms zero remaining un-awaited call site. This was presented to and confirmed by the user before
+proceeding, given the real cost was materially larger than originally estimated.
+
+**Platform-level authorization** (`platformAuthorization.ts`'s `requirePlatformMember`) has the
+identical latent gap and is explicitly **out of scope** for this change — the user's own framing
+scoped this to staff authorization; not touched, not silently left inconsistent, tracked as a
+follow-up.
+
+**Test strategy**: `staffAuthorization.test.ts`'s existing 14 pure, Firestore-free unit tests all now
+inject a fake `ClaimsRevocationLookup` (`neverRevoked`) so they stay exactly as fast/Firestore-free as
+before this change — plus 4 new pure tests of the staleness comparison itself via the same injection
+seam. The real, Firestore-backed `defaultClaimsRevocationLookup` path is proven separately, under the
+emulator, by the new `claimsRevocationLookup.test.ts` (calls the real function directly, in-process,
+never through a deployed callable's HTTP layer — mirrors `callableRateLimitEnforcement.test.ts`'s
+isolation reasoning from ADR-049). `staffMembership.test.ts` gained 5 new HTTP-level tests proving the
+three mutating callables actually write (or correctly withhold) the stamp.

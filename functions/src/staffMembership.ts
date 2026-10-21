@@ -1,6 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import type { CallableRequest } from "firebase-functions/v2/https";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { requireStaffPermission } from "./staffAuthorization";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
@@ -125,6 +125,28 @@ async function resyncClaimsForUid(uid: string): Promise<void> {
 }
 
 /**
+ * ADR-050 — stamps `authClaimsRevocations/{uid}.revokedAt`, read by
+ * `staffAuthorization.ts`'s `rejectIfClaimsStale` to reject any ID token
+ * issued (`token.iat`) before this moment, closing the "already-issued
+ * token keeps working for up to ~1 hour after a revoke" gap.
+ *
+ * Called only from the three privilege-*removing* directions
+ * ([revokeStaffRole], [revokeStaffBranchAccess], [setStaffMemberStatus]
+ * moving away from `active`) — never from a grant, since a stale token
+ * merely under-privileged (not over-privileged) is a usability delay, not
+ * a security risk, and stamping on every grant too would reject
+ * perfectly valid in-flight sessions for no safety benefit. Always called
+ * AFTER [resyncClaimsForUid] so a token minted at or after this stamp is
+ * guaranteed to already carry the corrected (narrower) claims.
+ */
+async function markClaimsRevoked(uid: string): Promise<void> {
+  await getFirestore()
+    .collection("authClaimsRevocations")
+    .doc(uid)
+    .set({ revokedAt: Timestamp.now() });
+}
+
+/**
  * Self-service, zero-trust claims bootstrap/sync — Faz R.3A D1. The
  * caller supplies nothing: every claim value is derived entirely from
  * their own *active* `memberships` documents, looked up by
@@ -217,7 +239,7 @@ export const registerStaffMember = onCall(
     const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
     const email = requireNonEmptyString(data.email, "email");
 
-    requireStaffPermission(request, organizationId, "manageStaffAccounts");
+    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
 
     let uid: string;
     try {
@@ -289,7 +311,7 @@ export const assignStaffRole = onCall(
       throw new HttpsError("permission-denied", "A staff member cannot grant themselves a role.");
     }
 
-    requireStaffPermission(request, organizationId, roleGrantPermission(role));
+    await requireStaffPermission(request, organizationId, roleGrantPermission(role));
 
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
@@ -316,7 +338,7 @@ export const revokeStaffRole = onCall(
       throw new HttpsError("permission-denied", "A staff member cannot revoke their own role.");
     }
 
-    requireStaffPermission(request, organizationId, roleGrantPermission(role));
+    await requireStaffPermission(request, organizationId, roleGrantPermission(role));
 
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
@@ -327,6 +349,7 @@ export const revokeStaffRole = onCall(
     const roles = doc.roles.filter((r) => r !== role);
     await ref.update({ roles, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
+    await markClaimsRevoked(targetUid);
 
     return { organizationId, targetUid, role, revoked: true };
   },
@@ -341,7 +364,7 @@ export const grantStaffBranchAccess = onCall(
     const targetUid = requireNonEmptyString(data.targetUid, "targetUid");
     const branchId = requireNonEmptyString(data.branchId, "branchId");
 
-    requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
+    await requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
 
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
@@ -365,7 +388,7 @@ export const revokeStaffBranchAccess = onCall(
     const targetUid = requireNonEmptyString(data.targetUid, "targetUid");
     const branchId = requireNonEmptyString(data.branchId, "branchId");
 
-    requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
+    await requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
 
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
@@ -376,6 +399,7 @@ export const revokeStaffBranchAccess = onCall(
     const branchAccess = doc.branchAccess.filter((b) => b !== branchId);
     await ref.update({ branchAccess, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
+    await markClaimsRevoked(targetUid);
 
     return { organizationId, targetUid, branchId, revoked: true };
   },
@@ -398,7 +422,7 @@ export const setStaffMemberStatus = onCall(
       invalid(`status must be one of: ${VALID_STATUSES.join(", ")}.`);
     }
 
-    requireStaffPermission(request, organizationId, "manageStaffAccounts");
+    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
 
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
@@ -409,6 +433,9 @@ export const setStaffMemberStatus = onCall(
 
     await ref.update({ status, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
+    if (status !== "active") {
+      await markClaimsRevoked(targetUid);
+    }
 
     return { organizationId, targetUid, status, updated: true };
   },

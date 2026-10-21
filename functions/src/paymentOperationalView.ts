@@ -50,8 +50,8 @@ export const getPaymentSessionOperationalView = onCall(
     const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
     const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
 
-    requireStaffPermission(request, organizationId, "processPayments");
-    requireBranchAccess(request, organizationId, branchId);
+    await requireStaffPermission(request, organizationId, "processPayments");
+    await requireBranchAccess(request, organizationId, branchId);
     await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
     const db = getFirestore();

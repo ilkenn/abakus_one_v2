@@ -58,8 +58,8 @@ async function authorizeFiscalCommand(request: CallableRequest, data: Record<str
   const branchId = requireNonEmptyString(data.branchId, "branchId");
   const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
   const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
-  requireStaffPermission(request, organizationId, "manageFiscalDevices");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "manageFiscalDevices");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
   return { organizationId, branchId, uid: request.auth.uid };
 }
@@ -180,8 +180,8 @@ export const issueOfflineLease = onCall({ enforceAppCheck: shouldEnforceAppCheck
   const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
   // Issuance itself requires processPayments — the same base capability the
   // lease will later authorize offline, never a broader one.
-  requireStaffPermission(request, organizationId, "processPayments");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "processPayments");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
   const requestedValidityMinutes = typeof data.validityMinutes === "number" && Number.isInteger(data.validityMinutes) && data.validityMinutes > 0
@@ -231,8 +231,8 @@ export const revokeOfflineLease = onCall({ enforceAppCheck: shouldEnforceAppChec
   // Revocation (e.g. lost/stolen device) is manager-tier — a higher bar
   // than issuance, matching the asymmetric risk of a mis-issued lease vs.
   // a wrongly-un-revoked one.
-  requireStaffPermission(request, organizationId, "approveCashReconciliation");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "approveCashReconciliation");
+  await requireBranchAccess(request, organizationId, branchId);
 
   const db = getFirestore();
   return db.runTransaction(async (tx) => {

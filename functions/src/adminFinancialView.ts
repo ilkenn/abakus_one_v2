@@ -37,17 +37,17 @@ function requireNonEmptyString(raw: unknown, field: string): string {
 function resolvePageSize(raw: unknown): number {
   return Math.min(MAX_PAGE_SIZE, Math.max(1, typeof raw === "number" && Number.isInteger(raw) ? raw : DEFAULT_PAGE_SIZE));
 }
-function requireAdminView(request: CallableRequest, organizationId: string, branchId: string): void {
+async function requireAdminView(request: CallableRequest, organizationId: string, branchId: string): Promise<void> {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
-  requireStaffPermission(request, organizationId, "processPayments");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "processPayments");
+  await requireBranchAccess(request, organizationId, branchId);
 }
 
 export const listPaymentSessionsForBranch = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
   const data = (request.data ?? {}) as Record<string, unknown>;
   const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
   const branchId = requireNonEmptyString(data.branchId, "branchId");
-  requireAdminView(request, organizationId, branchId);
+  await requireAdminView(request, organizationId, branchId);
   const pageSize = resolvePageSize(data.pageSize);
 
   const db = getFirestore();
@@ -74,7 +74,7 @@ export const listRefundsForBranch = onCall({ enforceAppCheck: shouldEnforceAppCh
   const data = (request.data ?? {}) as Record<string, unknown>;
   const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
   const branchId = requireNonEmptyString(data.branchId, "branchId");
-  requireAdminView(request, organizationId, branchId);
+  await requireAdminView(request, organizationId, branchId);
   const pageSize = resolvePageSize(data.pageSize);
 
   const db = getFirestore();
@@ -100,7 +100,7 @@ export const listCashSessionsForBranch = onCall({ enforceAppCheck: shouldEnforce
   const data = (request.data ?? {}) as Record<string, unknown>;
   const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
   const branchId = requireNonEmptyString(data.branchId, "branchId");
-  requireAdminView(request, organizationId, branchId);
+  await requireAdminView(request, organizationId, branchId);
   const pageSize = resolvePageSize(data.pageSize);
 
   const db = getFirestore();
@@ -127,7 +127,7 @@ export const listFiscalOperationsForBranch = onCall({ enforceAppCheck: shouldEnf
   const data = (request.data ?? {}) as Record<string, unknown>;
   const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
   const branchId = requireNonEmptyString(data.branchId, "branchId");
-  requireAdminView(request, organizationId, branchId);
+  await requireAdminView(request, organizationId, branchId);
   const pageSize = resolvePageSize(data.pageSize);
   // Reconciliation-queue view: only entries genuinely needing human review.
   // `timedOut` is included alongside the two explicit "needs reconciliation"
@@ -164,7 +164,7 @@ export const listOfflineLeasesForBranch = onCall({ enforceAppCheck: shouldEnforc
   const data = (request.data ?? {}) as Record<string, unknown>;
   const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
   const branchId = requireNonEmptyString(data.branchId, "branchId");
-  requireAdminView(request, organizationId, branchId);
+  await requireAdminView(request, organizationId, branchId);
   const pageSize = resolvePageSize(data.pageSize);
 
   const db = getFirestore();

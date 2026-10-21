@@ -76,7 +76,7 @@ export const setCourier = onCall(
         ? data.capacity
         : 1;
 
-    requireStaffPermission(request, organizationId, "manageCourierDispatch");
+    await requireStaffPermission(request, organizationId, "manageCourierDispatch");
 
     const db = getFirestore();
     const branchDoc = await db.collection("branches").doc(branchId).get();

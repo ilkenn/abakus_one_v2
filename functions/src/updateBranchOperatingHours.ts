@@ -44,7 +44,7 @@ export const updateBranchOperatingHours = onCall(
     const organizationId = requireString(data.organizationId, "organizationId");
     const branchId = requireString(data.branchId, "branchId");
 
-    requireStaffPermission(request, organizationId, "manageBranch");
+    await requireStaffPermission(request, organizationId, "manageBranch");
 
     let weeklySchedule;
     let dateOverrides;

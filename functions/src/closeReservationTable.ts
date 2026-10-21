@@ -48,7 +48,7 @@ export const closeReservationTable = onCall(
       }
       const reservation = reservationDoc.data()!;
 
-      requireStaffPermission(request, reservation.organizationId, "manageReservations");
+      await requireStaffPermission(request, reservation.organizationId, "manageReservations");
 
       const tableId = reservation.assignedTableId as string | null;
       if (!tableId) {

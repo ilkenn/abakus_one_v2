@@ -74,7 +74,7 @@ export const setRecipeIngredientLink = onCall(
     const recipeVersionId = requireString(data.recipeVersionId, "recipeVersionId");
     const ingredients = requireIngredients(data.ingredients);
 
-    requireStaffPermission(request, organizationId, "manageRecipes");
+    await requireStaffPermission(request, organizationId, "manageRecipes");
 
     const db = getFirestore();
     const linkRef = db.collection("recipeIngredientLinks").doc(`link-${productId}`);

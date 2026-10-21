@@ -76,8 +76,8 @@ export const cancelTakeawayOrderForStaff = onCall(
       // Baseline authorization, unconditional — established before any
       // status-specific branching, so an unauthorized caller learns
       // nothing about the order's actual current status.
-      requireStaffPermission(request, organizationId, "manageTakeawayOrders");
-      requireBranchAccess(request, organizationId, branchId);
+      await requireStaffPermission(request, organizationId, "manageTakeawayOrders");
+      await requireBranchAccess(request, organizationId, branchId);
 
       const currentStatus = order.status as OrderStatus;
 
@@ -101,7 +101,7 @@ export const cancelTakeawayOrderForStaff = onCall(
       }
       if (currentStatus === "preparing" || currentStatus === "ready") {
         // Escalated authority — real kitchen commitment already made.
-        requireStaffPermission(request, organizationId, "manageTakeawayOrderCancellations");
+        await requireStaffPermission(request, organizationId, "manageTakeawayOrderCancellations");
       }
       if (!canTransition(currentStatus, "cancelled")) {
         throw new HttpsError("failed-precondition", "Transition not allowed.");

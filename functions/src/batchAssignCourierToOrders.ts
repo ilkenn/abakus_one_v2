@@ -90,8 +90,8 @@ export const batchAssignCourierToOrders = onCall(
       // `assignCourierToOrder.ts` follows, so an authenticated-but-
       // unauthorized-for-this-org caller learns nothing about the orders'
       // existence/state before being rejected.
-      requireStaffPermission(request, organizationId, "manageCourierDispatch");
-      requireBranchAccess(request, organizationId, branchId);
+      await requireStaffPermission(request, organizationId, "manageCourierDispatch");
+      await requireBranchAccess(request, organizationId, branchId);
 
       if (courier.type === "marketplace") {
         throw new HttpsError(

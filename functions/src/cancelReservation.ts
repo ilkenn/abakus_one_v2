@@ -250,7 +250,7 @@ export const cancelReservation = onCall(
 
       // Faz R.3B §2/§3/§4 — canonical customer-vs-staff resolution, never a
       // client-supplied actorType.
-      const actor = resolveReservationCancellationActor(request, reservation);
+      const actor = await resolveReservationCancellationActor(request, reservation);
 
       const now = new Date();
       return handleCancel(tx, db, reservationRef, reservation, actor, now, reasonCode, reason);

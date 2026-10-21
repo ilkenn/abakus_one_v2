@@ -1,5 +1,6 @@
 import { HttpsError } from "firebase-functions/v2/https";
 import type { CallableRequest } from "firebase-functions/v2/https";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 
 /**
  * Generic, permission-based tenant-staff authorization — Faz R.1B.1. This
@@ -401,6 +402,65 @@ export function roleHasPermission(
 }
 
 /**
+ * Claim-revocation strategy decision (ADR-050) — the "~1 hour stale-token"
+ * gap: `resyncClaimsForUid` (`staffMembership.ts`) rebuilds a revoked
+ * staff member's Firebase Auth custom claims immediately, but an
+ * already-issued ID token keeps its OLD (baked-in) claims and keeps being
+ * accepted by `verifyIdToken` — called without `checkRevoked` by
+ * `onCall`'s own built-in auth parsing (confirmed by reading
+ * `firebase-functions`'s own source) — until that token's natural ~1 hour
+ * expiry. `admin.auth().revokeRefreshTokens` alone does not close this: it
+ * only blocks the *next* silent refresh, never the token already in the
+ * caller's hand.
+ *
+ * This closes it the way ADR-050 settled on: every privilege-*removing*
+ * mutation (`revokeStaffRole`/`revokeStaffBranchAccess`/
+ * `setStaffMemberStatus` away from `active`) stamps
+ * `authClaimsRevocations/{uid}.revokedAt`; every privileged callable then
+ * rejects a token whose `iat` (issue time) predates that stamp — down to
+ * "the next call", not "up to an hour". [ClaimsRevocationLookup] is an
+ * injectable seam specifically so `staffAuthorization.test.ts`'s existing
+ * fast, Firestore-free unit tests stay exactly that — the real
+ * Firestore-backed path is proven separately, under the emulator.
+ */
+export type ClaimsRevocationLookup = (uid: string) => Promise<number | null>;
+
+const AUTH_CLAIMS_REVOCATIONS_COLLECTION = "authClaimsRevocations";
+
+/** Real, Firestore-backed [ClaimsRevocationLookup] — the default every caller gets unless a test injects a fake one. */
+export async function defaultClaimsRevocationLookup(uid: string): Promise<number | null> {
+  const snap = await getFirestore().collection(AUTH_CLAIMS_REVOCATIONS_COLLECTION).doc(uid).get();
+  if (!snap.exists) return null;
+  const revokedAt = snap.data()?.revokedAt as Timestamp | undefined;
+  return revokedAt ? revokedAt.toMillis() : null;
+}
+
+/**
+ * Throws `permission-denied` when [request]'s ID token was issued
+ * *before* [lookup] says this uid's claims were last revoked — the token
+ * may be carrying privilege that has since been removed. `token.iat`
+ * (seconds since epoch, standard JWT claim), never `auth_time`: `iat`
+ * changes on every token refresh, `auth_time` only on a fresh sign-in, and
+ * what's under test here is "was this specific token minted before or
+ * after the revocation," not "when did the user last actually sign in."
+ * Assumes `request.auth` is already known non-null — every call site below
+ * checks that first.
+ */
+async function rejectIfClaimsStale(
+  request: CallableRequest,
+  lookup: ClaimsRevocationLookup,
+): Promise<void> {
+  const issuedAtMs = (request.auth!.token.iat as number) * 1000;
+  const revokedAtMs = await lookup(request.auth!.uid);
+  if (revokedAtMs !== null && issuedAtMs < revokedAtMs) {
+    throw new HttpsError(
+      "permission-denied",
+      "Your authorization has changed. Please sign in again.",
+    );
+  }
+}
+
+/**
  * Server-authoritative tenant-staff permission check for a Cloud Function
  * callable — mirrors `platformAuthorization.ts`'s `requirePlatformMember`
  * shape (throw `unauthenticated`/`permission-denied`), but resolves a named
@@ -410,15 +470,22 @@ export function roleHasPermission(
  * `isOrgMember`/`hasRole` exactly — "no role exemption": `organizationId`
  * must appear in `organizationAccess` independently of which roles are
  * held for it.
+ *
+ * [claimsRevocationLookup] defaults to the real, Firestore-backed
+ * [defaultClaimsRevocationLookup] — a test supplies a fake one to stay
+ * Firestore-free. Now `async` (ADR-050): every one of this function's ~60
+ * call sites was updated to `await` it as part of that same change.
  */
-export function requireStaffPermission(
+export async function requireStaffPermission(
   request: CallableRequest,
   organizationId: string,
   permission: StaffPermission,
-): void {
+  claimsRevocationLookup: ClaimsRevocationLookup = defaultClaimsRevocationLookup,
+): Promise<void> {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign-in is required.");
   }
+  await rejectIfClaimsStale(request, claimsRevocationLookup);
   const token = request.auth.token;
   const organizationAccess = token?.organizationAccess;
   const isOrgMember =
@@ -477,15 +544,23 @@ export function requireStaffPermission(
  * `branchAccess` claim key, a missing `organizationId` entry, or a
  * malformed (non-array) value all resolve to denied, never to an
  * exception a caller could mistake for something else.
+ *
+ * Also runs the same ADR-050 staleness check as `requireStaffPermission`
+ * — independently, since the two are often called in sequence for the
+ * same request and neither assumes the other already ran. Accepted,
+ * deliberate cost: a branch-scoped call does two `authClaimsRevocations`
+ * reads instead of one; not worth a request-scoped cache for this.
  */
-export function requireBranchAccess(
+export async function requireBranchAccess(
   request: CallableRequest,
   organizationId: string,
   branchId: string,
-): void {
+  claimsRevocationLookup: ClaimsRevocationLookup = defaultClaimsRevocationLookup,
+): Promise<void> {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign-in is required.");
   }
+  await rejectIfClaimsStale(request, claimsRevocationLookup);
   const token = request.auth.token;
   const branchAccessByOrg = token?.branchAccess as Record<string, unknown> | undefined;
   const branchesForOrg = branchAccessByOrg?.[organizationId];

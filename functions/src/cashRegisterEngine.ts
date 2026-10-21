@@ -75,8 +75,8 @@ async function authorizeCashCommand(request: CallableRequest, data: Record<strin
   const branchId = requireNonEmptyString(data.branchId, "branchId");
   const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
   const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
-  requireStaffPermission(request, organizationId, "manageCashSessions");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "manageCashSessions");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
   return { organizationId, branchId, uid: request.auth.uid };
 }
@@ -124,8 +124,8 @@ export const createCashDrawer = onCall({ enforceAppCheck: shouldEnforceAppCheck(
   const deviceId = requireNonEmptyString(data.deviceId, "deviceId");
   const deviceSessionId = requireNonEmptyString(data.deviceSessionId, "deviceSessionId");
   const name = requireNonEmptyString(data.name, "name");
-  requireStaffPermission(request, organizationId, "approveCashReconciliation");
-  requireBranchAccess(request, organizationId, branchId);
+  await requireStaffPermission(request, organizationId, "approveCashReconciliation");
+  await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
 
   const db = getFirestore();

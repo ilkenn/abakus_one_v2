@@ -346,9 +346,9 @@ export const respondToApprovalRequest = onCall(
     if (pre.requestedByActorUid === request.auth.uid) {
       throw new HttpsError("permission-denied", "The requester cannot respond to their own approval request.");
     }
-    requireStaffPermission(request, pre.organizationId, RESPONSE_PERMISSION_BY_ACTION[pre.actionType]);
+    await requireStaffPermission(request, pre.organizationId, RESPONSE_PERMISSION_BY_ACTION[pre.actionType]);
     if (BRANCH_SCOPED_RESPONSE_ACTION_TYPES.has(pre.actionType)) {
-      requireBranchAccess(request, pre.organizationId, pre.branchId);
+      await requireBranchAccess(request, pre.organizationId, pre.branchId);
     }
 
     if (pre.status === decision && pre.respondedByActorUid === request.auth.uid) {

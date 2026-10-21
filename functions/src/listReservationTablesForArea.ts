@@ -47,7 +47,7 @@ export const listReservationTablesForArea = onCall(
       }
       const reservation = reservationDoc.data()!;
 
-      requireStaffPermission(request, reservation.organizationId, "manageReservations");
+      await requireStaffPermission(request, reservation.organizationId, "manageReservations");
 
       if (reservation.status !== "confirmed" || !reservation.confirmedTime || !reservation.confirmedAreaId) {
         throw new HttpsError(

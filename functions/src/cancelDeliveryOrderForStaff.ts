@@ -78,8 +78,8 @@ export const cancelDeliveryOrderForStaff = onCall(
       // Baseline authorization, unconditional — established before any
       // status-specific branching, so an unauthorized caller learns
       // nothing about the order's actual current status.
-      requireStaffPermission(request, organizationId, "manageDeliveryOrders");
-      requireBranchAccess(request, organizationId, branchId);
+      await requireStaffPermission(request, organizationId, "manageDeliveryOrders");
+      await requireBranchAccess(request, organizationId, branchId);
 
       const currentStatus = order.status as OrderStatus;
 
@@ -112,7 +112,7 @@ export const cancelDeliveryOrderForStaff = onCall(
         currentStatus === "outForDelivery"
       ) {
         // Escalated authority — real kitchen/courier commitment already made.
-        requireStaffPermission(request, organizationId, "manageDeliveryOrderCancellations");
+        await requireStaffPermission(request, organizationId, "manageDeliveryOrderCancellations");
       }
       if (!canTransition(currentStatus, "cancelled")) {
         throw new HttpsError("failed-precondition", "Transition not allowed.");

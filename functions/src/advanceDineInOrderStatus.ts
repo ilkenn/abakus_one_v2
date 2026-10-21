@@ -109,8 +109,8 @@ export const advanceDineInOrderStatus = onCall(
       const organizationId = order.organizationId as string;
       const branchId = order.branchId as string;
 
-      requireStaffPermission(request, organizationId, "manageDineInOrders");
-      requireBranchAccess(request, organizationId, branchId);
+      await requireStaffPermission(request, organizationId, "manageDineInOrders");
+      await requireBranchAccess(request, organizationId, branchId);
 
       const currentStatus = order.status as OrderStatus;
 

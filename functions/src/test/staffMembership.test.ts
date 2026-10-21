@@ -701,3 +701,110 @@ test("setStaffMemberStatus: archived is terminal — a further status change on 
   );
   assert.strictEqual(reinstate.httpStatus, 400, JSON.stringify(reinstate.body));
 });
+
+// -----------------------------------------------------------------------
+// ADR-050 — authClaimsRevocations stamping on every privilege-removing
+// mutation. Only asserts the stamp is written with a recent timestamp;
+// `claimsRevocationLookup.test.ts` proves the stale-token rejection logic
+// that reads it back.
+// -----------------------------------------------------------------------
+
+async function assertRecentRevocationStamp(targetUid: string): Promise<void> {
+  const doc = await admin.firestore().collection("authClaimsRevocations").doc(targetUid).get();
+  assert.ok(doc.exists, "authClaimsRevocations stamp must exist after a privilege-removing mutation");
+  const revokedAt = (doc.data()!.revokedAt as admin.firestore.Timestamp).toDate();
+  assert.ok(Date.now() - revokedAt.getTime() < 60_000, "revokedAt must be a fresh, just-now timestamp");
+}
+
+test("revokeStaffRole: stamps authClaimsRevocations for the target uid", async () => {
+  const chain = await seedTenant();
+  const { idToken: adminToken } = await bootstrapRealAdmin(chain.organizationId);
+  const { uid: targetUid } = await signUpAnonymously();
+  await admin.firestore().collection("memberships").doc(`${chain.organizationId}_${targetUid}`).set({
+    organizationId: chain.organizationId, uid: targetUid, roles: ["manager"], branchAccess: [], restaurantAccess: [], status: "active",
+    createdAt: new Date(), updatedAt: new Date(),
+  });
+
+  const revoke = await callCallable(
+    REVOKE_ROLE_URL,
+    { organizationId: chain.organizationId, targetUid, role: "manager" },
+    adminToken,
+  );
+  assert.strictEqual(revoke.httpStatus, 200, JSON.stringify(revoke.body));
+  await assertRecentRevocationStamp(targetUid);
+});
+
+test("revokeStaffRole: a safe no-op (role not held) does NOT stamp authClaimsRevocations — nothing was actually revoked", async () => {
+  const chain = await seedTenant();
+  const { idToken: adminToken } = await bootstrapRealAdmin(chain.organizationId);
+  const { uid: targetUid } = await signUpAnonymously();
+  await admin.firestore().collection("memberships").doc(`${chain.organizationId}_${targetUid}`).set({
+    organizationId: chain.organizationId, uid: targetUid, roles: ["staff"], branchAccess: [], restaurantAccess: [], status: "active",
+    createdAt: new Date(), updatedAt: new Date(),
+  });
+
+  const noOp = await callCallable(
+    REVOKE_ROLE_URL,
+    { organizationId: chain.organizationId, targetUid, role: "manager" },
+    adminToken,
+  );
+  assert.strictEqual(noOp.httpStatus, 200, JSON.stringify(noOp.body));
+  assert.strictEqual(noOp.body.result!.revoked, false);
+  const doc = await admin.firestore().collection("authClaimsRevocations").doc(targetUid).get();
+  assert.strictEqual(doc.exists, false);
+});
+
+test("revokeStaffBranchAccess: stamps authClaimsRevocations for the target uid", async () => {
+  const chain = await seedTenant();
+  const { idToken: adminToken } = await bootstrapRealAdmin(chain.organizationId);
+  const { uid: targetUid } = await signUpAnonymously();
+  await admin.firestore().collection("memberships").doc(`${chain.organizationId}_${targetUid}`).set({
+    organizationId: chain.organizationId, uid: targetUid, roles: ["manager"], branchAccess: [chain.branchId], restaurantAccess: [], status: "active",
+    createdAt: new Date(), updatedAt: new Date(),
+  });
+
+  const revoke = await callCallable(
+    REVOKE_BRANCH_URL,
+    { organizationId: chain.organizationId, targetUid, branchId: chain.branchId },
+    adminToken,
+  );
+  assert.strictEqual(revoke.httpStatus, 200, JSON.stringify(revoke.body));
+  await assertRecentRevocationStamp(targetUid);
+});
+
+test("setStaffMemberStatus: moving a membership to suspended stamps authClaimsRevocations", async () => {
+  const chain = await seedTenant();
+  const { idToken: adminToken } = await bootstrapRealAdmin(chain.organizationId);
+  const { uid: targetUid } = await signUpAnonymously();
+  await admin.firestore().collection("memberships").doc(`${chain.organizationId}_${targetUid}`).set({
+    organizationId: chain.organizationId, uid: targetUid, roles: ["staff"], branchAccess: [], restaurantAccess: [], status: "active",
+    createdAt: new Date(), updatedAt: new Date(),
+  });
+
+  const suspend = await callCallable(
+    SET_STATUS_URL,
+    { organizationId: chain.organizationId, targetUid, status: "suspended" },
+    adminToken,
+  );
+  assert.strictEqual(suspend.httpStatus, 200, JSON.stringify(suspend.body));
+  await assertRecentRevocationStamp(targetUid);
+});
+
+test("setStaffMemberStatus: moving a membership TO active does NOT stamp authClaimsRevocations — a grant, never a removal", async () => {
+  const chain = await seedTenant();
+  const { idToken: adminToken } = await bootstrapRealAdmin(chain.organizationId);
+  const { uid: targetUid } = await signUpAnonymously();
+  await admin.firestore().collection("memberships").doc(`${chain.organizationId}_${targetUid}`).set({
+    organizationId: chain.organizationId, uid: targetUid, roles: ["staff"], branchAccess: [], restaurantAccess: [], status: "suspended",
+    createdAt: new Date(), updatedAt: new Date(),
+  });
+
+  const reactivate = await callCallable(
+    SET_STATUS_URL,
+    { organizationId: chain.organizationId, targetUid, status: "active" },
+    adminToken,
+  );
+  assert.strictEqual(reactivate.httpStatus, 200, JSON.stringify(reactivate.body));
+  const doc = await admin.firestore().collection("authClaimsRevocations").doc(targetUid).get();
+  assert.strictEqual(doc.exists, false);
+});
