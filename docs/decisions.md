@@ -19630,3 +19630,66 @@ correct, standard workflow regardless of the environment constraint — Xcode ge
 provisioning profile and writes `project.pbxproj` correctly itself; hand-writing the equivalent
 `DEVELOPMENT_TEAM`/`PROVISIONING_PROFILE_SPECIFIER` keys is strictly worse practice even with a
 working verification loop.
+
+## ADR-052 — Wednesday scope freeze: hide mock-only admin modules via visibleToRoles (2026-10-21)
+
+- Tarih: 2026-10-21
+- Durum: Accepted
+
+### Context
+
+Wednesday's scope-freeze item: hide the admin-panel modules confirmed mock/in-memory-only (no real
+Firestore/Cloud Functions backend) so staff can't mistake them for production-ready during this
+week's production-readiness push, following the original audit's recommendation to ship only the
+confirmed-real core operation loop and label/hide everything else.
+
+All candidate modules live as `_AdminNavItem` entries in one file,
+`lib/features/admin/presentation/screens/admin_shell_screen.dart`, filtered for every layout
+(desktop/tablet/mobile) by one line: `session.roles.any(item.visibleToRoles.contains)`.
+
+**Two items were found NOT to be pure mock and carved out of the freeze** (confirmed by user
+decision): `delivery-dispatch` ("Teslimat Dağıtımı") is genuinely Firestore-backed
+(`FirestoreDeliveryDispatchOrderRepository`, gated by `ModuleEntitlementGate(module:
+EntitlementModule.courier, ...)`) — unlike `dispatch` ("Kurye / Sevkiyat", the in-memory courier
+dashboard this freeze does hide), which uses only `RoleGate.forRoles` with no entitlement toggle of
+its own. `stock-counts` ("Stok Sayımları") has a partial real Firestore-backed path too, but was
+frozen anyway for consistency with the rest of its Inventory/Recipe/Purchasing group (explicit user
+decision, not an oversight).
+
+### Decision
+
+Flip `visibleToRoles` to `const {}` (with a `// SCOPE FREEZE (2026-10-21, ADR-052)` comment citing
+the specific in-memory repository) for 10 items, rather than deleting the list entries or building a
+new "Coming Soon" badge component:
+- `dispatch` (Kurye / Sevkiyat)
+- `campaigns` (Kampanyalar), `surveys` (Anketler)
+- `ingredient-catalog` (Malzeme Kataloğu), `inventory` (Envanter), `stock-counts` (Stok Sayımları),
+  `recipes` (Tarifler), `recipe-ingredient-links` (Reçete-Malzeme Bağlantıları), `suppliers`
+  (Tedarikçiler)
+- `audit` (Denetim)
+
+**Why this lever over the alternatives**: it's a one-line change per item, touches no list structure
+(zero risk of a bracket-matching mistake across a ~650-line literal), is trivially greppable
+(`grep -n "SCOPE FREEZE"`) and revertible, and needs no new shared widget — unlike a "Coming Soon"
+badge, which would add scope competing with this same freeze's own time pressure. Considered and
+rejected: using the existing `ModuleEntitlementGate`/`EntitlementModule` system instead — several of
+these items already carry one (`inventory`, `recipes`, `suppliers`), but `dispatch` doesn't, and the
+`courier` module is shared with the real, carved-out `delivery-dispatch` — toggling it off would have
+frozen the wrong item too.
+
+**Audit Center** (`audit`) is also fully mock — `BuildAuditCenterProjection` reads 4 audit trails, all
+`InMemory*Repository`, resetting on every app restart — confirmed rather than assumed from the
+HISTORICAL `docs/current_state_audit.md` (which incorrectly claims Courier/Inventory/CRM/Audit "do
+not exist at all" — stale, predates Phase 2-9; not used as evidence here).
+
+**Category not requiring any action**: ~46 empty (1-5 byte) placeholder `.dart` files scattered across
+`core/`/`shared/`/several features were checked for real importers — none has any; all are already
+unreachable dead scaffolding, with no nav entry to hide. Left as-is, out of scope for a navigation-
+hiding exercise.
+
+**Test impact**: `test/features/admin/presentation/admin_shell_screen_test.dart` had 6 tests
+asserting these items were reachable for a manager — all 6 rewritten to assert `findsNothing` instead
+(for both the label text and the now-unreachable screen widget type), keeping their existing feature-
+flag-enabled setup so the test also proves the freeze holds even if a flag is re-enabled. The other 4
+frozen items (`dispatch`/`campaigns`/`surveys`/`recipe-ingredient-links`) had no dedicated shell-level
+test. Verified: `flutter analyze` (whole project) and `flutter test` (whole project) both clean.

@@ -376,7 +376,9 @@ void main() {
     expect(find.text('Bu ekrana erişim yetkiniz yok.'), findsNothing);
   });
 
-  testWidgets('a manager can open the Audit Center from Sistem group',
+  testWidgets(
+      'SCOPE FREEZE (ADR-052): Denetim is hidden from a manager session — '
+      'all 4 of its audit trails are in-memory-only, reset on restart',
       (tester) async {
     await pumpShell(
       tester,
@@ -387,17 +389,8 @@ void main() {
       ),
     );
 
-    await tester.dragUntilVisible(
-      find.text('Denetim'),
-      find.byType(ListView).first,
-      const Offset(0, -300),
-    );
-    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Denetim'));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(AuditCenterScreen), findsOneWidget);
+    expect(find.text('Denetim'), findsNothing);
+    expect(find.byType(AuditCenterScreen), findsNothing);
   });
 
   testWidgets(
@@ -479,8 +472,9 @@ void main() {
   });
 
   testWidgets(
-      'a manager with branch access and the flag enabled can open Malzeme '
-      'Kataloğu from Akıllı Kurulum & Stok group', (tester) async {
+      'SCOPE FREEZE (ADR-052): Malzeme Kataloğu is hidden from a manager '
+      'session even with its feature flag enabled — IngredientRepository '
+      'is in-memory only', (tester) async {
     await pumpShell(
       tester,
       session: const ActorSession(
@@ -498,22 +492,14 @@ void main() {
       ],
     );
 
-    await tester.dragUntilVisible(
-      find.text('Malzeme Kataloğu'),
-      find.byType(ListView).first,
-      const Offset(0, -300),
-    );
-    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Malzeme Kataloğu').first);
-    await tester.pumpAndSettle();
-
-    expect(find.byType(IngredientCatalogScreen), findsOneWidget);
+    expect(find.text('Malzeme Kataloğu'), findsNothing);
+    expect(find.byType(IngredientCatalogScreen), findsNothing);
   });
 
   testWidgets(
-      'a manager with branch access and the flag enabled can open Envanter '
-      'from Akıllı Kurulum & Stok group', (tester) async {
+      'SCOPE FREEZE (ADR-052): Envanter is hidden from a manager session '
+      'even with its feature flag enabled — InventoryItemRepository is '
+      'in-memory only', (tester) async {
     await pumpShell(
       tester,
       session: const ActorSession(
@@ -531,22 +517,15 @@ void main() {
       ],
     );
 
-    await tester.dragUntilVisible(
-      find.text('Envanter'),
-      find.byType(ListView).first,
-      const Offset(0, -300),
-    );
-    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Envanter').first);
-    await tester.pumpAndSettle();
-
-    expect(find.byType(InventoryScreen), findsOneWidget);
+    expect(find.text('Envanter'), findsNothing);
+    expect(find.byType(InventoryScreen), findsNothing);
   });
 
   testWidgets(
-      'a manager with branch access and the flag enabled can open Stok '
-      'Sayımları from Akıllı Kurulum & Stok group', (tester) async {
+      'SCOPE FREEZE (ADR-052): Stok Sayımları is hidden from a manager '
+      'session even with its feature flag enabled — frozen for group '
+      'consistency with the rest of Inventory/Recipe/Purchasing, despite '
+      'its own partial real Firestore-backed path', (tester) async {
     await pumpShell(
       tester,
       session: const ActorSession(
@@ -564,22 +543,14 @@ void main() {
       ],
     );
 
-    await tester.dragUntilVisible(
-      find.text('Stok Sayımları'),
-      find.byType(ListView).first,
-      const Offset(0, -300),
-    );
-    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Stok Sayımları').first);
-    await tester.pumpAndSettle();
-
-    expect(find.byType(StockCountsScreen), findsOneWidget);
+    expect(find.text('Stok Sayımları'), findsNothing);
+    expect(find.byType(StockCountsScreen), findsNothing);
   });
 
   testWidgets(
-      'a manager with branch access and the flag enabled can open Tarifler '
-      'from Akıllı Kurulum & Stok group', (tester) async {
+      'SCOPE FREEZE (ADR-052): Tarifler is hidden from a manager session '
+      'even with its feature flag enabled — RecipeRepository is in-memory '
+      'only', (tester) async {
     await pumpShell(
       tester,
       session: const ActorSession(
@@ -597,22 +568,14 @@ void main() {
       ],
     );
 
-    await tester.dragUntilVisible(
-      find.text('Tarifler'),
-      find.byType(ListView).first,
-      const Offset(0, -300),
-    );
-    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tarifler').first);
-    await tester.pumpAndSettle();
-
-    expect(find.byType(RecipesScreen), findsOneWidget);
+    expect(find.text('Tarifler'), findsNothing);
+    expect(find.byType(RecipesScreen), findsNothing);
   });
 
   testWidgets(
-      'a manager with branch access and the flag enabled can open '
-      'Tedarikçiler from Akıllı Kurulum & Stok group', (tester) async {
+      'SCOPE FREEZE (ADR-052): Tedarikçiler is hidden from a manager '
+      'session even with its feature flag enabled — purchasing is '
+      'in-memory only', (tester) async {
     await pumpShell(
       tester,
       session: const ActorSession(
@@ -630,17 +593,8 @@ void main() {
       ],
     );
 
-    await tester.dragUntilVisible(
-      find.text('Tedarikçiler'),
-      find.byType(ListView).first,
-      const Offset(0, -300),
-    );
-    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tedarikçiler').first);
-    await tester.pumpAndSettle();
-
-    expect(find.byType(SuppliersScreen), findsOneWidget);
+    expect(find.text('Tedarikçiler'), findsNothing);
+    expect(find.byType(SuppliersScreen), findsNothing);
   });
 
   testWidgets(

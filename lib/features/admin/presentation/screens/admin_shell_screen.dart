@@ -198,7 +198,14 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'dispatch',
             label: 'Kurye / Sevkiyat',
             icon: Icons.local_shipping_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) — in-memory
+            // mock only (CourierDispatchDashboardScreen's full dependency
+            // chain is InMemory*Repository, confirmed by audit); hidden from
+            // every role for this week's production-readiness scope freeze.
+            // Unlike 'delivery-dispatch' below (ModuleEntitlementGate-gated,
+            // real Firestore-backed), this item has no entitlement toggle of
+            // its own — visibleToRoles is the only lever.
+            visibleToRoles: const {},
             builder: (context, ref) => RoleGate.forRoles(
               const {StaffRole.manager, StaffRole.admin},
               child: CourierDispatchDashboardScreen(
@@ -326,7 +333,11 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'campaigns',
             label: 'Kampanyalar',
             icon: Icons.campaign_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) —
+            // CustomerNotificationCampaignRepository is in-memory only
+            // (InMemoryCustomerNotificationCampaignRepository); hidden for
+            // this week's production-readiness scope freeze.
+            visibleToRoles: const {},
             builder: (context, ref) => RoleGate.forAction(
               PosAuthorizedAction.manageCustomerNotificationCampaigns,
               child: CustomerNotificationCampaignsAdminScreen(
@@ -339,7 +350,10 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'surveys',
             label: 'Anketler',
             icon: Icons.poll_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) —
+            // SurveyRepository/SurveyResponseRepository are in-memory only;
+            // hidden for this week's production-readiness scope freeze.
+            visibleToRoles: const {},
             builder: (context, ref) => RoleGate.forAction(
               PosAuthorizedAction.manageSurveys,
               child: SurveyAdminScreen(
@@ -471,7 +485,10 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'ingredient-catalog',
             label: 'Malzeme Kataloğu',
             icon: Icons.egg_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) —
+            // IngredientRepository is in-memory only; hidden for this
+            // week's production-readiness scope freeze.
+            visibleToRoles: const {},
             builder: (context, ref) => ModuleEntitlementGate(
               module: EntitlementModule.inventory,
               scopeType: EntitlementScopeType.branch,
@@ -488,7 +505,11 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'inventory',
             label: 'Envanter',
             icon: Icons.inventory_2_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) —
+            // InventoryItemRepository and its location/warehouse/branch-
+            // stock/lot siblings are in-memory only; hidden for this
+            // week's production-readiness scope freeze.
+            visibleToRoles: const {},
             builder: (context, ref) => ModuleEntitlementGate(
               module: EntitlementModule.inventory,
               scopeType: EntitlementScopeType.branch,
@@ -504,7 +525,13 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'stock-counts',
             label: 'Stok Sayımları',
             icon: Icons.fact_check_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) — frozen
+            // for consistency with the rest of this Inventory/Recipe/
+            // Purchasing group, even though StockCountRepository has a
+            // partial real Firestore-backed path (gated by
+            // firebaseReadyProvider) unlike its siblings above — see
+            // ADR-052 for why the group-consistency call was made anyway.
+            visibleToRoles: const {},
             builder: (context, ref) => ModuleEntitlementGate(
               module: EntitlementModule.inventory,
               scopeType: EntitlementScopeType.branch,
@@ -521,7 +548,10 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'recipes',
             label: 'Tarifler',
             icon: Icons.menu_book_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) —
+            // RecipeRepository is in-memory only; hidden for this week's
+            // production-readiness scope freeze.
+            visibleToRoles: const {},
             builder: (context, ref) => ModuleEntitlementGate(
               module: EntitlementModule.recipes,
               scopeType: EntitlementScopeType.branch,
@@ -538,7 +568,10 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'recipe-ingredient-links',
             label: 'Reçete-Malzeme Bağlantıları',
             icon: Icons.link,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) —
+            // RecipeIngredientLinkRepository is in-memory only; hidden for
+            // this week's production-readiness scope freeze.
+            visibleToRoles: const {},
             builder: (context, ref) => ModuleEntitlementGate(
               module: EntitlementModule.recipes,
               scopeType: EntitlementScopeType.branch,
@@ -553,7 +586,11 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'suppliers',
             label: 'Tedarikçiler',
             icon: Icons.local_shipping_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) —
+            // SupplierRepository and the rest of purchasing are in-memory
+            // only; hidden for this week's production-readiness scope
+            // freeze.
+            visibleToRoles: const {},
             builder: (context, ref) => ModuleEntitlementGate(
               module: EntitlementModule.suppliers,
               scopeType: EntitlementScopeType.branch,
@@ -591,7 +628,12 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'audit',
             label: 'Denetim',
             icon: Icons.fact_check_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            // SCOPE FREEZE (2026-10-21, docs/decisions.md ADR-052) — all 4
+            // audit trails BuildAuditCenterProjection reads from are
+            // in-memory only and reset on every app restart; hidden for
+            // this week's production-readiness scope freeze so staff never
+            // mistakes this for durable history.
+            visibleToRoles: const {},
             builder: (context, ref) => RoleGate.forAction(
               PosAuthorizedAction.viewAuditCenter,
               child: AuditCenterScreen(branchId: branchId),

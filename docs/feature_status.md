@@ -8045,3 +8045,37 @@ treating the smaller edit size as an implicit exception to the existing preceden
 
 New/changed files: `android/app/build.gradle.kts`, `android/key.properties.example` (new),
 `docs/decisions.md`, `docs/feature_status.md`.
+
+## Hafta Kapanışı Faz 3 (Çarşamba): Mock Modülleri Admin Panelinden Gizleme (2026-10-21)
+
+Closes the day with the scope-freeze item: hiding the admin-panel modules confirmed mock/in-memory-
+only from every staff role, so nobody mistakes them for production-ready this week. See **ADR-052**
+(`docs/decisions.md`) for the full reasoning, the two carve-outs found NOT to be pure mock
+(`delivery-dispatch`/"Teslimat Dağıtımı" stays live — real Firestore-backed; `stock-counts`/"Stok
+Sayımları" was frozen anyway for group consistency despite its own partial real path, an explicit
+user decision), and why `visibleToRoles: const {}` was chosen over deleting the nav entries or
+building a new "Coming Soon" badge.
+
+**10 items hidden** in `lib/features/admin/presentation/screens/admin_shell_screen.dart`: `dispatch`
+(Kurye/Sevkiyat), `campaigns` (Kampanyalar), `surveys` (Anketler), `ingredient-catalog` (Malzeme
+Kataloğu), `inventory` (Envanter), `stock-counts` (Stok Sayımları), `recipes` (Tarifler),
+`recipe-ingredient-links` (Reçete-Malzeme Bağlantıları), `suppliers` (Tedarikçiler), `audit`
+(Denetim) — each with a `// SCOPE FREEZE (2026-10-21, ADR-052)` comment citing the specific
+in-memory repository confirmed backing it.
+
+**46 empty Phase 1 placeholder `.dart` files** (1-5 bytes, confirmed by direct byte-size + hex-dump
+check) were also audited per this task's own ask — all confirmed to have zero real importers
+anywhere in `lib/`/`test/`, so none needed hiding; they're already unreachable dead scaffolding, left
+as-is.
+
+**Tests**: 6 pre-existing `admin_shell_screen_test.dart` tests that asserted these items were
+reachable were rewritten to assert `findsNothing` for both the label and the screen widget type
+(keeping their feature-flag-enabled setup, so the test also proves the freeze holds even if a flag is
+re-enabled later).
+
+**Verification**: `flutter analyze` (whole project) clean. `flutter test` (whole project) —
+**3687/3687 passing**, zero failures.
+
+New/changed files: `lib/features/admin/presentation/screens/admin_shell_screen.dart`,
+`test/features/admin/presentation/admin_shell_screen_test.dart`, `docs/decisions.md`,
+`docs/feature_status.md`.
