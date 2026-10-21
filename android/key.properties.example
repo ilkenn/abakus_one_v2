@@ -1,0 +1,26 @@
+# Android release signing — real values, gitignored (android/.gitignore
+# already lists key.properties/**/*.keystore/**/*.jks).
+#
+# 1. Generate a new release keystore (only safe to do because this app has
+#    never shipped a Play Store release yet — once a real release ships
+#    signed with a keystore, that exact keystore must be used for every
+#    future update forever, so back this file up somewhere durable the
+#    moment you create it):
+#
+#      keytool -genkey -v -keystore android/app/upload-keystore.jks \
+#        -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#
+#    keytool will prompt for a keystore password, your name/org details,
+#    and a key password (can be the same as the keystore password).
+#
+# 2. Copy this file to android/key.properties (NOT android/app/) and fill
+#    in the real values below.
+#
+# 3. storeFile is resolved relative to the repository root (android/app/
+#    build.gradle.kts reads it via rootProject.file(...), not relative to
+#    this file's own directory).
+
+storeFile=app/upload-keystore.jks
+storePassword=YOUR_KEYSTORE_PASSWORD_HERE
+keyAlias=upload
+keyPassword=YOUR_KEY_PASSWORD_HERE

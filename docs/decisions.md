@@ -19585,3 +19585,48 @@ emulator, by the new `claimsRevocationLookup.test.ts` (calls the real function d
 never through a deployed callable's HTTP layer — mirrors `callableRateLimitEnforcement.test.ts`'s
 isolation reasoning from ADR-049). `staffMembership.test.ts` gained 5 new HTTP-level tests proving the
 three mutating callables actually write (or correctly withhold) the stamp.
+
+## ADR-051 — Mobile release signing: Android wired, iOS deliberately left to manual Xcode steps (2026-10-21)
+
+- Tarih: 2026-10-21
+- Durum: Accepted
+
+### Context
+
+Day 2's final item: `android/app/build.gradle.kts`'s release build type signed with the debug
+keystore (explicit `// TODO: Add your own signing config` comment), and `ios/Runner.xcodeproj/
+project.pbxproj` with no `DEVELOPMENT_TEAM` set anywhere, `CODE_SIGN_STYLE = Automatic`.
+
+**iOS has a real, documented prior decision directly on point**: `ios/config/README.md`'s own "Why
+this isn't wired into Xcode yet" section already explains why a previous phase deliberately did not
+hand-edit `project.pbxproj` — no macOS/Xcode in this environment to confirm an edit doesn't corrupt
+the file, no CI step builds for iOS to catch a mistake, so "a wrong edit could silently break the iOS
+project in a way nobody notices until someone opens it in Xcode much later." That decision was about a
+larger edit (flavor/scheme wiring), but the same reasoning applies identically to any `project.pbxproj`
+edit, however small — confirmed with the user before proceeding rather than treating the smaller scope
+as an implicit exception.
+
+**Structural reason beyond the environment risk**: `DEVELOPMENT_TEAM` is a real Apple Developer Team ID
+belonging to the user's own Apple Developer account — not something derivable or safely
+default-able from this environment.
+
+### Decision
+
+**Android** — wired for real: `android/app/build.gradle.kts` now reads `android/key.properties`
+(gitignored; `android/.gitignore` already listed `key.properties`/`**/*.keystore`/`**/*.jks` from the
+original Flutter scaffold, never previously used) via the exact same `Properties()`-loading pattern
+already established for `mapsApiKeyAndroid`/`local.properties`. Falls back to the debug signing config
+— not a hard build failure — whenever `key.properties` is missing or its `storeFile` doesn't exist, so
+`flutter run --release`/CI on a machine without the real release keystore keeps working exactly as
+before (a loud `println` flags the fallback at configuration time). New committed
+`android/key.properties.example` documents the format and the `keytool` command to generate a new
+release keystore — safe to generate fresh since this app has never shipped a signed Play Store
+release yet.
+
+**iOS** — left to the user, done through Xcode directly rather than a hand-edit, matching
+`ios/config/README.md`'s own precedent: in `Runner.xcodeproj` → `Runner` target → Signing &
+Capabilities → select Team, with "Automatically manage signing" checked. This is also simply the
+correct, standard workflow regardless of the environment constraint — Xcode generates/renews the
+provisioning profile and writes `project.pbxproj` correctly itself; hand-writing the equivalent
+`DEVELOPMENT_TEAM`/`PROVISIONING_PROFILE_SPECIFIER` keys is strictly worse practice even with a
+working verification loop.

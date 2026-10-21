@@ -34,6 +34,37 @@ val mapsApiKeyAndroid: String =
         properties.getProperty("mapsApiKeyAndroid", "")
     }
 
+// Release signing — android/key.properties (gitignored, per-machine/CI
+// secret — same "local.properties, gitignored, loaded via Properties()"
+// pattern as mapsApiKeyAndroid above; android/.gitignore already lists
+// key.properties/**/*.keystore/**/*.jks, from the original Flutter
+// scaffold, never previously wired up). See android/key.properties.example
+// for the exact format and `keytool` command to generate a new keystore.
+//
+// Deliberately falls back to the debug signing config, not a hard build
+// failure, when key.properties is missing or its storeFile doesn't exist
+// — so `flutter run --release`/CI on a machine that doesn't hold the real
+// release keystore keeps working exactly as it does today (debug-signed),
+// with a loud println flagging the fallback at configuration time so a
+// real release build never silently ships debug-signed by accident.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties()
+val hasRealReleaseKeystore: Boolean =
+    run {
+        if (!keystorePropertiesFile.exists()) return@run false
+        keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+        val storeFilePath = keystoreProperties.getProperty("storeFile")
+        storeFilePath != null && rootProject.file(storeFilePath).exists()
+    }
+if (!hasRealReleaseKeystore) {
+    println(
+        "[build.gradle.kts] No real release keystore found (android/key.properties " +
+            "missing, or its storeFile doesn't point to an existing file) — the " +
+            "release build type falls back to debug signing. See " +
+            "android/key.properties.example to set up a real one.",
+    )
+}
+
 android {
     namespace = "com.abakus.one"
     compileSdk = flutter.compileSdkVersion
@@ -59,11 +90,28 @@ android {
         manifestPlaceholders["mapsApiKeyAndroid"] = mapsApiKeyAndroid
     }
 
+    signingConfigs {
+        if (hasRealReleaseKeystore) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig =
+                if (hasRealReleaseKeystore) {
+                    signingConfigs.getByName("release")
+                } else {
+                    // Mobile Sign-off Day 2 — see the hasRealReleaseKeystore
+                    // comment above for why this fallback exists rather than
+                    // failing the build.
+                    signingConfigs.getByName("debug")
+                }
         }
     }
 

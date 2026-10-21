@@ -8024,3 +8024,24 @@ wrappers): `adminFinancialView.ts`, `advanceDeliveryOrderStatus.ts`, `advanceDin
 `staffPermissionOverrides.ts`, `submitDineInOrder.ts`, `submitStockCount.ts`,
 `tableSessionTransfer.ts`, `transitionKitchenWorkItem.ts`, `trustedDevice.ts`,
 `updateBranchOperatingHours.ts`, `updateTakeawayOperationStatus.ts`.
+
+## Hafta Kapanışı Faz 2 (Salı, Madde 3): Mobil Derleme/İmzalama (2026-10-21)
+
+Day 2's final item. **Android — wired**: `android/app/build.gradle.kts` reads `android/
+key.properties` (gitignored; the original Flutter scaffold's `.gitignore` already listed
+`key.properties`/`**/*.keystore`/`**/*.jks`, never previously used) for real release signing,
+falling back to the debug signing config (not a hard build failure) whenever the file or its
+`storeFile` doesn't exist — verified with a real `flutter build apk --debug` run, which correctly
+printed the fallback warning and produced a working APK. New committed
+`android/key.properties.example` documents the format and the `keytool` command to generate a new
+release keystore.
+
+**iOS — deliberately left to manual Xcode steps, not a `project.pbxproj` hand-edit** — see **ADR-051**
+(`docs/decisions.md`) for the full reasoning: `ios/config/README.md`'s own prior, documented decision
+against hand-editing this file (no macOS/Xcode/iOS-CI in this environment to verify a change doesn't
+corrupt it) applies identically here, and `DEVELOPMENT_TEAM` is the user's own Apple Developer Team
+ID — not something this environment can supply. Confirmed with the user before proceeding rather than
+treating the smaller edit size as an implicit exception to the existing precedent.
+
+New/changed files: `android/app/build.gradle.kts`, `android/key.properties.example` (new),
+`docs/decisions.md`, `docs/feature_status.md`.
