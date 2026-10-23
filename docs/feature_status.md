@@ -8079,3 +8079,43 @@ re-enabled later).
 New/changed files: `lib/features/admin/presentation/screens/admin_shell_screen.dart`,
 `test/features/admin/presentation/admin_shell_screen_test.dart`, `docs/decisions.md`,
 `docs/feature_status.md`.
+
+## Hafta Kapanışı Faz 4 (Perşembe): Full Regresyon + İlk Staging Deploy Ön Koşul Denetimi (2026-10-22)
+
+Pure investigation/audit, no code changed. Re-confirmed the full verification bar: `npx tsc
+--noEmit` clean; Firestore Rules suite 420/420 (unchanged since the ADR-050 commit — zero diff to
+`functions/`/`firestore.rules` since then, so the prior run still stands); Functions emulator suite
+2077/2078 (same single, pre-existing, unrelated `dineInGuestKitchenIntegration.test.ts` failure);
+`flutter analyze`/`flutter test` clean, 3687/3687.
+
+**Cloud Functions first-ever deploy to `abakus-one-staging` — audited directly against the real
+project via Firebase CLI (already authenticated, real access confirmed)**:
+
+- **Blocker — no Firestore database provisioned at all**: `firebase firestore:databases:list
+  --project abakus-one-staging` → "No databases found." Must be created (Console or `firebase
+  firestore:databases:create`) before any Firestore-touching deploy.
+- **Blocker — 2 required secrets never set**: `CUSTOMER_PHONE_SEARCH_HMAC_SECRET`
+  (`customerDirectoryConfig.ts`) and `GOOGLE_PLACES_SERVER_KEY` (`deliveryPlaces.ts`), both
+  `defineSecret` with no default — confirmed absent via a real (404) `functions:secrets:access`
+  call against staging, not assumed. Must be set via `firebase functions:secrets:set <NAME>
+  --project abakus-one-staging` before deploy.
+- **Unverifiable from this environment**: Blaze billing plan status (no `gcloud` CLI here, Firebase
+  CLI's own `projects:list` doesn't surface it) — needs manual Console confirmation; Cloud Functions
+  Gen 2 and the 3 scheduled functions (`reservationNotificationDelivery`/`reservationSweep`/
+  `takeawayOperationsSweep`) both require it.
+- **No `staging` alias in `.firebaserc`** — only `default: demo-abakus-one-emulator` (emulator-only,
+  not a deployable project). Every real deploy command needs an explicit `--project
+  abakus-one-staging` until an alias is added.
+- First deploy will prompt to enable the Cloud Scheduler API (for the 3 scheduled functions) —
+  needs an interactive approval or pre-enabling via Console, not deployable from a pure
+  non-interactive run.
+- 3 extra Firebase projects found beyond the 3 CLAUDE.md documents (`abakus-980b3`, `abakus-b5623`,
+  `abakus-one-dev-4bf2e`) — confirmed by the user as abandoned/unused experiments, not relevant to
+  this deploy.
+
+**Correction during the audit**: a `firebase target:apply storage ...` probe command had a real,
+unintended side effect (wrote a bogus target mapping into `.firebaserc` under the wrong project).
+Caught and reverted via `git checkout -- .firebaserc` before this entry was written — `.firebaserc`
+is unchanged from before this audit.
+
+No deploy was attempted — this phase was explicitly investigation/summary only.
