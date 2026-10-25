@@ -8119,3 +8119,44 @@ Caught and reverted via `git checkout -- .firebaserc` before this entry was writ
 is unchanged from before this audit.
 
 No deploy was attempted — this phase was explicitly investigation/summary only.
+
+## Hafta Kapanışı Faz 5 (Cuma): İlk Staging Deploy — abakus-one-staging (2026-10-25)
+
+First-ever real deploy to `abakus-one-staging`, following up on Thursday's audit. User completed the
+3 prerequisites (Firestore database created, Storage bucket/App Engine provisioned, the 2 required
+secrets set, Blaze plan confirmed active) before this started.
+
+**Result**: Firestore Rules + Indexes ✅, Storage Rules ✅, Cloud Functions ✅ — **169 functions live**.
+
+**Issues hit and resolved, in order**:
+1. `ENFORCE_APP_CHECK` Parameter had no value for this project and `firebase deploy` in
+   non-interactive mode can't prompt for one, even with a coded default. Fixed by creating
+   `functions/.env.abakus-one-staging` (`ENFORCE_APP_CHECK=false`, matching the coded default
+   exactly — a committed, shared-config file per Firebase's own `.env.<project-id>` convention,
+   distinct from the gitignored `.env.local`).
+2. `Can't find the storage bucket region` — the project had never had its default Storage bucket/App
+   Engine provisioned. User resolved via the Firebase Console.
+3. `finalizeCustomerPhotoUpload`'s intentional `retry: true` failure policy required an explicit
+   `--force` confirmation on first deploy (billing-awareness confirmation, not a real problem — this
+   retry policy is a deliberately tested mechanism, not new).
+4. Transient `429 Quota Exceeded` errors across many `us-central1` functions during creation —
+   self-resolved via Firebase CLI's own built-in retry loop within the same run.
+5. 9 Firestore-trigger functions in `europe-west1` (`onOrderCreated`/`onOrderCompleted`/etc.) failed
+   with "Permission denied while using the Eventarc Service Agent" — a well-documented, transient
+   IAM-propagation delay from Eventarc having just been enabled for this project during this same
+   deploy. Resolved itself on a second `--force` retry a few minutes later, no code/config change
+   needed.
+6. `advanceReservationPreorderOrderStatus`'s invoker IAM policy failed to set on the first attempt
+   ("may not have the roles/functions.admin IAM role") — did not recur on retry, confirming it was
+   the same class of transient propagation delay, not an actual missing permission (every other
+   function's invoker policy set correctly both times).
+
+**New finding, time-sensitive**: the deploy log surfaced `Runtime Node.js 20 was deprecated on
+2026-04-30 and will be decommissioned on 2026-10-30` — **6 days from this entry's date**. After that
+date this functions codebase becomes undeployable on Node 20 entirely. Upgrading `functions/
+package.json`'s `engines.node` (currently `"20"`) to a current LTS, and `firebase-functions` itself
+(CLI also flagged it as outdated, warns of breaking changes on upgrade), is now an urgent, dated
+follow-up — not yet scheduled as its own task.
+
+New/changed files: `functions/.env.abakus-one-staging` (new, committed per Firebase's own
+project-level `.env.<project-id>` convention), `docs/feature_status.md`.
