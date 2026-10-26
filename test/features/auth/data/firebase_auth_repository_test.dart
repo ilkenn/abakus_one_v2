@@ -1,10 +1,11 @@
 import 'package:abakus_one_v2/features/auth/data/repositories/auth_repository.dart';
-import 'package:abakus_one_v2/features/auth/data/repositories/firebase_auth_client.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/firebase_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/otp_challenge.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../core/services/auth/fake_firebase_auth_client.dart';
 
 class _FakeSessionStorage implements SessionStorage {
   AuthSession? stored;
@@ -19,52 +20,15 @@ class _FakeSessionStorage implements SessionStorage {
   Future<void> clearSession() async => stored = null;
 }
 
-/// A deterministic fake — no real Firebase SDK involved. [verifyPhoneNumber]
-/// always issues a fixed `verificationId` per phone number;
-/// [confirmSmsCode] only succeeds for [validSmsCode].
-class _FakeFirebaseAuthClient implements FirebaseAuthClient {
-  static const validSmsCode = '654321';
-
-  bool throwOnVerify = false;
-  bool signOutCalled = false;
-  int verifyCallCount = 0;
-
-  @override
-  Future<String> verifyPhoneNumber(String phoneNumber) async {
-    verifyCallCount++;
-    if (throwOnVerify) {
-      throw const FirebaseAuthClientException(
-          'invalid-phone-number', 'Bad number.');
-    }
-    return 'verification-id-for-$phoneNumber';
-  }
-
-  @override
-  Future<FirebaseAuthResult> confirmSmsCode({
-    required String verificationId,
-    required String smsCode,
-  }) async {
-    if (smsCode != validSmsCode) {
-      throw const FirebaseAuthClientException(
-          'invalid-verification-code', 'Wrong code.');
-    }
-    return const FirebaseAuthResult(
-        uid: 'firebase-uid-1', phoneNumber: '+905321234567');
-  }
-
-  @override
-  Future<void> signOut() async => signOutCalled = true;
-}
-
 void main() {
   const phoneNumber = '+905321234567';
   late _FakeSessionStorage storage;
-  late _FakeFirebaseAuthClient client;
+  late FakeFirebaseAuthClient client;
   late FirebaseAuthRepository repository;
 
   setUp(() {
     storage = _FakeSessionStorage();
-    client = _FakeFirebaseAuthClient();
+    client = FakeFirebaseAuthClient(validSmsCode: '654321');
     repository = FirebaseAuthRepository(
       client: client,
       sessionStorage: storage,
@@ -100,12 +64,12 @@ void main() {
 
     final result = await repository.verifyOtp(
       phoneNumber: phoneNumber,
-      code: _FakeFirebaseAuthClient.validSmsCode,
+      code: client.validSmsCode,
     );
 
     expect(result, OtpVerificationResult.success);
     expect(storage.stored, isNotNull);
-    expect(storage.stored!.uid, 'firebase-uid-1');
+    expect(storage.stored!.uid, 'fake-phone-uid-$phoneNumber');
     expect(storage.stored!.phoneNumber, phoneNumber);
   });
 
@@ -123,7 +87,7 @@ void main() {
   test('verifyOtp with no prior requestOtp returns expired', () async {
     final result = await repository.verifyOtp(
       phoneNumber: phoneNumber,
-      code: _FakeFirebaseAuthClient.validSmsCode,
+      code: client.validSmsCode,
     );
 
     expect(result, OtpVerificationResult.expired);

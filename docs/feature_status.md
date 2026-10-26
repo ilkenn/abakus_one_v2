@@ -8160,3 +8160,47 @@ follow-up — not yet scheduled as its own task.
 
 New/changed files: `functions/.env.abakus-one-staging` (new, committed per Firebase's own
 project-level `.env.<project-id>` convention), `docs/feature_status.md`.
+
+## StaffSignInScreen: real phone/OTP sign-in alongside email/password (2026-10-25)
+
+Added for staging device testing: `+905337106414` was granted `platformOwner` (via the real
+`grantPlatformRole` callable) and a full-role (`staff`/`manager`/`admin`/`tenantOwner`/`courier`)
+`org-1` membership one-time, out-of-band, with real GCP service-account credentials (never from
+this app) — but the real admin sign-in screen (`StaffSignInScreen`) only ever accepted email/
+password, so that account had no way to actually sign into `AdminShellScreen` through the app's
+real UI. `/admin`/`/platform` remain their own, wholly separate identity system from the customer
+signed-in/guest router guard (`AppRouteGuard`'s own documented rule) — unchanged; this adds a second
+credential method to `StaffSignInScreen` itself, never a bridge from the customer phone flow.
+
+**`StaffSignInScreen`** now has an E-posta/Telefon `SegmentedButton` toggle. The phone path reuses
+the exact same Firebase Auth phone-verification mechanism the customer app's own
+`FirebaseAuthRepository` already proves works (`FirebaseAuthClient.verifyPhoneNumber`/
+`confirmSmsCode`) — a real cross-feature data-layer import from `features/auth/data/`, flagged as a
+candidate for a future `core/services/auth/` relocation (mirroring where `EmailPasswordAuthClient`
+already lives) rather than silently moved now, since CLAUDE.md requires explicit approval for file
+moves and this wasn't one.
+
+**`StaffAuthRepository`** gained `startPhoneSignIn`/`completePhoneSignIn`, sharing the exact same
+claims-sync-and-build tail `signIn` already used (extracted into `_syncClaimsAndBuildSession`) — the
+two credential methods differ only in how the underlying Firebase credential is established, never
+in how authorization is derived afterward. That shared tail now also calls `syncOwnPlatformClaims`
+(best-effort, never denies a staff sign-in on failure — proven under `flutter test`, which has no
+real Firebase app, via the `[core/no-app]` error being caught and ignored) so a signed-in Platform
+Owner's token carries `platformRole` without a separate manual step, for both credential methods.
+
+**Tests**: new shared `test/core/services/auth/fake_firebase_auth_client.dart` (promoted from an
+inline fake in `firebase_auth_repository_test.dart` once this became the 2nd real consumer, matching
+`FakeEmailPasswordAuthClient`'s own established convention) backs 4 new repository-level tests
+(`firebase_staff_auth_repository_test.dart`) and 7 new widget tests
+(`staff_sign_in_screen_test.dart`: toggle, validation, send/verify success and failure, "Numarayı
+Değiştir" reset). `flutter analyze` clean; `flutter test` 3698/3698 (+11 from this change, zero
+regressions).
+
+New/changed files: `lib/features/admin/data/staff_auth_repository.dart`,
+`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`,
+`lib/features/admin/presentation/screens/staff_sign_in_screen.dart`,
+`test/features/admin/data/firebase_staff_auth_repository_test.dart`,
+`test/features/admin/presentation/screens/staff_sign_in_screen_test.dart`,
+`test/features/admin/presentation/staff_claims_authorization_integration_test.dart`,
+`test/features/auth/data/firebase_auth_repository_test.dart`,
+`test/core/services/auth/fake_firebase_auth_client.dart` (new), `docs/feature_status.md`.

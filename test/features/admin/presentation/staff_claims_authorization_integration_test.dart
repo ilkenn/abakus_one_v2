@@ -15,6 +15,7 @@ import 'package:abakus_one_v2/core/services/feature_flags/feature_flags_provider
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
 
 import '../../../core/services/auth/fake_email_password_auth_client.dart';
+import '../../../core/services/auth/fake_firebase_auth_client.dart';
 import '../../../core/services/auth/fake_staff_claims_sync_client.dart';
 import '../../entitlements/test_support/entitlement_test_fixtures.dart';
 import '../test_support/admin_test_fixtures.dart';
@@ -52,6 +53,7 @@ void main() {
     ));
     final repository = FirebaseStaffAuthRepository(
       authClient: authClient,
+      phoneAuthClient: FakeFirebaseAuthClient(),
       staffMemberRepository: staffMemberRepository,
       sessionDuration: () => const Duration(hours: 1),
       claimsSyncClient: FakeStaffClaimsSyncClient(

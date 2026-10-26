@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/services/auth/email_password_auth_client.dart';
 import '../../../../core/services/auth/staff_claims_sync_client.dart';
+import '../../../auth/data/repositories/firebase_auth_client.dart';
 import '../../../../core/services/logging/log_level.dart';
 import '../../../../core/services/logging/logging_provider.dart';
 import '../../data/firebase_staff_member_repository.dart';
@@ -158,6 +159,7 @@ final staffAuthRepositoryProvider = Provider<StaffAuthRepository>((ref) {
   }
   return FirebaseStaffAuthRepository(
     authClient: DefaultEmailPasswordAuthClient(),
+    phoneAuthClient: DefaultFirebaseAuthClient(),
     staffMemberRepository: ref.watch(staffMemberRepositoryProvider),
     sessionDuration: () => const Duration(hours: 12),
     claimsSyncClient: DefaultStaffClaimsSyncClient(),

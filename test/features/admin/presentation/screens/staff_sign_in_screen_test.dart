@@ -16,12 +16,24 @@ import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart'
 /// for the sign-in hang this wave found and fixed (`StaffSignInScreen
 /// ._signIn` previously had no `try`/`catch` around this exact call).
 class _ScriptedStaffAuthRepository implements StaffAuthRepository {
-  _ScriptedStaffAuthRepository(this._script);
+  _ScriptedStaffAuthRepository(
+    this._script, {
+    List<Future<String> Function()>? phoneStartScript,
+    List<Future<ActorSession?> Function()>? phoneCompleteScript,
+  })  : _phoneStartScript = phoneStartScript,
+        _phoneCompleteScript = phoneCompleteScript;
   final List<Future<ActorSession?> Function()> _script;
+  final List<Future<String> Function()>? _phoneStartScript;
+  final List<Future<ActorSession?> Function()>? _phoneCompleteScript;
   int callCount = 0;
   String? lastEmail;
   String? lastPassword;
+  String? lastPhoneNumber;
+  String? lastVerificationId;
+  String? lastSmsCode;
   int signOutCallCount = 0;
+  int phoneStartCallCount = 0;
+  int phoneCompleteCallCount = 0;
 
   /// Records `'signOut'`/`'signIn'` in call order — used to prove a stale
   /// session is cleared BEFORE the new sign-in attempt, not merely that
@@ -38,6 +50,36 @@ class _ScriptedStaffAuthRepository implements StaffAuthRepository {
     lastPassword = password;
     final step = _script[callCount.clamp(0, _script.length - 1)];
     callCount++;
+    return step();
+  }
+
+  @override
+  Future<String> startPhoneSignIn(String phoneNumber) {
+    callOrder.add('startPhoneSignIn');
+    lastPhoneNumber = phoneNumber;
+    final script = _phoneStartScript;
+    if (script == null) {
+      throw UnimplementedError('No phoneStartScript configured for this test.');
+    }
+    final step = script[phoneStartCallCount.clamp(0, script.length - 1)];
+    phoneStartCallCount++;
+    return step();
+  }
+
+  @override
+  Future<ActorSession?> completePhoneSignIn({
+    required String verificationId,
+    required String smsCode,
+  }) {
+    callOrder.add('completePhoneSignIn');
+    lastVerificationId = verificationId;
+    lastSmsCode = smsCode;
+    final script = _phoneCompleteScript;
+    if (script == null) {
+      throw UnimplementedError('No phoneCompleteScript configured for this test.');
+    }
+    final step = script[phoneCompleteCallCount.clamp(0, script.length - 1)];
+    phoneCompleteCallCount++;
     return step();
   }
 
@@ -215,5 +257,182 @@ void main() {
       reason: 'the dev-admin shortcut must land directly on the POS branch '
           'overview, never the shell\'s general default landing item',
     );
+  });
+
+  group('phone sign-in', () {
+    Future<void> switchToPhone(WidgetTester tester) async {
+      await tester.tap(find.text('Telefon'));
+      await tester.pump();
+    }
+
+    testWidgets(
+        'the phone toggle switches to the phone form, hiding the email '
+        'fields entirely', (tester) async {
+      await _pump(tester, _ScriptedStaffAuthRepository([]));
+      await switchToPhone(tester);
+
+      expect(find.widgetWithText(TextFormField, 'E-posta'), findsNothing);
+      expect(find.widgetWithText(TextFormField, 'Şifre'), findsNothing);
+      expect(find.widgetWithText(TextFormField, 'Telefon Numarası'),
+          findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Kod Gönder'),
+          findsOneWidget);
+    });
+
+    testWidgets(
+        'an invalid phone number shows a validation error and never calls '
+        'startPhoneSignIn', (tester) async {
+      final repository = _ScriptedStaffAuthRepository([]);
+      await _pump(tester, repository);
+      await switchToPhone(tester);
+
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Telefon Numarası'), '123');
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
+      await tester.pump();
+
+      expect(repository.phoneStartCallCount, 0);
+      expect(find.textContaining('Geçerli bir telefon numarası girin'),
+          findsOneWidget);
+    });
+
+    testWidgets(
+        'sending a code signs out any stale session first, normalizes the '
+        'number to +90, calls startPhoneSignIn, and shows the code-entry '
+        'step on success', (tester) async {
+      final repository = _ScriptedStaffAuthRepository(
+        [],
+        phoneStartScript: [() async => 'verification-id-1'],
+      );
+      await _pump(tester, repository);
+      await switchToPhone(tester);
+
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Telefon Numarası'),
+          '5337106414');
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(repository.callOrder, ['signOut', 'startPhoneSignIn']);
+      expect(repository.lastPhoneNumber, '+905337106414');
+      expect(find.widgetWithText(TextFormField, 'Doğrulama Kodu'),
+          findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Doğrula ve Giriş Yap'),
+          findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'Telefon Numarası'),
+          findsNothing);
+    });
+
+    testWidgets(
+        'a StaffAuthUnavailableException from startPhoneSignIn shows its '
+        'message and stays on the number-entry step', (tester) async {
+      final repository = _ScriptedStaffAuthRepository(
+        [],
+        phoneStartScript: [
+          () => Future<String>.error(const StaffAuthUnavailableException(
+              'Kod gönderilemedi (zaman aşımı) — tekrar deneyin.')),
+        ],
+      );
+      await _pump(tester, repository);
+      await switchToPhone(tester);
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Telefon Numarası'),
+          '5337106414');
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Kod gönderilemedi (zaman aşımı) — tekrar deneyin.'),
+          findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'Telefon Numarası'),
+          findsOneWidget,
+          reason: 'a failed send must not advance to the code-entry step');
+    });
+
+    testWidgets(
+        'verifying the right code calls completePhoneSignIn with the '
+        'entered code and verificationId, and reaches the real Admin '
+        'shell on success', (tester) async {
+      final repository = _ScriptedStaffAuthRepository(
+        [],
+        phoneStartScript: [() async => 'verification-id-1'],
+        phoneCompleteScript: [() async => _session],
+      );
+      await _pump(tester, repository);
+      await switchToPhone(tester);
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Telefon Numarası'),
+          '5337106414');
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Doğrulama Kodu'), '123456');
+      await tester.tap(
+          find.widgetWithText(ElevatedButton, 'Doğrula ve Giriş Yap'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(repository.lastVerificationId, 'verification-id-1');
+      expect(repository.lastSmsCode, '123456');
+      expect(find.byType(AdminShellScreen), findsOneWidget);
+    });
+
+    testWidgets(
+        'an invalid code (completePhoneSignIn returns null) shows the '
+        'invalid-credential message, never reaching the Admin shell',
+        (tester) async {
+      final repository = _ScriptedStaffAuthRepository(
+        [],
+        phoneStartScript: [() async => 'verification-id-1'],
+        phoneCompleteScript: [() async => null],
+      );
+      await _pump(tester, repository);
+      await switchToPhone(tester);
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Telefon Numarası'),
+          '5337106414');
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Doğrulama Kodu'), '000000');
+      await tester.tap(
+          find.widgetWithText(ElevatedButton, 'Doğrula ve Giriş Yap'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(AdminShellScreen), findsNothing);
+      expect(find.text('Giriş başarısız. Bilgilerinizi kontrol edin.'),
+          findsOneWidget);
+    });
+
+    testWidgets(
+        '"Numarayı Değiştir" resets back to the number-entry step, '
+        'clearing the error', (tester) async {
+      final repository = _ScriptedStaffAuthRepository(
+        [],
+        phoneStartScript: [() async => 'verification-id-1'],
+      );
+      await _pump(tester, repository);
+      await switchToPhone(tester);
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Telefon Numarası'),
+          '5337106414');
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.widgetWithText(TextButton, 'Numarayı Değiştir'));
+      await tester.pump();
+
+      expect(find.widgetWithText(TextFormField, 'Telefon Numarası'),
+          findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Kod Gönder'),
+          findsOneWidget);
+    });
   });
 }

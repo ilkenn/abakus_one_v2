@@ -9,6 +9,7 @@ import '../../../../core/services/logging/logging_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../pos/domain/authorization/actor_session.dart';
 import '../../application/use_cases/bootstrap_first_admin_account.dart';
 import '../../data/staff_auth_repository.dart';
 import 'admin_shell_screen.dart';
@@ -39,13 +40,27 @@ class StaffSignInScreen extends ConsumerStatefulWidget {
   ConsumerState<StaffSignInScreen> createState() => _StaffSignInScreenState();
 }
 
+/// Which credential form [StaffSignInScreen] currently shows — a toggle,
+/// not two separate screens, since both land on the exact same success
+/// path ([AdminShellScreen]) and share the same busy/error state.
+enum _SignInMethod { email, phone }
+
 class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _smsCodeController = TextEditingController();
   String? _error;
   bool _busy = false;
   bool _showBootstrap = false;
+  _SignInMethod _method = _SignInMethod.email;
+
+  /// Set once [_sendPhoneCode] succeeds — switches the phone form from
+  /// "enter a number" to "enter the code just sent to it." `null` means no
+  /// challenge is currently live (including after a successful/failed
+  /// verification, so a retry always starts from a clean number field).
+  String? _phoneVerificationId;
 
   /// PC Yönetici İnceleme Modu — a local-development-only shortcut onto
   /// this screen's own real `_signIn()` (real Firebase email/password
@@ -95,7 +110,102 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _phoneController.dispose();
+    _smsCodeController.dispose();
     super.dispose();
+  }
+
+  /// Mirrors `TurkishPhoneNumber.normalize` (`features/auth/domain/
+  /// phone_number.dart`) exactly — duplicated locally rather than imported
+  /// across features for a 10-line, stateless, single-purpose check (the
+  /// customer phone flow's own domain utility isn't yet promoted to
+  /// `core`/`shared`, and this screen already imports
+  /// `FirebaseAuthClient` from that feature's data layer for the real
+  /// verification call itself — see that import's own comment on the
+  /// cross-feature-reuse question this raises).
+  static String? _normalizeTurkishPhoneNumber(String rawLocalInput) {
+    final digitsOnly = rawLocalInput.replaceAll(RegExp(r'[^0-9]'), '');
+    if (!RegExp(r'^5\d{9}$').hasMatch(digitsOnly)) return null;
+    return '+90$digitsOnly';
+  }
+
+  void _completeSignIn(ActorSession? session) {
+    if (!mounted) return;
+    if (session == null) {
+      setState(() => _error = 'Giriş başarısız. Bilgilerinizi kontrol edin.');
+      return;
+    }
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const AdminShellScreen()),
+    );
+  }
+
+  Future<void> _sendPhoneCode() async {
+    final normalized = _normalizeTurkishPhoneNumber(_phoneController.text);
+    if (normalized == null) {
+      setState(() => _error = 'Geçerli bir telefon numarası girin (5XX XXX XX XX).');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      try {
+        await ref.read(staffSessionControllerProvider).signOut();
+      } catch (_) {
+        // Best-effort — see `_signIn`'s own identical comment on why a
+        // failed sign-out must never block the attempt that follows it.
+      }
+      final verificationId = await ref
+          .read(staffAuthRepositoryProvider)
+          .startPhoneSignIn(normalized);
+      if (!mounted) return;
+      setState(() {
+        _phoneVerificationId = verificationId;
+        _smsCodeController.clear();
+      });
+    } on StaffAuthUnavailableException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Beklenmeyen bir sorun oluştu — tekrar deneyin.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _verifyPhoneCode() async {
+    final verificationId = _phoneVerificationId;
+    if (verificationId == null) return;
+    final code = _smsCodeController.text.trim();
+    if (code.isEmpty) {
+      setState(() => _error = 'Lütfen size gelen kodu girin.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    ActorSession? session;
+    try {
+      session = await ref.read(staffAuthRepositoryProvider).completePhoneSignIn(
+            verificationId: verificationId,
+            smsCode: code,
+          );
+    } on StaffAuthUnavailableException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.message);
+      return;
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Beklenmeyen bir sorun oluştu — tekrar deneyin.');
+      return;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    _completeSignIn(session);
   }
 
   Future<void> _signIn({String? initialAdminNavItemId}) async {
@@ -241,33 +351,89 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                TextFormField(
-                  controller: _emailController,
-                  enabled: !_busy,
-                  keyboardType: TextInputType.emailAddress,
-                  autofillHints: const [AutofillHints.email],
-                  decoration: const InputDecoration(
-                    labelText: 'E-posta',
-                    prefixIcon: Icon(Icons.mail_outline_rounded),
-                  ),
-                  validator: (value) => (value == null || value.trim().isEmpty)
-                      ? 'Lütfen e-posta adresinizi girin'
-                      : null,
+                SegmentedButton<_SignInMethod>(
+                  segments: const [
+                    ButtonSegment(
+                      value: _SignInMethod.email,
+                      label: Text('E-posta'),
+                      icon: Icon(Icons.mail_outline_rounded),
+                    ),
+                    ButtonSegment(
+                      value: _SignInMethod.phone,
+                      label: Text('Telefon'),
+                      icon: Icon(Icons.phone_outlined),
+                    ),
+                  ],
+                  selected: {_method},
+                  onSelectionChanged: _busy
+                      ? null
+                      : (selection) => setState(() {
+                            _method = selection.first;
+                            _error = null;
+                          }),
                 ),
-                const SizedBox(height: AppSpacing.md),
-                TextFormField(
-                  controller: _passwordController,
-                  enabled: !_busy,
-                  obscureText: true,
-                  autofillHints: const [AutofillHints.password],
-                  decoration: const InputDecoration(
-                    labelText: 'Şifre',
-                    prefixIcon: Icon(Icons.lock_outline_rounded),
+                const SizedBox(height: AppSpacing.lg),
+                if (_method == _SignInMethod.email) ...[
+                  TextFormField(
+                    controller: _emailController,
+                    enabled: !_busy,
+                    keyboardType: TextInputType.emailAddress,
+                    autofillHints: const [AutofillHints.email],
+                    decoration: const InputDecoration(
+                      labelText: 'E-posta',
+                      prefixIcon: Icon(Icons.mail_outline_rounded),
+                    ),
+                    validator: (value) =>
+                        (value == null || value.trim().isEmpty)
+                            ? 'Lütfen e-posta adresinizi girin'
+                            : null,
                   ),
-                  validator: (value) => (value == null || value.isEmpty)
-                      ? 'Lütfen şifrenizi girin'
-                      : null,
-                ),
+                  const SizedBox(height: AppSpacing.md),
+                  TextFormField(
+                    controller: _passwordController,
+                    enabled: !_busy,
+                    obscureText: true,
+                    autofillHints: const [AutofillHints.password],
+                    decoration: const InputDecoration(
+                      labelText: 'Şifre',
+                      prefixIcon: Icon(Icons.lock_outline_rounded),
+                    ),
+                    validator: (value) => (value == null || value.isEmpty)
+                        ? 'Lütfen şifrenizi girin'
+                        : null,
+                  ),
+                ] else ...[
+                  if (_phoneVerificationId == null)
+                    TextFormField(
+                      controller: _phoneController,
+                      enabled: !_busy,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Telefon Numarası',
+                        prefixIcon: Icon(Icons.phone_outlined),
+                        prefixText: '+90 ',
+                      ),
+                    )
+                  else ...[
+                    Text(
+                      '+90 ${_phoneController.text} numarasına gönderilen '
+                      'kodu girin.',
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.textSecondary),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    TextFormField(
+                      controller: _smsCodeController,
+                      enabled: !_busy,
+                      keyboardType: TextInputType.number,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Doğrulama Kodu',
+                        prefixIcon: Icon(Icons.sms_outlined),
+                      ),
+                    ),
+                  ],
+                ],
                 if (_error != null) ...[
                   const SizedBox(height: AppSpacing.md),
                   Text(_error!,
@@ -275,62 +441,101 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
                           .copyWith(color: AppColors.error)),
                 ],
                 const SizedBox(height: AppSpacing.lg),
-                ElevatedButton(
-                  onPressed: _busy ? null : _signIn,
-                  style: ElevatedButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(vertical: AppSpacing.md),
-                  ),
-                  child: _busy
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text('Giriş Yap'),
-                ),
-                if (_devAdminShortcutAvailable) ...[
-                  const SizedBox(height: AppSpacing.sm),
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _signInAsDevAdmin,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.warning,
-                      side: const BorderSide(color: AppColors.warning),
+                if (_method == _SignInMethod.email) ...[
+                  ElevatedButton(
+                    onPressed: _busy ? null : _signIn,
+                    style: ElevatedButton.styleFrom(
                       padding:
                           const EdgeInsets.symmetric(vertical: AppSpacing.md),
                     ),
-                    icon: const Icon(Icons.bug_report_outlined),
-                    label: const Text('Dev Admin ile Gir (Yalnızca Development)'),
+                    child: _busy
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Giriş Yap'),
                   ),
-                ],
-                const SizedBox(height: AppSpacing.xl),
-                TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () => setState(() => _showBootstrap = true),
-                  child: const Text('İlk yönetici hesabını oluştur'),
-                ),
-                if (_showBootstrap) ...[
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    'Yalnızca hiç personel hesabı kayıtlı değilse çalışır — '
-                    'yukarıdaki e-posta/şifre ile yeni bir yönetici hesabı '
-                    'oluşturulur.',
-                    style: AppTypography.bodySmall
-                        .copyWith(color: AppColors.textSecondary),
+                  if (_devAdminShortcutAvailable) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    OutlinedButton.icon(
+                      onPressed: _busy ? null : _signInAsDevAdmin,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.warning,
+                        side: const BorderSide(color: AppColors.warning),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: AppSpacing.md),
+                      ),
+                      icon: const Icon(Icons.bug_report_outlined),
+                      label:
+                          const Text('Dev Admin ile Gir (Yalnızca Development)'),
+                    ),
+                  ],
+                  const SizedBox(height: AppSpacing.xl),
+                  TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() => _showBootstrap = true),
+                    child: const Text('İlk yönetici hesabını oluştur'),
                   ),
-                  const SizedBox(height: AppSpacing.sm),
-                  OutlinedButton(
-                    onPressed: _busy ? null : _bootstrapFirstAdmin,
-                    style: OutlinedButton.styleFrom(
+                  if (_showBootstrap) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(
+                      'Yalnızca hiç personel hesabı kayıtlı değilse çalışır — '
+                      'yukarıdaki e-posta/şifre ile yeni bir yönetici hesabı '
+                      'oluşturulur.',
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.textSecondary),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    OutlinedButton(
+                      onPressed: _busy ? null : _bootstrapFirstAdmin,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            vertical: AppSpacing.md),
+                      ),
+                      child: const Text('İlk Yönetici Hesabını Oluştur'),
+                    ),
+                  ],
+                ] else ...[
+                  ElevatedButton(
+                    onPressed: _busy
+                        ? null
+                        : (_phoneVerificationId == null
+                            ? _sendPhoneCode
+                            : _verifyPhoneCode),
+                    style: ElevatedButton.styleFrom(
                       padding:
                           const EdgeInsets.symmetric(vertical: AppSpacing.md),
                     ),
-                    child: const Text('İlk Yönetici Hesabını Oluştur'),
+                    child: _busy
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(_phoneVerificationId == null
+                            ? 'Kod Gönder'
+                            : 'Doğrula ve Giriş Yap'),
                   ),
+                  if (_phoneVerificationId != null) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    TextButton(
+                      onPressed: _busy
+                          ? null
+                          : () => setState(() {
+                                _phoneVerificationId = null;
+                                _error = null;
+                              }),
+                      child: const Text('Numarayı Değiştir'),
+                    ),
+                  ],
                 ],
               ],
             ),

@@ -10,6 +10,7 @@ import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart'
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/services/auth/fake_email_password_auth_client.dart';
+import '../../../core/services/auth/fake_firebase_auth_client.dart';
 import '../../../core/services/auth/fake_staff_claims_sync_client.dart';
 import '../test_support/admin_test_fixtures.dart';
 
@@ -28,6 +29,7 @@ void main() {
           email: 'manager@abakus.test', password: 'S3curePass!');
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(
@@ -57,6 +59,7 @@ void main() {
           email: 'owner@abakus.test', password: 'S3curePass!');
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(
@@ -97,6 +100,7 @@ void main() {
       ));
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: memberRepository,
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(
@@ -143,6 +147,7 @@ void main() {
       ));
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: memberRepository,
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(
@@ -183,6 +188,7 @@ void main() {
       ));
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: memberRepository,
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient:
@@ -202,6 +208,7 @@ void main() {
       final claimsSyncClient = FakeStaffClaimsSyncClient();
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: claimsSyncClient,
@@ -224,6 +231,7 @@ void main() {
           email: 'manager@abakus.test', password: 'S3curePass!');
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(claimsToReturn: null),
@@ -245,6 +253,7 @@ void main() {
           email: 'manager@abakus.test', password: 'S3curePass!');
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         // The exact implementation `staffMemberRepositoryProvider` selects
         // in release builds — always returns null from every lookup.
         staffMemberRepository:
@@ -279,6 +288,7 @@ void main() {
           email: 'manager@abakus.test', password: 'S3curePass!');
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: _ThrowingStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(
@@ -306,6 +316,7 @@ void main() {
         'indefinite hang', () async {
       final repository = FirebaseStaffAuthRepository(
         authClient: FakeEmailPasswordAuthClient(neverResolvesSignIn: true),
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(),
@@ -329,6 +340,7 @@ void main() {
           email: 'manager@abakus.test', password: 'S3curePass!');
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(neverResolves: true),
@@ -353,6 +365,7 @@ void main() {
           email: 'manager@abakus.test', password: 'S3curePass!');
       final repository = FirebaseStaffAuthRepository(
         authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: _NeverResolvingStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(
@@ -393,6 +406,7 @@ void main() {
       );
       final repository = FirebaseStaffAuthRepository(
         authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: claimsSyncClient,
@@ -426,6 +440,7 @@ void main() {
       );
       final repository = FirebaseStaffAuthRepository(
         authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: claimsSyncClient,
@@ -450,6 +465,7 @@ void main() {
         () async {
       final repository = FirebaseStaffAuthRepository(
         authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(), // empty claims
@@ -471,6 +487,7 @@ void main() {
         'held, mirroring the pre-R.3A.2 StaffMember-based behavior', () async {
       final repository = FirebaseStaffAuthRepository(
         authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(
@@ -509,6 +526,7 @@ void main() {
       ));
       final repository = FirebaseStaffAuthRepository(
         authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: memberRepository,
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(
@@ -540,6 +558,7 @@ void main() {
         () async {
       final repository = FirebaseStaffAuthRepository(
         authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: _ThrowingStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(
@@ -571,6 +590,7 @@ void main() {
         'refreshSession too — never an indefinite hang', () async {
       final repository = FirebaseStaffAuthRepository(
         authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: FakeFirebaseAuthClient(),
         staffMemberRepository: InMemoryStaffMemberRepository(),
         sessionDuration: () => const Duration(hours: 1),
         claimsSyncClient: FakeStaffClaimsSyncClient(neverResolves: true),
@@ -587,6 +607,111 @@ void main() {
         repository.refreshSession(current),
         throwsA(isA<StaffAuthUnavailableException>()),
       );
+    });
+  });
+
+  group('FirebaseStaffAuthRepository phone sign-in', () {
+    test(
+        'startPhoneSignIn returns the real verificationId from the phone '
+        'client', () async {
+      final phoneClient = FakeFirebaseAuthClient();
+      final repository = FirebaseStaffAuthRepository(
+        authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: phoneClient,
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: StaffAuthorizationClaims.empty,
+        ),
+        organizationId: () => _testOrgId,
+      );
+
+      final verificationId =
+          await repository.startPhoneSignIn('+905337106414');
+
+      expect(verificationId, 'verification-id-for-+905337106414');
+      expect(phoneClient.verifyCallCount, 1);
+    });
+
+    test(
+        'startPhoneSignIn wraps a FirebaseAuthClientException as '
+        'StaffAuthUnavailableException, never a raw exception', () async {
+      final phoneClient = FakeFirebaseAuthClient()..throwOnVerify = true;
+      final repository = FirebaseStaffAuthRepository(
+        authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: phoneClient,
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: StaffAuthorizationClaims.empty,
+        ),
+        organizationId: () => _testOrgId,
+      );
+
+      await expectLater(
+        repository.startPhoneSignIn('+905337106414'),
+        throwsA(isA<StaffAuthUnavailableException>()),
+      );
+    });
+
+    test(
+        'completePhoneSignIn succeeds when the code is right and refreshed '
+        'claims carry a role for the org — same claims-authority contract '
+        'as the email path', () async {
+      final phoneClient = FakeFirebaseAuthClient(validSmsCode: '111222');
+      final repository = FirebaseStaffAuthRepository(
+        authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: phoneClient,
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: const StaffAuthorizationClaims(
+            organizationAccess: [_testOrgId],
+            rolesByOrganization: {
+              _testOrgId: ['admin'],
+            },
+            branchAccessByOrganization: {},
+          ),
+        ),
+        organizationId: () => _testOrgId,
+      );
+      final verificationId =
+          await repository.startPhoneSignIn('+905337106414');
+
+      final session = await repository.completePhoneSignIn(
+        verificationId: verificationId,
+        smsCode: '111222',
+      );
+
+      expect(session, isNotNull);
+      expect(session!.roles, {StaffRole.admin});
+      expect(session.organizationAccess, {_testOrgId});
+    });
+
+    test(
+        'completePhoneSignIn returns null for a wrong code — the same '
+        '"invalid credential" signal as a bad password, never a thrown '
+        'exception', () async {
+      final phoneClient = FakeFirebaseAuthClient();
+      final repository = FirebaseStaffAuthRepository(
+        authClient: FakeEmailPasswordAuthClient(),
+        phoneAuthClient: phoneClient,
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: StaffAuthorizationClaims.empty,
+        ),
+        organizationId: () => _testOrgId,
+      );
+      final verificationId =
+          await repository.startPhoneSignIn('+905337106414');
+
+      final session = await repository.completePhoneSignIn(
+        verificationId: verificationId,
+        smsCode: 'wrong-code',
+      );
+
+      expect(session, isNull);
     });
   });
 }

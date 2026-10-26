@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart' as functions;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
@@ -8,6 +9,16 @@ import '../../../core/services/auth/staff_claims_sync_client.dart';
 import '../../../core/services/logging/log_level.dart';
 import '../../../core/services/logging/logging_provider.dart';
 import '../../../core/services/logging/logging_service.dart';
+// `FirebaseAuthClient` lives under `features/auth/data/` (the customer
+// phone-OTP flow's own narrow Firebase Auth seam — see that file's own doc
+// comment: "mirrors CrashlyticsClient," already designed as reusable
+// infrastructure, not customer-private). Reused here as-is rather than
+// duplicated — a real cross-feature data-layer import CLAUDE.md's layering
+// rule doesn't explicitly address (only presentation-to-presentation is
+// named forbidden); flagged as a candidate for a future `core/services/
+// auth/` relocation (mirroring where `EmailPasswordAuthClient` already
+// lives) rather than silently moved now.
+import '../../auth/data/repositories/firebase_auth_client.dart';
 import '../../pos/domain/authorization/actor_session.dart';
 import '../domain/staff/staff_member.dart';
 import '../domain/staff/staff_member_status.dart';
@@ -65,6 +76,27 @@ abstract interface class StaffAuthRepository {
     required String password,
   });
 
+  /// Starts a real phone-verification challenge for [phoneNumber] (already
+  /// normalized to `+905XXXXXXXXX`) — the staff/admin-side counterpart to
+  /// the customer app's own `AuthRepository.requestOtp`, reusing the exact
+  /// same underlying Firebase Auth phone mechanism via [FirebaseAuthClient],
+  /// never a parallel implementation. Returns an opaque verificationId.
+  /// Throws [StaffAuthUnavailableException] if the request itself cannot be
+  /// sent (quota, malformed number, no connection) — never silently
+  /// swallowed.
+  Future<String> startPhoneSignIn(String phoneNumber);
+
+  /// Confirms [smsCode] against [verificationId] and, on success, runs the
+  /// exact same claims-sync path [signIn] does — the two differ only in how
+  /// the underlying Firebase credential is established (password vs. SMS
+  /// code), never in how authorization is derived afterward. Returns `null`
+  /// for an invalid/expired code or a credential that resolves to no real
+  /// staff role, exactly like [signIn] returning `null` for a bad password.
+  Future<ActorSession?> completePhoneSignIn({
+    required String verificationId,
+    required String smsCode,
+  });
+
   /// Re-derives [current]'s authorization fresh and rebuilds it, or returns
   /// `null` if it's no longer valid — "removed role takes effect
   /// immediately after session refresh." For [FirebaseStaffAuthRepository],
@@ -87,6 +119,20 @@ class ProductionUnavailableStaffAuthRepository implements StaffAuthRepository {
   Future<ActorSession?> signIn({
     required String email,
     required String password,
+  }) async =>
+      null;
+
+  @override
+  Future<String> startPhoneSignIn(String phoneNumber) async {
+    throw const StaffAuthUnavailableException(
+      'Telefon ile giriş şu anda kullanılamıyor.',
+    );
+  }
+
+  @override
+  Future<ActorSession?> completePhoneSignIn({
+    required String verificationId,
+    required String smsCode,
   }) async =>
       null;
 
@@ -133,6 +179,28 @@ class DevelopmentStaffAuthRepository implements StaffAuthRepository {
       organizationAccess: member.organizationAccess,
       issuedAt: now,
       expiresAt: now.add(_sessionDuration()),
+    );
+  }
+
+  /// This legacy test fixture (see class doc comment — "no longer wired
+  /// into any production provider") never claims phone-sign-in capability
+  /// it doesn't have, rather than fabricating one.
+  @override
+  Future<String> startPhoneSignIn(String phoneNumber) {
+    throw UnimplementedError(
+      'Phone sign-in is not supported by this legacy test fixture — use '
+      'FirebaseStaffAuthRepository.',
+    );
+  }
+
+  @override
+  Future<ActorSession?> completePhoneSignIn({
+    required String verificationId,
+    required String smsCode,
+  }) {
+    throw UnimplementedError(
+      'Phone sign-in is not supported by this legacy test fixture — use '
+      'FirebaseStaffAuthRepository.',
     );
   }
 
@@ -191,6 +259,7 @@ class DevelopmentStaffAuthRepository implements StaffAuthRepository {
 class FirebaseStaffAuthRepository implements StaffAuthRepository {
   FirebaseStaffAuthRepository({
     required EmailPasswordAuthClient authClient,
+    required FirebaseAuthClient phoneAuthClient,
     required StaffMemberRepository staffMemberRepository,
     required Duration Function() sessionDuration,
     required StaffClaimsSyncClient claimsSyncClient,
@@ -198,6 +267,7 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     Duration networkTimeout = staffAuthNetworkTimeout,
     LoggingService? logging,
   })  : _authClient = authClient,
+        _phoneAuthClient = phoneAuthClient,
         _staffMemberRepository = staffMemberRepository,
         _sessionDuration = sessionDuration,
         _claimsSyncClient = claimsSyncClient,
@@ -206,6 +276,7 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
         _logging = logging ?? defaultLoggingService();
 
   final EmailPasswordAuthClient _authClient;
+  final FirebaseAuthClient _phoneAuthClient;
   final StaffMemberRepository _staffMemberRepository;
   final Duration _networkTimeout;
   final Duration Function() _sessionDuration;
@@ -287,6 +358,78 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
       );
     }
 
+    return _syncClaimsAndBuildSession(
+      uid: result.uid,
+      // Real credentials are only ever in scope here (a fresh sign-in) —
+      // `refreshSession` has none and must never supply this. See
+      // `StaffClaimsSyncClient.syncAndRefresh`'s own doc comment on
+      // `remintToken` for why Windows needs it at all (PC Yönetici
+      // İnceleme Modu, 2026-09-21).
+      remintToken: () async {
+        await _authClient.signIn(email: email, password: password);
+      },
+    );
+  }
+
+  @override
+  Future<String> startPhoneSignIn(String phoneNumber) async {
+    try {
+      return await _phoneAuthClient
+          .verifyPhoneNumber(phoneNumber)
+          .timeout(_networkTimeout);
+    } on FirebaseAuthClientException catch (e) {
+      throw StaffAuthUnavailableException(e.message);
+    } on TimeoutException {
+      throw const StaffAuthUnavailableException(
+        'Kod gönderilemedi (zaman aşımı) — tekrar deneyin.',
+      );
+    }
+  }
+
+  @override
+  Future<ActorSession?> completePhoneSignIn({
+    required String verificationId,
+    required String smsCode,
+  }) async {
+    final FirebaseAuthResult result;
+    try {
+      result = await _phoneAuthClient
+          .confirmSmsCode(verificationId: verificationId, smsCode: smsCode)
+          .timeout(_networkTimeout);
+    } on FirebaseAuthClientException {
+      // Invalid/expired code — same "credential invalid" signal `signIn`
+      // returns `null` for on a bad password, never a thrown exception
+      // (the challenge itself may still be live; the caller can retry the
+      // code without re-requesting a new one).
+      return null;
+    } on TimeoutException {
+      throw const StaffAuthUnavailableException(
+        'Kod doğrulanamadı (zaman aşımı) — tekrar deneyin.',
+      );
+    }
+
+    // Unlike the email path, there is no practical way to "remint" a phone
+    // credential invisibly (it would mean sending and entering a second
+    // real SMS code) — `remintToken` stays unsupplied, exactly like
+    // `refreshSession` below. This is the same, already-documented
+    // Windows-only `getIdTokenResult(true)` fragility
+    // `StaffClaimsSyncClient.syncAndRefresh`'s own doc comment describes;
+    // real targets (Android/iOS/web) are unaffected.
+    return _syncClaimsAndBuildSession(uid: result.uid);
+  }
+
+  /// The shared tail of [signIn]/[completePhoneSignIn]: once a real
+  /// Firebase credential is established (whichever way), sync and parse
+  /// authorization claims, best-effort-sync platform claims too (so a
+  /// signed-in Platform Owner's token carries `platformRole` without a
+  /// separate manual step), look up best-effort profile metadata, and
+  /// build the resulting [ActorSession] — see the class-level comment
+  /// above for why `claims`, never [StaffMember], is the authorization
+  /// source of truth.
+  Future<ActorSession?> _syncClaimsAndBuildSession({
+    required String uid,
+    Future<void> Function()? remintToken,
+  }) async {
     final StaffAuthorizationClaims? claims;
     final syncWatch = Stopwatch()..start();
     _logging.log(LogLevel.debug, '[AUTH-TRACE] syncAndRefresh: start');
@@ -300,14 +443,7 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
       claims = await _claimsSyncClient
           .syncAndRefresh(
             allowCachedTokenFallback: true,
-            // Real credentials are only ever in scope here (a fresh
-            // sign-in) — `refreshSession` has none and must never supply
-            // this. See `StaffClaimsSyncClient.syncAndRefresh`'s own doc
-            // comment on `remintToken` for why Windows needs it at all
-            // (PC Yönetici İnceleme Modu, 2026-09-21).
-            remintToken: () async {
-              await _authClient.signIn(email: email, password: password);
-            },
+            remintToken: remintToken,
           )
           .timeout(_networkTimeout);
       _logging.log(LogLevel.debug,
@@ -333,13 +469,35 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     // result traces back to genuinely empty claims for this organization
     // (e.g. an Auth-emulator/Firestore-emulator data mismatch across
     // restarts leaving no matching `memberships` doc for this uid) versus
-    // something else further down `signIn`.
+    // something else further down.
     _logging.log(
       LogLevel.debug,
       '[AUTH-TRACE] syncAndRefresh: claims for org=${_organizationId()} -> '
       'organizationAccess=${claims.organizationAccess}, '
       'roles=${claims.rolesFor(_organizationId())}',
     );
+
+    // Platform-tier claims (`syncOwnPlatformClaims`) are a wholly separate
+    // namespace from the staff claims above — see
+    // `platformMembership.ts`'s own `resyncPlatformClaimsForUid`. Best-
+    // effort and independent of this method's own result: an account that
+    // is staff but never a Platform Owner has nothing to sync (the
+    // callable just writes `platformRole: null`, a harmless no-op), and a
+    // transient failure here must never deny a staff sign-in the real
+    // staff claims above already authorized.
+    try {
+      await functions.FirebaseFunctions.instance
+          .httpsCallable('syncOwnPlatformClaims')
+          .call<Map<String, dynamic>>()
+          .timeout(_networkTimeout);
+    } catch (e, st) {
+      _logging.log(
+        LogLevel.debug,
+        '[AUTH-TRACE] syncOwnPlatformClaims: failed, ignored (best-effort)',
+        error: e,
+        stackTrace: st,
+      );
+    }
 
     // Profile/display metadata only — see the class-level note above. A
     // failed/unavailable/slow directory lookup must never deny or hang a
@@ -364,7 +522,7 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
       _logging.log(LogLevel.debug, '[AUTH-TRACE] staff-member lookup: start');
       try {
         member = await _staffMemberRepository
-            .findByAuthUid(result.uid)
+            .findByAuthUid(uid)
             .timeout(_networkTimeout);
         _logging.log(LogLevel.debug,
             '[AUTH-TRACE] staff-member lookup: end (${lookupWatch.elapsedMilliseconds}ms)');
@@ -388,16 +546,16 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     // the role/authorization decision (that's `claims`, from `syncAndRefresh`
     // above, derived from real custom claims regardless of this step).
     // `ActorSession.tryFromRaw` returns `null` only when `roleNames` is
-    // empty — if `signIn()` is still returning `false` on Windows after
-    // this pass, check the `[AUTH-TRACE] syncAndRefresh: claims for
-    // org=...` line logged just above this block: an empty `roles=[]`
-    // there means the account's real custom claims don't carry the
-    // expected role yet (e.g. `seed_dev_staff.mjs` needs a re-run against
-    // the currently running emulator), not a bug in this lookup step.
+    // empty — if sign-in is still returning `false` on Windows after this
+    // pass, check the `[AUTH-TRACE] syncAndRefresh: claims for org=...`
+    // line logged just above this block: an empty `roles=[]` there means
+    // the account's real custom claims don't carry the expected role yet
+    // (e.g. `seed_dev_staff.mjs` needs a re-run against the currently
+    // running emulator), not a bug in this lookup step.
 
     final now = DateTime.now();
     return ActorSession.tryFromRaw(
-      actorId: member?.id ?? result.uid,
+      actorId: member?.id ?? uid,
       roleNames: claims.rolesFor(_organizationId()),
       branchAccessIds: claims.branchAccessFor(_organizationId()),
       restaurantAccessIds: (member?.restaurantAccess ?? const {}).toList(),
