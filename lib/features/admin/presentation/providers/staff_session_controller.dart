@@ -27,6 +27,29 @@ class StaffSessionController {
     return session != null;
   }
 
+  /// The phone-sign-in counterpart to [signIn]'s first half — requests the
+  /// SMS challenge. Returns an opaque verificationId; writes nothing to
+  /// [actorSessionProvider] yet (there is no session until [
+  /// completePhoneSignIn] below actually confirms a code).
+  Future<String> startPhoneSignIn(String phoneNumber) =>
+      _authRepository.startPhoneSignIn(phoneNumber);
+
+  /// The phone-sign-in counterpart to [signIn]'s second half — confirms
+  /// [smsCode] and, on success, writes the resulting session into
+  /// [actorSessionProvider] exactly like [signIn] does. Returns `true` on
+  /// success, matching [signIn]'s own return-value contract.
+  Future<bool> completePhoneSignIn({
+    required String verificationId,
+    required String smsCode,
+  }) async {
+    final session = await _authRepository.completePhoneSignIn(
+      verificationId: verificationId,
+      smsCode: smsCode,
+    );
+    _ref.read(actorSessionProvider.notifier).state = session;
+    return session != null;
+  }
+
   Future<void> signOut() async {
     await _authRepository.signOut();
     _ref.read(actorSessionProvider.notifier).state = null;

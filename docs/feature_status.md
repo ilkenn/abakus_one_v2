@@ -8204,3 +8204,33 @@ New/changed files: `lib/features/admin/data/staff_auth_repository.dart`,
 `test/features/admin/presentation/staff_claims_authorization_integration_test.dart`,
 `test/features/auth/data/firebase_auth_repository_test.dart`,
 `test/core/services/auth/fake_firebase_auth_client.dart` (new), `docs/feature_status.md`.
+
+### Fix: phone sign-in bypassed `StaffSessionController`, never reached `AdminShellScreen` (2026-10-27)
+
+Live staging test against `+905337106414` (real Firebase Auth phone verification, confirmed via a
+direct Identity Toolkit REST replay: correct code accepted, `platformRole: platformOwner` present on
+the minted token) showed the sign-in succeeding but the UI silently landing back on
+`StaffSignInScreen` with no error text. Root cause: `StaffSessionController` is "the one place
+`actorSessionProvider`'s state is ever written" (ADR-023, its own doc comment) — the email path
+(`_signIn`) correctly calls `ref.read(staffSessionControllerProvider).signIn(...)`, but the phone
+path added above (`_sendPhoneCode`/`_verifyPhoneCode`) called `staffAuthRepositoryProvider` directly,
+bypassing the controller entirely. The resulting `ActorSession` was real and valid but never written
+to `actorSessionProvider`, so `AdminShellScreen.build()` (`admin_shell_screen.dart:704-711`) found a
+`null` session and rendered `AdminUnauthorizedScreen` instead — with no error surfaced on
+`StaffSignInScreen` itself, since nothing there had thrown.
+
+Fix: added `StaffSessionController.startPhoneSignIn`/`completePhoneSignIn`, mirroring `signIn`'s
+exact pattern (call the repository, then write `actorSessionProvider.notifier.state = session`);
+`StaffSignInScreen` now calls these instead of the raw repository. `_completeSignIn` was simplified
+from `ActorSession?` to a plain `bool` (the only thing it ever used the session for was a null-check;
+the controller now owns writing the session itself).
+
+**Test-coverage gap this also closed**: the existing phone-success widget test asserted only
+`find.byType(AdminShellScreen), findsOneWidget` — which stayed true even with the bug present, since
+`AdminShellScreen` the widget still mounts and simply renders `AdminUnauthorizedScreen` as its child
+when the session is `null`. Strengthened to also assert
+`find.byType(AdminUnauthorizedScreen), findsNothing`, which would have caught this regression.
+
+New/changed files: `lib/features/admin/presentation/providers/staff_session_controller.dart`,
+`lib/features/admin/presentation/screens/staff_sign_in_screen.dart`,
+`test/features/admin/presentation/screens/staff_sign_in_screen_test.dart`, `docs/feature_status.md`.

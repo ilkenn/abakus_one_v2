@@ -9,7 +9,6 @@ import '../../../../core/services/logging/logging_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
-import '../../../pos/domain/authorization/actor_session.dart';
 import '../../application/use_cases/bootstrap_first_admin_account.dart';
 import '../../data/staff_auth_repository.dart';
 import 'admin_shell_screen.dart';
@@ -129,9 +128,9 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
     return '+90$digitsOnly';
   }
 
-  void _completeSignIn(ActorSession? session) {
+  void _completeSignIn(bool success) {
     if (!mounted) return;
-    if (session == null) {
+    if (!success) {
       setState(() => _error = 'Giriş başarısız. Bilgilerinizi kontrol edin.');
       return;
     }
@@ -143,7 +142,8 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
   Future<void> _sendPhoneCode() async {
     final normalized = _normalizeTurkishPhoneNumber(_phoneController.text);
     if (normalized == null) {
-      setState(() => _error = 'Geçerli bir telefon numarası girin (5XX XXX XX XX).');
+      setState(
+          () => _error = 'Geçerli bir telefon numarası girin (5XX XXX XX XX).');
       return;
     }
     setState(() {
@@ -158,7 +158,7 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
         // failed sign-out must never block the attempt that follows it.
       }
       final verificationId = await ref
-          .read(staffAuthRepositoryProvider)
+          .read(staffSessionControllerProvider)
           .startPhoneSignIn(normalized);
       if (!mounted) return;
       setState(() {
@@ -188,12 +188,13 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
       _busy = true;
       _error = null;
     });
-    ActorSession? session;
+    bool success;
     try {
-      session = await ref.read(staffAuthRepositoryProvider).completePhoneSignIn(
-            verificationId: verificationId,
-            smsCode: code,
-          );
+      success =
+          await ref.read(staffSessionControllerProvider).completePhoneSignIn(
+                verificationId: verificationId,
+                smsCode: code,
+              );
     } on StaffAuthUnavailableException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);
@@ -205,7 +206,7 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    _completeSignIn(session);
+    _completeSignIn(success);
   }
 
   Future<void> _signIn({String? initialAdminNavItemId}) async {
@@ -279,18 +280,19 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
       if (mounted) setState(() => _busy = false);
     }
     if (!success) {
-      logging.log(LogLevel.debug,
+      logging.log(
+          LogLevel.debug,
           '[AUTH-TRACE] _signIn: signIn() returned false — invalid credential '
           '(${overallWatch.elapsedMilliseconds}ms)');
       setState(() => _error = 'Giriş başarısız. Bilgilerinizi kontrol edin.');
       return;
     }
     if (!mounted) return;
-    logging.log(LogLevel.debug,
+    logging.log(
+        LogLevel.debug,
         '[AUTH-TRACE] _signIn: success (${overallWatch.elapsedMilliseconds}ms) '
         '— Navigating to AdminShellScreen');
-    logging.log(
-        LogLevel.debug, '[AUTH-TRACE] Navigating to AdminShellScreen');
+    logging.log(LogLevel.debug, '[AUTH-TRACE] Navigating to AdminShellScreen');
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) =>
@@ -466,12 +468,12 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.warning,
                         side: const BorderSide(color: AppColors.warning),
-                        padding: const EdgeInsets.symmetric(
-                            vertical: AppSpacing.md),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: AppSpacing.md),
                       ),
                       icon: const Icon(Icons.bug_report_outlined),
-                      label:
-                          const Text('Dev Admin ile Gir (Yalnızca Development)'),
+                      label: const Text(
+                          'Dev Admin ile Gir (Yalnızca Development)'),
                     ),
                   ],
                   const SizedBox(height: AppSpacing.xl),
@@ -494,8 +496,8 @@ class _StaffSignInScreenState extends ConsumerState<StaffSignInScreen> {
                     OutlinedButton(
                       onPressed: _busy ? null : _bootstrapFirstAdmin,
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            vertical: AppSpacing.md),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: AppSpacing.md),
                       ),
                       child: const Text('İlk Yönetici Hesabını Oluştur'),
                     ),

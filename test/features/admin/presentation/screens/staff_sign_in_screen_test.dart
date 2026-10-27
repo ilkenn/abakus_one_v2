@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/admin/data/staff_auth_repository.dart';
 import 'package:abakus_one_v2/features/admin/presentation/providers/admin_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/admin_shell_screen.dart';
+import 'package:abakus_one_v2/features/admin/presentation/screens/admin_unauthorized_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/staff_sign_in_screen.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
@@ -76,7 +77,8 @@ class _ScriptedStaffAuthRepository implements StaffAuthRepository {
     lastSmsCode = smsCode;
     final script = _phoneCompleteScript;
     if (script == null) {
-      throw UnimplementedError('No phoneCompleteScript configured for this test.');
+      throw UnimplementedError(
+          'No phoneCompleteScript configured for this test.');
     }
     final step = script[phoneCompleteCallCount.clamp(0, script.length - 1)];
     phoneCompleteCallCount++;
@@ -239,8 +241,7 @@ void main() {
     final button = find.widgetWithText(
         OutlinedButton, 'Dev Admin ile Gir (Yalnızca Development)');
     expect(button, findsOneWidget,
-        reason:
-            'flutter test always runs debug + AppEnvironment.development, '
+        reason: 'flutter test always runs debug + AppEnvironment.development, '
             'so the shortcut must be visible here');
 
     await tester.tap(button);
@@ -252,7 +253,9 @@ void main() {
     expect(repository.lastPassword, 'abakus-dev-admin-2026');
     expect(find.byType(AdminShellScreen), findsOneWidget);
     expect(
-      tester.widget<AdminShellScreen>(find.byType(AdminShellScreen)).initialNavItemId,
+      tester
+          .widget<AdminShellScreen>(find.byType(AdminShellScreen))
+          .initialNavItemId,
       'pos',
       reason: 'the dev-admin shortcut must land directly on the POS branch '
           'overview, never the shell\'s general default landing item',
@@ -275,8 +278,7 @@ void main() {
       expect(find.widgetWithText(TextFormField, 'Şifre'), findsNothing);
       expect(find.widgetWithText(TextFormField, 'Telefon Numarası'),
           findsOneWidget);
-      expect(find.widgetWithText(ElevatedButton, 'Kod Gönder'),
-          findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Kod Gönder'), findsOneWidget);
     });
 
     testWidgets(
@@ -308,20 +310,19 @@ void main() {
       await switchToPhone(tester);
 
       await tester.enterText(
-          find.widgetWithText(TextFormField, 'Telefon Numarası'),
-          '5337106414');
+          find.widgetWithText(TextFormField, 'Telefon Numarası'), '5337106414');
       await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(repository.callOrder, ['signOut', 'startPhoneSignIn']);
       expect(repository.lastPhoneNumber, '+905337106414');
-      expect(find.widgetWithText(TextFormField, 'Doğrulama Kodu'),
-          findsOneWidget);
+      expect(
+          find.widgetWithText(TextFormField, 'Doğrulama Kodu'), findsOneWidget);
       expect(find.widgetWithText(ElevatedButton, 'Doğrula ve Giriş Yap'),
           findsOneWidget);
-      expect(find.widgetWithText(TextFormField, 'Telefon Numarası'),
-          findsNothing);
+      expect(
+          find.widgetWithText(TextFormField, 'Telefon Numarası'), findsNothing);
     });
 
     testWidgets(
@@ -337,8 +338,7 @@ void main() {
       await _pump(tester, repository);
       await switchToPhone(tester);
       await tester.enterText(
-          find.widgetWithText(TextFormField, 'Telefon Numarası'),
-          '5337106414');
+          find.widgetWithText(TextFormField, 'Telefon Numarası'), '5337106414');
       await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
@@ -362,22 +362,28 @@ void main() {
       await _pump(tester, repository);
       await switchToPhone(tester);
       await tester.enterText(
-          find.widgetWithText(TextFormField, 'Telefon Numarası'),
-          '5337106414');
+          find.widgetWithText(TextFormField, 'Telefon Numarası'), '5337106414');
       await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
       await tester.enterText(
           find.widgetWithText(TextFormField, 'Doğrulama Kodu'), '123456');
-      await tester.tap(
-          find.widgetWithText(ElevatedButton, 'Doğrula ve Giriş Yap'));
+      await tester
+          .tap(find.widgetWithText(ElevatedButton, 'Doğrula ve Giriş Yap'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(repository.lastVerificationId, 'verification-id-1');
       expect(repository.lastSmsCode, '123456');
       expect(find.byType(AdminShellScreen), findsOneWidget);
+      // Guards against the real regression this test originally missed:
+      // `AdminShellScreen` mounts either way, but renders
+      // `AdminUnauthorizedScreen` instead of its real content whenever
+      // `actorSessionProvider` wasn't actually populated — exactly what
+      // happened when the phone path bypassed `StaffSessionController` and
+      // called `StaffAuthRepository` directly.
+      expect(find.byType(AdminUnauthorizedScreen), findsNothing);
     });
 
     testWidgets(
@@ -392,16 +398,15 @@ void main() {
       await _pump(tester, repository);
       await switchToPhone(tester);
       await tester.enterText(
-          find.widgetWithText(TextFormField, 'Telefon Numarası'),
-          '5337106414');
+          find.widgetWithText(TextFormField, 'Telefon Numarası'), '5337106414');
       await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
       await tester.enterText(
           find.widgetWithText(TextFormField, 'Doğrulama Kodu'), '000000');
-      await tester.tap(
-          find.widgetWithText(ElevatedButton, 'Doğrula ve Giriş Yap'));
+      await tester
+          .tap(find.widgetWithText(ElevatedButton, 'Doğrula ve Giriş Yap'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
@@ -420,8 +425,7 @@ void main() {
       await _pump(tester, repository);
       await switchToPhone(tester);
       await tester.enterText(
-          find.widgetWithText(TextFormField, 'Telefon Numarası'),
-          '5337106414');
+          find.widgetWithText(TextFormField, 'Telefon Numarası'), '5337106414');
       await tester.tap(find.widgetWithText(ElevatedButton, 'Kod Gönder'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
@@ -431,8 +435,7 @@ void main() {
 
       expect(find.widgetWithText(TextFormField, 'Telefon Numarası'),
           findsOneWidget);
-      expect(find.widgetWithText(ElevatedButton, 'Kod Gönder'),
-          findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Kod Gönder'), findsOneWidget);
     });
   });
 }
