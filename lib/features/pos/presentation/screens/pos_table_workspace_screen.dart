@@ -9,11 +9,13 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../../shared/widgets/images/product_image.dart';
 import '../../../admin/data/tenant_customer_directory_gateway.dart';
 import '../../../admin/domain/approval/approval_request.dart';
 import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../../admin/presentation/screens/approval_inbox_screen.dart';
 import '../../../admin/presentation/screens/trusted_device_status_screen.dart';
+import '../../../menu/domain/models/menu_category.dart';
 import '../../../menu/domain/models/menu_product.dart';
 import '../../../menu/presentation/providers/menu_catalog_provider.dart';
 import '../../data/pos_action_gateway.dart';
@@ -149,9 +151,10 @@ class _PosTableWorkspaceScreenState
       return const LoadingView(message: 'Masa yükleniyor...');
     }
 
-    final centerPane = _CenterPane(
-      organizationId: ctx.organizationId,
+    return _PosWorkbench(
+      ctx: ctx,
       view: view,
+      checkId: _openedCheckId,
       busy: _busy,
       actionError: _actionError,
       onAcceptReject: (orderId, lineIndex, accept) => _runAction(
@@ -173,19 +176,20 @@ class _PosTableWorkspaceScreenState
               reasonMessage: reasonMessage,
             ),
       ),
-      onStaffEntry: (subAccountSelection, productId, quantity) => _runAction(
+      onStaffEntry: (subAccountSelection, items) => _runAction(
         () => ref.read(posActionGatewayProvider).submitStaffEntryOrder(
           ctx: ctx,
           tableId: tableId,
           subAccountSelection: subAccountSelection,
           items: [
-            {
-              'kind': 'product',
-              'productId': productId,
-              'quantity': quantity,
-              'selectedModifiers': <Map<String, String>>[],
-              'note': '',
-            },
+            for (final item in items)
+              {
+                'kind': 'product',
+                'productId': item.productId,
+                'quantity': item.quantity,
+                'selectedModifiers': <Map<String, String>>[],
+                'note': '',
+              },
           ],
         ),
       ),
@@ -200,14 +204,6 @@ class _PosTableWorkspaceScreenState
                   reasonMessage: reasonMessage,
                 ),
       ),
-    );
-
-    final checkPanel = _CheckPanel(
-      ctx: ctx,
-      view: view,
-      checkId: _openedCheckId,
-      busy: _busy,
-      actionError: _actionError,
       onOpenCheck: () async {
         final tableSessionId = view.tableSessionId;
         if (tableSessionId == null) return;
@@ -354,33 +350,6 @@ class _PosTableWorkspaceScreenState
             .then((_) => _load());
       },
     );
-
-    // Phone-width devices (AP-3 physical-device finding): the canonical
-    // side-by-side 3:2 split assumes POS-hardware/tablet width and produces
-    // unreadably narrow columns (character-per-line text wrap) below
-    // [AppBreakpoints.tablet] — stack the two panes instead, each full-width
-    // and independently scrollable. Tablet/desktop/POS-hardware keeps the
-    // original side-by-side layout unchanged.
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < AppBreakpoints.tablet) {
-          return Column(
-            children: [
-              Expanded(child: centerPane),
-              Container(height: 1, color: AppColors.border),
-              Expanded(child: checkPanel),
-            ],
-          );
-        }
-        return Row(
-          children: [
-            Expanded(flex: 3, child: centerPane),
-            Container(width: 1, color: AppColors.border),
-            Expanded(flex: 2, child: checkPanel),
-          ],
-        );
-      },
-    );
   }
 }
 
@@ -389,125 +358,1024 @@ typedef _AcceptRejectFn = Future<void> Function(
 typedef _ProposeFn = Future<void> Function(String orderId, int lineIndex,
     String productId, int quantity, String reasonCode, String reasonMessage);
 typedef _StaffEntryFn = Future<String?> Function(
-    Map<String, dynamic> subAccountSelection, String productId, int quantity);
+    Map<String, dynamic> subAccountSelection,
+    List<({String productId, int quantity})> items);
 typedef _CancelLineFn = Future<void> Function(
     String orderId, int lineIndex, String reasonCode, String reasonMessage);
 
-const _subAccountFilterAllSentinel = '__all__';
-
-class _CenterPane extends StatefulWidget {
-  const _CenterPane({
-    required this.organizationId,
+/// The real industry-standard 3-column touch POS layout — 2026-10-31,
+/// replacing the previous two-pane "review orders / manage check in a
+/// separate modal" split and the `_StaffEntryScreen` full-screen dialog it
+/// used for adding products. Category rail (left) → product grid (center,
+/// tap-to-add) → "Adisyon" panel (right): accepted lines, a running
+/// local cart of not-yet-sent taps, the real payment button, and two
+/// on-demand surfaces for everything that doesn't belong inline in a
+/// touch list — pending customer-line review (a badge, opens a sheet
+/// reusing [_OrderCard] exactly as the old always-visible pane did) and
+/// table-level tools (split/transfer/discount, an "İşlemler" sheet
+/// reusing [_CheckPanel]'s old body verbatim). Every real action below —
+/// accept/reject/propose/cancel-request, 5 split modes, financial
+/// adjustment, transfer/merge, finalize, checkout — is the exact same
+/// `PosActionGateway` call this screen already had; nothing here invents
+/// a new backend capability. Whole-check cancellation does **not**
+/// exist server-side (confirmed by audit, 2026-10-31) and is
+/// deliberately not represented by any button here — only the real,
+/// already-wired single-line cancellation request is.
+class _PosWorkbench extends ConsumerStatefulWidget {
+  const _PosWorkbench({
+    required this.ctx,
     required this.view,
+    required this.checkId,
     required this.busy,
     required this.actionError,
     required this.onAcceptReject,
     required this.onPropose,
-    required this.onStaffEntry,
     required this.onCancelRequest,
+    required this.onStaffEntry,
+    required this.onOpenCheck,
+    required this.onSplit,
+    required this.onQuantitySplit,
+    required this.onFreeAmountSplit,
+    required this.onHeadcountSplit,
+    required this.onRequestAdjustment,
+    required this.onFinalize,
+    required this.onTransfer,
+    required this.onMerge,
+    required this.onOpenCheckout,
   });
 
-  final String organizationId;
+  final PosDeviceContext ctx;
   final PosTableOperationalView view;
+  final String? checkId;
   final bool busy;
   final String? actionError;
   final _AcceptRejectFn onAcceptReject;
   final _ProposeFn onPropose;
-  final _StaffEntryFn onStaffEntry;
   final _CancelLineFn onCancelRequest;
+  final _StaffEntryFn onStaffEntry;
+  final VoidCallback onOpenCheck;
+  final _SplitFn onSplit;
+  final _QuantitySplitFn onQuantitySplit;
+  final _FreeAmountSplitFn onFreeAmountSplit;
+  final _HeadcountSplitFn onHeadcountSplit;
+  final _AdjustmentFn onRequestAdjustment;
+  final VoidCallback onFinalize;
+  final _TransferMergeFn onTransfer;
+  final _TransferMergeFn onMerge;
+  final VoidCallback onOpenCheckout;
 
   @override
-  State<_CenterPane> createState() => _CenterPaneState();
+  ConsumerState<_PosWorkbench> createState() => _PosWorkbenchState();
 }
 
-class _CenterPaneState extends State<_CenterPane> {
-  String _filterSubAccountId = _subAccountFilterAllSentinel;
+class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
+  String _categoryFilter = _staffEntryAllCategoriesSentinel;
+  final List<_StaffEntryCartLine> _cartLines = [];
+  bool _sendingCart = false;
+
+  String _accountSelection = _staffEntryTableGeneralSentinel;
+  final _walkInNameController = TextEditingController();
+  final _customerSearchController = TextEditingController();
+  List<TenantCustomerSearchResult> _customerSearchResults = const [];
+  bool _searchingCustomers = false;
+  TenantCustomerSearchResult? _linkedCustomer;
+
+  bool get _useWalkIn => _accountSelection == _staffEntryWalkInSentinel;
+  bool get _useTableGeneral =>
+      _accountSelection == _staffEntryTableGeneralSentinel;
+  bool get _useExistingCustomer =>
+      _accountSelection == _staffEntryExistingCustomerSentinel;
+  String? get _selectedSubAccountId =>
+      (!_useWalkIn && !_useTableGeneral && !_useExistingCustomer)
+          ? _accountSelection
+          : null;
+
+  double get _cartTotal => _cartLines.fold(
+      0.0, (sum, line) => sum + line.product.basePrice * line.quantity);
 
   @override
-  Widget build(BuildContext context) {
-    final view = widget.view;
-    final filteredOrders = _filterSubAccountId == _subAccountFilterAllSentinel
-        ? view.orders
-        : [
-            for (final order in view.orders)
-              if (order.subAccountId == _filterSubAccountId) order,
-          ];
-    return ListView(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      children: [
-        Text(
-          'Masa · ${view.status}',
-          style: AppTypography.titleLarge.copyWith(fontWeight: FontWeight.bold),
+  void dispose() {
+    _walkInNameController.dispose();
+    _customerSearchController.dispose();
+    super.dispose();
+  }
+
+  static final _phoneLikeQuery = RegExp(r'^[+\d][\d\s]*$');
+
+  Future<void> _searchCustomers() async {
+    final query = _customerSearchController.text.trim();
+    if (query.isEmpty) return;
+    final isPhoneLike = _phoneLikeQuery.hasMatch(query);
+    setState(() => _searchingCustomers = true);
+    try {
+      final results =
+          await ref.read(tenantCustomerDirectoryGatewayProvider).search(
+                organizationId: widget.ctx.organizationId,
+                phoneNumber: isPhoneLike ? query : null,
+                namePrefix: isPhoneLike ? null : query,
+              );
+      if (mounted) setState(() => _customerSearchResults = results);
+    } on TenantCustomerDirectoryException {
+      if (mounted) setState(() => _customerSearchResults = const []);
+    } finally {
+      if (mounted) setState(() => _searchingCustomers = false);
+    }
+  }
+
+  void _addToCart(MenuProduct product) {
+    setState(() {
+      for (final line in _cartLines) {
+        if (line.product.id == product.id) {
+          line.quantity++;
+          return;
+        }
+      }
+      _cartLines.add(_StaffEntryCartLine(product: product));
+    });
+  }
+
+  void _incrementLine(_StaffEntryCartLine line) =>
+      setState(() => line.quantity++);
+
+  void _decrementLine(_StaffEntryCartLine line) => setState(() {
+        if (line.quantity > 1) {
+          line.quantity--;
+        } else {
+          _cartLines.remove(line);
+        }
+      });
+
+  Map<String, dynamic>? _resolveAccountSelection() {
+    if (_useTableGeneral) return {'mode': 'staffGeneral'};
+    if (_useWalkIn) {
+      final name = _walkInNameController.text.trim();
+      if (name.isEmpty) return null;
+      return {'mode': 'namedWalkIn', 'displayName': name};
+    }
+    if (_useExistingCustomer) {
+      final customer = _linkedCustomer;
+      if (customer == null) return null;
+      return {'mode': 'existingCustomer', 'customerId': customer.id};
+    }
+    final subAccountId = _selectedSubAccountId;
+    if (subAccountId != null) {
+      return {'mode': 'existingSubAccount', 'subAccountId': subAccountId};
+    }
+    return null;
+  }
+
+  /// Sends the local, not-yet-real cart as one real `submitStaffEntryOrder`
+  /// call (`widget.onStaffEntry`, which already wraps `_runAction` — same
+  /// success/`null`-on-failure contract documented on the old
+  /// `_StaffEntryScreenState._submit`). Only the local cart is cleared
+  /// here; the resulting real, accepted order line appears once
+  /// `_runAction`'s own `_load()` refreshes `widget.view` on the next
+  /// build — never assumed synchronously.
+  Future<void> _sendCart() async {
+    final selection = _resolveAccountSelection();
+    if (selection == null || _cartLines.isEmpty) return;
+    setState(() => _sendingCart = true);
+    await widget.onStaffEntry(selection, [
+      for (final line in _cartLines)
+        (productId: line.product.id, quantity: line.quantity),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _sendingCart = false;
+      _cartLines.clear();
+    });
+  }
+
+  Widget _buildCategoryRail(
+      List<MenuCategory> categories, bool scrollHorizontally) {
+    final chips = [
+      ChoiceChip(
+        label: const Text('Tümü'),
+        selected: _categoryFilter == _staffEntryAllCategoriesSentinel,
+        onSelected: (_) =>
+            setState(() => _categoryFilter = _staffEntryAllCategoriesSentinel),
+      ),
+      for (final category in categories)
+        ChoiceChip(
+          label: Text(category.name),
+          selected: _categoryFilter == category.id,
+          onSelected: (_) => setState(() => _categoryFilter = category.id),
         ),
-        if (widget.actionError != null) ...[
-          const SizedBox(height: AppSpacing.sm),
-          Text(widget.actionError!,
-              style: AppTypography.bodySmall.copyWith(color: AppColors.error)),
-        ],
-        const SizedBox(height: AppSpacing.md),
-        if (!view.hasActiveSession)
-          const Text('Bu masada aktif oturum yok.',
-              style: AppTypography.bodyMedium)
-        else ...[
-          if (view.subAccounts.isNotEmpty)
+    ];
+    if (scrollHorizontally) {
+      return SizedBox(
+        height: 48,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          itemCount: chips.length,
+          separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
+          itemBuilder: (_, index) => chips[index],
+        ),
+      );
+    }
+    return SizedBox(
+      width: 160,
+      child: ListView(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+        children: [
+          for (final chip in chips)
             Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-              child: DropdownButtonFormField<String>(
-                key: const Key('subAccountFilterDropdown'),
-                initialValue: _filterSubAccountId,
-                decoration:
-                    const InputDecoration(labelText: 'Hesaba Göre Filtrele'),
-                items: [
-                  const DropdownMenuItem(
-                    value: _subAccountFilterAllSentinel,
-                    child: Text('Tümü'),
-                  ),
-                  for (final sub in view.subAccounts)
-                    DropdownMenuItem(
-                      value: sub['id'] as String,
-                      child: Text(sub['displayName'] as String? ?? 'Misafir'),
-                    ),
-                ],
-                onChanged: (value) => setState(() => _filterSubAccountId =
-                    value ?? _subAccountFilterAllSentinel),
-              ),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+              child: Align(alignment: Alignment.centerLeft, child: chip),
             ),
-          for (final order in filteredOrders)
-            _OrderCard(
-              order: order,
-              busy: widget.busy,
-              onAcceptReject: widget.onAcceptReject,
-              onPropose: widget.onPropose,
-              onCancelRequest: widget.onCancelRequest,
-            ),
-          const SizedBox(height: AppSpacing.md),
-          OutlinedButton.icon(
-            onPressed: widget.busy
-                ? null
-                : () => _showStaffEntryDialog(
-                    context, widget.organizationId, view, widget.onStaffEntry),
-            icon: const Icon(Icons.add_shopping_cart_outlined),
-            label: const Text('Ürün Ekle (Personel)'),
-          ),
         ],
-      ],
+      ),
     );
   }
 
-  Future<void> _showStaffEntryDialog(
-    BuildContext context,
-    String organizationId,
-    PosTableOperationalView view,
-    _StaffEntryFn onStaffEntry,
-  ) async {
+  Widget _buildProductGrid(List<MenuProduct> products) {
+    if (products.isEmpty) {
+      return const Center(
+        child: Text('Bu kategoride ürün yok.', style: AppTypography.bodyMedium),
+      );
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 180,
+        mainAxisSpacing: AppSpacing.sm,
+        crossAxisSpacing: AppSpacing.sm,
+        childAspectRatio: 0.8,
+      ),
+      itemCount: products.length,
+      itemBuilder: (context, index) {
+        final product = products[index];
+        return _StaffEntryProductCard(
+          product: product,
+          onTap: () => _addToCart(product),
+        );
+      },
+    );
+  }
+
+  int get _pendingApprovalLineCount => [
+        for (final order in widget.view.orders)
+          for (final line in order.lines)
+            if (line.status == 'pendingApproval') line,
+      ].length;
+
+  Future<void> _showCancelDialog(
+      BuildContext context, String orderId, int lineIndex) async {
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => _StaffEntryDialog(
-        organizationId: organizationId,
-        view: view,
-        onSubmit: onStaffEntry,
+      builder: (dialogContext) => _ReasonDialog(
+        title: 'Ürünü İptal Et',
+        confirmLabel: 'İptal Talebi Gönder',
+        reasonCodes: const {
+          'customerRequest': 'Müşteri Talebi',
+          'kitchenError': 'Mutfak Hatası',
+          'other': 'Diğer',
+        },
+        onSubmit: (reasonCode, reasonMessage) => widget.onCancelRequest(
+            orderId, lineIndex, reasonCode, reasonMessage),
       ),
     );
+  }
+
+  /// The old always-visible order-review pane, relocated behind a badge
+  /// (product owner's explicit choice, 2026-10-31) — reuses [_OrderCard]
+  /// unchanged, so accept/reject/propose keep their exact existing
+  /// behavior and backend calls.
+  void _showPendingApprovalsSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: 0.8,
+        expand: false,
+        builder: (sheetContext, scrollController) => ListView(
+          controller: scrollController,
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          children: [
+            const Text('Onay Bekleyen Siparişler',
+                style: AppTypography.titleLarge),
+            const SizedBox(height: AppSpacing.md),
+            for (final order in widget.view.orders)
+              _OrderCard(
+                order: order,
+                busy: widget.busy,
+                onAcceptReject: widget.onAcceptReject,
+                onPropose: widget.onPropose,
+                onCancelRequest: widget.onCancelRequest,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Table-level tools — splits (needs an accepted line + a sub-account
+  /// to split from, same nested shape the old `_CheckPanel` already
+  /// used), headcount-equal split, discount/"Fiyat Düzeltmesi", transfer,
+  /// merge. Reuses every existing dialog unchanged; only the entry point
+  /// moved from always-visible buttons into this on-demand sheet
+  /// (product owner's explicit choice, 2026-10-31).
+  void _showQuickToolsSheet(BuildContext context) {
+    final view = widget.view;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: 0.8,
+        expand: false,
+        builder: (sheetContext, scrollController) => ListView(
+          controller: scrollController,
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          children: [
+            const Text('İşlemler', style: AppTypography.titleLarge),
+            const SizedBox(height: AppSpacing.md),
+            if (view.subAccounts.isNotEmpty) ...[
+              const Text('Bölüştürme', style: AppTypography.labelLarge),
+              for (final subAccount in view.subAccounts)
+                for (final order in view.orders)
+                  for (var i = 0; i < order.lines.length; i++)
+                    if (order.lines[i].status == 'accepted')
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${order.lines[i].productName} → ${subAccount['displayName']}',
+                              style: AppTypography.bodySmall,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Wrap(
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.inventory_2_outlined,
+                                      size: 18),
+                                  tooltip: 'Ürüne Göre Böl',
+                                  onPressed: widget.busy
+                                      ? null
+                                      : () => widget.onSplit(
+                                            subAccount['id'] as String,
+                                            order.orderId,
+                                            i,
+                                            'product',
+                                          ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.person_outline,
+                                      size: 18),
+                                  tooltip: 'Kişiye Göre Böl',
+                                  onPressed: widget.busy
+                                      ? null
+                                      : () => widget.onSplit(
+                                            subAccount['id'] as String,
+                                            order.orderId,
+                                            i,
+                                            'customer',
+                                          ),
+                                ),
+                                IconButton(
+                                  icon:
+                                      const Icon(Icons.pin_outlined, size: 18),
+                                  tooltip: 'Adete Göre Böl',
+                                  onPressed: widget.busy
+                                      ? null
+                                      : () => _showQuantitySplitDialog(
+                                            context,
+                                            subAccount['id'] as String,
+                                            order.orderId,
+                                            i,
+                                            order.lines[i].quantity,
+                                          ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.payments_outlined,
+                                      size: 18),
+                                  tooltip: 'Serbest Tutara Göre Böl',
+                                  onPressed: widget.busy
+                                      ? null
+                                      : () => _showFreeAmountSplitDialog(
+                                            context,
+                                            subAccount['id'] as String,
+                                            order.orderId,
+                                            i,
+                                          ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+              const SizedBox(height: AppSpacing.sm),
+              OutlinedButton(
+                onPressed: widget.busy || view.subAccounts.length < 2
+                    ? null
+                    : () => _showHeadcountSplitDialog(context, view),
+                child: const Text('Eşit Böl (Kişi Sayısına Göre)'),
+              ),
+              const Divider(),
+            ],
+            OutlinedButton(
+              onPressed: widget.busy || widget.checkId == null
+                  ? null
+                  : () => _showAdjustmentDialog(context, view, widget.checkId!),
+              child: const Text('Fiyat Düzeltmesi Talep Et'),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            OutlinedButton(
+              onPressed: widget.busy
+                  ? null
+                  : () => _showTransferDialog(
+                      context, widget.onTransfer, 'Masa Transferi'),
+              child: const Text('Masa Transfer Et'),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            OutlinedButton(
+              onPressed: widget.busy
+                  ? null
+                  : () => _showTransferDialog(
+                      context, widget.onMerge, 'Masa Birleştir'),
+              child: const Text('Masa Birleştir'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showQuantitySplitDialog(
+    BuildContext context,
+    String subAccountId,
+    String sourceOrderId,
+    int sourceLineIndex,
+    int maxQuantity,
+  ) async {
+    var quantity = 1;
+    final result = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setState) => AlertDialog(
+          title: const Text('Adete Göre Böl'),
+          content: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.remove),
+                onPressed:
+                    quantity > 1 ? () => setState(() => quantity--) : null,
+              ),
+              Text('$quantity / $maxQuantity'),
+              IconButton(
+                icon: const Icon(Icons.add),
+                onPressed: quantity < maxQuantity
+                    ? () => setState(() => quantity++)
+                    : null,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Vazgeç'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(quantity),
+              child: const Text('Böl'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) {
+      await widget.onQuantitySplit(
+          subAccountId, sourceOrderId, sourceLineIndex, result);
+    }
+  }
+
+  Future<void> _showFreeAmountSplitDialog(
+    BuildContext context,
+    String subAccountId,
+    String sourceOrderId,
+    int sourceLineIndex,
+  ) async {
+    final controller = TextEditingController();
+    final amountText = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Serbest Tutara Göre Böl'),
+        content: TextField(
+          key: const Key('freeAmountField'),
+          controller: controller,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: 'Tutar (TL)'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('Böl'),
+          ),
+        ],
+      ),
+    );
+    final amountTl = double.tryParse((amountText ?? '').replaceAll(',', '.'));
+    if (amountTl != null && amountTl > 0) {
+      await widget.onFreeAmountSplit(
+        subAccountId,
+        sourceOrderId,
+        sourceLineIndex,
+        (amountTl * 100).round(),
+      );
+    }
+  }
+
+  Future<void> _showHeadcountSplitDialog(
+    BuildContext context,
+    PosTableOperationalView view,
+  ) async {
+    final selected = <String>{
+      for (final sub in view.subAccounts) sub['id'] as String,
+    };
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setState) => AlertDialog(
+          title: const Text('Kişi Sayısına Göre Eşit Böl'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final sub in view.subAccounts)
+                CheckboxListTile(
+                  value: selected.contains(sub['id']),
+                  title: Text(sub['displayName'] as String? ?? 'Misafir'),
+                  onChanged: (checked) => setState(() {
+                    if (checked ?? false) {
+                      selected.add(sub['id'] as String);
+                    } else {
+                      selected.remove(sub['id'] as String);
+                    }
+                  }),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Vazgeç'),
+            ),
+            ElevatedButton(
+              onPressed: selected.length >= 2
+                  ? () => Navigator.of(dialogContext).pop(selected.toList())
+                  : null,
+              child: const Text('Böl'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) {
+      await widget.onHeadcountSplit(result);
+    }
+  }
+
+  Future<void> _showAdjustmentDialog(
+    BuildContext context,
+    PosTableOperationalView view,
+    String checkId,
+  ) async {
+    final activeAllocations =
+        view.allocations.where((a) => a.status == 'active').toList();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _AdjustmentDialog(
+        view: view,
+        activeAllocations: activeAllocations,
+        onSubmit: ({
+          required scope,
+          allocationId,
+          subAccountId,
+          required adjustmentType,
+          percentageBasisPoints,
+          fixedAmountMinorUnits,
+          required reasonCode,
+          required reasonMessage,
+        }) =>
+            widget.onRequestAdjustment(
+          scope: scope,
+          allocationId: allocationId,
+          subAccountId: subAccountId,
+          adjustmentType: adjustmentType,
+          percentageBasisPoints: percentageBasisPoints,
+          fixedAmountMinorUnits: fixedAmountMinorUnits,
+          reasonCode: reasonCode,
+          reasonMessage: reasonMessage,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showTransferDialog(
+    BuildContext context,
+    _TransferMergeFn action,
+    String title,
+  ) async {
+    final controller = TextEditingController();
+    final targetTableId = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          key: const Key('targetTableIdField'),
+          controller: controller,
+          decoration: const InputDecoration(labelText: 'Hedef Masa Kimliği'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('Onayla'),
+          ),
+        ],
+      ),
+    );
+    if (targetTableId != null && targetTableId.isNotEmpty) {
+      await action(targetTableId);
+    }
+  }
+
+  /// `requestCheckFinancialAdjustment`'s own real server status
+  /// (`open`/`readyForPayment`/`paid`/`cancelled`) — read directly from
+  /// [PosTableOperationalView.checks], never independently tracked, same
+  /// as the old `_CheckPanel._currentCheckStatus`.
+  String? get _currentCheckStatus {
+    final checkId = widget.checkId;
+    if (checkId == null) return null;
+    for (final check in widget.view.checks) {
+      if ((check['id'] ?? check['checkId']) == checkId) {
+        return check['status'] as String?;
+      }
+    }
+    return null;
+  }
+
+  /// One always-prominent bottom button whose label/action is driven by
+  /// the real check status — "Hesap Aç" → "Ödemeye Hazırla" → "Ödeme Al"
+  /// — the exact same 3-state logic the old `_CheckPanel` already had
+  /// (verbatim), just the single visually-dominant action this screen's
+  /// "büyük 'Ödeme Al / Hesabı Kapat' butonu" spec asks for.
+  Widget _buildPaymentButton() {
+    final status = _currentCheckStatus;
+    if (widget.checkId == null) {
+      return ElevatedButton(
+        onPressed: widget.view.hasActiveSession && !widget.busy
+            ? widget.onOpenCheck
+            : null,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: AppColors.onPrimary,
+          minimumSize: const Size.fromHeight(48),
+        ),
+        child: const Text('Hesap Aç'),
+      );
+    }
+    if (status == 'readyForPayment' || status == 'paid') {
+      return ElevatedButton.icon(
+        onPressed: widget.busy ? null : widget.onOpenCheckout,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: AppColors.onPrimary,
+          minimumSize: const Size.fromHeight(48),
+        ),
+        icon: const Icon(Icons.point_of_sale_outlined),
+        label: Text(status == 'paid' ? 'Ödeme Detayı' : 'Ödeme Al'),
+      );
+    }
+    return ElevatedButton(
+      onPressed: widget.busy ? null : widget.onFinalize,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.primary,
+        foregroundColor: AppColors.onPrimary,
+        minimumSize: const Size.fromHeight(48),
+      ),
+      child: const Text('Ödemeye Hazırla'),
+    );
+  }
+
+  Widget _buildAccountTargetSelector() {
+    // `isExpanded: true` + an explicit `overflow` on every item's `Text` —
+    // without both, a long label ("Mevcut Müşteri Ara ve Bağla") overflows
+    // this dropdown's fixed width in the narrow cart column instead of
+    // eliding, a real render overflow caught by the widget tests.
+    return DropdownButtonFormField<String>(
+      key: const Key('cartAccountTargetDropdown'),
+      initialValue: _accountSelection,
+      isExpanded: true,
+      decoration: const InputDecoration(labelText: 'Hesap', isDense: true),
+      items: [
+        for (final subAccount in widget.view.subAccounts)
+          DropdownMenuItem(
+            value: subAccount['id'] as String? ?? '',
+            child: Text(
+              subAccount['displayName'] as String? ?? 'Misafir',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        const DropdownMenuItem(
+          value: _staffEntryTableGeneralSentinel,
+          child: Text('Masa Geneli', overflow: TextOverflow.ellipsis),
+        ),
+        const DropdownMenuItem(
+          value: _staffEntryWalkInSentinel,
+          child: Text('Yeni İsimli Misafir', overflow: TextOverflow.ellipsis),
+        ),
+        const DropdownMenuItem(
+          value: _staffEntryExistingCustomerSentinel,
+          child: Text('Mevcut Müşteri Ara ve Bağla',
+              overflow: TextOverflow.ellipsis),
+        ),
+      ],
+      onChanged: (value) =>
+          setState(() => _accountSelection = value ?? _accountSelection),
+    );
+  }
+
+  Widget _buildAdisyonPanel(BuildContext context) {
+    final view = widget.view;
+    final pendingCount = _pendingApprovalLineCount;
+    return Container(
+      color: AppColors.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Masa · ${view.status}',
+                    style: AppTypography.titleMedium
+                        .copyWith(fontWeight: FontWeight.bold)),
+                if (widget.actionError != null) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(widget.actionError!,
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.error)),
+                ],
+                const SizedBox(height: AppSpacing.sm),
+                _PendingApprovalBanner(
+                  organizationId: widget.ctx.organizationId,
+                  branchId: widget.ctx.branchId,
+                ),
+                if (pendingCount > 0) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.rate_review_outlined, size: 18),
+                    label: Text('Onay Bekleyen Sipariş: $pendingCount'),
+                    onPressed: widget.busy
+                        ? null
+                        : () => _showPendingApprovalsSheet(context),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          Expanded(
+            child: !view.hasActiveSession
+                ? const Center(
+                    child: Text('Bu masada aktif oturum yok.',
+                        style: AppTypography.bodyMedium),
+                  )
+                : ListView(
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    children: [
+                      for (final order in view.orders)
+                        if (order.lines.any((l) => l.status == 'accepted'))
+                          Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: AppSpacing.sm),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: _KitchenStatusBadge(
+                                      orderId: order.orderId),
+                                ),
+                                for (var i = 0; i < order.lines.length; i++)
+                                  if (order.lines[i].status == 'accepted')
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          bottom: AppSpacing.xs),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              '${order.lines[i].quantity}x ${order.lines[i].productName}',
+                                              style: AppTypography.bodyMedium,
+                                            ),
+                                          ),
+                                          Text(
+                                            '${(order.lines[i].unitPriceMinorUnits * order.lines[i].quantity / 100).toStringAsFixed(0)} TL',
+                                            style: AppTypography.bodySmall,
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                                Icons.remove_circle_outline,
+                                                size: 18,
+                                                color: AppColors.error),
+                                            tooltip: 'İptal Talebi Gönder',
+                                            onPressed: widget.busy
+                                                ? null
+                                                : () => _showCancelDialog(
+                                                    context, order.orderId, i),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                              ],
+                            ),
+                          ),
+                      if (_cartLines.isNotEmpty) ...[
+                        const SizedBox(height: AppSpacing.md),
+                        const Text('Yeni Eklenenler (Gönderilmedi)',
+                            style: AppTypography.labelLarge),
+                        for (final line in _cartLines)
+                          Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: AppSpacing.sm),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(line.product.name,
+                                      style: AppTypography.bodyMedium),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.remove, size: 18),
+                                  onPressed: () => _decrementLine(line),
+                                ),
+                                Text('${line.quantity}'),
+                                IconButton(
+                                  icon: const Icon(Icons.add, size: 18),
+                                  onPressed: () => _incrementLine(line),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ],
+                  ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_cartLines.isNotEmpty) ...[
+                  _buildAccountTargetSelector(),
+                  if (_useWalkIn)
+                    TextField(
+                      key: const Key('walkInNameField'),
+                      controller: _walkInNameController,
+                      decoration:
+                          const InputDecoration(labelText: 'Misafir Adı'),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  if (_useExistingCustomer) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            key: const Key('customerSearchField'),
+                            controller: _customerSearchController,
+                            decoration: const InputDecoration(
+                                labelText: 'Ad veya Telefon ile Ara'),
+                          ),
+                        ),
+                        IconButton(
+                          icon: _searchingCustomers
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.search),
+                          onPressed:
+                              _searchingCustomers ? null : _searchCustomers,
+                        ),
+                      ],
+                    ),
+                    if (_linkedCustomer != null)
+                      Text(
+                        'Bağlanacak müşteri: ${_linkedCustomer!.displayName}',
+                        style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    for (final result in _customerSearchResults)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(result.displayName),
+                        subtitle: Text(result.phoneMasked),
+                        onTap: () => setState(() {
+                          _linkedCustomer = result;
+                          _customerSearchResults = const [];
+                        }),
+                      ),
+                  ],
+                  const SizedBox(height: AppSpacing.sm),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Expanded(
+                        child: Text('Yeni Ürünler Toplamı',
+                            style: AppTypography.labelMedium,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                      Text('${_cartTotal.toStringAsFixed(0)} TL',
+                          style: AppTypography.bodyMedium
+                              .copyWith(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  ElevatedButton(
+                    onPressed:
+                        !_sendingCart && _resolveAccountSelection() != null
+                            ? _sendCart
+                            : null,
+                    child: _sendingCart
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Siparişi Mutfağa Gönder'),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.more_horiz),
+                  label: const Text('İşlemler'),
+                  onPressed: widget.busy || widget.checkId == null
+                      ? null
+                      : () => _showQuickToolsSheet(context),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                _buildPaymentButton(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = ref.watch(menuCategoriesProvider);
+    final allProducts =
+        ref.watch(menuProductsProvider).where((p) => p.isAvailable).toList();
+    final visibleProducts = _categoryFilter == _staffEntryAllCategoriesSentinel
+        ? allProducts
+        : allProducts.where((p) => p.categoryId == _categoryFilter).toList();
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final isWide = constraints.maxWidth >= AppBreakpoints.tablet;
+      final grid = _buildProductGrid(visibleProducts);
+      final adisyon = _buildAdisyonPanel(context);
+      if (!isWide) {
+        return Column(
+          children: [
+            _buildCategoryRail(categories, true),
+            Expanded(child: grid),
+            Container(height: 1, color: AppColors.border),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 360),
+              child: adisyon,
+            ),
+          ],
+        );
+      }
+      return Row(
+        children: [
+          _buildCategoryRail(categories, false),
+          Container(width: 1, color: AppColors.border),
+          Expanded(flex: 3, child: grid),
+          Container(width: 1, color: AppColors.border),
+          SizedBox(width: 340, child: adisyon),
+        ],
+      );
+    });
   }
 }
 
@@ -798,235 +1666,68 @@ class _LineRow extends StatelessWidget {
   }
 }
 
-class _StaffEntryDialog extends StatefulWidget {
-  const _StaffEntryDialog({
-    required this.organizationId,
-    required this.view,
-    required this.onSubmit,
-  });
-  final String organizationId;
-  final PosTableOperationalView view;
-  final _StaffEntryFn onSubmit;
-
-  @override
-  State<_StaffEntryDialog> createState() => _StaffEntryDialogState();
-}
-
 const _staffEntryTableGeneralSentinel = '__table_general__';
 const _staffEntryWalkInSentinel = '__named_walk_in__';
 const _staffEntryExistingCustomerSentinel = '__existing_customer__';
+const _staffEntryAllCategoriesSentinel = '__all_categories__';
 
-class _StaffEntryDialogState extends State<_StaffEntryDialog> {
-  String? _selection;
-  final _walkInNameController = TextEditingController();
-  final _customerSearchController = TextEditingController();
-  MenuProduct? _selectedProduct;
-  int _quantity = 1;
-  List<TenantCustomerSearchResult> _customerSearchResults = const [];
-  bool _searchingCustomers = false;
-  TenantCustomerSearchResult? _linkedCustomer;
+/// One accumulated line in the cart being built — mutable [quantity] only
+/// (never a second [MenuProduct] for the same [product.id]; re-tapping a
+/// card increments the existing line instead, see `_StaffEntryScreenState
+/// ._addToCart`).
+class _StaffEntryCartLine {
+  _StaffEntryCartLine({required this.product});
+  final MenuProduct product;
+  int quantity = 1;
+}
 
-  bool get _useWalkIn => _selection == _staffEntryWalkInSentinel;
-  bool get _useTableGeneral => _selection == _staffEntryTableGeneralSentinel;
-  bool get _useExistingCustomer =>
-      _selection == _staffEntryExistingCustomerSentinel;
-  String? get _selectedSubAccountId => (_selection != null &&
-          !_useWalkIn &&
-          !_useTableGeneral &&
-          !_useExistingCustomer)
-      ? _selection
-      : null;
-
-  @override
-  void dispose() {
-    _walkInNameController.dispose();
-    _customerSearchController.dispose();
-    super.dispose();
-  }
-
-  static final _phoneLikeQuery = RegExp(r'^[+\d][\d\s]*$');
-
-  Future<void> _searchCustomers(WidgetRef ref) async {
-    final query = _customerSearchController.text.trim();
-    if (query.isEmpty) return;
-    final isPhoneLike = _phoneLikeQuery.hasMatch(query);
-    setState(() => _searchingCustomers = true);
-    try {
-      final results =
-          await ref.read(tenantCustomerDirectoryGatewayProvider).search(
-                organizationId: widget.organizationId,
-                phoneNumber: isPhoneLike ? query : null,
-                namePrefix: isPhoneLike ? null : query,
-              );
-      if (mounted) setState(() => _customerSearchResults = results);
-    } on TenantCustomerDirectoryException {
-      if (mounted) setState(() => _customerSearchResults = const []);
-    } finally {
-      if (mounted) setState(() => _searchingCustomers = false);
-    }
-  }
+/// A single tappable product tile in the staff order-entry grid — a real
+/// photo via [ProductImage] (resolved from [MenuProduct.imageKey], with
+/// its own built-in placeholder for a product that has none), name, and
+/// price. Deliberately no quantity control on the card itself — tapping
+/// adds one unit to the cart; the cart panel is where quantity is
+/// adjusted, matching the "tap to add, adjust in the cart" convention a
+/// touch POS grid is expected to have.
+class _StaffEntryProductCard extends StatelessWidget {
+  const _StaffEntryProductCard({required this.product, required this.onTap});
+  final MenuProduct product;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Consumer(builder: (context, ref, _) {
-      final products = ref.watch(menuProductsProvider);
-      return AlertDialog(
-        shape: const RoundedRectangleBorder(borderRadius: AppRadius.kLarge),
-        title: const Text('Personel Ürün Girişi'),
-        content: SingleChildScrollView(
+    return AppCard(
+      padding: EdgeInsets.zero,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.sm),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Hesap', style: AppTypography.labelLarge),
-              RadioGroup<String>(
-                groupValue: _selection,
-                onChanged: (value) => setState(() => _selection = value),
-                child: Column(
-                  children: [
-                    for (final subAccount in widget.view.subAccounts)
-                      RadioListTile<String>(
-                        value: subAccount['id'] as String? ?? '',
-                        title: Text(
-                            subAccount['displayName'] as String? ?? 'Misafir'),
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    const RadioListTile<String>(
-                      value: _staffEntryTableGeneralSentinel,
-                      title: Text('Masa Geneli'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    const RadioListTile<String>(
-                      value: _staffEntryWalkInSentinel,
-                      title: Text('Yeni İsimli Misafir'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    const RadioListTile<String>(
-                      value: _staffEntryExistingCustomerSentinel,
-                      title: Text('Mevcut Müşteri Ara ve Bağla'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ],
+              Expanded(
+                child: ProductImage(
+                  imageKey: product.imageKey,
+                  width: double.infinity,
+                  height: double.infinity,
                 ),
               ),
-              if (_useWalkIn)
-                TextField(
-                  key: const Key('walkInNameField'),
-                  controller: _walkInNameController,
-                  decoration: const InputDecoration(labelText: 'Misafir Adı'),
-                ),
-              if (_useExistingCustomer) ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        key: const Key('customerSearchField'),
-                        controller: _customerSearchController,
-                        decoration: const InputDecoration(
-                            labelText: 'Ad veya Telefon ile Ara'),
-                      ),
-                    ),
-                    IconButton(
-                      icon: _searchingCustomers
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.search),
-                      onPressed: _searchingCustomers
-                          ? null
-                          : () => _searchCustomers(ref),
-                    ),
-                  ],
-                ),
-                if (_linkedCustomer != null)
-                  Text(
-                    'Bağlanacak müşteri: ${_linkedCustomer!.displayName} '
-                    '(${_linkedCustomer!.phoneMasked})',
-                    style: AppTypography.bodySmall.copyWith(
-                        color: AppColors.primary, fontWeight: FontWeight.bold),
-                  ),
-                for (final result in _customerSearchResults)
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(result.displayName),
-                    subtitle: Text(result.phoneMasked),
-                    onTap: () => setState(() {
-                      _linkedCustomer = result;
-                      _customerSearchResults = const [];
-                    }),
-                  ),
-              ],
-              const SizedBox(height: AppSpacing.sm),
-              const Text('Ürün', style: AppTypography.labelLarge),
-              DropdownButtonFormField<MenuProduct>(
-                key: const Key('staffEntryProductDropdown'),
-                initialValue: _selectedProduct,
-                items: [
-                  for (final product in products)
-                    DropdownMenuItem(value: product, child: Text(product.name)),
-                ],
-                onChanged: (value) => setState(() => _selectedProduct = value),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                product.name,
+                style: AppTypography.bodyMedium,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-              Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.remove),
-                    onPressed: _quantity > 1
-                        ? () => setState(() => _quantity--)
-                        : null,
-                  ),
-                  Text('$_quantity'),
-                  IconButton(
-                    icon: const Icon(Icons.add),
-                    onPressed: () => setState(() => _quantity++),
-                  ),
-                ],
+              Text(
+                '${product.basePrice.toStringAsFixed(0)} TL',
+                style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.primary, fontWeight: FontWeight.bold),
               ),
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Vazgeç'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final product = _selectedProduct;
-              if (product == null) return;
-              Map<String, dynamic> selection;
-              if (_useTableGeneral) {
-                selection = {'mode': 'staffGeneral'};
-              } else if (_useWalkIn) {
-                final name = _walkInNameController.text.trim();
-                if (name.isEmpty) return;
-                selection = {'mode': 'namedWalkIn', 'displayName': name};
-              } else if (_useExistingCustomer) {
-                final customer = _linkedCustomer;
-                if (customer == null) return;
-                selection = {
-                  'mode': 'existingCustomer',
-                  'customerId': customer.id
-                };
-              } else if (_selectedSubAccountId != null) {
-                selection = {
-                  'mode': 'existingSubAccount',
-                  'subAccountId': _selectedSubAccountId,
-                };
-              } else {
-                return;
-              }
-              widget.onSubmit(selection, product.id, _quantity);
-              Navigator.of(context).pop();
-            },
-            child: const Text('Ekle'),
-          ),
-        ],
-      );
-    });
+      ),
+    );
   }
 }
 
@@ -1131,437 +1832,6 @@ typedef _AdjustmentFn = Future<void> Function({
   required String reasonCode,
   required String reasonMessage,
 });
-
-class _CheckPanel extends StatelessWidget {
-  const _CheckPanel({
-    required this.ctx,
-    required this.view,
-    required this.checkId,
-    required this.busy,
-    required this.actionError,
-    required this.onOpenCheck,
-    required this.onSplit,
-    required this.onQuantitySplit,
-    required this.onFreeAmountSplit,
-    required this.onHeadcountSplit,
-    required this.onRequestAdjustment,
-    required this.onFinalize,
-    required this.onTransfer,
-    required this.onMerge,
-    required this.onOpenCheckout,
-  });
-
-  final PosDeviceContext ctx;
-  final PosTableOperationalView view;
-  final String? checkId;
-  final bool busy;
-  final String? actionError;
-  final VoidCallback onOpenCheck;
-  final _SplitFn onSplit;
-  final _QuantitySplitFn onQuantitySplit;
-  final _FreeAmountSplitFn onFreeAmountSplit;
-  final _HeadcountSplitFn onHeadcountSplit;
-  final _AdjustmentFn onRequestAdjustment;
-  final VoidCallback onFinalize;
-  final _TransferMergeFn onTransfer;
-  final _TransferMergeFn onMerge;
-  final VoidCallback onOpenCheckout;
-
-  /// The open check's own real server status (`open`/`readyForPayment`/
-  /// `paid`/`cancelled`) — AP-4 Wave D. Read directly from [view].checks,
-  /// never independently tracked, so it can never drift from what
-  /// `finalizeCheckReadyForPayment`/the payment engine actually did.
-  String? get _currentCheckStatus {
-    if (checkId == null) return null;
-    for (final check in view.checks) {
-      if ((check['id'] ?? check['checkId']) == checkId) {
-        return check['status'] as String?;
-      }
-    }
-    return null;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: AppColors.surface,
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      child: ListView(
-        children: [
-          Text('Hesap',
-              style: AppTypography.titleMedium
-                  .copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: AppSpacing.sm),
-          _PendingApprovalBanner(
-              organizationId: ctx.organizationId, branchId: ctx.branchId),
-          const SizedBox(height: AppSpacing.sm),
-          if (checkId == null)
-            ElevatedButton(
-              onPressed: view.hasActiveSession && !busy ? onOpenCheck : null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.onPrimary,
-              ),
-              child: const Text('Hesap Aç'),
-            )
-          else ...[
-            Text('Hesap No: $checkId', style: AppTypography.bodySmall),
-            const SizedBox(height: AppSpacing.md),
-            const Text('Bölüştürme', style: AppTypography.labelLarge),
-            for (final subAccount in view.subAccounts)
-              for (final order in view.orders)
-                for (var i = 0; i < order.lines.length; i++)
-                  if (order.lines[i].status == 'accepted')
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${order.lines[i].productName} → ${subAccount['displayName']}',
-                            style: AppTypography.bodySmall,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          Wrap(
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.inventory_2_outlined,
-                                    size: 18),
-                                tooltip: 'Ürüne Göre Böl',
-                                onPressed: busy
-                                    ? null
-                                    : () => onSplit(
-                                          subAccount['id'] as String,
-                                          order.orderId,
-                                          i,
-                                          'product',
-                                        ),
-                              ),
-                              IconButton(
-                                icon:
-                                    const Icon(Icons.person_outline, size: 18),
-                                tooltip: 'Kişiye Göre Böl',
-                                onPressed: busy
-                                    ? null
-                                    : () => onSplit(
-                                          subAccount['id'] as String,
-                                          order.orderId,
-                                          i,
-                                          'customer',
-                                        ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.pin_outlined, size: 18),
-                                tooltip: 'Adete Göre Böl',
-                                onPressed: busy
-                                    ? null
-                                    : () => _showQuantitySplitDialog(
-                                          context,
-                                          subAccount['id'] as String,
-                                          order.orderId,
-                                          i,
-                                          order.lines[i].quantity,
-                                          onQuantitySplit,
-                                        ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.payments_outlined,
-                                    size: 18),
-                                tooltip: 'Serbest Tutara Göre Böl',
-                                onPressed: busy
-                                    ? null
-                                    : () => _showFreeAmountSplitDialog(
-                                          context,
-                                          subAccount['id'] as String,
-                                          order.orderId,
-                                          i,
-                                          onFreeAmountSplit,
-                                        ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-            const SizedBox(height: AppSpacing.sm),
-            OutlinedButton(
-              onPressed: busy || view.subAccounts.length < 2
-                  ? null
-                  : () => _showHeadcountSplitDialog(
-                      context, view, onHeadcountSplit),
-              child: const Text('Eşit Böl (Kişi Sayısına Göre)'),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            OutlinedButton(
-              onPressed: busy
-                  ? null
-                  : () => _showAdjustmentDialog(
-                      context, view, checkId!, onRequestAdjustment),
-              child: const Text('Fiyat Düzeltmesi Talep Et'),
-            ),
-            const Divider(),
-            OutlinedButton(
-              onPressed: busy
-                  ? null
-                  : () => _showTransferDialog(
-                      context, onTransfer, 'Masa Transferi'),
-              child: const Text('Masa Transfer Et'),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            OutlinedButton(
-              onPressed: busy
-                  ? null
-                  : () =>
-                      _showTransferDialog(context, onMerge, 'Masa Birleştir'),
-              child: const Text('Masa Birleştir'),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            if (_currentCheckStatus == 'readyForPayment' ||
-                _currentCheckStatus == 'paid')
-              ElevatedButton.icon(
-                onPressed: busy ? null : onOpenCheckout,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: AppColors.onPrimary,
-                ),
-                icon: const Icon(Icons.point_of_sale_outlined),
-                label: Text(_currentCheckStatus == 'paid'
-                    ? 'Ödeme Detayı'
-                    : 'Ödemeye Git'),
-              )
-            else
-              ElevatedButton(
-                onPressed: busy ? null : onFinalize,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: AppColors.onPrimary,
-                ),
-                child: const Text('Ödemeye Hazır'),
-              ),
-          ],
-          if (actionError != null) ...[
-            const SizedBox(height: AppSpacing.sm),
-            Text(actionError!,
-                style:
-                    AppTypography.bodySmall.copyWith(color: AppColors.error)),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showQuantitySplitDialog(
-    BuildContext context,
-    String subAccountId,
-    String sourceOrderId,
-    int sourceLineIndex,
-    int maxQuantity,
-    _QuantitySplitFn onQuantitySplit,
-  ) async {
-    var quantity = 1;
-    final result = await showDialog<int>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setState) => AlertDialog(
-          title: const Text('Adete Göre Böl'),
-          content: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.remove),
-                onPressed:
-                    quantity > 1 ? () => setState(() => quantity--) : null,
-              ),
-              Text('$quantity / $maxQuantity'),
-              IconButton(
-                icon: const Icon(Icons.add),
-                onPressed: quantity < maxQuantity
-                    ? () => setState(() => quantity++)
-                    : null,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Vazgeç'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(dialogContext).pop(quantity),
-              child: const Text('Böl'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (result != null) {
-      await onQuantitySplit(
-          subAccountId, sourceOrderId, sourceLineIndex, result);
-    }
-  }
-
-  Future<void> _showFreeAmountSplitDialog(
-    BuildContext context,
-    String subAccountId,
-    String sourceOrderId,
-    int sourceLineIndex,
-    _FreeAmountSplitFn onFreeAmountSplit,
-  ) async {
-    final controller = TextEditingController();
-    final amountText = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Serbest Tutara Göre Böl'),
-        content: TextField(
-          key: const Key('freeAmountField'),
-          controller: controller,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Tutar (TL)'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Vazgeç'),
-          ),
-          ElevatedButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text.trim()),
-            child: const Text('Böl'),
-          ),
-        ],
-      ),
-    );
-    final amountTl = double.tryParse((amountText ?? '').replaceAll(',', '.'));
-    if (amountTl != null && amountTl > 0) {
-      await onFreeAmountSplit(
-        subAccountId,
-        sourceOrderId,
-        sourceLineIndex,
-        (amountTl * 100).round(),
-      );
-    }
-  }
-
-  Future<void> _showHeadcountSplitDialog(
-    BuildContext context,
-    PosTableOperationalView view,
-    _HeadcountSplitFn onHeadcountSplit,
-  ) async {
-    final selected = <String>{
-      for (final sub in view.subAccounts) sub['id'] as String,
-    };
-    final result = await showDialog<List<String>>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setState) => AlertDialog(
-          title: const Text('Kişi Sayısına Göre Eşit Böl'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final sub in view.subAccounts)
-                CheckboxListTile(
-                  value: selected.contains(sub['id']),
-                  title: Text(sub['displayName'] as String? ?? 'Misafir'),
-                  onChanged: (checked) => setState(() {
-                    if (checked ?? false) {
-                      selected.add(sub['id'] as String);
-                    } else {
-                      selected.remove(sub['id'] as String);
-                    }
-                  }),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Vazgeç'),
-            ),
-            ElevatedButton(
-              onPressed: selected.length >= 2
-                  ? () => Navigator.of(dialogContext).pop(selected.toList())
-                  : null,
-              child: const Text('Böl'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (result != null) {
-      await onHeadcountSplit(result);
-    }
-  }
-
-  Future<void> _showAdjustmentDialog(
-    BuildContext context,
-    PosTableOperationalView view,
-    String checkId,
-    _AdjustmentFn onRequestAdjustment,
-  ) async {
-    final activeAllocations =
-        view.allocations.where((a) => a.status == 'active').toList();
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => _AdjustmentDialog(
-        view: view,
-        activeAllocations: activeAllocations,
-        onSubmit: ({
-          required scope,
-          allocationId,
-          subAccountId,
-          required adjustmentType,
-          percentageBasisPoints,
-          fixedAmountMinorUnits,
-          required reasonCode,
-          required reasonMessage,
-        }) =>
-            onRequestAdjustment(
-          scope: scope,
-          allocationId: allocationId,
-          subAccountId: subAccountId,
-          adjustmentType: adjustmentType,
-          percentageBasisPoints: percentageBasisPoints,
-          fixedAmountMinorUnits: fixedAmountMinorUnits,
-          reasonCode: reasonCode,
-          reasonMessage: reasonMessage,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showTransferDialog(
-    BuildContext context,
-    _TransferMergeFn action,
-    String title,
-  ) async {
-    final controller = TextEditingController();
-    final targetTableId = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          key: const Key('targetTableIdField'),
-          controller: controller,
-          decoration: const InputDecoration(labelText: 'Hedef Masa Kimliği'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Vazgeç'),
-          ),
-          ElevatedButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text.trim()),
-            child: const Text('Onayla'),
-          ),
-        ],
-      ),
-    );
-    if (targetTableId != null && targetTableId.isNotEmpty) {
-      await action(targetTableId);
-    }
-  }
-}
 
 typedef _AdjustmentSubmitFn = Future<void> Function({
   required String scope,

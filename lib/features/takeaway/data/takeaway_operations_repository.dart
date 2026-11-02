@@ -44,7 +44,8 @@ class FirestoreTakeawayOperationsRepository
         .collection('branchTakeawaySettings')
         .doc(branchId)
         .snapshots()
-        .map((snap) => snap.exists ? _mapSettings(branchId, snap.data()!) : null);
+        .map((snap) =>
+            snap.exists ? _mapSettings(branchId, snap.data()!) : null);
   }
 
   @override
@@ -57,7 +58,8 @@ class FirestoreTakeawayOperationsRepository
         .map((snap) => snap.docs.length);
   }
 
-  BranchTakeawaySettings _mapSettings(String branchId, Map<String, dynamic> data) {
+  BranchTakeawaySettings _mapSettings(
+      String branchId, Map<String, dynamic> data) {
     return BranchTakeawaySettings(
       branchId: branchId,
       status: TakeawayOperationStatus.values.byName(data['status'] as String),

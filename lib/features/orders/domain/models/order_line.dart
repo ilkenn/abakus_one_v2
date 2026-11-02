@@ -28,6 +28,7 @@ class OrderLine {
     required this.tax,
     required this.kitchenNote,
     required this.customerNote,
+    required this.excludedIngredients,
   });
 
   /// Builds a line, computing [modifierTotal]/[lineSubtotal]/[lineTotal]/
@@ -59,6 +60,7 @@ class OrderLine {
     required TaxRate taxRate,
     String kitchenNote = '',
     String customerNote = '',
+    List<String> excludedIngredients = const [],
   }) {
     if (quantity <= 0) {
       throw NonPositiveQuantityViolation(
@@ -101,6 +103,7 @@ class OrderLine {
       tax: TaxSnapshot.fromGrossAmount(lineTotal, taxRate),
       kitchenNote: kitchenNote,
       customerNote: customerNote,
+      excludedIngredients: List.unmodifiable(excludedIngredients),
     );
   }
 
@@ -144,6 +147,14 @@ class OrderLine {
   /// `OrderItemSnapshot` split these today (both have a single `note`).
   final String customerNote;
 
+  /// Standard ingredient names the customer excluded ("İçinden Çıkar") —
+  /// price-neutral (removing an ingredient grants no discount), validated
+  /// only structurally (non-empty strings, length-capped) rather than
+  /// against the live catalog's exact ingredient list, the same trust
+  /// boundary [kitchenNote]/[customerNote] already sit at — see
+  /// `submitTakeawayOrder.ts`'s `sanitizeExcludedIngredients`.
+  final List<String> excludedIngredients;
+
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
@@ -157,7 +168,8 @@ class OrderLine {
             other.lineTotal == lineTotal &&
             other.tax == tax &&
             other.kitchenNote == kitchenNote &&
-            other.customerNote == customerNote);
+            other.customerNote == customerNote &&
+            _listEquals(other.excludedIngredients, excludedIngredients));
   }
 
   @override
@@ -171,6 +183,7 @@ class OrderLine {
         tax,
         kitchenNote,
         customerNote,
+        Object.hashAll(excludedIngredients),
       );
 
   static bool _listEquals<T>(List<T> a, List<T> b) {

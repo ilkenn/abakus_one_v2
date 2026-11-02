@@ -427,20 +427,34 @@ class _ProductTile extends ConsumerWidget {
     );
   }
 
+  /// Every product carries the universal "Ekstra Sos" cross-sell group
+  /// (`StandardModifierGroups.crossSellSauceGroup`, id `cross_sell_sauce`)
+  /// — but POS's whole point is a fast single-tap add for a plain item
+  /// (a bottle of ayran, a snack), so that group alone must never force
+  /// the sheet open here the way it deliberately does on the customer
+  /// QR menu's full-page `ProductDetailScreen`. A product only needs the
+  /// sheet when it has a *substantive* group (Bowl's carb/salad/pickle,
+  /// Burger/Wrap's Patates/Ketçap) or a removable-ingredient checklist.
+  bool get _needsSelectionSheet =>
+      product.modifierGroups.any((g) => g.id != 'cross_sell_sauce') ||
+      product.removableIngredients.isNotEmpty;
+
   Future<void> _handleTap(BuildContext context, WidgetRef ref) async {
-    if (product.modifierGroups.isEmpty) {
+    if (!_needsSelectionSheet) {
       ref.read(posOrderSessionProvider.notifier).addProduct(product: product);
       return;
     }
-    final selected = await showModalBottomSheet<List<SelectedModifier>>(
+    final result = await showModalBottomSheet<
+        ({List<SelectedModifier> modifiers, List<String> excludedIngredients})>(
       context: context,
       isScrollControlled: true,
       builder: (context) => _ModifierSelectionSheet(product: product),
     );
-    if (selected != null) {
+    if (result != null) {
       ref.read(posOrderSessionProvider.notifier).addProduct(
             product: product,
-            selectedModifiers: selected,
+            selectedModifiers: result.modifiers,
+            excludedIngredients: result.excludedIngredients,
           );
     }
   }
@@ -458,6 +472,17 @@ class _ModifierSelectionSheet extends StatefulWidget {
 
 class _ModifierSelectionSheetState extends State<_ModifierSelectionSheet> {
   final Map<String, Set<String>> _selectionsByGroup = {};
+  final Set<String> _excludedIngredients = {};
+
+  @override
+  void initState() {
+    super.initState();
+    for (final group in widget.product.modifierGroups) {
+      final defaults =
+          group.options.where((o) => o.isDefault).map((o) => o.id).toSet();
+      if (defaults.isNotEmpty) _selectionsByGroup[group.id] = defaults;
+    }
+  }
 
   void _toggle(ModifierGroup group, String optionId) {
     setState(() {
@@ -475,6 +500,19 @@ class _ModifierSelectionSheetState extends State<_ModifierSelectionSheet> {
       }
     });
   }
+
+  void _toggleExcludedIngredient(String ingredient) {
+    setState(() {
+      if (!_excludedIngredients.remove(ingredient)) {
+        _excludedIngredients.add(ingredient);
+      }
+    });
+  }
+
+  bool get _allGroupsValid => widget.product.modifierGroups.every(
+        (group) => group
+            .isSatisfiedBy((_selectionsByGroup[group.id] ?? const {}).toList()),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -496,6 +534,26 @@ class _ModifierSelectionSheetState extends State<_ModifierSelectionSheet> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (widget.product.removableIngredients.isNotEmpty) ...[
+                        const Text('İçinden Çıkar',
+                            style: AppTypography.bodyLarge),
+                        const SizedBox(height: AppSpacing.xs),
+                        for (final ingredient
+                            in widget.product.removableIngredients)
+                          Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: AppSpacing.xs),
+                            child: OptionSelectionCard(
+                              name: '$ingredient İstemiyorum',
+                              extraPrice: 0,
+                              isSelected:
+                                  _excludedIngredients.contains(ingredient),
+                              onTap: () =>
+                                  _toggleExcludedIngredient(ingredient),
+                            ),
+                          ),
+                        const SizedBox(height: AppSpacing.md),
+                      ],
                       for (final group in widget.product.modifierGroups) ...[
                         Text(group.name, style: AppTypography.bodyLarge),
                         const SizedBox(height: AppSpacing.xs),
@@ -521,7 +579,12 @@ class _ModifierSelectionSheetState extends State<_ModifierSelectionSheet> {
                 ),
               ),
               ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(_buildSelections()),
+                onPressed: !_allGroupsValid
+                    ? null
+                    : () => Navigator.of(context).pop((
+                          modifiers: _buildSelections(),
+                          excludedIngredients: _excludedIngredients.toList(),
+                        )),
                 child: const Text('Siparişe Ekle'),
               ),
             ],

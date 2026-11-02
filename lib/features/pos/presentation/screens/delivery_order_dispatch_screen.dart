@@ -57,8 +57,10 @@ class _DeliveryOrderDispatchScreenState
 
   @override
   Widget build(BuildContext context) {
-    final ordersAsync = ref.watch(assignableDeliveryOrdersProvider(widget.branchId));
-    final couriersAsync = ref.watch(allCouriersForBranchProvider(widget.branchId));
+    final ordersAsync =
+        ref.watch(assignableDeliveryOrdersProvider(widget.branchId));
+    final couriersAsync =
+        ref.watch(allCouriersForBranchProvider(widget.branchId));
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -89,14 +91,16 @@ class _DeliveryOrderDispatchScreenState
             );
           }
           final couriersById = <String, Courier>{
-            for (final courier in couriersAsync.valueOrNull ?? const <Courier>[])
+            for (final courier
+                in couriersAsync.valueOrNull ?? const <Courier>[])
               courier.id: courier,
           };
           final clusters = DeliveryNeighborhoodClusterer.cluster(orders);
           final visibleClusters = _selectedNeighborhoodFilter == null
               ? clusters
               : clusters
-                  .where((c) => c.neighborhoodName == _selectedNeighborhoodFilter)
+                  .where(
+                      (c) => c.neighborhoodName == _selectedNeighborhoodFilter)
                   .toList();
 
           return Column(
@@ -185,7 +189,8 @@ class _NeighborhoodFilterRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -348,7 +353,9 @@ class _PickupLocationIndicator extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
-          merchantName == null ? Icons.storefront_rounded : Icons.storefront_outlined,
+          merchantName == null
+              ? Icons.storefront_rounded
+              : Icons.storefront_outlined,
           size: 14,
           color: AppColors.textSecondary,
         ),
@@ -541,7 +548,8 @@ class _RegisterConsortiumOrderDialogState
               const SizedBox(height: AppSpacing.sm),
               TextField(
                 controller: _feeController,
-                decoration: const InputDecoration(labelText: 'Teslimat Ücreti (kuruş)'),
+                decoration:
+                    const InputDecoration(labelText: 'Teslimat Ücreti (kuruş)'),
                 keyboardType: TextInputType.number,
                 onChanged: (_) => setState(() {}),
               ),
@@ -568,7 +576,8 @@ class _RegisterConsortiumOrderDialogState
               const SizedBox(height: AppSpacing.sm),
               TextField(
                 controller: _neighborhoodController,
-                decoration: const InputDecoration(labelText: 'Mahalle (kümeleme için)'),
+                decoration:
+                    const InputDecoration(labelText: 'Mahalle (kümeleme için)'),
               ),
               const SizedBox(height: AppSpacing.sm),
               TextField(
@@ -586,7 +595,8 @@ class _RegisterConsortiumOrderDialogState
                   ),
                   child: Text(
                     _error!,
-                    style: AppTypography.bodySmall.copyWith(color: AppColors.error),
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.error),
                   ),
                 ),
               ],

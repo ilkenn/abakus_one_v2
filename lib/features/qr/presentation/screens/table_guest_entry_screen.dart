@@ -2,28 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../bootstrap/firebase_ready_provider.dart';
+import '../../../../core/services/logging/log_level.dart';
+import '../../../../core/services/logging/logging_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
-import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../../navigation/presentation/providers/navigation_provider.dart';
 import '../../../navigation/presentation/screens/main_navigation_screen.dart';
 import '../../data/table_guest_session_gateway.dart';
 import '../providers/active_table_context_provider.dart';
 import '../providers/table_guest_session_dependencies_provider.dart';
 
-enum _EntryPhase { resolving, previewReady, openingSession, error }
+enum _EntryPhase { resolving, openingSession, error }
 
 /// AP-3 — the non-camera counterpart to [QrScannerScreen]'s in-app scan
 /// flow: the exact same server-authoritative table session (the same
 /// `resolveTableQrToken`/`openTableGuestSession` Cloud Functions, the same
 /// [TableGuestSessionGateway]/[OpenTableGuestSessionFromQrScan] seam) reached
 /// by opening a URL/deep link instead of pointing a camera at a physical
-/// code. Structurally mirrors [TakeawayGuestEntryScreen] exactly (same
-/// two-round-trip "preview, then explicit confirm" shape, same phase enum,
-/// same error-message vocabulary) — see that screen's own doc comment for
-/// the full rationale of why confirmation is never automatic.
+/// code.
+///
+/// **2026-10-29 — zero-friction entry (explicit user decision)**: unlike
+/// [TakeawayGuestEntryScreen]'s own "preview, then explicit confirm" shape,
+/// this screen opens the real session automatically the instant
+/// `resolveTableQrToken` comes back usable — no welcome/confirm screen, no
+/// tap. The trade-off this accepts is documented on [_resolve] itself.
 ///
 /// Reached only via [AppRoutes.tableGuestPrefix]/`/table/:token`, a route
 /// [AppRouteGuard] never redirects away from onboarding/login/OTP, exactly
@@ -51,9 +55,14 @@ class TableGuestEntryScreen extends ConsumerStatefulWidget {
 
 class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
   _EntryPhase _phase = _EntryPhase.resolving;
-  String? _tableDisplayName;
-  String? _branchDisplayName;
   String? _errorMessage;
+
+  /// Set once `resolveTableQrToken` comes back usable — real, server-
+  /// confirmed, never guessed from the token itself. `null` only while
+  /// still resolving or on an error (a table name is never shown next to
+  /// an error message, since the error means the table was never
+  /// confirmed).
+  String? _tableDisplayName;
 
   @override
   void initState() {
@@ -61,6 +70,16 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
     _resolve();
   }
 
+  /// 2026-10-29 — zero-friction dine-in entry: resolves the token, then,
+  /// on success, immediately opens the real session and lands on the Menu
+  /// tab with no intermediate "Masaya Otur" tap. User-confirmed trade-off:
+  /// this removes the deliberate anti-abuse gap that previously meant
+  /// `openTableGuestSession` (a real, mutating session-open) never fired
+  /// without an explicit human tap — a sufficiently capable link-preview
+  /// bot (one that executes JS, not just scrapes HTML) could now open a
+  /// real, empty table session just by unfurling a shared QR link. Accepted
+  /// explicitly in exchange for true zero-tap entry; `resolveToken` itself
+  /// stays a safe, non-mutating preview either way.
   Future<void> _resolve() async {
     setState(() {
       _phase = _EntryPhase.resolving;
@@ -89,18 +108,36 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
         });
         return;
       }
-      setState(() {
-        _phase = _EntryPhase.previewReady;
-        _tableDisplayName = preview.tableDisplayName;
-        _branchDisplayName = preview.branchDisplayName;
-      });
-    } on TableGuestSessionException catch (error) {
+      setState(() => _tableDisplayName = preview.tableDisplayName);
+      await _startOrder();
+    } on TableGuestSessionException catch (error, stackTrace) {
+      ref.read(loggingServiceProvider).log(
+        LogLevel.error,
+        'TableGuestEntryScreen._resolve: TableGuestSessionException',
+        error: error,
+        stackTrace: stackTrace,
+        context: {'code': error.code, 'token': widget.token},
+      );
       if (!mounted) return;
       setState(() {
         _phase = _EntryPhase.error;
         _errorMessage = _messageForExceptionCode(error.code);
       });
-    } catch (_) {
+    } catch (error, stackTrace) {
+      // 2026-10-29 — logged, not shown raw (CLAUDE.md §9: a thrown
+      // exception's own text/stack trace is never surfaced to the user;
+      // `ErrorMapper` is the one allowed boundary, and this isn't it). This
+      // is exactly the class of failure that previously hid a real cause
+      // (Firebase Auth's Anonymous provider disabled on the target
+      // project) behind this same generic message — check the browser/
+      // Flutter console for this log line before assuming a code bug.
+      ref.read(loggingServiceProvider).log(
+        LogLevel.error,
+        'TableGuestEntryScreen._resolve: unexpected exception',
+        error: error,
+        stackTrace: stackTrace,
+        context: {'token': widget.token},
+      );
       if (!mounted) return;
       setState(() {
         _phase = _EntryPhase.error;
@@ -137,13 +174,29 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
         context,
         MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
       );
-    } on TableGuestSessionException catch (error) {
+    } on TableGuestSessionException catch (error, stackTrace) {
+      ref.read(loggingServiceProvider).log(
+        LogLevel.error,
+        'TableGuestEntryScreen._startOrder: TableGuestSessionException',
+        error: error,
+        stackTrace: stackTrace,
+        context: {'code': error.code, 'token': widget.token},
+      );
       if (!mounted) return;
       setState(() {
         _phase = _EntryPhase.error;
         _errorMessage = _messageForExceptionCode(error.code);
       });
-    } catch (_) {
+    } catch (error, stackTrace) {
+      // See `_resolve`'s identical catch-all comment — the same "a generic
+      // message here previously hid a real cause" lesson applies.
+      ref.read(loggingServiceProvider).log(
+        LogLevel.error,
+        'TableGuestEntryScreen._startOrder: unexpected exception',
+        error: error,
+        stackTrace: stackTrace,
+        context: {'token': widget.token},
+      );
       if (!mounted) return;
       setState(() {
         _phase = _EntryPhase.error;
@@ -181,22 +234,19 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(title: const Text('QR ile Masaya Otur')),
       body: SafeArea(
         child: switch (_phase) {
-          _EntryPhase.resolving =>
-            const LoadingView(message: 'QR kod kontrol ediliyor...'),
-          _EntryPhase.openingSession =>
-            const LoadingView(message: 'Masa açılıyor...'),
+          _EntryPhase.resolving => const _BrandedWelcome(
+              statusMessage: 'QR kod kontrol ediliyor...',
+            ),
+          _EntryPhase.openingSession => _BrandedWelcome(
+              tableDisplayName: _tableDisplayName,
+              statusMessage: 'Masa açılıyor...',
+            ),
           _EntryPhase.error => ErrorView(
               message: _errorMessage!,
               retryLabel: 'Tekrar Dene',
               onRetry: _resolve,
-            ),
-          _EntryPhase.previewReady => _PreviewConfirm(
-              tableDisplayName: _tableDisplayName ?? '',
-              branchDisplayName: _branchDisplayName ?? '',
-              onConfirm: _startOrder,
             ),
         },
       ),
@@ -204,16 +254,16 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
   }
 }
 
-class _PreviewConfirm extends StatelessWidget {
-  final String tableDisplayName;
-  final String branchDisplayName;
-  final VoidCallback onConfirm;
+/// 2026-10-29 (branding) — the only thing a guest sees during the
+/// zero-tap resolve→open transition (normally a few hundred ms). Shows the
+/// real brand name, never the technical `abakus_one_v2` package name
+/// (CLAUDE.md §1), and the table name only once it's actually known from
+/// the server (never guessed/shown early).
+class _BrandedWelcome extends StatelessWidget {
+  final String? tableDisplayName;
+  final String statusMessage;
 
-  const _PreviewConfirm({
-    required this.tableDisplayName,
-    required this.branchDisplayName,
-    required this.onConfirm,
-  });
+  const _BrandedWelcome({this.tableDisplayName, required this.statusMessage});
 
   @override
   Widget build(BuildContext context) {
@@ -223,53 +273,30 @@ class _PreviewConfirm extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              decoration: const BoxDecoration(
-                color: AppColors.surfaceVariant,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.table_restaurant_rounded,
-                size: 56,
-                color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            Text(
-              branchDisplayName,
-              style: AppTypography.titleMedium.copyWith(
-                color: AppColors.textSecondary,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              tableDisplayName,
+            const Text(
+              'Abaküs Street Food\'a Hoş Geldiniz',
               style: AppTypography.headlineMedium,
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: AppSpacing.sm),
+            if (tableDisplayName != null) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Masa: $tableDisplayName',
+                style: AppTypography.titleMedium.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+            const SizedBox(height: AppSpacing.xl),
+            const CircularProgressIndicator(color: AppColors.primary),
+            const SizedBox(height: AppSpacing.md),
             Text(
-              'Bu masaya oturmak üzeresin. Hesap açmana veya giriş yapmana '
-              'gerek yok.',
+              statusMessage,
               style: AppTypography.bodyMedium.copyWith(
                 color: AppColors.textSecondary,
               ),
               textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: AppSpacing.xl),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: onConfirm,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: AppSpacing.md,
-                  ),
-                ),
-                child: const Text('Masaya Otur'),
-              ),
             ),
           ],
         ),

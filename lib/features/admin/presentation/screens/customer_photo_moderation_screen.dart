@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -46,34 +47,50 @@ class _CustomerPhotoModerationScreenState
   }
 
   Future<void> _load() async {
-    final photos =
-        await ref.read(customerPhotoRepositoryProvider).findPendingReview();
+    final photos = await ref
+        .read(customerPhotoRepositoryProvider)
+        .findPendingReview(
+            organizationId: ref.read(currentOrganizationIdProvider));
     if (!mounted) return;
     setState(() => _photos = photos);
   }
 
+  /// 2026-10-27: once Firebase is ready, the mutation goes through the
+  /// real `moderateCustomerPhoto` callable (`CustomerPhotoModerationGateway`)
+  /// — server-authoritative authorization, status transition, selection-
+  /// clearing, and audit entry, never the client's own `PosAuthorizationPolicy`
+  /// decision. The in-memory/pre-Firebase path (dev/test) is unchanged —
+  /// still the original `ModerateCustomerPhoto` use case.
   Future<void> _moderate(
     CustomerPhoto photo,
     CustomerPhotoModerationAction action, {
     String? rejectionReason,
   }) async {
-    final policy = widget.authorizationPolicy;
-    if (policy == null) {
-      setState(() => _error = 'Yetki politikası tanımlı değil.');
-      return;
-    }
     try {
-      await ModerateCustomerPhoto(
-        authorizationPolicy: policy,
-        repository: ref.read(customerPhotoRepositoryProvider),
-        auditRepository: ref.read(adminAuditEntryRepositoryProvider),
-      )(
-        photoId: photo.id,
-        moderationAction: action,
-        rejectionReason: rejectionReason,
-        performedByStaffId: widget.performedByStaffId,
-        performedAt: DateTime.now(),
-      );
+      if (ref.read(firebaseReadyProvider)) {
+        await ref.read(customerPhotoModerationGatewayProvider).moderate(
+              photoId: photo.id,
+              action: action,
+              rejectionReason: rejectionReason,
+            );
+      } else {
+        final policy = widget.authorizationPolicy;
+        if (policy == null) {
+          setState(() => _error = 'Yetki politikası tanımlı değil.');
+          return;
+        }
+        await ModerateCustomerPhoto(
+          authorizationPolicy: policy,
+          repository: ref.read(customerPhotoRepositoryProvider),
+          auditRepository: ref.read(adminAuditEntryRepositoryProvider),
+        )(
+          photoId: photo.id,
+          moderationAction: action,
+          rejectionReason: rejectionReason,
+          performedByStaffId: widget.performedByStaffId,
+          performedAt: DateTime.now(),
+        );
+      }
       setState(() => _error = null);
       await _load();
     } catch (e) {

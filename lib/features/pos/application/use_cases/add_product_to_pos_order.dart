@@ -44,6 +44,7 @@ class AddProductToPosOrder {
     List<SelectedModifier> selectedModifiers = const [],
     int quantity = 1,
     String note = '',
+    List<String> excludedIngredients = const [],
   }) {
     if (quantity <= 0) {
       throw NonPositiveQuantityViolation(
@@ -79,6 +80,7 @@ class AddProductToPosOrder {
       quantity: quantity,
       selectedModifiers: selectedModifiers,
       note: note,
+      removedIngredients: excludedIngredients,
     );
     final draft = PosOrderLineDraft(
       id: _draftIdGenerator.nextDraftId(),

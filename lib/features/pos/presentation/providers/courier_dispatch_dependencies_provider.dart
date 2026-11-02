@@ -48,9 +48,12 @@ final availableCouriersForBranchProvider = StreamProvider.family(
 /// used by the dispatch screen's own courier-name lookups (an order's
 /// `assignedCourierId` needs a display name even for a courier who is no
 /// longer `available`).
-final allCouriersForBranchProvider = StreamProvider.family<List<Courier>, String>(
+final allCouriersForBranchProvider =
+    StreamProvider.family<List<Courier>, String>(
   (ref, branchId) {
-    return ref.watch(firestoreCourierRepositoryProvider).watchByBranchId(branchId);
+    return ref
+        .watch(firestoreCourierRepositoryProvider)
+        .watchByBranchId(branchId);
   },
 );
 

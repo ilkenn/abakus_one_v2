@@ -40,20 +40,38 @@ class FirebaseRemoteConfigService implements RemoteConfigService {
         fetchTimeout: policy.fetchTimeout,
         minimumFetchInterval: policy.minimumFetchInterval,
       );
-      await _client.fetchAndActivate();
+      // 2026-10-28 — `fetchTimeout` above is a setting handed to the
+      // native SDK to self-enforce; observed directly on Windows desktop
+      // (a real profile-mode run, not assumed) to never actually fire —
+      // `fetchAndActivate()` hung indefinitely well past the configured
+      // 30s staging timeout, blocking `bootstrapApp`'s `Future.wait`
+      // forever (the reported "infinite loading spinner"). Matches this
+      // codebase's own established distrust of native-plugin timeout/
+      // refresh behavior on Windows specifically (see
+      // `StaffClaimsSyncClient.syncAndRefresh`'s own doc comment on the
+      // same class of issue for `getIdTokenResult(true)`). An explicit
+      // Dart-level `.timeout()` enforces the cutoff regardless of whether
+      // the native plugin honors its own setting.
+      await _client.fetchAndActivate().timeout(policy.fetchTimeout);
     } catch (error, stackTrace) {
       // Never rethrown: an environment with no network, a disabled Remote
-      // Config API, or any other startup-time failure must still let the
-      // app boot — every getter below falls back to the caller's
-      // defaultValue when nothing was ever successfully fetched.
+      // Config API, a timeout, or any other startup-time failure must
+      // still let the app boot — every getter below falls back to the
+      // caller's defaultValue when nothing was ever successfully fetched.
       _logFailure('Remote Config initialization failed', error, stackTrace);
     }
   }
 
+  // Same reasoning as [initialize]'s own doc comment — every method below
+  // that reaches the native SDK gets the same explicit Dart-level
+  // timeout, not just the one called during startup.
+  Duration get _fetchTimeout =>
+      RemoteConfigFetchPolicy.forEnvironment(_environment).fetchTimeout;
+
   @override
   Future<bool> fetch() async {
     try {
-      await _client.fetch();
+      await _client.fetch().timeout(_fetchTimeout);
       return true;
     } catch (error, stackTrace) {
       _logFailure('Remote Config fetch failed', error, stackTrace);
@@ -64,7 +82,7 @@ class FirebaseRemoteConfigService implements RemoteConfigService {
   @override
   Future<bool> activate() async {
     try {
-      return await _client.activate();
+      return await _client.activate().timeout(_fetchTimeout);
     } catch (error, stackTrace) {
       _logFailure('Remote Config activate failed', error, stackTrace);
       return false;
@@ -74,7 +92,7 @@ class FirebaseRemoteConfigService implements RemoteConfigService {
   @override
   Future<bool> fetchAndActivate() async {
     try {
-      return await _client.fetchAndActivate();
+      return await _client.fetchAndActivate().timeout(_fetchTimeout);
     } catch (error, stackTrace) {
       _logFailure('Remote Config fetchAndActivate failed', error, stackTrace);
       return false;

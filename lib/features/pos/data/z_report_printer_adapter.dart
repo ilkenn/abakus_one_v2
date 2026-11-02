@@ -110,8 +110,7 @@ class UnconfiguredZReportPrinterAdapter implements ZReportPrinterAdapter {
   Future<ZReportPrintResult> print(ZReportContent content) async {
     return const ZReportPrintResult(
       succeeded: false,
-      message:
-          'Bu cihazda yapılandırılmış bir ESC/POS yazıcı bağlantısı yok. '
+      message: 'Bu cihazda yapılandırılmış bir ESC/POS yazıcı bağlantısı yok. '
           'Rapor içeriği önizlemede görüntüleniyor.',
     );
   }

@@ -1,3 +1,5 @@
+import '../../../orders/domain/models/order_channel.dart';
+
 /// The header block every printed/digital [KitchenTicket] must show.
 class KitchenTicketHeader {
   const KitchenTicketHeader({
@@ -10,6 +12,7 @@ class KitchenTicketHeader {
     this.priority = '',
     this.tableLabel,
     this.customerName,
+    this.channel = OrderChannel.delivery,
   });
 
   final String restaurantName;
@@ -18,6 +21,20 @@ class KitchenTicketHeader {
   /// Source platform/channel, human-readable (e.g. "Masa QR", "Gel-Al",
   /// "Getir Yemek") — display text, not the raw `OrderChannel` enum name.
   final String channelLabel;
+
+  /// 2026-10-29 — the real, raw channel, additive alongside [channelLabel]
+  /// (display text only). Needed so the KDS detail screen's whole-order
+  /// cancel action knows which `advance*OrderStatus` callable actually
+  /// accepts `targetStatus: 'cancelled'` for this specific ticket
+  /// (`dineInQr` only, today — `dineInStaff`/`takeaway`/`delivery`/
+  /// `reservationPreorder` each have their own separate cancellation
+  /// mechanism, confirmed by reading `advanceDineInOrderStatus.ts`'s own
+  /// explicit `order.channel !== "dineInQr"` check). Defaults to
+  /// [OrderChannel.delivery] only so the many existing tests that
+  /// construct this class directly, pre-dating this field, don't all need
+  /// updating — every real ticket (`KitchenTicketMapper.fromOrder`) always
+  /// supplies the order's own real channel explicitly.
+  final OrderChannel channel;
 
   final String orderNumber;
 

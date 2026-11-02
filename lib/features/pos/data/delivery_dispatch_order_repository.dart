@@ -46,6 +46,8 @@ class FirestoreDeliveryDispatchOrderRepository
         .map((snap) => [
               for (final doc in snap.docs)
                 OrderFirestoreMapper.fromFirestore(doc.data())
-            ].where((order) => _assignableStatuses.contains(order.status)).toList());
+            ]
+                .where((order) => _assignableStatuses.contains(order.status))
+                .toList());
   }
 }

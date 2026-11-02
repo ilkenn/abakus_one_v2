@@ -6,11 +6,19 @@ import '../../../orders/domain/models/order_channel.dart';
 /// [selectedModifiers] is the generic, product-agnostic way a cart item
 /// carries its chosen options (protein, sauce, extras, Bowl Builder
 /// ingredients, ...) — see `SelectedModifier`. [selectedProtein]/
-/// [selectedSauce]/[removedIngredients]/[extraIngredients] are the older,
-/// bowl-specific fields kept only so the existing checkout/cart display
-/// logic for previously-added items keeps working; new call sites
-/// (redesigned Product Detail, Bowl Builder) populate [selectedModifiers]
-/// instead. See `docs/menu_experience_architecture.md`.
+/// [selectedSauce]/[extraIngredients] are the older, bowl-specific fields
+/// kept only so the existing checkout/cart display logic for
+/// previously-added items keeps working; new call sites (redesigned
+/// Product Detail, Bowl Builder) populate [selectedModifiers] instead. See
+/// `docs/menu_experience_architecture.md`.
+///
+/// [removedIngredients] is **not** legacy — 2026-10-30's universal
+/// "İçinden Çıkar" feature repurposes this exact field (same name/shape,
+/// never bowl-specific) as the one place every product's excluded standard
+/// ingredients live, for every product in the catalog
+/// (`MenuProduct.removableIngredients`), not just Bowl Builder. It maps
+/// structurally into `OrderLine.excludedIngredients` (see
+/// `CartLineMapper`), not into free-text kitchen notes.
 class CartItem {
   final String id;
   final String name;

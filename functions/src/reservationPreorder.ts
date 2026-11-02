@@ -25,6 +25,7 @@ import {
   type SelectedBenefitType,
 } from "./boncukRedemptionErrors";
 import type { CatalogRewardOrderSnapshot } from "./submitTakeawayOrder";
+import { sanitizeExcludedIngredients, requireModifierGroupsSatisfied } from "./submitTakeawayOrder";
 import { enforceBenefitExclusivity } from "./benefitExclusivity";
 import type { CampaignOrderSnapshot } from "./campaignEngine";
 import type { CampaignPriceableLine } from "./campaignPricing";
@@ -104,6 +105,7 @@ interface RawProductItem {
   quantity: unknown;
   selectedModifiers?: unknown;
   note?: unknown;
+  excludedIngredients?: unknown;
 }
 
 interface RawBowlItem {
@@ -172,6 +174,7 @@ export function parsePreorderRequest(raw: unknown): ParsedPreorderRequest | null
         quantity: item.quantity,
         selectedModifiers: item.selectedModifiers,
         note: item.note,
+        excludedIngredients: item.excludedIngredients,
       };
     }
     if (item.kind === "bowl") {
@@ -277,6 +280,7 @@ async function buildPreorderProductLine(
   if (!product!.isAvailable) invalid(`product "${productId}" is not available.`);
 
   const modifiers = await resolvePreorderProductModifiers(product!, item.selectedModifiers);
+  requireModifierGroupsSatisfied(product!, modifiers);
   // No reservation-preorder-specific surcharge exists (see this file's own
   // doc comment §1) — `unitPriceMinorUnits` is already the canonical base
   // price + modifiers, so `freeUnitCount` covers exactly that, no invented
@@ -288,6 +292,10 @@ async function buildPreorderProductLine(
   });
 
   const note = typeof item.note === "string" ? item.note.slice(0, 500) : "";
+  const excludedIngredients = sanitizeExcludedIngredients(
+    item.excludedIngredients,
+    `product "${productId}"`,
+  );
   return buildOrderLine({
     productId: product!.id,
     productName: product!.name,
@@ -297,6 +305,7 @@ async function buildPreorderProductLine(
     unitPriceMinorUnits,
     taxBasisPoints: PREORDER_TAX_BASIS_POINTS,
     customerNote: note,
+    excludedIngredients,
     freeUnitCount,
     campaignDiscountMinorUnits,
   });
@@ -597,6 +606,7 @@ export function buildPreorderOrderDocument(params: {
       taxRateBasisPoints: line.taxBasisPoints,
       kitchenNote: line.kitchenNote,
       customerNote: line.customerNote,
+      excludedIngredients: line.excludedIngredients,
     })),
     pricing: {
       grossSubtotal: moneyField(params.pricing.grossSubtotalMinorUnits),

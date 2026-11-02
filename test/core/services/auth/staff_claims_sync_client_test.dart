@@ -8,9 +8,9 @@ import 'package:flutter_test/flutter_test.dart';
 /// since this function never verifies it (that's the server's job, always);
 /// only the header/payload segments' base64url-JSON shape does.
 String _fakeJwt(Map<String, dynamic> payload, {String header = 'header'}) {
-  String segment(Object value) =>
-      base64Url.encode(utf8.encode(value is String ? value : jsonEncode(value)))
-          .replaceAll('=', '');
+  String segment(Object value) => base64Url
+      .encode(utf8.encode(value is String ? value : jsonEncode(value)))
+      .replaceAll('=', '');
   return '${segment(header)}.${segment(payload)}.signature';
 }
 
@@ -218,20 +218,21 @@ void main() {
       expect(decodeJwtPayload(jwt), {'a': 1});
     });
 
-    test('a string with the wrong number of dot-separated segments returns '
+    test(
+        'a string with the wrong number of dot-separated segments returns '
         'null, never throws', () {
       expect(decodeJwtPayload('not-a-jwt'), isNull);
       expect(decodeJwtPayload('only.two'), isNull);
       expect(decodeJwtPayload('four.segments.here.oops'), isNull);
     });
 
-    test('a payload segment that decodes to non-base64/non-JSON returns '
+    test(
+        'a payload segment that decodes to non-base64/non-JSON returns '
         'null, never throws', () {
       expect(decodeJwtPayload('header.!!!not-base64!!!.signature'), isNull);
     });
 
-    test('a payload that is valid JSON but not a JSON object returns null',
-        () {
+    test('a payload that is valid JSON but not a JSON object returns null', () {
       final arrayPayload =
           base64Url.encode(utf8.encode('[1,2,3]')).replaceAll('=', '');
       expect(decodeJwtPayload('header.$arrayPayload.signature'), isNull);

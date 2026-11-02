@@ -66,12 +66,14 @@ class ReservationPreorderProductItem extends ReservationPreorderItem {
   final int quantity;
   final List<({String groupId, String optionId})> selectedModifiers;
   final String note;
+  final List<String> excludedIngredients;
 
   const ReservationPreorderProductItem({
     required this.productId,
     required this.quantity,
     this.selectedModifiers = const [],
     this.note = '',
+    this.excludedIngredients = const [],
   });
 
   @override
@@ -84,6 +86,7 @@ class ReservationPreorderProductItem extends ReservationPreorderItem {
             {'groupId': modifier.groupId, 'optionId': modifier.optionId},
         ],
         'note': note,
+        'excludedIngredients': excludedIngredients,
       };
 }
 

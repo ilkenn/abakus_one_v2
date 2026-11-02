@@ -206,6 +206,31 @@ test("buildOrderLine: quantity 1, no modifiers — lineTotal equals unitPrice, V
   assert.strictEqual(line.lineTotalMinorUnits, 1100);
   assert.strictEqual(line.vatAmountMinorUnits, 100);
   assert.strictEqual(line.taxableBaseMinorUnits, 1000);
+  assert.deepStrictEqual(line.excludedIngredients, []);
+});
+
+// 2026-10-30 product-configurator.
+test("buildOrderLine: excludedIngredients is carried through unchanged and never affects any price field", () => {
+  const withExclusions = buildOrderLine({
+    productId: "p1",
+    productName: "P1",
+    modifiers: [],
+    quantity: 1,
+    unitPriceMinorUnits: 1100,
+    taxBasisPoints: 1000,
+    excludedIngredients: ["Mısır", "Mor Lahana Turşusu"],
+  });
+  const withoutExclusions = buildOrderLine({
+    productId: "p1",
+    productName: "P1",
+    modifiers: [],
+    quantity: 1,
+    unitPriceMinorUnits: 1100,
+    taxBasisPoints: 1000,
+  });
+  assert.deepStrictEqual(withExclusions.excludedIngredients, ["Mısır", "Mor Lahana Turşusu"]);
+  assert.strictEqual(withExclusions.lineTotalMinorUnits, withoutExclusions.lineTotalMinorUnits);
+  assert.strictEqual(withExclusions.vatAmountMinorUnits, withoutExclusions.vatAmountMinorUnits);
 });
 
 test("buildOrderLine: normal product +20 TL applied once, quantity 2 doubles the adjustment (adjustment x2, not per-unit-per-ingredient)", () => {

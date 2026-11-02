@@ -103,9 +103,21 @@ class FirestoreKitchenWorkItemRepository
     required String branchId,
     String? stationName,
   }) async {
+    // Same-shaped fix as `FirestoreKitchenTicketRepository._query`'s own
+    // doc comment (`KitchenTicketRepository.findActiveByBranch`): without
+    // an explicit `organizationId` equality filter, Firestore can't
+    // statically prove every possible result of a `branchId`-only query
+    // satisfies `kitchenWorkItems`' `firestore.rules` read rule
+    // (`isOrgMember(resource.data.organizationId) && hasBranchAccess(...)`)
+    // and rejects the whole query — confirmed directly against real
+    // staging data, 2026-10-27. `kSingleTenantOrganizationId` is the same
+    // constant `_toFirestore` already stamps every work item with (the
+    // "AP-5 Sprint 2 fix" comment above it is this exact same class of gap
+    // on the write side), so no new parameter is needed here.
     fs.Query<Map<String, dynamic>> query = _firestore
         .collection(_collection)
-        .where('branchId', isEqualTo: branchId);
+        .where('branchId', isEqualTo: branchId)
+        .where('organizationId', isEqualTo: kSingleTenantOrganizationId);
     if (stationName != null) {
       query = query.where('station', isEqualTo: stationName);
     }

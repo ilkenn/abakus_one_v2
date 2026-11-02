@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:abakus_one_v2/core/services/auth/staff_claims_sync_client.dart';
 import 'package:abakus_one_v2/features/admin/data/staff_auth_repository.dart';
 import 'package:abakus_one_v2/features/admin/data/staff_member_repository.dart';
@@ -626,8 +628,7 @@ void main() {
         organizationId: () => _testOrgId,
       );
 
-      final verificationId =
-          await repository.startPhoneSignIn('+905337106414');
+      final verificationId = await repository.startPhoneSignIn('+905337106414');
 
       expect(verificationId, 'verification-id-for-+905337106414');
       expect(phoneClient.verifyCallCount, 1);
@@ -675,8 +676,7 @@ void main() {
         ),
         organizationId: () => _testOrgId,
       );
-      final verificationId =
-          await repository.startPhoneSignIn('+905337106414');
+      final verificationId = await repository.startPhoneSignIn('+905337106414');
 
       final session = await repository.completePhoneSignIn(
         verificationId: verificationId,
@@ -703,8 +703,7 @@ void main() {
         ),
         organizationId: () => _testOrgId,
       );
-      final verificationId =
-          await repository.startPhoneSignIn('+905337106414');
+      final verificationId = await repository.startPhoneSignIn('+905337106414');
 
       final session = await repository.completePhoneSignIn(
         verificationId: verificationId,
@@ -712,6 +711,142 @@ void main() {
       );
 
       expect(session, isNull);
+    });
+  });
+
+  // 2026-10-30 — Windows fast-fail network preflight.
+  group('FirebaseStaffAuthRepository.signIn — Windows reachability preflight',
+      () {
+    setUp(() {
+      debugDefaultTargetPlatformOverride = null;
+    });
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    test(
+        'on Windows, an unreachable network fails fast with '
+        'StaffAuthUnavailableException — never reaching (or hanging on) '
+        'the real sign-in call', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      final authClient = FakeEmailPasswordAuthClient(neverResolvesSignIn: true);
+      final repository = FirebaseStaffAuthRepository(
+        authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: StaffAuthorizationClaims.empty,
+        ),
+        organizationId: () => _testOrgId,
+        reachabilityCheck: () async => false,
+      );
+
+      // If the preflight didn't short-circuit, this would hang on the
+      // never-resolving fake sign-in call until staffAuthNetworkTimeout
+      // (20s) — the test's own default timeout would catch that as a
+      // failure, but asserting the specific exception proves it's the
+      // fast preflight path, not a lucky late failure.
+      await expectLater(
+        () => repository.signIn(email: 'x@abakus.test', password: 'pw'),
+        throwsA(isA<StaffAuthUnavailableException>()),
+      );
+    });
+
+    test(
+        'on Windows, a reachable network proceeds to the real sign-in call '
+        'as normal', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      final authClient = FakeEmailPasswordAuthClient();
+      await authClient.createAccount(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+      final repository = FirebaseStaffAuthRepository(
+        authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: const StaffAuthorizationClaims(
+            organizationAccess: [_testOrgId],
+            rolesByOrganization: {
+              _testOrgId: ['manager'],
+            },
+            branchAccessByOrganization: {},
+          ),
+        ),
+        organizationId: () => _testOrgId,
+        reachabilityCheck: () async => true,
+      );
+
+      final session = await repository.signIn(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+
+      expect(session, isNotNull);
+      expect(session!.roles, {StaffRole.manager});
+    });
+
+    test(
+        'on a non-Windows platform, the preflight is never consulted — '
+        'an "unreachable"-reporting check has no effect', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final authClient = FakeEmailPasswordAuthClient();
+      await authClient.createAccount(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+      final repository = FirebaseStaffAuthRepository(
+        authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: const StaffAuthorizationClaims(
+            organizationAccess: [_testOrgId],
+            rolesByOrganization: {
+              _testOrgId: ['manager'],
+            },
+            branchAccessByOrganization: {},
+          ),
+        ),
+        organizationId: () => _testOrgId,
+        // Would fail the signIn fast on Windows — must be ignored here.
+        reachabilityCheck: () async => false,
+      );
+
+      final session = await repository.signIn(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+
+      expect(session, isNotNull);
+    });
+
+    test(
+        "a reachability check that itself throws is treated as "
+        '"couldn\'t tell," never as "unreachable" — proceeds to the real '
+        'sign-in call rather than failing closed on its own bug', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      final authClient = FakeEmailPasswordAuthClient();
+      await authClient.createAccount(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+      final repository = FirebaseStaffAuthRepository(
+        authClient: authClient,
+        phoneAuthClient: FakeFirebaseAuthClient(),
+        staffMemberRepository: InMemoryStaffMemberRepository(),
+        sessionDuration: () => const Duration(hours: 1),
+        claimsSyncClient: FakeStaffClaimsSyncClient(
+          claimsToReturn: const StaffAuthorizationClaims(
+            organizationAccess: [_testOrgId],
+            rolesByOrganization: {
+              _testOrgId: ['manager'],
+            },
+            branchAccessByOrganization: {},
+          ),
+        ),
+        organizationId: () => _testOrgId,
+        reachabilityCheck: () async => throw Exception('probe bug'),
+      );
+
+      final session = await repository.signIn(
+          email: 'manager@abakus.test', password: 'S3curePass!');
+
+      expect(session, isNotNull);
     });
   });
 }

@@ -314,6 +314,7 @@ class _ReservationFlowScreenState extends ConsumerState<ReservationFlowScreen> {
                           optionId: modifier.optionId
                         ),
                     ],
+                    excludedIngredients: item.removedIngredients,
                   ),
               ],
         requestedBoncukAmount: (_boncukUsageEnabled && preorderItems.isNotEmpty)

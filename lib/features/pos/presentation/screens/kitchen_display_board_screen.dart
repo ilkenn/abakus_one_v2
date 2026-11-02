@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/errors/business_rule_violation.dart';
+import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -133,7 +134,10 @@ class _KitchenDisplayBoardScreenState
     // already reuses, not a parallel one.
     _ticketSubscription = ref
         .read(kitchenTicketRepositoryProvider)
-        .watchActiveByBranch(widget.branchId)
+        .watchActiveByBranch(
+          widget.branchId,
+          organizationId: ref.read(currentOrganizationIdProvider),
+        )
         .listen((_) => _load(), onError: _handleLoadError);
   }
 
@@ -177,9 +181,11 @@ class _KitchenDisplayBoardScreenState
     final clock = ref.read(clockProvider);
     final List<KitchenTicket> tickets;
     try {
-      tickets = await ref
-          .read(kitchenTicketRepositoryProvider)
-          .findActiveByBranch(widget.branchId);
+      tickets =
+          await ref.read(kitchenTicketRepositoryProvider).findActiveByBranch(
+                widget.branchId,
+                organizationId: ref.read(currentOrganizationIdProvider),
+              );
     } catch (error) {
       _handleLoadError(error);
       return;
@@ -196,11 +202,25 @@ class _KitchenDisplayBoardScreenState
     // server had already enqueued. `EnqueueKitchenWorkItems` itself stays
     // in the codebase (still real, tested application logic) — it's just
     // no longer invoked from production UI.
-    final workItems =
-        await ref.read(kitchenProjectionRepositoryProvider).findByBranch(
-              branchId: widget.branchId,
-              stationName: _selectedStation?.name,
-            );
+    // 2026-10-27: this call was previously unguarded — an uncaught
+    // `permission-denied` here (the exact same class of Firestore
+    // list-query rejection the ticket query above already guards against;
+    // see `FirestoreKitchenWorkItemRepository.findByBranch`'s own doc
+    // comment) left `_load()` never reaching the `setState` below, so the
+    // screen hung on "Mutfak ekranı yükleniyor..." forever with only an
+    // uncaught browser-console error to show for it, never a visible
+    // message. Now degrades exactly like the ticket query does.
+    final List<KitchenWorkItem> workItems;
+    try {
+      workItems =
+          await ref.read(kitchenProjectionRepositoryProvider).findByBranch(
+                branchId: widget.branchId,
+                stationName: _selectedStation?.name,
+              );
+    } catch (error) {
+      _handleLoadError(error);
+      return;
+    }
     final grouped = <String, List<KitchenWorkItem>>{};
     for (final item in workItems) {
       grouped.putIfAbsent(item.kitchenTicketId, () => []).add(item);

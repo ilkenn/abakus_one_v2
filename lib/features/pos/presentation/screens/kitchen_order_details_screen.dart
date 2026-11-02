@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/errors/business_rule_violation.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/clock_provider.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
+import '../../../../shared/widgets/feedback/empty_view.dart';
+import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../orders/domain/models/order_channel.dart';
 import '../../application/use_cases/record_kitchen_event.dart';
 import '../../application/use_cases/transition_kitchen_work_item.dart';
+import '../../data/kitchen_action_gateway.dart';
 import '../../domain/authorization/pos_authorization_policy.dart';
 import '../../domain/kds/kitchen_line_status.dart';
 import '../../domain/kds/kitchen_order_view.dart';
@@ -51,6 +56,17 @@ class _KitchenOrderDetailsScreenState
   List<KitchenWorkItem>? _workItems;
   String? _message;
 
+  /// 2026-10-29 — distinguishes "still loading" from "load finished, but
+  /// nothing was found" or "load failed/timed out". Previously absent: a
+  /// `null` ticket after a *completed* load rendered the exact same
+  /// `LoadingView` as a load still in flight, so a genuinely-missing
+  /// ticket (a stale/mismatched `kitchenTicketId`, or a slow/failing
+  /// `kitchenTicketRepositoryProvider` read) looked identical to "still
+  /// loading" forever — the real cause of the reported "Detaylar
+  /// yükleniyor..." infinite spinner.
+  bool _loadAttempted = false;
+  String? _loadError;
+
   @override
   void initState() {
     super.initState();
@@ -58,26 +74,80 @@ class _KitchenOrderDetailsScreenState
   }
 
   Future<void> _load() async {
-    final ticket = await ref
-        .read(kitchenTicketRepositoryProvider)
-        .findById(widget.kitchenTicketId);
-    final allItems = ticket == null
-        ? <KitchenWorkItem>[]
-        : await ref
-            .read(kitchenProjectionRepositoryProvider)
-            .findByOrderId(ticket.orderId);
-    final items = allItems
-        .where((i) => i.kitchenTicketId == widget.kitchenTicketId)
-        .toList();
-    if (!mounted) return;
     setState(() {
-      _ticket = ticket;
-      _workItems = items;
+      _loadAttempted = false;
+      _loadError = null;
     });
+    try {
+      final ticket = await ref
+          .read(kitchenTicketRepositoryProvider)
+          .findById(widget.kitchenTicketId)
+          .timeout(const Duration(seconds: 15));
+      final allItems = ticket == null
+          ? <KitchenWorkItem>[]
+          : await ref
+              .read(kitchenProjectionRepositoryProvider)
+              .findByOrderId(ticket.orderId)
+              .timeout(const Duration(seconds: 15));
+      final items = allItems
+          .where((i) => i.kitchenTicketId == widget.kitchenTicketId)
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _ticket = ticket;
+        _workItems = items;
+        _loadAttempted = true;
+        _loadError = ticket == null ? 'Sipariş bulunamadı.' : null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadAttempted = true;
+        _loadError = 'Detaylar yüklenemedi. Lütfen tekrar dene.';
+      });
+    }
   }
 
+  /// 2026-10-29 — once Firebase is ready, the real `transitionKitchenWorkItem`
+  /// callable (`KitchenActionGateway`) is the only path a transition takes,
+  /// mirroring `KitchenDisplayBoardScreen._advanceLine`'s exact reasoning
+  /// (the old local `TransitionKitchenWorkItem` use case's `save()` is a
+  /// deliberate no-op once Firestore-backed — see
+  /// `FirestoreKitchenWorkItemRepository`'s own doc comment). Previously
+  /// this screen always used the local use case regardless of environment,
+  /// so a staff member acting from the detail screen instead of the board
+  /// never actually reached the server, and never propagated to KDS/the
+  /// customer's live order tracking.
   Future<void> _transition(KitchenWorkItem item, KitchenLineStatus to,
       {String? reason}) async {
+    if (ref.read(firebaseReadyProvider)) {
+      try {
+        final gateway = ref.read(kitchenActionGatewayProvider);
+        final result = await gateway.transitionWorkItem(
+          workItemId: item.id,
+          to: to,
+          expectedRevision: item.revision,
+          reason: reason,
+        );
+        final orderId = result.orderId;
+        final orderChannel = result.orderChannel;
+        if (result.allSiblingsReady &&
+            orderId != null &&
+            orderChannel != null) {
+          await gateway.advanceOrderStatus(
+            orderId: orderId,
+            channel: orderChannel,
+            targetStatus: 'ready',
+          );
+        }
+        setState(() => _message = null);
+        await _load();
+      } on KitchenActionException catch (e) {
+        setState(() => _message = e.message);
+      }
+      return;
+    }
+
     final policy = widget.authorizationPolicy;
     if (policy == null) {
       setState(() => _message = 'Yetki politikası tanımlı değil.');
@@ -106,6 +176,69 @@ class _KitchenOrderDetailsScreenState
       await _load();
     } on BusinessRuleViolation catch (e) {
       setState(() => _message = e.description);
+    }
+  }
+
+  /// 2026-10-29 — the user-requested whole-order "İptal Et" action, next to
+  /// the ready-progress summary (this screen's own "Hazır/Tamamla"
+  /// indicator). Only shown for a `dineInQr` ticket (the one channel
+  /// `advanceDineInOrderStatus` accepts `targetStatus: 'cancelled'` for —
+  /// `dineInStaff`/`takeaway`/`delivery`/`reservationPreorder` each have
+  /// their own, separate cancellation mechanism this button deliberately
+  /// does not attempt to also drive).
+  Future<void> _cancelWholeOrder(KitchenTicket ticket) async {
+    DineInCancellationReasonCode selected =
+        DineInCancellationReasonCode.itemUnavailable;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Siparişi İptal Et'),
+          content: RadioGroup<DineInCancellationReasonCode>(
+            groupValue: selected,
+            onChanged: (value) => setDialogState(() => selected = value!),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final code in DineInCancellationReasonCode.values)
+                  RadioListTile<DineInCancellationReasonCode>(
+                    value: code,
+                    title: Text(_cancellationReasonLabel(code)),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Vazgeç'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Siparişi İptal Et'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await ref.read(kitchenActionGatewayProvider).advanceOrderStatus(
+            orderId: ticket.orderId.value,
+            channel: 'dineInQr',
+            targetStatus: 'cancelled',
+            reasonCode: selected.name,
+          );
+      if (!mounted) return;
+      setState(() => _message = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sipariş iptal edildi.')),
+      );
+      await _load();
+    } on KitchenActionException catch (e) {
+      if (!mounted) return;
+      setState(() => _message = e.message);
     }
   }
 
@@ -157,56 +290,104 @@ class _KitchenOrderDetailsScreenState
         elevation: 0,
       ),
       body: SafeArea(
-        child: ticket == null || items == null || view == null
+        child: !_loadAttempted
             ? const LoadingView(message: 'Detaylar yükleniyor...')
-            : ListView(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                children: [
-                  Text(ticket.header.channelLabel,
-                      style: AppTypography.bodyMedium
-                          .copyWith(color: AppColors.textSecondary)),
-                  Text(
-                    view.isFullyReady
-                        ? 'Sipariş hazır'
-                        : '${items.where((i) => i.status == KitchenLineStatus.ready).length}/${items.length} hazır',
-                    style: AppTypography.bodyLarge.copyWith(
-                      color: view.isFullyReady
-                          ? AppColors.success
-                          : AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  if (_message != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                      child: Text(_message!,
-                          style: AppTypography.bodySmall
-                              .copyWith(color: AppColors.error)),
-                    ),
-                  for (final item in items)
-                    _WorkItemDetailCard(
-                      item: item,
-                      line: ticket.lines.firstWhere(
-                        (l) => l.id == item.kitchenTicketLineId,
-                        orElse: () => KitchenTicketLine(
-                          id: item.kitchenTicketLineId,
-                          productName: '(bilinmiyor)',
-                          quantity: item.quantity,
-                        ),
+            : (ticket == null || items == null || view == null)
+                ? EmptyView(
+                    icon: Icons.receipt_long_outlined,
+                    message: _loadError ?? 'Sipariş bulunamadı.',
+                  )
+                : _loadError != null
+                    ? ErrorView(
+                        message: _loadError!,
+                        retryLabel: 'Tekrar Dene',
+                        onRetry: _load,
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.all(AppSpacing.lg),
+                        children: [
+                          Text(ticket.header.channelLabel,
+                              style: AppTypography.bodyMedium
+                                  .copyWith(color: AppColors.textSecondary)),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                view.isFullyReady
+                                    ? 'Sipariş hazır'
+                                    : '${items.where((i) => i.status == KitchenLineStatus.ready).length}/${items.length} hazır',
+                                style: AppTypography.bodyLarge.copyWith(
+                                  color: view.isFullyReady
+                                      ? AppColors.success
+                                      : AppColors.textPrimary,
+                                ),
+                              ),
+                              if (ticket.header.channel ==
+                                  OrderChannel.dineInQr)
+                                OutlinedButton(
+                                  onPressed: () => _cancelWholeOrder(ticket),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.error,
+                                    side: const BorderSide(
+                                        color: AppColors.error),
+                                  ),
+                                  child: const Text('Siparişi İptal Et'),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          if (_message != null)
+                            Padding(
+                              padding:
+                                  const EdgeInsets.only(bottom: AppSpacing.sm),
+                              child: Text(_message!,
+                                  style: AppTypography.bodySmall
+                                      .copyWith(color: AppColors.error)),
+                            ),
+                          for (final item in items)
+                            _WorkItemDetailCard(
+                              item: item,
+                              line: ticket.lines.firstWhere(
+                                (l) => l.id == item.kitchenTicketLineId,
+                                orElse: () => KitchenTicketLine(
+                                  id: item.kitchenTicketLineId,
+                                  productName: '(bilinmiyor)',
+                                  quantity: item.quantity,
+                                ),
+                              ),
+                              nextStatus:
+                                  KitchenOrderCard.nextStatus(item.status),
+                              onAdvance: (to) => _transition(item, to),
+                              onCancel: () => _promptReasonThenTransition(
+                                  item,
+                                  KitchenLineStatus.cancelled,
+                                  'Satırı İptal Et'),
+                              onRecall: item.status == KitchenLineStatus.ready
+                                  ? () => _promptReasonThenTransition(item,
+                                      KitchenLineStatus.recalled, 'Geri Çağır')
+                                  : null,
+                            ),
+                        ],
                       ),
-                      nextStatus: KitchenOrderCard.nextStatus(item.status),
-                      onAdvance: (to) => _transition(item, to),
-                      onCancel: () => _promptReasonThenTransition(
-                          item, KitchenLineStatus.cancelled, 'Satırı İptal Et'),
-                      onRecall: item.status == KitchenLineStatus.ready
-                          ? () => _promptReasonThenTransition(
-                              item, KitchenLineStatus.recalled, 'Geri Çağır')
-                          : null,
-                    ),
-                ],
-              ),
       ),
     );
+  }
+}
+
+String _cancellationReasonLabel(DineInCancellationReasonCode code) {
+  switch (code) {
+    case DineInCancellationReasonCode.itemUnavailable:
+      return 'Ürün stokta yok';
+    case DineInCancellationReasonCode.kitchenUnavailable:
+      return 'Mutfak müsait değil';
+    case DineInCancellationReasonCode.capacityUnavailable:
+      return 'Kapasite yetersiz';
+    case DineInCancellationReasonCode.guestLeft:
+      return 'Misafir masayı terk etti';
+    case DineInCancellationReasonCode.operationalIssue:
+      return 'Operasyonel sorun';
+    case DineInCancellationReasonCode.other:
+      return 'Diğer';
   }
 }
 

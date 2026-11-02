@@ -227,6 +227,7 @@ class _DeliveryCheckoutScreenState
                 (groupId: modifier.groupId, optionId: modifier.optionId),
             ],
             note: item.note,
+            excludedIngredients: item.removedIngredients,
           ),
     ];
   }

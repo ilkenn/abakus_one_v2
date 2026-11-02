@@ -247,8 +247,31 @@ class TrustedDeviceSessionController
     } on DeviceKeyStorageCorruptedException catch (e) {
       state = KeyStorageCorrupted(e.toString());
     } on TrustedDeviceSessionException catch (e) {
-      state = DeviceNetworkError(e.message);
+      state = DeviceNetworkError(_friendlyActivationErrorMessage(e));
     }
+  }
+
+  /// 2026-10-30 — `trustedDevice.ts`'s `loadDeviceRegistration` throws a
+  /// raw `not-found: "No trusted device registration found."` whenever
+  /// the locally-cached `deviceId` (deterministically derived from this
+  /// device's own key, `deriveServerDeviceId`) doesn't match any real
+  /// Firestore doc — e.g. a key cached from a registration attempt made
+  /// while the Windows native transport was still broken, before this
+  /// session's REST-bridge fixes. `DeviceNetworkError`'s own card
+  /// (`_RetryableErrorCard`) was previously showing that raw English
+  /// backend string verbatim — never acceptable for an end user
+  /// (`CLAUDE.md` §9) and, worse, gave no hint that its own "Tekrar Dene"
+  /// button (`controller.register(...)`, reusing this exact same cached
+  /// key) is precisely the fix: re-submitting registration with the same
+  /// key deterministically recreates the missing doc through the real
+  /// admin-approval flow — never a bypass, never a new/different key.
+  String _friendlyActivationErrorMessage(TrustedDeviceSessionException e) {
+    if (e.code == 'not-found') {
+      return 'Bu cihazın kaydı sunucuda bulunamadı. Aşağıdaki "Tekrar Dene" '
+          'bu cihazı aynı kimlikle yeniden kaydeder ve yönetici onayına '
+          'gönderir.';
+    }
+    return e.message;
   }
 
   /// Called before any device-gated POS action — returns the still-valid

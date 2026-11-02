@@ -2,8 +2,6 @@ import 'package:cloud_functions/cloud_functions.dart' as functions;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
-import '../../../bootstrap/app_environment.dart';
-import '../../../bootstrap/firebase_functions_emulator_config.dart';
 import '../../../core/services/functions/rest_callable_client.dart';
 
 /// The three real callables `trusted_device_gateway.dart` deliberately
@@ -107,16 +105,17 @@ class FirebaseTrustedDeviceSessionGateway
   /// (`pos_operational_view_gateway.dart`) for the full rationale — this
   /// device session is a hard prerequisite for that gateway's own two
   /// callables (`requireActiveDeviceSession`, server-side), so the same
-  /// Windows-plus-local-emulator REST bridge is needed here too (PC
-  /// Yönetici İnceleme Modu, 2026-09-20).
+  /// Windows REST bridge is needed here too (PC Yönetici İnceleme Modu,
+  /// 2026-09-20). **2026-10-29**: no longer also gated on
+  /// `FirebaseFunctionsEmulatorConfig.shouldUseEmulator` — see
+  /// `StaffClaimsSyncClient.syncAndRefresh`'s identical fix for why that
+  /// extra condition silently broke this on Windows against a real
+  /// project (staging/production), not just the emulator.
   Future<Map<String, dynamic>> _call(
     String name,
     Map<String, dynamic> data,
   ) async {
-    final useRest = !kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.windows &&
-        FirebaseFunctionsEmulatorConfig.shouldUseEmulator(
-            AppEnvironment.current);
+    final useRest = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
     if (useRest) {
       try {
         return await _restClient.call(name, data);

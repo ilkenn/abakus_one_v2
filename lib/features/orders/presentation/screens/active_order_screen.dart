@@ -4,6 +4,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../../core/theme/qr_menu_theme.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
@@ -435,6 +436,11 @@ class _TimelineRow extends StatelessWidget {
         .copyWith(
             color: isDone ? AppColors.textPrimary : AppColors.textSecondary);
 
+    // "Warm Artisanal & Craft" step-timeline reskin — scoped visual change
+    // only: the data/logic this renders (`OrderTrackingTimeline.stepsFor`/
+    // `.currentStepFor`/`.labelFor`) is completely untouched, only the
+    // marker/connector chrome below is restyled with `QrMenuColors` and a
+    // hand-drawn-feeling dashed connector instead of the former solid line.
     return Semantics(
       label: isCurrent
           ? '$label, şu anki durum'
@@ -446,30 +452,34 @@ class _TimelineRow extends StatelessWidget {
             Column(
               children: [
                 Container(
-                  width: 24,
-                  height: 24,
+                  width: 28,
+                  height: 28,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color:
-                        isDone ? AppColors.primary : AppColors.surfaceVariant,
+                        isDone ? QrMenuColors.primary : QrMenuColors.background,
                     border: Border.all(
-                      color: isDone ? AppColors.primary : AppColors.border,
-                      width: isCurrent ? 2 : 1,
+                      color: isCurrent
+                          ? QrMenuColors.gold
+                          : (isDone
+                              ? QrMenuColors.primary
+                              : QrMenuColors.border),
+                      width: isCurrent ? 2.5 : 1.5,
                     ),
                   ),
                   child: isCompleted
                       ? const Icon(
                           Icons.check_rounded,
-                          size: 14,
-                          color: Colors.white,
+                          size: 15,
+                          color: QrMenuColors.onPrimary,
                         )
                       : (isCurrent
                           ? Center(
                               child: Container(
-                                width: 8,
-                                height: 8,
+                                width: 9,
+                                height: 9,
                                 decoration: const BoxDecoration(
-                                  color: Colors.white,
+                                  color: QrMenuColors.gold,
                                   shape: BoxShape.circle,
                                 ),
                               ),
@@ -478,9 +488,16 @@ class _TimelineRow extends StatelessWidget {
                 ),
                 if (!isLast)
                   Expanded(
-                    child: Container(
+                    child: SizedBox(
                       width: 2,
-                      color: isCompleted ? AppColors.primary : AppColors.border,
+                      child: CustomPaint(
+                        size: const Size(2, double.infinity),
+                        painter: _CraftConnectorPainter(
+                          color: isCompleted
+                              ? QrMenuColors.primary
+                              : QrMenuColors.border,
+                        ),
+                      ),
                     ),
                   ),
               ],
@@ -490,7 +507,7 @@ class _TimelineRow extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.only(
                   bottom: isLast ? 0 : AppSpacing.lg,
-                  top: 2,
+                  top: 4,
                 ),
                 child: Text(label, style: textStyle),
               ),
@@ -500,6 +517,40 @@ class _TimelineRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Hand-drawn-feeling dashed connector between two timeline markers —
+/// decorative only (purely paints [color] in short dashes down a 2px-wide
+/// column), carries no information of its own that isn't already conveyed
+/// by the markers' own fill/border + the row's [Semantics] label, so it
+/// needs no separate accessibility treatment. GPU-cheap: a handful of
+/// `drawLine` calls per repaint, no blur/shader effects.
+class _CraftConnectorPainter extends CustomPainter {
+  final Color color;
+
+  static const double _dashLength = 5;
+  static const double _gapLength = 4;
+
+  const _CraftConnectorPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+
+    var y = 0.0;
+    while (y < size.height) {
+      final end = (y + _dashLength).clamp(0.0, size.height);
+      canvas.drawLine(Offset(1, y), Offset(1, end), paint);
+      y += _dashLength + _gapLength;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CraftConnectorPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _CancelledStatusCard extends StatelessWidget {

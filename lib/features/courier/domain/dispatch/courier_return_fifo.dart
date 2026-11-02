@@ -22,8 +22,9 @@ abstract final class CourierReturnFifo {
   /// [returnedAt]) keep their relative input order (a stable sort), never
   /// re-ordered arbitrarily.
   static List<Courier> sortAvailableByReturnTime(List<Courier> couriers) {
-    final available =
-        couriers.where((c) => c.dispatchStatus == CourierStatus.available).toList();
+    final available = couriers
+        .where((c) => c.dispatchStatus == CourierStatus.available)
+        .toList();
     available.sort((a, b) {
       final aReturnedAt = a.returnedAt;
       final bReturnedAt = b.returnedAt;

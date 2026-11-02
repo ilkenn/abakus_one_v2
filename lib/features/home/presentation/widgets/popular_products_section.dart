@@ -5,6 +5,8 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_shadows.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../../core/theme/qr_menu_theme.dart';
+import '../../../../shared/widgets/cards/glass_card.dart';
 import '../../../../shared/widgets/images/product_image.dart';
 import '../../../menu/domain/models/menu_product.dart';
 import '../../../menu/presentation/providers/menu_catalog_provider.dart';
@@ -115,15 +117,16 @@ class _PopularProductCard extends StatelessWidget {
                         Positioned(
                           left: AppSpacing.sm,
                           top: AppSpacing.sm,
-                          child: Container(
+                          // "Warm Artisanal & Craft" glassmorphism badge —
+                          // scoped QR-menu styling only (see
+                          // `qr_menu_theme.dart`'s own doc comment); the
+                          // rest of this card's layout/text is untouched.
+                          child: GlassCard(
+                            tintColor: QrMenuColors.glassBadgeTint,
+                            borderRadius: AppRadius.kPill,
                             padding: const EdgeInsets.symmetric(
                               horizontal: AppSpacing.sm,
                               vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.surface.withValues(alpha: 0.92),
-                              borderRadius: AppRadius.kPill,
-                              boxShadow: AppShadows.subtle,
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -131,13 +134,13 @@ class _PopularProductCard extends StatelessWidget {
                                 const Icon(
                                   Icons.eco_rounded,
                                   size: 12,
-                                  color: AppColors.primary,
+                                  color: QrMenuColors.gold,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
                                   tag,
-                                  style: AppTypography.caption.copyWith(
-                                    color: AppColors.primary,
+                                  style: QrMenuTypography.caption.copyWith(
+                                    color: QrMenuColors.onPrimary,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
@@ -145,6 +148,22 @@ class _PopularProductCard extends StatelessWidget {
                             ),
                           ),
                         ),
+                      Positioned(
+                        right: AppSpacing.sm,
+                        bottom: AppSpacing.sm,
+                        child: GlassCard(
+                          tintColor: QrMenuColors.glassBadgeTint,
+                          borderRadius: AppRadius.kPill,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.sm,
+                            vertical: 4,
+                          ),
+                          child: Text(
+                            '${product.basePrice.toStringAsFixed(0)} TL',
+                            style: QrMenuTypography.badge,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),

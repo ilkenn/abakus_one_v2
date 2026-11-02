@@ -150,6 +150,7 @@ export interface RawProductItem {
   quantity: unknown;
   selectedModifiers?: unknown;
   note?: unknown;
+  excludedIngredients?: unknown;
 }
 
 export interface RawBowlItem {
@@ -218,6 +219,7 @@ export function parseItems(raw: unknown): RawItem[] {
         quantity: item.quantity,
         selectedModifiers: item.selectedModifiers,
         note: item.note,
+        excludedIngredients: item.excludedIngredients,
       };
     }
     if (item.kind === "bowl") {
@@ -245,6 +247,35 @@ export function requireValidQuantity(raw: unknown, context: string): number {
 // -----------------------------------------------------------------------
 // Catalog-backed line building
 // -----------------------------------------------------------------------
+
+const MAX_EXCLUDED_INGREDIENTS = 20;
+const MAX_EXCLUDED_INGREDIENT_LENGTH = 100;
+
+/**
+ * 2026-10-30 product-configurator — structural-only validation (type,
+ * count, length), never matched against the live catalog's exact
+ * `removableIngredients` list. Price-neutral free-text identical in risk
+ * profile to `note`/`kitchenNote`, which are already trusted client input
+ * at this exact boundary — see `ComputedOrderLine.excludedIngredients`'s
+ * own doc comment for the full reasoning.
+ */
+export function sanitizeExcludedIngredients(raw: unknown, context: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) invalid(`${context}: excludedIngredients must be an array.`);
+  if (raw.length > MAX_EXCLUDED_INGREDIENTS) {
+    invalid(`${context}: too many excludedIngredients.`);
+  }
+  return raw.map((entry) => {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      invalid(`${context}: each excludedIngredients entry must be a non-empty string.`);
+    }
+    const trimmed = (entry as string).trim();
+    if (trimmed.length > MAX_EXCLUDED_INGREDIENT_LENGTH) {
+      invalid(`${context}: an excludedIngredients entry is too long.`);
+    }
+    return trimmed;
+  });
+}
 
 export async function resolveProductModifiers(
   product: CanonicalMenuProduct,
@@ -285,6 +316,34 @@ export async function resolveProductModifiers(
   return resolved;
 }
 
+/**
+ * 2026-10-30 product-configurator — server-side enforcement that every
+ * `isRequired` group on [product] got at least `minSelections` selections
+ * among [resolved]. Mirrors the Dart `ModifierGroup.isSatisfiedBy`/
+ * `ModifierValidator` the Flutter client already enforces client-side
+ * (`AddProductToPosOrder`, `ProductDetailScreen._allGroupsValid`) — but
+ * client-side-only enforcement is never authoritative (this app's own
+ * security rule): before this function existed, a caller could omit a
+ * required group's selection entirely and still have the order accepted
+ * at base price, since `resolveProductModifiers` only ever validated
+ * *submitted* entries, never that every required group was covered. Every
+ * `isRequired` group added by this same feature (Bowl's carb/salad/pickle,
+ * Burger/Wrap's Patates Tercihi) is now actually enforced here, for every
+ * channel that resolves through `buildProductLine`.
+ */
+export function requireModifierGroupsSatisfied(
+  product: CanonicalMenuProduct,
+  resolved: OrderLineModifierInput[],
+): void {
+  for (const group of product.modifierGroups) {
+    if (!group.isRequired) continue;
+    const selectedCount = resolved.filter((m) => m.groupId === group.id).length;
+    if (selectedCount < Math.max(group.minSelections, 1)) {
+      invalid(`product "${product.id}": required modifier group "${group.id}" needs a selection.`);
+    }
+  }
+}
+
 export async function buildProductLine(
   db: Firestore,
   item: RawProductItem,
@@ -309,6 +368,7 @@ export async function buildProductLine(
   if (!product!.isAvailable) invalid(`product "${productId}" is not available.`);
 
   const modifiers = await resolveProductModifiers(product!, item.selectedModifiers);
+  requireModifierGroupsSatisfied(product!, modifiers);
   // `unitPriceMinorUnits` is already channel-resolved here (includes
   // takeaway's own product-level surcharge, if any) — a catalog reward's
   // `freeUnitCount` therefore automatically covers that surcharge too, with
@@ -321,6 +381,10 @@ export async function buildProductLine(
   });
 
   const note = typeof item.note === "string" ? item.note.slice(0, 500) : "";
+  const excludedIngredients = sanitizeExcludedIngredients(
+    item.excludedIngredients,
+    `product "${productId}"`,
+  );
   return buildOrderLine({
     productId: product!.id,
     productName: product!.name,
@@ -330,6 +394,7 @@ export async function buildProductLine(
     unitPriceMinorUnits,
     taxBasisPoints: TAKEAWAY_TAX_BASIS_POINTS,
     customerNote: note,
+    excludedIngredients,
     freeUnitCount,
     campaignDiscountMinorUnits,
   });
@@ -1750,6 +1815,7 @@ function buildOrderDocument(params: {
       taxRateBasisPoints: line.taxBasisPoints,
       kitchenNote: line.kitchenNote,
       customerNote: line.customerNote,
+      excludedIngredients: line.excludedIngredients,
     })),
     pricing: {
       grossSubtotal: moneyField(params.pricing.grossSubtotalMinorUnits),

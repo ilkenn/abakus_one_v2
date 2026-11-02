@@ -120,10 +120,10 @@ void main() {
 
         expect(find.text('Siparişe henüz ürün eklenmedi'), findsOneWidget);
 
-        await tapProduct(tester, 'Mexifit Bowl');
+        await tapProduct(tester, 'Acılı Ayran (Spice Ayran)');
 
         expect(find.text('Siparişe henüz ürün eklenmedi'), findsNothing);
-        expect(find.text('Mexifit Bowl'), findsWidgets);
+        expect(find.text('Acılı Ayran (Spice Ayran)'), findsWidgets);
         expect(repository.draftIds, contains('session-1'));
       },
     );
@@ -134,7 +134,7 @@ void main() {
     ) async {
       await pumpCashier(tester);
 
-      await tapProduct(tester, 'Mexifit Bowl');
+      await tapProduct(tester, 'Acılı Ayran (Spice Ayran)');
 
       await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Gönder'));
       await tester.pumpAndSettle();
@@ -151,7 +151,7 @@ void main() {
     ) async {
       await pumpCashier(tester);
 
-      await tapProduct(tester, 'Mexifit Bowl');
+      await tapProduct(tester, 'Acılı Ayran (Spice Ayran)');
       await tester.tap(find.widgetWithText(ElevatedButton, 'Siparişi Gönder'));
       await tester.pumpAndSettle();
 
@@ -181,7 +181,7 @@ void main() {
       (tester) async {
         await pumpCashier(tester);
 
-        await tapProduct(tester, 'Mexifit Bowl');
+        await tapProduct(tester, 'Acılı Ayran (Spice Ayran)');
 
         expect(find.text('Döviz kuru şu anda kullanılamıyor'), findsOneWidget);
       },
@@ -209,7 +209,7 @@ void main() {
         }),
       );
 
-      await tapProduct(tester, 'Mexifit Bowl');
+      await tapProduct(tester, 'Acılı Ayran (Spice Ayran)');
 
       expect(find.textContaining('Yaklaşık EUR'), findsOneWidget);
       expect(find.textContaining('Yaklaşık USD'), findsOneWidget);
@@ -222,7 +222,7 @@ void main() {
     ) async {
       await pumpCashier(tester);
 
-      await tapProduct(tester, 'Mexifit Bowl');
+      await tapProduct(tester, 'Acılı Ayran (Spice Ayran)');
 
       final button = tester.widget<ElevatedButton>(
         find.widgetWithText(ElevatedButton, 'Siparişi Gönder'),
@@ -236,7 +236,7 @@ void main() {
       tester,
     ) async {
       await pumpCashier(tester);
-      await tapProduct(tester, 'Mexifit Bowl');
+      await tapProduct(tester, 'Acılı Ayran (Spice Ayran)');
 
       expect(
         find.text('Hızlı indirim uygulamak için önce bir ürün seçin'),
@@ -254,11 +254,11 @@ void main() {
       tester,
     ) async {
       await pumpCashier(tester);
-      await tapProduct(tester, 'Mexifit Bowl');
+      await tapProduct(tester, 'Acılı Ayran (Spice Ayran)');
 
       // The cart line tile (not the product-grid tile) is the InkWell
       // ancestor of its quantity-decrement icon — a distinguishing marker
-      // since "Mexifit Bowl" text now also appears in the product grid.
+      // since "Acılı Ayran (Spice Ayran)" text now also appears in the product grid.
       final cartLineInkWell = find.ancestor(
         of: find.byIcon(Icons.remove_circle_outline),
         matching: find.byType(InkWell),

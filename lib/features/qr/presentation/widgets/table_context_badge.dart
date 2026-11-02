@@ -56,7 +56,8 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
     super.dispose();
   }
 
-  Future<void> _requestService(String guestSessionId, ServiceRequestType type) async {
+  Future<void> _requestService(
+      String guestSessionId, ServiceRequestType type) async {
     if (_busyType != null) return;
     setState(() => _busyType = type);
     try {
@@ -93,7 +94,8 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
 
     final localExpired = tableContext.session.expiresAt != null &&
         DateTime.now().isAfter(tableContext.session.expiresAt!);
-    final liveAsync = ref.watch(tableGuestSessionLivenessProvider(guestSessionId));
+    final liveAsync =
+        ref.watch(tableGuestSessionLivenessProvider(guestSessionId));
     // The stream not having delivered data yet (loading/error, e.g. a
     // transient reconnect) must never itself read as stale — only a real
     // snapshot saying so does. `orElse` deliberately stays `false`.

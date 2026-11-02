@@ -35,7 +35,9 @@ final takeawayOperationsRepositoryProvider =
 /// = active" convention).
 final branchTakeawaySettingsProvider = StreamProvider.family(
   (ref, String branchId) {
-    return ref.watch(takeawayOperationsRepositoryProvider).watchSettings(branchId);
+    return ref
+        .watch(takeawayOperationsRepositoryProvider)
+        .watchSettings(branchId);
   },
 );
 

@@ -47,6 +47,8 @@ class Order {
     required this.restaurantId,
     this.customerId,
     this.tableId,
+    this.tableNumber,
+    this.tableSection,
     this.tableSessionId,
     this.guestSessionId,
     this.guestAuthUid,
@@ -103,6 +105,15 @@ class Order {
   /// no table context (takeaway, delivery). Field names deliberately match
   /// `TableSession`/`GuestSession`'s own id fields, not new vocabulary.
   final String? tableId;
+
+  /// 2026-10-28 launch — a frozen, display-ready snapshot of the table's
+  /// own `restaurantTables/{tableId}.displayName`/`.areaName` at order-
+  /// creation time (e.g. `"İç Masa 1"` / `"İç Mekan"`), written server-side
+  /// by `submitDineInOrder.ts`. `null` for a channel with no table context,
+  /// or for an order placed before this field existed — never re-derived
+  /// from [tableId] by any client.
+  final String? tableNumber;
+  final String? tableSection;
   final String? tableSessionId;
   final String? guestSessionId;
 
@@ -433,6 +444,8 @@ class Order {
     String? restaurantId,
     String? customerId,
     String? tableId,
+    String? tableNumber,
+    String? tableSection,
     String? tableSessionId,
     String? guestSessionId,
     String? guestAuthUid,
@@ -477,6 +490,8 @@ class Order {
       restaurantId: restaurantId ?? this.restaurantId,
       customerId: customerId ?? this.customerId,
       tableId: tableId ?? this.tableId,
+      tableNumber: tableNumber ?? this.tableNumber,
+      tableSection: tableSection ?? this.tableSection,
       tableSessionId: tableSessionId ?? this.tableSessionId,
       guestSessionId: guestSessionId ?? this.guestSessionId,
       guestAuthUid: guestAuthUid ?? this.guestAuthUid,
@@ -493,8 +508,8 @@ class Order {
       merchantId: merchantId ?? this.merchantId,
       merchantName: merchantName ?? this.merchantName,
       pickupAddress: pickupAddress ?? this.pickupAddress,
-      consortiumDeliveryFeeMinorUnits:
-          consortiumDeliveryFeeMinorUnits ?? this.consortiumDeliveryFeeMinorUnits,
+      consortiumDeliveryFeeMinorUnits: consortiumDeliveryFeeMinorUnits ??
+          this.consortiumDeliveryFeeMinorUnits,
       contactFirstName: contactFirstName ?? this.contactFirstName,
       contactLastName: contactLastName ?? this.contactLastName,
       contactPhone: contactPhone ?? this.contactPhone,

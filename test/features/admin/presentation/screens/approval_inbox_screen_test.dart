@@ -118,7 +118,8 @@ void main() {
           if (session != null)
             actorSessionProvider.overrideWith((ref) => session),
           if (stockCountRepository != null)
-            stockCountRepositoryProvider.overrideWithValue(stockCountRepository),
+            stockCountRepositoryProvider
+                .overrideWithValue(stockCountRepository),
           if (stockCountLineRepository != null)
             stockCountLineRepositoryProvider
                 .overrideWithValue(stockCountLineRepository),

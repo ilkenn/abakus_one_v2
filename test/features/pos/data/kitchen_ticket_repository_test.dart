@@ -66,7 +66,8 @@ void main() {
     await repository.save(_ticket(id: 'ticket-1', branchId: 'branch-a'));
     await repository.save(_ticket(id: 'ticket-2', branchId: 'branch-b'));
 
-    final results = await repository.findActiveByBranch('branch-a');
+    final results = await repository.findActiveByBranch('branch-a',
+        organizationId: 'org-1');
 
     expect(results.map((t) => t.id), ['ticket-1']);
   });
@@ -76,7 +77,9 @@ void main() {
       final repository = InMemoryKitchenTicketRepository();
       await repository.save(_ticket(id: 'ticket-1', branchId: 'branch-a'));
 
-      final first = await repository.watchActiveByBranch('branch-a').first;
+      final first = await repository
+          .watchActiveByBranch('branch-a', organizationId: 'org-1')
+          .first;
 
       expect(first.map((t) => t.id), ['ticket-1']);
     });
@@ -85,8 +88,9 @@ void main() {
         () async {
       final repository = InMemoryKitchenTicketRepository();
       final emissions = <List<KitchenTicket>>[];
-      final subscription =
-          repository.watchActiveByBranch('branch-a').listen(emissions.add);
+      final subscription = repository
+          .watchActiveByBranch('branch-a', organizationId: 'org-1')
+          .listen(emissions.add);
       await Future<void>.delayed(Duration.zero);
 
       await repository.save(_ticket(id: 'ticket-1', branchId: 'branch-a'));
@@ -100,8 +104,9 @@ void main() {
         () async {
       final repository = InMemoryKitchenTicketRepository();
       final emissions = <List<KitchenTicket>>[];
-      final subscription =
-          repository.watchActiveByBranch('branch-a').listen(emissions.add);
+      final subscription = repository
+          .watchActiveByBranch('branch-a', organizationId: 'org-1')
+          .listen(emissions.add);
       await Future<void>.delayed(Duration.zero);
       final countAfterInitial = emissions.length;
 
@@ -120,7 +125,9 @@ void main() {
       await repository.save(
           _ticket(id: 'ticket-1', branchId: 'branch-a').copyWith(revision: 2));
 
-      final results = await repository.watchActiveByBranch('branch-a').first;
+      final results = await repository
+          .watchActiveByBranch('branch-a', organizationId: 'org-1')
+          .first;
 
       expect(results, hasLength(1));
       expect(results.single.revision, 2);

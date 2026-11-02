@@ -89,7 +89,9 @@ class _TakeawayModeChangeDialogState
       _error = null;
     });
     try {
-      await ref.read(takeawayOperationsGatewayProvider).updateTakeawayOperationStatus(
+      await ref
+          .read(takeawayOperationsGatewayProvider)
+          .updateTakeawayOperationStatus(
             organizationId: widget.organizationId,
             branchId: widget.branchId,
             status: _status,
@@ -134,7 +136,8 @@ class _TakeawayModeChangeDialogState
                   children: [
                     for (final minutes in kTakeawayBusyDelayMinuteOptions)
                       ChoiceChip(
-                        label: Text(minutes == 0 ? 'Gecikme yok' : '+$minutes dk'),
+                        label:
+                            Text(minutes == 0 ? 'Gecikme yok' : '+$minutes dk'),
                         selected: _busyDelayMinutes == minutes,
                         onSelected: (_) =>
                             setState(() => _busyDelayMinutes = minutes),
@@ -152,9 +155,10 @@ class _TakeawayModeChangeDialogState
                   children: [
                     ChoiceChip(
                       label: const Text('30 dk'),
-                      selected: _pausePreset == _PauseDurationPreset.thirtyMinutes,
-                      onSelected: (_) => setState(
-                          () => _pausePreset = _PauseDurationPreset.thirtyMinutes),
+                      selected:
+                          _pausePreset == _PauseDurationPreset.thirtyMinutes,
+                      onSelected: (_) => setState(() =>
+                          _pausePreset = _PauseDurationPreset.thirtyMinutes),
                     ),
                     ChoiceChip(
                       label: const Text('1 sa'),
@@ -204,7 +208,8 @@ class _TakeawayModeChangeDialogState
                   ),
                   child: Text(
                     _error!,
-                    style: AppTypography.bodySmall.copyWith(color: AppColors.error),
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.error),
                   ),
                 ),
               ],

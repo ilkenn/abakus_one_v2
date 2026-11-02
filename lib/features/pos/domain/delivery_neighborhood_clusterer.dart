@@ -7,7 +7,8 @@ import '../../orders/domain/models/order.dart';
 /// provider didn't resolve one) — these are never silently dropped, just
 /// never clustered.
 class NeighborhoodCluster {
-  const NeighborhoodCluster({required this.neighborhoodName, required this.orders});
+  const NeighborhoodCluster(
+      {required this.neighborhoodName, required this.orders});
 
   final String? neighborhoodName;
   final List<Order> orders;

@@ -32,11 +32,13 @@ class ScheduledOrdersCountBadge extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.schedule_rounded, size: 14, color: AppColors.onPrimary),
+            const Icon(Icons.schedule_rounded,
+                size: 14, color: AppColors.onPrimary),
             const SizedBox(width: AppSpacing.xs),
             Text(
               '$count',
-              style: AppTypography.labelLarge.copyWith(color: AppColors.onPrimary),
+              style:
+                  AppTypography.labelLarge.copyWith(color: AppColors.onPrimary),
             ),
           ],
         ),

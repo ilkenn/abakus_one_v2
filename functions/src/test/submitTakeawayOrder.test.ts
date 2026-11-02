@@ -1130,6 +1130,142 @@ test("Manipulation: a client-sent modifier extraPrice of 0 is ignored — the ca
   assert.strictEqual(order.pricing.grandTotal.minorUnits, 15000);
 });
 
+// 2026-10-30 product-configurator.
+test("Product configurator: excludedIngredients round-trips onto the order line, price-neutral", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, { basePriceMinorUnits: 45000 });
+  const { idToken } = await createRealPhoneUser();
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [
+        {
+          kind: "product",
+          productId,
+          quantity: 1,
+          excludedIngredients: ["Mısır", "Mor Lahana Turşusu"],
+        },
+      ],
+      ...CONTACT,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200);
+  const order = (await admin.firestore().collection("orders").doc(body.result!.orderId as string).get()).data()!;
+  assert.deepStrictEqual(order.lines[0].excludedIngredients, ["Mısır", "Mor Lahana Turşusu"]);
+  assert.strictEqual(order.pricing.grandTotal.minorUnits, 45000, "excluding an ingredient never changes price");
+});
+
+test("Manipulation: a non-string excludedIngredients entry is rejected", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, {});
+  const { idToken } = await createRealPhoneUser();
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [{ kind: "product", productId, quantity: 1, excludedIngredients: [42] }],
+      ...CONTACT,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+});
+
+test("Product configurator: omitting a selection for a required modifier group is rejected", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, {
+    modifierGroups: [
+      {
+        id: "bowl_carb",
+        name: "Karbonhidrat",
+        selectionType: "single",
+        isRequired: true,
+        minSelections: 1,
+        maxSelections: 1,
+        options: [{ id: "carb_basmati", name: "Pirinç / Basmati Pilavı", extraPriceMinorUnits: 0, isAvailable: true }],
+      },
+    ],
+  });
+  const { idToken } = await createRealPhoneUser();
+
+  const { httpStatus, body } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [{ kind: "product", productId, quantity: 1 }],
+      ...CONTACT,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
+});
+
+test("Product configurator: a satisfied required modifier group is accepted", async () => {
+  const chain = await seedValidChain();
+  const productId = nextId("product");
+  await seedMenuProduct(productId, chain.restaurantId, chain.organizationId, {
+    modifierGroups: [
+      {
+        id: "bowl_carb",
+        name: "Karbonhidrat",
+        selectionType: "single",
+        isRequired: true,
+        minSelections: 1,
+        maxSelections: 1,
+        options: [{ id: "carb_basmati", name: "Pirinç / Basmati Pilavı", extraPriceMinorUnits: 0, isAvailable: true }],
+      },
+    ],
+  });
+  const { idToken } = await createRealPhoneUser();
+
+  const { httpStatus } = await callCallable(
+    SUBMIT_URL,
+    {
+      submissionKey: nextId("key"),
+      restaurantId: chain.restaurantId,
+      branchId: chain.branchId,
+      pickupMode: "scheduled",
+      pickupTime: futurePickupIso(30),
+      items: [
+        {
+          kind: "product",
+          productId,
+          quantity: 1,
+          selectedModifiers: [{ groupId: "bowl_carb", optionId: "carb_basmati" }],
+        },
+      ],
+      ...CONTACT,
+    },
+    idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200);
+});
+
 test("Manipulation: claiming a different category on the item payload has no effect — the product's own canonical category is always used", async () => {
   const chain = await seedValidChain();
   const productId = nextId("product");

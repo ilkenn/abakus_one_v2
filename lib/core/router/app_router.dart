@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -83,9 +85,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   final authState = ref.read(authProvider);
   final isOnboardingComplete = ref.read(onboardingCompleteProvider);
   final signedIn = authState.isAuthenticated || authState.isGuest;
-  final initialLocation = signedIn
-      ? AppRoutes.main
-      : (isOnboardingComplete ? AppRoutes.login : AppRoutes.onboarding);
+  // Windows desktop is a back-office/POS terminal, never a customer
+  // surface (explicit product decision, 2026-10-28) — it always opens
+  // straight into [AppRoutes.admin] ([AdminShellScreen], which performs
+  // its own real, internal staff-session check and shows
+  // [StaffSignInScreen] itself when signed out — see that route's own
+  // `redirect` bypass below), regardless of any customer
+  // signed-in/guest/onboarding state. Other platforms are unaffected.
+  final isWindowsDesktop =
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  final initialLocation = isWindowsDesktop
+      ? AppRoutes.admin
+      : (signedIn
+          ? AppRoutes.main
+          : (isOnboardingComplete ? AppRoutes.login : AppRoutes.onboarding));
 
   return GoRouter(
     initialLocation: initialLocation,

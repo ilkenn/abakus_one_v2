@@ -78,12 +78,14 @@ class DeliveryProductItem extends DeliveryOrderItem {
   final int quantity;
   final List<({String groupId, String optionId})> selectedModifiers;
   final String note;
+  final List<String> excludedIngredients;
 
   const DeliveryProductItem({
     required this.productId,
     required this.quantity,
     this.selectedModifiers = const [],
     this.note = '',
+    this.excludedIngredients = const [],
   });
 
   @override
@@ -96,6 +98,7 @@ class DeliveryProductItem extends DeliveryOrderItem {
             {'groupId': modifier.groupId, 'optionId': modifier.optionId},
         ],
         'note': note,
+        'excludedIngredients': excludedIngredients,
       };
 }
 

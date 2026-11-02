@@ -53,14 +53,19 @@ Future<void> _pumpDialog(
 
 void main() {
   group('CourierAssignmentDialog', () {
-    testWidgets('marketplace-carried order renders the locked state, no courier list, no assign action', (tester) async {
-      await _pumpDialog(tester, overrides: const [], courierType: CourierType.marketplace);
+    testWidgets(
+        'marketplace-carried order renders the locked state, no courier list, no assign action',
+        (tester) async {
+      await _pumpDialog(tester,
+          overrides: const [], courierType: CourierType.marketplace);
 
       expect(find.text('Pazaryeri Kuryesi Taşımaktadır'), findsOneWidget);
       expect(find.text('Ata'), findsNothing);
     });
 
-    testWidgets('the first FIFO-sorted (oldest returnedAt) courier is tagged as recommended', (tester) async {
+    testWidgets(
+        'the first FIFO-sorted (oldest returnedAt) courier is tagged as recommended',
+        (tester) async {
       final couriers = [
         _courier('c-old', returnedAt: DateTime(2026, 1, 1, 10, 0)),
         _courier('c-new', returnedAt: DateTime(2026, 1, 1, 12, 0)),
@@ -79,7 +84,8 @@ void main() {
       expect(find.text('Ata'), findsNWidgets(2));
     });
 
-    testWidgets('an empty available-courier list shows the empty-state message', (tester) async {
+    testWidgets('an empty available-courier list shows the empty-state message',
+        (tester) async {
       await _pumpDialog(
         tester,
         overrides: [

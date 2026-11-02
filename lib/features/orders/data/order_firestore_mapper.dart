@@ -71,6 +71,8 @@ abstract final class OrderFirestoreMapper {
       'restaurantId': order.restaurantId,
       'customerId': order.customerId,
       'tableId': order.tableId,
+      'tableNumber': order.tableNumber,
+      'tableSection': order.tableSection,
       'tableSessionId': order.tableSessionId,
       'guestSessionId': order.guestSessionId,
       'guestAuthUid': order.guestAuthUid,
@@ -158,6 +160,8 @@ abstract final class OrderFirestoreMapper {
       restaurantId: data['restaurantId'] as String,
       customerId: data['customerId'] as String?,
       tableId: data['tableId'] as String?,
+      tableNumber: data['tableNumber'] as String?,
+      tableSection: data['tableSection'] as String?,
       tableSessionId: data['tableSessionId'] as String?,
       guestSessionId: data['guestSessionId'] as String?,
       guestAuthUid: data['guestAuthUid'] as String?,
@@ -324,6 +328,7 @@ abstract final class OrderFirestoreMapper {
         'taxRateBasisPoints': line.tax.rate.basisPoints,
         'kitchenNote': line.kitchenNote,
         'customerNote': line.customerNote,
+        'excludedIngredients': line.excludedIngredients,
         // AP-3 continuation — mirrors `functions/src/dineInCounterProposal
         // .ts`'s own raw shape: `status` embedded directly on each line map,
         // `counterProposal` alongside it, never a separate top-level array
@@ -353,6 +358,8 @@ abstract final class OrderFirestoreMapper {
       taxRate: TaxRate.fromBasisPoints(data['taxRateBasisPoints'] as int),
       kitchenNote: data['kitchenNote'] as String? ?? '',
       customerNote: data['customerNote'] as String? ?? '',
+      excludedIngredients:
+          (data['excludedIngredients'] as List?)?.cast<String>() ?? const [],
     );
   }
 

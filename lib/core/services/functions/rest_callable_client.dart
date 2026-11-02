@@ -3,8 +3,11 @@ import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:http/http.dart' as http;
 
+import '../../../bootstrap/app_environment.dart';
 import '../../../bootstrap/firebase_functions_emulator_config.dart';
 import '../../config/app_environment_config.dart';
+import '../auth/identity_toolkit_rest_auth_client.dart';
+import '../auth/windows_rest_auth_session.dart';
 
 /// Thrown for any REST-callable failure — a non-2xx HTTP response with a
 /// parseable Firebase-callable error body, or the request/response
@@ -38,13 +41,28 @@ class RestCallableException implements Exception {
 /// a 2xx response carries `{"result": {...}}`, anything else carries
 /// `{"error": {"status": ..., "message": ...}}`.
 ///
-/// **Only ever constructed for the Windows-desktop-plus-local-emulator
-/// case** (see each call site's own `defaultTargetPlatform`/
-/// `FirebaseFunctionsEmulatorConfig.shouldUseEmulator` gate) — this class
-/// itself does not re-check that, it only knows how to make one HTTP call;
-/// gating which platform/environment ever reaches it is the caller's job,
-/// exactly like `HttpEmulatorVerificationCodeClient`'s own precedent
+/// **Constructed for every Windows-desktop case, emulator or real
+/// project** (see each call site's own `defaultTargetPlatform` gate — the
+/// native `cloud_functions` plugin is unconditionally absent on Windows,
+/// not just against the emulator) — this class itself does not re-check
+/// the platform, it only knows how to make one HTTP call; gating which
+/// platform ever reaches it is the caller's job, exactly like
+/// `HttpEmulatorVerificationCodeClient`'s own precedent
 /// (`features/auth/data/emulator_verification_code_client.dart`).
+///
+/// **2026-10-29 fix**: against a real project (`AppEnvironment.staging`/
+/// `.production`), targets the function's real deployed HTTPS endpoint
+/// (`https://<region>-<projectId>.cloudfunctions.net/<name>` — confirmed
+/// live against `abakus-one-staging` directly: an unauthenticated POST to
+/// that exact URL returns `401`, not `404`, proving the URL itself
+/// resolves to the real 2nd-gen `onCall` function, Firebase's own stable
+/// alias for it). Previously this class *always* built an emulator-only
+/// `http://127.0.0.1:5001/...` URI regardless of environment — harmless
+/// against the emulator, but silently unreachable against staging/
+/// production, which is exactly the real cause behind a Windows "staff
+/// claims sync" failure reported after a real staging sign-in (the native-
+/// plugin path and this one were BOTH broken for that combination; see
+/// each call site's own corrected gate).
 ///
 /// [httpClient] is an injection point purely for testing (a
 /// `package:http/testing.dart` `MockClient`) — real call sites always use
@@ -64,14 +82,34 @@ class RestCallableClient {
   RestCallableClient({
     http.Client? httpClient,
     Future<String?> Function()? idTokenProvider,
+    AppEnvironment? environmentOverride,
   })  : _injectedClient = httpClient,
-        _idTokenProvider = idTokenProvider ?? _defaultIdTokenProvider;
+        _idTokenProvider = idTokenProvider ?? _defaultIdTokenProvider,
+        _environmentOverride = environmentOverride;
 
   final http.Client? _injectedClient;
   final Future<String?> Function() _idTokenProvider;
 
-  static Future<String?> _defaultIdTokenProvider() async =>
-      fb.FirebaseAuth.instance.currentUser?.getIdToken();
+  /// Test-only injection point — real call sites always leave this `null`
+  /// and get the real [AppEnvironment.current]. Lets a test exercise the
+  /// real-project HTTPS branch without a compile-time `ENVIRONMENT` define
+  /// (which [AppEnvironment.current] resolves once, statically, and which
+  /// `flutter test` always leaves at its `development` default).
+  final AppEnvironment? _environmentOverride;
+
+  /// 2026-10-30 — falls back to [WindowsRestAuthSession] whenever the
+  /// native SDK's own `currentUser` is null. On every platform other than
+  /// Windows, and even on Windows once/if the background native sign-in
+  /// `RestEmailPasswordAuthClient` fires eventually succeeds, `currentUser`
+  /// is non-null and this fallback is simply never reached — see that
+  /// class's own doc comment for why both paths exist at once.
+  static Future<String?> _defaultIdTokenProvider() async {
+    final native = await fb.FirebaseAuth.instance.currentUser?.getIdToken();
+    if (native != null) return native;
+    return WindowsRestAuthSession.currentIdToken(
+      client: DefaultIdentityToolkitRestAuthClient(),
+    );
+  }
 
   static const _timeout = Duration(seconds: 20);
   static const _region = 'us-central1';
@@ -97,10 +135,15 @@ class RestCallableClient {
     String name,
     Map<String, dynamic> data,
   ) async {
-    final uri = Uri.http(
-      '${FirebaseFunctionsEmulatorConfig.host}:${FirebaseFunctionsEmulatorConfig.port}',
-      '/$_resolvedProjectId/$_region/$name',
-    );
+    final useEmulator = FirebaseFunctionsEmulatorConfig.shouldUseEmulator(
+        _environmentOverride ?? AppEnvironment.current);
+    final uri = useEmulator
+        ? Uri.http(
+            '${FirebaseFunctionsEmulatorConfig.host}:${FirebaseFunctionsEmulatorConfig.port}',
+            '/$_resolvedProjectId/$_region/$name',
+          )
+        : Uri.https(
+            '$_region-$_resolvedProjectId.cloudfunctions.net', '/$name');
 
     final idToken = await _idTokenProvider();
     if (idToken == null) {
@@ -154,7 +197,7 @@ class RestCallableClient {
     } catch (error) {
       throw RestCallableException(
         'unknown',
-        'Could not reach the Functions Emulator at "$uri" for "$name": $error',
+        'Could not reach "$uri" for "$name": $error',
       );
     } finally {
       // Never close a client this instance did not itself create — see

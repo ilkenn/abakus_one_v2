@@ -145,7 +145,15 @@ class FirebasePlatformAuthRepository implements PlatformAuthRepository {
       return null;
     }
 
-    final member = await _platformMemberRepository.findByAuthUid(result.uid);
+    final member = await _platformMemberRepository.findByAuthUid(
+      result.uid,
+      // Real credentials are only ever in scope here (a fresh sign-in) —
+      // mirrors `FirebaseStaffAuthRepository.signIn`'s identical
+      // `remintToken` reasoning, one tier up.
+      remintToken: () async {
+        await _authClient.signIn(email: email, password: password);
+      },
+    );
     if (member == null || !member.isActive || member.roles.isEmpty) {
       return null;
     }

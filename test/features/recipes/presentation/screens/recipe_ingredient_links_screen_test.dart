@@ -135,7 +135,8 @@ void main() {
     expect(find.text('1 malzeme bağlı'), findsOneWidget);
   });
 
-  testWidgets('an empty inventory item id is rejected before calling the gateway',
+  testWidgets(
+      'an empty inventory item id is rejected before calling the gateway',
       (tester) async {
     final gateway = _FakeRecipeIngredientLinkGateway();
     await pumpScreen(

@@ -62,12 +62,13 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
       _loadError = null;
     });
     try {
-      final overview = await ref.read(posOperationalViewGatewayProvider).getBranchOverview(
-            organizationId: ctx.organizationId,
-            branchId: ctx.branchId,
-            deviceId: ctx.deviceId,
-            deviceSessionId: ctx.deviceSessionId,
-          );
+      final overview =
+          await ref.read(posOperationalViewGatewayProvider).getBranchOverview(
+                organizationId: ctx.organizationId,
+                branchId: ctx.branchId,
+                deviceId: ctx.deviceId,
+                deviceSessionId: ctx.deviceSessionId,
+              );
       final openTables = overview.tables
           .where((t) => t.activeTableSessionId != null)
           .toList(growable: false);
@@ -80,7 +81,8 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
         return;
       }
 
-      final drawers = await ref.read(cashRegisterGatewayProvider).listCashDrawers(ctx: ctx);
+      final drawers =
+          await ref.read(cashRegisterGatewayProvider).listCashDrawers(ctx: ctx);
       CashDrawerSummary? drawerWithOpenSession;
       for (final d in drawers) {
         if (d.openSession != null) {
@@ -125,12 +127,13 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
     final session = _session;
     if (session == null) return 0;
     final openingFloat = session.openingFloatAmountMinorUnits ?? 0;
-    final movementsSum = session.movements
-        .fold<int>(0, (sum, m) => sum + m.amountMinorUnits);
+    final movementsSum =
+        session.movements.fold<int>(0, (sum, m) => sum + m.amountMinorUnits);
     return openingFloat + movementsSum;
   }
 
-  ({String type, int amountMinorUnits}) _previewVariance(int actualAmountMinorUnits) {
+  ({String type, int amountMinorUnits}) _previewVariance(
+      int actualAmountMinorUnits) {
     final expected = _liveExpectedAmountMinorUnits();
     final diff = actualAmountMinorUnits - expected;
     if (diff == 0) return (type: 'exact', amountMinorUnits: 0);
@@ -146,12 +149,13 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
       _actionError = null;
     });
     try {
-      final countResult = await ref.read(cashRegisterGatewayProvider).submitCashCount(
-            ctx: ctx,
-            sessionId: session!.sessionId!,
-            actualAmountMinorUnits: actualAmountMinorUnits,
-            notes: 'Gün Sonu sayımı.',
-          );
+      final countResult =
+          await ref.read(cashRegisterGatewayProvider).submitCashCount(
+                ctx: ctx,
+                sessionId: session!.sessionId!,
+                actualAmountMinorUnits: actualAmountMinorUnits,
+                notes: 'Gün Sonu sayımı.',
+              );
       final refreshed = await ref
           .read(cashRegisterGatewayProvider)
           .getCashSessionView(ctx: ctx, sessionId: session.sessionId!);
@@ -192,7 +196,8 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
         varianceType: countResult.varianceType,
         varianceAmountMinorUnits: countResult.varianceAmountMinorUnits,
       );
-      final printResult = await const UnconfiguredZReportPrinterAdapter().print(content);
+      final printResult =
+          await const UnconfiguredZReportPrinterAdapter().print(content);
       if (!mounted) return;
       setState(() {
         _receiptText = content.toReceiptText();
@@ -210,7 +215,8 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
     final code = _session?.currencyCode ?? Currency.tryLira.isoCode;
     return Money(
       minorUnits,
-      Currency.all.firstWhere((c) => c.isoCode == code, orElse: () => Currency.tryLira),
+      Currency.all
+          .firstWhere((c) => c.isoCode == code, orElse: () => Currency.tryLira),
     );
   }
 
@@ -237,7 +243,8 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
   Widget _buildContent() {
     switch (_phase) {
       case _EodPhase.loading:
-        return const LoadingView(message: 'Gün sonu durumu kontrol ediliyor...');
+        return const LoadingView(
+            message: 'Gün sonu durumu kontrol ediliyor...');
       case _EodPhase.error:
         return ErrorView(
           message: 'Gün sonu bilgileri yüklenemedi: $_loadError',
@@ -297,8 +304,9 @@ class _OpenTablesWarning extends StatelessWidget {
                     Expanded(
                       child: Text(
                         '${tables.length} masa hâlâ açık — gün sonu kapanışı kilitli',
-                        style: AppTypography.titleMedium
-                            .copyWith(color: AppColors.error, fontWeight: FontWeight.bold),
+                        style: AppTypography.titleMedium.copyWith(
+                            color: AppColors.error,
+                            fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],
@@ -315,12 +323,14 @@ class _OpenTablesWarning extends StatelessWidget {
           Expanded(
             child: ListView.separated(
               itemCount: tables.length,
-              separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.xs),
+              separatorBuilder: (_, __) =>
+                  const SizedBox(height: AppSpacing.xs),
               itemBuilder: (context, index) {
                 final table = tables[index];
                 return AppCard(
                   padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Text(table.displayName, style: AppTypography.bodyLarge),
+                  child:
+                      Text(table.displayName, style: AppTypography.bodyLarge),
                 );
               },
             ),
@@ -389,13 +399,17 @@ class _ReadyViewState extends State<_ReadyView> {
   @override
   Widget build(BuildContext context) {
     final revenue = widget.revenue;
-    final preview = _typedMinorUnits != null ? widget.previewVariance(_typedMinorUnits!) : null;
+    final preview = _typedMinorUnits != null
+        ? widget.previewVariance(_typedMinorUnits!)
+        : null;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Günün Ciro Özeti', style: AppTypography.titleLarge.copyWith(fontWeight: FontWeight.bold)),
+          Text('Günün Ciro Özeti',
+              style: AppTypography.titleLarge
+                  .copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: AppSpacing.sm),
           if (revenue == null)
             const LoadingView(message: 'Ciro özeti yükleniyor...')
@@ -405,9 +419,15 @@ class _ReadyViewState extends State<_ReadyView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _RevenueRow(label: 'Nakit', value: widget.currencyOf(revenue.cashMinorUnits)),
-                  _RevenueRow(label: 'Kredi Kartı', value: widget.currencyOf(revenue.cardMinorUnits)),
-                  _RevenueRow(label: 'Diğer', value: widget.currencyOf(revenue.otherMinorUnits)),
+                  _RevenueRow(
+                      label: 'Nakit',
+                      value: widget.currencyOf(revenue.cashMinorUnits)),
+                  _RevenueRow(
+                      label: 'Kredi Kartı',
+                      value: widget.currencyOf(revenue.cardMinorUnits)),
+                  _RevenueRow(
+                      label: 'Diğer',
+                      value: widget.currencyOf(revenue.otherMinorUnits)),
                   const Divider(),
                   _RevenueRow(
                     label: 'Toplam Ciro',
@@ -418,7 +438,9 @@ class _ReadyViewState extends State<_ReadyView> {
               ),
             ),
           const SizedBox(height: AppSpacing.lg),
-          Text('Kasa Sayımı', style: AppTypography.titleMedium.copyWith(fontWeight: FontWeight.bold)),
+          Text('Kasa Sayımı',
+              style: AppTypography.titleMedium
+                  .copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: AppSpacing.sm),
           Text(
             'Açılış Bakiyesi: ${widget.currencyOf(widget.session.openingFloatAmountMinorUnits ?? 0)}',
@@ -435,7 +457,8 @@ class _ReadyViewState extends State<_ReadyView> {
             ),
             onChanged: (value) {
               final parsed = double.tryParse(value.replaceAll(',', '.'));
-              setState(() => _typedMinorUnits = parsed == null ? null : (parsed * 100).round());
+              setState(() => _typedMinorUnits =
+                  parsed == null ? null : (parsed * 100).round());
             },
           ),
           if (preview != null) ...[
@@ -451,7 +474,8 @@ class _ReadyViewState extends State<_ReadyView> {
           if (widget.countResult != null) ...[
             const SizedBox(height: AppSpacing.md),
             AppCard(
-              borderColor: _varianceColor(widget.countResult!.varianceType).withValues(alpha: 0.4),
+              borderColor: _varianceColor(widget.countResult!.varianceType)
+                  .withValues(alpha: 0.4),
               padding: const EdgeInsets.all(AppSpacing.md),
               child: Text(
                 'Sunucu Sonucu — Beklenen ${widget.currencyOf(widget.countResult!.expectedAmountMinorUnits)} · '
@@ -475,7 +499,8 @@ class _ReadyViewState extends State<_ReadyView> {
           if (widget.actionError != null) ...[
             const SizedBox(height: AppSpacing.sm),
             Text(widget.actionError!,
-                style: AppTypography.bodySmall.copyWith(color: AppColors.error)),
+                style:
+                    AppTypography.bodySmall.copyWith(color: AppColors.error)),
           ],
           const SizedBox(height: AppSpacing.lg),
           SizedBox(
@@ -500,7 +525,8 @@ class _ReadyViewState extends State<_ReadyView> {
 }
 
 class _RevenueRow extends StatelessWidget {
-  const _RevenueRow({required this.label, required this.value, this.bold = false});
+  const _RevenueRow(
+      {required this.label, required this.value, this.bold = false});
   final String label;
   final Money value;
   final bool bold;
@@ -537,19 +563,23 @@ class _ClosedView extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 28),
+              const Icon(Icons.check_circle_rounded,
+                  color: AppColors.success, size: 28),
               const SizedBox(width: AppSpacing.sm),
               Text('Gün kapatıldı',
-                  style: AppTypography.titleLarge.copyWith(fontWeight: FontWeight.bold)),
+                  style: AppTypography.titleLarge
+                      .copyWith(fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
           if (printResult != null && !printResult!.succeeded)
             Text(printResult!.message,
-                style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary)),
+                style: AppTypography.bodySmall
+                    .copyWith(color: AppColors.textSecondary)),
           const SizedBox(height: AppSpacing.md),
           Text('Yazdırmaya Hazır — Z Raporu',
-              style: AppTypography.titleMedium.copyWith(fontWeight: FontWeight.bold)),
+              style: AppTypography.titleMedium
+                  .copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: AppSpacing.sm),
           AppCard(
             padding: const EdgeInsets.all(AppSpacing.md),

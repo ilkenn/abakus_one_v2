@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:cloud_functions/cloud_functions.dart' as functions;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:http/http.dart' as http;
+
+import '../../../core/services/functions/rest_callable_client.dart';
 
 import '../../../core/services/auth/email_password_auth_client.dart';
 import '../../../core/services/auth/staff_claims_sync_client.dart';
@@ -32,6 +35,45 @@ import 'staff_member_repository.dart';
 /// loading state is forbidden" applies to every await in this file, not
 /// just the ones a prior pass already caught.
 const staffAuthNetworkTimeout = Duration(seconds: 20);
+
+/// 2026-10-30 — Windows fast-fail network preflight. A plain, web-safe
+/// (`package:http`, not `dart:io Socket` — this file is also reachable
+/// from the web build target) reachability probe against the exact host
+/// `signInWithEmailAndPassword` itself talks to
+/// (`identitytoolkit.googleapis.com`), with its own short timeout.
+///
+/// **Why this, not a parallel REST-based sign-in bridge**: every other
+/// Windows REST bridge this app has (`RestCallableClient`) still reads
+/// its auth header from `FirebaseAuth.instance.currentUser` — there is no
+/// public API to inject a REST-obtained ID/refresh token pair into that
+/// SDK-managed state, so a parallel REST sign-in path would leave
+/// `currentUser` null even after "succeeding," silently breaking every
+/// POS/KDS/catalog-sync/entitlement call downstream that depends on it.
+/// Windows email/password sign-in already works through the real native
+/// plugin end-to-end once a route to Google's servers exists (confirmed
+/// via a real `signInWithPassword` round trip against `abakus-one-staging`,
+/// `docs/feature_status.md` 2026-10-28) — the actual problem a 20-second
+/// hang-then-timeout points to is *reachability*, not a missing
+/// implementation. This probe turns "no route to the real endpoint" into
+/// an honest, fast (~5s) failure instead of silently eating the full
+/// [staffAuthNetworkTimeout] to report the exact same thing.
+typedef NetworkReachabilityCheck = Future<bool> Function();
+
+const _preflightTimeout = Duration(seconds: 5);
+
+Future<bool> _defaultFirebaseAuthReachabilityCheck() async {
+  final client = http.Client();
+  try {
+    await client
+        .head(Uri.https('identitytoolkit.googleapis.com', '/'))
+        .timeout(_preflightTimeout);
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    client.close();
+  }
+}
 
 /// Thrown when a sign-in-critical step (credential verification, claims
 /// sync) cannot complete within [staffAuthNetworkTimeout] — deliberately
@@ -266,6 +308,7 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     required String Function() organizationId,
     Duration networkTimeout = staffAuthNetworkTimeout,
     LoggingService? logging,
+    NetworkReachabilityCheck? reachabilityCheck,
   })  : _authClient = authClient,
         _phoneAuthClient = phoneAuthClient,
         _staffMemberRepository = staffMemberRepository,
@@ -273,12 +316,15 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
         _claimsSyncClient = claimsSyncClient,
         _organizationId = organizationId,
         _networkTimeout = networkTimeout,
-        _logging = logging ?? defaultLoggingService();
+        _logging = logging ?? defaultLoggingService(),
+        _reachabilityCheck =
+            reachabilityCheck ?? _defaultFirebaseAuthReachabilityCheck;
 
   final EmailPasswordAuthClient _authClient;
   final FirebaseAuthClient _phoneAuthClient;
   final StaffMemberRepository _staffMemberRepository;
   final Duration _networkTimeout;
+  final NetworkReachabilityCheck _reachabilityCheck;
   final Duration Function() _sessionDuration;
   final StaffClaimsSyncClient _claimsSyncClient;
   final String Function() _organizationId;
@@ -328,6 +374,38 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     required String email,
     required String password,
   }) async {
+    // 2026-10-30 — Windows fast-fail preflight (see
+    // `NetworkReachabilityCheck`'s own doc comment). Scoped to Windows
+    // only: every other platform's native `firebase_auth` plugin already
+    // has its own, already-proven-reliable connectivity handling, and
+    // this probe is strictly an early-exit optimization, never a
+    // correctness requirement — a probe that itself fails to resolve (a
+    // bug in the probe, not the network) must never block a real
+    // sign-in, so it is never allowed to throw past this `if`.
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      bool reachable;
+      try {
+        reachable = await _reachabilityCheck();
+      } catch (_) {
+        // The probe's own failure is never treated as "network is down" —
+        // only an explicit `false` result is. Proceed to the real
+        // attempt, which has its own correct, independent timeout.
+        reachable = true;
+      }
+      if (!reachable) {
+        _logging.log(
+          LogLevel.error,
+          '[AUTH-TRACE] signIn: preflight unreachable — failing fast '
+          'instead of waiting the full ${_networkTimeout.inSeconds}s',
+        );
+        throw const StaffAuthUnavailableException(
+          'Firebase sunucularına ulaşılamıyor. İnternet bağlantınızı, '
+          'VPN/proxy veya güvenlik duvarı ayarlarınızı kontrol edip '
+          'tekrar deneyin.',
+        );
+      }
+    }
+
     final EmailPasswordAuthResult result;
     final signInWatch = Stopwatch()..start();
     _logging.log(LogLevel.debug, '[AUTH-TRACE] signIn: start');
@@ -486,10 +564,22 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     // transient failure here must never deny a staff sign-in the real
     // staff claims above already authorized.
     try {
-      await functions.FirebaseFunctions.instance
-          .httpsCallable('syncOwnPlatformClaims')
-          .call<Map<String, dynamic>>()
-          .timeout(_networkTimeout);
+      // 2026-10-30 — same Windows-native-plugin gap as every other
+      // `cloud_functions` call site this session fixed; this one was
+      // left on the broken native path since its own failure was
+      // already harmless (best-effort, caught below) — but "harmless
+      // failure" meant it silently never ran on Windows at all. Routed
+      // through `RestCallableClient` there now, for real, consistent
+      // with `syncOwnStaffClaims` right above it.
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+        await RestCallableClient()
+            .call('syncOwnPlatformClaims', const {}).timeout(_networkTimeout);
+      } else {
+        await functions.FirebaseFunctions.instance
+            .httpsCallable('syncOwnPlatformClaims')
+            .call<Map<String, dynamic>>()
+            .timeout(_networkTimeout);
+      }
     } catch (e, st) {
       _logging.log(
         LogLevel.debug,

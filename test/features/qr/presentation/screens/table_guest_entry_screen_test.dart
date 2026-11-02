@@ -130,28 +130,63 @@ Future<
 
 void main() {
   testWidgets(
-      'geçerli QR: önizleme (masa + şube adı) gösterilir, giriş/OTP ekranı '
-      'ASLA gösterilmez', (tester) async {
-    await pumpEntryScreen(tester);
+      '2026-10-29 branding: ilk karede gerçek marka adı gösterilir, teknik '
+      'paket adı ("abakus_one_v2") veya eski "Masaya Hoş Geldin" metni '
+      'hiçbir zaman görünmez', (tester) async {
+    final gateway = _FakeTableGuestSessionGateway();
+    final container = ProviderContainer(
+      overrides: [
+        firebaseReadyProvider.overrideWithValue(true),
+        tableGuestSessionGatewayProvider.overrideWithValue(gateway),
+        technicalIdentityProviderProvider
+            .overrideWithValue(_FakeTechnicalIdentityProvider()),
+      ],
+    );
+    addTearDown(container.dispose);
 
-    expect(find.text('Masa 12'), findsOneWidget);
-    expect(find.text('Abaküs Ortaköy'), findsOneWidget);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: TableGuestEntryScreen(token: 'qr-token-abc'),
+        ),
+      ),
+    );
+    // Deliberately no further pump/settle — the very first frame, before
+    // `_resolve()`'s own awaited calls have a chance to complete.
+    expect(find.text('Abaküs Street Food\'a Hoş Geldiniz'), findsOneWidget);
+    expect(find.text('Masaya Hoş Geldin'), findsNothing);
+    expect(find.textContaining('Masa:'), findsNothing);
+
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      '2026-10-29 sıfır-sürtünme: geçerli QR, tek bir dokunuş olmadan '
+      'doğrudan MenuScreen\'e açılır — giriş/OTP ekranı ASLA gösterilmez',
+      (tester) async {
+    final result = await pumpEntryScreen(tester);
+
+    expect(result.gateway.resolveCallCount, 1);
+    expect(result.identity.ensureSignedInCallCount, 1);
+    expect(result.gateway.openCallCount, 1);
+    expect(find.byType(MenuScreen), findsOneWidget);
     expect(find.byType(LoginScreen), findsNothing);
     expect(find.byType(OtpScreen), findsNothing);
   });
 
   testWidgets(
-      'önizlemedeki masa/şube adı backend\'in resolveTableQrToken '
-      'yanıtından gelir — sabit kodlanmamış', (tester) async {
-    await pumpEntryScreen(
+      'açılan oturumun masa/şube kimliği backend\'in resolveTableQrToken/'
+      'openSession yanıtından gelir — sabit kodlanmamış', (tester) async {
+    final result = await pumpEntryScreen(
       tester,
       tableDisplayName: 'Masa 4',
       branchDisplayName: 'Abaküs Beşiktaş',
     );
 
-    expect(find.text('Masa 4'), findsOneWidget);
-    expect(find.text('Abaküs Beşiktaş'), findsOneWidget);
-    expect(find.text('Masa 12'), findsNothing);
+    final tableContext = result.container.read(activeTableContextProvider);
+    expect(tableContext!.tableName, 'Masa 4');
+    expect(tableContext.branchName, 'Abaküs Beşiktaş');
   });
 
   testWidgets('geçersiz (invalid) QR: hata mesajı gösterilir', (tester) async {
@@ -196,13 +231,10 @@ void main() {
   });
 
   testWidgets(
-      'Masaya Otur: anonymous technical identity kurulur (ensureSignedIn '
-      'tam olarak bir kez çağrılır), activeTableContextProvider set edilir, '
-      'MenuScreen açılır — giriş/OTP ekranı hiç gösterilmez', (tester) async {
+      'anonymous technical identity kurulur (ensureSignedIn tam olarak bir '
+      'kez çağrılır), activeTableContextProvider set edilir, MenuScreen '
+      'açılır — giriş/OTP ekranı hiç gösterilmez', (tester) async {
     final result = await pumpEntryScreen(tester);
-
-    await tester.tap(find.text('Masaya Otur'));
-    await tester.pumpAndSettle();
 
     expect(result.identity.ensureSignedInCallCount, 1);
     expect(result.gateway.openCallCount, 1);
@@ -228,9 +260,6 @@ void main() {
       preexistingUid: 'real-phone-verified-customer-uid',
     );
 
-    await tester.tap(find.text('Masaya Otur'));
-    await tester.pumpAndSettle();
-
     expect(result.identity.ensureSignedInCallCount, 1);
     expect(result.identity.currentUid, 'real-phone-verified-customer-uid');
   });
@@ -246,9 +275,6 @@ void main() {
         'QR code is expired.',
       ),
     );
-
-    await tester.tap(find.text('Masaya Otur'));
-    await tester.pumpAndSettle();
 
     expect(find.byType(MenuScreen), findsNothing);
     expect(
@@ -285,9 +311,6 @@ void main() {
         'Too many requests. Please wait a moment before trying again.',
       ),
     );
-
-    await tester.tap(find.text('Masaya Otur'));
-    await tester.pumpAndSettle();
 
     expect(find.byType(MenuScreen), findsNothing);
     expect(

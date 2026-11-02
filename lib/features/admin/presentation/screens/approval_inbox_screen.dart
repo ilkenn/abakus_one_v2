@@ -378,8 +378,7 @@ class _StockCountDiscrepancyDetailState
     if (lines.isEmpty) {
       return Text(
         'Sayım satırı bulunamadı.',
-        style: AppTypography.bodySmall
-            .copyWith(color: AppColors.textSecondary),
+        style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
       );
     }
     return Container(

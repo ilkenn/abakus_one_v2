@@ -403,6 +403,7 @@ function buildDeliveryOrderDocument(params: {
       taxRateBasisPoints: line.taxBasisPoints,
       kitchenNote: line.kitchenNote,
       customerNote: line.customerNote,
+      excludedIngredients: line.excludedIngredients,
     })),
     pricing: {
       grossSubtotal: moneyField(params.pricing.grossSubtotalMinorUnits),

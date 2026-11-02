@@ -30,6 +30,7 @@ void main() {
           {'groupId': 'g1', 'optionId': 'o1'},
         ],
         'note': 'az baharatlı',
+        'excludedIngredients': <String>[],
       });
       expect(json.containsKey('price'), isFalse);
       expect(json.containsKey('unitPrice'), isFalse);

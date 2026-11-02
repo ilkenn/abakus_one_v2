@@ -8,6 +8,7 @@ import '../../../../core/utils/clock_provider.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../../orders/domain/fulfillment/package_preparation.dart';
 import '../../domain/expeditor/expeditor_entry.dart';
 import '../../domain/expeditor/expeditor_projection_builder.dart';
@@ -42,9 +43,11 @@ class _ExpeditorScreenState extends ConsumerState<ExpeditorScreen> {
   }
 
   Future<void> _load() async {
-    final tickets = await ref
-        .read(kitchenTicketRepositoryProvider)
-        .findActiveByBranch(widget.branchId);
+    final tickets =
+        await ref.read(kitchenTicketRepositoryProvider).findActiveByBranch(
+              widget.branchId,
+              organizationId: ref.read(currentOrganizationIdProvider),
+            );
     final packageRepository = ref.read(packagePreparationRepositoryProvider);
     final packagePreparations = <PackagePreparation>[];
     final seenOrderIds = <String>{};

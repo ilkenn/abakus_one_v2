@@ -33,7 +33,8 @@ void main() {
       expect(sorted.map((c) => c.id).toList(), ['c2', 'c3', 'c1']);
     });
 
-    test('a courier with a null returnedAt sorts last, never recommended first', () {
+    test('a courier with a null returnedAt sorts last, never recommended first',
+        () {
       final couriers = [
         _courier('c1', returnedAt: null),
         _courier('c2', returnedAt: DateTime(2026, 1, 1, 10, 0)),
@@ -46,9 +47,15 @@ void main() {
 
     test('excludes couriers that are not dispatchStatus.available', () {
       final couriers = [
-        _courier('c1', dispatchStatus: CourierStatus.delivering, returnedAt: DateTime(2026, 1, 1)),
-        _courier('c2', dispatchStatus: CourierStatus.offline, returnedAt: DateTime(2026, 1, 1)),
-        _courier('c3', dispatchStatus: CourierStatus.available, returnedAt: DateTime(2026, 1, 1)),
+        _courier('c1',
+            dispatchStatus: CourierStatus.delivering,
+            returnedAt: DateTime(2026, 1, 1)),
+        _courier('c2',
+            dispatchStatus: CourierStatus.offline,
+            returnedAt: DateTime(2026, 1, 1)),
+        _courier('c3',
+            dispatchStatus: CourierStatus.available,
+            returnedAt: DateTime(2026, 1, 1)),
       ];
 
       final sorted = CourierReturnFifo.sortAvailableByReturnTime(couriers);

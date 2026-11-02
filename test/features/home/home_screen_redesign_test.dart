@@ -519,29 +519,38 @@ void main() {
   });
 
   group('8. kategoriler', () {
-    testWidgets('gercek 7 kategoriyi tam istenen sirada gosterir', (
+    testWidgets(
+        'gercek 10 aktif kategoriyi tam istenen sirada gosterir '
+        '(2026-10-28 PDF menu refresh)', (
       tester,
     ) async {
       await pumpHome(tester);
 
-      final bowlChip = find.text('Bowl');
+      final kahvaltiChip = find.text('Kahvaltı');
       await tester.dragUntilVisible(
-        bowlChip,
+        kahvaltiChip,
         find.byType(Scrollable).first,
         const Offset(0, -400),
       );
       await tester.pumpAndSettle();
 
-      final categoryRow =
-          find.ancestor(of: bowlChip, matching: find.byType(Scrollable)).first;
+      final categoryRow = find
+          .ancestor(of: kahvaltiChip, matching: find.byType(Scrollable))
+          .first;
 
+      // HomeCategorySection._visibleCategoryIds siralamasiyla birebir
+      // eslesir — eski 6 kategori artik isActive:false oldugu icin
+      // burada gorunmez.
       const expectedOrder = [
-        'Bowl',
-        'Salata',
-        'Wrap',
-        'Hamburger',
-        'Makarna',
-        'Atıştırmalık',
+        'Kahvaltı',
+        'Tartineler',
+        "Bowl'lar",
+        'Tavalar',
+        'Salatalar',
+        'Burgerler',
+        "Wrap'ler",
+        'Makarnalar',
+        'Aperatifler',
         'İçecekler',
       ];
       for (final category in expectedOrder) {
@@ -560,29 +569,29 @@ void main() {
       (tester) async {
         await pumpHome(tester);
 
-        final bowlChip = find.text('Bowl');
+        final kahvaltiChip = find.text('Kahvaltı');
         await tester.dragUntilVisible(
-          bowlChip,
+          kahvaltiChip,
           find.byType(Scrollable).first,
           const Offset(0, -400),
         );
         await tester.pumpAndSettle();
 
         final categoryRow = find
-            .ancestor(of: bowlChip, matching: find.byType(Scrollable))
+            .ancestor(of: kahvaltiChip, matching: find.byType(Scrollable))
             .first;
-        final hamburgerChip = find.text('Hamburger');
+        final tartineChip = find.text('Tartineler');
         await tester.dragUntilVisible(
-          hamburgerChip,
+          tartineChip,
           categoryRow,
           const Offset(-150, 0),
         );
         await tester.pumpAndSettle();
 
-        await tester.tap(hamburgerChip);
+        await tester.tap(tartineChip);
         await tester.pumpAndSettle();
 
-        expect(container.read(menuFilterProvider), 'Hamburger');
+        expect(container.read(menuFilterProvider), 'Tartineler');
         expect(container.read(navigationProvider), AppTab.menu);
       },
     );

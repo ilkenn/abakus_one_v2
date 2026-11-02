@@ -1,5 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
+import '../../../core/services/functions/rest_callable_client.dart';
 import 'pos_action_gateway.dart' show PosDeviceContext;
 
 /// The real cash register boundary — AP-4 Wave B/Wave D wiring. Mirrors
@@ -331,7 +334,10 @@ abstract interface class CashRegisterGateway {
 }
 
 class FirebaseCashRegisterGateway implements CashRegisterGateway {
-  const FirebaseCashRegisterGateway();
+  FirebaseCashRegisterGateway({RestCallableClient? restClient})
+      : _restClient = restClient ?? RestCallableClient();
+
+  final RestCallableClient _restClient;
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
     throw CashRegisterGatewayException(
@@ -343,40 +349,54 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
     );
   }
 
-  functions.HttpsCallable _fn(String name) =>
-      functions.FirebaseFunctions.instance.httpsCallable(name);
-
-  @override
-  Future<String> createCashDrawer({
-    required PosDeviceContext ctx,
-    required String name,
-  }) async {
+  /// 2026-10-30 — same Windows REST-callable bridge as `trusted_device_
+  /// session_gateway.dart`/`pos_action_gateway.dart`/`firebase_staff_
+  /// member_repository.dart` — `cloud_functions` has no Windows plugin
+  /// implementation, so every call here previously hung indefinitely on
+  /// Windows (`CashRegisterGatewayException(unknown): Unable to
+  /// establish connection on channel: ...CloudFunctionsHostApi.call`).
+  Future<Map<String, dynamic>> _call(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    final useRest = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+    if (useRest) {
+      try {
+        return await _restClient.call(name, data);
+      } on RestCallableException catch (error) {
+        throw CashRegisterGatewayException(error.code, error.message);
+      }
+    }
+    final callable = functions.FirebaseFunctions.instance.httpsCallable(name);
     try {
-      final result = await _fn('createCashDrawer').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'name': name,
-      });
-      return result.data['drawerId'] as String;
+      final result = await callable.call<Map<String, dynamic>>(data);
+      return result.data;
     } on functions.FirebaseFunctionsException catch (error) {
       _rethrow(error);
     }
   }
 
   @override
+  Future<String> createCashDrawer({
+    required PosDeviceContext ctx,
+    required String name,
+  }) async {
+    final data = await _call('createCashDrawer', {
+      ...ctx.toWire(),
+      'name': name,
+    });
+    return data['drawerId'] as String;
+  }
+
+  @override
   Future<List<CashDrawerSummary>> listCashDrawers({
     required PosDeviceContext ctx,
   }) async {
-    try {
-      final result = await _fn('listCashDrawers').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-      });
-      return [
-        for (final raw in (result.data['drawers'] as List))
-          CashDrawerSummary.fromWire(Map<String, dynamic>.from(raw as Map)),
-      ];
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('listCashDrawers', {...ctx.toWire()});
+    return [
+      for (final raw in (data['drawers'] as List))
+        CashDrawerSummary.fromWire(Map<String, dynamic>.from(raw as Map)),
+    ];
   }
 
   @override
@@ -384,16 +404,11 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
     required PosDeviceContext ctx,
     required String sessionId,
   }) async {
-    try {
-      final result = await _fn('getCashSessionOperationalView')
-          .call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'sessionId': sessionId,
-      });
-      return CashSessionView.fromWire(result.data);
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('getCashSessionOperationalView', {
+      ...ctx.toWire(),
+      'sessionId': sessionId,
+    });
+    return CashSessionView.fromWire(data);
   }
 
   @override
@@ -404,24 +419,18 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
     required String currencyCode,
     required String reason,
   }) async {
-    try {
-      final result =
-          await _fn('requestCashSessionOpen').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'drawerId': drawerId,
-        'openingFloatAmountMinorUnits': openingFloatAmountMinorUnits,
-        'currencyCode': currencyCode,
-        'reason': reason,
-      });
-      final data = result.data;
-      return CashSessionOpenResult(
-        sessionId: data['sessionId'] as String,
-        status: data['status'] as String,
-        approvalRequestId: data['approvalRequestId'] as String?,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('requestCashSessionOpen', {
+      ...ctx.toWire(),
+      'drawerId': drawerId,
+      'openingFloatAmountMinorUnits': openingFloatAmountMinorUnits,
+      'currencyCode': currencyCode,
+      'reason': reason,
+    });
+    return CashSessionOpenResult(
+      sessionId: data['sessionId'] as String,
+      status: data['status'] as String,
+      approvalRequestId: data['approvalRequestId'] as String?,
+    );
   }
 
   @override
@@ -432,24 +441,18 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
     required int amountMinorUnits,
     required String reason,
   }) async {
-    try {
-      final result =
-          await _fn('requestCashMovement').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'sessionId': sessionId,
-        'movementType': movementType,
-        'amountMinorUnits': amountMinorUnits,
-        'reason': reason,
-      });
-      final data = result.data;
-      return CashRequestResult(
-        requestId: data['requestId'] as String,
-        status: data['status'] as String,
-        approvalRequestId: data['approvalRequestId'] as String,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('requestCashMovement', {
+      ...ctx.toWire(),
+      'sessionId': sessionId,
+      'movementType': movementType,
+      'amountMinorUnits': amountMinorUnits,
+      'reason': reason,
+    });
+    return CashRequestResult(
+      requestId: data['requestId'] as String,
+      status: data['status'] as String,
+      approvalRequestId: data['approvalRequestId'] as String,
+    );
   }
 
   @override
@@ -459,23 +462,17 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
     required int amountMinorUnits,
     required String reason,
   }) async {
-    try {
-      final result =
-          await _fn('requestCashAdjustment').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'sessionId': sessionId,
-        'amountMinorUnits': amountMinorUnits,
-        'reason': reason,
-      });
-      final data = result.data;
-      return CashRequestResult(
-        requestId: data['requestId'] as String,
-        status: data['status'] as String,
-        approvalRequestId: data['approvalRequestId'] as String,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('requestCashAdjustment', {
+      ...ctx.toWire(),
+      'sessionId': sessionId,
+      'amountMinorUnits': amountMinorUnits,
+      'reason': reason,
+    });
+    return CashRequestResult(
+      requestId: data['requestId'] as String,
+      status: data['status'] as String,
+      approvalRequestId: data['approvalRequestId'] as String,
+    );
   }
 
   @override
@@ -485,25 +482,20 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
     required int actualAmountMinorUnits,
     String notes = '',
   }) async {
-    try {
-      final result = await _fn('submitCashCount').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'sessionId': sessionId,
-        'actualAmountMinorUnits': actualAmountMinorUnits,
-        'notes': notes,
-      });
-      final data = result.data;
-      final variance = data['variance'] as Map;
-      return CashCountResult(
-        countId: data['countId'] as String,
-        expectedAmountMinorUnits: data['expectedAmountMinorUnits'] as int,
-        varianceType: variance['type'] as String,
-        varianceAmountMinorUnits: variance['amountMinorUnits'] as int,
-        approvalRequestId: data['approvalRequestId'] as String,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('submitCashCount', {
+      ...ctx.toWire(),
+      'sessionId': sessionId,
+      'actualAmountMinorUnits': actualAmountMinorUnits,
+      'notes': notes,
+    });
+    final variance = data['variance'] as Map;
+    return CashCountResult(
+      countId: data['countId'] as String,
+      expectedAmountMinorUnits: data['expectedAmountMinorUnits'] as int,
+      varianceType: variance['type'] as String,
+      varianceAmountMinorUnits: variance['amountMinorUnits'] as int,
+      approvalRequestId: data['approvalRequestId'] as String,
+    );
   }
 
   @override
@@ -511,14 +503,10 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
     required PosDeviceContext ctx,
     required String sessionId,
   }) async {
-    try {
-      await _fn('closeCashSession').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'sessionId': sessionId,
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('closeCashSession', {
+      ...ctx.toWire(),
+      'sessionId': sessionId,
+    });
   }
 
   @override
@@ -526,15 +514,11 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
     required PosDeviceContext ctx,
     required String sessionId,
   }) async {
-    try {
-      final result = await _fn('getDailyRevenueSummary').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'sessionId': sessionId,
-      });
-      return DailyRevenueSummary.fromWire(result.data);
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('getDailyRevenueSummary', {
+      ...ctx.toWire(),
+      'sessionId': sessionId,
+    });
+    return DailyRevenueSummary.fromWire(data);
   }
 }
 

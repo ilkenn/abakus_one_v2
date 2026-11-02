@@ -408,4 +408,38 @@ void main() {
     await controller.register(capabilities: const ['POS']);
     expect(controller.state, isA<DeviceNetworkError>());
   });
+
+  test(
+      "activateOrRefresh(): a server 'not-found' (a locally-cached device "
+      'id with no matching Firestore doc — e.g. a stale pre-REST-bridge '
+      'key) surfaces a clear, actionable Turkish message naming the real '
+      "recovery action ('Tekrar Dene' re-registers the same device), "
+      'never the raw backend string', () async {
+    final controller = buildController();
+    gateway.registrationResult = const RequestDeviceRegistrationResult(
+      deviceId: 'device-1',
+      status: 'active',
+      alreadyRegistered: false,
+    );
+    await controller.register(capabilities: const ['POS']);
+    gateway.challengeResult = RequestDeviceChallengeResult(
+      challengeId: 'c1',
+      nonce: 'nonce-1',
+      expiresAt: DateTime.now().add(const Duration(minutes: 2)),
+    );
+    gateway.issueSessionError = const TrustedDeviceSessionException(
+      'not-found',
+      'No trusted device registration found.',
+    );
+
+    await controller.activateOrRefresh();
+
+    final state = controller.state;
+    expect(state, isA<DeviceNetworkError>());
+    final message = (state as DeviceNetworkError).message;
+    expect(message, isNot(contains('No trusted device registration found')),
+        reason: 'never the raw English backend string');
+    expect(message, contains('Tekrar Dene'),
+        reason: 'must point at the actual recovery action');
+  });
 }

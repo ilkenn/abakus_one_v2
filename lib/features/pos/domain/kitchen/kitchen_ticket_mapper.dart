@@ -1,5 +1,7 @@
 import '../../../orders/domain/models/order.dart';
 import '../../../orders/domain/models/order_channel.dart';
+import '../../../orders/domain/models/order_line.dart';
+import '../../../orders/domain/models/order_line_modifier_selection.dart';
 import 'kitchen_ticket.dart';
 import 'kitchen_ticket_header.dart';
 import 'kitchen_ticket_line.dart';
@@ -32,12 +34,7 @@ abstract final class KitchenTicketMapper {
         id: '$ticketId-line-$i',
         productName: orderLine.productName,
         quantity: orderLine.quantity,
-        ingredientSummary: [
-          for (final modifier in orderLine.modifiers)
-            modifier.quantity > 1
-                ? '${modifier.optionName} x${modifier.quantity}'
-                : modifier.optionName,
-        ],
+        ingredientSummary: _ingredientSummaryFor(orderLine),
         note: orderLine.kitchenNote,
       ));
     }
@@ -57,12 +54,50 @@ abstract final class KitchenTicketMapper {
         priority: priority,
         tableLabel: order.tableId == null ? null : 'Masa ${order.tableId}',
         customerName: _customerName(order),
+        channel: order.channel,
       ),
       lines: lines,
       isCopy: isCopy,
       firedAt: firedAt,
       revision: 1,
     );
+  }
+
+  /// Groups [orderLine.modifiers] by `groupName` (e.g. "Karbonhidrat:
+  /// Meksika Pilavı (+20 TL)", "Ekstra: Cheddar Peyniri (+60 TL), Abaküs
+  /// Sos (+25 TL)"), then appends a trailing "ÇIKAR: ..." line for
+  /// [OrderLine.excludedIngredients] — the exact hierarchy the 2026-10-30
+  /// product-configurator spec requires. Preserves each group's
+  /// first-seen order rather than alphabetizing, so "Karbonhidrat" prints
+  /// before "Salata" when the customer selected them in that order (every
+  /// real call site selects groups in the catalog's own declared order).
+  static List<String> _ingredientSummaryFor(OrderLine orderLine) {
+    final order = <String>[];
+    final byGroup = <String, List<String>>{};
+    for (final modifier in orderLine.modifiers) {
+      byGroup.putIfAbsent(modifier.groupName, () {
+        order.add(modifier.groupName);
+        return <String>[];
+      }).add(_modifierDisplay(modifier));
+    }
+    final result = [
+      for (final groupName in order)
+        '$groupName: ${byGroup[groupName]!.join(", ")}',
+    ];
+    if (orderLine.excludedIngredients.isNotEmpty) {
+      result.add('ÇIKAR: ${orderLine.excludedIngredients.join(", ")}');
+    }
+    return result;
+  }
+
+  static String _modifierDisplay(OrderLineModifierSelection modifier) {
+    final qtyLabel = modifier.quantity > 1
+        ? '${modifier.optionName} x${modifier.quantity}'
+        : modifier.optionName;
+    if (modifier.totalExtraPrice.isZero) return qtyLabel;
+    final wholeTl = modifier.totalExtraPrice.minorUnits ~/
+        modifier.totalExtraPrice.currency.minorUnitsPerWhole;
+    return '$qtyLabel (+$wholeTl TL)';
   }
 
   /// `null` when the order carries no contact name at all — never an empty

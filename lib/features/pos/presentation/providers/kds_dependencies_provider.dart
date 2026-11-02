@@ -75,7 +75,7 @@ final kitchenActionGatewayProvider = Provider<KitchenActionGateway>((ref) {
   if (!isFirebaseReady) {
     return const UnavailableKitchenActionGateway();
   }
-  return const FirebaseKitchenActionGateway();
+  return FirebaseKitchenActionGateway();
 });
 
 /// AP-5 Sprint 4 — the real backend boundary for opening/driving a

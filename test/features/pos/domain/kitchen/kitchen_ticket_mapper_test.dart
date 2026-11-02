@@ -2,6 +2,7 @@ import 'package:abakus_one_v2/features/orders/domain/models/order.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_line.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_line_modifier_selection.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_number.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_timestamps.dart';
@@ -96,8 +97,7 @@ void main() {
   // directly from the already-available `Order.tableId`/
   // `contactFirstName`/`contactLastName` (no mapper signature change).
   group('KitchenTicketMapper.fromOrder — table/customer header fields', () {
-    test('derives tableLabel and customerName when the order carries both',
-        () {
+    test('derives tableLabel and customerName when the order carries both', () {
       final order = _buildOrder(
         channel: OrderChannel.dineInQr,
         status: OrderStatus.confirmed,
@@ -136,6 +136,128 @@ void main() {
 
       expect(ticket.header.tableLabel, isNull);
       expect(ticket.header.customerName, isNull);
+    });
+  });
+
+  // 2026-10-30 product-configurator — modifiers grouped by groupName (one
+  // combined line per group, not one line per selection), plus a trailing
+  // "ÇIKAR:" line for excludedIngredients.
+  group('KitchenTicketMapper.fromOrder — ingredient summary formatting', () {
+    test(
+        'groups modifiers by groupName in first-seen order, prices shown only '
+        'when non-zero, and appends a ÇIKAR line for excludedIngredients', () {
+      final line = OrderLine.create(
+        productId: 'p1',
+        productName: 'Çıtır Tavuk Bowl',
+        quantity: 1,
+        unitPrice: Money.fromWhole(260, Currency.tryLira),
+        taxRate: TaxPolicy.defaultRate,
+        modifiers: [
+          OrderLineModifierSelection(
+            groupId: 'bowl_carb',
+            groupName: 'Karbonhidrat',
+            optionId: 'carb_meksika',
+            optionName: 'Meksika Pilavı',
+            unitExtraPrice: Money.fromWhole(20, Currency.tryLira),
+            quantity: 1,
+          ),
+          OrderLineModifierSelection(
+            groupId: 'bowl_salad',
+            groupName: 'Salata',
+            optionId: 'salad_coban',
+            optionName: 'Çoban Salata',
+            unitExtraPrice: Money.fromWhole(40, Currency.tryLira),
+            quantity: 1,
+          ),
+          OrderLineModifierSelection(
+            groupId: 'bowl_extras',
+            groupName: 'Ekstra',
+            optionId: 'extra_cheddar',
+            optionName: 'Cheddar Peyniri',
+            unitExtraPrice: Money.fromWhole(60, Currency.tryLira),
+            quantity: 1,
+          ),
+          OrderLineModifierSelection(
+            groupId: 'cross_sell_sauce',
+            groupName: 'Ekstra',
+            optionId: 'sauce_abakus',
+            optionName: 'Abaküs Sos',
+            unitExtraPrice: Money.fromWhole(25, Currency.tryLira),
+            quantity: 1,
+          ),
+          OrderLineModifierSelection(
+            groupId: 'bowl_pickle',
+            groupName: 'Turşu',
+            optionId: 'pickle_none',
+            optionName: 'Turşu İstemiyorum',
+            unitExtraPrice: Money.zero(Currency.tryLira),
+            quantity: 1,
+          ),
+        ],
+        excludedIngredients: const ['Mısır', 'Susamlı Çörekotlu Salatalık'],
+      );
+      final order = Order(
+        id: OrderId('order-1'),
+        orderNumber: OrderNumber('RP-00000002'),
+        status: OrderStatus.confirmed,
+        channel: OrderChannel.dineInQr,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        lines: [line],
+        pricing: PriceCalculator.calculate(
+            lines: [line], currency: Currency.tryLira),
+        timestamps: OrderTimestamps(created: DateTime(2026, 10, 30)),
+      );
+
+      final ticket = KitchenTicketMapper.fromOrder(
+        ticketId: 'ticket-1',
+        order: order,
+        type: KitchenTicketType.initial,
+        restaurantName: 'Test Restaurant',
+        branchName: 'Merkez Şube',
+        firedAt: DateTime(2026, 10, 30, 12, 0),
+      );
+
+      expect(ticket.lines.single.ingredientSummary, [
+        'Karbonhidrat: Meksika Pilavı (+20 TL)',
+        'Salata: Çoban Salata (+40 TL)',
+        'Ekstra: Cheddar Peyniri (+60 TL), Abaküs Sos (+25 TL)',
+        'Turşu: Turşu İstemiyorum',
+        'ÇIKAR: Mısır, Susamlı Çörekotlu Salatalık',
+      ]);
+    });
+
+    test('no ÇIKAR line when excludedIngredients is empty', () {
+      final line = OrderLine.create(
+        productId: 'p1',
+        productName: 'Double Chicken Burger',
+        quantity: 1,
+        unitPrice: Money.fromWhole(650, Currency.tryLira),
+        taxRate: TaxPolicy.defaultRate,
+      );
+      final order = Order(
+        id: OrderId('order-2'),
+        orderNumber: OrderNumber('RP-00000003'),
+        status: OrderStatus.confirmed,
+        channel: OrderChannel.takeaway,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        lines: [line],
+        pricing: PriceCalculator.calculate(
+            lines: [line], currency: Currency.tryLira),
+        timestamps: OrderTimestamps(created: DateTime(2026, 10, 30)),
+      );
+
+      final ticket = KitchenTicketMapper.fromOrder(
+        ticketId: 'ticket-2',
+        order: order,
+        type: KitchenTicketType.initial,
+        restaurantName: 'Test Restaurant',
+        branchName: 'Merkez Şube',
+        firedAt: DateTime(2026, 10, 30, 12, 0),
+      );
+
+      expect(ticket.lines.single.ingredientSummary, isEmpty);
     });
   });
 }

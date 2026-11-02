@@ -42,18 +42,20 @@ abstract final class CartLineMapper {
         )
         .toList();
 
-    // selectedProtein/selectedSauce/extraIngredients/removedIngredients
-    // predate SelectedModifier and carry no individual price of their own
-    // (only the single combined extraCostPerUnit folded into unitPrice
-    // above) — preserved as free-text kitchen instructions instead of
-    // invented modifier prices, mirroring exactly how
-    // OrderItemSnapshot.fromCartItem already flattens the same fields.
+    // selectedProtein/selectedSauce/extraIngredients predate SelectedModifier
+    // and carry no individual price of their own (only the single combined
+    // extraCostPerUnit folded into unitPrice above) — preserved as free-text
+    // kitchen instructions instead of invented modifier prices, mirroring
+    // exactly how OrderItemSnapshot.fromCartItem already flattens the same
+    // fields. removedIngredients is no longer folded in here — it is now
+    // the generic, universal "İçinden Çıkar" field (not bowl-specific/
+    // legacy), carried structurally on OrderLine.excludedIngredients
+    // instead of as free text, so the KDS ticket can render it as its own
+    // "ÇIKAR:" line (see KitchenTicketMapper).
     final kitchenNoteParts = <String>[
       if (item.selectedProtein.isNotEmpty) 'Protein: ${item.selectedProtein}',
       if (item.selectedSauce.isNotEmpty) 'Sos: ${item.selectedSauce}',
       for (final extra in item.extraIngredients) 'Ekstra: $extra',
-      if (item.removedIngredients.isNotEmpty)
-        'Çıkarılan: ${item.removedIngredients.join(", ")}',
     ];
 
     return OrderLine.create(
@@ -66,6 +68,7 @@ abstract final class CartLineMapper {
       taxRate: taxRate,
       kitchenNote: kitchenNoteParts.join(' | '),
       customerNote: item.note,
+      excludedIngredients: item.removedIngredients,
     );
   }
 }

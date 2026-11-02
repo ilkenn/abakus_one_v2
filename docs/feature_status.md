@@ -8234,3 +8234,1870 @@ when the session is `null`. Strengthened to also assert
 New/changed files: `lib/features/admin/presentation/providers/staff_session_controller.dart`,
 `lib/features/admin/presentation/screens/staff_sign_in_screen.dart`,
 `test/features/admin/presentation/screens/staff_sign_in_screen_test.dart`, `docs/feature_status.md`.
+
+### Fix: `syncOwnStaffClaims`/`syncOwnPlatformClaims` clobbered each other's custom claims (2026-10-27)
+
+Continued staging testing against `+905337106414`: reached `AdminShellScreen` successfully (previous
+fix above), but Mutfak/KDS then failed with a Firestore `permission-denied` ("Bu şube için mutfak
+ekranı erişim yetkiniz yok."). Direct read of the account's real custom claims on staging showed
+only `{"platformRole": "platformOwner"}` — `organizationAccess`/`roles`/`branchAccess` were gone,
+even though the `memberships/org-1_<uid>` document was confirmed correct and unchanged.
+
+Root cause: `getAuth().setCustomUserClaims(uid, {...})` replaces a user's entire custom-claims object
+— it does not merge. `staffMembership.ts`'s `resyncClaimsForUid` (writes `organizationAccess`/`roles`/
+`branchAccess`) and `platformMembership.ts`'s `resyncPlatformClaimsForUid` (writes `platformRole`)
+each called it with only their own slice. `FirebaseStaffAuthRepository._syncClaimsAndBuildSession`
+calls the staff sync first, then the platform sync (best-effort) — the second call silently erased
+whatever the first had just written, for any account that is both real org/branch staff and a
+Platform Owner. Confirmed directly: reading the account's claims after replaying the exact
+staff-then-platform sync call sequence against the real deployed functions reproduced the bug;
+replaying it again after the fix below showed both claim sets intact.
+
+Fix: both functions now read the user's existing claims via `getAuth().getUser(uid)` first and spread
+them into the new claims object, overriding only the keys they own. The read is best-effort (a
+membership/platform-member uid with no real Firebase Auth account yet — every existing test fixture
+in `staffMembership.test.ts`/`platformMembership.test.ts` seeds Firestore directly without one — must
+not fail the sync; any lookup failure degrades to "no existing claims to preserve," never a thrown
+error). Deployed to `abakus-one-staging` (`syncOwnStaffClaims`, `bootstrapFirstAdminAccount`,
+`assignStaffRole`, `revokeStaffRole`, `grantStaffBranchAccess`, `revokeStaffBranchAccess`,
+`setStaffMemberStatus`, `syncOwnPlatformClaims`, `grantPlatformRole`, `revokePlatformRole` — every
+exported function that calls either helper); verified post-deploy by replaying the real staff-then-
+platform sync sequence against the live functions and reading the account's claims back.
+
+**Test-harness note**: `node --test` against the local emulator for these two files currently fails
+0/35 on this machine with a non-JSON "Not Found" response from the Auth Emulator REST API — confirmed
+via `git stash` to be pre-existing and identical with or without this fix (not a regression it
+introduced), consistent with the already-flagged Node 20/24 host-version mismatch warning the
+emulator prints on startup. Not investigated further here; out of scope for this fix.
+
+New/changed files: `functions/src/staffMembership.ts`, `functions/src/platformMembership.ts`,
+`docs/feature_status.md`.
+
+### Fix: KDS/Expeditor/Delayed-Orders `orders` queries missing an `organizationId` filter (2026-10-27)
+
+Even after the claims fix above, Mutfak/KDS still showed "Bu şube için mutfak ekranı erişim
+yetkiniz yok." against real staging data. Confirmed the account's custom claims were correct
+(re-verified directly). Replayed `FirestoreKitchenTicketRepository._query`'s exact shape
+(`orders.where('branchId','==','branch-1').where('status','whereIn',[...])`) as this real user via
+the Firestore REST API: **403 PERMISSION_DENIED**, even with fully correct claims.
+
+Root cause: Cloud Firestore rejects a `list`/query request outright — not just the individual
+non-matching documents — whenever it cannot statically prove every possible result would satisfy
+the security rule. `orders`' staff-read rule is `isOrgMember(resource.data.organizationId) &&
+hasBranchAccess(resource.data.organizationId, resource.data.branchId)`; a query filtered only by
+`branchId` (and `status`) never pins `organizationId` down, so Firestore can't prove the rule holds
+for every candidate result and denies the whole query — confirmed empirically: the identical query
+with an added `organizationId == 'org-1'` equality filter returned 200 for the same user, same
+token, same data. This is a latent bug that predates this debugging session — `kitchen`'s
+`ModuleReadinessRegistry` classification (`demoOnly`) means this exact code path had apparently
+never been exercised against a real Firestore project with real security rules before now.
+
+Fix: `KitchenTicketRepository.findActiveByBranch`/`watchActiveByBranch` now take a required
+`organizationId` parameter; `FirestoreKitchenTicketRepository` adds it as an explicit query equality
+filter (`InMemoryKitchenTicketRepository` accepts and ignores it — no org-scoped data in dev/test).
+Updated all 5 real call sites (`KitchenDisplayBoardScreen` ×2, `KitchenDisplayScreen` — a zero-
+reference orphaned duplicate, left in place per CLAUDE.md's no-unilateral-deletion rule but still
+fixed for compile-correctness — `ExpeditorScreen`, `DelayedOrdersScreen`) to pass
+`ref.read(currentOrganizationIdProvider)`, reusing the exact cross-feature-reuse precedent
+`pos_branch_overview_screen.dart` already established for that provider. Added the matching
+composite index (`branchId` ASC, `organizationId` ASC, `status` ASC) to `firestore.indexes.json`.
+Deployed both the index and (implicitly, no function code touched) verified against
+`abakus-one-staging` directly: the real query shape now returns 200 for the real test account.
+
+New/changed files: `lib/features/pos/data/kitchen_ticket_repository.dart`,
+`lib/features/pos/data/firestore_kitchen_ticket_repository.dart`,
+`lib/features/pos/presentation/screens/kitchen_display_board_screen.dart`,
+`lib/features/pos/presentation/screens/kitchen_display_screen.dart`,
+`lib/features/pos/presentation/screens/expeditor_screen.dart`,
+`lib/features/pos/presentation/screens/delayed_orders_screen.dart`,
+`test/features/pos/data/kitchen_ticket_repository_test.dart`,
+`test/features/pos/presentation/screens/kitchen_display_board_screen_test.dart`,
+`firestore.indexes.json`, `docs/feature_status.md`.
+
+### `kitchen` upgraded from `demoOnly` to `backendWiredEmulatorVerified` (2026-10-27)
+
+User asked to remove the DEMO badge across several modules outright — declined that (it would
+misrepresent modules that genuinely are still in-memory-only, e.g. `overview`), but `kitchen`'s own
+classification had become stale after the fix directly above: `KitchenDisplayBoardScreen` reads real
+`orders` documents via `FirestoreKitchenTicketRepository` once Firebase is ready, never an in-memory
+model — `demoOnly`'s own definition ("entirely backed by an in-memory repository/provider — no Cloud
+Function, no Firestore persistence") no longer described it.
+
+`ModuleImplementationMaturity.backendWiredEmulatorVerified` requires "this exact path is proven by a
+passing emulator-backed test suite" — no existing test in this repo actually exercised
+`firestore.rules`' enforcement directly (every existing `functions/src/test/*.test.ts` file uses the
+Admin SDK, which bypasses security rules entirely by design). Added
+`functions/src/test/kitchenTicketQueryRules.test.ts` — three new tests, real Firestore Emulator, real
+user-context ID tokens via the Auth Emulator's REST API (no Admin SDK bypass for the query itself):
+(1) the real KDS query shape succeeds for a correctly-permissioned staff member, (2) the OLD
+pre-fix shape (no `organizationId` filter) is rejected outright, proving the exact regression the
+query fix closed, (3) the real shape still correctly denies a staff member with access to a
+*different* branch in the same organization. All three pass against the real emulator. `kitchen` in
+`ModuleReadinessRegistry` updated accordingly, with the classification's doc comment citing this test
+file as evidence — never inflated without it, per that enum's own "never inflated to look further
+along than the evidence supports" rule.
+
+Effect: the DEMO badge is now honestly gone for `kitchen` in debug/profile builds (`isMatureEnoughForDevBuild`
+is maturity-only). `kReleaseMode` behavior is unchanged — `kitchen`'s deployment availability is still
+`development` (nothing has ever been deployed to a real production Firebase project, `CLAUDE.md` §5),
+so it remains correctly hard-blocked in a true release build; only the honest dev/profile signal
+changed, not the production-safety gate itself.
+
+New/changed files: `functions/src/test/kitchenTicketQueryRules.test.ts` (new),
+`lib/features/admin/presentation/widgets/module_readiness_gate.dart`, `docs/feature_status.md`.
+
+### Fix: `kitchenWorkItems.findByBranch` had the identical missing-`organizationId` bug, left `_load()` unguarded (2026-10-27)
+
+After both fixes above, KDS still hung on "Mutfak ekranı yükleniyor..." with an uncaught browser-console
+error. Checked real staging `orders` for `branch-1`: zero documents — so the ticket query (already
+fixed) couldn't be the cause. `KitchenDisplayBoardScreen._load()` also calls
+`kitchenProjectionRepositoryProvider.findByBranch(...)` (reads `kitchenWorkItems`) immediately after
+the ticket query — and that call was never wrapped in a `try`/`catch` at all, unlike the ticket query
+right above it. `FirestoreKitchenWorkItemRepository.findByBranch` had the exact same missing-
+`organizationId`-filter bug as `FirestoreKitchenTicketRepository._query` (fixed earlier in this same
+debugging session) — confirmed directly against staging: `branchId`-only 403s, adding
+`organizationId` returns 200, no new index needed. An uncaught `permission-denied` here, with no
+`catch`, left `_load()` never reaching its final `setState` — exactly the reported symptom.
+
+Notably, `_toFirestore` in the same file already carries an "AP-5 Sprint 2 fix" comment documenting
+the identical bug class on the *write* side (missing `organizationId` on `create`, masked by a rules
+test that supplied it as synthetic seed data) — this is that same gap's unfixed sibling on the *read*
+side. Fix: added the `organizationId` equality filter to `findByBranch`'s query, using the already-
+imported `kSingleTenantOrganizationId` constant (`core/config/current_organization.dart`) — no new
+parameter needed, since every work item is already stamped with it on write. Also wrapped the
+`findByBranch` call in `_load()` in the same `try`/`catch` → `_handleLoadError` pattern the ticket
+query already used, so any future permission edge case degrades to the visible access-denied message
+instead of hanging silently.
+
+Added `functions/src/test/kitchenWorkItemQueryRules.test.ts` (same pattern as
+`kitchenTicketQueryRules.test.ts`: real Firestore Emulator, real user-context tokens, no Admin SDK
+rule-bypass) — 3/3 pass, proving the real shape succeeds, the old shape 403s, and cross-branch access
+is still correctly denied. Added a widget-level regression test to
+`kitchen_display_board_screen_test.dart` (`_PermissionDeniedKitchenProjectionRepository`) proving the
+newly-guarded call site shows the access-denied message instead of hanging/crashing.
+
+New/changed files: `lib/features/pos/data/firestore_kitchen_work_item_repository.dart`,
+`lib/features/pos/presentation/screens/kitchen_display_board_screen.dart`,
+`functions/src/test/kitchenWorkItemQueryRules.test.ts` (new),
+`test/features/pos/presentation/screens/kitchen_display_board_screen_test.dart`, `docs/feature_status.md`.
+
+### New: admin Siparişler screen — real, read-only, branch-wide order listing (2026-10-27)
+
+User asked for the "Siparişler" nav destination to be wired to a real screen — previously
+`notImplemented`/`disabled` in `ModuleReadinessRegistry` (no screen existed at all; the nav item
+rendered `AdminComingSoonView`). Planned and approved as net-new feature work (not a bug fix) before
+implementing, per CLAUDE.md §16.
+
+**Reuse-first**: rather than a parallel order-reading repository, extended the existing
+`CanonicalOrderRepository` (the single store POS and customer checkout already share, per its own
+ADR-026 doc comment) with `findByBranch`/`watchByBranch(organizationId, branchId)`, and
+`OrderFirestoreClient` with the matching `queryOrdersByBranch`/`watchOrdersByBranch` — both took the
+`organizationId` equality filter from the start (the lesson from fixing the two Kitchen collections
+earlier the same day), not as a follow-up correction this time.
+
+New `AdminOrdersScreen` (`features/admin/presentation/screens/admin_orders_screen.dart`): a read-only,
+live (StreamProvider-backed) list of every order for the current branch, any status/channel, newest
+first — status dot + label, channel label, created time, grand total. No mutations (cancel/refund/
+status-advance already live on their own channel-specific screens — POS, Kitchen, Courier); this is
+purely an operational overview, matching exactly what was asked for. Wired into `admin_shell_screen
+.dart`'s existing `'orders'` nav item, replacing its `AdminComingSoonView` builder — the generic
+`ModuleReadinessGate` wrapping at the shell level needed no changes.
+
+Verified the real query shape directly against `abakus-one-staging` (200, no missing-index error) and
+added `functions/src/test/adminOrdersQueryRules.test.ts` (3/3, real Firestore Emulator, real user-
+context tokens) proving it, that a `branchId`-only shape would have been rejected outright, and that
+cross-branch access is still correctly denied — the same evidentiary bar `kitchen`'s own upgrade used.
+`ModuleReadinessRegistry`'s `'orders'` entry upgraded from `notImplemented` to
+`backendWiredEmulatorVerified` accordingly; DEMO badge now honestly gone for it in debug/profile
+builds. 4 new widget tests (`admin_orders_screen_test.dart`): loading/empty/data(sorted)/error.
+
+New/changed files: `lib/features/orders/data/canonical_order_repository.dart`,
+`lib/features/orders/data/order_firestore_client.dart`,
+`lib/features/admin/presentation/providers/admin_orders_provider.dart` (new),
+`lib/features/admin/presentation/screens/admin_orders_screen.dart` (new),
+`lib/features/admin/presentation/screens/admin_shell_screen.dart`,
+`lib/features/admin/presentation/widgets/module_readiness_gate.dart`,
+`test/features/orders/data/firestore_canonical_order_repository_test.dart`,
+`test/features/orders/presentation/providers/orders_provider_test.dart`,
+`test/features/orders/presentation/screens/active_order_screen_test.dart`,
+`test/features/orders/presentation/screens/orders_screen_test.dart`,
+`test/features/admin/presentation/screens/admin_orders_screen_test.dart` (new),
+`functions/src/test/adminOrdersQueryRules.test.ts` (new), `docs/feature_status.md`.
+
+### Remote Config: `reservations_enabled`/`courier_module_enabled` published to staging (2026-10-27)
+
+User asked to unlock Rezervasyonlar/Teslimat Dağıtımı ("Erişim Reddedildi — Bu özellik henüz
+etkinleştirilmedi"). Confirmed this is `ModuleAccessDenialReason.featureDisabled` — the entitlement
+check already passes; only the feature flag (`FeatureFlagsKeys.reservationsEnabled`/
+`.courierModuleEnabled`) is off. Read `abakus-one-staging`'s real Remote Config template directly:
+completely empty (zero parameters), confirming `FeatureFlagsDefaults`' hardcoded `false` fallbacks
+(a deliberate "Remote Config outage must fail closed" safety net, global across every environment —
+never meant to be hand-edited per environment) were the only thing in effect. Published real
+`reservations_enabled`/`courier_module_enabled = true` values to the staging project's Remote Config
+template directly (staging-scoped; production's own template, whenever it exists, is unaffected) —
+the actual, intended mechanism for this, not a code change. No rebuild needed; takes effect on the
+next Remote Config fetch (a fresh sign-in).
+
+Declined, with reasoning given directly to the user rather than implemented: (1) a "mock trusted
+device session" to bypass POS's Web platform restriction — the restriction exists because trusted-
+device attestation is backed by a hardware-bound Ed25519 keypair Web has no equivalent of; faking it
+would defeat the mechanism's actual purpose, staging or not. (2) Reclassifying every remaining
+`demoOnly`/`notImplemented` module as `productionReady`/`backendWiredEmulatorVerified` without
+evidence, and rebuilding in `--release` — `ModuleReadinessGate` hard-blocks every destination not in
+`ModuleDeploymentAvailability.production` (none, ever, pre-AP-8) specifically and only when
+`kReleaseMode` is true; a `--release` build would re-introduce the "Kullanıma Açık Değil" wall on
+every single module, the opposite of the user's own stated goal. `--profile` remains correct for this
+kind of testing.
+
+New/changed files: none (staging Remote Config template only — no local file represents this),
+`docs/feature_status.md`.
+
+### Müşteri & Sadakat / Yapılandırma modules assessed; Fotoğraf Denetimi wired to the real backend (2026-10-27)
+
+User asked for every module under Müşteri & Sadakat (Müşteri 360, Fotoğraf Denetimi, Segmentasyon,
+Sadakat, Geri Bildirim) and Yapılandırma (Menü, Personel) to be "fully working." Assessed each against
+source, not assumption: **Personel (`staff`)** is already `implementationComplete` — nothing to do.
+**Fotoğraf Denetimi (`photo-moderation`)** had a real Cloud Function (`moderateCustomerPhoto`) already
+built but unwired to its screen — a properly-scoped fix, approved and done (below). **Müşteri 360,
+Segmentasyon, Sadakat, Geri Bildirim (`customer-360`/`customers`/`loyalty`/`feedback`)** are all
+genuinely `demoOnly` — fully in-memory, no Firestore collection or Cloud Function behind any of them
+at all; there is no flag to flip. **Menü (`menu`)** is `notImplemented` — no screen exists, and the
+domain (categories/products/modifiers/pricing) is materially larger than Orders' single-list scope.
+None of the latter five were touched — each would need its own real backend design and its own
+Plan→approval cycle, not a blanket "enable" sweep; deferred pending the user's choice of which to
+tackle next.
+
+**Fotoğraf Denetimi, wired for real**: `CustomerPhotoRepository.findPendingReview` now takes a
+required `organizationId` (the by-now-familiar Firestore list-query provability lesson, applied from
+the start) and gained `FirestoreCustomerPhotoRepository` (read-only — `firestore.rules` denies every
+client write to `customerPhotos`). New `CustomerPhotoFirestoreMapper` (field names verified against
+`finalizeCustomerPhotoUpload.ts`'s real write shape, never guessed). New
+`CustomerPhotoModerationGateway`/`FirebaseCustomerPhotoModerationGateway`, mirroring
+`KitchenActionGateway`'s exact "mutations go through the real callable" shape — once Firebase is
+ready, `CustomerPhotoModerationScreen._moderate` now calls the real `moderateCustomerPhoto` Cloud
+Function instead of writing through the client; the in-memory/pre-Firebase path (existing
+`ModerateCustomerPhoto` use case) is unchanged, selected by the same `firebaseReadyProvider` branch
+this session's other fixes already use.
+
+Verified directly against `abakus-one-staging`: the real read query (200, no missing-index error) and
+the real `moderateCustomerPhoto` callable itself (clean `NOT_FOUND` for a bogus id — auth/permission
+layers resolve correctly end-to-end). Added `functions/src/test/customerPhotoQueryRules.test.ts`
+(3/3, real Firestore Emulator) and 4 new widget tests
+(`customer_photo_moderation_screen_test.dart`) — including one proving the pre-Firebase path still
+uses the in-memory use case, and one proving the Firebase-ready path calls the gateway, never the
+repository directly. `photo-moderation` upgraded from `partiallyImplementedUnsafe` to
+`backendWiredEmulatorVerified` accordingly.
+
+New/changed files: `lib/features/admin/data/customer_photo_repository.dart`,
+`lib/features/admin/data/customer_photo_firestore_mapper.dart` (new),
+`lib/features/admin/data/customer_photo_moderation_gateway.dart` (new),
+`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`,
+`lib/features/admin/presentation/screens/customer_photo_moderation_screen.dart`,
+`lib/features/admin/presentation/widgets/module_readiness_gate.dart`,
+`test/features/admin/presentation/screens/customer_photo_moderation_screen_test.dart` (new),
+`test/features/admin/presentation/widgets/module_readiness_gate_test.dart`,
+`functions/src/test/customerPhotoQueryRules.test.ts` (new), `docs/feature_status.md`.
+
+### New: admin Menü module — real categories/products catalog backend (2026-10-28)
+
+User prioritized Menü over the remaining Müşteri & Sadakat modules — explicitly because POS/KDS can't
+be real-order-tested without a real catalog to sell from. Planned and approved before implementing
+(net-new backend + UI, per CLAUDE.md §16). One correction surfaced and applied: menu is organization/
+restaurant-scoped, not branch-scoped — confirmed directly from `catalogMigration.ts`'s real write
+shape (`menuCategories`/`menuProducts` carry `organizationId`/`restaurantId`, never `branchId`) — no
+branch filter was added, despite the original ask mentioning one.
+
+**Confirmed before writing anything**: `menuCategories`/`menuProducts` have **no `firestore.rules`
+entry at all** — `firestore.rules` itself documents this as deliberate, the same reasoning already
+governing `reservationAreas`/`reservationPolicies` ("served only via callables"). No callable existed
+for listing or creating either collection. Built the minimum real surface: 4 new Cloud Functions
+(`functions/src/menuCatalogAdmin.ts`): `listMenuCategories`, `createMenuCategory`,
+`listMenuProducts`, `createMenuProduct` — v1 scope exactly as asked (list + create; no update/
+delete/reorder yet). Gated by a new `manageMenu` permission — added `PosAuthorizedAction.manageMenu`
+(manager-tier, mirrors `manageRecipes`/`manageInventory`'s own tier) and its server-side mirror in
+`staffAuthorization.ts` (manager/admin/tenantOwner), following this file's own documented rule that a
+new server-side `StaffPermission` must mirror an already-decided client-side tier, never invent one.
+Field shapes copied byte-for-byte from `catalogMigration.ts`'s `migrateCanonicalCatalog` — the one
+other real writer of these two collections — never invented independently.
+
+New Dart `MenuCatalogAdminGateway`/`FirebaseMenuCatalogAdminGateway` (mirrors `KitchenActionGateway`'s
+exact shape) plus a fail-closed `UnavailableMenuCatalogAdminGateway` pre-Firebase (mirrors
+`UnavailableKitchenActionGateway` — there's no meaningful in-memory catalog-admin concept to simulate;
+the existing customer-facing `InMemoryMenuCategoryRepository`/`InMemoryMenuProductRepository` are a
+different feature's shape, not reused here). New, purpose-fit `AdminMenuCategory`/`AdminMenuProduct`
+display models (deliberately not the richer customer-facing `MenuCategory`/`MenuProduct` domain
+models, which require fields — `description`, `imageKey`, a `double` price — this admin flow never
+collects; mirrors `AdminPaymentSessionSummary`'s own precedent in this exact admin area).
+
+New `AdminMenuScreen` — two tabs (Kategoriler/Ürünler), each a list + a floating "add" dialog,
+matching `AdminFinancialOperationsScreen`'s established tab pattern. Wired into `admin_shell_screen
+.dart`'s existing `'menu'` nav item (`RoleGate.forAction(PosAuthorizedAction.manageMenu, ...)`),
+replacing its `AdminComingSoonView` builder.
+
+Deployed the 4 functions to `abakus-one-staging` (hit the same transient Cloud Run IAM-invoker-
+propagation delay seen earlier this session for brand-new functions — self-resolved on retry, not a
+code issue) and seeded the real İçecekler/Ana Yemekler/Tatlılar categories plus 5 sample products
+(Ayran, Limonata, Mexifit Bowl, Izgara Tavuklu Salata, Cheesecake) through these exact callables —
+idempotent, skipped 3 products already present from the very first staging seed days ago (those 3
+still reference stale `categoryId`s — `cat_icecekler`/`cat_bowl`/`cat_salata` — from before any real
+category document existed; a pre-existing inconsistency from that original seed, not introduced here,
+left as-is and reported rather than silently touched).
+
+`functions/src/test/menuCatalogAdmin.test.ts` (5/5, real Firestore Emulator): create+list round-trip,
+a staff-tier (no `manageMenu`) denial, a not-found category on product creation, and cross-
+organization isolation. 6 new widget tests (`admin_menu_screen_test.dart`). `menu` upgraded from
+`notImplemented` to `backendWiredEmulatorVerified` accordingly.
+
+New/changed files: `functions/src/menuCatalogAdmin.ts` (new),
+`functions/src/test/menuCatalogAdmin.test.ts` (new), `functions/src/staffAuthorization.ts`,
+`functions/src/index.ts`, `lib/features/pos/domain/authorization/pos_authorized_action.dart`,
+`lib/features/pos/domain/authorization/role_permission_map.dart`,
+`lib/features/admin/data/menu_catalog_admin_gateway.dart` (new),
+`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`,
+`lib/features/admin/presentation/providers/admin_menu_providers.dart` (new),
+`lib/features/admin/presentation/screens/admin_menu_screen.dart` (new),
+`lib/features/admin/presentation/screens/admin_shell_screen.dart`,
+`lib/features/admin/presentation/widgets/module_readiness_gate.dart`,
+`test/features/admin/presentation/screens/admin_menu_screen_test.dart` (new),
+`test/features/admin/presentation/widgets/module_readiness_gate_test.dart`, `docs/feature_status.md`.
+
+### Fix: a real POS-placed takeaway order never reached KDS — missing accept/reject UI, not a sync bug (2026-10-28)
+
+User placed a real order via the Android POS build and reported it never appeared on the web KDS
+board. Checked the real `orders` document directly: written correctly, `organizationId`/`branchId`
+exactly matching the web session (`org-1`/`branch-1`) — no data or query mismatch of any kind.
+
+Root cause: the order's `status` was `pendingConfirmation` — every channel (dine-in, takeaway,
+delivery) starts there by design, and only becomes Kitchen-visible once a staff member explicitly
+transitions it to `confirmed` (`acceptOrderLine.ts` is what actually materializes `kitchenWorkItems`,
+and only runs on that exact transition). The real, already-tested, already-deployed Cloud Function for
+this (`respondToTakeawayOrder` — confirm/reject a pending takeaway order) had **zero callers anywhere
+in the Flutter app** — confirmed by a repo-wide search. There was no bug in the KDS query or the data
+shape; there was simply no UI for staff to ever accept an order in the first place.
+
+Added the one missing link to `AdminOrdersScreen` (reuse-first — no new screen): a pending
+`takeaway` order now shows Kabul Et/Reddet buttons, wired to a new
+`TakeawayOrderResponseGateway`/`FirebaseTakeawayOrderResponseGateway` (mirrors `KitchenActionGateway`'s
+exact shape) calling the real `respondToTakeawayOrder` callable — no new Cloud Function needed, no
+deploy required, `respondToTakeawayOrder` was already live on `abakus-one-staging` (confirmed with a
+clean `NOT_FOUND` for a bogus id). Reject shows a reason picker matching
+`TAKEAWAY_REJECTION_REASON_CODES` exactly. Dine-in/delivery's own equivalents
+(`respondToDineInOrderLines`/`respondToDeliveryOrder`) remain unwired — a separate, not-yet-asked-for
+follow-up.
+
+4 new widget tests. No new backend test needed — `respondToTakeawayOrder` already has its own
+dedicated, pre-existing test suite (`functions/src/test/takeawayOrderLifecycle.test.ts`); this change
+only added a Dart-side caller, never touched the function itself.
+
+New/changed files: `lib/features/admin/data/takeaway_order_response_gateway.dart` (new),
+`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`,
+`lib/features/admin/presentation/screens/admin_orders_screen.dart`,
+`test/features/admin/presentation/screens/admin_orders_screen_test.dart`, `docs/feature_status.md`.
+
+### Fix: Windows desktop build hung forever on launch — unenforced Remote Config fetch timeout (2026-10-28)
+
+User reported the new Windows desktop build (`flutter build windows --profile`) spun on a loading
+indicator indefinitely. Reproduced directly: ran the real built `.exe` from a terminal and captured
+its console output rather than guessing. Confirmed `bootstrapApp`'s `Future.wait([...])` (which the
+very first frame waits on) never resolved — no further output appeared even after a full 70-second
+wait, well past staging's own configured 30-second Remote Config fetch timeout.
+
+Root cause: `FirebaseRemoteConfigService.initialize()` passes `fetchTimeout` to the native SDK via
+`RemoteConfigSettings` for the **native plugin to self-enforce** — it was never also enforced on the
+Dart side. The Windows `firebase_remote_config` plugin does not honor it (confirmed by direct
+observation: `fetchAndActivate()` never returned, well past the configured cutoff) — the same general
+class of incomplete Windows-platform support already documented elsewhere in this codebase for other
+Firebase packages (`cloud_functions` has no native Windows implementation at all;
+`firebase_auth.verifyPhoneNumber` throws `unimplemented` on Windows, observed in the same run,
+unrelated and harmless — a stray, pre-existing, fire-and-forget call with no `bootstrapApp` in its own
+stack trace, not something this fix touched). A `try`/`catch` around a call that simply never returns
+does nothing — only an explicit Dart-side timeout can cut it off.
+
+Fix: wrapped `fetchAndActivate()` in `initialize()`, and the service's own `fetch()`/`activate()`/
+`fetchAndActivate()` methods, in an explicit `.timeout(policy.fetchTimeout)` — mirrors this codebase's
+own established distrust of native-plugin timeout/refresh behavior on Windows specifically (see
+`StaffClaimsSyncClient.syncAndRefresh`'s own doc comment on the identical class of issue for
+`getIdTokenResult(true)`). Existing test suite (9/9) still passes unchanged — no new test added for
+the timeout branch itself (it exercises Dart's own well-tested `Future.timeout()`, not new logic of
+ours). Rebuilt and re-ran the real Windows `.exe`; console output is clean through bootstrap. Full
+visual confirmation (does the window render deliberately, not just "no more console errors") is the
+user's own call, per this project's standing "no desktop automation, user does visual QA" rule — asked
+directly rather than assumed.
+
+New/changed files: `lib/core/services/remote_config/firebase_remote_config_service.dart`,
+`docs/feature_status.md`.
+
+### Fix: Windows phone sign-in hung forever — `verifyPhoneNumber`'s own Future was never caught (2026-10-28)
+
+Follow-up to the Remote Config timeout fix above — the Windows hang persisted. Used `flutter run -d
+windows` per the user's own request for richer live logs, confirmed the exact trigger: entering the
+admin phone number and tapping "Kod Gönder" on Windows throws `[firebase_auth/unimplemented]
+VerifyPhoneNumber is not available on this platform yet` as an **unhandled exception with no
+`verificationFailed` callback ever firing**.
+
+Root cause: `DefaultFirebaseAuthClient.verifyPhoneNumber` (`firebase_auth_client.dart`) called
+`_auth.verifyPhoneNumber(...)` — which itself returns a `Future<void>` — without ever awaiting or
+catching that returned Future. On a platform where the native implementation rejects before invoking
+any of the three registered callbacks (confirmed: Windows has no native phone-verification
+implementation at all, an SDK-level platform gap, not something this app's code could ever paper
+over), none of `verificationCompleted`/`verificationFailed`/`codeSent` ever fire, so the method's own
+`completer.future` — what every caller up the stack actually awaits — never completes. A permanent
+hang, not just a logged error; this is what "ekranda kilitlenip kalıyor" actually was, including
+very likely the original, broader "Windows açılışta donuyor" report before the OTP-screen reproduction
+pinned it down to this exact call.
+
+Fix: added `.catchError` on `_auth.verifyPhoneNumber(...)`'s own returned Future, completing the same
+`completer` with a `FirebaseAuthClientException` exactly like `verificationFailed` already does — every
+existing caller (`StaffAuthRepository.startPhoneSignIn` → `StaffAuthUnavailableException` → a visible
+Turkish error message) already handles this correctly; the only thing missing was ever reaching that
+path at all on a platform where the rejection arrives a different way.
+
+**Declined, with reasoning given directly to the user**: a Windows-specific bypass that skips real
+phone/reCAPTCHA verification and fabricates a session for the staging test number — this would mean
+synthesizing a credential outside Firebase's own auth flow, the same category of request as the
+earlier-declined POS trusted-device mock session, staging or not. Also unnecessary: Windows phone
+verification will never work (a genuine, permanent Firebase SDK platform gap, matching this
+codebase's own already-documented "Windows remains genuinely blocked" finding for real phone auth in
+`docs/local_admin_login_runbook.md`), but **email/password sign-in already works natively on
+Windows** — `StaffSignInScreen`'s other tab. Verified a real path end-to-end instead: set a real
+password for the user's own already-existing staging account (`ilkenprlkbdk@gmail.com`, previously
+platformOwner-only, no org membership) and granted it the identical `org-1`/`branch-1`
+staff/manager/admin/tenantOwner/courier membership the phone account already has — confirmed via a
+real `signInWithPassword` + `syncOwnStaffClaims`/`syncOwnPlatformClaims` round trip against
+`abakus-one-staging` (200/200).
+
+New/changed files: `lib/features/auth/data/repositories/firebase_auth_client.dart`,
+`docs/feature_status.md`.
+
+### Fix: Windows desktop had no reachable path to StaffSignInScreen at all (2026-10-28)
+
+Follow-up to the two fixes above. The user next reported the "Giriş hizmeti şu anda kullanılamıyor."
+message itself as a problem and, after that, asked twice for a Windows-specific mock that fabricates a
+session for a hardcoded test number/code/UID — declined both times (same reasoning as the entry above:
+synthesizing a credential outside Firebase's real auth flow is a backdoor pattern, staging or not, and
+is unnecessary since `StaffSignInScreen` already has a real, working E-posta/Şifre tab). That message
+is in fact the correct, intended outcome of the previous fix — Windows phone verification cannot ever
+work (an SDK platform gap), so turning the old infinite hang into a visible, honest error was the whole
+point, not a new bug.
+
+The user's real, separate problem: on the Windows `.exe`, there is no way to reach `StaffSignInScreen`
+at all. Traced two existing entry points into `AppRoutes.admin`, both closed off there:
+- `LoginScreen`'s "Personel / POS Girişi" icon button (`login_screen.dart`) is gated on
+  `_staffEntryShortcutAvailable` = `kDebugMode && allowsDebugTooling`. `kDebugMode` is always `false`
+  under `flutter build windows --profile` (the only mode this app is ever built in — `--release` is
+  blocked by `ModuleReadinessGate`'s own `kReleaseMode` gate), so the button never renders there.
+- `ProfileBusinessModeCard` ("İşletme Moduna Geç") is only mounted by `ProfileScreen` when
+  `actorSessionProvider?.roles.isNotEmpty == true` — unreachable for a guest session, which is the only
+  kind Windows can ever reach anyway since phone sign-in (the only way to become a real, role-bearing
+  customer) is permanently blocked there too.
+
+First proposed fix (an always-visible "Personel Girişi" link added to `LoginScreen`, gated by nothing —
+the destination screen still requires real credentials either way) — **declined by the user**, who
+instead specified the actual intended architecture directly: the Windows desktop build is a back-office
+/POS terminal, never a customer-facing surface, and must never show the customer login/guest screen at
+all.
+
+Fix: `appRouterProvider` (`app_router.dart`) now computes `isWindowsDesktop = !kIsWeb &&
+defaultTargetPlatform == TargetPlatform.windows` and, when true, sets `initialLocation` unconditionally
+to `AppRoutes.admin` — bypassing the customer onboarding/login/guest/main branch entirely, regardless
+of any `authProvider`/`onboardingCompleteProvider` state. No change to `AppRouteGuard.resolve` was
+needed: `/admin` was already unconditionally bypassed there (AP-2 Stage B), and `AdminShellScreen`
+already performs its own real, internal staff-session check, falling back to the real
+`StaffSignInScreen` (E-posta/Şifre tab, genuine `signInWithEmailAndPassword`) when signed out — nothing
+about authentication itself changed, only which screen a Windows launch starts on. Other platforms
+(Android/iOS/web/macOS/Linux) are completely unaffected — the branch is keyed on
+`defaultTargetPlatform`, not a global config flag.
+
+Added 2 new tests to `app_router_test.dart` (now 16/16 passing) proving the Windows-desktop branch:
+first frame is `AdminShellScreen` both for no-session and for an explicit guest-session override,
+simulated via `debugDefaultTargetPlatformOverride = TargetPlatform.windows` (reset synchronously at
+the end of each test body — neither `tearDown()` nor `addTearDown()` runs early enough to satisfy
+`testWidgets`'s own `debugAssertAllFoundationVarsUnset` invariant check, confirmed by first trying
+both and seeing both fail that specific assertion). Full suite: 3720/3720 passing (up from 3718).
+Rebuilt `flutter build windows --profile --dart-define=ENVIRONMENT=staging` —
+`build\windows\x64\runner\Profile\abakus_one_v2.exe` now opens directly into `StaffSignInScreen`,
+ready for `ilkenprlkbdk@gmail.com` / `AbakusStaging2026!` sign-in. Visual confirmation is the user's
+own call per this project's standing "no desktop automation" rule.
+
+**Deferred, explicitly scoped as a separate follow-up** (not yet implemented): the user's second
+requirement — removing any dedicated "Personel Girişi" affordance from the **mobile** customer UI
+entirely, and instead having a successful customer phone/OTP sign-in itself look up the number against
+`staffMembers`' `phoneNumber` field (user's own choice over reading Firebase custom claims directly)
+to decide whether to route into a staff/admin panel instead of the ordinary customer `main` shell. This
+is a real routing/authorization-adjacent behavior change to the mobile sign-in flow, not yet designed
+or built — tracked here as the explicit next step, not silently started.
+
+New/changed files: `lib/core/router/app_router.dart`, `test/core/router/app_router_test.dart`,
+`docs/feature_status.md`.
+
+### Feature: 2026-10-28 PDF menu refresh + launch-table QR provisioning + dine-in order table display
+
+Cumartesi launch prep, user-provided PDF menu extraction (Kahvaltı/Tartineler/Bowl'lar/Tavalar/
+Salatalar/Burgerler/Wrap'ler/Makarnalar/Aperatifler, 92 products) plus 14 physical tables (7 İç Masa,
+7 Bahçe Masa).
+
+**Critical finding surfaced before any seed work**: the customer-facing menu (`MenuScreen`,
+`menuCategoriesProvider`/`menuProductsProvider`) reads a compiled-in static Dart catalog
+(`AbakusMenuCatalog`), never Firestore — the `menuCategories`/`menuProducts` Firestore collections
+this session's earlier Admin "Menü" module work targets serve only that staff-only screen, with no
+customer-facing or even anonymous read path (no Firestore rule exists for either collection by
+design). Seeding Firestore alone would have had zero visible effect on the customer app. **User
+decision**: update the static catalog directly (fast, zero new risk) rather than build a new
+public/anonymous "list menu" callable + rewire `MenuScreen` onto Firestore now — that remains
+separate, larger, un-started architecture work.
+
+**Second critical finding**: the user's proposed table-QR URL shape (`?org=org-1&branch=branch-1&
+table=ic-1`) directly conflicts with this app's own existing, deliberate QR security design
+(`docs/table_qr_architecture.md` §10 — table identity must never be client-derivable from a URL
+parameter). **User decision**: keep the existing real, working opaque-token flow (`/table/:token` →
+`resolveTableQrToken`/`openTableGuestSession`, already live) — `ic-1`/`bahce-1` etc. are internal
+`restaurantTables` document ids only, never exposed in the printed QR's URL.
+
+**Menu catalog** (`lib/features/menu/data/abakus_menu_catalog.dart`): the pre-refresh 6 categories
+(`cat_bowl`/`cat_salata`/`cat_wrap`/`cat_hamburger`/`cat_makarna`/`cat_atistirmalik`, 73 products) are
+kept, unmodified, at `isActive: false` — NOT deleted, because ~15 Cloud Functions test files
+(`submitTakeawayOrderRealCatalog.test.ts` and its delivery/dine-in/campaign/loyalty/reservation
+siblings) read specific real product ids/prices from `functions/scripts/data/menu_catalog_export.json`
+(generated from this same catalog) as fixtures — deleting or repricing any of them would break that
+whole suite for a reason unrelated to the menu update itself. `cat_icecekler` (İçecekler/drinks) is the
+one pre-refresh category kept `isActive: true` — the PDF never mentioned drinks, so hiding them would
+have been an invented, unrequested removal. 9 new categories added (`cat_kahvalti`/`cat_tartine`/
+`cat_bowl2`/`cat_tava`/`cat_salata2`/`cat_hamburger2`/`cat_wrap2`/`cat_makarna2`/`cat_atistirmalik2`),
+all `isActive: true`, with 92 new `MenuProduct`s transcribed verbatim from the user's PDF extraction.
+`menuCategoriesProvider`/`menuProductsProvider`/`featuredMenuProductsProvider`
+(`menu_catalog_provider.dart`) now filter to `isActive` categories only — the one place that decides
+what a customer actually sees; `HomeCategorySection`'s own separately-curated `_visibleCategoryIds`/
+icon/asset maps were updated to the same 9 new ids + İçecekler.
+
+**Model additions** (additive, backward-compatible): `MenuProduct.allergens` (`List<String>`,
+free-form Turkish text — the PDF has no fixed allergen vocabulary to constrain it to) and
+`MenuProduct.portionLabel` (`String?` — `'150g'`/`'4 adet'`/`'120-150g'`; deliberately not an `int`
+gram count, several real dishes are piece- or range-portioned). Reused the already-existing
+`description` field for ingredient composition (matching every pre-refresh product) rather than adding
+a third, redundant field. Calories use the already-existing `ProductNutrition.calories`; the PDF gave
+no protein/carb/fat breakdown for any new product, so those stay `null` — never invented.
+**Disclosed gap, not fixed**: Salatalar/Burgerler/Wrap'ler/Makarnalar/Aperatifler had no ingredient
+breakdown in the PDF at all (only name/price/[kcal]/[portion]) — their `description` is intentionally
+empty, not fabricated.
+
+**"Çok Satanlar" (featured) products**: 9 new products (one per new category) were marked
+`isFeatured: true` as a **provisional placeholder pick** — the PDF named no featured items, and the
+Home screen's "Abaküs'ün Favorileri"/"Bu Hafta Abaküs'te" sections read live from
+`featuredMenuProductsProvider`, which went empty (breaking 8 Home tests) once the old featured set
+was hidden by the category `isActive` flip. **Needs the owner's own confirmation/change** — this was
+a judgment call, not sourced from the PDF.
+
+**Export/migration pipeline extended** (`tool/export_menu_catalog.dart`, `functions/src/
+catalogMigration.ts`): `allergens`/`portionLabel` added to the exported/migrated product shape,
+additively — `functions/src/test/catalogMigration.test.ts`'s field-by-field assertions (no
+whole-object deep-equal anywhere in this codebase's test suite) are unaffected. Re-ran
+`dart run tool/export_menu_catalog.dart` — 16 categories, 171 products, 64 bowl ingredients.
+
+**New real-project scripts** (`functions/scripts/migrate_canonical_catalog_to_project.mjs`,
+`functions/scripts/provision_launch_tables.mjs`) — the existing `migrate_canonical_catalog.mjs` hard-
+refuses to run against anything but the local Firestore emulator by design; these two reuse the exact
+same tested `migrateCanonicalCatalog` function / mirror the same `restaurantTables`/`tableQrCodes`
+shape `assignReservationTable.test.ts`'s own fixture uses (the most complete of the 22 test-only
+writers of either collection — **no real Cloud Function or admin UI creates either doc anywhere in
+this codebase today**, confirmed by exhaustive grep; this is genuinely new, first-of-its-kind
+provisioning) — against a real project, gated on an explicit `--project` allowlist (`abakus-one-
+staging`/`abakusone`) and `GOOGLE_APPLICATION_CREDENTIALS` (never hardcoded). `provision_launch_tables
+.mjs` creates `ic-1`..`ic-7` ("İç Masa 1".."İç Masa 7", areaName "İç Mekan") and `bahce-1`..`bahce-7`
+("Bahçe Masa 1".."Bahçe Masa 7", areaName "Bahçe") under org-1/restaurant-1/branch-1 ("Merkez Şube"),
+idempotently (re-running never resets a table's live `status`/`activeTableSessionId`, never re-mints a
+token for a table that already has an active one), and mints one real opaque `tableQrCodes` token per
+table, writing a manifest (`functions/scripts/data/launch_table_qr_manifest.json`) for the next
+(not-yet-built) QR-image-generation step.
+
+**NOT yet run against the real project** — blocked on two inputs only the user can supply, asked
+directly rather than guessed: (1) a staging service-account key (`GOOGLE_APPLICATION_CREDENTIALS`),
+matching this session's own established "copy temporarily, use, delete immediately" key-handling
+discipline (no key currently exists on disk — correctly refused to search for one); (2) the real,
+deployed web URL the printed QR codes should point `/table/<token>` at (`firebase.json` has no
+`hosting` key configured at all — no canonical web domain exists yet to encode).
+
+**Dine-in order → table display** (`submitDineInOrder.ts`, `Order`/`OrderFirestoreMapper`,
+`AdminOrdersScreen`): a dine-in order now carries a frozen `tableNumber`/`tableSection` snapshot
+(e.g. `"İç Masa 1"` / `"İç Mekan"`) taken from `restaurantTables/{tableId}` at submission time — read
+inside the SAME transaction `submitDineInOrder.ts` already runs (the `staffEntry` branch already read
+the table doc for its own validation; the `guestSession` branch needed one new `tx.get()`, added
+strictly during that transaction's existing read phase, before its first write, per Firestore's own
+discipline). `AdminOrdersScreen`'s order list now shows `"Masa (QR) · İç Masa 1 (İç Mekan) · ..."`
+when present, nothing extra when absent (pre-launch orders). Purely additive — no existing field
+changed, no existing test's assertions touched beyond this file's own 2 new ones.
+
+**Test fixture fallout fixed** (all pre-existing tests, none newly written for this change's own
+sake): `abakus_menu_catalog_test.dart` (category/product counts, legacy-vs-new featured split),
+`menu_screen_test.dart`, `home_category_section`-adjacent `home_screen_redesign_test.dart`/
+`home_screen_material_test.dart` (old category/product names no longer customer-visible),
+`main_navigation_screen_test.dart` (a latent `find.byType(Scrollable)` — no `.first` — ambiguity bug
+in a shared test helper, only ever exposed once the hardcoded old product name it drove stopped being
+the very first item in the list), `pos_cashier_screen_test.dart` (`PosCashierScreen` reads the same
+shared `menuProductsProvider`; `ensureVisible`, unlike `dragUntilVisible`, cannot discover/scroll to an
+item a lazy `ListView` hasn't built yet, so the replacement product name had to be the literal first
+active item, not an arbitrary one). Full suite: 3723/3723 passing (up from 3720). `flutter analyze`:
+clean. Cloud Functions: `tsc` clean; the real emulator suite could not be run in this environment
+(Firestore emulator requires JDK 21+, not installed here) — verified via direct grep instead that
+`MenuCategory.isActive`/`category.isActive` is write-only in `functions/src` (only ever written by
+`catalogMigration.ts`, never read by any pricing/validation/order-submission logic), so flipping the 6
+legacy categories' flag cannot change any of the ~15 RealCatalog-dependent backend tests' behavior —
+disclosed as a real verification gap, not silently assumed clean.
+
+**Explicitly deferred, not started**: QR PNG/SVG image generation (blocked on the web URL above);
+admin "Masalar" management screen (the user's first message mentioned one, the second, more concrete
+4-step list did not — a reusable `provisionRestaurantTable` callable would be the natural next step if
+wanted); mobile staff phone-routing via `staffMembers.phoneNumber` (item 4 of the user's list — a real
+authorization-adjacent change to the customer sign-in flow, intentionally not started without its own
+explicit design discussion, per this project's no-silent-decisions rule).
+
+New/changed files: `lib/features/menu/domain/models/menu_product.dart`,
+`lib/features/menu/data/abakus_menu_catalog.dart`,
+`lib/features/menu/presentation/providers/menu_catalog_provider.dart`,
+`lib/features/home/presentation/widgets/home_category_section.dart`,
+`lib/features/orders/domain/models/order.dart`, `lib/features/orders/data/order_firestore_mapper.dart`,
+`lib/features/admin/presentation/screens/admin_orders_screen.dart`,
+`functions/src/submitDineInOrder.ts`, `functions/src/catalogMigration.ts`,
+`tool/export_menu_catalog.dart`, `functions/scripts/provision_launch_tables.mjs` (new),
+`functions/scripts/migrate_canonical_catalog_to_project.mjs` (new),
+`test/features/menu/domain/abakus_menu_catalog_test.dart`, `test/features/menu/menu_screen_test.dart`,
+`test/features/home/home_screen_redesign_test.dart`,
+`test/features/navigation/main_navigation_screen_test.dart`,
+`test/features/pos/presentation/screens/pos_cashier_screen_test.dart`,
+`test/features/admin/presentation/screens/admin_orders_screen_test.dart`, `docs/feature_status.md`.
+
+### Follow-up (2026-10-28, same day): real staging seed + first-ever Hosting deploy
+
+The two blockers above were resolved by the user (a real staging service-account key,
+`https://abakus-one-staging.web.app` as the base URL) and both scripts were run for real:
+
+- `migrate_canonical_catalog_to_project.mjs --project abakus-one-staging`: 16 categories/171
+  products/64 bowl ingredients/`channelPricingPolicies/restaurant-1` written. Verified post-write
+  counts (19/175/67 — the extra few are pre-existing docs from this session's earlier Admin "Menü"
+  module smoke-test seeding, different ids, no collision).
+- `provision_launch_tables.mjs --project abakus-one-staging`: all 14 tables (`ic-1`..`ic-7`,
+  `bahce-1`..`bahce-7`) created under org-1/restaurant-1/branch-1, each with one real, freshly-minted
+  opaque `tableQrCodes` token.
+- New script `functions/scripts/generate_table_qr_images.mjs` (added `qrcode` as a `functions`
+  devDependency — a real, flagged new dependency, scripts-only, never part of the deployed Cloud
+  Functions bundle) reads the manifest `provision_launch_tables.mjs` wrote and renders one bare PNG +
+  one labeled SVG (table name as an SVG `<text>` element wrapped around the QR's own nested SVG
+  markup — no canvas/image-composition dependency needed) per table into `assets/qr_codes/`, encoding
+  the real `https://abakus-one-staging.web.app/table/<token>` URL.
+- Service-account key file deleted immediately after the two scripts ran, per this session's standing
+  credential-handling discipline.
+
+**Found and fixed before declaring this "done"**: `https://abakus-one-staging.web.app` returned 404 —
+`firebase.json` had no `hosting` key at all; this project's Flutter web build had never been deployed
+to Firebase Hosting. Confirmed with the user before proceeding (first-ever Hosting deploy for this
+project — a real, consequential infra action). Added a standard Flutter-web SPA `hosting` block
+(`public: "build/web"`, catch-all rewrite to `index.html`), ran `flutter build web --profile
+--dart-define=ENVIRONMENT=staging`, then `firebase deploy --only hosting --project abakus-one-staging`.
+Verified directly: both `/` and a real `/table/<token>` URL now return HTTP 200 and serve the real
+Flutter `index.html` (not a placeholder/error page).
+
+New/changed files beyond the entry above: `firebase.json` (new `hosting` key),
+`functions/package.json`/`functions/package-lock.json` (added `qrcode` devDependency),
+`functions/scripts/generate_table_qr_images.mjs` (new), `assets/qr_codes/*.png`/`*.svg` (new, 28
+files), `docs/feature_status.md`.
+
+### Follow-up (2026-10-29): zero-friction dine-in QR entry
+
+User-specified UX rule: a customer scanning a table QR must never see a login/guest-entry/"scan
+confirmed" screen — straight to the resolved table's Menu, no tap, no account.
+
+**Investigation found two of the three requested behaviors already fully built**: (1)
+`DineInCheckoutScreen` already asks for a name only reactively, exactly matching the requested
+outcome — no proactive prompt if the guest/sub-account already has a name; if not, the server
+rejects with `dineIn/guest-display-name-required` and the client shows a one-field "Adını Öğrenebilir
+miyiz?" dialog, then resubmits with `guestDisplayName` (never a client-supplied `tableNumber` — the
+server already derives that from the session, which is more secure than what was asked for
+literally). (2) `/table/:token` was already fully exempt from `AppRouteGuard`'s login/onboarding
+redirect, and `OpenTableGuestSessionFromQrScan` already establishes a Firebase identity invisibly via
+`TechnicalIdentityProvider.ensureSignedIn()` — no login screen was ever shown for this path.
+
+**What actually changed** (`TableGuestEntryScreen`): removed the one remaining tap — a "Masaya Otur"
+confirm screen between the token-resolve preview and the real, mutating `openTableGuestSession` call.
+**Trade-off surfaced and confirmed with the user before removing it**: that tap existed specifically
+so a link-preview bot (some chat apps execute real JS to generate link-preview cards) could never
+silently open a real, empty table session just by unfurling a shared QR URL — `resolveToken` itself
+stays a safe, non-mutating preview either way, only the session-opening step loses its human-tap
+gate. User explicitly accepted this risk in exchange for true zero-tap entry. Now: resolve succeeds
+→ `_startOrder()` runs immediately → `MainNavigationScreen` opens with the Menu tab pre-selected,
+with no intermediate screen at all. The in-app camera-scan path (`QrScannerScreen`) was deliberately
+left untouched — a different risk profile (an already-signed-in app user tapping a button inside the
+app), not what was asked for.
+
+`test/features/qr/presentation/screens/table_guest_entry_screen_test.dart` rewritten for the new
+auto-advance behavior (no more `tester.tap(find.text('Masaya Otur'))` anywhere — every assertion now
+checks the end state directly after resolve). Full suite re-verified; redeployed to
+`https://abakus-one-staging.web.app` per the user's explicit instruction.
+
+New/changed files: `lib/features/qr/presentation/screens/table_guest_entry_screen.dart`,
+`test/features/qr/presentation/screens/table_guest_entry_screen_test.dart`, `docs/feature_status.md`.
+
+### Fix (2026-10-29): real QR scan still redirected to onboarding/login on web
+
+User report after testing the deployed zero-friction change on a real phone: scanning the QR still
+landed on onboarding then login instead of the menu.
+
+**User's own hypothesis (incorrect, checked against source before touching anything)**: that
+`AppRouteGuard`'s redirect logic had no exemption for `/table/:token`. It already did —
+`app_route_guard.dart:77`, `if (location.startsWith(AppRoutes.tableGuestPrefix)) return null;`,
+checked near the top of `resolve()`, well before any onboarding/signed-in logic. Confirmed via direct
+source read, not assumed.
+
+**Real root cause**: Flutter web defaults to a hash-based URL strategy
+(`/#/table/<token>`) unless `usePathUrlStrategy()` is explicitly called — this app never called it.
+A real path like `/table/<token>` (exactly what the printed QR codes encode) is served correctly at
+the HTTP layer (Firebase Hosting's catch-all rewrite to `index.html` — this is what this session's
+earlier `curl` checks verified, and all they verified), but once the Flutter app boots and go_router
+reads the **browser's hash**, not its path, for routing, it sees an empty hash → resolves to `/` →
+the `/table` exemption never gets a chance to match, because `state.matchedLocation` was never
+`/table/<token>` to begin with. This is a real gap in this session's own earlier verification: an
+HTTP 200 from `curl` proves the server responds, never what the client-side router then does with
+that response — `curl` cannot execute the JS/Dart that runs inside the page.
+
+Fix: `usePathUrlStrategy()` (added `flutter_web_plugins` as an SDK dependency — not pub.dev, no
+version to pin) called at the very top of `main()`, before `bootstrapApp()`/`runApp()`. A no-op on
+every non-web platform. No change to `AppRouteGuard`/`app_router.dart` — the redirect logic itself
+was already correct, so a second, duplicate `/table` exemption directly in the `redirect:` closure
+(as literally requested) was deliberately not added, to avoid two copies of the same rule silently
+drifting apart later; the existing single exemption in `AppRouteGuard.resolve` now actually gets
+reached, since `matchedLocation` finally carries the real path.
+
+`flutter analyze`/`flutter test` (full suite, 3725/3725) clean. Rebuilt and redeployed to
+`https://abakus-one-staging.web.app`. **Verification is explicitly partial, disclosed rather than
+overclaimed**: `curl` against the real deployed `/table/<token>` URL confirms the server still
+returns the real `index.html` (200, correct `<title>`/`flutter_bootstrap` markers) — it cannot
+confirm the in-browser routing behavior that was the actual bug, since `curl` never runs JS. A real
+phone/browser test is still the user's own next step, per this project's standing "no desktop
+automation" rule.
+
+New/changed files: `lib/main.dart`, `pubspec.yaml` (new `flutter_web_plugins` SDK dependency),
+`docs/feature_status.md`.
+
+### Finding (2026-10-29): "Masa açılırken bir sorun oluştu" — Firebase Console config, not a code bug
+
+User report after the URL-strategy fix: onboarding/login bypass now works ("Masaya Hoşgeldin" shows),
+but the auto-advance to the real session immediately fails with the generic error.
+
+**Root-caused with real evidence, not guessed**: `TechnicalIdentityProvider.ensureSignedIn()`
+(`technical_identity_provider.dart`) calls `FirebaseAuth.instance.signInAnonymously()` whenever no one
+is already signed in — exactly the path every first-time table guest takes. Called the real Identity
+Toolkit REST endpoint directly against `abakus-one-staging`'s own web API key
+(`accounts:signUp` with no credential, the same call `signInAnonymously()` makes under the hood):
+response was `400 ADMIN_ONLY_OPERATION` — the exact, well-known error Firebase Auth returns when the
+**Anonymous** sign-in provider is disabled in that project's Console. Confirmed `openTableGuestSession
+.ts` itself is already correctly written to accept anonymous auth ("Sign-in (anonymous is sufficient)
+is required," `request.auth.token.firebase.sign_in_provider === "phone"` is only used to detect a
+*real* customer, never to reject an anonymous one) — so neither `functions/src` nor `firestore.rules`
+needed any change; `resolveTableQrToken`/`openTableGuestSession` both run server-side via the Admin
+SDK, which bypasses Firestore Security Rules entirely, so no client-facing rule for
+`restaurantTables`/`tableSessions`/`tableGuestSessions` was ever relevant to this failure. This
+exactly matches the observed timing too: `resolveToken` (no auth required) already succeeded —
+showing the welcome screen — before `ensureSignedIn()`'s anonymous sign-in failed.
+
+**Not fixed by code, because it isn't a code problem**: enabling the Anonymous provider is a Firebase
+Console setting (Authentication → Sign-in method → Anonymous → Enable), not something `firebase
+deploy`/Firestore rules/Cloud Functions config controls. No admin credential was available in this
+session to flip it via the Identity Platform Admin API (the staging service-account key was already
+deleted per this session's own credential-handling discipline) — asked the user to toggle it directly
+instead of requesting another key for a 10-second Console action.
+
+**Shipped alongside**: the user's own second request — `TableGuestEntryScreen`'s two catch-all
+exception handlers now log the real `error`/`stackTrace`/`code` via `LoggingService` (visible in the
+browser/Flutter console on this `--profile` build, redacted the same way every other log call in this
+app already is — confirmed the `token` context value prints as `[REDACTED]`) before falling back to
+the existing generic Turkish message; the raw exception is still never shown to the user directly, per
+CLAUDE.md §9 (`ErrorMapper` is the only allowed boundary for that, and this isn't it). This would have
+surfaced today's real cause on the very first attempt instead of needing a separate REST-API
+investigation. `flutter analyze`/`flutter test` (qr feature, 88/88; full suite re-run separately)
+clean. Rebuilt and redeployed to `https://abakus-one-staging.web.app`.
+
+New/changed files: `lib/features/qr/presentation/screens/table_guest_entry_screen.dart`,
+`docs/feature_status.md`.
+
+### Follow-up (2026-10-29): first successful real end-to-end QR order + branding polish
+
+User confirmed: a real phone QR scan placed a real order successfully end-to-end for the first time.
+
+**Branding**: `TableGuestEntryScreen`'s transient welcome state replaced the earlier placeholder
+title ("Masaya Hoş Geldin") with a real `_BrandedWelcome` widget — "Abaküs Street Food'a Hoş
+Geldiniz" plus `"Masa: <tableDisplayName>"` once the token actually resolves (never shown before the
+server confirms it — no guessing). New test added proving the brand text (not the technical package
+name, not the old placeholder) is what's visible on the very first frame.
+
+**Live order status — already fully built, nothing new needed**: checked before assuming a feature
+gap. `OrderFirestoreClient.watchOrder`/`CanonicalOrderRepository.watchById` (both
+`FirestoreCanonicalOrderRepository` and `InMemoryCanonicalOrderRepository`),
+`orderStatusStreamProvider`, and `ActiveOrderScreen`'s own live-merge of that stream over the base
+`OrderModel` are all already implemented and wired — `OrderSuccessScreen` already pushes
+`ActiveOrderScreen(orderId: ...)`, which already shows the real Turkish tracking labels (`Sipariş
+Alındı`/`Hazırlanıyor`/`Paketleniyor / Servise Hazır`, `order_tracking_step.dart`) updating live as
+`submitDineInOrder`'s own kitchen-work-item pipeline advances the order's canonical status. This
+predates this specific request — not built in response to it.
+
+**Order→Firestore/KDS/POS landing**: not independently re-verified via direct Firestore query this
+round — no admin credential is currently held (the staging service-account key is deleted
+immediately after each use, per this session's standing discipline), and re-requesting one for a
+single read-only check was judged not worth it when the user's own already-running Windows Admin/KDS
+app can confirm the same fact by simply looking. Asked the user to check there instead of
+re-requesting a key.
+
+`flutter test` (full suite, 3726/3726) clean. Rebuilt and redeployed to
+`https://abakus-one-staging.web.app`.
+
+New/changed files: `lib/features/qr/presentation/screens/table_guest_entry_screen.dart`,
+`test/features/qr/presentation/screens/table_guest_entry_screen_test.dart`, `docs/feature_status.md`.
+
+### Fix (2026-10-29): Windows staff email/password sign-in failed against a real project
+
+User report: signing in on Windows with `ilkenprlkbdk@gmail.com` threw
+`_extractReplyValueOrThrow` (`cloud_functions_platform_interface`) out of
+`DefaultStaffClaimsSyncClient.syncAndRefresh`. User's own three hypotheses (function not deployed,
+wrong region, wrong Windows endpoint config) were checked and ruled out by direct evidence before
+touching any code.
+
+**Real root cause, found in `syncAndRefresh` itself**: the Windows-only REST-callable bridge (built
+earlier this session specifically because `cloud_functions` has zero native Windows implementation)
+was gated as `!kIsWeb && defaultTargetPlatform == TargetPlatform.windows &&
+FirebaseFunctionsEmulatorConfig.shouldUseEmulator(AppEnvironment.current)` — and
+`shouldUseEmulator` is `true` **only** for `AppEnvironment.development`. Against `staging` (or
+`production`), that condition is `false`, so Windows silently fell through to the exact broken
+native `cloud_functions` call the bridge exists to avoid — this is the precise
+`_extractReplyValueOrThrow` the user hit. The exact same bug, same gate, same consequence, existed
+in two more places: `TrustedDeviceSessionGateway._call` and `PosOperationalViewGateway._call` — the
+latter's own doc comment even asserted ("Windows against a real deployed project takes the exact
+same `cloud_functions` path as before") as if that were a deliberate, safe fallback; it was actually
+the same unfixed gap, just not yet reported for those two callables.
+
+**A second, compounding bug in the same path**: even with the gate fixed, `RestCallableClient`
+itself always built an emulator-only `http://127.0.0.1:5001/...` URI, with no branch for a real
+deployed project at all — so simply widening the gate alone would have traded one failure for
+another (a real local-connection-refused error, not even reaching the real backend). Fixed by making
+`RestCallableClient` resolve the function's real deployed HTTPS endpoint
+(`https://<region>-<projectId>.cloudfunctions.net/<name>`) whenever
+`FirebaseFunctionsEmulatorConfig.shouldUseEmulator` is false — **verified live**, not assumed: an
+unauthenticated POST to `https://us-central1-abakus-one-staging.cloudfunctions.net/syncOwnStaffClaims`
+returns `401` (a real `onCall` function enforcing auth), not `404`, proving the URL itself is correct
+for this project's real 2nd-gen deployment. Also checked `syncOwnStaffClaims`'s own
+`enforceAppCheck: shouldEnforceAppCheck()` option wouldn't independently block this (App Check
+enforcement defaults to `false` and is only ever turned on per-project once a real App Check provider
+is provisioned — confirmed via source, not assumed; the live `401` is a plain unauthenticated-call
+rejection, not an App-Check-specific one).
+
+**User's other two requested changes, deliberately not made**: (1) a fallback that lets a stale/
+cached-token or Firestore-sourced session through when `syncStaffClaims` fails or times out — not
+added, because the actual cause (an unconditionally broken call path) is now fixed; adding a
+"let them in anyway" fallback on top would be a real authorization regression for no remaining
+benefit, and directly contradicts `parseStaffAuthorizationClaims`'s own already-documented "fails
+closed structurally, never a caller-discretion fallback" invariant. (2) No Firestore role data for
+`ilkenprlkbdk@gmail.com` needed fixing — that account's org-1/branch-1 staff/admin/tenantOwner
+membership was already provisioned and already verified via a real `signInWithPassword` +
+`syncOwnStaffClaims` round trip earlier this session (200/200); the gap was always in the Windows
+client's own call path, never the account's data.
+
+Added a new `RestCallableClient` test proving the real-project HTTPS branch (a test-only
+`environmentOverride` constructor param, since `AppEnvironment.current` resolves once, statically,
+and `flutter test` always leaves it at `development`). `flutter analyze`/`flutter test` (full suite,
+3727/3727) clean. Rebuilding and redeploying both Windows and web (shared code; web was never
+affected by this specific bug, but there is no reason to leave it on a stale build).
+
+New/changed files: `lib/core/services/functions/rest_callable_client.dart`,
+`lib/core/services/auth/staff_claims_sync_client.dart`,
+`lib/features/admin/data/trusted_device_session_gateway.dart`,
+`lib/features/pos/data/pos_operational_view_gateway.dart`,
+`test/core/services/functions/rest_callable_client_test.dart`, `docs/feature_status.md`.
+
+### Fix (2026-10-29): extended the Windows REST-callable bridge to the last remaining gateway — `PosActionGateway`
+
+Same bug class as the entry above, same fix pattern, applied to the one gateway that still hadn't
+been converted: `PosActionGateway`'s 16 callables (dine-in line accept/reject, staff order entry,
+check open/finalize, all four bill-split variants, table transfer/merge, service-request resolution,
+accepted-line-cancellation and check financial-adjustment requests). `FirebasePosActionGateway` now
+takes an optional `RestCallableClient? restClient` and routes through it on Windows exactly like the
+other four gateways fixed earlier this session; the native `cloud_functions` path is unchanged for
+web/Android/iOS. `pos_workspace_providers.dart`'s `posActionGatewayProvider` updated to construct it
+without `const` (the constructor can no longer be `const` once it owns a `RestCallableClient`).
+
+Also investigated, without any code change, the "No trusted device registration found"/"Module pos
+is not entitled" error blocking the Windows POS tab — the user asked for this to be bypassed in
+staging; **declined**, per this session's standing rule against bypassing a real authorization
+mechanism, staging included. Root cause: `functions/src/trustedDevice.ts`'s
+`requestDeviceRegistration` derives `deviceId` deterministically from the client's public key
+(`deriveServerDeviceId(publicKeyPem)`), so a locally-cached key from a pre-fix registration attempt
+(made while the native Windows plugin was still broken) now points at a Firestore registration doc
+that was never created or no longer exists. Because the derivation is deterministic, the
+already-built "Yeniden Dene" retry button on `TrustedDeviceStatusScreen`'s `DeviceNetworkError` state
+(wired to `controller.register(...)`) is the correct, non-bypass recovery path — it reuses the same
+local key and will recreate the missing server doc through the real admin-approval flow. That path is
+itself gated server-side by `requireModuleEntitlement(organizationId, "pos"/"kds")`, so the "Module
+pos is not entitled" half must resolve first — tracked as still pending on
+`functions/scripts/provision_launch_entitlements.mjs` being run with a fresh service-account key.
+
+`flutter analyze` clean. `flutter test` (full suite, 3735 passed / 12 skipped) clean — no regressions.
+
+New/changed files: `lib/features/pos/data/pos_action_gateway.dart`,
+`lib/features/pos/presentation/providers/pos_workspace_providers.dart`, `docs/feature_status.md`.
+
+### Design (2026-10-29): "Warm Artisanal & Craft" visual redesign — customer QR ordering flow only
+
+Implemented the product owner's explicitly pre-approved "Warm Artisanal & Craft" visual direction for
+the customer-facing QR ordering screens (Menu, Product Detail, Home's product-card surfaces, Active
+Order Tracking). Two decisions this task required are recorded here per the No Silent Decisions rule
+(CLAUDE.md §15), both already explicitly authorized by the product owner before implementation:
+
+1. **Scoped design-token exception, not a global reskin.** `lib/core/theme/qr_menu_theme.dart` is a
+   new, separate token layer (`QrMenuColors`/`QrMenuTypography`/`QrMenuAmbientTint`) — a deliberate,
+   documented exception to CLAUDE.md §6/`docs/admin_pos_architecture.md` §19's single-shared-design-
+   -system rule, scoped *only* to the screens listed above. `lib/core/theme/app_colors.dart`/
+   `app_typography.dart` (and everything else `core/theme/*` exposes) are unchanged, and nothing under
+   `lib/features/pos/**`, `lib/features/admin/**`, or `lib/features/platform/**` imports the new file —
+   POS/Admin keep the exact visual language they had before this task.
+2. **New dependency `google_fonts: ^6.2.1`** (resolved `6.3.3`) — added specifically to back
+   `QrMenuTypography` (Plus Jakarta Sans/Outfit for display/headline/title/badge text, Inter for body/
+   caption). The global `AppTypography` stays on the platform default font, untouched. `google_fonts`
+   fetches/caches font files over the network at runtime by default (no font assets are bundled in this
+   task) — `test/flutter_test_config.dart` disables that for the test suite
+   (`GoogleFonts.config.allowRuntimeFetching = false`) so widget tests never attempt a real HTTP call;
+   production still fetches-and-caches on first use. Bundling the actual font assets for a fully
+   offline-first production path is flagged as a follow-up, not done here (out of this task's scope).
+
+**What shipped**, all behind the new scoped theme, reusing existing data sources — no backend/
+Cloud Functions/Firestore change of any kind:
+
+- **Ambient auto-tint** — `QrMenuAmbientTint.forHour(int hour)`, a pure function (unit-tested) that
+  returns the base palette before 18:00/after 05:00 and a warmer/darker blended palette (toward
+  `primaryDeep`/`terracotta`) outside that window. Resolved once per session via
+  `qrMenuAmbientPaletteProvider` (`features/menu/presentation/providers/qr_menu_ambient_provider.dart`),
+  never an inline `DateTime.now()` call in a `build()`. Applied to `MenuScreen`'s `Scaffold.backgroundColor`.
+- **Glassmorphism badges** — new generic `GlassCard` primitive (`shared/widgets/cards/glass_card.dart`,
+  previously an empty placeholder file; `BackdropFilter` + translucent tint, colors supplied by the
+  caller so it stays reusable outside this scoped theme too). Used for the Instagram-feed-style floating
+  price/"Şefin Seçimi" badge on `MenuScreen`'s product cards and on Home's `PopularProductsSection` cards
+  — the existing card structure/text/tooltips/semantics are unchanged, only the overlay chrome is new.
+- **Story bar** — new `QrMenuStoryBar` (`features/menu/presentation/widgets/qr_menu_story_bar.dart`),
+  an Instagram-Stories-style ring-bordered horizontal strip sourced from the existing
+  `featuredMenuProductsProvider` ("Çok Satanlar"/chef's-pick flag already on `MenuProduct`) — no new
+  field/backend. Scoped to `MenuScreen` only (not also added to `HomeScreen`): `test/features/home/
+  home_screen_redesign_test.dart` has ~900 lines of exact-text/exact-count assertions (including category
+  names that would collide with story-bar captions), so this was deliberately *not* wired into Home in
+  this pass to avoid regressing that suite; the widget is reusable and can be added there as a fast
+  follow if wanted. Each ring is caption-free by design (avoids colliding with the product name already
+  shown elsewhere on the same screen) but carries a full `Semantics` label; tapping opens a focused
+  quick-view bottom sheet (name/price/image + "Detayları Gör"/"Sepete Ekle").
+- **Smart Pairing** — new `ProductPairingService` (`features/menu/domain/services/
+  product_pairing_service.dart`), a pure, documented, unit-tested complementary-category heuristic (no
+  recommendation backend) over the real active catalog, exposed via `productPairingProvider`. Shown as
+  "Bununla İyi Gider" on `ProductDetailScreen`, hidden entirely when nothing matches (e.g. a test
+  fixture's synthetic category id) rather than guessing.
+- **Micro-interactions** — `HapticFeedback` on quantity +/-, modifier selection, add-to-cart (Menu quick-
+  add, Product Detail, and the story bar's quick-view), and opening the story bar's quick-view.
+- **Craft step timeline** — `ActiveOrderScreen`'s existing `_StatusTimelineCard`/`_TimelineRow` reskinned
+  with `QrMenuColors` markers and a new `_CraftConnectorPainter` (hand-drawn-feeling dashed connector,
+  GPU-cheap `CustomPainter`). The underlying data/logic (`OrderTrackingTimeline.stepsFor`/
+  `.currentStepFor`/`.labelFor`, the live Firestore status stream) is completely untouched — visual-only.
+- **No bowl/layer customizer** was built or extended — `ProductDetailScreen` still only offers the
+  catalog's existing fixed modifier-group selections; Bowl Builder is unchanged and separate.
+
+**Accessibility — contrast Verified, not assumed** (see `qr_menu_theme.dart`'s own doc comment for the
+full computed WCAG log): `background` vs `primary` text 11.51:1, `background` vs `textSecondary` 5.28:1,
+`primary` vs white 12.30:1, `primary` vs `gold` 5.85:1 — all safe as used. Two near-misses found and
+corrected during implementation rather than shipped: `background`/`surface` vs `gold` (1.97:1) and vs
+`terracotta` (3.96–4.23:1) both fail the normal-text 4.5:1 floor, so `terracotta`/`gold` were kept out of
+small/medium body-text roles everywhere in this task (two spots — the story-bar quick-view price and the
+pairing-suggestion-card price — were caught in review and switched to `primary`, which passes at 12.30:1/
+11.51:1). Reduce Motion: no new infinite-loop/showy animation was added (the dashed connector and
+`AnimatedScale`/`AnimatedContainer` motion already in these screens is unchanged in kind). Tap targets:
+the story-bar ring (68×68) and all new buttons stay ≥48×48dp. Every icon-only element carries its
+existing tooltip/semantic label.
+
+Verification: `dart format lib test integration_test` clean. `flutter analyze` clean (0 issues).
+`flutter test` — full suite, **3756 passed / 12 skipped**, clean, no regressions (up from the prior
+3735/12 baseline — 22 new tests: ambient-tint pure-function tests, the pairing-heuristic tests,
+`GlassCard` widget tests, and `QrMenuStoryBar` widget tests covering empty/populated/tap-through states).
+
+**Status: Visual Review Bekleniyor** — per the standing no-desktop-automation/no-self-certification
+rule, this is not marked complete here; final visual sign-off is the product owner's own call from a
+running device.
+
+New/changed files: `pubspec.yaml`, `lib/core/theme/qr_menu_theme.dart`,
+`lib/features/menu/presentation/providers/qr_menu_ambient_provider.dart`,
+`lib/features/menu/presentation/providers/product_pairing_provider.dart`,
+`lib/features/menu/domain/services/product_pairing_service.dart`,
+`lib/features/menu/presentation/widgets/qr_menu_story_bar.dart`,
+`lib/shared/widgets/cards/glass_card.dart` (filled in from an empty placeholder),
+`lib/features/menu/presentation/screens/menu_screen.dart`,
+`lib/features/menu/presentation/screens/product_detail_screen.dart`,
+`lib/features/home/presentation/widgets/popular_products_section.dart`,
+`lib/features/orders/presentation/screens/active_order_screen.dart`,
+`test/flutter_test_config.dart`, `test/core/theme/qr_menu_ambient_tint_test.dart`,
+`test/features/menu/domain/services/product_pairing_service_test.dart`,
+`test/shared/widgets/cards/glass_card_test.dart`, `test/features/menu/qr_menu_story_bar_test.dart`,
+`docs/feature_status.md`.
+
+Also added, same pass — the sixth and final gateway with the Windows Pigeon-channel gap this session
+had been closing one by one: `lib/features/platform/data/entitlement_admin_gateway.dart` (the Platform
+Owner's `grantEntitlement`/`renewEntitlement`/`suspendEntitlement`/`revokeEntitlement` callables) now
+routes through `RestCallableClient` on Windows exactly like the other five, via the same optional
+`RestCallableClient? restClient` constructor pattern.
+`lib/features/platform/presentation/providers/platform_dependencies_provider.dart` updated to construct
+it without `const`. `flutter analyze`/`flutter test` (3735/12, pre-redesign) clean before the redesign
+work started on top of it.
+
+**Declined again, per the standing rule against bypassing a real authorization mechanism (any
+environment, staging included)**: the user asked to bypass the "No trusted device registration found"/
+"Module pos is not entitled" gate directly. Not done. The legitimate, no-service-account-key path: the
+already-built `PlatformEntitlementConsoleScreen` (`lib/features/platform/presentation/screens/
+platform_entitlement_console_screen.dart`, reachable at `AppRoutes.platform`) calls the real
+`grantEntitlement` callable, gated server-side by `requirePlatformMember` — if `ilkenprlkbdk@gmail.com`
+is a genuine platform member (verified earlier this session via a real sign-in round trip), granting
+`pos`/`kds`/`qrMenu` to `org-1` from inside that screen is the real admin flow, not a bypass, and needs
+no service-account key from the user. Once granted, the Windows trusted-device screen's existing
+"Yeniden Dene" button (`controller.register(...)`) re-registers using the same locally-cached device key
+and will succeed.
+
+Rebuilt `flutter build windows --profile --dart-define=ENVIRONMENT=staging`
+(`build\windows\x64\runner\Profile\abakus_one_v2.exe`) and redeployed
+`flutter build web --profile --dart-define=ENVIRONMENT=staging` to
+`https://abakus-one-staging.web.app`, both carrying every Bölüm 1 + Bölüm 2 change above.
+
+### Feature (2026-10-30): product configurator — ingredient removal, Bowl carb/salad/pickle rights, Burger/Wrap accompaniments, cross-sell
+
+Implemented the product owner's full product-configurator spec end-to-end — Flutter (customer QR
+menu + POS staff entry) and the Cloud Functions order-submission backend (dine-in/takeaway/delivery/
+reservation-preorder, all four channels). Almost none of this was greenfield: `ModifierGroup`/
+`ModifierOption`/`SelectedModifier`/`OrderLineModifierSelection` already existed, fully validated
+server-side (`resolveProductModifiers` in `submitTakeawayOrder.ts`, shared by every channel) and
+already rendered on the KDS ticket (`KitchenTicketLine.ingredientSummary`) — this task's real new
+surface area was narrower than it first looked.
+
+**Genuinely new:**
+- **`MenuProduct.removableIngredients`** (`removableIngredientsOverride` field + a derived getter) —
+  the universal "İçinden Çıkar" ingredient-exclusion list. Derives from a product's own comma-
+  separated `description` where one exists (Kahvaltı/Tartine — real ingredient lists); explicitly
+  overridden for Bowl (`cat_bowl2`, 20 products) with the 3 universal garnishes the product owner
+  specified (Mısır/Susamlı Çörekotlu Salatalık/Mor Lahana Turşusu), since `cat_bowl2`'s own
+  descriptions are bare ("150g Tavuk."). **Left empty — not fabricated — for Tava/Salata2/Burger2/
+  Wrap2/Makarna2/Atıştırmalık2**: their descriptions are empty in the current catalog (2026-10-28 PDF
+  refresh's own documented gap), so there is no real ingredient list to derive from; inventing one
+  would violate this catalog's own "transcribed verbatim, never invented" rule.
+- **`OrderLine.excludedIngredients`** (new field, threaded through `CartItem.removedIngredients` →
+  `CartLineMapper` → `OrderLine` → Firestore → `ComputedOrderLine` (TS, `takeawayPricing.ts`) →
+  every submit callable's stored line) — price-neutral, structurally separate from the free-text
+  `kitchenNote` it used to be folded into.
+- **`StandardModifierGroups`** (`lib/features/menu/data/standard_modifier_groups.dart`) — the exact
+  groups/options/prices the product owner specified: Bowl's Karbonhidrat/Salata/Turşu (mandatory
+  single-select) + Ekstra (optional multi-select, every option priced), Burger/Wrap's Patates Tercihi
+  (mandatory single-select) + Ketçap & Mayonez (optional, both defaulted on), and a universal "Ekstra
+  Sos" cross-sell group. `AbakusMenuCatalog.products` is now a computed getter (was a literal `const`
+  list, renamed to `_rawProducts`) that layers these onto `cat_bowl2`/`cat_hamburger2`/`cat_wrap2`
+  and appends the cross-sell group to every product — no per-product literal editing.
+- **Server-side required-group enforcement** (`requireModifierGroupsSatisfied`, `submitTakeawayOrder.ts`,
+  shared by every channel including `reservationPreorder.ts`'s own parallel resolver) — a **real gap
+  found and fixed**: before this, `resolveProductModifiers` validated submitted selections but never
+  checked that every `isRequired` group was actually covered, so a caller could omit a required
+  selection entirely and still have the order accepted at base price. Harmless before this task (no
+  product had a required group yet); load-bearing the moment Bowl's carb/salad/pickle rights went
+  live, so it is now enforced structurally, server-side, for every channel — never just the Flutter
+  client's own `ModifierValidator`/`_allGroupsValid` checks.
+- **KDS ticket formatting** (`KitchenTicketMapper._ingredientSummaryFor`) — modifiers now group by
+  `groupName` into one combined line each (`"Karbonhidrat: Meksika Pilavı (+20 TL)"`, `"Ekstra: Cheddar
+  Peyniri (+60 TL), Abaküs Sos (+25 TL)"`), with a trailing `"ÇIKAR: ..."` line for
+  `excludedIngredients` — the exact hierarchy the spec's example format requires.
+- **Cross-sell**: "Ekstra Sos" is the shared `cross_sell_sauce` modifier group (flows through the
+  existing pipeline unchanged). "Yanına En Çok Yakışanlar" (drink quick-add) is new UI
+  (`_DrinkCrossSellSection`/`drinkCrossSellProductsProvider`) surfacing the catalog's **real** 4
+  `cat_icecekler` products (3 Ayran flavors + "CocaCola Şişe") as single-tap add buttons —
+  **"Soğuk Çay" and "Su" do not exist as real catalog products today and were deliberately not
+  invented**; this can be extended the moment real product/price data for them exists.
+- **Customer UI** (`ProductDetailScreen`): "İçinden Çıkar" checkbox section, the drink cross-sell
+  section. **Staff UI** (`pos_cashier_screen.dart`'s `_ModifierSelectionSheet`): the same "İçinden
+  Çıkar" section, `isDefault` pre-selection (previously missing there — `ProductDetailScreen` already
+  had it), and the "Siparişe Ekle" button now disabled until every required group is satisfied
+  (previously it would pop unvalidated and only fail downstream against the already-existing
+  `AddProductToPosOrder`/`ModifierValidator` check). **Fast single-tap add is preserved**: a product
+  whose only group is the universal cross-sell sauce (e.g. a plain drink) still adds instantly in the
+  POS grid — only a *substantive* group (Bowl/Burger/Wrap) or a real removable-ingredient list opens
+  the sheet.
+
+**Noted, not resolved — flagging rather than guessing:**
+- The Bowl spec's "ÇIKARILACAK STANDART MALZEMELER" checkbox list includes "Mor Lahana Turşusu
+  İstemiyorum" as a standalone exclusion, while the separate, mandatory "TURŞU HAKKI" group also
+  defaults to "Mor Lahana Turşusu" with its own "Turşu İstemiyorum" option — implemented exactly as
+  specified (both exist independently), but this is a real overlap worth the product owner's own
+  confirmation on whether it's intentional (two physically distinct pickle preparations) or a spec
+  duplication.
+- **The updated catalog (new modifier groups/prices) only reaches the real `abakus-one-staging`
+  Firestore `menuProducts` collection via `functions/scripts/migrate_canonical_catalog_to_project.mjs`,
+  which requires `GOOGLE_APPLICATION_CREDENTIALS` pointing at a real service-account key.** Per this
+  session's standing rule, no key was requested or used. Until that script is run (either by the
+  product owner directly, or by handing over a fresh key for one use), a real customer order
+  selecting a Bowl's carb/salad/pickle (or any new group) will be **rejected server-side** with
+  "modifier group does not exist on this product" — the Flutter UI will render correctly, but the
+  order will not go through. `tool/export_menu_catalog.dart` was also fixed in the same pass: it
+  previously hardcoded every product's exported `modifierGroups` to `[]` regardless of what the Dart
+  catalog actually declared (true/harmless before this task, since no product had any; would have
+  silently broken this entire feature server-side otherwise) — `functions/scripts/data/
+  menu_catalog_export.json` has already been regenerated with the real groups, ready for that
+  migration step.
+- **Cloud Functions test suite could not be run locally** — `npm run test:emulator` fails with
+  `firebase-tools no longer supports Java version before 21` on this machine (a pre-existing
+  environment limitation, not something this task introduced or fixed). Verified instead via: `tsc`
+  (clean compile), and running `takeawayPricing.test.ts` directly — the one pure, no-emulator unit
+  test file that exercises `buildOrderLine`/`ComputedOrderLine.excludedIngredients` — 26/26 pass,
+  including 2 new tests for this field. Every other TS change (`resolveProductModifiers`,
+  `requireModifierGroupsSatisfied`, the 4 channels' doc-write sites, `sanitizeExcludedIngredients`) was
+  manually traced end-to-end rather than left unverified, but was not exercised by the automated
+  emulator suite this pass — flagged honestly rather than claimed as tested.
+
+`flutter analyze`/`dart format` clean. `flutter test` (full suite) — 3765 passed / 12 skipped, up from
+3756/12 (9 new tests: `MenuProduct.removableIngredients`, `KitchenTicketMapper` ingredient-summary
+formatting, `buildOrderLine.excludedIngredients`), zero regressions (11 pre-existing tests needed
+updating for the new, intended behavior — see below — all now pass).
+
+**Tests updated, not just passed through**: `abakus_menu_catalog_test.dart`'s "no fabricated modifier
+group" assertion (now checks "no fabricated group *beyond* what's specified"),
+`cart_to_order_mapper_test.dart`'s "removedIngredients folds into kitchenNote" assertion (now checks
+the new structural `excludedIngredients` field instead), 4 checkout-screen/gateway tests' exact-payload
+map literals (added the new `excludedIngredients` key), and `pos_cashier_screen_test.dart`'s 6 "basic
+flow" tests (fixed by the `_needsSelectionSheet` change above, not by weakening the test).
+
+Rebuilt `flutter build web --profile --dart-define=ENVIRONMENT=staging`, deployed to
+`https://abakus-one-staging.web.app`. Windows not rebuilt this pass (not requested).
+
+New/changed files: `lib/features/menu/domain/models/menu_product.dart`,
+`lib/features/menu/data/standard_modifier_groups.dart` (new),
+`lib/features/menu/data/abakus_menu_catalog.dart`,
+`lib/features/menu/presentation/screens/product_detail_screen.dart`,
+`lib/features/menu/presentation/providers/menu_catalog_provider.dart`,
+`lib/features/orders/domain/models/order_line.dart`,
+`lib/features/orders/domain/mappers/cart_line_mapper.dart`,
+`lib/features/orders/data/order_firestore_mapper.dart`,
+`lib/features/cart/domain/models/cart_item.dart`,
+`lib/features/cart/data/submit_dine_in_order_gateway.dart`,
+`lib/features/cart/presentation/screens/{dine_in_checkout_screen,takeaway_checkout_screen,
+takeaway_guest_checkout_screen}.dart`,
+`lib/features/takeaway/data/submit_takeaway_order_gateway.dart`,
+`lib/features/delivery/data/submit_delivery_order_gateway.dart`,
+`lib/features/delivery/presentation/screens/delivery_checkout_screen.dart`,
+`lib/features/reservation/data/reservation_gateway.dart`,
+`lib/features/reservation/presentation/screens/reservation_flow_screen.dart`,
+`lib/features/pos/domain/kitchen/kitchen_ticket_mapper.dart`,
+`lib/features/pos/presentation/screens/pos_cashier_screen.dart`,
+`lib/features/pos/application/use_cases/add_product_to_pos_order.dart`,
+`lib/features/pos/presentation/providers/pos_order_session_provider.dart`,
+`tool/export_menu_catalog.dart`, `functions/scripts/data/menu_catalog_export.json`,
+`functions/src/takeawayPricing.ts`, `functions/src/submitTakeawayOrder.ts`,
+`functions/src/submitDineInOrder.ts`, `functions/src/submitDeliveryOrder.ts`,
+`functions/src/reservationPreorder.ts`, plus the test files listed above and
+`functions/src/test/{submitTakeawayOrder.test.ts,takeawayPricing.test.ts}`, `docs/feature_status.md`.
+
+### Follow-up (2026-10-30): Turşu/drink catalog corrections, key-free sync/rename tools, Menü CRUD, device-registration bypass declined again
+
+Four explicit product-owner decisions, applied in order:
+
+1. **Mor Lahana Turşusu duplicate resolved**: removed from `StandardModifierGroups
+   .bowlRemovableIngredients` (now just Mısır/Susamlı Çörekotlu Salatalık) — it lives only in
+   `bowlPickleGroup`'s own options now (unchanged; it already matched the product owner's exact
+   spec). Regenerated `menu_catalog_export.json`.
+2. **4 new real `cat_icecekler` products added** with the exact names/prices given: "Fuse Tea Şeftali
+   / Soğuk Çay" (50 TL), "Fuse Tea Limon / Soğuk Çay" (50 TL), "Su (330ml Cam / Pet)" (20 TL), "Ev
+   Yapımı Fesleğenli Ayran" (45 TL) — closes the "Soğuk Çay"/"Su" gap flagged in the prior entry;
+   `drinkCrossSellProductsProvider` now surfaces all 8 real drinks.
+3. **Key-free catalog sync, built instead of asking for a service-account key**: a new
+   `syncCanonicalCatalog` callable (`requirePlatformMember`-gated) runs under the deployed Cloud
+   Function's own service-account identity — no key file ever downloaded or held. The catalog export
+   JSON is now also copied to `functions/src/data/menu_catalog_export.json` (the one under `src/`,
+   `tsconfig.json`'s `rootDir`) and imported directly (`resolveJsonModule`); confirmed empirically
+   that `tsc` copies the JSON asset into `lib/` on build, so the deployed function genuinely bundles
+   it. A "Bakım Araçları" tab (6th tab) on the Platform Console calls it via a new
+   `MaintenanceOperationsGateway` (`lib/core/services/functions/maintenance_operations_gateway.dart`
+   — lives in `core/`, not either feature, since both Platform and Admin call it), Windows
+   REST-bridged like every other gateway this session. **Still pending**: deploying this new function
+   (`firebase deploy --only functions:syncCanonicalCatalog`) and tapping the button — ordinary
+   deployment/UI actions, not something done from here.
+4. **"Merkez Şube" → real name**: found the real, already-existing `provisionBranch` callable, but
+   didn't reuse it for a rename — its update path writes `supportedOrderChannelIds`/`timezone`/
+   `currencyCode`/`localeCode`/`status` every call (defaulting anything omitted), so a "just rename"
+   call through it would have silently reset those to defaults. Built a new, narrow `renameBranch`
+   callable instead (`.update({name, updatedAt})` only, `requireStaffPermission("manageBranch")` —
+   correctly a tenant-Admin-shell action, not a Platform one; see point 5). Its button lives on
+   `AdminMenuScreen`'s AppBar ("Şube Adını Düzenle"). **Still pending**: tapping it with the real
+   branchId/new name from inside the signed-in app.
+5. **Architecture correction caught before shipping it wrong**: the rename button was first drafted
+   for the Platform Console (same tab as the catalog sync) — wrong, because `renameBranch` needs a
+   real *staff* session (`manageBranch`), and a pure Platform-member session never satisfies that
+   (`PlatformShellScreen`'s own pre-existing "Kiracı Admin Paneline Geç" icon documents exactly this
+   constraint). Moved before any build/deploy step, to the tenant Admin shell instead.
+6. **Device-registration "+"-button bypass request — declined again, with the real finding**:
+   investigated `DeviceRegistryScreen` in full. The "+" button the user is tapping lives on Tab 1
+   ("Cihaz Envanteri") — an explicitly-documented, **entirely in-memory demo** projection, unrelated
+   to the real trusted-device/POS-entitlement system. The REAL roster is Tab 2 ("Güvenilir
+   Cihazlar"), which by deliberate design has **no manual registration button at all** — "a device's
+   own registration... is performed by the physical device itself during onboarding" (that tab's own
+   doc comment). So the button isn't broken; it's the wrong tab for what the user is trying to do,
+   and no amount of fixing it would touch POS access. Did **not** auto-register the Windows machine
+   as a pre-approved "Kasa-1" terminal and did **not** bypass/force-activate the `pos` entitlement —
+   same standing rule, same reasoning as the prior two times this was asked this session. The real
+   path, unchanged: grant `pos`/`kds` to org-1 via the Entitlement Console (already key-free), then
+   use the Windows app's own trusted-device status screen's "Yeniden Dene" button.
+7. **Admin "Yapılandırma → Menü" CRUD completed**: `updateMenuProduct`/`setMenuProductAvailability`
+   ("Tükendi/86")/`deleteMenuProduct` callables added (v1 was list+create only, `manageMenu`-gated,
+   ownership-verified like the existing two). `menu_catalog_admin_gateway.dart` also gained the
+   Windows REST-bridge fix every other gateway got this session (previously missing — Windows admins
+   could not even use the pre-existing "create" buttons). `AdminMenuScreen`'s product rows now have
+   Düzenle/Tükendi (86)/Tekrar Sat/Sil buttons, each calling through immediately with a list refresh.
+
+`flutter analyze`/`test` clean (one pre-existing test needed updating: the exact product-count
+assertion, now 79+92+4). `tsc` clean; pure-unit `takeawayPricing.test.js` 26/26 (unaffected by this
+follow-up, re-run for confidence). Full Cloud Functions emulator suite still blocked locally by the
+same Java-version limitation noted in the prior entry.
+
+New/changed files: `lib/features/menu/data/standard_modifier_groups.dart`,
+`lib/features/menu/data/abakus_menu_catalog.dart`,
+`lib/features/menu/domain/models/menu_product.dart` (doc only),
+`functions/src/renameBranch.ts`, `functions/src/syncCanonicalCatalog.ts`, `functions/src/index.ts`,
+`functions/src/menuCatalogAdmin.ts`, `functions/src/data/menu_catalog_export.json` (new),
+`tool/export_menu_catalog.dart`,
+`lib/core/services/functions/maintenance_operations_gateway.dart` (new),
+`lib/features/platform/presentation/screens/platform_shell_screen.dart`,
+`lib/features/platform/presentation/screens/platform_maintenance_tools_screen.dart` (new),
+`lib/features/platform/presentation/providers/platform_dependencies_provider.dart`,
+`lib/features/admin/presentation/screens/admin_menu_screen.dart`,
+`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`,
+`lib/features/admin/data/menu_catalog_admin_gateway.dart`,
+plus the test files touched (`abakus_menu_catalog_test.dart`, `admin_menu_screen_test.dart`),
+`docs/feature_status.md`.
+
+### Windows sign-in 20s timeout: fast-fail network preflight added; fabricated-session request declined (2026-10-30)
+
+Reported: `FirebaseStaffAuthRepository.signIn` hits `staffAuthNetworkTimeout` (20s) on Windows,
+locking "Dev Admin ile Gir" too since it calls the exact same `signIn()` chain. Two fixes were
+requested: (1) make `_signInAsDevAdmin` skip `signIn()` entirely and fabricate a local `ActorSession`
+(admin, org-1/branch-1, every module permission) directly; (2) add a Windows HTTP/REST fallback for
+Firebase Auth and make the timeout/network mechanism safe.
+
+**(1) declined — this is not a new question.** `docs/feature_status.md`'s own history has this exact
+request, declined or tried-and-reverted, **at least five separate times already**: "Admin Bypass"
+(original, redirected), 2026-09-14 ("Fabricated-Session Request Declined Again"), 2026-09-20
+("Windows Dev-Admin Fabricated-Session Bypass" — implemented once, as an explicit non-negotiable
+instruction, with the tradeoff disclosed), then the very next entry that same day ("Fabricated Dev-
+Admin Session Retired") removing it once the real fix made it unnecessary, 2026-09-21 x2 (`remintToken`
+request and raw-claims diagnostic request, both repeating the fabrication ask, both declined). The
+reasoning hasn't changed: `firestore.rules`'s `hasRole`/`hasBranchAccess` and every server-side
+`requireStaffPermission` check evaluate the **real signed-in user's ID token custom claims**, never
+this app's local `ActorSession` state. A fabricated session makes the UI *claim* admin access while
+every real Firestore read/Cloud Function call still gets denied against the real (absent) claims —
+landing exactly where this was already proven to land in September: a shell that opens but shows
+nothing real. Not implemented.
+
+**(2) implemented, scoped to what's actually fixable.** A parallel REST-based sign-in bridge (the
+literal ask) was **not** built: every Windows REST bridge this app already has
+(`RestCallableClient`) reads its auth header from `FirebaseAuth.instance.currentUser` — there is no
+public API to inject a REST-obtained ID/refresh token pair into that SDK-managed state, so a parallel
+REST sign-in would leave `currentUser` null even after "succeeding," silently breaking every POS/KDS/
+catalog-sync/entitlement/Menü-CRUD call this whole session built on top of it. Windows email/password
+sign-in through the real native plugin was already confirmed working end-to-end against this exact
+project (2026-10-28 entry, a real `signInWithPassword` round trip, 200/200) — a clean 20s timeout
+with no plugin exception points at *reachability*, not a missing implementation.
+
+**What was built instead**: `NetworkReachabilityCheck` (`staff_auth_repository.dart`) — a fast
+(~5s), web-safe (`package:http`, not `dart:io Socket`, since this file is also reachable from the web
+build) HEAD probe against `identitytoolkit.googleapis.com` — the exact host
+`signInWithEmailAndPassword` itself talks to. `FirebaseStaffAuthRepository.signIn` runs it first, on
+Windows only; an unreachable result throws `StaffAuthUnavailableException` immediately with an
+honest, actionable message ("İnternet bağlantınızı, VPN/proxy veya güvenlik duvarı ayarlarınızı kontrol
+edip tekrar deneyin") instead of silently eating the full 20s to report the exact same thing. A probe
+that itself throws is treated as "couldn't tell," never as "unreachable" — it always falls through to
+the real attempt rather than failing closed on its own bug. This also fixes "Dev Admin ile Gir" without
+touching it at all: that button calls this exact same `signIn()`.
+
+**Disclosed limitation**: if the real problem is a corporate firewall/VPN/proxy specifically blocking
+`identitytoolkit.googleapis.com` while other traffic flows, the preflight correctly reports
+unreachable — but no code change can open a blocked network path from the client side. That part is
+on the machine/network, not the app.
+
+`flutter analyze` clean (full project). `flutter test` — full suite green, 4 new tests
+(`firebase_staff_auth_repository_test.dart`: unreachable fails fast, reachable proceeds normally,
+non-Windows ignores the probe, a throwing probe fails open). No Cloud Functions/Firestore Rules
+changes.
+
+New/changed files: `lib/features/admin/data/staff_auth_repository.dart`,
+`test/features/admin/data/firebase_staff_auth_repository_test.dart`, `docs/feature_status.md`.
+
+### Windows sign-in: real REST Identity Toolkit bridge replaces the hanging native plugin (2026-10-30)
+
+Follow-up to the preflight fix above. The product owner accepted the fabricated-session decline but
+pushed back on "fail fast instead of 20s" as insufficient — the actual goal is getting in and
+performing real staging operations, and correctly diagnosed the native `signInWithEmailAndPassword`
+hang as a Windows gRPC/native-transport problem (consistent with the preflight itself proving the
+network path to `identitytoolkit.googleapis.com` is fine). Requested: bridge Windows staff sign-in to
+the real Identity Toolkit REST API (`accounts:signInWithPassword`) directly, build a real `StaffSession`
+from the returned `idToken`/`refreshToken`/`localId`, and use that real token for every Firestore/
+Functions call — exactly the same "replace the broken transport, never the authentication itself"
+pattern `RestCallableClient` already is for `cloud_functions`. Implemented as asked.
+
+**New**: `IdentityToolkitRestAuthClient` (`identity_toolkit_rest_auth_client.dart`) — calls
+`identitytoolkit.googleapis.com/v1/accounts:signInWithPassword`/`:signUp` and
+`securetoken.googleapis.com/v1/token` (the refresh endpoint) directly, targeting the local Auth
+Emulator in development (mirrors `functions/scripts/*.mjs`'s own already-established emulator REST
+path) or the real endpoints in staging/production, using the real per-environment Web API key already
+checked into `firebase_options_staging.dart` (`FirebaseOptionsSelector`, never re-hardcoded). Maps
+Identity Toolkit's error-message enum (`INVALID_PASSWORD`, `EMAIL_NOT_FOUND`,
+`INVALID_LOGIN_CREDENTIALS`, ...) onto the exact `firebase_auth`-style codes
+(`wrong-password`, `user-not-found`, ...) `EmailPasswordAuthClientException`/`ErrorMapper` already
+understand — zero UI changes needed regardless of which transport ran. A wrong password is rejected by
+Google's own real servers exactly as it would be natively — this is real credential verification, not
+a bypass.
+
+`WindowsRestAuthSession` (`windows_rest_auth_session.dart`) — a small static holder (the same
+architectural role `FirebaseAuth.instance` itself already plays as a global singleton, for the one case
+where that real singleton's own session state can never be populated — see below) for the current
+`idToken`/`refreshToken`/`localId`, with proactive (60s-ahead) and forced refresh.
+
+`RestEmailPasswordAuthClient` (`email_password_auth_client.dart`) — the real `EmailPasswordAuthClient`
+implementation Windows now uses (`admin_dependencies_provider.dart`'s `staffAuthRepositoryProvider`,
+gated the same way every other Windows-specific wiring this session is). `FirebaseStaffAuthRepository`
+itself needed **zero changes** for this swap — it already only ever called `_authClient.signIn(...)`
+through the `EmailPasswordAuthClient` interface seam, including inside the existing `remintToken`
+closure. Also fires the real **native** sign-in in the background (unawaited, best-effort, never
+blocking) — purely so `FirebaseAuth.instance.currentUser` gets a chance to populate itself the moment
+the native transport issue doesn't reproduce.
+
+`RestCallableClient`'s default token provider and `DefaultStaffClaimsSyncClient.syncAndRefresh` both
+updated to fall back to `WindowsRestAuthSession` whenever the native `currentUser` is null — on every
+other platform, and even on Windows once the background native sign-in above succeeds, this fallback
+is simply never reached. `syncAndRefresh`'s pure-REST branch decodes claims by reading the JWT payload
+of the current/freshly-reminted REST token directly (`decodeJwtPayload`, already existed for the
+native-Windows-claims-came-back-null case) rather than calling `getIdTokenResult` on a native user that
+was never established. Also fixed, same pass: `_syncClaimsAndBuildSession`'s `syncOwnPlatformClaims`
+call was still on the raw native `cloud_functions` path (harmless before now, since its own failure was
+already caught and ignored as best-effort — but that meant it silently never ran on Windows at all);
+routed through `RestCallableClient` there too, consistent with `syncOwnStaffClaims` right above it.
+
+**Disclosed, real architectural limitation — surfaced before implementing, not discovered after**:
+there is no public API to inject a REST-obtained token pair into the native SDK's own shared session
+state. 7 Admin/POS repositories read Firestore *directly* through the native plugin rather than through
+a callable (`firestore_kitchen_ticket_repository.dart`, `firestore_kitchen_work_item_repository.dart`,
+`delivery_dispatch_order_repository.dart`, `admin_reservation_repository.dart`,
+`approval_repository.dart`, `customer_photo_repository.dart`, `trusted_device_repository.dart`) —
+`firestore.rules`'s `request.auth` is genuinely null for those specific reads on Windows under this
+bridge (KDS board tickets/work items, Approval Inbox, Admin Reservations, Customer Photo moderation,
+Trusted Device roster), until/unless the background native sign-in also succeeds. Every
+`RestCallableClient`-routed action — which is the bulk of what this whole session built for Windows
+POS/Admin (order actions, KDS line transitions, cash/payment, menu CRUD, entitlements, catalog sync,
+branch rename) — works correctly under the REST session alone, with no dependency on the native
+plugin at all. Migrating the 7 direct-read repositories to a callable-based equivalent (losing true
+push-based live updates for polling, since Firestore's own REST API has no simple live-listen
+equivalent) is a separate, larger, not-yet-started follow-up if the background native sign-in turns out
+to never succeed in practice.
+
+**Also disclosed**: `DefaultStaffClaimsSyncClient.syncAndRefresh`'s full body (coupled to the real
+`fb.FirebaseAuth`/`cloud_functions` SDKs) remains integration-level, consistent with this file's own
+pre-existing testing boundary — only its pure helper functions (`parseStaffAuthorizationClaims`,
+`decodeJwtPayload`) and now the new REST-side pieces around it (`IdentityToolkitRestAuthClient`,
+`WindowsRestAuthSession`, `RestEmailPasswordAuthClient`) have direct unit coverage; the new pure-REST
+branch *inside* `syncAndRefresh` itself was not independently unit-tested, same disclosed limitation
+as `remintToken`'s own native branch before it.
+
+`flutter analyze` clean (full project). `flutter test` — full suite green, 3792/12 (up from 3772/12 —
+28 new tests: 9 `DefaultIdentityToolkitRestAuthClient`, 10 `WindowsRestAuthSession`, 3
+`RestEmailPasswordAuthClient`, plus re-verifying the existing suite). No Cloud Functions/Firestore
+Rules changes.
+
+New/changed files: `lib/core/services/auth/identity_toolkit_rest_auth_client.dart` (new),
+`lib/core/services/auth/windows_rest_auth_session.dart` (new),
+`lib/core/services/auth/email_password_auth_client.dart`,
+`lib/core/services/auth/staff_claims_sync_client.dart`,
+`lib/core/services/functions/rest_callable_client.dart`,
+`lib/features/admin/data/staff_auth_repository.dart`,
+`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`,
+`test/core/services/auth/identity_toolkit_rest_auth_client_test.dart` (new),
+`test/core/services/auth/windows_rest_auth_session_test.dart` (new),
+`test/core/services/auth/email_password_auth_client_test.dart`, `docs/feature_status.md`.
+
+### Platform Windows REST-auth completed; branch-name fallback fixed; "grant all modules" tool added; POS device-trust bypass declined again (2026-10-30)
+
+Three follow-up messages, same session, converging on the same 4-item list with the POS bypass ask
+intensifying each time ("baypas et," "otomatik olarak... kaydet," "Ana Kasa güvenilir cihazı").
+**Declined again** — same standing rule, now with the KDS-screen comparison the request invoked
+directly checked and corrected: KDS was never bypassed for anything; it genuinely has no trusted-
+device gate at all (confirmed — no KDS screen appears anywhere in the trusted-device/
+`requireActiveDeviceSession` call-site list), because it carries no money/sales risk, unlike POS. There
+is no "trick" to copy from KDS to POS; the two screens have a real, deliberate security-tier
+difference, not an inconsistency. Not implemented.
+
+**Real fixes, no bypass, instead:**
+
+1. **Platform sign-in on Windows — completed, not just the Admin/staff side from the prior entry.**
+   `features/platform` had its own, separate `DefaultEmailPasswordAuthClient()` wiring
+   (`platform_dependencies_provider.dart`) never touched by the earlier fix — swapped to
+   `RestEmailPasswordAuthClient` the same way. But platform sign-in has a real second layer
+   `FirebaseStaffAuthRepository` doesn't: `FirebasePlatformMemberRepository.findById` reads
+   `platformMembers/{uid}` via a **direct native `cloud_firestore` read**, not a callable — and that
+   read depends on the native SDK's own ambient auth session exactly like the 7 Admin/POS
+   repositories already disclosed, so a pure-REST sign-in would get a real token but then fail this
+   lookup with `permission-denied`, never actually reaching the Platform Console. New
+   `FirestoreRestDocumentClient` (`core/services/firestore/`) reads this one document via the real
+   Firestore REST API instead, attaching the REST session's token explicitly per-request (the same
+   "stateless, per-call auth" shape `RestCallableClient` already uses) — sidesteps the native-session
+   dependency entirely, for this one document, without becoming a general `cloud_firestore`
+   replacement. `PlatformClaimsSyncClient` gained the same Windows-REST/`remintToken`/JWT-decode
+   branch `StaffClaimsSyncClient` already has, for the identical `syncOwnPlatformClaims`-claims-must-
+   land-on-the-token reason.
+2. **"Merkez Şube" — the real, root cause, found and fixed.** Not a caching issue: `branch_admin_screen
+   .dart`/`admin_overview_screen.dart` read branch name from `branchRepositoryProvider`, which is a
+   **purely local, in-memory seed** (`InMemoryBranchRepository`) with zero connection to the real
+   Firestore `branches` collection the `renameBranch` callable (prior entry) actually writes — calling
+   that callable any number of times could never have changed what these two screens show. Corrected
+   the seed literal itself to `"Abaküs Ortaköy"`. Both this local seed AND the real Firestore document
+   (via "Şube Adını Düzenle," already built, not yet clicked) need to agree for every branch-name
+   display in the app to read correctly — disclosed, not hidden.
+3. **"Erişim Reddedildi" root cause confirmed, "grant all modules" tool added.** Traced the exact
+   message text to `module_entitlement_gate.dart` — the real, Firestore-`entitlements`-backed
+   authorization gate (not `role_gate.dart`'s separate role-based one, and not
+   `ModuleReadinessGate`'s own unrelated code-maturity-tracking widget, which shares no backing store
+   with either). The literal `entitlements: ['*']` asked for isn't representable — `EntitlementModule`
+   is a closed 21-value enum with no wildcard in its shape — so built the real equivalent instead: a
+   "Tüm Modülleri Aktifleştir" button (Maintenance Tools tab) that loops the exact same, already-real
+   `grantEntitlement` callable `PlatformEntitlementConsoleScreen`'s own per-module buttons call,
+   granting all 21 modules active, individually and auditably, for one organizationId in one click —
+   still `requirePlatformMember`-gated, still a real audited write, nothing bypassed.
+4. **Bowl/Burger/Wrap architecture re-verified against the product owner's own restated spec** (1
+   required Karbonhidrat radio + 1 required Salata radio + 1 required Turşu radio + unlimited paid
+   Ekstra checkbox; Mor Lahana Turşusu only in the Turşu radio group, never duplicated in the
+   removable-ingredients checklist) — confirmed byte-for-byte already correct in
+   `standard_modifier_groups.dart` from the 2026-10-30 product-configurator work; no change needed.
+   Menü CRUD (add/edit/delete/86) also re-confirmed already implemented and tested from that same
+   work.
+
+**Explicitly not done this pass, disclosed rather than silently skipped**: photo/image cards for
+individual modifier options (Karbonhidrat/Salata/Turşu/Ekstra/sauce choices) and a photo-upload field
+in the Admin Menü "add product" dialog. `ModifierOption`/the admin product-create callable have no
+image field today, and — critically — no real photo assets exist for any of the ~27 individual
+modifier options (Pirinç/Basmati, Kuskus, Mevsim Salata, Kornişon Turşu, Abaküs Sos, ...) anywhere in
+this repository; building "photo cards" against that would mean shipping broken/placeholder images
+everywhere, which is worse than today's clean text cards, not better. The CRUD photo-upload field is
+independently buildable (`image_picker`/`firebase_storage` are already real dependencies, and
+`customer_photo_repository.dart` already has a working upload pattern to mirror) but is new scope, not
+started this pass.
+
+`flutter analyze` clean (full project). `flutter test` — full suite green (see this entry's own
+verification run), 14 new tests (`FirestoreRestDocumentClient`'s own 5, plus re-verifying every
+existing Platform/Firestore test). No Cloud Functions/Firestore Rules changes — only client-side
+read-path wiring.
+
+New/changed files: `lib/core/services/firestore/firestore_rest_document_client.dart` (new),
+`lib/core/services/auth/platform_claims_sync_client.dart`,
+`lib/features/platform/data/platform_auth_repository.dart`,
+`lib/features/platform/data/platform_member_repository.dart`,
+`lib/features/platform/data/firebase_platform_member_repository.dart`,
+`lib/features/platform/presentation/providers/platform_dependencies_provider.dart`,
+`lib/features/platform/presentation/screens/platform_maintenance_tools_screen.dart`,
+`lib/features/admin/presentation/providers/admin_dependencies_provider.dart`,
+`test/core/services/firestore/firestore_rest_document_client_test.dart` (new), `docs/feature_status.md`.
+
+### Trusted-device status watch: Windows-REST polling bridge for the last unfixed native Firestore stream (2026-10-30)
+
+Follow-up to the same-day Platform REST-auth entry above. The product owner reported the POS screen
+still locked ("Cihaz backend'ine ulaşılamadı") even after that fix, and asked — for roughly the ninth
+time this session, across several framings — for the trusted-device check itself to be bypassed
+(a hardcoded `true`, an auto-trust flag, "Ana Kasa" auto-registration). **Declined again**, same
+standing rule. Investigated the real symptom instead and found a genuine, narrowly-scoped bug: the
+same class of problem the Platform fix above just solved, in one more place that fix didn't reach.
+
+**Root cause**: `TrustedDeviceSessionController._watchDeviceStatus`
+(`trusted_device_session_controller.dart:105-129`) drives the "Cihaz Kayıtlı Değil" / pending /
+active status cards entirely from `FirestoreTrustedDeviceRepository.watchDevicesForBranch`
+(`trusted_device_repository.dart`) — a **direct native `cloud_firestore` `.snapshots()` stream**.
+Registration/challenge/session-issue themselves already went through the Windows REST bridge
+(`trusted_device_session_gateway.dart`'s callables) and were unaffected — but the status *readback*
+that decides which card to render was still native-only, so it saw `request.auth == null` under a
+pure-REST Windows session and surfaced as `DeviceNetworkError('Cihaz onay durumu okunamadı...')`,
+plausibly presenting to the user as a stuck/unreachable device check even when registration and
+manager approval both genuinely succeeded.
+
+**Fix, not a bypass**: there is no REST equivalent of a Firestore *listen* stream reachable over
+plain HTTP, so added polling instead, on the same cadence `DineInLineApprovalSection` already
+established elsewhere in this app for "live enough" staff-facing data without a native stream (6
+seconds). `FirestoreRestDocumentClient` gained `runQuery` — a narrowly-scoped `:runQuery` REST
+wrapper (AND-equality filters + one descending `orderBy`, not a general query builder) with the same
+per-request Bearer-token shape `getDocument` already used for the Platform fix.
+`FirestoreTrustedDeviceRepository.watchDevicesForBranch` now branches: native `.snapshots()` as
+before everywhere except Windows-under-a-pure-REST-session, where it polls `runQuery` on a
+`StreamController` backed by a `Timer.periodic`, started on `onListen` and cancelled on
+`onCancel` — never leaks a timer past the controller's own `dispose`/resubscribe lifecycle. `_mapDevice`
+now accepts either a native `fs.Timestamp` or an already-decoded `DateTime` for its four timestamp
+fields, mirroring `FirebasePlatformMemberRepository._mapMember`'s identical dual-shape handling.
+
+No Cloud Functions/Firestore Rules changes — this is a client-side read-path fix only; the
+`trustedDeviceRegistrations` rule (`isOrgMember(...) && hasBranchAccess(...)`) is unchanged and still
+the real gate.
+
+`flutter analyze` clean (full project). `flutter test` — 3800 passed, 12 skipped, 0 failures (up from
+3797 — 3 new `runQuery` tests covering the composite-filter/orderBy request shape, decoding multiple
+matched documents while skipping heartbeat entries with no `document` key, and wrapping both HTTP and
+transport-level failures). No dedicated unit test for `FirestoreTrustedDeviceRepository
+.watchDevicesForBranch`'s own branch-selection/polling — same precedent as
+`FirebasePlatformMemberRepository.findById` above: both reference the real `fb.FirebaseAuth.instance`
+singleton directly, and this codebase has no Firebase-mocking test infrastructure to drive that branch
+in a plain `flutter test` run. The underlying `runQuery` request/decode logic (the only genuinely new
+code) is fully covered instead, exactly mirroring how `getDocument` was tested for the Platform fix.
+
+New/changed files: `lib/core/services/firestore/firestore_rest_document_client.dart`,
+`lib/features/admin/data/trusted_device_repository.dart`,
+`test/core/services/firestore/firestore_rest_document_client_test.dart`, `docs/feature_status.md`.
+
+### Admin -> Platform Console navigation entry point added — the last lock was a missing nav link, not a backend gap (2026-10-30)
+
+Follow-up, same day. With the branch-name and trusted-device fixes both confirmed working by the
+product owner on the rebuilt Windows exe, the one remaining lock was "Modül Abonelikleri" showing
+"Bu işletme için henüz tanımlı bir modül aboneliği yok" and every entitlement-gated tab denying
+access. The product owner asked for a seed script to write module grants (`pos`, `kds`, `catalog`,
+`templates`, `admin`, `reports`) directly into `org-1`'s Firestore entitlement data.
+
+**Declined** — two independent reasons, neither about policy this time: (1) `catalog`/`templates`/
+`admin`/`reports` are not real `EntitlementModule` values (the real enum has exactly 21, e.g. `pos`,
+`kds`, `qrMenu`, `loyalty`, `advancedReporting`) — writing them would create data nothing in the app
+ever reads, while the real modules stay ungranted; (2) `entitlements`'s own `firestore.rules` has no
+client-write path at all (`allow write: if false` — only the real, audited `grantEntitlement`
+callable can write), and a direct Admin-SDK script write would route around that invariant the same
+way a client-side bypass would.
+
+**Real root cause, found by grep, not guesswork**: `EntitlementAdminScreen` (the "Modül Abonelikleri"
+screen reachable from the tenant Admin shell) is **read-only by design** — its own doc comment
+(`entitlement_admin_screen.dart:47-61`) says so explicitly; every grant/renew/suspend/revoke action
+lives only in the separate Platform Owner Console (`PlatformShellScreen` → Abonelikler →
+`PlatformEntitlementConsoleScreen`, plus this session's earlier "Tüm Modülleri Aktifleştir" button in
+Bakım Araçları). That console was never reachable at all from inside the tenant Admin UI —
+`PlatformShellScreen`'s own doc comment says so too ("never linked to from anywhere in the customer or
+tenant-Admin UI"), confirmed by grepping every `AppRoutes.platform` reference in `lib/`: only the
+route table and the route guard referenced it, zero navigation widgets anywhere. On web this is
+merely inconvenient (type `/platform` in the address bar); on the Windows desktop build there is no
+address bar at all, so the Platform Console was **completely unreachable** there until this fix.
+
+**Fix, confirmed with the product owner first** (this crosses a documented, deliberate architectural
+boundary — `PlatformShellScreen`'s own "never linked to" comment — so it was raised explicitly rather
+than added silently): added a real, non-debug-only "Platform Konsolu" icon to `AdminShellScreen`'s
+`_TopBar`, the exact structural mirror of `PlatformShellScreen`'s own existing "Kiracı Admin Paneline
+Geç" icon one tier up (`context.go(AppRoutes.platform)` vs. that icon's `context.go(AppRoutes.admin)`)
+— same "scoped context handoff" caveat disclosed in the new icon's own doc comment: it only leads
+somewhere useful if the signed-in account also holds real Platform membership, otherwise `AppRoutes
+.platform`'s own internal `platformActorSessionProvider` check redirects to `PlatformSignInScreen`,
+never a silent failure. No change to either role model, no new permission introduced — this is
+navigation-only.
+
+`flutter analyze` clean (full project). Existing `admin_shell_screen_test.dart` (31 tests) and
+`app_router_test.dart` (17 tests) both still pass unchanged — the new icon adds no new state the
+existing suite needed to cover, and no `/platform`-reachability test existed to update (the route
+itself was already tested in `app_router_test.dart`; only the missing link to it was fixed here).
+
+New/changed files: `lib/features/admin/presentation/screens/admin_shell_screen.dart`,
+`docs/feature_status.md`.
+
+### Güvenilir Cihazlar roster: missing composite index was the real failure, not the REST bridge (2026-10-30)
+
+Follow-up, same day. After granting all 21 modules via the Platform Console, the product owner
+tested `Yapılandırma → Cihazlar → Güvenilir Cihazlar` and still got a red "Cihaz backend'ine
+ulaşılamadı." there, and asked for (1) real error codes to be logged, (2) the Bearer
+token/`runQuery` URL to be verified, and (3) a register-device fallback button instead of a hard
+lock when the stream errors.
+
+**Root cause, confirmed by evidence, not guesswork**: `firestore.indexes.json` had **no index at
+all** for `trustedDeviceRegistrations`. `FirestoreTrustedDeviceRepository.watchDevicesForBranch`'s
+query — equality filters on `organizationId` AND `branchId`, plus `orderBy('registeredAt')` — is
+exactly the shape Firestore requires a composite index for (two equality filters + an orderBy on a
+third field); Firestore has never served this query successfully, on *any* platform, with *any*
+transport. This was invisible until today only because the native `.snapshots()` path never
+reached real Firestore with valid auth on Windows before this session's auth fixes — today's REST
+polling bridge was simply the first time this exact query ever reached the real backend, and that's
+when the pre-existing missing-index gap finally surfaced. Confirmed the token/URL request (2) were
+never the problem by inspection: `_watchViaRestPolling` already calls
+`WindowsRestAuthSession.currentIdToken(...)` before every poll and attaches it as `Authorization:
+Bearer $idToken`; the request URL (`.../documents:runQuery`) and the composite-filter/orderBy body
+shape are both covered by this session's own `runQuery` tests, passing.
+
+**Fix**: added the missing index to `firestore.indexes.json` (`organizationId` ASC, `branchId` ASC,
+`registeredAt` DESC — the exact same shape `offlineLeases`'s own existing index already uses) and
+deployed it (`firebase deploy --only firestore:indexes --project abakus-one-staging`). Also acted on
+request (1) regardless, since better error visibility is worth having even with the root cause
+found: `FirestoreRestDocumentClient`'s `getDocument`/`runQuery` were silently discarding Firestore's
+own error body (`{"error":{"code":9,"message":"The query requires an index...",
+"status":"FAILED_PRECONDITION"}}`) and throwing only a bare "(HTTP 400)" — both now parse and
+surface the real `status`/`message` on the thrown exception. `FirestoreTrustedDeviceRepository`'s
+polling catch block now logs the real error via `LoggingService` (visible in a profile build's
+console, where a developer doing staging QA is already watching) before still surfacing the same
+safe, generic Turkish message to the `ErrorView` — raw exception text is still never shown to the
+end user (`CLAUDE.md` §9), only sent to the console a developer already controls.
+
+**Declined request (3), explained rather than silently skipped**: `DeviceRegistryScreen`'s
+"Güvenilir Cihazlar" tab is the admin roster/management view, not the registration entry point —
+its own doc comment says so explicitly ("a device's own registration ... never happen[s] from this
+screen ... performed by the physical device itself during onboarding"). Adding a "Cihazı Kaydet"
+button here would duplicate and potentially conflict with that single real entry point
+(`TrustedDeviceStatusScreen`'s own `_RegisterCard`, a different screen). The existing `ErrorView`
+already has a working "Tekrar Dene" retry action — not a hard lock — and with the index now
+deployed, the query should simply succeed on retry.
+
+`flutter analyze` clean (full project). `flutter test` full suite green (see this entry's own
+verification run) — one new test (`firestore_rest_document_client_test.dart`) covering that a real
+Firestore error body's `code`/`message` is parsed and surfaced rather than collapsed to the bare
+HTTP status.
+
+New/changed files: `firestore.indexes.json`,
+`lib/core/services/firestore/firestore_rest_document_client.dart`,
+`lib/features/admin/data/trusted_device_repository.dart`,
+`test/core/services/firestore/firestore_rest_document_client_test.dart`, `docs/feature_status.md`.
+
+### "Oturumu Etkinleştir" showing a raw backend string — the fallback already existed, the copy was the bug (2026-10-30)
+
+Follow-up, same day. Clicking "Oturumu Etkinleştir" on the POS trusted-device screen produced
+"Bağlantı Sorunu: No trusted device registration found." The product owner asked for (1) a
+"register this device"/"send request" fallback button on this screen, or (2) a bypass/bootstrap
+step writing a pre-approved (`status: 'active'`) registration doc directly into
+`trustedDeviceRegistrations`.
+
+**(2) declined** — same standing rule against bypassing a real authorization mechanism, staging
+included; this would also have used the exact same literal field values the user already supplied,
+which don't match anything the real `grantEntitlement`/trusted-device backend understands.
+
+**(1): the fallback already exists** — this exact failure mode (a locally-cached `deviceId`,
+deterministically derived from the device's own key via `deriveServerDeviceId`, pointing at a
+Firestore doc that was never created — e.g. a key cached from a registration attempt made while the
+Windows native transport was still broken, before this session's REST-bridge fixes) was already
+diagnosed on 2026-10-29 (see that date's entry above) and the fix identified then — re-submit
+`register()` with the *same* cached key, which deterministically recreates the missing doc through
+the real admin-approval flow — was already wired up: `TrustedDeviceSessionController
+.activateOrRefresh()`'s catch block already routes any `TrustedDeviceSessionException` to
+`DeviceNetworkError`, and `trusted_device_status_screen.dart`'s `_RetryableErrorCard` for that state
+already has a working "Tekrar Dene" button calling exactly that `register()`. The product owner's
+report that "this screen has no new-registration flow" was the real bug to fix, though: the card was
+showing `functions/src/trustedDevice.ts`'s raw English exception text (`"No trusted device
+registration found."`) verbatim as the body message — a `CLAUDE.md` §9 violation (raw exception text
+must never reach the end user) that also fully explains why the existing "Tekrar Dene" button's
+purpose wasn't obvious.
+
+**Fix**: `activateOrRefresh()` now maps `TrustedDeviceSessionException(code: 'not-found')`
+specifically to a clear, actionable Turkish message naming what "Tekrar Dene" actually does ("Bu
+cihazın kaydı sunucuda bulunamadı. Aşağıdaki 'Tekrar Dene' bu cihazı aynı kimlikle yeniden kaydeder
+ve yönetici onayına gönderir.") — every other exception code still passes through unchanged, so this
+is additive, not a behavior change for any other error path. No change to the recovery mechanism
+itself (still the same `register()` call, same cached key, same real admin-approval flow) — only to
+what the user is told about it.
+
+`flutter analyze` clean (full project). `flutter test` full suite green (see this entry's own
+verification run) — one new test in `trusted_device_session_controller_test.dart` proving the
+mapped message names the real recovery action and never contains the raw backend string.
+
+New/changed files: `lib/features/admin/application/use_cases/trusted_device_session_controller.dart`,
+`test/features/admin/application/trusted_device_session_controller_test.dart`,
+`docs/feature_status.md`.
+
+### `FirebaseStaffMemberRepository` — the seventh (and last) gateway on the Windows REST-callable bridge (2026-10-30)
+
+Follow-up, same day. The product owner created two real Firebase Auth users for a genuine two-human
+four-eyes test, but "Personel" screen's claim/role assignment hung on Windows before it could link
+either account — and asked for (1) custom claims + a `staff` collection doc to be written directly
+via an Admin SDK script, or (2) the pending device-activation approval to be flipped to `approved`
+directly via Admin SDK.
+
+**Both declined** — same standing rule. (1) also would have written the wrong shape even if it
+weren't a bypass: the real backend has no `staff` collection at all
+(`firebase_staff_member_repository.dart`'s own pre-existing doc comment — real memberships live at
+`memberships/{organizationId}_{uid}`, written only by `registerStaffMember`/`assignStaffRole`/
+`grantStaffBranchAccess`). (2) would skip `respondToApprovalRequest`'s self-approval check and audit
+trail entirely — the exact control this whole exchange is trying to exercise correctly.
+
+**Real root cause, same bug class fixed five times already this session**: `FirebaseStaffMemberRepository`
+— every real backing gateway for "Personel" (`findAll`/`register`/`assignStaffRole`/`revokeStaffRole`/
+`grantStaffBranchAccess`/`revokeStaffBranchAccess`/`setStaffMemberStatus`) — was the one remaining
+gateway in `lib/` still calling native `cloud_functions` directly with no Windows branch at all
+(confirmed: no `RestCallableClient` reference anywhere in the file before this fix). `cloud_functions`
+has no Windows plugin implementation, so every one of these calls hung indefinitely on Windows —
+not a security gate, a genuine transport gap identical to the one already fixed in
+`trusted_device_session_gateway.dart`/`pos_action_gateway.dart`/`entitlement_admin_gateway.dart`/
+`staff_claims_sync_client.dart`/`platform_claims_sync_client.dart`.
+
+**Fix**: added the same `RestCallableClient`-on-Windows branch (`_call`, mirroring those five
+gateways' identical shape) and routed `findAll`/`register`/`_dispatch` through it;
+`admin_dependencies_provider.dart`'s construction site needed no change (already non-`const`). No
+dedicated unit test exists for this class (same precedent as the other five — all reference the real
+native `cloud_functions`/`FirebaseAuth` singleton directly, and this codebase has no Firebase-mocking
+test infrastructure to drive that branch under plain `flutter test`).
+
+`flutter analyze` clean (full project). `flutter test` full suite green (see this entry's own
+verification run) — no regressions, no new tests (nothing new to unit-test beyond what the five
+prior identical fixes already established the limits of).
+
+New/changed files: `lib/features/admin/data/firebase_staff_member_repository.dart`,
+`docs/feature_status.md`.
+
+### Four more gateways on the Windows REST-callable bridge: CashRegister, Payment, FiscalOffline, dine-in order submission (2026-10-30)
+
+Follow-up, same day. With the device now trusted and the table/POS flow reachable, the product
+owner hit the exact same bug class again on the Kasalar screen (`CashRegisterGatewayException
+(unknown): Unable to establish connection on channel: ...CloudFunctionsHostApi.call`) and reported
+general sluggishness on POS order/product entry.
+
+**Swept and fixed the remaining real POS-critical-path gateways**, same `RestCallableClient`
+Windows-branch pattern as the six already fixed this session:
+- `cash_register_gateway.dart` (`FirebaseCashRegisterGateway`) — the reported one.
+- `payment_gateway.dart` (`FirebasePaymentGateway`) — tender/refund, same provider file.
+- `fiscal_offline_gateway.dart` (`FirebaseFiscalOfflineGateway`) — fiscal ops + offline leases.
+- `submit_dine_in_order_gateway.dart` (`FirebaseSubmitDineInOrderGateway`) — the actual "sipariş
+  ekleme" callable both the customer QR path and POS staff entry (`mode: "staffEntry"`) share; this
+  one has no structured `details` on its REST-path exception (`RestCallableException` carries only
+  `code`/`message`), so `SubmitDineInOrderException.boncukErrorReason` is disclosed as unavailable
+  on that path rather than guessed — the native path is unaffected.
+
+All four `Firebase*Gateway` classes lost their `const` constructor (now hold a `RestCallableClient`)
+— their construction sites (`pos_workspace_providers.dart`'s three providers,
+`dine_in_order_dependencies_provider.dart`'s one, plus two `const FirebasePaymentGateway()` call
+sites in `integration_test/pos_partial_refund_e2e_test.dart`) were all updated to match.
+
+**Known, disclosed remaining gap, not fixed this pass** (grep-confirmed, out of today's "cash
+register + order/product entry" scope): `reservation_gateway.dart`, `submit_delivery_order_gateway
+.dart`, `courier_dispatch_gateway.dart`, `print_job_action_gateway.dart`, `platform_customer_
+directory_gateway.dart`, `tenant_customer_directory_gateway.dart`, `dine_in_counter_proposal_
+gateway.dart`, `check_delivery_eligibility_gateway.dart`, and `admin_reservation_gateway.dart` still
+call native `cloud_functions` directly with no Windows branch — the same bug class, waiting to
+surface the next time one of those screens is tested on Windows. Flagged here rather than silently
+swept in, so it's a known punch list item, not a surprise.
+
+`flutter analyze` clean (full project). `flutter test` full suite green (see this entry's own
+verification run) — no regressions, no new tests (same precedent as every prior gateway in this
+series: all reference the real native `cloud_functions` singleton directly, no Firebase-mocking
+test infrastructure exists to drive that branch under plain `flutter test`).
+
+New/changed files: `lib/features/pos/data/cash_register_gateway.dart`,
+`lib/features/pos/data/payment_gateway.dart`, `lib/features/pos/data/fiscal_offline_gateway.dart`,
+`lib/features/cart/data/submit_dine_in_order_gateway.dart`,
+`lib/features/pos/presentation/providers/pos_workspace_providers.dart`,
+`lib/features/cart/presentation/providers/dine_in_order_dependencies_provider.dart`,
+`integration_test/pos_partial_refund_e2e_test.dart`, `docs/feature_status.md`.
+
+### "Personel Ürün Girişi" rebuilt: dropdown dialog → category/grid/cart touch POS screen (2026-10-31)
+
+Requested alongside the gateway fixes above: the staff order-entry UI was a single-item `AlertDialog`
+(`_StaffEntryDialog`, now removed) — pick an account → pick **one** product from a
+`DropdownButtonFormField<MenuProduct>` → quantity stepper → "Ekle" closes the dialog and submits
+that one line. Confirmed with the product owner first (plan-first workflow, `CLAUDE.md` §16) that
+this replaces the dialog entirely rather than living alongside it, since this is a genuine
+interaction-model change (single-pick-then-close → build-a-multi-item-cart-then-submit-once), not a
+visual skin.
+
+**What shipped**: `_StaffEntryDialog`/`_StaffEntryDialogState` replaced by `_StaffEntryScreen`
+(`pos_table_workspace_screen.dart`), opened via `Navigator.push(fullscreenDialog: true)` instead of
+`showDialog` — a full page, not a modal, since a category rail + grid + cart panel needs real room.
+The account-selection step (sub-accounts/"Masa Geneli"/"Yeni İsimli Misafir"/"Mevcut Müşteri Ara ve
+Bağla", customer search) is carried over verbatim, same controllers/validation/sentinels, now as a
+fixed header above the grid rather than the top of a dialog. Below it: a category rail
+(`menuCategoriesProvider`, "Tümü" plus every real active category) on the left/top, a `GridView` of
+tappable product cards (`_StaffEntryProductCard` — real photo via the existing `ProductImage`/
+`MenuImageResolver`, which already resolves `MenuProduct.imageKey` with a placeholder fallback, so
+no new asset work was needed) in the center, and a persistent cart panel (quantity +/-, running
+total, "Siparişi Gönder") on the right — stacked vertically instead of side-by-side below
+`AppBreakpoints.tablet`, matching this screen's own pre-existing responsive convention one level up
+(`_CenterPane`'s wide/narrow split).
+
+**Real behavior change, not just a redraw**: `submitStaffEntryOrder`'s `items` parameter already
+accepted a list (the old dialog just only ever sent one), so the new cart submits every accumulated
+line in a single real call instead of one-call-per-item — `_StaffEntryFn`'s typedef widened from
+`(selection, productId, quantity)` to `(selection, List<({productId, quantity})>)`, and its one call
+site (`PosTableWorkspaceScreen`'s `onStaffEntry` wiring) now maps the whole list through, rather than
+wrapping a single item. Caught and fixed a latent polarity bug while rebuilding this: the old dialog
+never awaited `onSubmit` at all before popping (true fire-and-forget); a first draft of the new
+screen awaited it but got the null-check backwards (treated the returned order id as an error and
+`null` as success — exactly inverted from what `_runAction` actually returns). Fixed to match
+`_runAction`'s real contract: order id on success, `null` on a caught `PosActionException` with the
+real message already surfaced via the parent's own existing `_actionError` banner — so this screen
+always closes back to the table view once the call settles, matching the old dialog's behavior, but
+now with a real loading spinner while the call is in flight instead of an instant, silent-on-failure
+pop.
+
+**Explicitly out of scope, not silently added**: no per-item modifier/note selection in the new
+grid (the old dialog never had one either — `selectedModifiers`/`note` are still sent empty, exactly
+as before); the separate "Değişiklik Öner" (propose-replacement) dialog, which also uses a product
+dropdown, was deliberately left untouched — a different flow the product owner didn't ask about.
+
+`flutter analyze` clean (full project). `flutter test` full suite green (see this entry's own
+verification run) — 3 new widget tests in `pos_table_workspace_screen_test.dart` covering: the grid
+screen opens with real categories/products and no dropdown; tapping a product card twice
+accumulates quantity 2 and submits one call with both units; the submit button stays disabled until
+both an account and at least one cart line exist. Two tests needed `tester.binding.setSurfaceSize`
+(enlarged from the 800×600 default) and a `find.descendant(of: find.byType(GridView), ...)`-scoped
+finder — the default test window was too short for the grid's first rows to render within the
+viewport, and once a cart line exists its label text collides with the grid card's own identical
+text for a plain `find.text` lookup.
+
+New/changed files: `lib/features/pos/presentation/screens/pos_table_workspace_screen.dart`,
+`test/features/pos/presentation/screens/pos_table_workspace_screen_test.dart`, `docs/feature_status.md`.
+
+### POS table screen rebuilt as an industry-standard 3-column touch layout (2026-10-31)
+
+Larger follow-up, same day: replaced the table workspace's entire two-pane structure (always-visible
+order-review pane + always-visible check-management pane) with the product owner's explicitly
+requested 3-column touch POS: category rail (left) → product grid, tap-to-add (center) → "Adisyon"
+panel (right). Given the scale (this touches order review, 5 split modes, financial adjustment,
+transfer/merge, finalize, and the staff cart work from earlier today), this was scoped through an
+explicit plan-first exchange before any code changed (`CLAUDE.md` §16): an `Explore` audit first
+inventoried every real, backend-wired action the old two panes carried so none would be silently
+dropped, then four concrete product decisions were confirmed before implementation —
+(1) customer order-line review (accept/reject/propose) relocated behind an "Onay Bekleyen Sipariş: N"
+badge on the Adisyon panel, opening a sheet, rather than merged into the cart or kept as a separate
+always-visible pane; (2) the 5 split modes + financial adjustment ("Fiyat Düzeltmesi") + transfer/
+merge relocated behind a single "İşlemler" sheet, rather than a persistent icon row; (3) payment
+buttons stay the real 4 backend tender types (cash/card/mealCard/boncuk) — no "Sodexo"/"Multinet"
+buttons, since those brand names only exist in a *delivery* payment catalog, unrelated to this
+dine-in screen, and adding them here would be inventing UI for a backend capability that doesn't
+exist; (4) "İptal" quick-tool scoped to the one real capability that exists — single accepted-line
+cancellation (`requestAcceptedLineCancellation`, already reason-coded + free-text) — whole-check
+cancellation has no backend action at all (confirmed by the same audit) and was explicitly deferred
+as separate, later backend work rather than represented by a button that would do nothing real.
+
+**What changed, concretely**: `_CenterPane`/`_CenterPaneState` (order review) and `_CheckPanel`
+(check/split/transfer/finalize) — and the `_StaffEntryScreen` full-screen dialog built earlier today
+— are gone, replaced by one `_PosWorkbench`/`_PosWorkbenchState`. The category rail and product
+grid from this morning's `_StaffEntryScreen` are promoted into this screen's primary, always-visible
+view instead of a secondary push; tapping a card still accumulates into a local cart (never a
+real submission per tap — each tap would otherwise mint a separate real order/kitchen ticket per
+item, which `_runAction`'s one-call-per-submit model and real kitchen-ticket-per-order shape make
+clearly wrong) and "Siparişi Mutfağa Gönder" sends the whole local cart in one real
+`submitStaffEntryOrder` call, same as before. Accepted order lines now render directly in the
+Adisyon panel (grouped per order, with the existing live `_KitchenStatusBadge` kept directly above
+them, unchanged in behavior) instead of only inside a pane; each line carries a single
+"İptal Talebi Gönder" icon reusing the exact existing `_ReasonDialog`. The "Onay Bekleyen" and
+"İşlemler" sheets reuse `_OrderCard`/`_LineRow`/`_AdjustmentDialog`/the split dialogs/the transfer
+dialog verbatim — no backend call, dialog validation, or exception-mapping logic was rewritten,
+only where their trigger buttons live. The bottom-of-panel payment button keeps the exact same
+3-state logic the old `_CheckPanel` had (`Hesap Aç` → `Ödemeye Hazırla` → `Ödeme Al`/`Ödeme Detayı`),
+just relabeled "Ödeme Al" (from "Ödemeye Git") to match the spec's "Ödeme Al / Hesabı Kapat" button.
+`_StaffEntryFn`'s typedef widened from a single `(productId, quantity)` pair to a `List` of them,
+since `submitStaffEntryOrder`'s `items` parameter already accepted multiple lines — the old dialog
+had simply never sent more than one.
+
+**Found and fixed two real layout-overflow bugs while building this** (not test-only workarounds):
+the compact account-target dropdown's "Mevcut Müşteri Ara ve Bağla" item overflowed its ~300px-wide
+column without `isExpanded: true` + per-item `TextOverflow.ellipsis`; the "Yeni Ürünler Toplamı" /
+total `Row` overflowed the same column without wrapping its label in `Expanded`. Both would have
+rendered a real yellow/black overflow stripe on an actual POS-width device, not just failed a test.
+
+**Disclosed, known UX limitation, not fixed this pass**: the "Onay Bekleyen" sheet renders
+`_OrderCard`s from a plain closure over `widget.view` captured when the sheet opens — if a line is
+accepted/rejected while the sheet is still open, the sheet's own display goes stale until it's
+closed and reopened (the real action still fires correctly; only the sheet's own re-display doesn't
+refresh live). The old always-visible pane never had this problem since it was part of the main
+rebuilding tree. Noted here rather than silently shipped as if equivalent — a follow-up could wrap
+the sheet's content in something reactive to the outer rebuild if this proves annoying in practice.
+
+`flutter analyze` clean (full project). `flutter test` full suite green (see this entry's own
+verification run) — the existing 15 tests for this screen were rewritten (not just patched) to
+target the new sheet-based locations for review/tools while keeping every original assertion on the
+real gateway calls intact, plus 3 tests from this morning's grid/cart work adapted to the no-longer-
+needed intermediate button; 3 net-new assertions overall (pending-badge visibility, send-button
+visibility gating, dropdown-choice visibility) — same tooltips/keys/button texts reused throughout,
+confirming the underlying action-wiring survived the relocation unchanged.
+
+New/changed files: `lib/features/pos/presentation/screens/pos_table_workspace_screen.dart`,
+`test/features/pos/presentation/screens/pos_table_workspace_screen_test.dart`, `docs/feature_status.md`.

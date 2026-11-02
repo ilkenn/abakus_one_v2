@@ -40,6 +40,36 @@ class _FakeOrderFirestoreClient implements OrderFirestoreClient {
   Future<List<Map<String, dynamic>>> getAllOrders() async =>
       List.unmodifiable(_byId.values);
 
+  List<Map<String, dynamic>> _byBranch(String organizationId, String branchId) {
+    return [
+      for (final data in _byId.values)
+        if (data['organizationId'] == organizationId &&
+            data['branchId'] == branchId)
+          data,
+    ];
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> queryOrdersByBranch({
+    required String organizationId,
+    required String branchId,
+  }) async =>
+      _byBranch(organizationId, branchId);
+
+  @override
+  Stream<List<Map<String, dynamic>>> watchOrdersByBranch({
+    required String organizationId,
+    required String branchId,
+  }) {
+    final controller = StreamController<List<Map<String, dynamic>>>.broadcast();
+    scheduleMicrotask(() {
+      if (controller.hasListener) {
+        controller.add(_byBranch(organizationId, branchId));
+      }
+    });
+    return controller.stream;
+  }
+
   @override
   Stream<Map<String, dynamic>?> watchOrder(String orderId) {
     final controller = _watchers.putIfAbsent(
@@ -180,8 +210,7 @@ void main() {
     // customer/guest tracking screen can show a status change without
     // polling.
     group('watchById', () {
-      test('emits the current snapshot immediately on subscription',
-          () async {
+      test('emits the current snapshot immediately on subscription', () async {
         final client = _FakeOrderFirestoreClient();
         final repository = FirestoreCanonicalOrderRepository(
           client: client,

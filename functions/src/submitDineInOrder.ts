@@ -293,6 +293,7 @@ async function buildLines(
         quantity: item.quantity,
         selectedModifiers: item.selectedModifiers ?? [],
         note: item.note ?? "",
+        excludedIngredients: item.excludedIngredients ?? [],
       });
       campaignLines.push({
         lineIndex,
@@ -343,6 +344,17 @@ function buildDineInOrderDocument(params: {
   customerId: string | null;
   guestAuthUid: string;
   tableId: string;
+  /**
+   * 2026-10-28 launch — a human-readable snapshot of the table's own
+   * `restaurantTables/{tableId}.displayName`/`.areaName` at order-creation
+   * time (e.g. `"İç Masa 1"` / `"İç Mekan"`), so the admin Orders screen
+   * can show which physical table an order came from without a second
+   * lookup. `null` only if the table doc didn't exist at read time (never
+   * re-derived or guessed later) — see the two call sites below for where
+   * each is read.
+   */
+  tableDisplayName: string | null;
+  tableAreaName: string | null;
   /** The pre-AP-3 field — a `tableGuestSessions` document id. `null` for a staffEntry-mode order (no guest session exists). */
   tableSessionId: string | null;
   /** AP-3 Wave 1 — the NEW, table-level `tableSessions` id, deliberately a distinct field name/concept from `tableSessionId` above. Always set, for both modes; Wave 2's Check/allocation model groups by this. */
@@ -389,6 +401,8 @@ function buildDineInOrderDocument(params: {
     restaurantId: params.restaurantId,
     customerId: params.customerId,
     tableId: params.tableId,
+    tableNumber: params.tableDisplayName,
+    tableSection: params.tableAreaName,
     tableSessionId: params.tableSessionId,
     dineInSessionGroupId: params.dineInSessionGroupId,
     guestSessionId: null,
@@ -422,6 +436,7 @@ function buildDineInOrderDocument(params: {
       taxRateBasisPoints: line.taxBasisPoints,
       kitchenNote: line.kitchenNote,
       customerNote: line.customerNote,
+      excludedIngredients: line.excludedIngredients,
       // AP-3 Wave 1 (corrected report §1/§10) — per-line disposition. Every
       // line in one submission shares the same status at CREATE time
       // (staffEntry: auto-`accepted`; guestSession: `pendingApproval`) —
@@ -603,6 +618,10 @@ export const submitDineInOrder = onCall(
       let restaurantId: string;
       let branchId: string;
       let tableId: string;
+      // 2026-10-28 launch — see `buildDineInOrderDocument`'s own doc
+      // comment on `tableDisplayName`/`tableAreaName`.
+      let tableDisplayName: string | null = null;
+      let tableAreaName: string | null = null;
       let reservationContextId: string | null = null;
       let customerId: string | null = null;
       let resolvedTableSessionId: string;
@@ -639,6 +658,12 @@ export const submitDineInOrder = onCall(
         restaurantId = String(session.restaurantId);
         branchId = String(session.branchId);
         tableId = String(session.tableId);
+        const tableSnapForDisplay = await tx.get(db.collection("restaurantTables").doc(tableId));
+        if (tableSnapForDisplay.exists) {
+          const tableForDisplay = tableSnapForDisplay.data()!;
+          tableDisplayName = (tableForDisplay.displayName as string | undefined) ?? null;
+          tableAreaName = (tableForDisplay.areaName as string | undefined) ?? null;
+        }
         reservationContextId = session.reservationContextId ?? null;
         customerId = isRealCustomer ? uid : null;
 
@@ -707,6 +732,8 @@ export const submitDineInOrder = onCall(
         ) {
           throw new HttpsError("not-found", "Table not found.");
         }
+        tableDisplayName = (table.displayName as string | undefined) ?? null;
+        tableAreaName = (table.areaName as string | undefined) ?? null;
         const activeTableSessionId = (table.activeTableSessionId as string | null | undefined) ?? null;
         if (!activeTableSessionId) {
           throw new HttpsError(
@@ -1258,6 +1285,8 @@ export const submitDineInOrder = onCall(
           customerId,
           guestAuthUid: uid,
           tableId,
+          tableDisplayName,
+          tableAreaName,
           tableSessionId: mode === "guestSession" ? tableSessionId : null,
           dineInSessionGroupId: resolvedTableSessionId,
           reservationContextId,

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:abakus_one_v2/bootstrap/app_environment.dart';
 import 'package:abakus_one_v2/core/services/functions/rest_callable_client.dart';
 
 /// Covers `RestCallableClient`'s own Dart-side logic (request construction,
@@ -159,9 +160,42 @@ void main() {
     );
   });
 
-  test('the default constructor (no injections) still constructs cleanly',
-      () {
+  test('the default constructor (no injections) still constructs cleanly', () {
     final client = RestCallableClient();
     expect(client, isA<RestCallableClient>());
+  });
+
+  test(
+      '2026-10-29 fix: against a real project (staging/production), posts '
+      'to the function\'s real deployed HTTPS endpoint '
+      '(region-projectId.cloudfunctions.net/name), never the emulator '
+      'host — this is what makes the Windows REST bridge work outside the '
+      'local emulator', () async {
+    http.Request? captured;
+    final mockClient = MockClient((request) async {
+      captured = request;
+      return http.Response('{"result":{}}', 200);
+    });
+    final client = RestCallableClient(
+      httpClient: mockClient,
+      idTokenProvider: () async => 'fake-id-token',
+      environmentOverride: AppEnvironment.staging,
+    );
+
+    await client.call('syncOwnStaffClaims', const {});
+
+    expect(captured, isNotNull);
+    expect(captured!.url.scheme, 'https');
+    expect(
+      captured!.url.host,
+      // AppEnvironmentConfig.current resolves to `development` under
+      // `flutter test` regardless of this test's `environmentOverride`
+      // (that only affects the emulator-vs-real-endpoint branch, not
+      // which project id `AppEnvironmentConfig` itself resolves to) ->
+      // 'abakus-one-dev', matching the existing emulator-path test's own
+      // identical assumption.
+      'us-central1-abakus-one-dev.cloudfunctions.net',
+    );
+    expect(captured!.url.path, '/syncOwnStaffClaims');
   });
 }

@@ -22,7 +22,8 @@ InventoryItem _buildItem({
   );
 }
 
-BranchStock _buildStock(int smallestUnits, {bool isNegativeStockWarning = false}) {
+BranchStock _buildStock(int smallestUnits,
+    {bool isNegativeStockWarning = false}) {
   return BranchStock(
     inventoryItemId: 'item-1',
     locationId: 'branch-1',
@@ -38,7 +39,8 @@ void main() {
   group('StockHealthStatusResolver.compute', () {
     test('no BranchStock record at all -> healthy (nothing tracked yet)', () {
       final status = StockHealthStatusResolver.compute(
-        item: _buildItem(reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
+        item: _buildItem(
+            reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
         branchStock: null,
       );
       expect(status, StockHealthStatus.healthy);
@@ -46,7 +48,8 @@ void main() {
 
     test('on-hand above the reorder threshold -> healthy', () {
       final status = StockHealthStatusResolver.compute(
-        item: _buildItem(reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
+        item: _buildItem(
+            reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
         branchStock: _buildStock(1000),
       );
       expect(status, StockHealthStatus.healthy);
@@ -54,7 +57,8 @@ void main() {
 
     test('on-hand exactly at the reorder threshold -> lowStock', () {
       final status = StockHealthStatusResolver.compute(
-        item: _buildItem(reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
+        item: _buildItem(
+            reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
         branchStock: _buildStock(500),
       );
       expect(status, StockHealthStatus.lowStock);
@@ -62,13 +66,16 @@ void main() {
 
     test('on-hand below the reorder threshold -> lowStock', () {
       final status = StockHealthStatusResolver.compute(
-        item: _buildItem(reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
+        item: _buildItem(
+            reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
         branchStock: _buildStock(100),
       );
       expect(status, StockHealthStatus.lowStock);
     });
 
-    test('no reorderThreshold configured -> never lowStock, regardless of quantity', () {
+    test(
+        'no reorderThreshold configured -> never lowStock, regardless of quantity',
+        () {
       final status = StockHealthStatusResolver.compute(
         item: _buildItem(),
         branchStock: _buildStock(1),
@@ -76,9 +83,11 @@ void main() {
       expect(status, StockHealthStatus.healthy);
     });
 
-    test('on-hand exactly zero -> outOfStock, even with a configured threshold', () {
+    test('on-hand exactly zero -> outOfStock, even with a configured threshold',
+        () {
       final status = StockHealthStatusResolver.compute(
-        item: _buildItem(reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
+        item: _buildItem(
+            reorderThreshold: Quantity.fromWhole(500, InventoryUnit.gram)),
         branchStock: _buildStock(0),
       );
       expect(status, StockHealthStatus.outOfStock);

@@ -96,12 +96,14 @@ class TakeawayProductItem extends TakeawayOrderItem {
   final int quantity;
   final List<({String groupId, String optionId})> selectedModifiers;
   final String note;
+  final List<String> excludedIngredients;
 
   const TakeawayProductItem({
     required this.productId,
     required this.quantity,
     this.selectedModifiers = const [],
     this.note = '',
+    this.excludedIngredients = const [],
   });
 
   @override
@@ -114,6 +116,7 @@ class TakeawayProductItem extends TakeawayOrderItem {
             {'groupId': modifier.groupId, 'optionId': modifier.optionId},
         ],
         'note': note,
+        'excludedIngredients': excludedIngredients,
       };
 }
 

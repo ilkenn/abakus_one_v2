@@ -137,15 +137,42 @@ abstract final class ModuleReadinessRegistry {
     'overview': ModuleReadiness(ModuleImplementationMaturity.demoOnly,
         ModuleDeploymentAvailability.development),
     // Operasyonlar
-    'kitchen': ModuleReadiness(ModuleImplementationMaturity.demoOnly,
+    // Upgraded from demoOnly, 2026-10-27 — `KitchenDisplayBoardScreen` reads
+    // real `orders` documents via `FirestoreKitchenTicketRepository`
+    // (`kitchenTicketRepositoryProvider` resolves to it once Firebase is
+    // ready), never an in-memory model, once a real branch+org-scoped
+    // query shape was confirmed to actually satisfy `orders`'
+    // `firestore.rules` staff branch — proven against the real Firestore
+    // Emulator by `functions/src/test/kitchenTicketQueryRules.test.ts`
+    // (not just the Admin SDK, which bypasses rules entirely): the real
+    // query shape succeeds for a correctly-permissioned staff member,
+    // still correctly denies one without the queried branch's access, and
+    // the OLD (pre-fix) shape is rejected outright — the exact regression
+    // this fix closed, now pinned down permanently. `transitionKitchenWorkItem`
+    // (`kitchen_action_gateway.dart`) was already real.
+    'kitchen': ModuleReadiness(
+        ModuleImplementationMaturity.backendWiredEmulatorVerified,
         ModuleDeploymentAvailability.development),
     'reservations': ModuleReadiness(
         ModuleImplementationMaturity.implementationComplete,
         ModuleDeploymentAvailability.development),
     'dispatch': ModuleReadiness(ModuleImplementationMaturity.demoOnly,
         ModuleDeploymentAvailability.development),
-    'orders': ModuleReadiness(ModuleImplementationMaturity.notImplemented,
-        ModuleDeploymentAvailability.disabled),
+    // Upgraded from notImplemented, 2026-10-27 — `AdminOrdersScreen` is a
+    // new, real, read-only branch-wide order listing built this session,
+    // reusing `CanonicalOrderRepository` (the same store POS and customer
+    // checkout already share) rather than a parallel repository. The
+    // required `organizationId` equality filter on `queryOrdersByBranch`
+    // was written correctly from the start (the lesson from the two
+    // Kitchen-collection fixes immediately above), but proven anyway —
+    // `functions/src/test/adminOrdersQueryRules.test.ts` confirms the real
+    // query shape satisfies `orders`' `firestore.rules` staff branch
+    // against the real Firestore Emulator (not just the Admin SDK), that a
+    // `branchId`-only shape is rejected outright, and that cross-branch
+    // access is still correctly denied.
+    'orders': ModuleReadiness(
+        ModuleImplementationMaturity.backendWiredEmulatorVerified,
+        ModuleDeploymentAvailability.development),
     'pos': ModuleReadiness(ModuleImplementationMaturity.notImplemented,
         ModuleDeploymentAvailability.disabled),
     'cash': ModuleReadiness(ModuleImplementationMaturity.notImplemented,
@@ -153,11 +180,21 @@ abstract final class ModuleReadinessRegistry {
     // Müşteri & Sadakat
     'customer-360': ModuleReadiness(ModuleImplementationMaturity.demoOnly,
         ModuleDeploymentAvailability.development),
-    // photo-moderation: a real moderateCustomerPhoto Cloud Function exists
-    // (AP-2), but this screen is not wired to it — AP-3+ scope, disclosed,
-    // not silently left ambiguous. Stays partiallyImplementedUnsafe.
+    // Upgraded from partiallyImplementedUnsafe, 2026-10-27 —
+    // `CustomerPhotoModerationScreen` now reads real `customerPhotos`
+    // documents (`FirestoreCustomerPhotoRepository.findPendingReview`,
+    // organizationId-filtered) and routes every moderation mutation
+    // through the real `moderateCustomerPhoto` Cloud Function
+    // (`CustomerPhotoModerationGateway`) once Firebase is ready — never a
+    // client-side write (`firestore.rules`: `allow write: if false` on
+    // `customerPhotos`). The in-memory/pre-Firebase path (dev/test) is
+    // unchanged. Proven against the real Firestore Emulator by
+    // `functions/src/test/customerPhotoQueryRules.test.ts`: the real read
+    // shape succeeds for a same-org staff member, a status-only shape is
+    // rejected outright, and a different-org staff member is still
+    // correctly denied.
     'photo-moderation': ModuleReadiness(
-        ModuleImplementationMaturity.partiallyImplementedUnsafe,
+        ModuleImplementationMaturity.backendWiredEmulatorVerified,
         ModuleDeploymentAvailability.development),
     'customers': ModuleReadiness(ModuleImplementationMaturity.demoOnly,
         ModuleDeploymentAvailability.development),
@@ -170,8 +207,24 @@ abstract final class ModuleReadinessRegistry {
     'feedback': ModuleReadiness(ModuleImplementationMaturity.demoOnly,
         ModuleDeploymentAvailability.development),
     // Yapılandırma
-    'menu': ModuleReadiness(ModuleImplementationMaturity.notImplemented,
-        ModuleDeploymentAvailability.disabled),
+    // Upgraded from notImplemented, 2026-10-28 — `AdminMenuScreen` is a
+    // new, real categories+products catalog manager (list + create),
+    // backed by 4 new Cloud Functions (`menuCatalogAdmin.ts`):
+    // `menuCategories`/`menuProducts` carry no `firestore.rules` entry at
+    // all (served only via callables, by design — confirmed the same
+    // documented reasoning already governing `reservationAreas`/
+    // `reservationPolicies`), so these callables are the first real
+    // backend surface for this module, gated by the new `manageMenu`
+    // permission (manager-tier). Proven against the real Firestore
+    // Emulator by `functions/src/test/menuCatalogAdmin.test.ts` (list/
+    // create round-trips, a staff-tier denial, a not-found category, and
+    // cross-organization isolation) and verified directly against
+    // `abakus-one-staging` (seeded the real İçecekler/Ana Yemekler/
+    // Tatlılar categories and sample products through these exact
+    // callables).
+    'menu': ModuleReadiness(
+        ModuleImplementationMaturity.backendWiredEmulatorVerified,
+        ModuleDeploymentAvailability.development),
     'staff': ModuleReadiness(
         ModuleImplementationMaturity.implementationComplete,
         ModuleDeploymentAvailability.development),

@@ -41,9 +41,17 @@ void main() {
       of: find.byType(MenuScreen),
       matching: find.text(productName),
     );
+    // The product list (vertical `ListView.builder`), not the horizontal
+    // category-chip row above it — both are `Scrollable`s inside
+    // `MenuScreen`, and dragging the wrong one (the chip row) never
+    // reveals a product further down the page.
+    final productList = find
+        .descendant(
+            of: find.byType(MenuScreen), matching: find.byType(ListView))
+        .last;
     await tester.dragUntilVisible(
       finder,
-      find.byType(Scrollable),
+      productList,
       const Offset(0, -200),
     );
     await tester.pumpAndSettle();
@@ -209,7 +217,7 @@ void main() {
       (tester) async {
         await pumpShell(tester);
 
-        final chip = find.text('Bowl').first;
+        final chip = find.text('Kahvaltı').first;
         await tester.dragUntilVisible(
           chip,
           find.byType(Scrollable).first,
@@ -257,7 +265,7 @@ void main() {
         await tester.tap(find.text('Menü'));
         await tester.pumpAndSettle();
 
-        await tapMenuProductCard(tester, 'Mexifit Bowl');
+        await tapMenuProductCard(tester, 'CocaCola Şişe');
         expect(find.byType(ProductDetailScreen), findsOneWidget);
 
         await tester.tap(find.text('Ana Sayfa'));
@@ -281,7 +289,7 @@ void main() {
         await tester.tap(find.text('Menü'));
         await tester.pumpAndSettle();
 
-        await tapMenuProductCard(tester, 'Mexifit Bowl');
+        await tapMenuProductCard(tester, 'CocaCola Şişe');
         expect(find.byType(ProductDetailScreen), findsOneWidget);
 
         await tester.binding.handlePopRoute();

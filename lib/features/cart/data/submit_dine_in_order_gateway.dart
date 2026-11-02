@@ -1,4 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+
+import '../../../core/services/functions/rest_callable_client.dart';
 
 /// What a successful `submitDineInOrder` call returns — mirrors
 /// `SubmitDeliveryOrderResult`'s exact shape/reasoning. The full order
@@ -69,11 +73,18 @@ class DineInProductItem extends DineInOrderItem {
   final List<({String groupId, String optionId})> selectedModifiers;
   final String note;
 
+  /// 2026-10-30 product-configurator — standard ingredient names the
+  /// customer excluded ("İçinden Çıkar"). Price-neutral; see
+  /// `OrderLine.excludedIngredients`'s own doc comment for the trust
+  /// boundary this sits at.
+  final List<String> excludedIngredients;
+
   const DineInProductItem({
     required this.productId,
     required this.quantity,
     this.selectedModifiers = const [],
     this.note = '',
+    this.excludedIngredients = const [],
   });
 
   @override
@@ -86,6 +97,7 @@ class DineInProductItem extends DineInOrderItem {
             {'groupId': modifier.groupId, 'optionId': modifier.optionId},
         ],
         'note': note,
+        'excludedIngredients': excludedIngredients,
       };
 }
 
@@ -162,7 +174,10 @@ abstract interface class SubmitDineInOrderGateway {
 }
 
 class FirebaseSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
-  const FirebaseSubmitDineInOrderGateway();
+  FirebaseSubmitDineInOrderGateway({RestCallableClient? restClient})
+      : _restClient = restClient ?? RestCallableClient();
+
+  final RestCallableClient _restClient;
 
   @override
   Future<SubmitDineInOrderResult> submit({
@@ -174,24 +189,32 @@ class FirebaseSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     String? selectedCampaignId,
     String? guestDisplayName,
   }) async {
-    final callable = functions.FirebaseFunctions.instance.httpsCallable(
-      'submitDineInOrder',
-    );
+    final payload = {
+      'submissionKey': submissionKey,
+      'tableSessionId': tableSessionId,
+      'items': [for (final item in items) item.toJson()],
+      'customerNote': customerNote,
+      if (selectedRewardId != null) 'selectedRewardId': selectedRewardId,
+      // Server-Authoritative Campaign Engine P8-C.3 — sent ONLY when
+      // non-null, mirroring the server's own `sanitizeSelectedCampaignId`'s
+      // "absent == null" contract exactly.
+      if (selectedCampaignId != null) 'selectedCampaignId': selectedCampaignId,
+      if (guestDisplayName != null) 'guestDisplayName': guestDisplayName,
+    };
+    // 2026-10-30 — same Windows REST-callable bridge as `cash_register_
+    // gateway.dart`/`payment_gateway.dart` — `cloud_functions` has no
+    // Windows plugin, so this previously hung indefinitely on Windows for
+    // every staff POS order/product-entry call (`mode: "staffEntry"`),
+    // not just the customer-facing QR path this gateway was originally
+    // built for.
+    final useRest = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
     try {
-      final result = await callable.call<Map<String, dynamic>>({
-        'submissionKey': submissionKey,
-        'tableSessionId': tableSessionId,
-        'items': [for (final item in items) item.toJson()],
-        'customerNote': customerNote,
-        if (selectedRewardId != null) 'selectedRewardId': selectedRewardId,
-        // Server-Authoritative Campaign Engine P8-C.3 — sent ONLY when
-        // non-null, mirroring the server's own `sanitizeSelectedCampaignId`'s
-        // "absent == null" contract exactly.
-        if (selectedCampaignId != null)
-          'selectedCampaignId': selectedCampaignId,
-        if (guestDisplayName != null) 'guestDisplayName': guestDisplayName,
-      });
-      final data = result.data;
+      final data = useRest
+          ? await _restClient.call('submitDineInOrder', payload)
+          : (await functions.FirebaseFunctions.instance
+                  .httpsCallable('submitDineInOrder')
+                  .call<Map<String, dynamic>>(payload))
+              .data;
       return SubmitDineInOrderResult(
         orderId: data['orderId'] as String,
         orderNumber: data['orderNumber'] as String,
@@ -203,6 +226,13 @@ class FirebaseSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
         error.message ?? 'Sipariş gönderilemedi.',
         boncukErrorReason: _extractBoncukErrorReason(error),
       );
+    } on RestCallableException catch (error) {
+      // 2026-10-30 — `RestCallableException` carries only `code`/`message`
+      // (`rest_callable_client.dart`), never the structured `details` map
+      // a native `FirebaseFunctionsException` does — so `boncukErrorReason`
+      // is disclosed as unavailable here, never guessed, on the Windows
+      // REST path specifically. The native path above is unaffected.
+      throw SubmitDineInOrderException(error.code, error.message);
     }
   }
 }

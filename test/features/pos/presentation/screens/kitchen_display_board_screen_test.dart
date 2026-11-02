@@ -6,6 +6,7 @@ import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.da
 import 'package:abakus_one_v2/features/pos/data/kitchen_ticket_repository.dart';
 import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_station.dart';
 import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_line_status.dart';
+import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_work_item.dart';
 import 'package:abakus_one_v2/features/pos/domain/kitchen/kitchen_ticket.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kitchen_ticket_dependencies_provider.dart';
@@ -36,17 +37,67 @@ class _PermissionDeniedKitchenTicketRepository
   Future<List<KitchenTicket>> findByOrderId(OrderId orderId) async => const [];
 
   @override
-  Future<List<KitchenTicket>> findActiveByBranch(String branchId) {
+  Future<List<KitchenTicket>> findActiveByBranch(
+    String branchId, {
+    required String organizationId,
+  }) {
     throw fs.FirebaseException(
         plugin: 'cloud_firestore', code: 'permission-denied');
   }
 
   @override
-  Stream<List<KitchenTicket>> watchActiveByBranch(String branchId) {
+  Stream<List<KitchenTicket>> watchActiveByBranch(
+    String branchId, {
+    required String organizationId,
+  }) {
     return Stream.error(
       fs.FirebaseException(
           plugin: 'cloud_firestore', code: 'permission-denied'),
     );
+  }
+}
+
+/// 2026-10-27 — the `kitchenWorkItems`-collection sibling of
+/// [_PermissionDeniedKitchenTicketRepository]: simulates
+/// `FirestoreKitchenWorkItemRepository.findByBranch` hitting the exact
+/// same `firestore.rules` rejection. Proves `_load()`'s `findByBranch` call
+/// is now guarded the same way the ticket query already was — previously
+/// unguarded, this would have propagated as an uncaught exception and left
+/// the screen hung on "Mutfak ekranı yükleniyor..." forever (the real
+/// regression reported against staging, root-caused and fixed the same
+/// day).
+class _PermissionDeniedKitchenProjectionRepository
+    implements KitchenProjectionRepository {
+  @override
+  Future<void> save(KitchenWorkItem item) async {}
+
+  @override
+  Future<void> createInitial(KitchenWorkItem item) async {}
+
+  @override
+  Future<KitchenWorkItem?> findById(String workItemId) async => null;
+
+  @override
+  Future<KitchenWorkItem?> findByIdempotencyKey(String idempotencyKey) async =>
+      null;
+
+  @override
+  Future<List<KitchenWorkItem>> findByOrderId(OrderId orderId) async =>
+      const [];
+
+  @override
+  Stream<List<KitchenWorkItem>> watchByOrderId(OrderId orderId) => Stream.error(
+        fs.FirebaseException(
+            plugin: 'cloud_firestore', code: 'permission-denied'),
+      );
+
+  @override
+  Future<List<KitchenWorkItem>> findByBranch({
+    required String branchId,
+    String? stationName,
+  }) {
+    throw fs.FirebaseException(
+        plugin: 'cloud_firestore', code: 'permission-denied');
   }
 }
 
@@ -179,6 +230,27 @@ void main() {
     await pumpScreen(
       tester,
       ticketRepository: _PermissionDeniedKitchenTicketRepository(),
+    );
+
+    expect(find.text('Bu şube için mutfak ekranı erişim yetkiniz yok.'),
+        findsOneWidget);
+    expect(find.text('Mutfak ekranı yükleniyor...'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  // 2026-10-27 regression proof — `findByBranch`'s call in `_load()` was
+  // previously unguarded; this is the exact staging symptom: the screen
+  // never leaves the loading state and the exception goes uncaught.
+  testWidgets(
+      'a permission-denied error from the work-item repository also shows a safe access-denied state, never an infinite loader or a crash',
+      (tester) async {
+    final ticketRepository = InMemoryKitchenTicketRepository();
+    await ticketRepository.save(buildTestKitchenTicket());
+
+    await pumpScreen(
+      tester,
+      ticketRepository: ticketRepository,
+      projectionRepository: _PermissionDeniedKitchenProjectionRepository(),
     );
 
     expect(find.text('Bu şube için mutfak ekranı erişim yetkiniz yok.'),

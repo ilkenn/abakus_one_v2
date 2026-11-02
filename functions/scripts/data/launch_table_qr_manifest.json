@@ -1,0 +1,89 @@
+{
+  "projectId": "abakus-one-staging",
+  "tables": [
+    {
+      "tableId": "ic-1",
+      "displayName": "İç Masa 1",
+      "areaName": "İç Mekan",
+      "opaqueToken": "2I03L54y-vaTBwXSEFmo2aFZ541veocU"
+    },
+    {
+      "tableId": "ic-2",
+      "displayName": "İç Masa 2",
+      "areaName": "İç Mekan",
+      "opaqueToken": "eC1hIlKlSFqAzTtpliaK3W_R2Jcw2s3u"
+    },
+    {
+      "tableId": "ic-3",
+      "displayName": "İç Masa 3",
+      "areaName": "İç Mekan",
+      "opaqueToken": "nW07pM1TJko4WtWlEvNNmoGD72iyK3CL"
+    },
+    {
+      "tableId": "ic-4",
+      "displayName": "İç Masa 4",
+      "areaName": "İç Mekan",
+      "opaqueToken": "jluaegSNlUWhMn9-QSNeRwstKLGCGqvu"
+    },
+    {
+      "tableId": "ic-5",
+      "displayName": "İç Masa 5",
+      "areaName": "İç Mekan",
+      "opaqueToken": "qqqe58iX3uCUS2BNn0EZRxeldrqgx6XK"
+    },
+    {
+      "tableId": "ic-6",
+      "displayName": "İç Masa 6",
+      "areaName": "İç Mekan",
+      "opaqueToken": "43QrAvfgXAIPkgE9TOLa-t1lQRYLfREj"
+    },
+    {
+      "tableId": "ic-7",
+      "displayName": "İç Masa 7",
+      "areaName": "İç Mekan",
+      "opaqueToken": "TrKRzQECECRxf-uiCIWC7Jcv6JvdSS6V"
+    },
+    {
+      "tableId": "bahce-1",
+      "displayName": "Bahçe Masa 1",
+      "areaName": "Bahçe",
+      "opaqueToken": "KPD9NBlBEHu_SeDKBMulrxhEHhP2RjOi"
+    },
+    {
+      "tableId": "bahce-2",
+      "displayName": "Bahçe Masa 2",
+      "areaName": "Bahçe",
+      "opaqueToken": "9GvPlYxQrd5tUYXbtPc17IwC4WtKRlGL"
+    },
+    {
+      "tableId": "bahce-3",
+      "displayName": "Bahçe Masa 3",
+      "areaName": "Bahçe",
+      "opaqueToken": "6v7lVBBH60CLN3HIQCSAxysCdtG39Bti"
+    },
+    {
+      "tableId": "bahce-4",
+      "displayName": "Bahçe Masa 4",
+      "areaName": "Bahçe",
+      "opaqueToken": "5nPKSLtgISTru9AXtKisvpr93QuvQB_S"
+    },
+    {
+      "tableId": "bahce-5",
+      "displayName": "Bahçe Masa 5",
+      "areaName": "Bahçe",
+      "opaqueToken": "8hT6KJXz6JSNnDFZs3zZzbix2EJB5UXM"
+    },
+    {
+      "tableId": "bahce-6",
+      "displayName": "Bahçe Masa 6",
+      "areaName": "Bahçe",
+      "opaqueToken": "PhUY_tvKyJhROkcAopcitlPSAVIzl-6r"
+    },
+    {
+      "tableId": "bahce-7",
+      "displayName": "Bahçe Masa 7",
+      "areaName": "Bahçe",
+      "opaqueToken": "zgvT_yPN-8r5hOgPd1zQMWME_U8Iypjs"
+    }
+  ]
+}

@@ -83,7 +83,21 @@ class DefaultFirebaseAuthClient implements FirebaseAuthClient {
   @override
   Future<String> verifyPhoneNumber(String phoneNumber) {
     final completer = Completer<String>();
-    _auth.verifyPhoneNumber(
+    // 2026-10-28 — `verifyPhoneNumber`'s own returned `Future<void>` was
+    // never awaited/caught here: on a platform where the native
+    // implementation rejects before ever invoking ANY of the three
+    // callbacks below (confirmed directly on Windows desktop —
+    // `[firebase_auth/unimplemented] VerifyPhoneNumber is not available
+    // on this platform yet`, thrown synchronously, not via
+    // `verificationFailed`), `completer.future` never completed at all —
+    // a permanent hang (the real cause of "ekranda kilitlenip kalıyor"),
+    // not just an unhandled-exception log line. `.catchError` below makes
+    // any such early rejection resolve the SAME completer the same way
+    // `verificationFailed` already does, so every caller already handles
+    // it (`StaffAuthRepository.startPhoneSignIn` -> `StaffAuthUnavailableException`
+    // -> a visible Turkish error message, never a stuck spinner).
+    _auth
+        .verifyPhoneNumber(
       phoneNumber: phoneNumber,
       timeout: const Duration(seconds: 60),
       verificationCompleted: (_) {
@@ -106,7 +120,16 @@ class DefaultFirebaseAuthClient implements FirebaseAuthClient {
         }
       },
       codeAutoRetrievalTimeout: (_) {},
-    );
+    )
+        .catchError((Object error) {
+      if (!completer.isCompleted) {
+        final code = error is fb.FirebaseAuthException ? error.code : 'unknown';
+        final message = error is fb.FirebaseAuthException
+            ? (error.message ?? error.code)
+            : error.toString();
+        completer.completeError(FirebaseAuthClientException(code, message));
+      }
+    });
     return completer.future;
   }
 

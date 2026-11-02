@@ -53,8 +53,7 @@ abstract interface class KitchenProjectionRepository {
 class InMemoryKitchenProjectionRepository
     implements KitchenProjectionRepository {
   final Map<String, List<KitchenWorkItem>> _historyById = {};
-  final _orderControllers =
-      <String, StreamController<List<KitchenWorkItem>>>{};
+  final _orderControllers = <String, StreamController<List<KitchenWorkItem>>>{};
 
   @override
   Future<void> save(KitchenWorkItem item) async {

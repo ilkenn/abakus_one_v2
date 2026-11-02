@@ -1,6 +1,9 @@
 import '../../pos/domain/kds/kitchen_station.dart';
 import '../domain/models/menu_category.dart';
 import '../domain/models/menu_product.dart';
+import '../domain/models/modifier_group.dart';
+import '../domain/models/product_nutrition.dart';
+import 'standard_modifier_groups.dart';
 
 /// THE REAL ABAKÜS MENU.
 ///
@@ -29,11 +32,25 @@ import '../domain/models/menu_product.dart';
 abstract final class AbakusMenuCatalog {
   AbakusMenuCatalog._();
 
+  // 2026-10-28 PDF menu refresh — these 6 categories (and the 73 real
+  // products under them) are superseded by the new PDF-sourced menu below
+  // (`kahvaltiCategory` onward) and turned `isActive: false` so
+  // `menuCategoriesProvider`/`menuProductsProvider` stop surfacing them to
+  // customers (see that provider file's own filtering logic). They are
+  // deliberately NOT deleted or renumbered: ~15 Cloud Functions test files
+  // (`submitTakeawayOrderRealCatalog.test.ts` and its delivery/dine-in/
+  // campaign/loyalty/reservation siblings) read specific ids/prices from
+  // here (via `tool/export_menu_catalog.dart`'s export) as real-catalog
+  // fixtures — changing or removing any of them would break that whole
+  // suite for a reason unrelated to what it actually tests. `drinkCategory`
+  // is the one exception kept `isActive: true`: the PDF refresh never
+  // listed drinks, so removing them from the live customer menu would be
+  // an invented, unrequested change, not a faithful import.
   static const MenuCategory bowlCategory = MenuCategory(
     id: 'cat_bowl',
     name: 'Bowl',
     sortOrder: 0,
-    isActive: true,
+    isActive: false,
     // KDS station-based routing (2026-09-23) — always centered on a
     // cooked protein, assembled at the hot line.
     defaultStation: KitchenStation.hot,
@@ -42,7 +59,7 @@ abstract final class AbakusMenuCatalog {
     id: 'cat_salata',
     name: 'Salata',
     sortOrder: 1,
-    isActive: true,
+    isActive: false,
     // KDS station-based routing (2026-09-23) — cold-assembled base; any
     // grilled protein is prepped separately at the hot line before being
     // placed on the salad.
@@ -52,7 +69,7 @@ abstract final class AbakusMenuCatalog {
     id: 'cat_wrap',
     name: 'Wrap',
     sortOrder: 2,
-    isActive: true,
+    isActive: false,
     // KDS station-based routing (2026-09-23) — grilled/fried fillings,
     // tortilla typically warmed/pressed.
     defaultStation: KitchenStation.hot,
@@ -61,7 +78,7 @@ abstract final class AbakusMenuCatalog {
     id: 'cat_hamburger',
     name: 'Hamburger',
     sortOrder: 3,
-    isActive: true,
+    isActive: false,
     // KDS station-based routing (2026-09-23) — grilled patty, toasted bun.
     defaultStation: KitchenStation.hot,
   );
@@ -69,7 +86,7 @@ abstract final class AbakusMenuCatalog {
     id: 'cat_makarna',
     name: 'Makarna',
     sortOrder: 4,
-    isActive: true,
+    isActive: false,
     // KDS station-based routing (2026-09-23) — cooked-to-order hot dishes.
     defaultStation: KitchenStation.hot,
   );
@@ -77,7 +94,7 @@ abstract final class AbakusMenuCatalog {
     id: 'cat_atistirmalik',
     name: 'Atıştırmalık',
     sortOrder: 5,
-    isActive: true,
+    isActive: false,
     // KDS station-based routing (2026-09-23) — fried items.
     defaultStation: KitchenStation.hot,
   );
@@ -90,6 +107,67 @@ abstract final class AbakusMenuCatalog {
     defaultStation: KitchenStation.beverage,
   );
 
+  // 2026-10-28 PDF menu refresh — the real, currently-live menu. Category
+  // station routing is deliberately left `null` (falls back to
+  // `KitchenStation.shared`, the documented default for any unconfigured
+  // category) rather than guessed: this refresh's source data never
+  // specified kitchen-station assignment, and inventing one risks
+  // misrouting a real kitchen ticket.
+  static const MenuCategory kahvaltiCategory = MenuCategory(
+    id: 'cat_kahvalti',
+    name: 'Kahvaltı',
+    sortOrder: 7,
+    isActive: true,
+  );
+  static const MenuCategory tartineCategory = MenuCategory(
+    id: 'cat_tartine',
+    name: 'Tartineler',
+    sortOrder: 8,
+    isActive: true,
+  );
+  static const MenuCategory bowl2Category = MenuCategory(
+    id: 'cat_bowl2',
+    name: "Bowl'lar",
+    sortOrder: 9,
+    isActive: true,
+  );
+  static const MenuCategory tavaCategory = MenuCategory(
+    id: 'cat_tava',
+    name: 'Tavalar',
+    sortOrder: 10,
+    isActive: true,
+  );
+  static const MenuCategory salata2Category = MenuCategory(
+    id: 'cat_salata2',
+    name: 'Salatalar',
+    sortOrder: 11,
+    isActive: true,
+  );
+  static const MenuCategory hamburger2Category = MenuCategory(
+    id: 'cat_hamburger2',
+    name: "Burgerler",
+    sortOrder: 12,
+    isActive: true,
+  );
+  static const MenuCategory wrap2Category = MenuCategory(
+    id: 'cat_wrap2',
+    name: "Wrap'ler",
+    sortOrder: 13,
+    isActive: true,
+  );
+  static const MenuCategory makarna2Category = MenuCategory(
+    id: 'cat_makarna2',
+    name: 'Makarnalar',
+    sortOrder: 14,
+    isActive: true,
+  );
+  static const MenuCategory atistirmalik2Category = MenuCategory(
+    id: 'cat_atistirmalik2',
+    name: 'Aperatifler',
+    sortOrder: 15,
+    isActive: true,
+  );
+
   static const List<MenuCategory> categories = [
     bowlCategory,
     saladCategory,
@@ -98,9 +176,25 @@ abstract final class AbakusMenuCatalog {
     pastaCategory,
     snackCategory,
     drinkCategory,
+    kahvaltiCategory,
+    tartineCategory,
+    bowl2Category,
+    tavaCategory,
+    salata2Category,
+    hamburger2Category,
+    wrap2Category,
+    makarna2Category,
+    atistirmalik2Category,
   ];
 
-  static const List<MenuProduct> products = [
+  /// The raw, hand-authored product literals — never read directly outside
+  /// this class. [products] is the real public surface: it layers the
+  /// 2026-10-30 product-configurator's shared modifier groups (Bowl carb/
+  /// salad/pickle/extras on `cat_bowl2`, Patates/Ketçap&Mayonez on
+  /// `cat_hamburger2`/`cat_wrap2`, the cross-sell sauce group on every
+  /// product) on top, so none of the ~190 literals below need editing by
+  /// hand to carry them.
+  static const List<MenuProduct> _rawProducts = [
     // --- Bowl (16) ---
     MenuProduct(
       id: 'prod_mexifit_bowl',
@@ -791,7 +885,7 @@ abstract final class AbakusMenuCatalog {
       imageKey: 'patates-kizartmasi',
     ),
 
-    // --- İçecekler (4) ---
+    // --- İçecekler (8) ---
     MenuProduct(
       id: 'prod_acili_ayran',
       categoryId: 'cat_icecekler',
@@ -825,5 +919,979 @@ abstract final class AbakusMenuCatalog {
       basePrice: 80,
       imageKey: 'cocacola',
     ),
+    // 2026-10-30 — product owner's explicit cross-sell drink additions
+    // (exact name/price given directly, not sourced/derived).
+    MenuProduct(
+      id: 'prod_fuse_tea_seftali',
+      categoryId: 'cat_icecekler',
+      name: 'Fuse Tea Şeftali / Soğuk Çay',
+      description: '',
+      basePrice: 50,
+      imageKey: 'fuse-tea-seftali',
+    ),
+    MenuProduct(
+      id: 'prod_fuse_tea_limon',
+      categoryId: 'cat_icecekler',
+      name: 'Fuse Tea Limon / Soğuk Çay',
+      description: '',
+      basePrice: 50,
+      imageKey: 'fuse-tea-limon',
+    ),
+    MenuProduct(
+      id: 'prod_su_330',
+      categoryId: 'cat_icecekler',
+      name: 'Su (330ml Cam / Pet)',
+      description: '',
+      basePrice: 20,
+      imageKey: 'su-330ml',
+    ),
+    MenuProduct(
+      id: 'prod_feslegenli_ayran',
+      categoryId: 'cat_icecekler',
+      name: 'Ev Yapımı Fesleğenli Ayran',
+      description: '',
+      basePrice: 45,
+      imageKey: 'feslegenli-ayran',
+    ),
+
+    // === 2026-10-28 PDF menu refresh — the real, currently-live menu ===
+    // Transcribed verbatim from the restaurant's own finalized PDF menu.
+    // Where the PDF gave no ingredient breakdown (Salatalar onward,
+    // allergens beyond what's noted, or a gram/piece portion), the field
+    // is left empty/null rather than invented — see each category's own
+    // comment below.
+
+    // --- Kahvaltı (3) ---
+    MenuProduct(
+      id: 'prod_kahvalti_clasico',
+      categoryId: 'cat_kahvalti',
+      name: 'Clasico',
+      description: 'Mevsim Salata, Zeytin, Ceviz, Haşlanmış Yumurta, Beyaz '
+          'Peynir, Izgara Kapya Biber, Avokado, Çeri Domates, Salatalık.',
+      basePrice: 650,
+      imageKey: 'kahvalti-clasico',
+      // 2026-10-28 refresh — provisional "Çok Satanlar" pick, one per new
+      // category; the PDF source didn't name featured items, so this is a
+      // judgment call pending the owner's own choice.
+      isFeatured: true,
+      nutrition: ProductNutrition(calories: 610),
+      allergens: ['yumurta', 'ceviz'],
+    ),
+    MenuProduct(
+      id: 'prod_kahvalti_steak',
+      categoryId: 'cat_kahvalti',
+      name: 'Steak',
+      description: 'Roka Salata, Dana Antrikot Füme, Omlet, Avokado, Beyaz '
+          'Peynir, Izgara Kapya Biber, Zeytin.',
+      basePrice: 780,
+      imageKey: 'kahvalti-steak',
+      nutrition: ProductNutrition(calories: 780),
+      allergens: ['süt', 'yumurta'],
+    ),
+    MenuProduct(
+      id: 'prod_kahvalti_salmon',
+      categoryId: 'cat_kahvalti',
+      name: 'Salmon',
+      description: 'Roka Salata, Salatalık, Labne, Avokado, Izgara Kapya '
+          'Biber, Kabak Çekirdeği İçi, Kapari, Zeytin, Somon Füme, '
+          'Dereotu, Zeytinyağ Limon.',
+      basePrice: 860,
+      imageKey: 'kahvalti-salmon',
+      nutrition: ProductNutrition(calories: 520),
+    ),
+
+    // --- Tartineler (5) ---
+    MenuProduct(
+      id: 'prod_tartine_pollo_croccante',
+      categoryId: 'cat_tartine',
+      name: 'Pollo Croccante',
+      description: 'Çıtır Tavuk, Cheddar Peyniri, Ballı Hardal, Marul, '
+          'Kornişon Turşu, Ekşi Mayalı Ekmek.',
+      basePrice: 450,
+      imageKey: 'tartine-pollo-croccante',
+      nutrition: ProductNutrition(calories: 620),
+      allergens: ['gluten', 'süt', 'yumurta', 'hardal'],
+    ),
+    MenuProduct(
+      id: 'prod_tartine_verde_velluto',
+      categoryId: 'cat_tartine',
+      name: 'Verde Velluto',
+      description: 'Avokado Ezmesi, Çırpılmış Yumurta, Hindi Füme, Mevsim '
+          'Yeşillikleri, Cherry Domates, Ekşi Mayalı Ekmek.',
+      basePrice: 560,
+      imageKey: 'tartine-verde-velluto',
+      nutrition: ProductNutrition(calories: 500),
+      allergens: ['gluten', 'yumurta'],
+    ),
+    MenuProduct(
+      id: 'prod_tartine_rosso_mattino',
+      categoryId: 'cat_tartine',
+      name: 'Rosso Mattino',
+      description: 'Dana Antrikot Füme, Çırpılmış Yumurta, Labne & '
+          'Parmesan, Mevsim Yeşillikleri, Cherry Domates, Ekşi Mayalı '
+          'Ekmek.',
+      basePrice: 780,
+      imageKey: 'tartine-rosso-mattino',
+      nutrition: ProductNutrition(calories: 580),
+      allergens: ['gluten', 'süt', 'yumurta'],
+    ),
+    MenuProduct(
+      id: 'prod_tartine_sole_di_salmone',
+      categoryId: 'cat_tartine',
+      name: 'Sole di Salmone',
+      description: 'Somon Füme, Avokado, Haşlanmış Yumurta, Labne, Kapari, '
+          'Dereotu, Ekşi Mayalı Ekmek.',
+      basePrice: 860,
+      imageKey: 'tartine-sole-di-salmone',
+      nutrition: ProductNutrition(calories: 540),
+      allergens: ['gluten', 'süt', 'yumurta', 'balık'],
+    ),
+    MenuProduct(
+      id: 'prod_tartine_trio_di_mare',
+      categoryId: 'cat_tartine',
+      name: 'Trio di Mare',
+      description: 'Somon Füme, Labne, Kapari, Dereotu, Ekşi Mayalı Ekmek.',
+      basePrice: 920,
+      imageKey: 'tartine-trio-di-mare',
+      isFeatured: true,
+      nutrition: ProductNutrition(calories: 650),
+      allergens: ['gluten', 'süt', 'balık'],
+    ),
+
+    // --- Bowl'lar (21) --- Her kasede ortak baz: Mevsim salata, susamlı
+    // çörekotlu salatalık, mor lahana turşusu, mısır, basmati pirinç
+    // pilavı — PDF'de ayrı yazılmadığı için her ürün açıklamasına
+    // tekrarlanmıyor, bu yorumda bir kez belirtiliyor.
+    MenuProduct(
+      id: 'prod_bowl2_tatli_eksi_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Tatlı Ekşi Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 520,
+      imageKey: 'bowl2-tatli-eksi-tavuk',
+      nutrition: ProductNutrition(calories: 560),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_tatli_aci_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Tatlı Acı Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 520,
+      imageKey: 'bowl2-tatli-aci-tavuk',
+      nutrition: ProductNutrition(calories: 580),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_kremali_kekikli_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Kremalı Kekikli Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 500,
+      imageKey: 'bowl2-kremali-kekikli-tavuk',
+      nutrition: ProductNutrition(calories: 510),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_barbeku_soslu_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Barbekü Soslu Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 520,
+      imageKey: 'bowl2-barbeku-soslu-tavuk',
+      nutrition: ProductNutrition(calories: 590),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_aci_soslu_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Acı Soslu Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 520,
+      imageKey: 'bowl2-aci-soslu-tavuk',
+      nutrition: ProductNutrition(calories: 570),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_soya_soslu_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Soya Soslu Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 520,
+      imageKey: 'bowl2-soya-soslu-tavuk',
+      nutrition: ProductNutrition(calories: 560),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_teriyaki_soslu_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Teriyaki Soslu Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 540,
+      imageKey: 'bowl2-teriyaki-soslu-tavuk',
+      nutrition: ProductNutrition(calories: 600),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_kori_soslu_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Köri Soslu Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 520,
+      imageKey: 'bowl2-kori-soslu-tavuk',
+      nutrition: ProductNutrition(calories: 560),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_kremali_mantarli_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Kremalı Mantarlı Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 520,
+      imageKey: 'bowl2-kremali-mantarli-tavuk',
+      nutrition: ProductNutrition(calories: 490),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_kremali_pesto_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Kremalı Pesto Soslu Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 520,
+      imageKey: 'bowl2-kremali-pesto-tavuk',
+      nutrition: ProductNutrition(calories: 540),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_izgara_tavuk_gogsu',
+      categoryId: 'cat_bowl2',
+      name: 'Izgara Tavuk Göğsü Bowl',
+      description: '150g Tavuk.',
+      basePrice: 450,
+      imageKey: 'bowl2-izgara-tavuk-gogsu',
+      nutrition: ProductNutrition(calories: 500),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_izgara_tavuk_pirzola',
+      categoryId: 'cat_bowl2',
+      name: 'Izgara Tavuk Pirzola Bowl',
+      description: '150g Tavuk.',
+      basePrice: 450,
+      imageKey: 'bowl2-izgara-tavuk-pirzola',
+      nutrition: ProductNutrition(calories: 450),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_citir_tavuk',
+      categoryId: 'cat_bowl2',
+      name: 'Çıtır Tavuk Bowl',
+      description: '150g Tavuk.',
+      basePrice: 450,
+      imageKey: 'bowl2-citir-tavuk',
+      nutrition: ProductNutrition(calories: 570),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_aci_soslu_dana_bonfile',
+      categoryId: 'cat_bowl2',
+      name: 'Acı Soslu Dana Bonfile Bowl',
+      description: '150g Bonfile.',
+      basePrice: 750,
+      imageKey: 'bowl2-aci-soslu-dana-bonfile',
+      nutrition: ProductNutrition(calories: 680),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_izgara_anne_koftesi',
+      categoryId: 'cat_bowl2',
+      name: 'Izgara Anne Köftesi Bowl',
+      description: '150g Köfte.',
+      basePrice: 550,
+      imageKey: 'bowl2-izgara-anne-koftesi',
+      nutrition: ProductNutrition(calories: 780),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_izgara_bonfile',
+      categoryId: 'cat_bowl2',
+      name: 'Izgara Bonfile Bowl',
+      description: '150g Bonfile.',
+      basePrice: 800,
+      imageKey: 'bowl2-izgara-bonfile',
+      nutrition: ProductNutrition(calories: 700),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_izgara_somon',
+      categoryId: 'cat_bowl2',
+      name: 'Izgara Somon Bowl',
+      description: '120-150g Somon.',
+      basePrice: 850,
+      imageKey: 'bowl2-izgara-somon',
+      isFeatured: true,
+      nutrition: ProductNutrition(calories: 680),
+      portionLabel: '120-150g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_somon_fume',
+      categoryId: 'cat_bowl2',
+      name: 'Somon Füme Bowl',
+      description: '100g Somon Füme.',
+      basePrice: 900,
+      imageKey: 'bowl2-somon-fume',
+      nutrition: ProductNutrition(calories: 650),
+      portionLabel: '100g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_ton_baligi',
+      categoryId: 'cat_bowl2',
+      name: 'Ton Balığı Bowl',
+      description: '120g Ton Balığı.',
+      basePrice: 520,
+      imageKey: 'bowl2-ton-baligi',
+      nutrition: ProductNutrition(calories: 610),
+      portionLabel: '120g',
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_falafel',
+      categoryId: 'cat_bowl2',
+      name: 'Falafel Bowl',
+      description: 'Falafel.',
+      basePrice: 450,
+      imageKey: 'bowl2-falafel',
+      nutrition: ProductNutrition(calories: 720),
+    ),
+    MenuProduct(
+      id: 'prod_bowl2_izgara_sebze_mix',
+      categoryId: 'cat_bowl2',
+      name: 'Izgara Sebze Mix Bowl',
+      description: 'Izgara Sebze Mix.',
+      basePrice: 450,
+      imageKey: 'bowl2-izgara-sebze-mix',
+      nutrition: ProductNutrition(calories: 500),
+    ),
+
+    // --- Tavalar (20) --- Hepsi mevsim salata ve basmati pilav ile servis
+    // edilir (PDF notu, her ürün açıklamasında tekrarlanmıyor).
+    MenuProduct(
+      id: 'prod_tava_citir_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Çıtır Tavuk Tava',
+      description: '',
+      basePrice: 430,
+      imageKey: 'tava-citir-tavuk',
+      nutrition: ProductNutrition(calories: 780),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_tatli_eksi_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Tatlı Ekşi Tavuk Tava',
+      description: '',
+      basePrice: 520,
+      imageKey: 'tava-tatli-eksi-tavuk',
+      nutrition: ProductNutrition(calories: 720),
+      portionLabel: '200g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_kremali_pestolu_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Kremalı Pestolu Tavuk Tava',
+      description: '',
+      basePrice: 520,
+      imageKey: 'tava-kremali-pestolu-tavuk',
+      nutrition: ProductNutrition(calories: 850),
+      portionLabel: '200g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_kremali_mantarli_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Kremalı Mantarlı Tavuk Tava',
+      description: '',
+      basePrice: 520,
+      imageKey: 'tava-kremali-mantarli-tavuk',
+      nutrition: ProductNutrition(calories: 820),
+      portionLabel: '200g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_izgara_tavuk_gogsu',
+      categoryId: 'cat_tava',
+      name: 'Izgara Tavuk Göğsü Tava',
+      description: '',
+      basePrice: 430,
+      imageKey: 'tava-izgara-tavuk-gogsu',
+      nutrition: ProductNutrition(calories: 620),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_barbeku_soslu_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Barbekü Soslu Tavuk Tava',
+      description: '',
+      basePrice: 520,
+      imageKey: 'tava-barbeku-soslu-tavuk',
+      nutrition: ProductNutrition(calories: 780),
+      portionLabel: '200g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_tatli_aci_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Tatlı Acı Tavuk Tava',
+      description: '',
+      basePrice: 520,
+      imageKey: 'tava-tatli-aci-tavuk',
+      nutrition: ProductNutrition(calories: 720),
+      portionLabel: '200g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_izgara_tavuk_pirzola',
+      categoryId: 'cat_tava',
+      name: 'Izgara Tavuk Pirzola Tava',
+      description: '',
+      basePrice: 430,
+      imageKey: 'tava-izgara-tavuk-pirzola',
+      nutrition: ProductNutrition(calories: 850),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_kori_soslu_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Köri Soslu Tavuk Tava',
+      description: '',
+      basePrice: 520,
+      imageKey: 'tava-kori-soslu-tavuk',
+      nutrition: ProductNutrition(calories: 820),
+      portionLabel: '200g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_soya_soslu_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Soya Soslu Tavuk Tava',
+      description: '',
+      basePrice: 500,
+      imageKey: 'tava-soya-soslu-tavuk',
+      nutrition: ProductNutrition(calories: 620),
+      portionLabel: '200g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_acili_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Acılı Tavuk Tava',
+      description: '',
+      basePrice: 520,
+      imageKey: 'tava-acili-tavuk',
+      nutrition: ProductNutrition(calories: 780),
+      portionLabel: '200g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_kremali_kekikli_tavuk',
+      categoryId: 'cat_tava',
+      name: 'Kremalı Kekikli Tavuk Tava',
+      description: '',
+      basePrice: 480,
+      imageKey: 'tava-kremali-kekikli-tavuk',
+      nutrition: ProductNutrition(calories: 720),
+      portionLabel: '200g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_ton_baligi',
+      categoryId: 'cat_tava',
+      name: 'Ton Balığı Tava',
+      description: '',
+      basePrice: 530,
+      imageKey: 'tava-ton-baligi',
+      nutrition: ProductNutrition(calories: 850),
+      portionLabel: '120g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_somon_fume',
+      categoryId: 'cat_tava',
+      name: 'Somon Füme Tava',
+      description: '',
+      basePrice: 850,
+      imageKey: 'tava-somon-fume',
+      nutrition: ProductNutrition(calories: 820),
+      portionLabel: '100g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_izgara_somon',
+      categoryId: 'cat_tava',
+      name: 'Izgara Somon Tava',
+      description: '',
+      basePrice: 850,
+      imageKey: 'tava-izgara-somon',
+      nutrition: ProductNutrition(calories: 620),
+      portionLabel: '120g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_anne_koftesi',
+      categoryId: 'cat_tava',
+      name: 'Anne Köftesi Tava',
+      description: '',
+      basePrice: 520,
+      imageKey: 'tava-anne-koftesi',
+      nutrition: ProductNutrition(calories: 780),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_izgara_bonfile',
+      categoryId: 'cat_tava',
+      name: 'Izgara Bonfile Tava',
+      description: '',
+      basePrice: 850,
+      imageKey: 'tava-izgara-bonfile',
+      nutrition: ProductNutrition(calories: 720),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_acili_bonfile',
+      categoryId: 'cat_tava',
+      name: 'Acılı Bonfile Tava',
+      description: '',
+      basePrice: 900,
+      imageKey: 'tava-acili-bonfile',
+      isFeatured: true,
+      nutrition: ProductNutrition(calories: 850),
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_tava_citir_falafel',
+      categoryId: 'cat_tava',
+      name: 'Çıtır Falafel Tava',
+      description: '',
+      basePrice: 480,
+      imageKey: 'tava-citir-falafel',
+      nutrition: ProductNutrition(calories: 820),
+      portionLabel: '4 adet',
+    ),
+    MenuProduct(
+      id: 'prod_tava_izgara_sebze_mix',
+      categoryId: 'cat_tava',
+      name: 'Izgara Sebze Mix Tava',
+      description: '',
+      basePrice: 450,
+      imageKey: 'tava-izgara-sebze-mix',
+      nutrition: ProductNutrition(calories: 620),
+      portionLabel: '150g',
+    ),
+
+    // --- Salatalar (9) --- PDF, bu kategoriden itibaren malzeme/içerik
+    // dökümü vermedi (sadece isim/fiyat/kalori) — description bu yüzden
+    // bilerek boş bırakıldı, uydurulmadı.
+    MenuProduct(
+      id: 'prod_salata2_veggie',
+      categoryId: 'cat_salata2',
+      name: 'Veggie Salad',
+      description: '',
+      basePrice: 550,
+      imageKey: 'salata2-veggie',
+      nutrition: ProductNutrition(calories: 520),
+    ),
+    MenuProduct(
+      id: 'prod_salata2_grill_caesar',
+      categoryId: 'cat_salata2',
+      name: 'Grill Caesar Salad',
+      description: '',
+      basePrice: 470,
+      imageKey: 'salata2-grill-caesar',
+      nutrition: ProductNutrition(calories: 680),
+    ),
+    MenuProduct(
+      id: 'prod_salata2_crispy_caesar',
+      categoryId: 'cat_salata2',
+      name: 'Crispy Caesar Salad',
+      description: '',
+      basePrice: 450,
+      imageKey: 'salata2-crispy-caesar',
+      nutrition: ProductNutrition(calories: 720),
+    ),
+    MenuProduct(
+      id: 'prod_salata2_moms_chicken',
+      categoryId: 'cat_salata2',
+      name: "Mom's Chicken Salad",
+      description: '',
+      basePrice: 450,
+      imageKey: 'salata2-moms-chicken',
+      nutrition: ProductNutrition(calories: 650),
+    ),
+    MenuProduct(
+      id: 'prod_salata2_crispy_falafel',
+      categoryId: 'cat_salata2',
+      name: 'Crispy Falafel Salad',
+      description: '',
+      basePrice: 450,
+      imageKey: 'salata2-crispy-falafel',
+      nutrition: ProductNutrition(calories: 690),
+    ),
+    MenuProduct(
+      id: 'prod_salata2_smoked_salmon',
+      categoryId: 'cat_salata2',
+      name: 'Smoked Salmon Salad',
+      description: '',
+      basePrice: 850,
+      imageKey: 'salata2-smoked-salmon',
+      isFeatured: true,
+      nutrition: ProductNutrition(calories: 560),
+    ),
+    MenuProduct(
+      id: 'prod_salata2_ton_ton',
+      categoryId: 'cat_salata2',
+      name: 'Ton Ton Salad',
+      description: '',
+      basePrice: 560,
+      imageKey: 'salata2-ton-ton',
+      nutrition: ProductNutrition(calories: 540),
+    ),
+    MenuProduct(
+      id: 'prod_salata2_ananas',
+      categoryId: 'cat_salata2',
+      name: 'Ananas Salad',
+      description: '',
+      basePrice: 530,
+      imageKey: 'salata2-ananas',
+      nutrition: ProductNutrition(calories: 430),
+    ),
+    MenuProduct(
+      id: 'prod_salata2_dana_bonfile',
+      categoryId: 'cat_salata2',
+      name: 'Dana Bonfile Salad',
+      description: '',
+      basePrice: 850,
+      imageKey: 'salata2-dana-bonfile',
+      nutrition: ProductNutrition(calories: 760),
+    ),
+
+    // --- Burgerler (9) --- Patates ile servis edilir (PDF notu).
+    // Malzeme dökümü verilmedi — description bilerek boş.
+    MenuProduct(
+      id: 'prod_burger2_double_chicken',
+      categoryId: 'cat_hamburger2',
+      name: 'Double Chicken Burger',
+      description: '',
+      basePrice: 650,
+      imageKey: 'burger2-double-chicken',
+      nutrition: ProductNutrition(calories: 820),
+    ),
+    MenuProduct(
+      id: 'prod_burger2_izgara_tavuk',
+      categoryId: 'cat_hamburger2',
+      name: 'Izgara Tavuk Burger',
+      description: '',
+      basePrice: 600,
+      imageKey: 'burger2-izgara-tavuk',
+      nutrition: ProductNutrition(calories: 760),
+    ),
+    MenuProduct(
+      id: 'prod_burger2_falafel',
+      categoryId: 'cat_hamburger2',
+      name: 'Falafel Burger',
+      description: '',
+      basePrice: 600,
+      imageKey: 'burger2-falafel',
+      nutrition: ProductNutrition(calories: 780),
+    ),
+    MenuProduct(
+      id: 'prod_burger2_tripoli',
+      categoryId: 'cat_hamburger2',
+      name: 'Tripoli Burger',
+      description: '',
+      basePrice: 850,
+      imageKey: 'burger2-tripoli',
+      nutrition: ProductNutrition(calories: 900),
+    ),
+    MenuProduct(
+      id: 'prod_burger2_swiss_mushroom',
+      categoryId: 'cat_hamburger2',
+      name: 'Swiss Mushroom Burger',
+      description: '',
+      basePrice: 780,
+      imageKey: 'burger2-swiss-mushroom',
+      nutrition: ProductNutrition(calories: 880),
+    ),
+    MenuProduct(
+      id: 'prod_burger2_steak',
+      categoryId: 'cat_hamburger2',
+      name: 'Steak Burger',
+      description: '',
+      basePrice: 800,
+      imageKey: 'burger2-steak',
+      isFeatured: true,
+      nutrition: ProductNutrition(calories: 950),
+    ),
+    MenuProduct(
+      id: 'prod_burger2_mexico_beef',
+      categoryId: 'cat_hamburger2',
+      name: 'Mexico Beef Burger',
+      description: '',
+      basePrice: 900,
+      imageKey: 'burger2-mexico-beef',
+      nutrition: ProductNutrition(calories: 920),
+    ),
+    MenuProduct(
+      id: 'prod_burger2_onion',
+      categoryId: 'cat_hamburger2',
+      name: 'Onion Burger',
+      description: '',
+      basePrice: 720,
+      imageKey: 'burger2-onion',
+      nutrition: ProductNutrition(calories: 900),
+    ),
+    MenuProduct(
+      id: 'prod_burger2_smoke_house',
+      categoryId: 'cat_hamburger2',
+      name: 'Smoke House Burger',
+      description: '',
+      basePrice: 850,
+      imageKey: 'burger2-smoke-house',
+      nutrition: ProductNutrition(calories: 980),
+    ),
+
+    // --- Wrap'ler (9) --- Patates ile servis edilir (PDF notu). PDF kalori
+    // ve malzeme dökümü vermedi — nutrition null, description boş.
+    MenuProduct(
+      id: 'prod_wrap2_asian_chicken',
+      categoryId: 'cat_wrap2',
+      name: 'Asian Chicken Wrap',
+      description: '',
+      basePrice: 550,
+      imageKey: 'wrap2-asian-chicken',
+    ),
+    MenuProduct(
+      id: 'prod_wrap2_caesar',
+      categoryId: 'cat_wrap2',
+      name: 'Caesar Wrap',
+      description: '',
+      basePrice: 550,
+      imageKey: 'wrap2-caesar',
+    ),
+    MenuProduct(
+      id: 'prod_wrap2_citir_tavuk',
+      categoryId: 'cat_wrap2',
+      name: 'Çıtır Tavuk Wrap',
+      description: '',
+      basePrice: 550,
+      imageKey: 'wrap2-citir-tavuk',
+    ),
+    MenuProduct(
+      id: 'prod_wrap2_citir_falafel',
+      categoryId: 'cat_wrap2',
+      name: 'Çıtır Falafel Wrap',
+      description: '',
+      basePrice: 550,
+      imageKey: 'wrap2-citir-falafel',
+    ),
+    MenuProduct(
+      id: 'prod_wrap2_ton_ton',
+      categoryId: 'cat_wrap2',
+      name: 'Ton Ton Wrap',
+      description: '',
+      basePrice: 600,
+      imageKey: 'wrap2-ton-ton',
+    ),
+    MenuProduct(
+      id: 'prod_wrap2_kahvalti',
+      categoryId: 'cat_wrap2',
+      name: 'Kahvaltı Wrap',
+      description: '',
+      basePrice: 530,
+      imageKey: 'wrap2-kahvalti',
+    ),
+    MenuProduct(
+      id: 'prod_wrap2_kofte',
+      categoryId: 'cat_wrap2',
+      name: 'Köfte Wrap',
+      description: '',
+      basePrice: 680,
+      imageKey: 'wrap2-kofte',
+    ),
+    MenuProduct(
+      id: 'prod_wrap2_acili_bonfile',
+      categoryId: 'cat_wrap2',
+      name: 'Acılı Bonfile Wrap',
+      description: '',
+      basePrice: 850,
+      imageKey: 'wrap2-acili-bonfile',
+    ),
+    MenuProduct(
+      id: 'prod_wrap2_asian_steak',
+      categoryId: 'cat_wrap2',
+      name: 'Asian Steak Wrap',
+      description: '',
+      basePrice: 850,
+      imageKey: 'wrap2-asian-steak',
+      isFeatured: true,
+    ),
+
+    // --- Makarnalar (8) --- PDF kalori ve malzeme dökümü vermedi.
+    MenuProduct(
+      id: 'prod_makarna2_citir_tavuk_fettuccine',
+      categoryId: 'cat_makarna2',
+      name: 'Çıtır Tavuk Fettuccine',
+      description: '',
+      basePrice: 450,
+      imageKey: 'makarna2-citir-tavuk-fettuccine',
+    ),
+    MenuProduct(
+      id: 'prod_makarna2_kofte_fettuccine',
+      categoryId: 'cat_makarna2',
+      name: 'Köfte Fettuccine',
+      description: '',
+      basePrice: 550,
+      imageKey: 'makarna2-kofte-fettuccine',
+    ),
+    MenuProduct(
+      id: 'prod_makarna2_dana_bonfile_fettuccine',
+      categoryId: 'cat_makarna2',
+      name: 'Dana Bonfile Fettuccine',
+      description: '',
+      basePrice: 750,
+      imageKey: 'makarna2-dana-bonfile-fettuccine',
+      isFeatured: true,
+    ),
+    MenuProduct(
+      id: 'prod_makarna2_fettuccine_chicken_alfredo',
+      categoryId: 'cat_makarna2',
+      name: 'Fettuccine Chicken Alfredo',
+      description: '',
+      basePrice: 480,
+      imageKey: 'makarna2-fettuccine-chicken-alfredo',
+    ),
+    MenuProduct(
+      id: 'prod_makarna2_pipette_kofte',
+      categoryId: 'cat_makarna2',
+      name: 'Pipette Köfte',
+      description: '',
+      basePrice: 520,
+      imageKey: 'makarna2-pipette-kofte',
+    ),
+    MenuProduct(
+      id: 'prod_makarna2_pipette_dana_bonfile',
+      categoryId: 'cat_makarna2',
+      name: 'Pipette Dana Bonfile',
+      description: '',
+      basePrice: 730,
+      imageKey: 'makarna2-pipette-dana-bonfile',
+    ),
+    MenuProduct(
+      id: 'prod_makarna2_pipette_citir_tavuk',
+      categoryId: 'cat_makarna2',
+      name: 'Pipette Çıtır Tavuk',
+      description: '',
+      basePrice: 430,
+      imageKey: 'makarna2-pipette-citir-tavuk',
+    ),
+    MenuProduct(
+      id: 'prod_makarna2_pipette_izgara_tavuk',
+      categoryId: 'cat_makarna2',
+      name: 'Pipette Izgara Tavuk',
+      description: '',
+      basePrice: 430,
+      imageKey: 'makarna2-pipette-izgara-tavuk',
+    ),
+
+    // --- Aperatifler (8) --- PDF kalori vermedi, porsiyon bilgisi verdi.
+    MenuProduct(
+      id: 'prod_aperatif_patates_kizartmasi',
+      categoryId: 'cat_atistirmalik2',
+      name: 'Patates Kızartması',
+      description: '',
+      basePrice: 250,
+      imageKey: 'aperatif-patates-kizartmasi',
+      portionLabel: '120g',
+    ),
+    MenuProduct(
+      id: 'prod_aperatif_tatli_patates',
+      categoryId: 'cat_atistirmalik2',
+      name: 'Tatlı Patates',
+      description: '',
+      basePrice: 450,
+      imageKey: 'aperatif-tatli-patates',
+      portionLabel: '120g',
+    ),
+    MenuProduct(
+      id: 'prod_aperatif_truflu_patates',
+      categoryId: 'cat_atistirmalik2',
+      name: 'Trüflü Patates',
+      description: '',
+      basePrice: 350,
+      imageKey: 'aperatif-truflu-patates',
+      portionLabel: '120g',
+    ),
+    MenuProduct(
+      id: 'prod_aperatif_cheddarli_patates',
+      categoryId: 'cat_atistirmalik2',
+      name: 'Cheddarlı Patates',
+      description: '',
+      basePrice: 350,
+      imageKey: 'aperatif-cheddarli-patates',
+      portionLabel: '120g',
+    ),
+    MenuProduct(
+      id: 'prod_aperatif_citir_tavuk',
+      categoryId: 'cat_atistirmalik2',
+      name: 'Çıtır Tavuk',
+      description: '',
+      basePrice: 300,
+      imageKey: 'aperatif-citir-tavuk',
+      portionLabel: '150g',
+    ),
+    MenuProduct(
+      id: 'prod_aperatif_sogan_halkasi',
+      categoryId: 'cat_atistirmalik2',
+      name: 'Soğan Halkası',
+      description: '',
+      basePrice: 250,
+      imageKey: 'aperatif-sogan-halkasi',
+      portionLabel: '6 adet',
+    ),
+    MenuProduct(
+      id: 'prod_aperatif_citir_falafel',
+      categoryId: 'cat_atistirmalik2',
+      name: 'Çıtır Falafel',
+      description: '',
+      basePrice: 300,
+      imageKey: 'aperatif-citir-falafel',
+      portionLabel: '4 adet',
+    ),
+    MenuProduct(
+      id: 'prod_aperatif_general_tso',
+      categoryId: 'cat_atistirmalik2',
+      name: 'General TSO',
+      description: '',
+      basePrice: 350,
+      imageKey: 'aperatif-general-tso',
+      isFeatured: true,
+      portionLabel: '200g',
+    ),
   ];
+
+  /// Real public catalog — [_rawProducts] plus the 2026-10-30 universal
+  /// modifier-group layering (see [_rawProducts]'s own doc comment).
+  /// Recomputed on each access (not `const`, since `MenuProduct.copyWith`
+  /// isn't a const constructor) — cheap enough for ~190 products, and the
+  /// only real callers (`menu_catalog_provider.dart`'s `Provider`s) cache
+  /// the result via Riverpod rather than re-invoking this per rebuild.
+  static List<MenuProduct> get products => [
+        for (final product in _rawProducts)
+          product.copyWith(
+            modifierGroups: [
+              ..._standardModifierGroupsFor(product.categoryId),
+              StandardModifierGroups.crossSellSauceGroup,
+            ],
+            removableIngredientsOverride: product.categoryId == bowl2Category.id
+                ? StandardModifierGroups.bowlRemovableIngredients
+                : null,
+          ),
+      ];
+
+  static List<ModifierGroup> _standardModifierGroupsFor(String categoryId) {
+    if (categoryId == bowl2Category.id) {
+      return StandardModifierGroups.bowlModifierGroups;
+    }
+    if (categoryId == hamburger2Category.id || categoryId == wrap2Category.id) {
+      return StandardModifierGroups.burgerWrapModifierGroups;
+    }
+    return const [];
+  }
 }

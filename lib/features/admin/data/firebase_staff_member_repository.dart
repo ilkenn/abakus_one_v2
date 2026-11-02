@@ -1,5 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
+import '../../../core/services/functions/rest_callable_client.dart';
 import '../../pos/domain/authorization/staff_role.dart';
 import '../domain/staff/staff_member.dart';
 import '../domain/staff/staff_member_status.dart';
@@ -46,20 +49,49 @@ class StaffDirectoryException implements Exception {
 /// fabricated name — except for a just-[register]ed member within the
 /// same session, where the real name entered at registration time is used.
 class FirebaseStaffMemberRepository implements StaffMemberRepository {
-  FirebaseStaffMemberRepository({required String Function() organizationId})
-      : _organizationId = organizationId;
+  FirebaseStaffMemberRepository({
+    required String Function() organizationId,
+    RestCallableClient? restClient,
+  })  : _organizationId = organizationId,
+        _restClient = restClient ?? RestCallableClient();
 
   final String Function() _organizationId;
+  final RestCallableClient _restClient;
   final Map<String, StaffMember> _cache = {};
-
-  functions.HttpsCallable _callable(String name) =>
-      functions.FirebaseFunctions.instance.httpsCallable(name);
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
     throw StaffDirectoryException(
       error.code,
       error.message ?? 'Beklenmeyen bir hata oluştu.',
     );
+  }
+
+  /// 2026-10-30 — same Windows REST-callable bridge as `trusted_device_
+  /// session_gateway.dart`/`pos_action_gateway.dart`/`entitlement_admin_
+  /// gateway.dart`, applied to the one remaining gateway still calling
+  /// native `cloud_functions` directly: `cloud_functions` has no Windows
+  /// plugin implementation at all, so every call here previously hung
+  /// indefinitely on Windows (`registerStaffMember`/`assignStaffRole`/
+  /// `grantStaffBranchAccess`/..., i.e. the whole "Personel" screen).
+  Future<Map<String, dynamic>> _call(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    final useRest = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+    if (useRest) {
+      try {
+        return await _restClient.call(name, data);
+      } on RestCallableException catch (error) {
+        throw StaffDirectoryException(error.code, error.message);
+      }
+    }
+    final callable = functions.FirebaseFunctions.instance.httpsCallable(name);
+    try {
+      final result = await callable.call<Map<String, dynamic>>(data);
+      return result.data;
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
   }
 
   StaffRole? _roleFromName(String name) {
@@ -99,17 +131,14 @@ class FirebaseStaffMemberRepository implements StaffMemberRepository {
 
   @override
   Future<List<StaffMember>> findAll() async {
-    try {
-      final result = await _callable('listStaffMembersForOrganization')
-          .call<Map<String, dynamic>>({'organizationId': _organizationId()});
-      final rawMembers = result.data['members'] as List;
-      return [
-        for (final raw in rawMembers)
-          _mapEntry(Map<String, dynamic>.from(raw as Map)),
-      ];
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('listStaffMembersForOrganization', {
+      'organizationId': _organizationId(),
+    });
+    final rawMembers = result['members'] as List;
+    return [
+      for (final raw in rawMembers)
+        _mapEntry(Map<String, dynamic>.from(raw as Map)),
+    ];
   }
 
   @override
@@ -135,26 +164,21 @@ class FirebaseStaffMemberRepository implements StaffMemberRepository {
     required String displayName,
     required String email,
   }) async {
-    try {
-      final result =
-          await _callable('registerStaffMember').call<Map<String, dynamic>>({
-        'organizationId': _organizationId(),
-        'email': email,
-      });
-      final uid = result.data['uid'] as String;
-      final member = StaffMember(
-        id: uid,
-        displayName: displayName,
-        authUid: uid,
-        organizationAccess: {_organizationId()},
-        createdAt: DateTime.now(),
-        revision: 1,
-      );
-      _cache[uid] = member;
-      return member;
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('registerStaffMember', {
+      'organizationId': _organizationId(),
+      'email': email,
+    });
+    final uid = result['uid'] as String;
+    final member = StaffMember(
+      id: uid,
+      displayName: displayName,
+      authUid: uid,
+      organizationAccess: {_organizationId()},
+      createdAt: DateTime.now(),
+      revision: 1,
+    );
+    _cache[uid] = member;
+    return member;
   }
 
   @override
@@ -217,11 +241,6 @@ class FirebaseStaffMemberRepository implements StaffMemberRepository {
     _cache[member.id] = member;
   }
 
-  Future<void> _dispatch(String name, Map<String, dynamic> data) async {
-    try {
-      await _callable(name).call<Map<String, dynamic>>(data);
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
-  }
+  Future<void> _dispatch(String name, Map<String, dynamic> data) =>
+      _call(name, data);
 }

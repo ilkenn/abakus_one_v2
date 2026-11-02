@@ -147,6 +147,7 @@ abstract final class RolePermissionMap {
     PosAuthorizedAction.manageInventory,
     PosAuthorizedAction.recordStockMovement,
     PosAuthorizedAction.approveStockCountAdjustment,
+    PosAuthorizedAction.manageMenu,
     PosAuthorizedAction.manageRecipes,
     PosAuthorizedAction.manageNutrition,
     PosAuthorizedAction.manageAllergens,

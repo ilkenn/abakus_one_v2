@@ -87,19 +87,25 @@ void main() {
   ) async {
     await pumpMenuScreen(tester);
 
+    // Kahvaltı/Tartineler: 2026-10-28 PDF refresh'inin ilk iki aktif
+    // kategorisi, kategori cip satirinda "Tümü"den sonra ilk gorunenler —
+    // kaydirmaya ihtiyac olmadan test edilebilir.
     expect(find.text('Tümü'), findsOneWidget);
-    expect(find.text('Bowl'), findsOneWidget);
-    expect(find.text('Hamburger'), findsOneWidget);
+    expect(find.text('Kahvaltı'), findsOneWidget);
+    expect(find.text('Tartineler'), findsOneWidget);
 
-    // Tumu seciliyken gercek bir Bowl urunu gorunur olmali.
-    expect(find.text('Mexifit Bowl'), findsOneWidget);
-
-    await tester.tap(find.text('Hamburger'));
+    await tester.tap(find.text('Kahvaltı'));
     await tester.pumpAndSettle();
 
-    // Hamburger'a gecince Bowl'a ozel urun artik gorunmemeli.
-    expect(find.text('Mexifit Bowl'), findsNothing);
-    expect(find.text('Mexico Burger'), findsOneWidget);
+    // Kahvaltı seciliyken gercek bir Kahvaltı urunu gorunur olmali.
+    expect(find.text('Clasico'), findsOneWidget);
+
+    await tester.tap(find.text('Tartineler'));
+    await tester.pumpAndSettle();
+
+    // Tartineler'e gecince Kahvaltı'ya ozel urun artik gorunmemeli.
+    expect(find.text('Clasico'), findsNothing);
+    expect(find.text('Pollo Croccante'), findsOneWidget);
   });
 
   testWidgets(
@@ -108,7 +114,12 @@ void main() {
     (tester) async {
       await pumpMenuScreen(tester);
 
-      await tester.tap(find.text('Mexifit Bowl'));
+      await tester.tap(find.text('Kahvaltı'));
+      await tester.pumpAndSettle();
+      final productCard = find.text('Clasico');
+      await tester.ensureVisible(productCard);
+      await tester.pumpAndSettle();
+      await tester.tap(productCard);
       await tester.pumpAndSettle();
 
       expect(find.byType(ProductDetailScreen), findsOneWidget);

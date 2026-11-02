@@ -17,6 +17,30 @@ abstract interface class OrderFirestoreClient {
 
   Future<List<Map<String, dynamic>>> getAllOrders();
 
+  /// Every order for [branchId] under [organizationId] — the admin
+  /// Siparişler screen's read path. [organizationId] is a required
+  /// equality filter, not optional: without it, Cloud Firestore can't
+  /// statically prove every possible result of a `branchId`-only query
+  /// satisfies `orders`' `firestore.rules` staff branch
+  /// (`isOrgMember(resource.data.organizationId) && hasBranchAccess(...)`)
+  /// and rejects the whole query outright — the exact regression found and
+  /// fixed in `FirestoreKitchenTicketRepository`/
+  /// `FirestoreKitchenWorkItemRepository` on 2026-10-27; applied here from
+  /// the start rather than repeated a third time.
+  Future<List<Map<String, dynamic>>> queryOrdersByBranch({
+    required String organizationId,
+    required String branchId,
+  });
+
+  /// A live view of [queryOrdersByBranch] — re-emits whenever the branch's
+  /// order set changes, so the admin Siparişler screen updates without a
+  /// manual refresh, mirroring `KitchenTicketRepository.watchActiveByBranch`'s
+  /// own contract.
+  Stream<List<Map<String, dynamic>>> watchOrdersByBranch({
+    required String organizationId,
+    required String branchId,
+  });
+
   /// A live view of [getOrder] for [orderId] — re-emits whenever the order
   /// document changes, so a customer/guest tracking screen can show a
   /// status change (e.g. `preparing` -> `ready`) without polling.
@@ -69,8 +93,41 @@ class DefaultOrderFirestoreClient implements OrderFirestoreClient {
     return [for (final doc in snapshot.docs) doc.data()];
   }
 
+  fs.Query<Map<String, dynamic>> _byBranchQuery({
+    required String organizationId,
+    required String branchId,
+  }) {
+    return _collection
+        .where('organizationId', isEqualTo: organizationId)
+        .where('branchId', isEqualTo: branchId);
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> queryOrdersByBranch({
+    required String organizationId,
+    required String branchId,
+  }) async {
+    final snapshot =
+        await _byBranchQuery(organizationId: organizationId, branchId: branchId)
+            .get();
+    return [for (final doc in snapshot.docs) doc.data()];
+  }
+
+  @override
+  Stream<List<Map<String, dynamic>>> watchOrdersByBranch({
+    required String organizationId,
+    required String branchId,
+  }) {
+    return _byBranchQuery(organizationId: organizationId, branchId: branchId)
+        .snapshots()
+        .map((snapshot) => [for (final doc in snapshot.docs) doc.data()]);
+  }
+
   @override
   Stream<Map<String, dynamic>?> watchOrder(String orderId) {
-    return _collection.doc(orderId).snapshots().map((snapshot) => snapshot.data());
+    return _collection
+        .doc(orderId)
+        .snapshots()
+        .map((snapshot) => snapshot.data());
   }
 }

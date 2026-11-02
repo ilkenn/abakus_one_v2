@@ -1,5 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
+import '../../../core/services/functions/rest_callable_client.dart';
 import '../../entitlements/domain/entitlement_module.dart';
 import '../../entitlements/domain/entitlement_scope_type.dart';
 import '../../entitlements/data/firebase_entitlement_grant_repository.dart';
@@ -52,7 +55,13 @@ abstract interface class EntitlementAdminGateway {
 }
 
 class FirebaseEntitlementAdminGateway implements EntitlementAdminGateway {
-  const FirebaseEntitlementAdminGateway();
+  FirebaseEntitlementAdminGateway({RestCallableClient? restClient})
+      : _restClient = restClient ?? RestCallableClient();
+
+  final RestCallableClient _restClient;
+
+  bool get _useRest =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
     throw EntitlementAdminException(
@@ -62,6 +71,24 @@ class FirebaseEntitlementAdminGateway implements EntitlementAdminGateway {
           ? Map<String, dynamic>.from(error.details as Map)
           : null,
     );
+  }
+
+  Future<void> _call(String name, Map<String, dynamic> data) async {
+    if (_useRest) {
+      try {
+        await _restClient.call(name, data);
+      } on RestCallableException catch (error) {
+        throw EntitlementAdminException(error.code, error.message);
+      }
+      return;
+    }
+    try {
+      await functions.FirebaseFunctions.instance
+          .httpsCallable(name)
+          .call<Map<String, dynamic>>(data);
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
   }
 
   @override
@@ -74,23 +101,17 @@ class FirebaseEntitlementAdminGateway implements EntitlementAdminGateway {
     DateTime? contractStartsAt,
     DateTime? contractEndsAt,
   }) async {
-    final callable =
-        functions.FirebaseFunctions.instance.httpsCallable('grantEntitlement');
-    try {
-      await callable.call<Map<String, dynamic>>({
-        'organizationId': organizationId,
-        'scopeType': entitlementScopeTypeToWire(scopeType),
-        'scopeId': scopeId,
-        'module': entitlementModuleToWire(module),
-        'initialStatus': asActiveImmediately ? 'active' : 'trial',
-        if (contractStartsAt != null)
-          'contractStartsAtIso': contractStartsAt.toIso8601String(),
-        if (contractEndsAt != null)
-          'contractEndsAtIso': contractEndsAt.toIso8601String(),
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('grantEntitlement', {
+      'organizationId': organizationId,
+      'scopeType': entitlementScopeTypeToWire(scopeType),
+      'scopeId': scopeId,
+      'module': entitlementModuleToWire(module),
+      'initialStatus': asActiveImmediately ? 'active' : 'trial',
+      if (contractStartsAt != null)
+        'contractStartsAtIso': contractStartsAt.toIso8601String(),
+      if (contractEndsAt != null)
+        'contractEndsAtIso': contractEndsAt.toIso8601String(),
+    });
   }
 
   @override
@@ -98,16 +119,10 @@ class FirebaseEntitlementAdminGateway implements EntitlementAdminGateway {
     required String entitlementId,
     required DateTime contractEndsAt,
   }) async {
-    final callable =
-        functions.FirebaseFunctions.instance.httpsCallable('renewEntitlement');
-    try {
-      await callable.call<Map<String, dynamic>>({
-        'entitlementId': entitlementId,
-        'contractEndsAtIso': contractEndsAt.toIso8601String(),
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('renewEntitlement', {
+      'entitlementId': entitlementId,
+      'contractEndsAtIso': contractEndsAt.toIso8601String(),
+    });
   }
 
   @override
@@ -116,21 +131,14 @@ class FirebaseEntitlementAdminGateway implements EntitlementAdminGateway {
     required String reasonMessage,
     List<EntitlementModule>? postGraceDisabledModules,
   }) async {
-    final callable = functions.FirebaseFunctions.instance
-        .httpsCallable('suspendEntitlement');
-    try {
-      await callable.call<Map<String, dynamic>>({
-        'entitlementId': entitlementId,
-        'reasonMessage': reasonMessage,
-        if (postGraceDisabledModules != null)
-          'postGraceDisabledModules': [
-            for (final m in postGraceDisabledModules)
-              entitlementModuleToWire(m),
-          ],
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('suspendEntitlement', {
+      'entitlementId': entitlementId,
+      'reasonMessage': reasonMessage,
+      if (postGraceDisabledModules != null)
+        'postGraceDisabledModules': [
+          for (final m in postGraceDisabledModules) entitlementModuleToWire(m),
+        ],
+    });
   }
 
   @override
@@ -138,16 +146,10 @@ class FirebaseEntitlementAdminGateway implements EntitlementAdminGateway {
     required String entitlementId,
     required String reasonMessage,
   }) async {
-    final callable =
-        functions.FirebaseFunctions.instance.httpsCallable('revokeEntitlement');
-    try {
-      await callable.call<Map<String, dynamic>>({
-        'entitlementId': entitlementId,
-        'reasonMessage': reasonMessage,
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('revokeEntitlement', {
+      'entitlementId': entitlementId,
+      'reasonMessage': reasonMessage,
+    });
   }
 }
 

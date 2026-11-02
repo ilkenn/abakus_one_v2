@@ -88,7 +88,8 @@ class FirebaseTakeawayOperationsGateway implements TakeawayOperationsGateway {
   }
 }
 
-class UnavailableTakeawayOperationsGateway implements TakeawayOperationsGateway {
+class UnavailableTakeawayOperationsGateway
+    implements TakeawayOperationsGateway {
   const UnavailableTakeawayOperationsGateway();
 
   @override

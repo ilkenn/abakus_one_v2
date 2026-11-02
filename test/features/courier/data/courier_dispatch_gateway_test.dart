@@ -19,7 +19,8 @@ void main() {
 
     test('assignCourierToOrder fails closed', () async {
       await expectLater(
-        gateway.assignCourierToOrder(orderId: 'order-1', courierId: 'courier-1'),
+        gateway.assignCourierToOrder(
+            orderId: 'order-1', courierId: 'courier-1'),
         throwsA(isA<CourierDispatchException>()),
       );
     });

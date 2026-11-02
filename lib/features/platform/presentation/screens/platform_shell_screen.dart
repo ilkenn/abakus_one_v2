@@ -9,6 +9,7 @@ import '../providers/platform_actor_session_provider.dart';
 import '../providers/platform_session_controller.dart';
 import 'platform_customer_directory_screen.dart';
 import 'platform_entitlement_console_screen.dart';
+import 'platform_maintenance_tools_screen.dart';
 import 'platform_monitoring_screen.dart';
 import 'platform_sign_in_screen.dart';
 import 'release_readiness_screen.dart';
@@ -47,7 +48,7 @@ class _PlatformShellScreenState extends ConsumerState<PlatformShellScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 6, vsync: this);
   }
 
   @override
@@ -114,6 +115,7 @@ class _PlatformShellScreenState extends ConsumerState<PlatformShellScreen>
             Tab(text: 'Mağaza Uyumluluğu'),
             Tab(text: 'Abonelikler'),
             Tab(text: 'Müşteriler'),
+            Tab(text: 'Bakım Araçları'),
           ],
         ),
       ),
@@ -126,6 +128,7 @@ class _PlatformShellScreenState extends ConsumerState<PlatformShellScreen>
             StoreComplianceScreen(),
             PlatformEntitlementConsoleScreen(),
             PlatformCustomerDirectoryScreen(),
+            PlatformMaintenanceToolsScreen(),
           ],
         ),
       ),

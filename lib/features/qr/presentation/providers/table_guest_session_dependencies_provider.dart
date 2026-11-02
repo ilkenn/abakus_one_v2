@@ -42,8 +42,7 @@ final openTableGuestSessionFromQrScanProvider =
 /// `tableGuestSessions` doc, so `TableContextBadge` can warn a browsing
 /// guest as soon as the session closes/expires, not only at checkout.
 final tableGuestSessionLivenessProvider =
-    StreamProvider.family<TableGuestSessionSnapshot?, String>(
-        (ref, sessionId) {
+    StreamProvider.family<TableGuestSessionSnapshot?, String>((ref, sessionId) {
   return ref
       .watch(tableGuestSessionFirestoreClientProvider)
       .watchById(sessionId);

@@ -172,7 +172,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.textContaining('Kapatılacak açık bir kasa oturumu'), findsOneWidget);
+    expect(find.textContaining('Kapatılacak açık bir kasa oturumu'),
+        findsOneWidget);
   });
 
   testWidgets(
@@ -185,7 +186,8 @@ void main() {
           drawerId: 'drawer-1',
           name: 'Ana Kasa',
           isActive: true,
-          openSession: CashOpenSessionSummary(sessionId: 'sess-1', status: 'approved'),
+          openSession:
+              CashOpenSessionSummary(sessionId: 'sess-1', status: 'approved'),
         ),
       ]
       ..sessionView = CashSessionView(
@@ -231,11 +233,13 @@ void main() {
 
     // Expected (BR-CASH-004 mirror): openingFloat 5000 + movements 10000 = 15000.
     expect(find.byKey(const Key('actualAmountField')), findsOneWidget);
-    await tester.enterText(find.byKey(const Key('actualAmountField')), '150.00');
+    await tester.enterText(
+        find.byKey(const Key('actualAmountField')), '150.00');
     await tester.pump();
     expect(find.textContaining('Tahmini Fark: Tam'), findsOneWidget);
 
-    await tester.enterText(find.byKey(const Key('actualAmountField')), '148.00');
+    await tester.enterText(
+        find.byKey(const Key('actualAmountField')), '148.00');
     await tester.pump();
     expect(find.textContaining('Tahmini Fark: Eksik'), findsOneWidget);
   });

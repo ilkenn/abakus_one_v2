@@ -97,8 +97,10 @@ void main() {
     await pumpScreen(
       tester,
       items: [
-        buildItem('healthy', reorderThreshold: Quantity.fromWhole(100, InventoryUnit.gram)),
-        buildItem('depleted', reorderThreshold: Quantity.fromWhole(100, InventoryUnit.gram)),
+        buildItem('healthy',
+            reorderThreshold: Quantity.fromWhole(100, InventoryUnit.gram)),
+        buildItem('depleted',
+            reorderThreshold: Quantity.fromWhole(100, InventoryUnit.gram)),
       ],
       ingredients: [
         buildIngredient('healthy', 'Sağlıklı Malzeme'),
@@ -119,8 +121,7 @@ void main() {
     expect(find.text('Düşük Stok'), findsOneWidget);
   });
 
-  testWidgets(
-      'selecting the Tükendi tab hides items that are not out of stock',
+  testWidgets('selecting the Tükendi tab hides items that are not out of stock',
       (tester) async {
     await pumpScreen(
       tester,
@@ -133,6 +134,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Sağlıklı Malzeme'), findsNothing);
-    expect(find.text('Bu filtreyle eşleşen envanter kalemi yok.'), findsOneWidget);
+    expect(
+        find.text('Bu filtreyle eşleşen envanter kalemi yok.'), findsOneWidget);
   });
 }

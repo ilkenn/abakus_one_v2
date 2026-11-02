@@ -32,33 +32,55 @@ class HomeCategorySection extends ConsumerWidget {
   // Home accessibility regression test.
   static const double _textAreaHeight = 42;
 
+  // 2026-10-28 PDF menu refresh — points at the new, active categories
+  // (`AbakusMenuCatalog`'s own doc comment on `cat_bowl`/`cat_salata`/etc.
+  // explains why the OLD 6 ids below are kept in the catalog, just
+  // `isActive: false`, rather than deleted; this widget's own curated list
+  // is independent of that flag, so it's updated here too — otherwise the
+  // Home screen would keep advertising a menu customers can no longer see
+  // in full on the Menu tab). `cat_icecekler` (İçecekler) is unchanged —
+  // the PDF refresh never touched drinks.
   static const List<String> _visibleCategoryIds = [
-    'cat_bowl',
-    'cat_salata',
-    'cat_wrap',
-    'cat_hamburger',
-    'cat_makarna',
-    'cat_atistirmalik',
+    'cat_kahvalti',
+    'cat_tartine',
+    'cat_bowl2',
+    'cat_tava',
+    'cat_salata2',
+    'cat_hamburger2',
+    'cat_wrap2',
+    'cat_makarna2',
+    'cat_atistirmalik2',
     'cat_icecekler',
   ];
 
   static const Map<String, IconData> _categoryIcons = {
-    'cat_bowl': Icons.rice_bowl_rounded,
-    'cat_salata': Icons.eco_rounded,
-    'cat_wrap': Icons.fastfood_rounded,
-    'cat_hamburger': Icons.lunch_dining_rounded,
-    'cat_makarna': Icons.ramen_dining_rounded,
-    'cat_atistirmalik': Icons.tapas_rounded,
+    'cat_kahvalti': Icons.egg_alt_rounded,
+    'cat_tartine': Icons.bakery_dining_rounded,
+    'cat_bowl2': Icons.rice_bowl_rounded,
+    'cat_tava': Icons.outdoor_grill_rounded,
+    'cat_salata2': Icons.eco_rounded,
+    'cat_hamburger2': Icons.lunch_dining_rounded,
+    'cat_wrap2': Icons.fastfood_rounded,
+    'cat_makarna2': Icons.ramen_dining_rounded,
+    'cat_atistirmalik2': Icons.tapas_rounded,
     'cat_icecekler': Icons.local_drink_rounded,
   };
 
+  // Real artwork for the new categories doesn't exist yet — each resolves
+  // to [_categoryIcons]' placeholder via [EditorialAssetCard]'s own
+  // `errorBuilder` (same graceful fallback every other not-yet-shot
+  // product/category image in this app already relies on), never a
+  // broken image or a crash.
   static const Map<String, String> _categoryAssetFileNames = {
-    'cat_bowl': 'bowl.webp',
-    'cat_salata': 'salad.webp',
-    'cat_wrap': 'wrap.webp',
-    'cat_hamburger': 'burger.webp',
-    'cat_makarna': 'pasta.webp',
-    'cat_atistirmalik': 'snacks.webp',
+    'cat_kahvalti': 'breakfast.webp',
+    'cat_tartine': 'tartine.webp',
+    'cat_bowl2': 'bowl.webp',
+    'cat_tava': 'tava.webp',
+    'cat_salata2': 'salad.webp',
+    'cat_hamburger2': 'burger.webp',
+    'cat_wrap2': 'wrap.webp',
+    'cat_makarna2': 'pasta.webp',
+    'cat_atistirmalik2': 'snacks.webp',
     'cat_icecekler': 'drinks.webp',
   };
 

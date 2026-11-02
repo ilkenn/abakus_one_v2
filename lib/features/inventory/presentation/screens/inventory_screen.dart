@@ -222,8 +222,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                                                 StockHealthStatus.healthy) ...[
                                               const SizedBox(
                                                   width: AppSpacing.xs),
-                                              _StockHealthBadge(
-                                                  status: status),
+                                              _StockHealthBadge(status: status),
                                             ],
                                           ],
                                         );

@@ -1,4 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+
+import '../../../core/services/functions/rest_callable_client.dart';
 
 /// The device-gated POS mutation boundary — AP-3 continuation. Every
 /// method requires the caller's own live trusted-device session context
@@ -158,7 +162,13 @@ abstract interface class PosActionGateway {
 }
 
 class FirebasePosActionGateway implements PosActionGateway {
-  const FirebasePosActionGateway();
+  FirebasePosActionGateway({RestCallableClient? restClient})
+      : _restClient = restClient ?? RestCallableClient();
+
+  final RestCallableClient _restClient;
+
+  bool get _useRest =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
     throw PosActionException(
@@ -170,28 +180,49 @@ class FirebasePosActionGateway implements PosActionGateway {
     );
   }
 
-  functions.HttpsCallable _fn(String name) =>
-      functions.FirebaseFunctions.instance.httpsCallable(name);
+  /// 2026-10-29: routes through [RestCallableClient] on Windows — the same
+  /// fix already applied to `FirebaseKitchenActionGateway`/
+  /// `FirebaseTakeawayOrderResponseGateway`/`FirebaseDineInOrderResponseGateway`.
+  /// `cloud_functions` ships no native Windows implementation at all, so
+  /// every one of this gateway's callables previously threw the
+  /// `CloudFunctionsHostApi.call` pigeon-channel error unconditionally on
+  /// Windows desktop.
+  Future<Map<String, dynamic>> _call(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    if (_useRest) {
+      try {
+        return await _restClient.call(name, data);
+      } on RestCallableException catch (error) {
+        throw PosActionException(error.code, error.message);
+      }
+    }
+    try {
+      final result = await functions.FirebaseFunctions.instance
+          .httpsCallable(name)
+          .call<Map<String, dynamic>>(data);
+      return result.data;
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
 
   @override
   Future<void> respondToOrderLines({
     required String orderId,
     required List<({int lineIndex, bool accept})> decisions,
   }) async {
-    try {
-      await _fn('respondToDineInOrderLines').call<Map<String, dynamic>>({
-        'orderId': orderId,
-        'decisions': [
-          for (final d in decisions)
-            {
-              'lineIndex': d.lineIndex,
-              'decision': d.accept ? 'accept' : 'reject',
-            },
-        ],
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('respondToDineInOrderLines', {
+      'orderId': orderId,
+      'decisions': [
+        for (final d in decisions)
+          {
+            'lineIndex': d.lineIndex,
+            'decision': d.accept ? 'accept' : 'reject',
+          },
+      ],
+    });
   }
 
   @override
@@ -204,19 +235,15 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String reasonCode,
     required String reasonMessage,
   }) async {
-    try {
-      await _fn('proposeDineInLineReplacement').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'orderId': orderId,
-        'lineIndex': lineIndex,
-        'proposedProductId': proposedProductId,
-        'proposedQuantity': proposedQuantity,
-        'reasonCode': reasonCode,
-        'reasonMessage': reasonMessage,
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('proposeDineInLineReplacement', {
+      ...ctx.toWire(),
+      'orderId': orderId,
+      'lineIndex': lineIndex,
+      'proposedProductId': proposedProductId,
+      'proposedQuantity': proposedQuantity,
+      'reasonCode': reasonCode,
+      'reasonMessage': reasonMessage,
+    });
   }
 
   @override
@@ -226,22 +253,18 @@ class FirebasePosActionGateway implements PosActionGateway {
     required Map<String, dynamic> subAccountSelection,
     required List<Map<String, dynamic>> items,
   }) async {
-    try {
-      final result = await _fn('submitDineInOrder').call<Map<String, dynamic>>({
-        'mode': 'staffEntry',
-        'submissionKey': DateTime.now().microsecondsSinceEpoch.toString(),
-        'organizationId': ctx.organizationId,
-        'branchId': ctx.branchId,
-        'tableId': tableId,
-        'deviceId': ctx.deviceId,
-        'deviceSessionId': ctx.deviceSessionId,
-        'subAccountSelection': subAccountSelection,
-        'items': items,
-      });
-      return result.data['orderId'] as String;
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('submitDineInOrder', {
+      'mode': 'staffEntry',
+      'submissionKey': DateTime.now().microsecondsSinceEpoch.toString(),
+      'organizationId': ctx.organizationId,
+      'branchId': ctx.branchId,
+      'tableId': tableId,
+      'deviceId': ctx.deviceId,
+      'deviceSessionId': ctx.deviceSessionId,
+      'subAccountSelection': subAccountSelection,
+      'items': items,
+    });
+    return result['orderId'] as String;
   }
 
   @override
@@ -249,15 +272,11 @@ class FirebasePosActionGateway implements PosActionGateway {
     required PosDeviceContext ctx,
     required String tableSessionId,
   }) async {
-    try {
-      final result = await _fn('openCheck').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'tableSessionId': tableSessionId,
-      });
-      return result.data['checkId'] as String;
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('openCheck', {
+      ...ctx.toWire(),
+      'tableSessionId': tableSessionId,
+    });
+    return result['checkId'] as String;
   }
 
   @override
@@ -265,14 +284,10 @@ class FirebasePosActionGateway implements PosActionGateway {
     required PosDeviceContext ctx,
     required String checkId,
   }) async {
-    try {
-      await _fn('finalizeCheckReadyForPayment').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('finalizeCheckReadyForPayment', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+    });
   }
 
   @override
@@ -283,19 +298,14 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String sourceOrderId,
     required int sourceLineIndex,
   }) async {
-    try {
-      final result =
-          await _fn('splitCheckByProduct').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-        'subAccountId': subAccountId,
-        'sourceOrderId': sourceOrderId,
-        'sourceLineIndex': sourceLineIndex,
-      });
-      return result.data['allocationId'] as String;
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('splitCheckByProduct', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+      'subAccountId': subAccountId,
+      'sourceOrderId': sourceOrderId,
+      'sourceLineIndex': sourceLineIndex,
+    });
+    return result['allocationId'] as String;
   }
 
   @override
@@ -307,20 +317,15 @@ class FirebasePosActionGateway implements PosActionGateway {
     required int sourceLineIndex,
     required int quantity,
   }) async {
-    try {
-      final result =
-          await _fn('splitCheckByQuantity').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-        'subAccountId': subAccountId,
-        'sourceOrderId': sourceOrderId,
-        'sourceLineIndex': sourceLineIndex,
-        'quantity': quantity,
-      });
-      return result.data['allocationId'] as String;
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('splitCheckByQuantity', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+      'subAccountId': subAccountId,
+      'sourceOrderId': sourceOrderId,
+      'sourceLineIndex': sourceLineIndex,
+      'quantity': quantity,
+    });
+    return result['allocationId'] as String;
   }
 
   @override
@@ -329,17 +334,12 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String checkId,
     required String subAccountId,
   }) async {
-    try {
-      final result =
-          await _fn('splitCheckByCustomer').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-        'subAccountId': subAccountId,
-      });
-      return result.data['allocationId'] as String;
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('splitCheckByCustomer', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+      'subAccountId': subAccountId,
+    });
+    return result['allocationId'] as String;
   }
 
   @override
@@ -348,17 +348,12 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String checkId,
     required List<String> subAccountIds,
   }) async {
-    try {
-      final result =
-          await _fn('splitCheckEqualByHeadcount').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-        'subAccountIds': subAccountIds,
-      });
-      return List<String>.from(result.data['allocationIds'] as List);
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('splitCheckEqualByHeadcount', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+      'subAccountIds': subAccountIds,
+    });
+    return List<String>.from(result['allocationIds'] as List);
   }
 
   @override
@@ -370,20 +365,15 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String sourceOrderId,
     required int sourceLineIndex,
   }) async {
-    try {
-      final result =
-          await _fn('splitCheckFreeAmount').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-        'subAccountId': subAccountId,
-        'amountMinorUnits': amountMinorUnits,
-        'sourceOrderId': sourceOrderId,
-        'sourceLineIndex': sourceLineIndex,
-      });
-      return result.data['allocationId'] as String;
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('splitCheckFreeAmount', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+      'subAccountId': subAccountId,
+      'amountMinorUnits': amountMinorUnits,
+      'sourceOrderId': sourceOrderId,
+      'sourceLineIndex': sourceLineIndex,
+    });
+    return result['allocationId'] as String;
   }
 
   @override
@@ -392,15 +382,11 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String sourceTableId,
     required String targetTableId,
   }) async {
-    try {
-      await _fn('transferTableSession').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'sourceTableId': sourceTableId,
-        'targetTableId': targetTableId,
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('transferTableSession', {
+      ...ctx.toWire(),
+      'sourceTableId': sourceTableId,
+      'targetTableId': targetTableId,
+    });
   }
 
   @override
@@ -409,15 +395,11 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String sourceTableId,
     required String targetTableId,
   }) async {
-    try {
-      await _fn('mergeTableSessions').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'sourceTableId': sourceTableId,
-        'targetTableId': targetTableId,
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('mergeTableSessions', {
+      ...ctx.toWire(),
+      'sourceTableId': sourceTableId,
+      'targetTableId': targetTableId,
+    });
   }
 
   @override
@@ -425,14 +407,10 @@ class FirebasePosActionGateway implements PosActionGateway {
     required PosDeviceContext ctx,
     required String requestId,
   }) async {
-    try {
-      await _fn('resolveServiceRequest').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'requestId': requestId,
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('resolveServiceRequest', {
+      ...ctx.toWire(),
+      'requestId': requestId,
+    });
   }
 
   @override
@@ -443,19 +421,14 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String reasonCode,
     required String reasonMessage,
   }) async {
-    try {
-      final result = await _fn('requestAcceptedLineCancellation')
-          .call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'orderId': orderId,
-        'lineIndex': lineIndex,
-        'reasonCode': reasonCode,
-        'reasonMessage': reasonMessage,
-      });
-      return result.data['approvalRequestId'] as String;
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('requestAcceptedLineCancellation', {
+      ...ctx.toWire(),
+      'orderId': orderId,
+      'lineIndex': lineIndex,
+      'reasonCode': reasonCode,
+      'reasonMessage': reasonMessage,
+    });
+    return result['approvalRequestId'] as String;
   }
 
   @override
@@ -471,26 +444,21 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String reasonCode,
     required String reasonMessage,
   }) async {
-    try {
-      final result = await _fn('requestCheckFinancialAdjustment')
-          .call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-        'scope': scope,
-        if (allocationId != null) 'allocationId': allocationId,
-        if (subAccountId != null) 'subAccountId': subAccountId,
-        'adjustmentType': adjustmentType,
-        if (percentageBasisPoints != null)
-          'percentageBasisPoints': percentageBasisPoints,
-        if (fixedAmountMinorUnits != null)
-          'fixedAmountMinorUnits': fixedAmountMinorUnits,
-        'reasonCode': reasonCode,
-        'reasonMessage': reasonMessage,
-      });
-      return result.data['approvalRequestId'] as String;
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final result = await _call('requestCheckFinancialAdjustment', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+      'scope': scope,
+      if (allocationId != null) 'allocationId': allocationId,
+      if (subAccountId != null) 'subAccountId': subAccountId,
+      'adjustmentType': adjustmentType,
+      if (percentageBasisPoints != null)
+        'percentageBasisPoints': percentageBasisPoints,
+      if (fixedAmountMinorUnits != null)
+        'fixedAmountMinorUnits': fixedAmountMinorUnits,
+      'reasonCode': reasonCode,
+      'reasonMessage': reasonMessage,
+    });
+    return result['approvalRequestId'] as String;
   }
 }
 

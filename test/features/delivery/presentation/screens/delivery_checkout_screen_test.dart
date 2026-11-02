@@ -739,6 +739,7 @@ void main() {
         'quantity': 2,
         'selectedModifiers': <Map<String, String>>[],
         'note': '',
+        'excludedIngredients': <String>[],
       },
     ]);
     expect(gateway.lastDeviceLocation, capturedLocation);

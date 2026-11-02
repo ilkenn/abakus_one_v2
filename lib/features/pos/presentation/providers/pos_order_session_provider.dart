@@ -112,6 +112,7 @@ class PosOrderSessionController extends Notifier<PosOrderSessionState> {
     List<SelectedModifier> selectedModifiers = const [],
     int quantity = 1,
     String note = '',
+    List<String> excludedIngredients = const [],
   }) async {
     final session = state.session;
     if (session == null || _isBusy) return;
@@ -125,6 +126,7 @@ class PosOrderSessionController extends Notifier<PosOrderSessionState> {
         selectedModifiers: selectedModifiers,
         quantity: quantity,
         note: note,
+        excludedIngredients: excludedIngredients,
       ),
     );
   }

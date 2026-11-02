@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -34,6 +36,8 @@ import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../../pos/presentation/widgets/role_gate.dart';
 import '../../../pos/presentation/screens/kitchen_display_board_screen.dart';
 import '../../../pos/presentation/screens/pos_branch_overview_screen.dart';
+import 'admin_menu_screen.dart';
+import 'admin_orders_screen.dart';
 import '../widgets/admin_coming_soon_view.dart';
 import '../widgets/admin_context_gate.dart';
 import '../widgets/module_readiness_gate.dart';
@@ -242,11 +246,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             },
             builder: (context, ref) => RoleGate.forRoles(
               const {StaffRole.staff, StaffRole.manager, StaffRole.admin},
-              child: const AdminComingSoonView(
-                title: 'Siparişler',
-                reason: 'Genel bir sipariş yönetimi ekranı henüz yok — sipariş '
-                    'işlemleri POS/KDS akışları üzerinden yürütülüyor.',
-              ),
+              child: const AdminOrdersScreen(),
             ),
           ),
           _AdminNavItem(
@@ -387,13 +387,9 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             label: 'Menü',
             icon: Icons.restaurant_menu_outlined,
             visibleToRoles: const {StaffRole.manager, StaffRole.admin},
-            builder: (context, ref) => RoleGate.forRoles(
-              const {StaffRole.manager, StaffRole.admin},
-              child: const AdminComingSoonView(
-                title: 'Menü',
-                reason: 'Menü/kategori/ürün/modifiye yönetimi için ayrı bir '
-                    'admin ekranı henüz yok.',
-              ),
+            builder: (context, ref) => RoleGate.forAction(
+              PosAuthorizedAction.manageMenu,
+              child: const AdminMenuScreen(),
             ),
           ),
           _AdminNavItem(
@@ -853,6 +849,29 @@ class _TopBar extends ConsumerWidget implements PreferredSizeWidget {
           const Icon(Icons.search_outlined, color: AppColors.textSecondary),
           const SizedBox(width: AppSpacing.md),
         ],
+        // 2026-10-30 — the real, symmetric counterpart to
+        // `PlatformShellScreen`'s own "Kiracı Admin Paneline Geç" icon
+        // (`platform_shell_screen.dart:96-100`): before this, `AppRoutes
+        // .platform` had no navigation entry point anywhere in `lib/`
+        // (confirmed by search — only the route table and the guard
+        // referenced it), reachable only by typing the URL directly,
+        // which has no equivalent on a Windows desktop build. This is a
+        // deliberate, user-approved crossing of the documented "Platform
+        // Console is never linked to from the tenant-Admin UI" boundary
+        // (`platform_shell_screen.dart`'s own doc comment) — approved
+        // specifically because that boundary made the Platform Console
+        // genuinely unreachable on Windows, not to remove the boundary's
+        // intent otherwise. Same "scoped context handoff" caveat as the
+        // reverse icon: this only leads somewhere useful if the signed-in
+        // account also holds real Platform membership — `AppRoutes
+        // .platform`'s own internal `platformActorSessionProvider` check
+        // redirects to `PlatformSignInScreen` otherwise, never a silent
+        // failure.
+        IconButton(
+          icon: const Icon(Icons.hub_outlined, color: AppColors.textSecondary),
+          tooltip: 'Platform Konsolu (modül abonelikleri için)',
+          onPressed: () => context.go(AppRoutes.platform),
+        ),
         Padding(
           padding: const EdgeInsets.only(right: AppSpacing.lg),
           child: Row(
@@ -955,7 +974,8 @@ class _DesktopShellState extends State<_DesktopShell> {
         widget.groups.any((g) => g.items.any((item) => item.id == requested));
     if (requestedExists) {
       _selected = requested;
-    } else if (widget.groups.isNotEmpty && widget.groups.first.items.isNotEmpty) {
+    } else if (widget.groups.isNotEmpty &&
+        widget.groups.first.items.isNotEmpty) {
       _selected = widget.groups.first.items.first.id;
     }
   }

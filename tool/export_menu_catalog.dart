@@ -59,12 +59,38 @@ Future<void> main() async {
         'basePriceMinorUnits': toMinorUnits(product.basePrice),
         'isAvailable': product.isAvailable,
         'isFeatured': product.isFeatured,
-        // The real menu's fixed dishes carry no modifier/option structure
-        // (AbakusMenuCatalog's own doc comment) and no product ever
-        // configures a channelPriceOverrides entry today — both
-        // empty/absent here is a faithful export, not a simplification.
-        'modifierGroups': <Object?>[],
+        // 2026-10-30 product-configurator — `AbakusMenuCatalog.products`
+        // (not `_rawProducts`) now layers real modifier groups onto Bowl/
+        // Burger/Wrap/every product (`standard_modifier_groups.dart`), so
+        // this must actually serialize them — a hardcoded empty array here
+        // would silently make every one of those groups invisible to
+        // `resolveProductModifiers` server-side, rejecting every real
+        // order that selects one. No product ever configures a
+        // channelPriceOverrides entry today, so that one stays empty.
+        'modifierGroups': [
+          for (final group in product.modifierGroups)
+            {
+              'id': group.id,
+              'name': group.name,
+              'selectionType': group.selectionType.name,
+              'isRequired': group.isRequired,
+              'minSelections': group.minSelections,
+              'maxSelections': group.maxSelections,
+              'options': [
+                for (final option in group.options)
+                  {
+                    'id': option.id,
+                    'name': option.name,
+                    'extraPriceMinorUnits': toMinorUnits(option.extraPrice),
+                    'isAvailable': option.isAvailable,
+                  },
+              ],
+            },
+        ],
         'channelPriceOverrides': <String, Object?>{},
+        // 2026-10-28 PDF menu refresh.
+        'allergens': product.allergens,
+        'portionLabel': product.portionLabel,
       },
   ];
 
@@ -116,14 +142,27 @@ Future<void> main() async {
     },
   };
 
+  final encoded = const JsonEncoder.withIndent('  ').convert(export);
+
   const outputPath = 'functions/scripts/data/menu_catalog_export.json';
   File(outputPath).createSync(recursive: true);
-  File(outputPath).writeAsStringSync(
-    const JsonEncoder.withIndent('  ').convert(export),
-  );
+  File(outputPath).writeAsStringSync(encoded);
+
+  // 2026-10-30 — a second copy under `functions/src/data/` so the
+  // deployed `syncCanonicalCatalog` callable (`functions/src/
+  // syncCanonicalCatalog.ts`) can `import` it directly: `tsconfig.json`'s
+  // `rootDir: "src"` means a JSON import outside `src/` fails the build,
+  // and relying on a loose file surviving Cloud Functions' own deployment
+  // bundling (uncertain, undocumented) would be a silent, hard-to-diagnose
+  // way for a real deploy to ship with stale/missing catalog data. Same
+  // bytes, two paths — one Dart run keeps both in sync, nothing is
+  // hand-typed twice.
+  const srcOutputPath = 'functions/src/data/menu_catalog_export.json';
+  File(srcOutputPath).createSync(recursive: true);
+  File(srcOutputPath).writeAsStringSync(encoded);
 
   stderr.writeln(
-    '[export_menu_catalog] wrote $outputPath — '
+    '[export_menu_catalog] wrote $outputPath and $srcOutputPath — '
     '${categories.length} categories, ${products.length} products, '
     '${bowlIngredients.length} bowl ingredients, '
     '${channelDefaultAdjustments.length} channel default adjustment(s).',

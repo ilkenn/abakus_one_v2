@@ -1,5 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
+import '../../../core/services/functions/rest_callable_client.dart';
 import 'pos_action_gateway.dart' show PosDeviceContext;
 
 /// The real payment/tender/refund boundary — AP-4 Wave A/Wave D wiring.
@@ -225,7 +228,10 @@ abstract interface class PaymentGateway {
 }
 
 class FirebasePaymentGateway implements PaymentGateway {
-  const FirebasePaymentGateway();
+  FirebasePaymentGateway({RestCallableClient? restClient})
+      : _restClient = restClient ?? RestCallableClient();
+
+  final RestCallableClient _restClient;
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
     throw PaymentGatewayException(
@@ -237,8 +243,30 @@ class FirebasePaymentGateway implements PaymentGateway {
     );
   }
 
-  functions.HttpsCallable _fn(String name) =>
-      functions.FirebaseFunctions.instance.httpsCallable(name);
+  /// 2026-10-30 — same Windows REST-callable bridge as `cash_register_
+  /// gateway.dart`/`pos_action_gateway.dart` — `cloud_functions` has no
+  /// Windows plugin implementation, so every call here previously hung
+  /// indefinitely on Windows.
+  Future<Map<String, dynamic>> _call(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    final useRest = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+    if (useRest) {
+      try {
+        return await _restClient.call(name, data);
+      } on RestCallableException catch (error) {
+        throw PaymentGatewayException(error.code, error.message);
+      }
+    }
+    final callable = functions.FirebaseFunctions.instance.httpsCallable(name);
+    try {
+      final result = await callable.call<Map<String, dynamic>>(data);
+      return result.data;
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
 
   @override
   Future<PaymentIntentResult> createPaymentIntent({
@@ -246,28 +274,21 @@ class FirebasePaymentGateway implements PaymentGateway {
     required String checkId,
     int coverCount = 0,
   }) async {
-    try {
-      final result =
-          await _fn('createPaymentIntent').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-        'coverCount': coverCount,
-      });
-      final data = result.data;
-      return PaymentIntentResult(
-        intentId: data['intentId'] as String,
-        sessionId: data['sessionId'] as String,
-        payableAmountMinorUnits: data['payableAmountMinorUnits'] as int,
-        subAccountAllocations: [
-          for (final raw
-              in (data['subAccountAllocations'] as List? ?? const []))
-            PaymentSubAccountAllocation.fromWire(
-                Map<String, dynamic>.from(raw as Map)),
-        ],
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('createPaymentIntent', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+      'coverCount': coverCount,
+    });
+    return PaymentIntentResult(
+      intentId: data['intentId'] as String,
+      sessionId: data['sessionId'] as String,
+      payableAmountMinorUnits: data['payableAmountMinorUnits'] as int,
+      subAccountAllocations: [
+        for (final raw in (data['subAccountAllocations'] as List? ?? const []))
+          PaymentSubAccountAllocation.fromWire(
+              Map<String, dynamic>.from(raw as Map)),
+      ],
+    );
   }
 
   @override
@@ -275,16 +296,11 @@ class FirebasePaymentGateway implements PaymentGateway {
     required PosDeviceContext ctx,
     required String checkId,
   }) async {
-    try {
-      final result = await _fn('getPaymentSessionOperationalView')
-          .call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-      });
-      return PaymentSessionView.fromWire(result.data);
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('getPaymentSessionOperationalView', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+    });
+    return PaymentSessionView.fromWire(data);
   }
 
   @override
@@ -299,33 +315,27 @@ class FirebasePaymentGateway implements PaymentGateway {
     String? cashSessionId,
     ({String leaseId, int deviceSequence})? offlineLease,
   }) async {
-    try {
-      final result =
-          await _fn('recordPaymentAttempt').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-        'sessionId': sessionId,
-        'tenderType': tenderType,
-        'idempotencyKey': idempotencyKey,
-        'allocations': allocations,
-        if (requestedBoncukAmount != null)
-          'requestedBoncukAmount': requestedBoncukAmount,
-        if (cashSessionId != null) 'cashSessionId': cashSessionId,
-        if (offlineLease != null)
-          'offlineLease': {
-            'leaseId': offlineLease.leaseId,
-            'deviceSequence': offlineLease.deviceSequence,
-          },
-      });
-      final data = result.data;
-      return PaymentAttemptResult(
-        attemptId: data['attemptId'] as String,
-        status: data['status'] as String,
-        boncukUsed: data['boncukUsed'] as int?,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('recordPaymentAttempt', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+      'sessionId': sessionId,
+      'tenderType': tenderType,
+      'idempotencyKey': idempotencyKey,
+      'allocations': allocations,
+      if (requestedBoncukAmount != null)
+        'requestedBoncukAmount': requestedBoncukAmount,
+      if (cashSessionId != null) 'cashSessionId': cashSessionId,
+      if (offlineLease != null)
+        'offlineLease': {
+          'leaseId': offlineLease.leaseId,
+          'deviceSequence': offlineLease.deviceSequence,
+        },
+    });
+    return PaymentAttemptResult(
+      attemptId: data['attemptId'] as String,
+      status: data['status'] as String,
+      boncukUsed: data['boncukUsed'] as int?,
+    );
   }
 
   @override
@@ -338,26 +348,20 @@ class FirebasePaymentGateway implements PaymentGateway {
     required String reasonMessage,
     List<String>? orderLineRefs,
   }) async {
-    try {
-      final result =
-          await _fn('requestPaymentRefund').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'checkId': checkId,
-        'refundType': refundType,
-        'amountMinorUnits': amountMinorUnits,
-        'reasonCode': reasonCode,
-        'reasonMessage': reasonMessage,
-        if (orderLineRefs != null) 'orderLineRefs': orderLineRefs,
-      });
-      final data = result.data;
-      return RefundRequestResult(
-        refundId: data['refundId'] as String,
-        status: data['status'] as String,
-        approvalRequestId: data['approvalRequestId'] as String,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('requestPaymentRefund', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+      'refundType': refundType,
+      'amountMinorUnits': amountMinorUnits,
+      'reasonCode': reasonCode,
+      'reasonMessage': reasonMessage,
+      if (orderLineRefs != null) 'orderLineRefs': orderLineRefs,
+    });
+    return RefundRequestResult(
+      refundId: data['refundId'] as String,
+      status: data['status'] as String,
+      approvalRequestId: data['approvalRequestId'] as String,
+    );
   }
 }
 

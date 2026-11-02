@@ -182,9 +182,7 @@ class _LinkStatusBadge extends StatelessWidget {
         borderRadius: AppRadius.kPill,
       ),
       child: Text(
-        linked
-            ? '${link!.ingredients.length} malzeme bağlı'
-            : 'Bağlantı yok',
+        linked ? '${link!.ingredients.length} malzeme bağlı' : 'Bağlantı yok',
         style: AppTypography.labelMedium
             .copyWith(color: AppColors.onPrimary, letterSpacing: 0),
       ),
@@ -197,7 +195,8 @@ class _IngredientLineDraft {
     String inventoryItemId = '',
     String quantity = '',
     this.unit = InventoryUnit.gram,
-  })  : inventoryItemIdController = TextEditingController(text: inventoryItemId),
+  })  : inventoryItemIdController =
+            TextEditingController(text: inventoryItemId),
         quantityController = TextEditingController(text: quantity);
 
   final TextEditingController inventoryItemIdController;
@@ -292,9 +291,11 @@ class _RecipeIngredientLinkFormScreenState
       final inventoryItemId = line.inventoryItemIdController.text.trim();
       final wholeQuantity =
           double.tryParse(line.quantityController.text.trim());
-      if (inventoryItemId.isEmpty || wholeQuantity == null || wholeQuantity <= 0) {
-        setState(() =>
-            _error = 'Her satır için geçerli bir malzeme kimliği ve miktar girin.');
+      if (inventoryItemId.isEmpty ||
+          wholeQuantity == null ||
+          wholeQuantity <= 0) {
+        setState(() => _error =
+            'Her satır için geçerli bir malzeme kimliği ve miktar girin.');
         return;
       }
       final smallestUnits =
@@ -311,12 +312,13 @@ class _RecipeIngredientLinkFormScreenState
       _saving = true;
     });
     try {
-      final result = await ref.read(recipeIngredientLinkGatewayProvider).setLink(
-            organizationId: widget.organizationId,
-            productId: widget.product.id,
-            recipeVersionId: recipeVersionId,
-            ingredients: ingredients,
-          );
+      final result =
+          await ref.read(recipeIngredientLinkGatewayProvider).setLink(
+                organizationId: widget.organizationId,
+                productId: widget.product.id,
+                recipeVersionId: recipeVersionId,
+                ingredients: ingredients,
+              );
       // Mirror the just-saved link into the local repository so the list
       // screen reflects the change immediately without a server round
       // -trip re-read — the server callable stays the source of truth
@@ -367,8 +369,8 @@ class _RecipeIngredientLinkFormScreenState
           children: [
             TextField(
               controller: _recipeVersionIdController,
-              decoration: const InputDecoration(
-                  labelText: 'Reçete Versiyon Kimliği'),
+              decoration:
+                  const InputDecoration(labelText: 'Reçete Versiyon Kimliği'),
             ),
             const SizedBox(height: AppSpacing.md),
             const Text('Malzemeler', style: AppTypography.titleMedium),
@@ -416,9 +418,8 @@ class _RecipeIngredientLinkFormScreenState
                           IconButton(
                             icon: const Icon(Icons.delete_outline,
                                 color: AppColors.error),
-                            onPressed: _lines.length > 1
-                                ? () => _removeLine(i)
-                                : null,
+                            onPressed:
+                                _lines.length > 1 ? () => _removeLine(i) : null,
                           ),
                         ],
                       ),
@@ -434,8 +435,8 @@ class _RecipeIngredientLinkFormScreenState
             const SizedBox(height: AppSpacing.md),
             if (_error != null) ...[
               Text(_error!,
-                  style: AppTypography.bodySmall
-                      .copyWith(color: AppColors.error)),
+                  style:
+                      AppTypography.bodySmall.copyWith(color: AppColors.error)),
               const SizedBox(height: AppSpacing.sm),
             ],
             ElevatedButton(

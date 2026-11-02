@@ -11,6 +11,7 @@ import '../../data/firebase_platform_member_repository.dart';
 import '../../data/firestore_platform_organization_repository.dart';
 import '../../data/platform_audit_entry_repository.dart';
 import '../../data/platform_auth_repository.dart';
+import '../../../../core/services/functions/maintenance_operations_gateway.dart';
 import '../../data/platform_customer_directory_gateway.dart';
 import '../../data/platform_member_repository.dart';
 
@@ -77,9 +78,18 @@ final entitlementAdminGatewayProvider =
     Provider<EntitlementAdminGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
   if (isFirebaseReady) {
-    return const FirebaseEntitlementAdminGateway();
+    return FirebaseEntitlementAdminGateway();
   }
   return const UnavailableEntitlementAdminGateway();
+});
+
+final maintenanceOperationsGatewayProvider =
+    Provider<MaintenanceOperationsGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) {
+    return FirebaseMaintenanceOperationsGateway();
+  }
+  return const UnavailableMaintenanceOperationsGateway();
 });
 
 /// AP-3 continuation — the Platform Owner's real global Customer Directory
@@ -103,7 +113,12 @@ final platformAuthRepositoryProvider = Provider<PlatformAuthRepository>((ref) {
     return const ProductionUnavailablePlatformAuthRepository();
   }
   return FirebasePlatformAuthRepository(
-    authClient: DefaultEmailPasswordAuthClient(),
+    // 2026-10-30 — same Windows REST Identity Toolkit bridge as
+    // `staffAuthRepositoryProvider`, for the identical native-plugin-hang
+    // reason. See `RestEmailPasswordAuthClient`'s own doc comment.
+    authClient: !kIsWeb && defaultTargetPlatform == TargetPlatform.windows
+        ? RestEmailPasswordAuthClient()
+        : DefaultEmailPasswordAuthClient(),
     platformMemberRepository: ref.watch(platformMemberRepositoryProvider),
     sessionDuration: () => const Duration(hours: 12),
   );

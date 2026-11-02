@@ -227,7 +227,7 @@ void main() {
     // `approval-{actionType}-{targetAggregateRef with / -> _}-v{version}`,
     // where paymentRefund's targetAggregateRef is
     // `refundRequests/{refundId}` and version is always 1 at creation.
-    final sessionView = await const FirebasePaymentGateway()
+    final sessionView = await FirebasePaymentGateway()
         .getPaymentSessionView(ctx: ctx, checkId: checkId);
     final pendingRefund =
         sessionView.refunds.firstWhere((r) => r.status == 'pendingApproval');
@@ -244,7 +244,7 @@ void main() {
     // the widget tree, before re-pumping. print() isn't visible through
     // `flutter drive`'s harness, so embed in a failure message instead if
     // it doesn't show the expected post-approval state.
-    final postApproveView = await const FirebasePaymentGateway()
+    final postApproveView = await FirebasePaymentGateway()
         .getPaymentSessionView(ctx: ctx, checkId: checkId);
     final postApproveStatuses = postApproveView.refunds
         .map((r) => '${r.refundId}:${r.status}')

@@ -59,4 +59,72 @@ void main() {
       expect(updated.channelPriceOverrides, product.channelPriceOverrides);
     });
   });
+
+  group('MenuProduct.removableIngredients', () {
+    test('derives from a comma-separated description', () {
+      const product = MenuProduct(
+        id: 'p1',
+        categoryId: 'cat_salata2',
+        name: 'Test Salad',
+        description: 'Marul, Domates, Salatalık.',
+        basePrice: 400,
+        imageKey: 'salad',
+      );
+      expect(
+        product.removableIngredients,
+        ['Marul', 'Domates', 'Salatalık'],
+      );
+    });
+
+    test('is empty for a narrative/non-list description', () {
+      const product = MenuProduct(
+        id: 'p1',
+        categoryId: 'cat_bowl2',
+        name: 'Çıtır Tavuk Bowl',
+        description: '150g Tavuk.',
+        basePrice: 450,
+        imageKey: 'bowl2',
+      );
+      expect(product.removableIngredients, isEmpty);
+    });
+
+    test('is empty for an empty description', () {
+      const product = MenuProduct(
+        id: 'p1',
+        categoryId: 'cat_tava',
+        name: 'Test Tava',
+        description: '',
+        basePrice: 400,
+        imageKey: 'tava',
+      );
+      expect(product.removableIngredients, isEmpty);
+    });
+
+    test('removableIngredientsOverride takes precedence over description', () {
+      const product = MenuProduct(
+        id: 'p1',
+        categoryId: 'cat_bowl2',
+        name: 'Çıtır Tavuk Bowl',
+        description: '150g Tavuk.',
+        basePrice: 450,
+        imageKey: 'bowl2',
+        removableIngredientsOverride: ['Mısır', 'Mor Lahana Turşusu'],
+      );
+      expect(product.removableIngredients, ['Mısır', 'Mor Lahana Turşusu']);
+    });
+
+    test('copyWith preserves the override when not explicitly replaced', () {
+      const product = MenuProduct(
+        id: 'p1',
+        categoryId: 'cat_bowl2',
+        name: 'Çıtır Tavuk Bowl',
+        description: '150g Tavuk.',
+        basePrice: 450,
+        imageKey: 'bowl2',
+        removableIngredientsOverride: ['Mısır'],
+      );
+      final updated = product.copyWith(basePrice: 500);
+      expect(updated.removableIngredients, ['Mısır']);
+    });
+  });
 }

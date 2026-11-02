@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
@@ -6,6 +7,7 @@ import '../../../../core/theme/app_shadows.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_theme_constants.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../../core/theme/qr_menu_theme.dart';
 import '../../../../shared/widgets/cards/option_selection_card.dart';
 import '../../../../shared/widgets/images/product_image.dart';
 import '../../../../shared/widgets/layout/app_section_header.dart';
@@ -19,6 +21,8 @@ import '../../domain/models/product_nutrition.dart';
 import '../../domain/models/selected_modifier.dart';
 import '../../domain/pricing/channel_pricing_policy.dart';
 import '../providers/channel_price_display_provider.dart';
+import '../providers/menu_catalog_provider.dart';
+import '../providers/product_pairing_provider.dart';
 
 class ProductDetailScreen extends ConsumerStatefulWidget {
   final MenuProduct product;
@@ -35,6 +39,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
   int _quantity = 1;
   late final TextEditingController _noteController;
   final Map<String, List<String>> _selections = {};
+  final Set<String> _excludedIngredients = {};
   late final AnimationController _entryController;
   late final Animation<double> _entryFade;
   late final Animation<Offset> _entrySlide;
@@ -72,13 +77,19 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
     super.dispose();
   }
 
-  void _increment() => setState(() => _quantity++);
+  void _increment() {
+    HapticFeedback.selectionClick();
+    setState(() => _quantity++);
+  }
 
-  void _decrement() => setState(() {
-        if (_quantity > 1) _quantity--;
-      });
+  void _decrement() {
+    if (_quantity <= 1) return;
+    HapticFeedback.selectionClick();
+    setState(() => _quantity--);
+  }
 
   void _selectSingle(ModifierGroup group, String optionId) {
+    HapticFeedback.selectionClick();
     setState(() {
       final current = _selections[group.id] ?? const [];
       _selections[group.id] = (current.length == 1 && current.first == optionId)
@@ -87,13 +98,25 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
     });
   }
 
-  void _toggleMultiple(ModifierGroup group, String optionId) {
+  void _toggleExcludedIngredient(String ingredient) {
+    HapticFeedback.selectionClick();
     setState(() {
-      final current = List<String>.from(_selections[group.id] ?? const []);
+      if (!_excludedIngredients.remove(ingredient)) {
+        _excludedIngredients.add(ingredient);
+      }
+    });
+  }
+
+  void _toggleMultiple(ModifierGroup group, String optionId) {
+    final current = List<String>.from(_selections[group.id] ?? const []);
+    if (!current.contains(optionId) && current.length >= group.maxSelections) {
+      return;
+    }
+    HapticFeedback.selectionClick();
+    setState(() {
       if (current.contains(optionId)) {
         current.remove(optionId);
       } else {
-        if (current.length >= group.maxSelections) return;
         current.add(optionId);
       }
       _selections[group.id] = current;
@@ -155,6 +178,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
       return;
     }
 
+    HapticFeedback.lightImpact();
     ref.read(cartProvider.notifier).addToCart(
           id: widget.product.id,
           name: widget.product.name,
@@ -164,6 +188,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
           selectedModifiers: _selectedModifiers,
           note: _noteController.text.trim(),
           pricedForChannel: ref.read(shoppingChannelProvider).channel,
+          removedIngredients: _excludedIngredients.toList(),
         );
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -253,6 +278,30 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                               const SizedBox(height: AppSpacing.md),
                               _NutritionRow(nutrition: nutrition),
                             ],
+                            if (widget
+                                .product.removableIngredients.isNotEmpty) ...[
+                              const Divider(height: AppSpacing.xxl),
+                              const AppSectionHeader(
+                                title: 'İçinden Çıkar',
+                                subtitle:
+                                    'İstemediğiniz malzemeleri işaretleyin.',
+                              ),
+                              const SizedBox(height: AppSpacing.sm),
+                              for (final ingredient
+                                  in widget.product.removableIngredients)
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                      bottom: AppSpacing.sm),
+                                  child: OptionSelectionCard(
+                                    name: '$ingredient İstemiyorum',
+                                    extraPrice: 0,
+                                    isSelected: _excludedIngredients
+                                        .contains(ingredient),
+                                    onTap: () =>
+                                        _toggleExcludedIngredient(ingredient),
+                                  ),
+                                ),
+                            ],
                             for (final group
                                 in widget.product.modifierGroups) ...[
                               const Divider(height: AppSpacing.xxl),
@@ -287,6 +336,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                                   ),
                                 ),
                             ],
+                            _SmartPairingSection(product: widget.product),
+                            _DrinkCrossSellSection(product: widget.product),
                             const Divider(height: AppSpacing.xxl),
                             Text(
                               'Sipariş Notu',
@@ -412,6 +463,219 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// "Bununla İyi Gider" — client-side-only Smart Pairing, per
+/// [productPairingProvider]/`ProductPairingService`'s documented
+/// complementary-category heuristic. Hides itself entirely when the
+/// heuristic has nothing to suggest (an unmapped/test-only category, or no
+/// matching product in the active catalog) — never a dead-looking empty
+/// section.
+class _SmartPairingSection extends ConsumerWidget {
+  final MenuProduct product;
+
+  const _SmartPairingSection({required this.product});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final suggestions = ref.watch(productPairingProvider(product));
+    if (suggestions.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: AppSpacing.xxl),
+        Text('Bununla İyi Gider', style: QrMenuTypography.title),
+        const SizedBox(height: AppSpacing.sm),
+        SizedBox(
+          height: 150,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: suggestions.length,
+            itemBuilder: (context, index) {
+              final suggestion = suggestions[index];
+              return Padding(
+                padding: const EdgeInsets.only(right: AppSpacing.md),
+                child: _PairingSuggestionCard(product: suggestion),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PairingSuggestionCard extends StatelessWidget {
+  final MenuProduct product;
+
+  const _PairingSuggestionCard({required this.product});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '${product.name}, ${product.basePrice.toStringAsFixed(0)} TL',
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: AppRadius.kLarge,
+        child: InkWell(
+          borderRadius: AppRadius.kLarge,
+          onTap: () => Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ProductDetailScreen(product: product),
+            ),
+          ),
+          child: Container(
+            width: 128,
+            decoration: BoxDecoration(
+              color: QrMenuColors.surface,
+              borderRadius: AppRadius.kLarge,
+              border: Border.all(color: QrMenuColors.border),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ProductImage(
+                  imageKey: product.imageKey,
+                  width: 128,
+                  height: 96,
+                  borderRadius: BorderRadius.zero,
+                  heroTag: 'pairing_product_image_${product.id}',
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        product.name,
+                        style: QrMenuTypography.bodySecondary.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: QrMenuColors.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        '${product.basePrice.toStringAsFixed(0)} TL',
+                        // `primary`, not `terracotta` — Verified contrast:
+                        // at this caption size/weight, terracotta-on-white
+                        // is only 4.23:1 (below the 4.5:1 normal-text
+                        // floor and not WCAG "large text"); primary-on-
+                        // white is 12.30:1 (see `qr_menu_theme.dart`'s
+                        // contrast log).
+                        style: QrMenuTypography.caption.copyWith(
+                          color: QrMenuColors.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "Yanına En Çok Yakışanlar" — single-tap drink add-on, per
+/// [drinkCrossSellProductsProvider]. Hides itself on a drink's own detail
+/// page (suggesting a drink while looking at a drink reads as a mistake,
+/// not a cross-sell) and whenever the catalog has none active.
+class _DrinkCrossSellSection extends ConsumerWidget {
+  final MenuProduct product;
+
+  const _DrinkCrossSellSection({required this.product});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (product.categoryId == 'cat_icecekler') return const SizedBox.shrink();
+    final drinks = ref.watch(drinkCrossSellProductsProvider);
+    if (drinks.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: AppSpacing.xxl),
+        Text('Yanına En Çok Yakışanlar', style: QrMenuTypography.title),
+        const SizedBox(height: AppSpacing.sm),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: [
+            for (final drink in drinks) _DrinkQuickAddChip(drink: drink),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _DrinkQuickAddChip extends ConsumerWidget {
+  final MenuProduct drink;
+
+  const _DrinkQuickAddChip({required this.drink});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Semantics(
+      button: true,
+      label:
+          '${drink.name}, ${drink.basePrice.toStringAsFixed(0)} TL, sepete ekle',
+      child: Material(
+        color: QrMenuColors.surface,
+        borderRadius: AppRadius.kPill,
+        child: InkWell(
+          borderRadius: AppRadius.kPill,
+          onTap: () {
+            HapticFeedback.lightImpact();
+            ref.read(cartProvider.notifier).addToCart(
+                  id: drink.id,
+                  name: drink.name,
+                  desc: drink.description,
+                  price: drink.basePrice,
+                  pricedForChannel: ref.read(shoppingChannelProvider).channel,
+                );
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('${drink.name} sepete eklendi!'),
+                duration: const Duration(seconds: 1),
+              ),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            decoration: BoxDecoration(
+              borderRadius: AppRadius.kPill,
+              border: Border.all(color: QrMenuColors.border),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.add_circle_outline_rounded,
+                    size: 18, color: QrMenuColors.primary),
+                const SizedBox(width: AppSpacing.xs),
+                Text(
+                  '${drink.name} · ${drink.basePrice.toStringAsFixed(0)} TL',
+                  style: QrMenuTypography.bodySecondary
+                      .copyWith(color: QrMenuColors.textPrimary),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

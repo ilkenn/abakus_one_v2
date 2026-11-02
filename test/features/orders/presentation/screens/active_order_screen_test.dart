@@ -50,6 +50,22 @@ class _ThrowingOnceRepository implements CanonicalOrderRepository {
 
   @override
   Stream<Order?> watchById(OrderId orderId) => _delegate.watchById(orderId);
+
+  @override
+  Future<List<Order>> findByBranch({
+    required String organizationId,
+    required String branchId,
+  }) =>
+      _delegate.findByBranch(
+          organizationId: organizationId, branchId: branchId);
+
+  @override
+  Stream<List<Order>> watchByBranch({
+    required String organizationId,
+    required String branchId,
+  }) =>
+      _delegate.watchByBranch(
+          organizationId: organizationId, branchId: branchId);
 }
 
 Future<Order> _buildDineInOrder({
@@ -342,7 +358,8 @@ void main() {
     (tester) async {
       final repository = InMemoryCanonicalOrderRepository();
       final order = await _buildDineInOrder(repository: repository);
-      await repository.submitOrder(order.copyWith(status: OrderStatus.confirmed));
+      await repository
+          .submitOrder(order.copyWith(status: OrderStatus.confirmed));
 
       await _pump(tester, repository: repository, orderId: order.id.value);
 
@@ -359,7 +376,8 @@ void main() {
 
       expect(statusBadgeSemantics('Sipariş Alındı'), findsOneWidget);
 
-      await repository.submitOrder(order.copyWith(status: OrderStatus.preparing));
+      await repository
+          .submitOrder(order.copyWith(status: OrderStatus.preparing));
       await tester.pump();
 
       expect(statusBadgeSemantics('Hazırlanıyor'), findsOneWidget);

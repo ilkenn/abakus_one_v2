@@ -31,8 +31,7 @@ class PaxTebTerminalAdapter implements PaymentProviderAdapter {
     return const PaymentResult(
       transactionId: '',
       status: PaymentStatus.notConfigured,
-      errorMessage:
-          'PAX A910SF / TEB POS entegrasyonu henüz yapılandırılmadı.',
+      errorMessage: 'PAX A910SF / TEB POS entegrasyonu henüz yapılandırılmadı.',
     );
   }
 
@@ -44,8 +43,7 @@ class PaxTebTerminalAdapter implements PaymentProviderAdapter {
     return const PaymentResult(
       transactionId: '',
       status: PaymentStatus.notConfigured,
-      errorMessage:
-          'PAX A910SF / TEB POS entegrasyonu henüz yapılandırılmadı.',
+      errorMessage: 'PAX A910SF / TEB POS entegrasyonu henüz yapılandırılmadı.',
     );
   }
 }

@@ -42,6 +42,26 @@ abstract interface class CanonicalOrderRepository {
   /// convenience getter.
   Future<List<Order>> findAll();
 
+  /// Every order for [branchId] under [organizationId], regardless of
+  /// status or channel — the admin Siparişler screen's read path.
+  /// [organizationId] is required (not derivable from [Order] itself,
+  /// which carries no organization field — see
+  /// [FirestoreCanonicalOrderRepository.submitOrder]'s own
+  /// `resolveOrganizationId` resolution) so [FirestoreCanonicalOrderRepository]
+  /// can satisfy `orders`' `firestore.rules` staff branch; see
+  /// [OrderFirestoreClient.queryOrdersByBranch]'s own doc comment for why.
+  Future<List<Order>> findByBranch({
+    required String organizationId,
+    required String branchId,
+  });
+
+  /// A live view of [findByBranch] — re-emits whenever the branch's order
+  /// set changes, mirroring [watchById]'s own contract.
+  Stream<List<Order>> watchByBranch({
+    required String organizationId,
+    required String branchId,
+  });
+
   /// A live view of [findById] for [orderId] — re-emits whenever the
   /// order changes, so a customer/guest tracking screen can show a status
   /// change without polling.
@@ -74,6 +94,37 @@ class InMemoryCanonicalOrderRepository implements CanonicalOrderRepository {
 
   @override
   Future<List<Order>> findAll() async => List.unmodifiable(_byId.values);
+
+  // No organization concept on the in-memory [Order] model itself
+  // (single-tenant-in-practice, same reasoning as
+  // `InMemoryKitchenTicketRepository`'s own identical parameter) —
+  // [organizationId] is accepted, for interface parity, and ignored.
+  @override
+  Future<List<Order>> findByBranch({
+    required String organizationId,
+    required String branchId,
+  }) async {
+    return List.unmodifiable(
+      _byId.values.where((order) => order.branchId == branchId),
+    );
+  }
+
+  @override
+  Stream<List<Order>> watchByBranch({
+    required String organizationId,
+    required String branchId,
+  }) {
+    final controller = StreamController<List<Order>>.broadcast();
+    scheduleMicrotask(() async {
+      if (controller.hasListener) {
+        controller.add(
+          await findByBranch(
+              organizationId: organizationId, branchId: branchId),
+        );
+      }
+    });
+    return controller.stream;
+  }
 
   @override
   Stream<Order?> watchById(OrderId orderId) {
@@ -150,9 +201,33 @@ class FirestoreCanonicalOrderRepository implements CanonicalOrderRepository {
   }
 
   @override
+  Future<List<Order>> findByBranch({
+    required String organizationId,
+    required String branchId,
+  }) async {
+    final docs = await _client.queryOrdersByBranch(
+      organizationId: organizationId,
+      branchId: branchId,
+    );
+    return [for (final doc in docs) OrderFirestoreMapper.fromFirestore(doc)];
+  }
+
+  @override
+  Stream<List<Order>> watchByBranch({
+    required String organizationId,
+    required String branchId,
+  }) {
+    return _client
+        .watchOrdersByBranch(organizationId: organizationId, branchId: branchId)
+        .map((docs) =>
+            [for (final doc in docs) OrderFirestoreMapper.fromFirestore(doc)]);
+  }
+
+  @override
   Stream<Order?> watchById(OrderId orderId) {
     return _client.watchOrder(orderId.value).map(
-          (data) => data == null ? null : OrderFirestoreMapper.fromFirestore(data),
+          (data) =>
+              data == null ? null : OrderFirestoreMapper.fromFirestore(data),
         );
   }
 }

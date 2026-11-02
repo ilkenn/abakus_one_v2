@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_shadows.dart';
@@ -6,7 +7,9 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_theme_constants.dart';
+import '../../../../core/theme/qr_menu_theme.dart';
 import '../../../../shared/widgets/cards/bowl_builder_feature_card.dart';
+import '../../../../shared/widgets/cards/glass_card.dart';
 import '../../../../shared/widgets/images/product_image.dart';
 import '../../../bowl_builder/presentation/screens/bowl_builder_screen.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
@@ -19,6 +22,8 @@ import '../../domain/pricing/channel_pricing_policy.dart';
 import '../providers/channel_price_display_provider.dart';
 import '../providers/menu_catalog_provider.dart';
 import '../providers/menu_filter_provider.dart';
+import '../providers/qr_menu_ambient_provider.dart';
+import '../widgets/qr_menu_story_bar.dart';
 import 'product_detail_screen.dart';
 
 const String _allCategoriesLabel = 'Tümü';
@@ -54,6 +59,10 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
     final isRestaurantOpen = ref.watch(
       restaurantStatusProvider.select((s) => s.isOpen && s.acceptsOrders),
     );
+    // "Warm Artisanal & Craft" ambient auto-tint — resolved once per
+    // provider lifetime from the device's local hour (see
+    // `QrMenuAmbientTint`'s own doc comment), not recomputed per rebuild.
+    final ambientPalette = ref.watch(qrMenuAmbientPaletteProvider);
 
     // A filter set from elsewhere (e.g. Home's quick-category chips) that
     // no longer matches a real category name is treated as "no filter"
@@ -75,6 +84,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
     }).toList();
 
     return Scaffold(
+      backgroundColor: ambientPalette.background,
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -149,6 +159,10 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: AppSpacing.lg),
+            // "Şefin Seçimi" / today's-specials story bar — real
+            // `featuredMenuProductsProvider` data, hides itself when empty.
+            const QrMenuStoryBar(),
             const SizedBox(height: AppSpacing.lg),
             SizedBox(
               height: AppThemeConstants.categoryListHeight,
@@ -343,6 +357,7 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
       _openDetail();
       return;
     }
+    HapticFeedback.lightImpact();
     final channelContext = ref.read(shoppingChannelProvider);
     final policy = ref.read(channelPricingPolicySnapshotProvider).valueOrNull ??
         const ChannelPricingPolicy();
@@ -444,6 +459,41 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
                             color: isFavorite ? AppColors.error : Colors.white,
                             size: 20,
                           ),
+                        ),
+                      ),
+                    ),
+                    // Instagram-feed-style floating glass badge — price
+                    // (and the catalog's own "Çok Satanlar"/chef's-pick
+                    // flag, when set) over the photo, frosted so it reads
+                    // regardless of the underlying image. The plain price
+                    // line below is kept as-is (detail, not decoration) —
+                    // this badge is the at-a-glance affordance.
+                    Positioned(
+                      bottom: AppSpacing.sm,
+                      left: AppSpacing.sm,
+                      child: GlassCard(
+                        tintColor: QrMenuColors.glassBadgeTint,
+                        borderRadius: AppRadius.kPill,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.md,
+                          vertical: AppSpacing.xs,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (product.isFeatured) ...[
+                              const Icon(
+                                Icons.star_rounded,
+                                size: 14,
+                                color: QrMenuColors.gold,
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            Text(
+                              '${displayPrice.toStringAsFixed(0)} TL',
+                              style: QrMenuTypography.badge,
+                            ),
+                          ],
                         ),
                       ),
                     ),

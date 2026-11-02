@@ -8,13 +8,15 @@ void main() {
     testWidgets('renders "Aktif" for active', (tester) async {
       await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
-          body: TakeawayOperationStatusBadge(status: TakeawayOperationStatus.active),
+          body: TakeawayOperationStatusBadge(
+              status: TakeawayOperationStatus.active),
         ),
       ));
       expect(find.text('Aktif'), findsOneWidget);
     });
 
-    testWidgets('renders "Yoğun (+30 dk)" for busy with a delay', (tester) async {
+    testWidgets('renders "Yoğun (+30 dk)" for busy with a delay',
+        (tester) async {
       await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
           body: TakeawayOperationStatusBadge(
@@ -29,7 +31,8 @@ void main() {
     testWidgets('renders "Kapalı" for paused', (tester) async {
       await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
-          body: TakeawayOperationStatusBadge(status: TakeawayOperationStatus.paused),
+          body: TakeawayOperationStatusBadge(
+              status: TakeawayOperationStatus.paused),
         ),
       ));
       expect(find.text('Kapalı'), findsOneWidget);
@@ -52,7 +55,8 @@ void main() {
     testWidgets('is not tappable when onTap is null', (tester) async {
       await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
-          body: TakeawayOperationStatusBadge(status: TakeawayOperationStatus.active),
+          body: TakeawayOperationStatusBadge(
+              status: TakeawayOperationStatus.active),
         ),
       ));
       expect(find.byType(InkWell), findsNothing);

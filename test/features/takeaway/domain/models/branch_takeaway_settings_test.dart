@@ -71,14 +71,16 @@ void main() {
         updatedAt: DateTime(2026, 1, 1),
         revision: 3,
       );
-      final updated = original.copyWith(status: TakeawayOperationStatus.busy, busyDelayMinutes: 45);
+      final updated = original.copyWith(
+          status: TakeawayOperationStatus.busy, busyDelayMinutes: 45);
       expect(updated.status, TakeawayOperationStatus.busy);
       expect(updated.busyDelayMinutes, 45);
       expect(updated.branchId, 'branch-1');
       expect(updated.revision, 3);
     });
 
-    test('kTakeawayBusyDelayMinuteOptions is exactly the five fixed values', () {
+    test('kTakeawayBusyDelayMinuteOptions is exactly the five fixed values',
+        () {
       expect(kTakeawayBusyDelayMinuteOptions, [0, 15, 30, 45, 60]);
     });
   });

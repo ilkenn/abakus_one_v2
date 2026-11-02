@@ -216,7 +216,8 @@ class _CourierAssignmentDialogState
                   ),
                   child: Text(
                     _error!,
-                    style: AppTypography.bodySmall.copyWith(color: AppColors.error),
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.error),
                   ),
                 ),
               ],
@@ -309,7 +310,8 @@ class _CourierRow extends StatelessWidget {
                     ),
                     child: Text(
                       'Önerilen (İlk Dönen)',
-                      style: AppTypography.caption.copyWith(color: AppColors.success),
+                      style: AppTypography.caption
+                          .copyWith(color: AppColors.success),
                     ),
                   ),
               ],

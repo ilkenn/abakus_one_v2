@@ -6,5 +6,5 @@ import '../../data/submit_dine_in_order_gateway.dart';
 /// Loyalty Program P7-D.1 (2026-08-24). Mirrors
 /// `submitDeliveryOrderGatewayProvider`'s exact shape.
 final submitDineInOrderGatewayProvider = Provider<SubmitDineInOrderGateway>(
-  (ref) => const FirebaseSubmitDineInOrderGateway(),
+  (ref) => FirebaseSubmitDineInOrderGateway(),
 );

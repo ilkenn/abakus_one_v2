@@ -1,3 +1,4 @@
+import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_ticket_repository.dart';
@@ -17,9 +18,11 @@ void main() {
   Future<InMemoryKitchenProjectionRepository> pumpScreen(
     WidgetTester tester, {
     AuthorizationResult? authorization,
+    String kitchenTicketIdToOpen = 'ticket-1',
+    OrderChannel ticketChannel = OrderChannel.delivery,
   }) async {
     final ticketRepository = InMemoryKitchenTicketRepository();
-    await ticketRepository.save(buildTestKitchenTicket());
+    await ticketRepository.save(buildTestKitchenTicket(channel: ticketChannel));
     final projectionRepository = InMemoryKitchenProjectionRepository();
     await projectionRepository.save(buildTestKitchenWorkItem());
 
@@ -34,7 +37,7 @@ void main() {
         ],
         child: MaterialApp(
           home: KitchenOrderDetailsScreen(
-            kitchenTicketId: 'ticket-1',
+            kitchenTicketId: kitchenTicketIdToOpen,
             authorizationPolicy: authorization == null
                 ? null
                 : FakePosAuthorizationPolicy(authorization),
@@ -74,5 +77,33 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Yetki politikası tanımlı değil.'), findsOneWidget);
+  });
+
+  testWidgets(
+      '2026-10-29: a mismatched/missing kitchenTicketId shows a clear '
+      '"not found" state once loading finishes — never an infinite '
+      'loading spinner', (tester) async {
+    await pumpScreen(tester, kitchenTicketIdToOpen: 'ticket-does-not-exist');
+
+    expect(find.text('Sipariş bulunamadı.'), findsOneWidget);
+    expect(find.text('Detaylar yükleniyor...'), findsNothing);
+  });
+
+  testWidgets(
+      '2026-10-29: "Siparişi İptal Et" only shows for a dineInQr ticket — '
+      'the one channel advanceDineInOrderStatus accepts a cancel for',
+      (tester) async {
+    await pumpScreen(tester, ticketChannel: OrderChannel.dineInQr);
+
+    expect(find.text('Siparişi İptal Et'), findsOneWidget);
+  });
+
+  testWidgets(
+      '2026-10-29: "Siparişi İptal Et" is absent for every other channel '
+      '(dineInStaff/takeaway/delivery/reservationPreorder each have their '
+      'own separate cancellation mechanism)', (tester) async {
+    await pumpScreen(tester, ticketChannel: OrderChannel.delivery);
+
+    expect(find.text('Siparişi İptal Et'), findsNothing);
   });
 }

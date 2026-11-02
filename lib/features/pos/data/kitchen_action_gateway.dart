@@ -1,6 +1,23 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
+import '../../../core/services/functions/rest_callable_client.dart';
 import '../domain/kds/kitchen_line_status.dart';
+
+/// 2026-10-29 — mirrors `dineInOrderLifecycle.ts`'s own
+/// `DINE_IN_CANCELLATION_REASON_CODES` exactly, never invented
+/// independently. Only meaningful for an already-`confirmed` (or later)
+/// dine-in order — `advanceDineInOrderStatus` is the one callable that
+/// accepts `targetStatus: 'cancelled'` with one of these codes.
+enum DineInCancellationReasonCode {
+  itemUnavailable,
+  kitchenUnavailable,
+  capacityUnavailable,
+  guestLeft,
+  operationalIssue,
+  other,
+}
 
 /// AP-5 Sprint 1 — the real backend boundary for kitchen work-item
 /// transitions and the order-lifecycle advance that follows once every
@@ -61,8 +78,11 @@ abstract interface class KitchenActionGateway {
 
   /// Advances the canonical order's own status — called by the KDS board
   /// only after [transitionWorkItem] returns `allSiblingsReady: true`,
-  /// using the [channel]/[orderId] that same response carried. Dispatches
-  /// to the already-real, already-tested per-channel callable
+  /// using the [channel]/[orderId] that same response carried, OR directly
+  /// by a staff-initiated whole-order cancel (`targetStatus: 'cancelled'`,
+  /// [reasonCode] then required — see
+  /// `dineInOrderLifecycle.ts`'s `DINE_IN_CANCELLATION_REASON_CODES`).
+  /// Dispatches to the already-real, already-tested per-channel callable
   /// (`advanceDineInOrderStatus`/`advanceTakeawayOrderStatus`/
   /// `advanceDeliveryOrderStatus`/`advanceReservationPreorderOrderStatus`)
   /// — never a new, parallel order-status write path.
@@ -70,11 +90,19 @@ abstract interface class KitchenActionGateway {
     required String orderId,
     required String channel,
     required String targetStatus,
+    String? reasonCode,
+    String? reasonMessage,
   });
 }
 
 class FirebaseKitchenActionGateway implements KitchenActionGateway {
-  const FirebaseKitchenActionGateway();
+  FirebaseKitchenActionGateway({RestCallableClient? restClient})
+      : _restClient = restClient ?? RestCallableClient();
+
+  final RestCallableClient _restClient;
+
+  bool get _useRest =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
     throw KitchenActionException(
@@ -83,8 +111,33 @@ class FirebaseKitchenActionGateway implements KitchenActionGateway {
     );
   }
 
-  functions.HttpsCallable _fn(String name) =>
-      functions.FirebaseFunctions.instance.httpsCallable(name);
+  /// **2026-10-29**: now routes through [RestCallableClient] on Windows —
+  /// this previously called `functions.FirebaseFunctions.instance
+  /// .httpsCallable(...)` unconditionally, the exact native-plugin path
+  /// confirmed broken on Windows desktop (`cloud_functions` ships no
+  /// native Windows implementation at all) — the real cause of the
+  /// reported `CloudFunctionsHostApi.call` pigeon-channel error on every
+  /// KDS status-transition attempt.
+  Future<Map<String, dynamic>> _call(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    if (_useRest) {
+      try {
+        return await _restClient.call(name, data);
+      } on RestCallableException catch (error) {
+        throw KitchenActionException(error.code, error.message);
+      }
+    }
+    try {
+      final result = await functions.FirebaseFunctions.instance
+          .httpsCallable(name)
+          .call<Map<String, dynamic>>(data);
+      return result.data;
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
 
   // AP-5 Sprint 2 fix: the real, stored `Order.channel` value for dine-in
   // is `'dineInQr'` (confirmed directly — every dine-in Cloud Function
@@ -105,25 +158,19 @@ class FirebaseKitchenActionGateway implements KitchenActionGateway {
     required int expectedRevision,
     String? reason,
   }) async {
-    try {
-      final result =
-          await _fn('transitionKitchenWorkItem').call<Map<String, dynamic>>({
-        'workItemId': workItemId,
-        'to': to.name,
-        'expectedRevision': expectedRevision,
-        if (reason != null) 'reason': reason,
-      });
-      final data = result.data;
-      return KitchenActionResult(
-        status: KitchenLineStatus.values.byName(data['status'] as String),
-        revision: data['revision'] as int,
-        allSiblingsReady: data['allSiblingsReady'] as bool,
-        orderId: data['orderId'] as String?,
-        orderChannel: data['orderChannel'] as String?,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('transitionKitchenWorkItem', {
+      'workItemId': workItemId,
+      'to': to.name,
+      'expectedRevision': expectedRevision,
+      if (reason != null) 'reason': reason,
+    });
+    return KitchenActionResult(
+      status: KitchenLineStatus.values.byName(data['status'] as String),
+      revision: data['revision'] as int,
+      allSiblingsReady: data['allSiblingsReady'] as bool,
+      orderId: data['orderId'] as String?,
+      orderChannel: data['orderChannel'] as String?,
+    );
   }
 
   @override
@@ -131,6 +178,8 @@ class FirebaseKitchenActionGateway implements KitchenActionGateway {
     required String orderId,
     required String channel,
     required String targetStatus,
+    String? reasonCode,
+    String? reasonMessage,
   }) async {
     final functionName = _advanceFunctionByChannel[channel];
     if (functionName == null) {
@@ -139,14 +188,12 @@ class FirebaseKitchenActionGateway implements KitchenActionGateway {
         'Bilinmeyen sipariş kanalı: $channel',
       );
     }
-    try {
-      await _fn(functionName).call<Map<String, dynamic>>({
-        'orderId': orderId,
-        'targetStatus': targetStatus,
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call(functionName, {
+      'orderId': orderId,
+      'targetStatus': targetStatus,
+      if (reasonCode != null) 'reasonCode': reasonCode,
+      if (reasonMessage != null) 'reasonMessage': reasonMessage,
+    });
   }
 }
 
@@ -172,6 +219,8 @@ class UnavailableKitchenActionGateway implements KitchenActionGateway {
     required String orderId,
     required String channel,
     required String targetStatus,
+    String? reasonCode,
+    String? reasonMessage,
   }) async =>
       _unavailable();
 }

@@ -49,7 +49,8 @@ Order _buildOrder(String id, {String? neighborhoodName}) {
     branchId: 'branch-1',
     restaurantId: 'restaurant-1',
     lines: [line],
-    pricing: PriceCalculator.calculate(lines: [line], currency: Currency.tryLira),
+    pricing:
+        PriceCalculator.calculate(lines: [line], currency: Currency.tryLira),
     timestamps: OrderTimestamps(created: DateTime(2026, 1, 1)),
     deliveryAddressSnapshot: _addressWithNeighborhood(neighborhoodName),
   );
@@ -74,7 +75,9 @@ void main() {
       expect(clusters[1].orders.length, 1);
     });
 
-    test('a null neighborhoodName goes to its own ungrouped bucket, sorted last regardless of size', () {
+    test(
+        'a null neighborhoodName goes to its own ungrouped bucket, sorted last regardless of size',
+        () {
       final orders = [
         _buildOrder('o1', neighborhoodName: null),
         _buildOrder('o2', neighborhoodName: null),
@@ -98,7 +101,8 @@ void main() {
 
       final clusters = DeliveryNeighborhoodClusterer.cluster(orders);
 
-      expect(clusters.map((c) => c.neighborhoodName).toList(), ['Dikilitaş', 'Fulya']);
+      expect(clusters.map((c) => c.neighborhoodName).toList(),
+          ['Dikilitaş', 'Fulya']);
     });
 
     test('empty input yields empty output', () {

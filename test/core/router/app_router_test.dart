@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -269,6 +270,53 @@ void main() {
       },
     );
   });
+
+  group(
+    'appRouterProvider — Windows desktop initial route (back-office '
+    'terminal, 2026-10-28)',
+    () {
+      // Reset synchronously at the end of each test body, not via
+      // `tearDown()`/`addTearDown` — both run after `testWidgets`'s own
+      // `_runTestBody` has already asserted
+      // `debugAssertAllFoundationVarsUnset` (confirmed: either one fails
+      // every test in this group with "The value of a foundation debug
+      // variable was changed by the test," even though it does reset the
+      // value — just one tick too late for that specific check).
+      testWidgets(
+        'no session, onboarding not complete -> first frame is '
+        'AdminShellScreen directly, never OnboardingScreen/LoginScreen',
+        (tester) async {
+          debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+
+          await _pumpInitial(tester);
+
+          expect(find.byType(AdminShellScreen), findsOneWidget);
+          expect(find.byType(OnboardingScreen), findsNothing);
+          expect(find.byType(LoginScreen), findsNothing);
+
+          debugDefaultTargetPlatformOverride = null;
+        },
+      );
+
+      testWidgets(
+        'a guest customer session is still overridden to AdminShellScreen '
+        '— Windows desktop is never a customer surface',
+        (tester) async {
+          debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+
+          await _pumpInitial(
+            tester,
+            overrides: [authProvider.overrideWith(_GuestAuthNotifier.new)],
+          );
+
+          expect(find.byType(AdminShellScreen), findsOneWidget);
+          expect(find.byType(MainNavigationScreen), findsNothing);
+
+          debugDefaultTargetPlatformOverride = null;
+        },
+      );
+    },
+  );
 
   group('appRouterProvider — AP-2 Stage B: /admin route', () {
     testWidgets(

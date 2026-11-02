@@ -102,6 +102,11 @@ export type StaffPermission =
   // client tier, not a new authorization decision. Staff-tier: a line cook
   // must never need a manager present to advance a kitchen ticket.
   | "manageKitchenOperations"
+  // 2026-10-28 — server-side mirror of the client-side
+  // `PosAuthorizedAction.manageMenu`, `_managerTier` in
+  // `role_permission_map.dart` — the canonical `menuCategories`/
+  // `menuProducts` catalog (categories, products, pricing).
+  | "manageMenu"
   // AP-5 Sprint 2 — server-side mirrors of the client-side
   // `PosAuthorizedAction.manageRecipes`/`manageInventory`, both already
   // `_managerTier` in `role_permission_map.dart` (never staff-tier,
@@ -299,6 +304,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     // must have both categories either way). Confirmed by directly
     // reproducing the failure against a live emulator, not assumed.
     "manageKitchenOperations",
+    "manageMenu",
     "manageRecipes",
     "manageInventory",
     "recordStockCount",
@@ -335,6 +341,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveCashReconciliation",
     "manageFiscalDevices",
     "manageKitchenOperations",
+    "manageMenu",
     "manageRecipes",
     "manageInventory",
     "recordStockCount",
@@ -371,6 +378,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveCashReconciliation",
     "manageFiscalDevices",
     "manageKitchenOperations",
+    "manageMenu",
     "manageRecipes",
     "manageInventory",
     "recordStockCount",

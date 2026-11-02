@@ -43,6 +43,13 @@ export interface CatalogExportProduct {
   isAvailable: boolean;
   modifierGroups: unknown[];
   channelPriceOverrides: Record<string, unknown>;
+  /** 2026-10-28 PDF menu refresh — mirrors `MenuProduct.allergens`.
+   * Absent/empty for every product the source menu didn't list one for. */
+  allergens?: string[];
+  /** 2026-10-28 PDF menu refresh — mirrors `MenuProduct.portionLabel`
+   * (`"150g"`, `"4 adet"`, ...). `null`/absent where the source menu
+   * states none. */
+  portionLabel?: string | null;
 }
 
 export interface CatalogExportIngredient {
@@ -137,6 +144,8 @@ export async function migrateCanonicalCatalog(
         isAvailable: product.isAvailable,
         modifierGroups: product.modifierGroups,
         channelPriceOverrides: product.channelPriceOverrides,
+        allergens: product.allergens ?? [],
+        portionLabel: product.portionLabel ?? null,
       },
     }),
   );

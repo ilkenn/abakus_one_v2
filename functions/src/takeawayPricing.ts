@@ -117,6 +117,15 @@ export interface ComputedOrderLine {
   taxableBaseMinorUnits: number;
   kitchenNote: string;
   customerNote: string;
+  /**
+   * 2026-10-30 product-configurator — standard ingredient names the
+   * customer excluded ("İçinden Çıkar"). Price-neutral (never affects any
+   * amount computed in this function) and validated only structurally
+   * (`sanitizeExcludedIngredients`) rather than against the live catalog's
+   * exact ingredient list — the same trust boundary `kitchenNote`/
+   * `customerNote` already sit at.
+   */
+  excludedIngredients: string[];
 }
 
 /**
@@ -174,6 +183,7 @@ export function buildOrderLine(params: {
   taxBasisPoints: number;
   kitchenNote?: string;
   customerNote?: string;
+  excludedIngredients?: string[];
   freeUnitCount?: number;
   campaignDiscountMinorUnits?: number;
 }): ComputedOrderLine {
@@ -229,6 +239,7 @@ export function buildOrderLine(params: {
     taxableBaseMinorUnits,
     kitchenNote: params.kitchenNote ?? "",
     customerNote: params.customerNote ?? "",
+    excludedIngredients: params.excludedIngredients ?? [],
   };
 }
 

@@ -118,20 +118,33 @@ class FirestoreKitchenTicketRepository implements KitchenTicketRepository {
   }
 
   @override
-  Future<List<KitchenTicket>> findActiveByBranch(String branchId) async {
-    final snapshot = await _query(branchId).get();
+  Future<List<KitchenTicket>> findActiveByBranch(
+    String branchId, {
+    required String organizationId,
+  }) async {
+    final snapshot = await _query(branchId, organizationId).get();
     return _mapSnapshot(snapshot);
   }
 
   @override
-  Stream<List<KitchenTicket>> watchActiveByBranch(String branchId) {
-    return _query(branchId).snapshots().map(_mapSnapshot);
+  Stream<List<KitchenTicket>> watchActiveByBranch(
+    String branchId, {
+    required String organizationId,
+  }) {
+    return _query(branchId, organizationId).snapshots().map(_mapSnapshot);
   }
 
-  fs.Query<Map<String, dynamic>> _query(String branchId) {
+  // `organizationId` must be an explicit equality filter here, not just
+  // satisfied by the signed-in actor's own claims — see
+  // `KitchenTicketRepository.findActiveByBranch`'s doc comment: without it,
+  // Firestore can't statically prove every possible query result satisfies
+  // `orders`' `firestore.rules` staff branch, and 403s the whole query.
+  fs.Query<Map<String, dynamic>> _query(
+      String branchId, String organizationId) {
     return _firestore
         .collection('orders')
         .where('branchId', isEqualTo: branchId)
+        .where('organizationId', isEqualTo: organizationId)
         .where('status', whereIn: _kitchenEligibleStatuses);
   }
 

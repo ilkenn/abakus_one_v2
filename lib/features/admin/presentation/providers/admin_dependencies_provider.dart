@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/services/auth/email_password_auth_client.dart';
 import '../../../../core/services/auth/staff_claims_sync_client.dart';
+import '../../../../core/services/functions/maintenance_operations_gateway.dart';
 import '../../../auth/data/repositories/firebase_auth_client.dart';
 import '../../../../core/services/logging/log_level.dart';
 import '../../../../core/services/logging/logging_provider.dart';
@@ -29,7 +30,11 @@ import '../../data/admin_audit_entry_repository.dart';
 import '../../data/admin_device_registration_repository.dart';
 import '../../data/branch_repository.dart';
 import '../../data/customer_admin_note_repository.dart';
+import '../../data/customer_photo_moderation_gateway.dart';
 import '../../data/customer_photo_repository.dart';
+import '../../data/dine_in_order_response_gateway.dart';
+import '../../data/menu_catalog_admin_gateway.dart';
+import '../../data/takeaway_order_response_gateway.dart';
 import '../../data/localization_config_repository.dart';
 import '../../data/maintenance_mode_state_repository.dart';
 import '../../data/organization_repository.dart';
@@ -158,7 +163,14 @@ final staffAuthRepositoryProvider = Provider<StaffAuthRepository>((ref) {
     return const ProductionUnavailableStaffAuthRepository();
   }
   return FirebaseStaffAuthRepository(
-    authClient: DefaultEmailPasswordAuthClient(),
+    // 2026-10-30 — Windows uses the REST Identity Toolkit bridge instead
+    // of the native plugin, which hangs on `signInWithEmailAndPassword`
+    // there (see `RestEmailPasswordAuthClient`'s own doc comment for the
+    // full root-cause/limitation writeup). Every other platform is
+    // unaffected.
+    authClient: !kIsWeb && defaultTargetPlatform == TargetPlatform.windows
+        ? RestEmailPasswordAuthClient()
+        : DefaultEmailPasswordAuthClient(),
     phoneAuthClient: DefaultFirebaseAuthClient(),
     staffMemberRepository: ref.watch(staffMemberRepositoryProvider),
     sessionDuration: () => const Duration(hours: 12),
@@ -205,6 +217,15 @@ final organizationRepositoryProvider = Provider<OrganizationRepository>((ref) {
 /// [resolvedActorContextProvider] for the real, callable-backed
 /// enumeration the context switcher is built on.
 final currentOrganizationIdProvider = StateProvider<String>((ref) => 'org-1');
+
+/// 2026-10-28 — the single-tenant-in-practice restaurant id, mirroring
+/// [currentOrganizationIdProvider]'s exact shape; needed by the admin Menü
+/// module's `createMenuCategory`/`createMenuProduct` calls
+/// (`menuCategories`/`menuProducts` are restaurant-scoped, matching
+/// `catalogMigration.ts`'s real write shape — never branch-scoped, unlike
+/// most other admin-operational data).
+final currentRestaurantIdProvider =
+    StateProvider<String>((ref) => 'restaurant-1');
 
 /// AP-2 Stage B — the real, self-derived enumeration of every organization/
 /// branch/role the SIGNED-IN STAFF ACTOR's own active memberships actually
@@ -293,7 +314,16 @@ final branchRepositoryProvider = Provider<BranchRepository>((ref) {
     Branch(
       id: 'branch-1',
       restaurantId: 'restaurant-1',
-      name: 'Merkez Şube',
+      // 2026-10-30 — corrected from the old "Merkez Şube" placeholder.
+      // This is a purely local, in-memory seed (`InMemoryBranchRepository`,
+      // never Firestore-backed) that `branch_admin_screen.dart`/
+      // `admin_overview_screen.dart` display from directly — the real
+      // `renameBranch` callable (Platform/Admin "Şube Adını Düzenle"
+      // action) only ever writes the real `branches/{branchId}` Firestore
+      // document, which this seed has no connection to at all. Both need
+      // to agree for every branch-name display in the app to actually
+      // show "Abaküs Ortaköy."
+      name: 'Abaküs Ortaköy',
       // Corrected, Faz C (Gel Al architecture analysis): this branch
       // already genuinely serves dineInQr/dineInStaff/delivery today
       // (real, tested customer-app flows) — the seed literal simply never
@@ -337,10 +367,78 @@ final customerAdminNoteIdGeneratorProvider =
   return SequentialCustomerAdminNoteIdGenerator();
 });
 
-// Phase 6G — customer photo moderation.
+// Phase 6G — customer photo moderation. Gated on [firebaseReadyProvider],
+// 2026-10-27, mirroring every other Firebase-backed provider in this
+// codebase: [FirestoreCustomerPhotoRepository] (read-only — see its own
+// doc comment) once Firebase is ready, [InMemoryCustomerPhotoRepository]
+// otherwise.
 final customerPhotoRepositoryProvider =
     Provider<CustomerPhotoRepository>((ref) {
-  return InMemoryCustomerPhotoRepository();
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return InMemoryCustomerPhotoRepository();
+  }
+  return FirestoreCustomerPhotoRepository();
+});
+
+/// The real backend boundary for moderation mutations — see
+/// `CustomerPhotoModerationGateway`'s own doc comment. Only ever
+/// constructed once Firebase is ready; the in-memory/pre-Firebase path
+/// keeps using the existing `ModerateCustomerPhoto` use case directly
+/// (`CustomerPhotoModerationScreen`'s own branch), unchanged.
+final customerPhotoModerationGatewayProvider =
+    Provider<CustomerPhotoModerationGateway>((ref) {
+  return const FirebaseCustomerPhotoModerationGateway();
+});
+
+/// 2026-10-28 — the real backend boundary for the admin Menü module. Gated
+/// on [firebaseReadyProvider], mirroring [kitchenActionGatewayProvider]'s
+/// exact shape: fail-closed [UnavailableMenuCatalogAdminGateway] pre-
+/// Firebase, the real [FirebaseMenuCatalogAdminGateway] once ready.
+final menuCatalogAdminGatewayProvider =
+    Provider<MenuCatalogAdminGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return const UnavailableMenuCatalogAdminGateway();
+  }
+  return FirebaseMenuCatalogAdminGateway();
+});
+
+/// 2026-10-30 — `renameBranch` only, called from this (tenant Admin) shell
+/// specifically because it's gated by `requireStaffPermission
+/// ("manageBranch")` — a real staff session, which only this shell has
+/// (the Platform Console's own session never satisfies it; see
+/// `maintenance_operations_gateway.dart`'s own doc comment).
+final adminMaintenanceOperationsGatewayProvider =
+    Provider<MaintenanceOperationsGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return const UnavailableMaintenanceOperationsGateway();
+  }
+  return FirebaseMaintenanceOperationsGateway();
+});
+
+/// 2026-10-28 — the real backend boundary for accepting/rejecting a
+/// pending takeaway order from the admin Siparişler screen. Same gating
+/// shape as [menuCatalogAdminGatewayProvider].
+final takeawayOrderResponseGatewayProvider =
+    Provider<TakeawayOrderResponseGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return const UnavailableTakeawayOrderResponseGateway();
+  }
+  return FirebaseTakeawayOrderResponseGateway();
+});
+
+/// Mirrors [takeawayOrderResponseGatewayProvider]'s exact shape — see
+/// `DineInOrderResponseGateway`'s own doc comment.
+final dineInOrderResponseGatewayProvider =
+    Provider<DineInOrderResponseGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (!isFirebaseReady) {
+    return const UnavailableDineInOrderResponseGateway();
+  }
+  return FirebaseDineInOrderResponseGateway();
 });
 
 final customerPhotoIdGeneratorProvider =

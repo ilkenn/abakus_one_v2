@@ -78,6 +78,15 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "branchId", "order": "ASCENDING" },
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "branchId", "order": "ASCENDING" },
         { "fieldPath": "channel", "order": "ASCENDING" }
       ]
     },
@@ -245,6 +254,15 @@
         { "fieldPath": "organizationId", "order": "ASCENDING" },
         { "fieldPath": "customerId", "order": "ASCENDING" },
         { "fieldPath": "timestamps.created", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "trustedDeviceRegistrations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "branchId", "order": "ASCENDING" },
+        { "fieldPath": "registeredAt", "order": "DESCENDING" }
       ]
     }
   ],

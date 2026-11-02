@@ -3,7 +3,7 @@
   "private": true,
   "description": "Server-authoritative Cloud Functions for Abaküs One - Sprint 9F (docs/decisions.md ADR-026). Emulator-tested only; not deployed to any real Firebase project yet - see functions/README.md.",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "main": "lib/index.js",
   "scripts": {
@@ -28,7 +28,8 @@
     "firebase-functions": "^6.0.1"
   },
   "devDependencies": {
-    "typescript": "^5.6.3",
-    "@types/node": "^20.16.0"
+    "@types/node": "^20.16.0",
+    "qrcode": "^1.5.4",
+    "typescript": "^5.6.3"
   }
 }

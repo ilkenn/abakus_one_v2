@@ -8,6 +8,7 @@ import '../../../../core/utils/clock_provider.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../domain/kds/kitchen_delay_state.dart';
 import '../../domain/kds/kitchen_line_status.dart';
 import '../../domain/kitchen/kitchen_ticket.dart';
@@ -44,9 +45,11 @@ class _DelayedOrdersScreenState extends ConsumerState<DelayedOrdersScreen> {
   Future<void> _load() async {
     final clock = ref.read(clockProvider);
     final now = clock.now();
-    final tickets = await ref
-        .read(kitchenTicketRepositoryProvider)
-        .findActiveByBranch(widget.branchId);
+    final tickets =
+        await ref.read(kitchenTicketRepositoryProvider).findActiveByBranch(
+              widget.branchId,
+              organizationId: ref.read(currentOrganizationIdProvider),
+            );
     final workItems = await ref
         .read(kitchenProjectionRepositoryProvider)
         .findByBranch(branchId: widget.branchId);

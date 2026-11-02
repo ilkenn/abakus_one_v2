@@ -30,7 +30,7 @@ final posOperationalViewGatewayProvider =
 
 final posActionGatewayProvider = Provider<PosActionGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
-  if (isFirebaseReady) return const FirebasePosActionGateway();
+  if (isFirebaseReady) return FirebasePosActionGateway();
   return const UnavailablePosActionGateway();
 });
 
@@ -40,19 +40,19 @@ final posActionGatewayProvider = Provider<PosActionGateway>((ref) {
 /// result — see each `Unavailable*Gateway`'s own fail-closed doc comment.
 final paymentGatewayProvider = Provider<PaymentGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
-  if (isFirebaseReady) return const FirebasePaymentGateway();
+  if (isFirebaseReady) return FirebasePaymentGateway();
   return const UnavailablePaymentGateway();
 });
 
 final cashRegisterGatewayProvider = Provider<CashRegisterGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
-  if (isFirebaseReady) return const FirebaseCashRegisterGateway();
+  if (isFirebaseReady) return FirebaseCashRegisterGateway();
   return const UnavailableCashRegisterGateway();
 });
 
 final fiscalOfflineGatewayProvider = Provider<FiscalOfflineGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
-  if (isFirebaseReady) return const FirebaseFiscalOfflineGateway();
+  if (isFirebaseReady) return FirebaseFiscalOfflineGateway();
   return const UnavailableFiscalOfflineGateway();
 });
 

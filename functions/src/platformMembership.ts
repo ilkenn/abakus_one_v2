@@ -84,13 +84,29 @@ function highestRole(roles: readonly PlatformRoleName[]): PlatformRoleName | nul
 async function resyncPlatformClaimsForUid(uid: string): Promise<void> {
   const db = getFirestore();
   const snap = await db.collection("platformMembers").doc(uid).get();
-  if (!snap.exists) {
-    await getAuth().setCustomUserClaims(uid, { platformRole: null });
-    return;
+  const role = snap.exists
+    ? (() => {
+        const data = snap.data() as PlatformMemberDoc;
+        return data.status === "active" ? highestRole(data.roles) : null;
+      })()
+    : null;
+  // Same-shaped fix as `resyncClaimsForUid`'s own doc comment
+  // (`staffMembership.ts`) — `setCustomUserClaims` replaces the whole claims
+  // object, so writing only `platformRole` here would silently wipe out
+  // `organizationAccess`/`roles`/`branchAccess` for a user who is both a
+  // Platform Owner and real org/branch staff, whichever sync ran last.
+  // Same best-effort-read reasoning as `resyncClaimsForUid`'s own doc
+  // comment (`staffMembership.ts`) — `getUser` fails for a platform-member
+  // uid with no real Firebase Auth account yet (test fixtures seed
+  // `platformMembers` directly), and any failure here just means there are
+  // no existing claims to preserve, never a reason to fail the sync.
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = (await getAuth().getUser(uid)).customClaims ?? {};
+  } catch {
+    // Swallowed deliberately — see comment above.
   }
-  const data = snap.data() as PlatformMemberDoc;
-  const role = data.status === "active" ? highestRole(data.roles) : null;
-  await getAuth().setCustomUserClaims(uid, { platformRole: role });
+  await getAuth().setCustomUserClaims(uid, { ...existing, platformRole: role });
 }
 
 /** Self-service claims sync — mirrors `syncOwnStaffClaims` exactly, one tier up. */

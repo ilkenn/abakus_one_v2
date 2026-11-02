@@ -207,8 +207,10 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
         'dropoffAddressDescription': dropoffAddressDescription,
         if (dropoffNeighborhoodName != null)
           'dropoffNeighborhoodName': dropoffNeighborhoodName,
-        if (dropoffProvinceName != null) 'dropoffProvinceName': dropoffProvinceName,
-        if (dropoffDistrictName != null) 'dropoffDistrictName': dropoffDistrictName,
+        if (dropoffProvinceName != null)
+          'dropoffProvinceName': dropoffProvinceName,
+        if (dropoffDistrictName != null)
+          'dropoffDistrictName': dropoffDistrictName,
       });
       final data = result.data;
       return ConsortiumOrderRegistrationResult(

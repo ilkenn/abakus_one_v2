@@ -94,9 +94,35 @@ void main() {
     });
 
     test(
-        'photo-moderation and audit remain partiallyImplementedUnsafe — a real backend exists elsewhere but these exact viewer screens are not wired to it (disclosed AP-3+ scope)',
+        'kitchen, orders and photo-moderation reached backendWiredEmulatorVerified, '
+        '2026-10-27 — real Firestore-backed queries (and, for photo-moderation, '
+        'a real Cloud Function for mutations), proven against the real emulator '
+        '(functions/src/test/kitchenTicketQueryRules.test.ts, '
+        'kitchenWorkItemQueryRules.test.ts, adminOrdersQueryRules.test.ts, '
+        'customerPhotoQueryRules.test.ts)', () {
+      for (final id in ['kitchen', 'orders', 'photo-moderation']) {
+        expect(
+          ModuleReadinessRegistry.readinessOf(id).maturity,
+          ModuleImplementationMaturity.backendWiredEmulatorVerified,
+          reason: '"$id" should be backendWiredEmulatorVerified',
+        );
+      }
+    });
+
+    test(
+        'menu reached backendWiredEmulatorVerified, 2026-10-28 — 4 new Cloud '
+        'Functions (menuCatalogAdmin.ts), proven against the real emulator '
+        '(functions/src/test/menuCatalogAdmin.test.ts)', () {
+      expect(
+        ModuleReadinessRegistry.readinessOf('menu').maturity,
+        ModuleImplementationMaturity.backendWiredEmulatorVerified,
+      );
+    });
+
+    test(
+        'audit remains partiallyImplementedUnsafe — a real backend exists elsewhere but this exact viewer screen is not wired to it (disclosed AP-3+ scope)',
         () {
-      for (final id in ['photo-moderation', 'audit']) {
+      for (final id in ['audit']) {
         expect(
           ModuleReadinessRegistry.readinessOf(id).maturity,
           ModuleImplementationMaturity.partiallyImplementedUnsafe,
@@ -111,9 +137,9 @@ void main() {
     });
 
     test(
-        'orders, pos, cash, menu, reports are classified notImplemented — '
+        'pos, cash, reports are classified notImplemented — '
         'AdminComingSoonView, no working screen exists at all', () {
-      for (final id in ['orders', 'pos', 'cash', 'menu', 'reports']) {
+      for (final id in ['pos', 'cash', 'reports']) {
         expect(
           ModuleReadinessRegistry.readinessOf(id).maturity,
           ModuleImplementationMaturity.notImplemented,

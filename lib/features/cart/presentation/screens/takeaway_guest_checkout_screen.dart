@@ -130,6 +130,7 @@ class _TakeawayGuestCheckoutScreenState
                 (groupId: modifier.groupId, optionId: modifier.optionId),
             ],
             note: item.note,
+            excludedIngredients: item.removedIngredients,
           ),
     ];
   }

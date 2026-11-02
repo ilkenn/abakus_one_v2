@@ -136,6 +136,11 @@ enum PosAuthorizedAction {
   recordStockCount,
   approveStockCountAdjustment,
   recordWaste,
+  // 2026-10-28 — the canonical `menuCategories`/`menuProducts` catalog
+  // (categories, products, pricing). Manager-tier, same reasoning as
+  // `manageRecipes`/`manageInventory` immediately below: catalog
+  // configuration is a supervisory action, never routine staff work.
+  manageMenu,
   manageRecipes,
   manageNutrition,
   manageAllergens,

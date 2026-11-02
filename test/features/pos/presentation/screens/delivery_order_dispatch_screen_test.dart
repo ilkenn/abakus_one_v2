@@ -62,7 +62,8 @@ Order _buildOrder(
     branchId: _branchId,
     restaurantId: 'restaurant-1',
     lines: [line],
-    pricing: PriceCalculator.calculate(lines: [line], currency: Currency.tryLira),
+    pricing:
+        PriceCalculator.calculate(lines: [line], currency: Currency.tryLira),
     timestamps: OrderTimestamps(created: DateTime(2026, 1, 1)),
     deliveryAddressSnapshot: _addressWithNeighborhood(neighborhoodName),
     merchantId: merchantId,
@@ -77,11 +78,14 @@ Future<void> _pumpScreen(WidgetTester tester, List<Order> orders) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        assignableDeliveryOrdersProvider(_branchId).overrideWith((ref) => Stream.value(orders)),
-        allCouriersForBranchProvider(_branchId).overrideWith((ref) => Stream.value(const [])),
+        assignableDeliveryOrdersProvider(_branchId)
+            .overrideWith((ref) => Stream.value(orders)),
+        allCouriersForBranchProvider(_branchId)
+            .overrideWith((ref) => Stream.value(const [])),
       ],
       child: const MaterialApp(
-        home: DeliveryOrderDispatchScreen(organizationId: 'org-1', branchId: _branchId),
+        home: DeliveryOrderDispatchScreen(
+            organizationId: 'org-1', branchId: _branchId),
       ),
     ),
   );
@@ -90,7 +94,8 @@ Future<void> _pumpScreen(WidgetTester tester, List<Order> orders) async {
 
 void main() {
   group('DeliveryOrderDispatchScreen', () {
-    testWidgets('renders one cluster card per neighborhood, largest first', (tester) async {
+    testWidgets('renders one cluster card per neighborhood, largest first',
+        (tester) async {
       await _pumpScreen(tester, [
         _buildOrder('o1', neighborhoodName: 'Fulya'),
         _buildOrder('o2', neighborhoodName: 'Dikilitaş'),
@@ -101,7 +106,9 @@ void main() {
       expect(find.text('Dikilitaş Bölgesi (1 Paket)'), findsOneWidget);
     });
 
-    testWidgets('shows "Kendi Dükkanımız" for an in-house order and the merchant name for a consortium order', (tester) async {
+    testWidgets(
+        'shows "Kendi Dükkanımız" for an in-house order and the merchant name for a consortium order',
+        (tester) async {
       await _pumpScreen(tester, [
         _buildOrder('o1', neighborhoodName: 'Fulya'),
         _buildOrder(
@@ -116,7 +123,9 @@ void main() {
       expect(find.text('Dış Restoran A'), findsOneWidget);
     });
 
-    testWidgets('selecting two orders shows the batch-assign bar with the correct count', (tester) async {
+    testWidgets(
+        'selecting two orders shows the batch-assign bar with the correct count',
+        (tester) async {
       await _pumpScreen(tester, [
         _buildOrder('o1', neighborhoodName: 'Fulya'),
         _buildOrder('o2', neighborhoodName: 'Fulya'),
@@ -135,9 +144,12 @@ void main() {
       expect(find.text('Tek Kuryeye Ata'), findsOneWidget);
     });
 
-    testWidgets('a marketplace-carried order\'s checkbox is disabled and excluded from selection', (tester) async {
+    testWidgets(
+        'a marketplace-carried order\'s checkbox is disabled and excluded from selection',
+        (tester) async {
       await _pumpScreen(tester, [
-        _buildOrder('o1', neighborhoodName: 'Fulya', courierType: CourierType.marketplace),
+        _buildOrder('o1',
+            neighborhoodName: 'Fulya', courierType: CourierType.marketplace),
       ]);
 
       final checkbox = tester.widget<Checkbox>(find.byType(Checkbox));

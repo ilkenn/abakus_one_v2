@@ -52,6 +52,20 @@ class _PendingCanonicalOrderRepository implements CanonicalOrderRepository {
   Future<List<Order>> findAll() async => [];
 
   @override
+  Future<List<Order>> findByBranch({
+    required String organizationId,
+    required String branchId,
+  }) =>
+      Completer<List<Order>>().future;
+
+  @override
+  Stream<List<Order>> watchByBranch({
+    required String organizationId,
+    required String branchId,
+  }) =>
+      const Stream.empty();
+
+  @override
   Stream<Order?> watchById(OrderId orderId) => const Stream.empty();
 }
 
@@ -70,6 +84,21 @@ class _FailingCanonicalOrderRepository implements CanonicalOrderRepository {
 
   @override
   Future<List<Order>> findAll() async => [];
+
+  @override
+  Future<List<Order>> findByBranch({
+    required String organizationId,
+    required String branchId,
+  }) async {
+    throw StateError('network error');
+  }
+
+  @override
+  Stream<List<Order>> watchByBranch({
+    required String organizationId,
+    required String branchId,
+  }) =>
+      const Stream.empty();
 
   @override
   Stream<Order?> watchById(OrderId orderId) => const Stream.empty();

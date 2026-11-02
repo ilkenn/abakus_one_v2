@@ -2,8 +2,6 @@ import 'package:cloud_functions/cloud_functions.dart' as functions;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
-import '../../../bootstrap/app_environment.dart';
-import '../../../bootstrap/firebase_functions_emulator_config.dart';
 import '../../../core/services/functions/rest_callable_client.dart';
 
 /// The real, device-gated read boundary onto `functions/src
@@ -59,7 +57,8 @@ class PosBranchTableSummary {
       pendingQrLineCount: data['pendingQrLineCount'] as int,
       pendingServiceRequests: [
         for (final raw in (data['pendingServiceRequests'] as List? ?? const []))
-          PosPendingServiceRequest.fromWire(Map<String, dynamic>.from(raw as Map)),
+          PosPendingServiceRequest.fromWire(
+              Map<String, dynamic>.from(raw as Map)),
       ],
     );
   }
@@ -268,20 +267,24 @@ class FirebasePosOperationalViewGateway implements PosOperationalViewGateway {
   /// connection on channel...`. Unlike this session's earlier Windows
   /// fixes (skip the call, fall back to a safe default), these two
   /// callables have no such fallback — there is no non-callable source
-  /// for real table data — so on Windows-plus-local-emulator specifically,
-  /// this routes through [RestCallableClient] instead: the same real
-  /// backend, reached via plain HTTP rather than the broken native plugin
-  /// (PC Yönetici İnceleme Modu, 2026-09-20). Every other platform, and
-  /// Windows against a real deployed project, takes the exact same
+  /// for real table data — so on Windows, this routes through
+  /// [RestCallableClient] instead: the same real backend, reached via
+  /// plain HTTP(S) rather than the broken native plugin (PC Yönetici
+  /// İnceleme Modu, 2026-09-20). Every other platform takes the exact same
   /// `cloud_functions` path as before — byte-for-byte unchanged.
+  ///
+  /// **2026-10-29 fix**: this previously also required
+  /// `FirebaseFunctionsEmulatorConfig.shouldUseEmulator(AppEnvironment
+  /// .current)` — this doc comment's own prior claim that "Windows against
+  /// a real deployed project takes the exact same `cloud_functions` path"
+  /// was the actual bug, not a safe fallback: that path is unconditionally
+  /// broken on Windows regardless of environment. See
+  /// `StaffClaimsSyncClient.syncAndRefresh`'s identical fix.
   Future<Map<String, dynamic>> _call(
     String name,
     Map<String, dynamic> data,
   ) async {
-    final useRest = !kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.windows &&
-        FirebaseFunctionsEmulatorConfig.shouldUseEmulator(
-            AppEnvironment.current);
+    final useRest = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
     if (useRest) {
       try {
         return await _restClient.call(name, data);

@@ -99,15 +99,17 @@ void main() {
   testWidgets(
       'recalling a ready item transitions it and removes it from this list',
       (tester) async {
-    final repository = await pumpScreen(tester, seedWorkItems: [
-      buildTestKitchenWorkItem(
-        workItemId: 'w1',
-        kitchenTicketLineId: 'line-ready',
-        status: KitchenLineStatus.ready,
-      ),
-    ], authorizationPolicy: FakePosAuthorizationPolicy(
-      const AuthorizationResult(granted: true),
-    ));
+    final repository = await pumpScreen(tester,
+        seedWorkItems: [
+          buildTestKitchenWorkItem(
+            workItemId: 'w1',
+            kitchenTicketLineId: 'line-ready',
+            status: KitchenLineStatus.ready,
+          ),
+        ],
+        authorizationPolicy: FakePosAuthorizationPolicy(
+          const AuthorizationResult(granted: true),
+        ));
 
     await tester.tap(find.widgetWithText(TextButton, 'Geri Çağır'));
     await tester.pumpAndSettle();

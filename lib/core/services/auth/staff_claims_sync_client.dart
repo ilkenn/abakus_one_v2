@@ -5,12 +5,12 @@ import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
-import '../../../bootstrap/app_environment.dart';
-import '../../../bootstrap/firebase_functions_emulator_config.dart';
 import '../functions/rest_callable_client.dart';
 import '../logging/log_level.dart';
 import '../logging/logging_provider.dart';
 import '../logging/logging_service.dart';
+import 'identity_toolkit_rest_auth_client.dart';
+import 'windows_rest_auth_session.dart';
 
 /// The parsed shape of the `organizationAccess`/`roles`/`branchAccess`
 /// custom claims `syncOwnStaffClaims` writes (`functions/src/
@@ -193,7 +193,16 @@ class DefaultStaffClaimsSyncClient implements StaffClaimsSyncClient {
     Future<void> Function()? remintToken,
   }) async {
     final user = _auth.currentUser;
-    if (user == null) return null;
+    final useRest = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+    // 2026-10-30 — `RestEmailPasswordAuthClient` (the Windows fix for the
+    // native `signInWithEmailAndPassword` hang) never populates
+    // `_auth.currentUser` at all (no public API accepts a REST-obtained
+    // token pair into the native SDK's own session state) — so `user ==
+    // null` alone can no longer mean "nobody is signed in" on Windows.
+    // `WindowsRestAuthSession.isActive` is this method's only way to tell
+    // the two cases apart.
+    final restSessionActive = useRest && WindowsRestAuthSession.isActive;
+    if (user == null && !restSessionActive) return null;
     // The official `cloud_functions` plugin ships no native Windows desktop
     // implementation (confirmed: absent from `windows/flutter/
     // generated_plugin_registrant.cc`, unlike `firebase_auth`, which is
@@ -216,16 +225,52 @@ class DefaultStaffClaimsSyncClient implements StaffClaimsSyncClient {
     // proven working for `getPosBranchTableOverview`/trusted-device
     // callables). Every other platform takes the exact same
     // `cloud_functions` path as before, byte-for-byte.
-    final useRest = !kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.windows &&
-        FirebaseFunctionsEmulatorConfig.shouldUseEmulator(
-            AppEnvironment.current);
+    //
+    // **2026-10-29 fix**: this used to also require
+    // `FirebaseFunctionsEmulatorConfig.shouldUseEmulator(AppEnvironment
+    // .current)` — i.e. only ever took the REST path against the local
+    // emulator, falling straight back into the broken native plugin for
+    // Windows + staging/production. The native plugin's Windows gap is
+    // unconditional (it's not implemented there at all, for any
+    // environment), so this gate must be too — `RestCallableClient` itself
+    // now resolves the real deployed HTTPS endpoint when not using the
+    // emulator (see its own doc comment), so dropping this environment
+    // check is what actually makes Windows staff sign-in work against a
+    // real project, not just the emulator.
     if (useRest) {
       await _restClient.call('syncOwnStaffClaims', const {});
     } else {
       await _functions
           .httpsCallable('syncOwnStaffClaims')
           .call<Map<String, dynamic>>();
+    }
+
+    // 2026-10-30 — pure-REST session (no native `user` at all): the
+    // common Windows case now that `RestEmailPasswordAuthClient` is the
+    // real sign-in path there. There is no native `fb.User`/
+    // `IdTokenResult` to call `getIdTokenResult` on — claims are read by
+    // decoding the current REST token's own JWT payload directly
+    // (`decodeJwtPayload`), exactly as the native-but-`claims`-came-back-
+    // null fallback a few lines below already does for the *shape* of
+    // the problem, just without a native token to start from at all.
+    if (useRest && user == null) {
+      final restAuthClient = DefaultIdentityToolkitRestAuthClient();
+      if (remintToken != null) {
+        // Mirrors the native branch below: a fresh sign-in
+        // unconditionally mints a brand-new token already carrying
+        // whatever claims `syncOwnStaffClaims` just wrote — no
+        // platform-specific refresh-flag behavior to sidestep here since
+        // there's no native flag involved, but the "always get a
+        // provably fresh token" property is the same.
+        await remintToken();
+      }
+      final token = remintToken != null
+          ? await WindowsRestAuthSession.currentIdToken(client: restAuthClient)
+          : await WindowsRestAuthSession.forceRefresh(client: restAuthClient);
+      if (token == null) return null;
+      final resolvedClaims = decodeJwtPayload(token);
+      _logRawClaims(resolvedClaims);
+      return parseStaffAuthorizationClaims(resolvedClaims);
     }
 
     if (useRest && remintToken != null) {
@@ -247,9 +292,13 @@ class DefaultStaffClaimsSyncClient implements StaffClaimsSyncClient {
       return parseStaffAuthorizationClaims(resolvedClaims);
     }
 
+    // Every path above either returned already or implies a native user
+    // exists (the pure-REST branch only triggers when `user == null`, and
+    // always returns) — safe to assume non-null from here on.
+    final nonNullUser = user!;
     fb.IdTokenResult tokenResult;
     try {
-      tokenResult = await user.getIdTokenResult(true);
+      tokenResult = await nonNullUser.getIdTokenResult(true);
     } catch (e) {
       if (!allowCachedTokenFallback) rethrow;
       // Windows desktop's `firebase_auth` C++/Pigeon layer has been
@@ -263,9 +312,9 @@ class DefaultStaffClaimsSyncClient implements StaffClaimsSyncClient {
       // only because every caller passing `allowCachedTokenFallback: true`
       // does so right after minting this exact token — see this
       // parameter's own doc comment on [StaffClaimsSyncClient.syncAndRefresh].
-      tokenResult = await user.getIdTokenResult(false);
+      tokenResult = await nonNullUser.getIdTokenResult(false);
     }
-    final resolvedClaims = await _resolveClaims(user, tokenResult);
+    final resolvedClaims = await _resolveClaims(nonNullUser, tokenResult);
     _logRawClaims(resolvedClaims);
     return parseStaffAuthorizationClaims(resolvedClaims);
   }

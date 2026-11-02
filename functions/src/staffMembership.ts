@@ -121,7 +121,34 @@ async function resyncClaimsForUid(uid: string): Promise<void> {
     branchAccess[data.organizationId] = data.branchAccess;
   }
 
-  await getAuth().setCustomUserClaims(uid, { organizationAccess, roles, branchAccess });
+  // Custom claims are a single flat object per user — `setCustomUserClaims`
+  // REPLACES it wholesale, it does not merge. `resyncPlatformClaimsForUid`
+  // (`platformMembership.ts`) writes the same user's `platformRole` claim
+  // independently; reading the existing claims first and spreading them in
+  // is what lets a Platform Owner who is also real org/branch staff keep
+  // both claim namespaces after either sync runs, in either order — a
+  // same-shaped bug fixed in `resyncPlatformClaimsForUid` at the same time.
+  // `getUser` throws for a membership uid with no real Firebase Auth
+  // account yet (every existing test fixture here seeds `memberships`
+  // directly, never a matching Auth user) — observed as a plain
+  // `auth/user-not-found` against a real project, but as a non-JSON
+  // "Not Found" body against the Auth Emulator for the same case (an
+  // emulator REST-response-shape quirk, not a `FirebaseAuthError` with a
+  // `.code`). Either way this is a best-effort enrichment read, never a
+  // correctness-critical one — any failure here just means there are no
+  // existing claims to preserve, not that the sync itself should fail.
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = (await getAuth().getUser(uid)).customClaims ?? {};
+  } catch {
+    // Swallowed deliberately — see comment above.
+  }
+  await getAuth().setCustomUserClaims(uid, {
+    ...existing,
+    organizationAccess,
+    roles,
+    branchAccess,
+  });
 }
 
 /**

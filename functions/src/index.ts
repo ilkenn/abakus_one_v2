@@ -10,6 +10,8 @@ export { openTableGuestSession } from "./openTableGuestSession";
 export { provisionOrganization } from "./provisionOrganization";
 export { provisionRestaurant } from "./provisionRestaurant";
 export { provisionBranch } from "./provisionBranch";
+export { renameBranch } from "./renameBranch";
+export { syncCanonicalCatalog } from "./syncCanonicalCatalog";
 export { resolveTakeawayQrToken } from "./resolveTakeawayQrToken";
 export { openTakeawayGuestSession } from "./openTakeawayGuestSession";
 export { submitTakeawayOrder } from "./submitTakeawayOrder";
@@ -34,6 +36,15 @@ export {
 } from "./staffMembership";
 export { setStaffPermissionOverride } from "./staffPermissionOverrides";
 export { listStaffMembersForOrganization } from "./staffDirectory";
+export {
+  listMenuCategories,
+  createMenuCategory,
+  listMenuProducts,
+  createMenuProduct,
+  updateMenuProduct,
+  setMenuProductAvailability,
+  deleteMenuProduct,
+} from "./menuCatalogAdmin";
 export { resolveActorContext } from "./tenantContext";
 export { syncOwnPlatformClaims, grantPlatformRole, revokePlatformRole } from "./platformMembership";
 export {

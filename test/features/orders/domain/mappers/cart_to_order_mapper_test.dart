@@ -65,9 +65,7 @@ void main() {
       expect(order.lines.single.modifiers, hasLength(1));
     });
 
-    test(
-        'freezes legacy protein/sauce/extras/removed fields as kitchen note text',
-        () {
+    test('freezes legacy protein/sauce/extras fields as kitchen note text', () {
       final cartItems = [
         const CartItem(
           id: 'p1',
@@ -78,7 +76,6 @@ void main() {
           selectedProtein: 'Tavuk',
           selectedSauce: 'Acı Sos',
           extraIngredients: ['Avokado'],
-          removedIngredients: ['Soğan'],
         ),
       ];
 
@@ -96,7 +93,39 @@ void main() {
       expect(note, contains('Protein: Tavuk'));
       expect(note, contains('Sos: Acı Sos'));
       expect(note, contains('Ekstra: Avokado'));
-      expect(note, contains('Çıkarılan: Soğan'));
+    });
+
+    // 2026-10-30 product-configurator — removedIngredients is no longer
+    // folded into free-text kitchenNote; it is the universal "İçinden
+    // Çıkar" field, carried structurally on OrderLine.excludedIngredients
+    // (see CartLineMapper's own updated doc comment).
+    test(
+        'freezes removedIngredients structurally on OrderLine.excludedIngredients, '
+        'not as kitchen note text', () {
+      final cartItems = [
+        const CartItem(
+          id: 'p1',
+          name: 'Çıtır Tavuk Bowl',
+          desc: '',
+          price: 450.0,
+          quantity: 1,
+          removedIngredients: ['Mısır', 'Mor Lahana Turşusu'],
+        ),
+      ];
+
+      final order = CartToOrderMapper.map(
+        orderId: OrderId('order-1'),
+        orderNumber: OrderNumber('A-001'),
+        cartItems: cartItems,
+        channel: OrderChannel.takeaway,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        now: DateTime(2026, 7, 28),
+      );
+
+      final line = order.lines.single;
+      expect(line.excludedIngredients, ['Mısır', 'Mor Lahana Turşusu']);
+      expect(line.kitchenNote, isNot(contains('Mısır')));
     });
 
     test('freezes the customer note separately from the kitchen note', () {

@@ -69,7 +69,8 @@ class FirestoreCourierRepository implements CourierRepository {
       displayName: data['displayName'] as String,
       phoneNumber: data['phoneNumber'] as String,
       vehicleType: CourierVehicleType.values.byName(
-          (data['vehicleType'] as String?) ?? CourierVehicleType.motorcycle.name),
+          (data['vehicleType'] as String?) ??
+              CourierVehicleType.motorcycle.name),
       vehicleIdentifier: data['vehicleIdentifier'] as String? ?? '',
       capacity: (data['capacity'] as num?)?.toInt() ?? 1,
       status: CourierRegistryStatus.values.byName(
@@ -81,10 +82,9 @@ class FirestoreCourierRepository implements CourierRepository {
       dispatchStatus: CourierStatus.values.byName(
           (data['dispatchStatus'] as String?) ?? CourierStatus.offline.name),
       returnedAt: (data['returnedAt'] as fs.Timestamp?)?.toDate(),
-      activeOrderIds: (data['activeOrderIds'] as List?)
-              ?.map((e) => e as String)
-              .toList() ??
-          const [],
+      activeOrderIds:
+          (data['activeOrderIds'] as List?)?.map((e) => e as String).toList() ??
+              const [],
     );
   }
 }

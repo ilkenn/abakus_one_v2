@@ -27,7 +27,9 @@ void main() {
       expect(courier.status, CourierRegistryStatus.active);
     });
 
-    test('every existing required-field caller shape still compiles and holds explicit values', () {
+    test(
+        'every existing required-field caller shape still compiles and holds explicit values',
+        () {
       final courier = Courier(
         id: 'c1',
         primaryBranchId: 'branch-1',

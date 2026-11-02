@@ -4,13 +4,24 @@ import '../domain/member/platform_member.dart';
 /// `StaffMemberRepository`.
 abstract interface class PlatformMemberRepository {
   Future<void> save(PlatformMember member);
-  Future<PlatformMember?> findById(String platformMemberId);
+
+  /// [remintToken] (2026-10-30) — only ever supplied, and only ever
+  /// meaningful, for `FirebasePlatformMemberRepository`'s Windows-REST
+  /// path (see that class's own `findById` doc comment); every other
+  /// implementation ignores it.
+  Future<PlatformMember?> findById(
+    String platformMemberId, {
+    Future<void> Function()? remintToken,
+  });
   Future<List<PlatformMember>> findAll();
 
   /// The credential-linkage lookup key — Sprint 9C
   /// (`docs/decisions.md` ADR-026). Mirrors
   /// `StaffMemberRepository.findByAuthUid` exactly.
-  Future<PlatformMember?> findByAuthUid(String authUid);
+  Future<PlatformMember?> findByAuthUid(
+    String authUid, {
+    Future<void> Function()? remintToken,
+  });
 }
 
 /// Selected in release builds — Phase 8 closure sprint
@@ -33,13 +44,21 @@ class ProductionUnavailablePlatformMemberRepository
   }
 
   @override
-  Future<PlatformMember?> findById(String platformMemberId) async => null;
+  Future<PlatformMember?> findById(
+    String platformMemberId, {
+    Future<void> Function()? remintToken,
+  }) async =>
+      null;
 
   @override
   Future<List<PlatformMember>> findAll() async => const [];
 
   @override
-  Future<PlatformMember?> findByAuthUid(String authUid) async => null;
+  Future<PlatformMember?> findByAuthUid(
+    String authUid, {
+    Future<void> Function()? remintToken,
+  }) async =>
+      null;
 }
 
 class InMemoryPlatformMemberRepository implements PlatformMemberRepository {
@@ -49,7 +68,10 @@ class InMemoryPlatformMemberRepository implements PlatformMemberRepository {
   Future<void> save(PlatformMember member) async => _byId[member.id] = member;
 
   @override
-  Future<PlatformMember?> findById(String platformMemberId) async =>
+  Future<PlatformMember?> findById(
+    String platformMemberId, {
+    Future<void> Function()? remintToken,
+  }) async =>
       _byId[platformMemberId];
 
   @override
@@ -57,7 +79,10 @@ class InMemoryPlatformMemberRepository implements PlatformMemberRepository {
       List.unmodifiable(_byId.values);
 
   @override
-  Future<PlatformMember?> findByAuthUid(String authUid) async {
+  Future<PlatformMember?> findByAuthUid(
+    String authUid, {
+    Future<void> Function()? remintToken,
+  }) async {
     for (final member in _byId.values) {
       if (member.authUid == authUid) return member;
     }

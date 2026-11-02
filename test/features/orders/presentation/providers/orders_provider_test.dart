@@ -67,6 +67,20 @@ class _SlowCanonicalOrderRepository implements CanonicalOrderRepository {
   Future<List<Order>> findAll() async => _orders;
 
   @override
+  Future<List<Order>> findByBranch({
+    required String organizationId,
+    required String branchId,
+  }) async =>
+      _orders.where((o) => o.branchId == branchId).toList();
+
+  @override
+  Stream<List<Order>> watchByBranch({
+    required String organizationId,
+    required String branchId,
+  }) =>
+      const Stream.empty();
+
+  @override
   Stream<Order?> watchById(OrderId orderId) => const Stream.empty();
 }
 

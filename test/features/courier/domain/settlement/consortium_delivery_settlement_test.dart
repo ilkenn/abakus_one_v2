@@ -24,7 +24,8 @@ void main() {
       expect(settlement.revision, 1);
     });
 
-    test('copyWith updates status/settledAt/revision independently of the rest', () {
+    test('copyWith updates status/settledAt/revision independently of the rest',
+        () {
       final original = _buildSettlement();
       final settled = original.copyWith(
         status: ConsortiumSettlementStatus.settled,

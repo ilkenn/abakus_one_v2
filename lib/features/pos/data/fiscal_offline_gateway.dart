@@ -1,5 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
+import '../../../core/services/functions/rest_callable_client.dart';
 import 'pos_action_gateway.dart' show PosDeviceContext;
 
 /// The real fiscal operation + offline authorization lease boundary —
@@ -72,7 +75,10 @@ abstract interface class FiscalOfflineGateway {
 }
 
 class FirebaseFiscalOfflineGateway implements FiscalOfflineGateway {
-  const FirebaseFiscalOfflineGateway();
+  FirebaseFiscalOfflineGateway({RestCallableClient? restClient})
+      : _restClient = restClient ?? RestCallableClient();
+
+  final RestCallableClient _restClient;
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
     throw FiscalOfflineGatewayException(
@@ -84,8 +90,28 @@ class FirebaseFiscalOfflineGateway implements FiscalOfflineGateway {
     );
   }
 
-  functions.HttpsCallable _fn(String name) =>
-      functions.FirebaseFunctions.instance.httpsCallable(name);
+  /// 2026-10-30 — same Windows REST-callable bridge as `cash_register_
+  /// gateway.dart`/`payment_gateway.dart`.
+  Future<Map<String, dynamic>> _call(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    final useRest = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+    if (useRest) {
+      try {
+        return await _restClient.call(name, data);
+      } on RestCallableException catch (error) {
+        throw FiscalOfflineGatewayException(error.code, error.message);
+      }
+    }
+    final callable = functions.FirebaseFunctions.instance.httpsCallable(name);
+    try {
+      final result = await callable.call<Map<String, dynamic>>(data);
+      return result.data;
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
 
   @override
   Future<FiscalOperationResult> recordFiscalOperation({
@@ -99,27 +125,21 @@ class FirebaseFiscalOfflineGateway implements FiscalOfflineGateway {
     String? refundRequestId,
     String? cashSessionId,
   }) async {
-    try {
-      final result =
-          await _fn('recordFiscalOperation').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        'operationType': operationType,
-        'amountMinorUnits': amountMinorUnits,
-        'currencyCode': currencyCode,
-        'idempotencyKey': idempotencyKey,
-        if (checkId != null) 'checkId': checkId,
-        if (paymentAttemptId != null) 'paymentAttemptId': paymentAttemptId,
-        if (refundRequestId != null) 'refundRequestId': refundRequestId,
-        if (cashSessionId != null) 'cashSessionId': cashSessionId,
-      });
-      final data = result.data;
-      return FiscalOperationResult(
-        entryId: data['entryId'] as String,
-        status: data['status'] as String,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('recordFiscalOperation', {
+      ...ctx.toWire(),
+      'operationType': operationType,
+      'amountMinorUnits': amountMinorUnits,
+      'currencyCode': currencyCode,
+      'idempotencyKey': idempotencyKey,
+      if (checkId != null) 'checkId': checkId,
+      if (paymentAttemptId != null) 'paymentAttemptId': paymentAttemptId,
+      if (refundRequestId != null) 'refundRequestId': refundRequestId,
+      if (cashSessionId != null) 'cashSessionId': cashSessionId,
+    });
+    return FiscalOperationResult(
+      entryId: data['entryId'] as String,
+      status: data['status'] as String,
+    );
   }
 
   @override
@@ -129,29 +149,23 @@ class FirebaseFiscalOfflineGateway implements FiscalOfflineGateway {
     int? maxTransactionCount,
     int? maxTransactionValueMinorUnits,
   }) async {
-    try {
-      final result = await _fn('issueOfflineLease').call<Map<String, dynamic>>({
-        ...ctx.toWire(),
-        if (validityMinutes != null) 'validityMinutes': validityMinutes,
-        if (maxTransactionCount != null)
-          'maxTransactionCount': maxTransactionCount,
-        if (maxTransactionValueMinorUnits != null)
-          'maxTransactionValueMinorUnits': maxTransactionValueMinorUnits,
-      });
-      final data = result.data;
-      return IssuedOfflineLease(
-        leaseId: data['leaseId'] as String,
-        expiresAt: DateTime.parse(data['expiresAt'] as String),
-        allowedTenderTypes:
-            List<String>.from(data['allowedTenderTypes'] as List),
-        maxTransactionCount: data['maxTransactionCount'] as int,
-        maxTransactionValueMinorUnits:
-            data['maxTransactionValueMinorUnits'] as int,
-        catalogVersion: data['catalogVersion'] as String,
-      );
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    final data = await _call('issueOfflineLease', {
+      ...ctx.toWire(),
+      if (validityMinutes != null) 'validityMinutes': validityMinutes,
+      if (maxTransactionCount != null)
+        'maxTransactionCount': maxTransactionCount,
+      if (maxTransactionValueMinorUnits != null)
+        'maxTransactionValueMinorUnits': maxTransactionValueMinorUnits,
+    });
+    return IssuedOfflineLease(
+      leaseId: data['leaseId'] as String,
+      expiresAt: DateTime.parse(data['expiresAt'] as String),
+      allowedTenderTypes: List<String>.from(data['allowedTenderTypes'] as List),
+      maxTransactionCount: data['maxTransactionCount'] as int,
+      maxTransactionValueMinorUnits:
+          data['maxTransactionValueMinorUnits'] as int,
+      catalogVersion: data['catalogVersion'] as String,
+    );
   }
 
   @override
@@ -161,16 +175,12 @@ class FirebaseFiscalOfflineGateway implements FiscalOfflineGateway {
     required String leaseId,
     required String reason,
   }) async {
-    try {
-      await _fn('revokeOfflineLease').call<Map<String, dynamic>>({
-        'organizationId': organizationId,
-        'branchId': branchId,
-        'leaseId': leaseId,
-        'reason': reason,
-      });
-    } on functions.FirebaseFunctionsException catch (error) {
-      _rethrow(error);
-    }
+    await _call('revokeOfflineLease', {
+      'organizationId': organizationId,
+      'branchId': branchId,
+      'leaseId': leaseId,
+      'reason': reason,
+    });
   }
 }
 

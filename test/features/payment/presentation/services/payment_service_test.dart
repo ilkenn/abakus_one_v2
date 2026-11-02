@@ -47,8 +47,7 @@ void main() {
       final request = PaymentRequest(
         orderId: 'order-1',
         amount: Money.fromWhole(100, Currency.tryLira),
-        method:
-            PaymentMethodSnapshot.capture(PaymentMethodSeedData.creditCard),
+        method: PaymentMethodSnapshot.capture(PaymentMethodSeedData.creditCard),
       );
 
       final result = await service.executePayment(request);
