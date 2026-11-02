@@ -90,6 +90,7 @@ class _StoryRing extends StatelessWidget {
           child: ClipOval(
             child: ProductImage(
               imageKey: product.imageKey,
+              categoryId: product.categoryId,
               width: double.infinity,
               height: double.infinity,
               borderRadius: BorderRadius.zero,
@@ -134,6 +135,7 @@ class _StoryQuickView extends ConsumerWidget {
           children: [
             ProductImage(
               imageKey: product.imageKey,
+              categoryId: product.categoryId,
               width: double.infinity,
               height: 200,
               borderRadius: BorderRadius.zero,

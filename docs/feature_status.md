@@ -10101,3 +10101,112 @@ confirming the underlying action-wiring survived the relocation unchanged.
 
 New/changed files: `lib/features/pos/presentation/screens/pos_table_workspace_screen.dart`,
 `test/features/pos/presentation/screens/pos_table_workspace_screen_test.dart`, `docs/feature_status.md`.
+
+### Real menu photos: new per-category asset convention, wired app-wide (not just POS) (2026-11-02)
+
+Requested alongside the first staging commit/CashRegister-REST-recheck/Release-build round: the
+product owner is adding real product photos as `assets/menu/<category>/<product>.png`, and asked
+for `pubspec.yaml` wiring plus the POS grid's image logic to try the local asset first, falling
+back to the placeholder if missing. That exact path didn't exist in the repo yet (confirmed by
+search — 0 files); the product owner confirmed via a clarifying question that the folders should be
+created now, empty, ready for real PNGs to be dropped in later with no further code changes.
+
+**Found a real regression risk before writing the fallback, not after**: this repo already has an
+older, *flat* `assets/images/menu/<imageKey>.png` convention (`MenuImageResolver`, allowlist-based)
+under which **53 of today's real catalog products already have a genuine, working photo** (e.g.
+`mexifit-bowl`, `abakus-burger`, `grill-salmon-bowl`). A naive "prefer the new per-category path
+when available" would have silently regressed every one of those 53 to a placeholder, since the new
+folders are empty today. Fixed by making both conventions additive, never either/or:
+`MenuImageResolver.resolveCandidates(imageKey, {categoryId})` now returns an ordered **list** (new
+convention first when `categoryId` is given, old flat convention second, since the old one is
+allowlist-gated and only appears when a real file is confirmed to exist) instead of a single
+nullable path. `ProductImageSource.resolveCandidates`/`ProductImage` were widened to match — mirrors
+the project's own "state machine of explicit states" discipline, just applied to image fallback —
+`ProductImage._buildCandidateChain` tries each candidate via nested `Image.errorBuilder`s, falling
+to the real placeholder icon only once every candidate has failed. `MenuImageResolver.resolve`
+(single-arg, old convention only) is unchanged for its one remaining caller.
+
+**Deliberately no manually-maintained allowlist for the new convention** (unlike the old one,
+which the resolver's own doc comment already says must be "kept in sync... run the test suite after
+adding/removing files"): the new per-category candidate is always returned whether or not the file
+exists yet, relying entirely on `Image`'s own `errorBuilder` to fall through — this is what lets the
+product owner drop a PNG into `assets/menu/<category>/` later with zero code changes, matching what
+was actually asked for ("dosya bulunamazsa... fallback yapsın").
+
+**`categoryId` threaded through, app-wide, not only the POS grid** — a deliberate, disclosed small
+widening of the literal ask: `ProductImage` gained an optional `categoryId` param (`null` by
+default, e.g. for Bowl Builder ingredient cards which have no category concept), and every screen
+that renders a real `MenuProduct`'s photo now passes it (`pos_table_workspace_screen.dart`'s POS
+grid — the actual ask — plus `menu_screen.dart`, `product_detail_screen.dart` (both the hero image
+and the "Bununla İyi Gider" pairing card), `qr_menu_story_bar.dart` (both the story ring and its
+quick-view sheet), `pos_cashier_screen.dart`, and Home's `popular_products_section.dart`/
+`weekly_editorial_section.dart`). Reusing the one shared `ProductImage`/`MenuImageResolver` seam for
+every real-product screen avoids a second, parallel, POS-only image-loading implementation that
+would drift from this one — not a UI redesign of any of those screens, purely plumbing one already-
+available field (`MenuProduct.categoryId`) through an existing optional parameter.
+
+Folder slugs are derived deterministically from the real `MenuCategory.id` with its `cat_` prefix
+stripped (`cat_bowl2` → `bowl2`) — never a second, hand-authored category-name-to-slug table that
+could drift from the catalog. Created all 10 active categories' folders
+(`assets/menu/{icecekler,kahvalti,tartine,bowl2,tava,salata2,hamburger2,wrap2,makarna2,
+atistirmalik2}/`), each with a `.gitkeep` so the still-empty directories are tracked by git and
+exist on disk for `pubspec.yaml`/the Flutter asset bundler to find at build time (an undeclared or
+missing directory fails `flutter pub get`/the build, not just a silently-ignored no-op).
+
+`flutter analyze` clean (full project). `flutter pub get` succeeded (new asset directories resolve).
+`flutter test` full suite green (see this entry's own verification run) — new tests cover:
+`resolveCandidates` returning the new path first, the old path second when a real photo already
+exists for that key (the regression-prevention case, explicitly), old-path-only when no `categoryId`
+is given, and the new convention being skipped for a non-`cat_`-prefixed id; a new `ProductImage`
+widget test proves a failed first candidate falls through to a working second candidate without
+ever reaching the placeholder.
+
+New/changed files: `pubspec.yaml`, `lib/core/config/asset_paths.dart`,
+`lib/features/menu/domain/services/menu_image_resolver.dart`,
+`lib/shared/widgets/images/product_image_source.dart`,
+`lib/shared/widgets/images/product_image.dart`,
+`lib/features/pos/presentation/screens/pos_table_workspace_screen.dart`,
+`lib/features/pos/presentation/screens/pos_cashier_screen.dart`,
+`lib/features/menu/presentation/screens/menu_screen.dart`,
+`lib/features/menu/presentation/screens/product_detail_screen.dart`,
+`lib/features/menu/presentation/widgets/qr_menu_story_bar.dart`,
+`lib/features/home/presentation/widgets/popular_products_section.dart`,
+`lib/features/home/presentation/widgets/weekly_editorial_section.dart`,
+`assets/menu/icecekler/.gitkeep`, `assets/menu/kahvalti/.gitkeep`, `assets/menu/tartine/.gitkeep`,
+`assets/menu/bowl2/.gitkeep`, `assets/menu/tava/.gitkeep`, `assets/menu/salata2/.gitkeep`,
+`assets/menu/hamburger2/.gitkeep`, `assets/menu/wrap2/.gitkeep`, `assets/menu/makarna2/.gitkeep`,
+`assets/menu/atistirmalik2/.gitkeep`,
+`test/features/menu/domain/menu_image_resolver_test.dart`,
+`test/shared/widgets/images/product_image_test.dart`, `docs/feature_status.md`.
+
+**Superseded the same day (2026-11-02, later that session)**: while this entry's folders were still
+empty, the product owner started dropping real photos directly under `assets/images/menu/<category>/`
+(not `assets/menu/<category>/` as planned above) — concurrently with their own separate removal of
+every file backing the *old* flat `assets/images/menu/<imageKey>.png` allowlist (all 70 deleted from
+disk). Asked to confirm which of the three now-live conventions (the new-but-empty `assets/menu/`
+tree above, the just-started `assets/images/menu/<category>/` tree, or the now-emptied old flat
+convention) should be permanent, the product owner chose **`assets/images/menu/<category>/`** as the
+sole, permanent convention. Implemented as a follow-up, not a new feature:
+- Removed the `assets/menu/<slug>/` tree (all 10 `.gitkeep`s) and its `pubspec.yaml` entries; removed
+  the old flat `assets/images/menu/` allowlist entry too (its backing files are gone).
+- `pubspec.yaml` now declares `assets/images/menu/<slug>/` for all 10 active categories (3 real —
+  `atistirmalik/`, `kahvalti/`, `wrap/` — 7 still empty, each with a `.gitkeep`).
+- `MenuImageResolver.resolveCandidates` rewritten: folder slug = `cat_` prefix **and any trailing
+  product-refresh "2" suffix** stripped (`cat_wrap2` → `wrap`, not `wrap2` — matches what the product
+  owner actually named the folder). Tries two filenames per category, both already real conventions
+  in use on disk: the full `imageKey` (`atistirmalik/general-tso.png`), and the `imageKey` with that
+  same category slug's own `-` prefix stripped (`kahvalti/clasico.png` for key `kahvalti-clasico`).
+  The old allowlist-gated `resolve()`/`_availableImageKeys`/`findMissingImageKeys` were removed —
+  dead code once their backing files no longer exist.
+- **Two real, disclosed-not-silently-fixed mismatches remain in the product owner's own in-progress
+  file drop, flagged rather than guessed around**: (1) `kahvalti/Steak.png` has a capital S; the
+  resolver's derived candidate is lowercase `steak.png` — Flutter asset lookups are case-sensitive,
+  so this file needs renaming to match. (2) most of `wrap/`'s 12 files don't match any real
+  `cat_wrap2` `imageKey` at all (e.g. `ton-ton-wrap.png` vs. the real key `wrap2-ton-ton`) — only 5 of
+  12 already match. Both need the product owner's own rename pass; the resolver does not special-case
+  either.
+
+`flutter analyze`/`flutter pub get`/`flutter test` (full suite, 3808 tests) all green after the
+pivot. New/changed files: `pubspec.yaml`, `lib/core/config/asset_paths.dart`,
+`lib/features/menu/domain/services/menu_image_resolver.dart`,
+`test/features/menu/domain/menu_image_resolver_test.dart`; removed `assets/menu/**` (10 `.gitkeep`s).

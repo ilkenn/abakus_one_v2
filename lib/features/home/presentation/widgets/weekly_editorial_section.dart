@@ -73,6 +73,7 @@ class WeeklyEditorialSection extends ConsumerWidget {
                           aspectRatio: 16 / 9,
                           child: ProductImage(
                             imageKey: product.imageKey,
+                            categoryId: product.categoryId,
                             borderRadius: BorderRadius.zero,
                             heroTag: 'home_weekly_editorial_${product.id}',
                           ),

@@ -247,6 +247,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                       ProductImage(
                         heroTag: 'product_image_${widget.product.id}',
                         imageKey: widget.product.imageKey,
+                        categoryId: widget.product.categoryId,
                         width: double.infinity,
                         height: 320,
                         borderRadius: BorderRadius.zero,
@@ -543,6 +544,7 @@ class _PairingSuggestionCard extends StatelessWidget {
               children: [
                 ProductImage(
                   imageKey: product.imageKey,
+                  categoryId: product.categoryId,
                   width: 128,
                   height: 96,
                   borderRadius: BorderRadius.zero,

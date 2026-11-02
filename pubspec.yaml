@@ -68,7 +68,26 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/onboarding/
-    - assets/images/menu/
+    # 2026-11-02 — real menu product photos, added incrementally per
+    # category (each folder may be empty today; `MenuImageResolver`'s
+    # per-category lookup relies on `Image`'s own `errorBuilder` to fall
+    # back to a placeholder for any product whose file hasn't been added
+    # yet, never a manually-maintained "which files exist" allowlist). One
+    # entry per real, active `MenuCategory.id`, with its `cat_` prefix AND
+    # any trailing product-refresh "2" suffix stripped (e.g. `cat_wrap2` ->
+    # `wrap`) — never a second, hand-authored slug list to drift out of
+    # sync with the catalog. The old flat `assets/images/menu/*.png`
+    # allowlist convention has been retired; its backing files are gone.
+    - assets/images/menu/icecekler/
+    - assets/images/menu/kahvalti/
+    - assets/images/menu/tartine/
+    - assets/images/menu/bowl/
+    - assets/images/menu/tava/
+    - assets/images/menu/salata/
+    - assets/images/menu/hamburger/
+    - assets/images/menu/wrap/
+    - assets/images/menu/makarna/
+    - assets/images/menu/atistirmalik/
     - assets/images/products/
     - assets/images/products/Proteinler/
     - assets/images/products/Karbonhidratlar/

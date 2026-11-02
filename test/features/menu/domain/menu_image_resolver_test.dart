@@ -1,48 +1,49 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:abakus_one_v2/features/menu/data/abakus_menu_catalog.dart';
 import 'package:abakus_one_v2/features/menu/domain/services/menu_image_resolver.dart';
 
 void main() {
-  group('resolve', () {
-    test(
-        'assets/images/menu/ altinda gercekten bulunan bir anahtar icin dogru yolu doner',
-        () {
-      // 'abakus-burger.png' repo icinde gercekten mevcut.
-      final path = MenuImageResolver.resolve('abakus-burger');
-      expect(path, 'assets/images/menu/abakus-burger.png');
+  group('resolveCandidates (2026-11-02 — per-category convention)', () {
+    test('cat_ prefix ve son "2" eki soyularak kategori klasoru kurulur', () {
+      final candidates = MenuImageResolver.resolveCandidates(
+        'general-tso',
+        categoryId: 'cat_atistirmalik2',
+      );
+      expect(candidates.first, 'assets/images/menu/atistirmalik/general-tso.png');
     });
 
     test(
-        'bilinmeyen/eslesmeyen bir anahtar icin null doner (yer tutucuya dusmeli)',
+        'imageKey, kategori on-ekiyle basliyorsa on-ek soyulmus hali de IKINCI '
+        'aday olarak eklenir', () {
+      final candidates = MenuImageResolver.resolveCandidates(
+        'kahvalti-clasico',
+        categoryId: 'cat_kahvalti',
+      );
+      expect(candidates, [
+        'assets/images/menu/kahvalti/kahvalti-clasico.png',
+        'assets/images/menu/kahvalti/clasico.png',
+      ]);
+    });
+
+    test('imageKey kategori on-ekiyle baslamiyorsa sadece tam anahtar denenir',
         () {
-      final path = MenuImageResolver.resolve('bu-dosya-hic-yok');
-      expect(path, isNull);
+      final candidates = MenuImageResolver.resolveCandidates(
+        'general-tso',
+        categoryId: 'cat_atistirmalik2',
+      );
+      expect(candidates, ['assets/images/menu/atistirmalik/general-tso.png']);
     });
 
-    test('esleme tam ve buyuk/kucuk harf duyarlidir', () {
-      // Gercek dosya 'Vegan-Bowl.png' (buyuk V), gercek menu urunu
-      // 'vegan-bowl' anahtarini kullaniyor -> bilerek eslesmez.
-      expect(MenuImageResolver.resolve('vegan-bowl'), isNull);
-      expect(MenuImageResolver.resolve('Vegan-Bowl'), isNotNull);
-    });
-  });
-
-  group('findMissingImageKeys', () {
-    test('gercek menudeki eslesmeyen anahtarlari dogru raporlar', () {
-      final allKeys = AbakusMenuCatalog.products.map((p) => p.imageKey);
-      final missing = MenuImageResolver.findMissingImageKeys(allKeys);
-
-      // Bilinen, isim farkindan kaynaklanan bir kac ornek: kesin var olmali.
-      expect(missing, contains('ton-ton-bowl'));
-      expect(missing, contains('vegan-bowl'));
-      expect(missing, contains('lokum-bowl'));
-
-      // Gercekten eslesen bir anahtar listede olmamali.
-      expect(missing, isNot(contains('abakus-burger')));
+    test('categoryId verilmezse hic aday dondurulmez', () {
+      expect(MenuImageResolver.resolveCandidates('general-tso'), isEmpty);
     });
 
-    test('bos girdi icin bos liste doner', () {
-      expect(MenuImageResolver.findMissingImageKeys(const []), isEmpty);
+    test("categoryId gercek 'cat_' onekiyle baslamiyorsa aday dondurulmez",
+        () {
+      final candidates = MenuImageResolver.resolveCandidates(
+        'general-tso',
+        categoryId: 'not-a-real-category-id',
+      );
+      expect(candidates, isEmpty);
     });
   });
 }

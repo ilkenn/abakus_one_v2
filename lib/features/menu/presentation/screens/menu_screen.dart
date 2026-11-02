@@ -427,6 +427,7 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
                   children: [
                     ProductImage(
                       imageKey: product.imageKey,
+                      categoryId: product.categoryId,
                       width: double.infinity,
                       height: 210,
                       borderRadius: BorderRadius.zero,

@@ -109,6 +109,7 @@ class _PopularProductCard extends StatelessWidget {
                     children: [
                       ProductImage(
                         imageKey: product.imageKey,
+                        categoryId: product.categoryId,
                         width: 176,
                         borderRadius: BorderRadius.zero,
                         heroTag: 'home_product_image_${product.id}',

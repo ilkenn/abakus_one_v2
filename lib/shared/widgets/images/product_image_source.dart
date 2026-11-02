@@ -17,29 +17,36 @@ import '../../../features/menu/domain/services/menu_image_resolver.dart';
 /// `ordersRepositoryProvider`/`authRepositoryProvider`/
 /// `bowlBuilderCatalogRepositoryProvider`.
 abstract interface class ProductImageSource {
-  /// The image provider for [imageKey], or `null` if no image exists for
-  /// this key — callers render a placeholder in that case, never a guessed
-  /// path/URL.
-  ImageProvider? resolve(String imageKey);
+  /// Every image provider worth trying for [imageKey], in order — empty
+  /// if none exist. [categoryId] (a real `MenuCategory.id`) opts into the
+  /// newer per-category menu-photo convention; see
+  /// [MenuImageResolver.resolveCandidates] for why this is a list rather
+  /// than a single nullable result. Callers render a placeholder once
+  /// every candidate here has failed to load.
+  List<ImageProvider> resolveCandidates(String imageKey, {String? categoryId});
 }
 
 /// Today's only implementation — resolves against the bundled
-/// `assets/images/menu/` (real dishes, via [MenuImageResolver]) and
-/// `assets/images/products/` (Bowl Builder ingredients, via
-/// [IngredientImageResolver]) directories. The two key namespaces don't
-/// collide (menu keys are hyphenated, e.g. `mexifit-bowl`; ingredient keys
-/// are snake_case, e.g. `izgara_tavuk`), so checking both here is safe and
-/// keeps [ProductImage] a single, feature-agnostic widget.
+/// `assets/menu/`/`assets/images/menu/` (real dishes, via
+/// [MenuImageResolver]) and `assets/images/products/` (Bowl Builder
+/// ingredients, via [IngredientImageResolver]) directories. The key
+/// namespaces don't collide (menu keys are hyphenated, e.g.
+/// `mexifit-bowl`; ingredient keys are snake_case, e.g. `izgara_tavuk`),
+/// so checking both here is safe and keeps [ProductImage] a single,
+/// feature-agnostic widget.
 class LocalAssetProductImageSource implements ProductImageSource {
   const LocalAssetProductImageSource();
 
   @override
-  ImageProvider? resolve(String imageKey) {
-    final menuPath = MenuImageResolver.resolve(imageKey);
-    if (menuPath != null) return AssetImage(menuPath);
+  List<ImageProvider> resolveCandidates(String imageKey, {String? categoryId}) {
+    final menuCandidates =
+        MenuImageResolver.resolveCandidates(imageKey, categoryId: categoryId);
+    if (menuCandidates.isNotEmpty) {
+      return [for (final path in menuCandidates) AssetImage(path)];
+    }
     final ingredientPath = IngredientImageResolver.resolve(imageKey);
-    if (ingredientPath != null) return AssetImage(ingredientPath);
-    return null;
+    if (ingredientPath != null) return [AssetImage(ingredientPath)];
+    return const [];
   }
 }
 

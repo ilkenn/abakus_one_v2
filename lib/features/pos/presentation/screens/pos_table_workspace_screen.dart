@@ -1707,6 +1707,7 @@ class _StaffEntryProductCard extends StatelessWidget {
               Expanded(
                 child: ProductImage(
                   imageKey: product.imageKey,
+                  categoryId: product.categoryId,
                   width: double.infinity,
                   height: double.infinity,
                 ),

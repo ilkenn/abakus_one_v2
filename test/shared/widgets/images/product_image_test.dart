@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,7 +20,10 @@ class _FakeProductImageSource implements ProductImageSource {
   const _FakeProductImageSource(this.resolver);
 
   @override
-  ImageProvider? resolve(String imageKey) => resolver(imageKey);
+  List<ImageProvider> resolveCandidates(String imageKey, {String? categoryId}) {
+    final provider = resolver(imageKey);
+    return provider == null ? const [] : [provider];
+  }
 }
 
 void main() {
@@ -106,4 +110,49 @@ void main() {
       expect(find.byType(Hero), findsOneWidget);
     },
   );
+
+  testWidgets(
+    '2026-11-02 — ilk aday (örn. henüz eklenmemiş kategori fotoğrafı) '
+    'yüklenemezse, gerçek Image hâlâ İKİNCİ adaydan render edilir, '
+    'yer tutucuya hiç düşmeden',
+    (tester) async {
+      final failingProvider = MemoryImage(Uint8List.fromList([1, 2, 3]));
+      final workingProvider = MemoryImage(_tinyPngBytes);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            productImageSourceProvider.overrideWithValue(
+              _FakeTwoCandidateProductImageSource(
+                [failingProvider, workingProvider],
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ProductImage(imageKey: 'k', width: 40, height: 40),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The failed first candidate's own `Image` element stays in the
+      // tree (its `errorBuilder` result — the second candidate's `Image`
+      // — becomes its child), so more than one `Image` widget legitimately
+      // exists here; what actually matters is that the real photo won,
+      // never the placeholder icon.
+      expect(find.byType(Image), findsWidgets);
+      expect(find.byIcon(Icons.fastfood_rounded), findsNothing);
+    },
+  );
+}
+
+class _FakeTwoCandidateProductImageSource implements ProductImageSource {
+  final List<ImageProvider> candidates;
+  const _FakeTwoCandidateProductImageSource(this.candidates);
+
+  @override
+  List<ImageProvider> resolveCandidates(String imageKey,
+          {String? categoryId}) =>
+      candidates;
 }

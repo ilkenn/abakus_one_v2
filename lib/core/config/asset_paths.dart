@@ -8,6 +8,13 @@
 abstract final class AssetPaths {
   AssetPaths._();
 
+  /// Real menu product photos, one subfolder per active `MenuCategory.id`
+  /// (its `cat_` prefix and any trailing product-refresh "2" suffix
+  /// stripped, e.g. `cat_wrap2` → `wrap/`) — see `MenuImageResolver` for
+  /// the exact candidate filenames tried inside each subfolder. Some
+  /// subfolders are still empty until a real PNG is dropped in;
+  /// `ProductImage`'s chained `errorBuilder` falls back to a placeholder
+  /// for those, never a maintained "which files exist" allowlist.
   static const String menuImageDirectory = 'assets/images/menu/';
 
   /// Bowl Builder ingredient photos — declared in `pubspec.yaml` since the

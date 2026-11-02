@@ -407,7 +407,9 @@ class _ProductTile extends ConsumerWidget {
           children: [
             Expanded(
               child: ProductImage(
-                  imageKey: product.imageKey, width: double.infinity),
+                  imageKey: product.imageKey,
+                  categoryId: product.categoryId,
+                  width: double.infinity),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
