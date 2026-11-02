@@ -546,23 +546,30 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     });
   }
 
-  Widget _buildCategoryRail(
-      List<MenuCategory> categories, bool scrollHorizontally) {
-    final chips = [
-      ChoiceChip(
-        label: const Text('Tümü'),
-        selected: _categoryFilter == _staffEntryAllCategoriesSentinel,
-        onSelected: (_) =>
-            setState(() => _categoryFilter = _staffEntryAllCategoriesSentinel),
-      ),
-      for (final category in categories)
-        ChoiceChip(
-          label: Text(category.name),
-          selected: _categoryFilter == category.id,
-          onSelected: (_) => setState(() => _categoryFilter = category.id),
-        ),
+  List<MenuProduct> _productsIn(String categoryId, List<MenuProduct> products) {
+    return [
+      for (final product in products)
+        if (product.categoryId == categoryId) product,
     ];
+  }
+
+  Widget _buildCategoryRail(List<MenuCategory> categories,
+      List<MenuProduct> allProducts, bool scrollHorizontally) {
     if (scrollHorizontally) {
+      final chips = [
+        ChoiceChip(
+          label: const Text('Tümü'),
+          selected: _categoryFilter == _staffEntryAllCategoriesSentinel,
+          onSelected: (_) => setState(
+              () => _categoryFilter = _staffEntryAllCategoriesSentinel),
+        ),
+        for (final category in categories)
+          ChoiceChip(
+            label: Text(category.name),
+            selected: _categoryFilter == category.id,
+            onSelected: (_) => setState(() => _categoryFilter = category.id),
+          ),
+      ];
       return SizedBox(
         height: 48,
         child: ListView.separated(
@@ -575,15 +582,27 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       );
     }
     return SizedBox(
-      width: 160,
+      width: 112,
       child: ListView(
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
         children: [
-          for (final chip in chips)
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
-              child: Align(alignment: Alignment.centerLeft, child: chip),
+          _CategoryCard(
+            label: 'Tümü',
+            icon: Icons.apps_rounded,
+            selected: _categoryFilter == _staffEntryAllCategoriesSentinel,
+            onTap: () => setState(
+                () => _categoryFilter = _staffEntryAllCategoriesSentinel),
+          ),
+          for (final category in categories)
+            _CategoryCard(
+              label: category.name,
+              selected: _categoryFilter == category.id,
+              onTap: () => setState(() => _categoryFilter = category.id),
+              categoryId: category.id,
+              previewImageKeys: [
+                for (final product in _productsIn(category.id, allProducts))
+                  product.imageKey,
+              ],
             ),
         ],
       ),
@@ -1356,7 +1375,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       if (!isWide) {
         return Column(
           children: [
-            _buildCategoryRail(categories, true),
+            _buildCategoryRail(categories, allProducts, true),
             Expanded(child: grid),
             Container(height: 1, color: AppColors.border),
             ConstrainedBox(
@@ -1368,7 +1387,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       }
       return Row(
         children: [
-          _buildCategoryRail(categories, false),
+          _buildCategoryRail(categories, allProducts, false),
           Container(width: 1, color: AppColors.border),
           Expanded(flex: 3, child: grid),
           Container(width: 1, color: AppColors.border),
@@ -1679,6 +1698,90 @@ class _StaffEntryCartLine {
   _StaffEntryCartLine({required this.product});
   final MenuProduct product;
   int quantity = 1;
+}
+
+/// Vertical category-rail card (2026-11-02 touch-POS redesign) — a small
+/// rounded preview image on top, the category name below, with a
+/// highlighted border/background when selected. Deliberately has no
+/// dedicated category-icon asset convention: the preview is the
+/// category's own products' real photos via [ProductImage], tried in
+/// order via [previewImageKeys] (so a product with no working photo
+/// falls through to the next product's, rather than dropping straight to
+/// the generic placeholder) — empty only for the synthetic "Tümü" entry
+/// or a category with no products, in which case [icon] is shown
+/// instead.
+class _CategoryCard extends StatelessWidget {
+  const _CategoryCard({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.categoryId,
+    this.previewImageKeys = const [],
+    this.icon = Icons.restaurant_menu_rounded,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final String? categoryId;
+  final List<String> previewImageKeys;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.medium),
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.primaryExtraLight : AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.medium),
+            border: Border.all(
+              color: selected ? AppColors.primary : AppColors.border,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.small),
+                child: SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: previewImageKeys.isEmpty
+                      ? Icon(icon, size: 28, color: AppColors.textSecondary)
+                      : ProductImage(
+                          imageKey: previewImageKeys.first,
+                          additionalImageKeys:
+                              previewImageKeys.skip(1).toList(),
+                          categoryId: categoryId,
+                          width: 56,
+                          height: 56,
+                        ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                label,
+                style: AppTypography.caption.copyWith(
+                  color: selected ? AppColors.primary : AppColors.textPrimary,
+                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// A single tappable product tile in the staff order-entry grid — a real

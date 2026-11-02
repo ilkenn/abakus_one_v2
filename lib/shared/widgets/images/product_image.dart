@@ -37,6 +37,14 @@ class ProductImage extends ConsumerWidget {
   final double placeholderIconSize;
   final Object? heroTag;
 
+  /// Other products' `imageKey`s (same [categoryId]) to fall through to,
+  /// in order, once every candidate for [imageKey] itself has failed —
+  /// e.g. the category rail showing its first product's photo, but
+  /// falling through to the next product that actually has one rather
+  /// than dropping straight to the generic placeholder. Empty by default,
+  /// so every existing single-product call site is unaffected.
+  final List<String> additionalImageKeys;
+
   const ProductImage({
     super.key,
     required this.imageKey,
@@ -46,13 +54,17 @@ class ProductImage extends ConsumerWidget {
     this.borderRadius = AppRadius.kMedium,
     this.placeholderIconSize = 36,
     this.heroTag,
+    this.additionalImageKeys = const [],
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final source = ref.watch(productImageSourceProvider);
-    final candidates =
-        source.resolveCandidates(imageKey, categoryId: categoryId);
+    final candidates = [
+      ...source.resolveCandidates(imageKey, categoryId: categoryId),
+      for (final key in additionalImageKeys)
+        ...source.resolveCandidates(key, categoryId: categoryId),
+    ];
     final devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
     final cacheWidth = (width != null && width!.isFinite)
         ? (width! * devicePixelRatio).round()
