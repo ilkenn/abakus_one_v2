@@ -34,6 +34,25 @@ final posActionGatewayProvider = Provider<PosActionGateway>((ref) {
   return const UnavailablePosActionGateway();
 });
 
+/// "Çok Tercih Edilenler" (Top 20), 2026-11-03 — product owner-approved
+/// minimal design (`docs/business_rules.md` BR-POS-001). Deliberately a
+/// plain (non-`autoDispose`) `FutureProvider.family`: fetched once per
+/// [PosDeviceContext] and kept for the rest of this app session (the
+/// product owner's own "oturum boyunca cache" ask) rather than refetched on
+/// every rebuild — the staff-facing POS screen never needs this to be more
+/// real-time than that. Call `ref.invalidate(topSellingProductsProvider(ctx))`
+/// to force a refresh (e.g. a manual "yenile" action, if one is added later).
+final topSellingProductsProvider =
+    FutureProvider.family<List<PosTopSellingProduct>, PosDeviceContext>(
+        (ref, ctx) {
+  return ref.read(posOperationalViewGatewayProvider).getTopSellingProducts(
+        organizationId: ctx.organizationId,
+        branchId: ctx.branchId,
+        deviceId: ctx.deviceId,
+        deviceSessionId: ctx.deviceSessionId,
+      );
+});
+
 /// AP-4 Wave D wiring — the real payment/cash/fiscal boundaries, gated on
 /// Firebase readiness exactly like every gateway above. Never falls back to
 /// an in-memory/mock implementation that could silently fabricate a money

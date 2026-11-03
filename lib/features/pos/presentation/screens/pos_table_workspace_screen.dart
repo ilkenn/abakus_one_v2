@@ -446,7 +446,7 @@ class _PosWorkbench extends ConsumerStatefulWidget {
 }
 
 class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
-  String _categoryFilter = _staffEntryAllCategoriesSentinel;
+  String _categoryFilter = _staffEntryTopSellersSentinel;
   final List<_StaffEntryCartLine> _cartLines = [];
   bool _sendingCart = false;
 
@@ -634,10 +634,10 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     if (scrollHorizontally) {
       final chips = [
         ChoiceChip(
-          label: const Text('Tümü'),
-          selected: _categoryFilter == _staffEntryAllCategoriesSentinel,
-          onSelected: (_) => setState(
-              () => _categoryFilter = _staffEntryAllCategoriesSentinel),
+          label: const Text('Çok Tercih Edilenler'),
+          selected: _categoryFilter == _staffEntryTopSellersSentinel,
+          onSelected: (_) =>
+              setState(() => _categoryFilter = _staffEntryTopSellersSentinel),
         ),
         for (final category in categories)
           ChoiceChip(
@@ -663,11 +663,11 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
         children: [
           _CategoryCard(
-            label: 'Tümü',
-            icon: Icons.apps_rounded,
-            selected: _categoryFilter == _staffEntryAllCategoriesSentinel,
-            onTap: () => setState(
-                () => _categoryFilter = _staffEntryAllCategoriesSentinel),
+            label: 'Çok Tercih Edilenler',
+            icon: Icons.star_rounded,
+            selected: _categoryFilter == _staffEntryTopSellersSentinel,
+            onTap: () =>
+                setState(() => _categoryFilter = _staffEntryTopSellersSentinel),
           ),
           for (final category in categories)
             _CategoryCard(
@@ -717,10 +717,11 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     );
   }
 
-  Widget _buildProductGrid(List<MenuProduct> products) {
+  Widget _buildProductGrid(List<MenuProduct> products,
+      {String emptyMessage = 'Bu kategoride ürün yok.'}) {
     if (products.isEmpty) {
-      return const Center(
-        child: Text('Bu kategoride ürün yok.', style: AppTypography.bodyMedium),
+      return Center(
+        child: Text(emptyMessage, style: AppTypography.bodyMedium),
       );
     }
     return GridView.builder(
@@ -1499,22 +1500,62 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     final categories = ref.watch(menuCategoriesProvider);
     final allProducts =
         ref.watch(menuProductsProvider).where((p) => p.isAvailable).toList();
-    final categoryFiltered = _categoryFilter == _staffEntryAllCategoriesSentinel
-        ? allProducts
-        : allProducts.where((p) => p.categoryId == _categoryFilter).toList();
+
+    // "Çok Tercih Edilenler" (2026-11-03, BR-POS-001) resolves asynchronously
+    // (a real backend aggregation) — every other category is already an
+    // in-memory list, wrapped in `AsyncValue.data` so both paths share one
+    // explicit loading/error/data handling below instead of two.
+    final categoryFilteredAsync = _categoryFilter ==
+            _staffEntryTopSellersSentinel
+        ? ref.watch(topSellingProductsProvider(widget.ctx)).whenData(
+            (topSellers) {
+              final productById = {for (final p in allProducts) p.id: p};
+              return [
+                for (final entry in topSellers)
+                  if (productById[entry.productId] != null)
+                    productById[entry.productId]!,
+              ];
+            },
+          )
+        : AsyncValue.data(
+            allProducts.where((p) => p.categoryId == _categoryFilter).toList(),
+          );
     final searchQuery = _productSearchQuery.trim().toLowerCase();
-    final visibleProducts = searchQuery.isEmpty
-        ? categoryFiltered
-        : categoryFiltered
-            .where((p) => p.name.toLowerCase().contains(searchQuery))
-            .toList();
+    // A non-empty search deliberately searches every product regardless of
+    // the selected category/Top-20 filter — finding a specific product by
+    // name shouldn't require first guessing which tab it's under, and it
+    // never needs to wait on the Top-20 network call either.
+    final visibleProductsAsync = searchQuery.isNotEmpty
+        ? AsyncValue.data(
+            allProducts
+                .where((p) => p.name.toLowerCase().contains(searchQuery))
+                .toList(),
+          )
+        : categoryFilteredAsync;
 
     return LayoutBuilder(builder: (context, constraints) {
       final isWide = constraints.maxWidth >= AppBreakpoints.tablet;
       final grid = Column(
         children: [
           _buildProductSearchField(),
-          Expanded(child: _buildProductGrid(visibleProducts)),
+          Expanded(
+            child: visibleProductsAsync.when(
+              loading: () => const LoadingView(
+                  message: 'Çok tercih edilenler yükleniyor...'),
+              error: (error, stackTrace) => ErrorView(
+                message: 'Çok tercih edilenler yüklenemedi.',
+                retryLabel: 'Yeniden Dene',
+                onRetry: () =>
+                    ref.invalidate(topSellingProductsProvider(widget.ctx)),
+              ),
+              data: (products) => _buildProductGrid(
+                products,
+                emptyMessage: _categoryFilter == _staffEntryTopSellersSentinel
+                    ? 'Henüz yeterli satış verisi yok.'
+                    : 'Bu kategoride ürün yok.',
+              ),
+            ),
+          ),
         ],
       );
       final adisyon = _buildAdisyonPanel(context);
@@ -1834,7 +1875,13 @@ class _LineRow extends StatelessWidget {
 const _staffEntryTableGeneralSentinel = '__table_general__';
 const _staffEntryWalkInSentinel = '__named_walk_in__';
 const _staffEntryExistingCustomerSentinel = '__existing_customer__';
-const _staffEntryAllCategoriesSentinel = '__all_categories__';
+
+/// 2026-11-03 — product owner, BR-POS-001: replaces the old "Tümü" (show
+/// every category) default with "Çok Tercih Edilenler" (Top 20
+/// best-sellers). The identifier keeps its old name's shape deliberately
+/// unrenamed in call sites that were already using it as "the default
+/// selection," but its *meaning* changed — see `topSellingProductsProvider`.
+const _staffEntryTopSellersSentinel = '__top_sellers__';
 
 /// The quick note-edit popup for a pending cart line. A dedicated
 /// `StatefulWidget` (rather than a `TextEditingController` created and

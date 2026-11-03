@@ -10276,3 +10276,60 @@ explicit architecture decision (CLAUDE.md §15) before implementation, not a sha
 `standard_modifier_groups.dart`, `abakus_menu_catalog.dart`, `pos_table_workspace_screen.dart`,
 `abakus_menu_catalog_test.dart` (the "never an invented modifier group" guard test updated to
 recognize the 3 new, now-legitimate groups), `docs/business_rules.md` (BR-BOWL-006–009).
+
+### Feature (2026-11-03, same day): "Çok Tercih Edilenler" (Top 20) implemented; "Tümü" removed
+
+Follow-up to the same day's earlier entry, which deliberately left this unbuilt pending a product-
+owner decision on the aggregation approach (BR-POS-001, then UNRESOLVED). Approved design: an
+on-demand Cloud Function, no precomputed aggregate, no new Firestore index — built and emulator-
+tested (`npm run test:emulator` against a real JDK 21 Firestore/Auth/Functions emulator; the
+sandbox's default JDK was 17, which the current `firebase-tools` emulator rejects outright — a
+JDK 21 happened to already be installed locally and was pointed to via `JAVA_HOME`).
+
+`functions/src/posTopSellingProducts.ts` (`getTopSellingProducts`) — same auth bar as every other
+POS read (`requireStaffPermission` + `requireBranchAccess` + `requireActiveDeviceSession`, mirroring
+`posOperationalView.ts`'s own documented rationale for needing all three). Queries `orders` by
+`organizationId`/`branchId` equality only; filters to the last 30 days and `accepted`-status lines
+**in memory** rather than adding a `timestamps.created` range clause to the query, which would have
+needed a new composite index to be created and deployed — exactly the kind of Firebase wiring
+CLAUDE.md §5 reserves for its own explicit decision, not something to bolt on while answering "how
+do I compute Top 20." 4 new emulator-backed tests (`posTopSellingProducts.test.ts`): quantity
+summed/sorted correctly across orders, non-`accepted` lines never counted, an order outside the
+30-day window excluded, and the auth-boundary rejection when no active device session exists.
+
+Client side: `PosTopSellingProduct`/`PosOperationalViewGateway.getTopSellingProducts` (real + the
+existing `Unavailable` fallback); `topSellingProductsProvider`, a plain (non-`autoDispose`)
+`FutureProvider.family<List<PosTopSellingProduct>, PosDeviceContext>` — fetched once per session,
+per the approved "oturum boyunca cache" design, invalidated only by an explicit future refresh
+action (none exists yet). `PosDeviceContext` gained value `==`/`hashCode` (confirmed nothing relied
+on its prior identity semantics) so the `.family` cache key works correctly across rebuilds.
+
+`pos_table_workspace_screen.dart`: the "Tümü" category (and its internal
+`_staffEntryAllCategoriesSentinel`, renamed `_staffEntryTopSellersSentinel`) is gone — "Çok Tercih
+Edilenler" is the new default, already-selected entry, backed by the async provider above with
+explicit `LoadingView`/`ErrorView` (retry action)/an explicit "Henüz yeterli satış verisi yok."
+empty state — never a silently blank grid for any of the three. **Search behavior changed
+alongside this, disclosed, not accidental**: typing in the product search field now overrides the
+selected category/Top-20 filter entirely rather than searching only within it — finding a specific
+product by name shouldn't require first guessing which tab (or waiting on the Top-20 network call)
+it's under. Two pre-existing search tests were updated to match (one's premise — "search works
+because 'Tümü' happens to include everything" — no longer holds now that "Tümü" is gone; rewritten
+to assert the new, intentional "search overrides category" behavior directly). Added a dedicated
+test group: default-selected/no-"Tümü", real backend data rendering, the empty state, and the error
+state with its retry button (an `OutlinedButton`, per `ErrorView`'s own implementation — not
+`ElevatedButton`, an easy first guess that the test caught).
+
+Two existing fakes (`end_of_day_screen_test.dart`, `pos_branch_overview_screen_test.dart`) needed a
+new `getTopSellingProducts` override to keep compiling, each delegating to `UnimplementedError()`
+since neither screen exercises it.
+
+`flutter analyze`/`flutter test` (full suite) green; `npm run build` (functions) clean;
+`posTopSellingProducts.test.ts` green against the real emulator. **Not run**: the full 142-file
+functions emulator suite — this change only added one new file and one new `index.ts` export line,
+touching no existing function body, so a full backend regression pass wasn't repeated; flagged here
+rather than silently assumed. New files: `functions/src/posTopSellingProducts.ts`,
+`functions/src/test/posTopSellingProducts.test.ts`. Updated: `functions/src/index.ts`,
+`pos_action_gateway.dart`, `pos_operational_view_gateway.dart`, `pos_workspace_providers.dart`,
+`pos_table_workspace_screen.dart`, `pos_table_workspace_screen_test.dart`,
+`end_of_day_screen_test.dart`, `pos_branch_overview_screen_test.dart`, `docs/business_rules.md`
+(BR-POS-001 moved from UNRESOLVED to VERIFIED).

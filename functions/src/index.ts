@@ -121,6 +121,9 @@ export { refundDineInOrder } from "./refundDineInOrder";
 // `allow read: if false` in firestore.rules for every staff actor).
 export { getPosTableOperationalView, getPosBranchTableOverview } from "./posOperationalView";
 
+// POS "Çok Tercih Edilenler" (Top 20 best-sellers), 2026-11-03 — BR-POS-001.
+export { getTopSellingProducts } from "./posTopSellingProducts";
+
 // AP-3 Wave 2 — money-safe Check/allocation model.
 export {
   openCheck,

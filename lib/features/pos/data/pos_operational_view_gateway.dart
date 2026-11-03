@@ -31,6 +31,30 @@ class PosPendingServiceRequest {
   }
 }
 
+/// One entry in "Çok Tercih Edilenler" (Top 20 best-sellers), 2026-11-03 —
+/// `functions/src/posTopSellingProducts.ts` (BR-POS-001). [quantitySold] is
+/// the real sum of `accepted`-line quantity across this branch's orders in
+/// the server's lookback window — never a client-side guess.
+class PosTopSellingProduct {
+  const PosTopSellingProduct({
+    required this.productId,
+    required this.productName,
+    required this.quantitySold,
+  });
+
+  final String productId;
+  final String productName;
+  final int quantitySold;
+
+  factory PosTopSellingProduct.fromWire(Map<String, dynamic> data) {
+    return PosTopSellingProduct(
+      productId: data['productId'] as String,
+      productName: data['productName'] as String,
+      quantitySold: (data['quantitySold'] as num).toInt(),
+    );
+  }
+}
+
 class PosBranchTableSummary {
   const PosBranchTableSummary({
     required this.tableId,
@@ -245,6 +269,13 @@ abstract interface class PosOperationalViewGateway {
     required String deviceId,
     required String deviceSessionId,
   });
+
+  Future<List<PosTopSellingProduct>> getTopSellingProducts({
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String deviceSessionId,
+  });
 }
 
 class FirebasePosOperationalViewGateway implements PosOperationalViewGateway {
@@ -350,6 +381,25 @@ class FirebasePosOperationalViewGateway implements PosOperationalViewGateway {
     });
     return PosTableOperationalView.fromWire(data);
   }
+
+  @override
+  Future<List<PosTopSellingProduct>> getTopSellingProducts({
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String deviceSessionId,
+  }) async {
+    final data = await _call('getTopSellingProducts', {
+      'organizationId': organizationId,
+      'branchId': branchId,
+      'deviceId': deviceId,
+      'deviceSessionId': deviceSessionId,
+    });
+    return [
+      for (final raw in (data['products'] as List))
+        PosTopSellingProduct.fromWire(Map<String, dynamic>.from(raw as Map)),
+    ];
+  }
 }
 
 class UnavailablePosOperationalViewGateway
@@ -377,6 +427,15 @@ class UnavailablePosOperationalViewGateway
     required String organizationId,
     required String branchId,
     required String tableId,
+    required String deviceId,
+    required String deviceSessionId,
+  }) async =>
+      _unavailable();
+
+  @override
+  Future<List<PosTopSellingProduct>> getTopSellingProducts({
+    required String organizationId,
+    required String branchId,
     required String deviceId,
     required String deviceSessionId,
   }) async =>

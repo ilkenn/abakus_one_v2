@@ -17,6 +17,14 @@ class _FakePosOperationalViewGateway implements PosOperationalViewGateway {
   PosTableOperationalView? viewToReturn;
   int callCount = 0;
 
+  /// Empty by default — a realistic "no accepted orders in the lookback
+  /// window yet" branch, so the default "Çok Tercih Edilenler" view renders
+  /// its empty state rather than an error for every test that doesn't
+  /// specifically exercise this (most switch to another category tab
+  /// immediately anyway).
+  List<PosTopSellingProduct> topSellingProductsToReturn = const [];
+  Object? topSellingProductsError;
+
   @override
   Future<PosTableOperationalView> getTableView({
     required String organizationId,
@@ -39,6 +47,18 @@ class _FakePosOperationalViewGateway implements PosOperationalViewGateway {
     String? ifNoneMatchVersion,
   }) async =>
       throw UnimplementedError();
+
+  @override
+  Future<List<PosTopSellingProduct>> getTopSellingProducts({
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String deviceSessionId,
+  }) async {
+    final error = topSellingProductsError;
+    if (error != null) throw error;
+    return topSellingProductsToReturn;
+  }
 }
 
 class _FakePosActionGateway implements PosActionGateway {
@@ -783,10 +803,9 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await _pump(tester, initialView: emptyOpenTableView());
 
-      // "Tümü" (every active category) is the default filter — CocaCola
-      // Şişe exists but isn't necessarily built yet inside the (lazy)
-      // grid's initial range; searching should bring it into view
-      // regardless of which category tab is selected.
+      // A non-empty search overrides the selected category/Top-20 filter
+      // entirely (default state here, "Çok Tercih Edilenler") — CocaCola
+      // Şişe should surface regardless of which tab happens to be selected.
       await tester.enterText(
           find.byKey(const Key('productSearchField')), 'cocacola');
       await tester.pump();
@@ -801,15 +820,27 @@ void main() {
       );
     });
 
-    testWidgets('clearing the search field restores the full grid',
-        (tester) async {
+    testWidgets(
+        'clearing the search field restores the selected category\'s own '
+        'grid (not a search result)', (tester) async {
       await tester.binding.setSurfaceSize(const Size(1200, 1400));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await _pump(tester, initialView: emptyOpenTableView());
 
+      await tester.tap(find.text("Bowl'lar"));
+      await tester.pump();
       await tester.enterText(
           find.byKey(const Key('productSearchField')), 'cocacola');
       await tester.pump();
+      final gridWhileSearching = find.byType(GridView);
+      expect(
+        find.descendant(
+            of: gridWhileSearching,
+            matching: find.text('Tatlı Ekşi Tavuk Bowl')),
+        findsNothing,
+        reason: 'searching must override the Bowl category filter',
+      );
+
       await tester.tap(find.byIcon(Icons.clear_rounded));
       await tester.pump();
 
@@ -817,7 +848,109 @@ void main() {
       expect(
         find.descendant(of: grid, matching: find.text('Tatlı Ekşi Tavuk Bowl')),
         findsOneWidget,
+        reason: "clearing search must restore the Bowl'lar category grid",
       );
+    });
+  });
+
+  group('"Çok Tercih Edilenler" (Top 20) (2026-11-03)', () {
+    PosTableOperationalView emptyOpenTableView() {
+      return const PosTableOperationalView(
+        tableId: 'table-1',
+        status: 'occupied',
+        tableSessionId: 'tsess-1',
+        subAccounts: [],
+        checks: [],
+        orders: [],
+      );
+    }
+
+    testWidgets(
+        '"Tümü" no longer exists; "Çok Tercih Edilenler" replaces it in '
+        'the category rail', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester, initialView: emptyOpenTableView());
+
+      expect(find.text('Tümü'), findsNothing);
+      expect(find.text('Çok Tercih Edilenler'), findsOneWidget);
+    });
+
+    testWidgets(
+        'shows the real top-selling products returned by the backend, '
+        'ranked in the order the server returned them', (tester) async {
+      final viewGateway = _FakePosOperationalViewGateway()
+        ..viewToReturn = emptyOpenTableView()
+        ..topSellingProductsToReturn = const [
+          PosTopSellingProduct(
+              productId: 'prod_cocacola',
+              productName: 'CocaCola Şişe',
+              quantitySold: 42),
+        ];
+      final actionGateway = _FakePosActionGateway();
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            posOperationalViewGatewayProvider.overrideWithValue(viewGateway),
+            posActionGatewayProvider.overrideWithValue(actionGateway),
+            posDeviceContextProvider.overrideWithValue(_ctx),
+            selectedPosTableIdProvider.overrideWith((ref) => 'table-1'),
+            kitchenProjectionRepositoryProvider
+                .overrideWithValue(InMemoryKitchenProjectionRepository()),
+          ],
+          child: const MaterialApp(home: PosTableWorkspaceScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final grid = find.byType(GridView);
+      expect(find.descendant(of: grid, matching: find.text('CocaCola Şişe')),
+          findsOneWidget);
+    });
+
+    testWidgets(
+        'shows an explicit empty state, not a blank grid, when '
+        'there is no sales data yet', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      // The fake's topSellingProductsToReturn defaults to [] — no override
+      // needed to exercise the empty state.
+      await _pump(tester, initialView: emptyOpenTableView());
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Henüz yeterli satış verisi yok.'), findsOneWidget);
+    });
+
+    testWidgets(
+        'shows an explicit error state with a retry action on failure, '
+        'never a silent blank grid', (tester) async {
+      final viewGateway = _FakePosOperationalViewGateway()
+        ..viewToReturn = emptyOpenTableView()
+        ..topSellingProductsError =
+            const PosOperationalViewException('unavailable', 'down');
+      final actionGateway = _FakePosActionGateway();
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            posOperationalViewGatewayProvider.overrideWithValue(viewGateway),
+            posActionGatewayProvider.overrideWithValue(actionGateway),
+            posDeviceContextProvider.overrideWithValue(_ctx),
+            selectedPosTableIdProvider.overrideWith((ref) => 'table-1'),
+            kitchenProjectionRepositoryProvider
+                .overrideWithValue(InMemoryKitchenProjectionRepository()),
+          ],
+          child: const MaterialApp(home: PosTableWorkspaceScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Çok tercih edilenler yüklenemedi.'), findsOneWidget);
+      expect(
+          find.widgetWithText(OutlinedButton, 'Yeniden Dene'), findsOneWidget);
     });
   });
 

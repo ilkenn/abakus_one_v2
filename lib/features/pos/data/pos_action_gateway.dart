@@ -33,6 +33,23 @@ class PosDeviceContext {
         'deviceId': deviceId,
         'deviceSessionId': deviceSessionId,
       };
+
+  /// Value equality (2026-11-03) — added so a `PosDeviceContext` can key a
+  /// Riverpod `.family` provider (`topSellingProductsProvider`) correctly;
+  /// nothing before this relied on identity semantics (confirmed by
+  /// search), so this is purely additive.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is PosDeviceContext &&
+          other.organizationId == organizationId &&
+          other.branchId == branchId &&
+          other.deviceId == deviceId &&
+          other.deviceSessionId == deviceSessionId);
+
+  @override
+  int get hashCode =>
+      Object.hash(organizationId, branchId, deviceId, deviceSessionId);
 }
 
 class PosActionException implements Exception {

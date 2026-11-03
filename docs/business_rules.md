@@ -570,15 +570,23 @@ options layered on top of it.
 # POS Staff Workflow Rules
 
 ### BR-POS-001 — "Çok Tercih Edilenler" (Top 20 best-sellers) category
-- **Status**: UNRESOLVED
-- **Rule**: The product owner asked for a dynamic category showing the 20 most-ordered products,
-  computed from real order history, replacing the static "Tümü" category in the POS product rail.
-  No sales-count aggregation exists anywhere in the codebase today — `MenuProduct.isFeatured`
-  ("Çok Satanlar") is a hand-picked static flag, not computed from order data. Building a genuine
-  one needs a new backend aggregation (a Cloud Function or precomputed Firestore read), which is an
-  architecture change (`CLAUDE.md` §15) requiring explicit approval before implementation. Not built;
-  not approximated with `isFeatured` either, since that would silently present curated picks as if
-  they were real sales data.
+- **Status**: VERIFIED (implemented 2026-11-03, product owner-approved minimal design)
+- **Rule**: Replaces the old static "Tümü" category — now the POS product rail's default, already-
+  selected entry. Real data, not a static pick: `functions/src/posTopSellingProducts.ts`
+  (`getTopSellingProducts`) queries this branch's `orders` (equality on `organizationId`/`branchId`
+  only — no new Firestore composite index), filters **in memory** to the last 30 days and to
+  `accepted` lines only, tallies by `productId`, returns the top 20 by quantity. Client-side
+  (`topSellingProductsProvider`, a plain non-`autoDispose` `FutureProvider.family`) fetches once per
+  `PosDeviceContext` and keeps it for the rest of the app session — the approved "oturum boyunca
+  cache" design, not a precomputed/incrementally-updated aggregate (that remains the documented
+  next step if a branch's order volume ever makes the full-equality-scan slow). `MenuProduct
+  .isFeatured` ("Çok Satanlar") is unrelated and untouched — still a hand-picked static flag, never
+  conflated with this real, computed ranking. Loading/error/empty states are explicit in
+  `pos_table_workspace_screen.dart`'s build method (`LoadingView`/`ErrorView` with retry/an explicit
+  "Henüz yeterli satış verisi yok." message) — never a silently blank grid.
+- **Noted same day**: the product search bar (already shipped) deliberately searches every product
+  regardless of the selected category/Top-20 filter, overriding it entirely while text is entered —
+  finding a product by name shouldn't require guessing which tab it's under.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Menu, POS
 
@@ -5329,7 +5337,6 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 | BR-LOYALTY-007 | What happens when a reward-eligible bowl's menu value exceeds 500 TL? |
 | BR-LOYALTY-008 | What is the server-verifiable anti-fraud mechanism per task type? Does an Instagram unfollow reverse earned Boncuk? |
 | BR-LOYALTY-009 | What is the exact wheel prize probability distribution? What are the exact wheel-Boncuk expiry mechanics? |
-| BR-POS-001 | What backend aggregation computes the real "en çok satan ilk 20" (Top 20 best-sellers) for the POS "Çok Tercih Edilenler" category? |
 
 # Decision Log
 

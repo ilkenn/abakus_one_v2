@@ -47,6 +47,15 @@ class _FakePosOperationalViewGateway implements PosOperationalViewGateway {
   }) async {
     throw UnimplementedError();
   }
+
+  @override
+  Future<List<PosTopSellingProduct>> getTopSellingProducts({
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String deviceSessionId,
+  }) async =>
+      throw UnimplementedError();
 }
 
 class _FakePosActionGateway implements PosActionGateway {
