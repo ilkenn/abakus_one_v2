@@ -733,6 +733,7 @@ void main() {
           'quantity': 2,
           'selectedModifiers': <Map<String, String>>[],
           'note': '',
+          'excludedIngredients': <String>[],
         },
       ]);
     });
@@ -760,6 +761,251 @@ void main() {
 
       expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
           findsOneWidget);
+    });
+  });
+
+  group('Ürün arama çubuğu (2026-11-03)', () {
+    PosTableOperationalView emptyOpenTableView() {
+      return const PosTableOperationalView(
+        tableId: 'table-1',
+        status: 'occupied',
+        tableSessionId: 'tsess-1',
+        subAccounts: [],
+        checks: [],
+        orders: [],
+      );
+    }
+
+    testWidgets(
+        'typing a name filters the grid to matching products across every '
+        'category, live as each letter is typed', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester, initialView: emptyOpenTableView());
+
+      // "Tümü" (every active category) is the default filter — CocaCola
+      // Şişe exists but isn't necessarily built yet inside the (lazy)
+      // grid's initial range; searching should bring it into view
+      // regardless of which category tab is selected.
+      await tester.enterText(
+          find.byKey(const Key('productSearchField')), 'cocacola');
+      await tester.pump();
+
+      final grid = find.byType(GridView);
+      expect(find.descendant(of: grid, matching: find.text('CocaCola Şişe')),
+          findsOneWidget);
+      expect(
+        find.descendant(of: grid, matching: find.text('Tatlı Ekşi Tavuk Bowl')),
+        findsNothing,
+        reason: 'a non-matching product must be filtered out',
+      );
+    });
+
+    testWidgets('clearing the search field restores the full grid',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester, initialView: emptyOpenTableView());
+
+      await tester.enterText(
+          find.byKey(const Key('productSearchField')), 'cocacola');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.clear_rounded));
+      await tester.pump();
+
+      final grid = find.byType(GridView);
+      expect(
+        find.descendant(of: grid, matching: find.text('Tatlı Ekşi Tavuk Bowl')),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('Ürün Özelleştirme Modalı (2026-11-03)', () {
+    PosTableOperationalView emptyOpenTableView() {
+      return const PosTableOperationalView(
+        tableId: 'table-1',
+        status: 'occupied',
+        tableSessionId: 'tsess-1',
+        subAccounts: [],
+        checks: [],
+        orders: [],
+      );
+    }
+
+    /// "Tatlı Ekşi Tavuk Bowl" (`prod_bowl2_tatli_eksi_tavuk`, real
+    /// catalog) — a Bowl product, so it carries the required Karbonhidrat/
+    /// Salata/Turşu groups (each with a free default option already
+    /// selected) plus the optional Ekstra/Ekstra Sos groups, and has
+    /// `nutrition.calories == 560`. Returns the pumped fakes so callers
+    /// can assert on `submitStaffEntryOrder` after further interaction.
+    Future<_Fakes> openBowlCustomizationModal(WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final fakes = await _pump(tester, initialView: emptyOpenTableView());
+
+      await tester.tap(find.text("Bowl'lar"));
+      await tester.pump();
+      final bowlCard = find.descendant(
+        of: find.byType(GridView),
+        matching: find.text('Tatlı Ekşi Tavuk Bowl'),
+      );
+      await tester.ensureVisible(bowlCard);
+      await tester.tap(bowlCard);
+      await tester.pumpAndSettle();
+      return fakes;
+    }
+
+    testWidgets(
+        'tapping a Bowl product (required modifier groups) opens the '
+        'customization modal instead of adding directly, and shows its '
+        'calorie badge and required groups', (tester) async {
+      await openBowlCustomizationModal(tester);
+
+      // Only the first group ("Karbonhidrat") is guaranteed built by the
+      // right panel's lazy `ListView` without scrolling first — later
+      // groups ("Salata", "Turşu", ...) are exercised by the other tests
+      // below, which scroll by selecting/confirming options inside them.
+      expect(find.text('Karbonhidrat'), findsOneWidget);
+      expect(find.textContaining('560 kcal'), findsWidgets);
+      // Real catalog allergens for this exact product (BR-BOWL-009).
+      expect(find.text('gluten'), findsWidgets);
+      expect(find.text('susam'), findsWidgets);
+      // Every required group's default option is pre-selected, so the
+      // modal opens already valid at the base price — no extra tap
+      // needed before Kaydet is enabled.
+      expect(find.widgetWithText(ElevatedButton, 'Kaydet (520 TL)'),
+          findsOneWidget);
+    });
+
+    testWidgets(
+        'scrolling the right panel reveals the 2026-11-03 İlave Protein / '
+        'Sos Tercihi / Ekstra Topping groups, each with their confirmed '
+        'prices', (tester) async {
+      await openBowlCustomizationModal(tester);
+
+      final rightPanel = find
+          .descendant(
+            of: find.byType(Dialog),
+            matching: find.byType(Scrollable),
+          )
+          .last;
+
+      await tester.scrollUntilVisible(find.text('İlave Protein'), 400,
+          scrollable: rightPanel);
+      expect(find.text('İlave Protein'), findsOneWidget);
+      expect(find.text('İlave Dana Bonfile'), findsOneWidget);
+
+      await tester.scrollUntilVisible(find.text('Sos Tercihi'), 400,
+          scrollable: rightPanel);
+      expect(find.text('Sos Tercihi'), findsOneWidget);
+      expect(find.text('Sweet Chilli'), findsOneWidget);
+
+      await tester.scrollUntilVisible(find.text('Ekstra Topping'), 400,
+          scrollable: rightPanel);
+      expect(find.text('Ekstra Topping'), findsOneWidget);
+      expect(find.text('Avokado'), findsOneWidget);
+    });
+
+    testWidgets(
+        'tapping a drink (only the optional cross-sell sauce group) still '
+        'adds directly — no modal', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester, initialView: emptyOpenTableView());
+
+      await tester.tap(find.text('İçecekler'));
+      await tester.pump();
+      final cocaColaCard = find.descendant(
+        of: find.byType(GridView),
+        matching: find.text('CocaCola Şişe'),
+      );
+      await tester.ensureVisible(cocaColaCard);
+      await tester.tap(cocaColaCard);
+      await tester.pump();
+
+      expect(find.byType(Dialog), findsNothing);
+      expect(find.text('1'), findsOneWidget);
+    });
+
+    testWidgets(
+        'confirming the modal with its default selections adds a '
+        'configured line whose summary lists the chosen options, and '
+        'submits those options as groupId/optionId pairs', (tester) async {
+      final fakes = await openBowlCustomizationModal(tester);
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kaydet (520 TL)'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Pirinç / Basmati Pilavı'), findsOneWidget);
+
+      await tester
+          .tap(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'));
+      await tester.pumpAndSettle();
+
+      final items = fakes.actionGateway.lastStaffEntryItems!;
+      expect(items, hasLength(1));
+      expect(items.first['productId'], 'prod_bowl2_tatli_eksi_tavuk');
+      final selectedModifiers =
+          items.first['selectedModifiers'] as List<dynamic>;
+      expect(selectedModifiers, hasLength(3));
+      expect(
+        selectedModifiers,
+        containsAll([
+          {'groupId': 'bowl_carb', 'optionId': 'carb_basmati'},
+          {'groupId': 'bowl_salad', 'optionId': 'salad_mevsim'},
+          {'groupId': 'bowl_pickle', 'optionId': 'pickle_mor_lahana'},
+        ]),
+      );
+    });
+
+    testWidgets(
+        'picking a paid option (Meksika Pilavı, +20 TL) updates the '
+        "modal's total and the pending cart's total", (tester) async {
+      await openBowlCustomizationModal(tester);
+
+      await tester.tap(find.text('Meksika Pilavı'));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(ElevatedButton, 'Kaydet (540 TL)'),
+          findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kaydet (540 TL)'));
+      await tester.pumpAndSettle();
+
+      // Scoped to the cart-total key, not a bare `find.text('540 TL')` —
+      // some other Bowl product in the same category grid can coincide
+      // with this exact price.
+      expect(
+        tester.widget<Text>(find.byKey(const Key('staffEntryCartTotal'))).data,
+        '540 TL',
+      );
+    });
+
+    testWidgets(
+        'the quick note popup on a pending line updates its note, shown '
+        'in the line summary and sent through submitStaffEntryOrder',
+        (tester) async {
+      final fakes = await openBowlCustomizationModal(tester);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kaydet (520 TL)'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Not Ekle'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('lineNoteField')),
+        'Sosu ayrı olsun',
+      );
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Kaydet'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Not: Sosu ayrı olsun'), findsOneWidget);
+
+      await tester
+          .tap(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'));
+      await tester.pumpAndSettle();
+
+      expect(fakes.actionGateway.lastStaffEntryItems!.first['note'],
+          'Sosu ayrı olsun');
     });
   });
 }

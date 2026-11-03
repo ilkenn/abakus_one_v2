@@ -141,14 +141,120 @@ abstract final class StandardModifierGroups {
     ],
   );
 
-  /// Every Bowl product (`cat_bowl2`) gets exactly these 4 groups, in this
+  /// "İLAVE PROTEİN" — optional, multi-select add-on on top of a Bowl's own
+  /// built-in protein (the bowl's name/description already names its base
+  /// protein; this is strictly additional). Prices and option list are
+  /// exactly as the product owner specified via chat on 2026-11-03 — see
+  /// `docs/business_rules.md` BR-BOWL-006. These are deliberately **not**
+  /// the same entities as Bowl Builder's own `kCategoryProtein` ingredients
+  /// (`bowl_builder_catalog.dart`, BR-BOWL-003) — two different products
+  /// (an already-finished named Bowl vs. build-your-own), confirmed by the
+  /// product owner to carry independent pricing; this group does not
+  /// change Bowl Builder's existing, separately-verified protein prices.
+  /// "Somon" was given as two prices with no further label, disambiguated
+  /// here as Bowl Builder's own two real Somon variants (Izgara Somon /
+  /// Somon Füme) since that's the only non-fabricated way to split it.
+  static const ModifierGroup bowlProteinAddOnGroup = ModifierGroup(
+    id: 'bowl_protein_addon',
+    name: 'İlave Protein',
+    selectionType: ModifierSelectionType.multiple,
+    isRequired: false,
+    minSelections: 0,
+    maxSelections: 6,
+    options: [
+      ModifierOption(
+          id: 'protein_addon_tavuk', name: 'İlave Tavuk', extraPrice: 300),
+      ModifierOption(
+          id: 'protein_addon_kofte', name: 'İlave Köfte', extraPrice: 400),
+      ModifierOption(
+          id: 'protein_addon_dana_bonfile',
+          name: 'İlave Dana Bonfile',
+          extraPrice: 450),
+      ModifierOption(
+          id: 'protein_addon_izgara_somon',
+          name: 'İlave Izgara Somon',
+          extraPrice: 450),
+      ModifierOption(
+          id: 'protein_addon_somon_fume',
+          name: 'İlave Somon Füme',
+          extraPrice: 550),
+      ModifierOption(
+          id: 'protein_addon_falafel', name: 'İlave Falafel', extraPrice: 250),
+    ],
+  );
+
+  /// "SOS TERCİHİ" — product owner, 2026-11-03 (BR-BOWL-007). **Disclosed
+  /// simplification**: the product owner described this as "1 dahil,
+  /// ilave +20 TL" (first sauce included free, each additional +20 TL),
+  /// but `ModifierOption.extraPrice` is a flat per-option price — there is
+  /// no selection-order-dependent pricing anywhere in this codebase (the
+  /// closest precedent, Bowl Builder's own per-unit "Extra" surcharge, is
+  /// itself still `BR-BOWL-004: UNRESOLVED`). Modeling genuine "first free,
+  /// rest priced" pricing is a pricing-engine change, not a catalog-data
+  /// change, so it is out of scope here and was not silently built.
+  /// Every option below is priced flat at the quoted "+20 TL" instead —
+  /// the "1 dahil" nuance is not yet enforced. Deliberately a **separate**
+  /// group from the pre-existing, differently-priced `crossSellSauceGroup`
+  /// ("Ekstra Sos") rather than merged into it — merging would mean
+  /// repricing `crossSellSauceGroup`'s already-shipped options (used by
+  /// every product in the catalog, not just Bowl), which wasn't asked for.
+  /// A Bowl product using this group ends up showing both sauce groups;
+  /// flagged to the product owner as a disclosed, not hidden, consequence.
+  static const ModifierGroup bowlSauceChoiceGroup = ModifierGroup(
+    id: 'bowl_sauce_choice',
+    name: 'Sos Tercihi',
+    selectionType: ModifierSelectionType.multiple,
+    isRequired: false,
+    minSelections: 0,
+    maxSelections: 5,
+    options: [
+      ModifierOption(
+          id: 'sauce_choice_balli_hardal',
+          name: 'Ballı Hardal',
+          extraPrice: 20),
+      ModifierOption(
+          id: 'sauce_choice_abakus', name: 'Abaküs Sos', extraPrice: 20),
+      ModifierOption(
+          id: 'sauce_choice_sweet_chilli',
+          name: 'Sweet Chilli',
+          extraPrice: 20),
+      ModifierOption(
+          id: 'sauce_choice_sriracha', name: 'Sriracha', extraPrice: 20),
+      ModifierOption(id: 'sauce_choice_tahin', name: 'Tahin', extraPrice: 20),
+    ],
+  );
+
+  /// "EKSTRA TOPPING" (sebze/peynir/topping) — product owner, 2026-11-03
+  /// (BR-BOWL-008). Deliberately a separate group from `bowlExtrasGroup`
+  /// ("Ekstra"), which is scoped to salad/carb extras only — these are a
+  /// different ingredient family (cheese/nut/vegetable toppings).
+  static const ModifierGroup bowlToppingsGroup = ModifierGroup(
+    id: 'bowl_toppings',
+    name: 'Ekstra Topping',
+    selectionType: ModifierSelectionType.multiple,
+    isRequired: false,
+    minSelections: 0,
+    maxSelections: 4,
+    options: [
+      ModifierOption(id: 'topping_avokado', name: 'Avokado', extraPrice: 80),
+      ModifierOption(
+          id: 'topping_mantar_sote', name: 'Mantar Sote', extraPrice: 50),
+      ModifierOption(id: 'topping_parmesan', name: 'Parmesan', extraPrice: 60),
+      ModifierOption(id: 'topping_ceviz', name: 'Ceviz', extraPrice: 60),
+    ],
+  );
+
+  /// Every Bowl product (`cat_bowl2`) gets exactly these 7 groups, in this
   /// order — carb/salad/pickle (mandatory, in the order the bottom sheet
-  /// renders them) then the optional paid extras last.
+  /// renders them), then the optional paid extras/add-ons last.
   static const List<ModifierGroup> bowlModifierGroups = [
     bowlCarbGroup,
     bowlSaladGroup,
     bowlPickleGroup,
     bowlExtrasGroup,
+    bowlProteinAddOnGroup,
+    bowlSauceChoiceGroup,
+    bowlToppingsGroup,
   ];
 
   /// Burger/Wrap "PATATES TERCİHİ" — mandatory single-select, every option

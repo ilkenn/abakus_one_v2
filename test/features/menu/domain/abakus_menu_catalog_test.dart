@@ -221,7 +221,11 @@ void main() {
             'bowl_carb',
             'bowl_salad',
             'bowl_pickle',
-            'bowl_extras'
+            'bowl_extras',
+            // 2026-11-03 — product owner, BR-BOWL-006–008.
+            'bowl_protein_addon',
+            'bowl_sauce_choice',
+            'bowl_toppings',
           },
         'cat_hamburger2' || 'cat_wrap2' => const {
             'fries_preference',

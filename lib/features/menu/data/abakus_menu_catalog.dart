@@ -975,7 +975,9 @@ abstract final class AbakusMenuCatalog {
       // judgment call pending the owner's own choice.
       isFeatured: true,
       nutrition: ProductNutrition(calories: 610),
-      allergens: ['yumurta', 'ceviz'],
+      // Product owner, 2026-11-03 — verified menu-PDF allergen data;
+      // corrected to add 'süt' (missing from the original import).
+      allergens: ['süt', 'yumurta', 'ceviz'],
     ),
     MenuProduct(
       id: 'prod_kahvalti_steak',
@@ -998,6 +1000,8 @@ abstract final class AbakusMenuCatalog {
       basePrice: 860,
       imageKey: 'kahvalti-salmon',
       nutrition: ProductNutrition(calories: 520),
+      // Product owner, 2026-11-03 — verified menu-PDF allergen data.
+      allergens: ['süt', 'balık'],
     ),
 
     // --- Tartineler (5) ---
@@ -1070,6 +1074,9 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'bowl2-tatli-eksi-tavuk',
       nutrition: ProductNutrition(calories: 560),
+      // Product owner, 2026-11-03 (BR-BOWL-009) — confirmed real allergens
+      // for this specific dish, not inferred from the description.
+      allergens: ['gluten', 'susam'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1080,6 +1087,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'bowl2-tatli-aci-tavuk',
       nutrition: ProductNutrition(calories: 580),
+      allergens: ['gluten', 'susam', 'soya'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1090,6 +1098,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 500,
       imageKey: 'bowl2-kremali-kekikli-tavuk',
       nutrition: ProductNutrition(calories: 510),
+      allergens: ['süt', 'susam'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1100,6 +1109,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'bowl2-barbeku-soslu-tavuk',
       nutrition: ProductNutrition(calories: 590),
+      allergens: ['gluten', 'susam', 'soya'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1110,6 +1120,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'bowl2-aci-soslu-tavuk',
       nutrition: ProductNutrition(calories: 570),
+      allergens: ['gluten', 'susam'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1120,6 +1131,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'bowl2-soya-soslu-tavuk',
       nutrition: ProductNutrition(calories: 560),
+      allergens: ['gluten', 'susam', 'soya'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1130,6 +1142,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 540,
       imageKey: 'bowl2-teriyaki-soslu-tavuk',
       nutrition: ProductNutrition(calories: 600),
+      allergens: ['gluten', 'susam', 'soya'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1140,6 +1153,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'bowl2-kori-soslu-tavuk',
       nutrition: ProductNutrition(calories: 560),
+      allergens: ['gluten', 'susam', 'soya'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1149,7 +1163,10 @@ abstract final class AbakusMenuCatalog {
       description: '150g Tavuk.',
       basePrice: 520,
       imageKey: 'bowl2-kremali-mantarli-tavuk',
-      nutrition: ProductNutrition(calories: 490),
+      // 2026-11-03 — corrected from 490 to 590 kcal, per the verified
+      // menu-PDF import (product owner-confirmed).
+      nutrition: ProductNutrition(calories: 590),
+      allergens: ['gluten', 'susam', 'süt'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1160,6 +1177,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'bowl2-kremali-pesto-tavuk',
       nutrition: ProductNutrition(calories: 540),
+      allergens: ['gluten', 'susam', 'süt'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1170,6 +1188,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 450,
       imageKey: 'bowl2-izgara-tavuk-gogsu',
       nutrition: ProductNutrition(calories: 500),
+      allergens: ['gluten', 'susam'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1180,6 +1199,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 450,
       imageKey: 'bowl2-izgara-tavuk-pirzola',
       nutrition: ProductNutrition(calories: 450),
+      allergens: ['gluten', 'susam'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1189,7 +1209,10 @@ abstract final class AbakusMenuCatalog {
       description: '150g Tavuk.',
       basePrice: 450,
       imageKey: 'bowl2-citir-tavuk',
-      nutrition: ProductNutrition(calories: 570),
+      // 2026-11-03 — corrected from 570 to 680 kcal, per the verified
+      // menu-PDF import (product owner-confirmed).
+      nutrition: ProductNutrition(calories: 680),
+      allergens: ['gluten', 'susam', 'süt'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1199,7 +1222,11 @@ abstract final class AbakusMenuCatalog {
       description: '150g Bonfile.',
       basePrice: 750,
       imageKey: 'bowl2-aci-soslu-dana-bonfile',
-      nutrition: ProductNutrition(calories: 680),
+      // 2026-11-03 — corrected from 680 to 570 kcal, per the verified
+      // menu-PDF import (product owner-confirmed, PDF name "Acılı Dana
+      // Bonfile Bowl").
+      nutrition: ProductNutrition(calories: 570),
+      allergens: ['gluten', 'susam', 'süt'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1210,6 +1237,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 550,
       imageKey: 'bowl2-izgara-anne-koftesi',
       nutrition: ProductNutrition(calories: 780),
+      allergens: ['gluten', 'yumurta', 'susam'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1220,6 +1248,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 800,
       imageKey: 'bowl2-izgara-bonfile',
       nutrition: ProductNutrition(calories: 700),
+      allergens: ['susam'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1230,7 +1259,10 @@ abstract final class AbakusMenuCatalog {
       basePrice: 850,
       imageKey: 'bowl2-izgara-somon',
       isFeatured: true,
-      nutrition: ProductNutrition(calories: 680),
+      // 2026-11-03 — corrected from 680 to 850 kcal, per the verified
+      // menu-PDF import (product owner-confirmed).
+      nutrition: ProductNutrition(calories: 850),
+      allergens: ['balık', 'susam'],
       portionLabel: '120-150g',
     ),
     MenuProduct(
@@ -1241,6 +1273,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 900,
       imageKey: 'bowl2-somon-fume',
       nutrition: ProductNutrition(calories: 650),
+      allergens: ['balık', 'susam'],
       portionLabel: '100g',
     ),
     MenuProduct(
@@ -1250,7 +1283,11 @@ abstract final class AbakusMenuCatalog {
       description: '120g Ton Balığı.',
       basePrice: 520,
       imageKey: 'bowl2-ton-baligi',
-      nutrition: ProductNutrition(calories: 610),
+      // 2026-11-03 — corrected from 610 to 410 kcal, per the verified
+      // menu-PDF import (product owner-confirmed, PDF name "Ton Balıklı
+      // Bowl").
+      nutrition: ProductNutrition(calories: 410),
+      allergens: ['balık', 'susam'],
       portionLabel: '120g',
     ),
     MenuProduct(
@@ -1260,7 +1297,11 @@ abstract final class AbakusMenuCatalog {
       description: 'Falafel.',
       basePrice: 450,
       imageKey: 'bowl2-falafel',
-      nutrition: ProductNutrition(calories: 720),
+      // 2026-11-03 — corrected from 720 to 500 kcal, per the verified
+      // menu-PDF import (product owner-confirmed, PDF name "Çıtır Falafel
+      // Bowl").
+      nutrition: ProductNutrition(calories: 500),
+      allergens: ['susam'],
     ),
     MenuProduct(
       id: 'prod_bowl2_izgara_sebze_mix',
@@ -1269,7 +1310,11 @@ abstract final class AbakusMenuCatalog {
       description: 'Izgara Sebze Mix.',
       basePrice: 450,
       imageKey: 'bowl2-izgara-sebze-mix',
-      nutrition: ProductNutrition(calories: 500),
+      // 2026-11-03 — corrected from 500 to 720 kcal, per the verified
+      // menu-PDF import (product owner-confirmed, PDF name "Izgara Sebze
+      // Bowl").
+      nutrition: ProductNutrition(calories: 720),
+      allergens: ['gluten', 'susam'],
     ),
 
     // --- Tavalar (20) --- Hepsi mevsim salata ve basmati pilav ile servis
@@ -1282,6 +1327,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 430,
       imageKey: 'tava-citir-tavuk',
       nutrition: ProductNutrition(calories: 780),
+      allergens: ['gluten', 'süt'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1292,6 +1338,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'tava-tatli-eksi-tavuk',
       nutrition: ProductNutrition(calories: 720),
+      allergens: ['soya'],
       portionLabel: '200g',
     ),
     MenuProduct(
@@ -1302,6 +1349,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'tava-kremali-pestolu-tavuk',
       nutrition: ProductNutrition(calories: 850),
+      allergens: ['süt'],
       portionLabel: '200g',
     ),
     MenuProduct(
@@ -1312,6 +1360,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'tava-kremali-mantarli-tavuk',
       nutrition: ProductNutrition(calories: 820),
+      allergens: ['süt'],
       portionLabel: '200g',
     ),
     MenuProduct(
@@ -1322,6 +1371,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 430,
       imageKey: 'tava-izgara-tavuk-gogsu',
       nutrition: ProductNutrition(calories: 620),
+      allergens: ['süt'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1332,6 +1382,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'tava-barbeku-soslu-tavuk',
       nutrition: ProductNutrition(calories: 780),
+      allergens: ['gluten', 'süt'],
       portionLabel: '200g',
     ),
     MenuProduct(
@@ -1342,6 +1393,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'tava-tatli-aci-tavuk',
       nutrition: ProductNutrition(calories: 720),
+      allergens: ['soya'],
       portionLabel: '200g',
     ),
     MenuProduct(
@@ -1352,6 +1404,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 430,
       imageKey: 'tava-izgara-tavuk-pirzola',
       nutrition: ProductNutrition(calories: 850),
+      allergens: ['süt'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1362,6 +1415,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'tava-kori-soslu-tavuk',
       nutrition: ProductNutrition(calories: 820),
+      allergens: ['süt'],
       portionLabel: '200g',
     ),
     MenuProduct(
@@ -1372,6 +1426,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 500,
       imageKey: 'tava-soya-soslu-tavuk',
       nutrition: ProductNutrition(calories: 620),
+      allergens: ['süt'],
       portionLabel: '200g',
     ),
     MenuProduct(
@@ -1382,6 +1437,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'tava-acili-tavuk',
       nutrition: ProductNutrition(calories: 780),
+      allergens: ['gluten', 'süt'],
       portionLabel: '200g',
     ),
     MenuProduct(
@@ -1392,6 +1448,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 480,
       imageKey: 'tava-kremali-kekikli-tavuk',
       nutrition: ProductNutrition(calories: 720),
+      allergens: ['soya'],
       portionLabel: '200g',
     ),
     MenuProduct(
@@ -1402,6 +1459,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 530,
       imageKey: 'tava-ton-baligi',
       nutrition: ProductNutrition(calories: 850),
+      allergens: ['süt'],
       portionLabel: '120g',
     ),
     MenuProduct(
@@ -1412,6 +1470,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 850,
       imageKey: 'tava-somon-fume',
       nutrition: ProductNutrition(calories: 820),
+      allergens: ['süt'],
       portionLabel: '100g',
     ),
     MenuProduct(
@@ -1422,6 +1481,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 850,
       imageKey: 'tava-izgara-somon',
       nutrition: ProductNutrition(calories: 620),
+      allergens: ['süt'],
       portionLabel: '120g',
     ),
     MenuProduct(
@@ -1432,6 +1492,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 520,
       imageKey: 'tava-anne-koftesi',
       nutrition: ProductNutrition(calories: 780),
+      allergens: ['gluten', 'süt'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1442,6 +1503,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 850,
       imageKey: 'tava-izgara-bonfile',
       nutrition: ProductNutrition(calories: 720),
+      allergens: ['soya'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1453,6 +1515,7 @@ abstract final class AbakusMenuCatalog {
       imageKey: 'tava-acili-bonfile',
       isFeatured: true,
       nutrition: ProductNutrition(calories: 850),
+      allergens: ['süt'],
       portionLabel: '150g',
     ),
     MenuProduct(
@@ -1463,6 +1526,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 480,
       imageKey: 'tava-citir-falafel',
       nutrition: ProductNutrition(calories: 820),
+      allergens: ['süt'],
       portionLabel: '4 adet',
     ),
     MenuProduct(
@@ -1473,6 +1537,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 450,
       imageKey: 'tava-izgara-sebze-mix',
       nutrition: ProductNutrition(calories: 620),
+      allergens: ['süt'],
       portionLabel: '150g',
     ),
 
@@ -1486,6 +1551,8 @@ abstract final class AbakusMenuCatalog {
       description: '',
       basePrice: 550,
       imageKey: 'salata2-veggie',
+      // Product owner, 2026-11-03 — verified menu-PDF data states this
+      // product has no allergens (explicit `[]`, not merely unconfirmed).
       nutrition: ProductNutrition(calories: 520),
     ),
     MenuProduct(
@@ -1496,6 +1563,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 470,
       imageKey: 'salata2-grill-caesar',
       nutrition: ProductNutrition(calories: 680),
+      allergens: ['süt', 'gluten'],
     ),
     MenuProduct(
       id: 'prod_salata2_crispy_caesar',
@@ -1505,6 +1573,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 450,
       imageKey: 'salata2-crispy-caesar',
       nutrition: ProductNutrition(calories: 720),
+      allergens: ['gluten', 'süt'],
     ),
     MenuProduct(
       id: 'prod_salata2_moms_chicken',
@@ -1514,6 +1583,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 450,
       imageKey: 'salata2-moms-chicken',
       nutrition: ProductNutrition(calories: 650),
+      allergens: ['gluten', 'hardal'],
     ),
     MenuProduct(
       id: 'prod_salata2_crispy_falafel',
@@ -1523,6 +1593,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 450,
       imageKey: 'salata2-crispy-falafel',
       nutrition: ProductNutrition(calories: 690),
+      allergens: ['gluten', 'susam'],
     ),
     MenuProduct(
       id: 'prod_salata2_smoked_salmon',
@@ -1533,6 +1604,7 @@ abstract final class AbakusMenuCatalog {
       imageKey: 'salata2-smoked-salmon',
       isFeatured: true,
       nutrition: ProductNutrition(calories: 560),
+      allergens: ['balık'],
     ),
     MenuProduct(
       id: 'prod_salata2_ton_ton',
@@ -1542,6 +1614,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 560,
       imageKey: 'salata2-ton-ton',
       nutrition: ProductNutrition(calories: 540),
+      allergens: ['balık', 'süt'],
     ),
     MenuProduct(
       id: 'prod_salata2_ananas',
@@ -1550,6 +1623,8 @@ abstract final class AbakusMenuCatalog {
       description: '',
       basePrice: 530,
       imageKey: 'salata2-ananas',
+      // Product owner, 2026-11-03 — verified menu-PDF data states this
+      // product has no allergens (explicit `[]`, not merely unconfirmed).
       nutrition: ProductNutrition(calories: 430),
     ),
     MenuProduct(
@@ -1560,6 +1635,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 850,
       imageKey: 'salata2-dana-bonfile',
       nutrition: ProductNutrition(calories: 760),
+      allergens: ['gluten', 'hardal'],
     ),
 
     // --- Burgerler (9) --- Patates ile servis edilir (PDF notu).
@@ -1572,6 +1648,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 650,
       imageKey: 'burger2-double-chicken',
       nutrition: ProductNutrition(calories: 820),
+      allergens: ['gluten', 'süt', 'hardal'],
     ),
     MenuProduct(
       id: 'prod_burger2_izgara_tavuk',
@@ -1581,6 +1658,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 600,
       imageKey: 'burger2-izgara-tavuk',
       nutrition: ProductNutrition(calories: 760),
+      allergens: ['gluten', 'süt', 'hardal'],
     ),
     MenuProduct(
       id: 'prod_burger2_falafel',
@@ -1590,6 +1668,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 600,
       imageKey: 'burger2-falafel',
       nutrition: ProductNutrition(calories: 780),
+      allergens: ['gluten', 'susam'],
     ),
     MenuProduct(
       id: 'prod_burger2_tripoli',
@@ -1599,6 +1678,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 850,
       imageKey: 'burger2-tripoli',
       nutrition: ProductNutrition(calories: 900),
+      allergens: ['gluten', 'süt', 'yumurta'],
     ),
     MenuProduct(
       id: 'prod_burger2_swiss_mushroom',
@@ -1608,6 +1688,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 780,
       imageKey: 'burger2-swiss-mushroom',
       nutrition: ProductNutrition(calories: 880),
+      allergens: ['gluten', 'süt'],
     ),
     MenuProduct(
       id: 'prod_burger2_steak',
@@ -1618,6 +1699,7 @@ abstract final class AbakusMenuCatalog {
       imageKey: 'burger2-steak',
       isFeatured: true,
       nutrition: ProductNutrition(calories: 950),
+      allergens: ['gluten', 'süt'],
     ),
     MenuProduct(
       id: 'prod_burger2_mexico_beef',
@@ -1627,6 +1709,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 900,
       imageKey: 'burger2-mexico-beef',
       nutrition: ProductNutrition(calories: 920),
+      allergens: ['gluten', 'süt'],
     ),
     MenuProduct(
       id: 'prod_burger2_onion',
@@ -1636,6 +1719,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 720,
       imageKey: 'burger2-onion',
       nutrition: ProductNutrition(calories: 900),
+      allergens: ['gluten', 'süt', 'hardal'],
     ),
     MenuProduct(
       id: 'prod_burger2_smoke_house',
@@ -1645,6 +1729,7 @@ abstract final class AbakusMenuCatalog {
       basePrice: 850,
       imageKey: 'burger2-smoke-house',
       nutrition: ProductNutrition(calories: 980),
+      allergens: ['gluten', 'süt', 'hardal'],
     ),
 
     // --- Wrap'ler (9) --- Patates ile servis edilir (PDF notu). PDF kalori

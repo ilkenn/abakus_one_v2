@@ -3,6 +3,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_radius.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
+import '../images/product_image.dart';
 
 /// A single selectable option tile — one radio-style or checkbox-style
 /// choice within a modifier/ingredient group.
@@ -24,6 +25,14 @@ class OptionSelectionCard extends StatelessWidget {
   /// Builder opts in so its free-vs-premium distinction is unambiguous.
   final bool showFreeTag;
 
+  /// A small leading thumbnail — resolved via [ProductImage] (so it reuses
+  /// the exact same placeholder-on-missing-asset behavior every other
+  /// product/ingredient photo in the app gets, never a broken image).
+  /// `null` (the default) keeps every existing call site's layout
+  /// unchanged — only the POS customization modal passes this today, for
+  /// options `ModifierOptionImageResolver` has a confident photo for.
+  final String? imageKey;
+
   const OptionSelectionCard({
     super.key,
     required this.name,
@@ -31,6 +40,7 @@ class OptionSelectionCard extends StatelessWidget {
     required this.isSelected,
     required this.onTap,
     this.showFreeTag = false,
+    this.imageKey,
   });
 
   @override
@@ -63,6 +73,15 @@ class OptionSelectionCard extends StatelessWidget {
                 size: 22,
               ),
               const SizedBox(width: AppSpacing.sm),
+              if (imageKey != null) ...[
+                ProductImage(
+                  imageKey: imageKey!,
+                  width: 36,
+                  height: 36,
+                  borderRadius: AppRadius.kSmall,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+              ],
               Expanded(
                 child: Text(
                   name,

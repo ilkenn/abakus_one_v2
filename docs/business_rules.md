@@ -313,6 +313,11 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   it stays a pure financial allocation, not a domain-object split. Confirmed still genuinely open;
   left untouched. See the "Unresolved Business Decisions" table entry for the narrowed-down open
   question.
+- **Noted 2026-11-03**: the product owner's POS request "select specific items from the adisyon and
+  move them to a target table" (as opposed to `transferTable`'s already-working whole-table move) is
+  this exact same open question, not a new one — moving an already-fired line to a *different* table
+  needs the same stable per-line identity this entry already defers. No gateway method or Cloud
+  Function for it exists; not built.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Table/QR, Payments, POS
 
@@ -495,6 +500,87 @@ handling) and **Related Modules** (the feature areas it touches, by name).
   the customer self-service wizard exists today; no cashier/POS entry flow exists.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Bowl Builder, Staff/Admin
+
+# Pre-built Bowl Customization Rules (POS/customer modal, distinct from Bowl Builder)
+
+These three rules cover the customization modal shown for an already-named Bowl *product*
+(`cat_bowl2`, e.g. "Tatlı Ekşi Tavuk Bowl") — not Bowl Builder's own build-from-scratch ingredient
+catalog (see BR-BOWL-001–005 above). The two features are intentionally independent: a named Bowl's
+own protein is baked into which product was picked, and these rules only cover *additional* paid
+options layered on top of it.
+
+### BR-BOWL-006 — İlave Protein add-on prices
+- **Status**: VERIFIED (confirmed by product owner via chat, 2026-11-03)
+- **Rule**: `StandardModifierGroups.bowlProteinAddOnGroup` — İlave Tavuk +300 TL, İlave Köfte +400 TL,
+  İlave Dana Bonfile +450 TL, İlave Izgara Somon +450 TL, İlave Somon Füme +550 TL, İlave Falafel
+  +250 TL. **These prices are 3–7x Bowl Builder's own, separately-VERIFIED protein prices
+  (BR-BOWL-003) for what is largely the same ingredient set** — flagged explicitly to the product
+  owner before implementation, who confirmed these new values are correct for this context and are
+  not meant to change Bowl Builder's own pricing (BR-BOWL-003 stays as-is).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, POS
+
+### BR-BOWL-007 — Sos Tercihi prices
+- **Status**: VERIFIED (confirmed by product owner via chat, 2026-11-03) — with one disclosed
+  simplification, see below
+- **Rule**: `StandardModifierGroups.bowlSauceChoiceGroup` — Ballı Hardal, Abaküs Sos, Sweet Chilli,
+  Sriracha, Tahin, each +20 TL. The product owner described this as "1 dahil, ilave +20 TL" (first
+  sauce included free, each additional +20 TL); the codebase has no selection-order-dependent pricing
+  mechanism anywhere (the nearest precedent, Bowl Builder's own per-unit "Extra" surcharge, is itself
+  **BR-BOWL-004: UNRESOLVED**), so this group prices every option flatly at +20 TL instead — the
+  "1 dahil" nuance is **not enforced**. A genuine fix needs a pricing-engine change, not a catalog
+  change, and was not silently built. This group is also deliberately separate from the pre-existing
+  `crossSellSauceGroup` ("Ekstra Sos", different prices, used by every product in the catalog) rather
+  than merged into it; a Bowl product shows both sauce groups today.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, POS
+
+### BR-BOWL-008 — Ekstra Topping prices
+- **Status**: VERIFIED (confirmed by product owner via chat, 2026-11-03)
+- **Rule**: `StandardModifierGroups.bowlToppingsGroup` — Avokado +80 TL, Mantar Sote +50 TL, Parmesan
+  +60 TL, Ceviz +60 TL. **These prices are 3–4x the same ingredients' prices in Bowl Builder's own,
+  separately-VERIFIED catalog** (Avokado +25, Sote Mantar +15, Parmesan Peyniri +20, Ceviz +15) —
+  flagged to the product owner before implementation, who confirmed these new values for this
+  context without changing Bowl Builder's own pricing.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, POS
+
+### BR-BOWL-009 — Tatlı Ekşi Tavuk Bowl allergens
+- **Status**: VERIFIED (confirmed by product owner via chat, 2026-11-03)
+- **Rule**: `prod_bowl2_tatli_eksi_tavuk`'s real allergens are gluten and susam (sesame) —
+  `MenuProduct.allergens`, never inferred from its description.
+- **Superseded same day by BR-BOWL-010**: every other Bowl/Burger/Tava/Salata/Kahvaltı product's
+  allergens were confirmed and added shortly after this entry, via the full PDF import below.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu
+
+### BR-BOWL-010 — Full menu-PDF calorie/allergen import (Bowl/Burger/Tava/Salata2/Kahvaltı)
+- **Status**: VERIFIED (confirmed by product owner via chat, 2026-11-03 — verified menu PDF)
+- **Rule**: All 21 Bowl, 9 Burger, 20 Tava, and 12 Kahvaltı/Salata products' `allergens` were set (or,
+  for 2 Salata2 products, explicitly confirmed empty) from the product owner's verified PDF data.
+  7 of the 21 Bowl products' pre-existing `nutrition.calories` values were corrected to match the
+  PDF (they predated this import and were off by a wide margin) — see `abakus_menu_catalog.dart`'s
+  inline `2026-11-03 — corrected from X to Y kcal` comments for the exact products and old values.
+  Tava/Burger/Salata2's calories already matched the PDF exactly for all 49 products, which is what
+  gave confidence in the name-based product-matching (several PDF names are English/shortened
+  variants of the Turkish catalog names, e.g. "Körili Tavuk Bowl" = `prod_bowl2_kori_soslu_tavuk`).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, POS
+
+# POS Staff Workflow Rules
+
+### BR-POS-001 — "Çok Tercih Edilenler" (Top 20 best-sellers) category
+- **Status**: UNRESOLVED
+- **Rule**: The product owner asked for a dynamic category showing the 20 most-ordered products,
+  computed from real order history, replacing the static "Tümü" category in the POS product rail.
+  No sales-count aggregation exists anywhere in the codebase today — `MenuProduct.isFeatured`
+  ("Çok Satanlar") is a hand-picked static flag, not computed from order data. Building a genuine
+  one needs a new backend aggregation (a Cloud Function or precomputed Firestore read), which is an
+  architecture change (`CLAUDE.md` §15) requiring explicit approval before implementation. Not built;
+  not approximated with `isFeatured` either, since that would silently present curated picks as if
+  they were real sales data.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, POS
 
 # Pricing Rules
 
@@ -5243,6 +5329,7 @@ Consolidated list of every UNRESOLVED rule above, for at-a-glance review:
 | BR-LOYALTY-007 | What happens when a reward-eligible bowl's menu value exceeds 500 TL? |
 | BR-LOYALTY-008 | What is the server-verifiable anti-fraud mechanism per task type? Does an Instagram unfollow reverse earned Boncuk? |
 | BR-LOYALTY-009 | What is the exact wheel prize probability distribution? What are the exact wheel-Boncuk expiry mechanics? |
+| BR-POS-001 | What backend aggregation computes the real "en çok satan ilk 20" (Top 20 best-sellers) for the POS "Çok Tercih Edilenler" category? |
 
 # Decision Log
 

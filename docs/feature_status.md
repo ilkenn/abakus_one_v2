@@ -10210,3 +10210,69 @@ sole, permanent convention. Implemented as a follow-up, not a new feature:
 pivot. New/changed files: `pubspec.yaml`, `lib/core/config/asset_paths.dart`,
 `lib/features/menu/domain/services/menu_image_resolver.dart`,
 `test/features/menu/domain/menu_image_resolver_test.dart`; removed `assets/menu/**` (10 `.gitkeep`s).
+
+### Feature (2026-11-03): POS product customization modal; Bowl protein/sauce/topping add-ons; full menu-PDF allergen/calorie import; allergen pictograms; product search bar
+
+`pos_table_workspace_screen.dart`'s staff product grid previously added every tap straight to the
+local cart, ignoring `MenuProduct.modifierGroups`/`nutrition`/`allergens`/`removableIngredients`
+entirely (all of which already existed and were already wired for the customer QR menu's
+`ProductDetailScreen`/`AddProductToPosOrder`). Added `PosProductCustomizationDialog` — a POS-sized
+two-pane modal (not a full-screen push), opened only for a product with a *required* modifier group
+or removable ingredients (`_needsCustomization`) so drinks/simple items keep today's single-tap-add;
+mirrors `ProductDetailScreen`'s selection/validation rules. `_StaffEntryCartLine` widened to carry
+`selectedModifiers`/`excludedIngredients`/`note`; two differently-configured orders of the same
+product no longer silently merge quantities. `submitStaffEntryOrder`'s wire payload — which already
+had `selectedModifiers`/`note` keys, previously always sent empty — now carries real data; the
+backend (`functions/src/submitDineInOrder.ts`) already consumed these fields, so no Cloud Function
+change was needed. Added a quick "Not Ekle/Düzenle" popup for pending (not-yet-sent) lines.
+
+**New Bowl modifier groups** (`StandardModifierGroups.bowlProteinAddOnGroup`/`bowlSauceChoiceGroup`/
+`bowlToppingsGroup`, BR-BOWL-006–008): İlave Protein, Sos Tercihi, Ekstra Topping, with prices the
+product owner confirmed explicitly after being shown they're 3–7x Bowl Builder's own,
+separately-VERIFIED ingredient prices for largely the same items — Bowl Builder's pricing was left
+untouched. "Sos Tercihi" is flagged as a disclosed simplification: the product owner described "1
+dahil, ilave +20 TL" pricing, but the codebase has no selection-order-dependent pricing mechanism
+anywhere (same open gap as Bowl Builder's own `BR-BOWL-004`), so every option here is priced flatly
+at +20 TL instead.
+
+**Full menu-PDF allergen/calorie import** (BR-BOWL-009 et seq.): the product owner supplied the
+verified PDF data for all 21 Bowl, 9 Burger, 20 Tava, and 12 Kahvaltı/Salata products. Matched to
+real catalog ids by name (several PDF names are English/shortened variants of the Turkish catalog
+names, e.g. "Körili Tavuk Bowl" = `prod_bowl2_kori_soslu_tavuk`) and, for Tava/Burger/Salata2,
+cross-checked against calorie values already in the catalog, which matched exactly across all 49 of
+those products — strong confirmation the name mapping was correct. 7 of the 21 Bowl products'
+existing calorie values were **corrected** (they predated this PDF and were off by a wide margin,
+e.g. `prod_bowl2_izgara_somon` 680→850 kcal) — each correction is commented inline with the old value
+for anyone auditing the diff. `allergens` added to every matched product (none fabricated — two
+Salata2 products, Veggie/Ananas Salad, got no allergens field at all per the PDF's explicit `[]`).
+
+**Allergen pictograms**: `AllergenIcons` maps the five allergens the product owner gave an explicit
+icon for (gluten→`Icons.grain`, süt→`Icons.local_drink`, susam→`Icons.spa`, balık→`Icons.phishing`,
+yumurta→`Icons.egg_outlined`) — real data for `hardal`/`soya`/`ceviz` exists from the PDF import but
+no pictogram was specified for them, so they fall back to a generic icon rather than a guessed
+symbol. Replaces the generic "⚠️" triangle on `PosNutritionAllergenBadge` everywhere it's shown (POS
+grid card, customization modal); each icon carries a `Tooltip` naming the allergen.
+
+**Product search bar**: a live, client-side name filter above the POS product grid
+(`productSearchField`), combined with the existing category filter — no backend change needed.
+
+**Explicitly not built this round, flagged rather than faked**: (1) "Çok Tercih Edilenler" (Top 20
+best-sellers) — there is no real sales-history aggregation anywhere in the codebase (`isFeatured` is
+a hand-picked static flag, not computed from order counts); building a genuine one needs a new
+backend aggregation, which weighted data don't exist. (2) Moving *specific items* from one table's
+check to another (as opposed to the whole table, which `transferTable` already does) — no gateway
+method or Cloud Function exists for this; it would need a new backend action, not just a UI addition.
+Both need a product-owner decision before any code is written for them.
+
+Also out of scope this round (flagged earlier the same day, still unaddressed): item 86/stock
+management (close-for-N-hours, price override, hide) has no domain model or persistence anywhere;
+manager-PIN-gated cancellation has no PIN/credential primitive anywhere; drag-drop category/product
+reordering has nowhere to persist a product-level `sortOrder` (only `MenuCategory` has one, and both
+categories and products are compiled-in Dart constants, not a mutable store). All three need an
+explicit architecture decision (CLAUDE.md §15) before implementation, not a shallow UI-only pass.
+
+`flutter analyze`/`flutter test` (full suite) green. New files: `pos_product_customization_dialog.dart`,
+`modifier_option_image_resolver.dart`, `allergen_icons.dart`, plus their test files; updated
+`standard_modifier_groups.dart`, `abakus_menu_catalog.dart`, `pos_table_workspace_screen.dart`,
+`abakus_menu_catalog_test.dart` (the "never an invented modifier group" guard test updated to
+recognize the 3 new, now-legitimate groups), `docs/business_rules.md` (BR-BOWL-006–009).

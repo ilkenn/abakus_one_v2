@@ -17,6 +17,7 @@ import '../../../admin/presentation/screens/approval_inbox_screen.dart';
 import '../../../admin/presentation/screens/trusted_device_status_screen.dart';
 import '../../../menu/domain/models/menu_category.dart';
 import '../../../menu/domain/models/menu_product.dart';
+import '../../../menu/domain/models/selected_modifier.dart';
 import '../../../menu/presentation/providers/menu_catalog_provider.dart';
 import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
@@ -24,6 +25,7 @@ import '../providers/actor_session_provider.dart';
 import '../providers/kds_dependencies_provider.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
+import '../widgets/pos_product_customization_dialog.dart';
 import 'pos_cash_register_screen.dart';
 import 'pos_checkout_screen.dart';
 
@@ -187,8 +189,15 @@ class _PosTableWorkspaceScreenState
                 'kind': 'product',
                 'productId': item.productId,
                 'quantity': item.quantity,
-                'selectedModifiers': <Map<String, String>>[],
-                'note': '',
+                'selectedModifiers': [
+                  for (final modifier in item.selectedModifiers)
+                    {
+                      'groupId': modifier.groupId,
+                      'optionId': modifier.optionId,
+                    },
+                ],
+                'note': item.note,
+                'excludedIngredients': item.excludedIngredients,
               },
           ],
         ),
@@ -359,7 +368,15 @@ typedef _ProposeFn = Future<void> Function(String orderId, int lineIndex,
     String productId, int quantity, String reasonCode, String reasonMessage);
 typedef _StaffEntryFn = Future<String?> Function(
     Map<String, dynamic> subAccountSelection,
-    List<({String productId, int quantity})> items);
+    List<
+            ({
+              String productId,
+              int quantity,
+              List<SelectedModifier> selectedModifiers,
+              List<String> excludedIngredients,
+              String note,
+            })>
+        items);
 typedef _CancelLineFn = Future<void> Function(
     String orderId, int lineIndex, String reasonCode, String reasonMessage);
 
@@ -433,6 +450,11 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
   final List<_StaffEntryCartLine> _cartLines = [];
   bool _sendingCart = false;
 
+  /// Live product-grid search (2026-11-03) — filters by name as the staff
+  /// types, independent of and combined with [_categoryFilter].
+  final _productSearchController = TextEditingController();
+  String _productSearchQuery = '';
+
   String _accountSelection = _staffEntryTableGeneralSentinel;
   final _walkInNameController = TextEditingController();
   final _customerSearchController = TextEditingController();
@@ -450,13 +472,14 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
           ? _accountSelection
           : null;
 
-  double get _cartTotal => _cartLines.fold(
-      0.0, (sum, line) => sum + line.product.basePrice * line.quantity);
+  double get _cartTotal =>
+      _cartLines.fold(0.0, (sum, line) => sum + line.totalRowPrice);
 
   @override
   void dispose() {
     _walkInNameController.dispose();
     _customerSearchController.dispose();
+    _productSearchController.dispose();
     super.dispose();
   }
 
@@ -482,16 +505,63 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     }
   }
 
-  void _addToCart(MenuProduct product) {
+  /// `AbakusMenuCatalog.products` appends the optional, catalog-wide
+  /// "Ekstra Sos" cross-sell group to *every* product (see
+  /// `abakus_menu_catalog.dart`'s `products` getter) — so checking
+  /// `modifierGroups.isEmpty` would open the customization modal for
+  /// every single drink too. The actual "is there something worth
+  /// configuring" signal is a *required* group (Bowl's carb/salad/pickle,
+  /// Burger/Wrap's fries) or a removable-ingredients list; a product with
+  /// only the optional sauce cross-sell keeps today's single-tap-add.
+  bool _needsCustomization(MenuProduct product) =>
+      product.modifierGroups.any((group) => group.isRequired) ||
+      product.removableIngredients.isNotEmpty;
+
+  /// A product with nothing worth configuring (drinks, simple sides) is
+  /// added directly, one tap, exactly like before. A Bowl/Burger/Wrap-style
+  /// product (see [_needsCustomization]) opens
+  /// [PosProductCustomizationDialog] first — dismissing it (back button,
+  /// tap outside) adds nothing.
+  Future<void> _onProductTap(MenuProduct product) async {
+    if (!_needsCustomization(product)) {
+      _mergeOrAddLine(_StaffEntryCartLine(product: product));
+      return;
+    }
+    final result = await PosProductCustomizationDialog.show(context, product);
+    if (result == null || !mounted) return;
+    _mergeOrAddLine(
+      _StaffEntryCartLine(
+        product: product,
+        selectedModifiers: result.selectedModifiers,
+        excludedIngredients: result.excludedIngredients,
+        note: result.note,
+      )..quantity = result.quantity,
+    );
+  }
+
+  /// Merges into an existing line only when both the product *and* its
+  /// exact configuration (`_StaffEntryCartLine.customizationKey`) match —
+  /// two differently-customized orders of the same dish are always
+  /// separate lines, never silently combined.
+  void _mergeOrAddLine(_StaffEntryCartLine newLine) {
     setState(() {
       for (final line in _cartLines) {
-        if (line.product.id == product.id) {
-          line.quantity++;
+        if (line.product.id == newLine.product.id &&
+            line.customizationKey == newLine.customizationKey) {
+          line.quantity += newLine.quantity;
           return;
         }
       }
-      _cartLines.add(_StaffEntryCartLine(product: product));
+      _cartLines.add(newLine);
     });
+  }
+
+  Future<void> _editLineNote(_StaffEntryCartLine line) async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => _LineNoteDialog(initialNote: line.note),
+    );
+    if (result != null && mounted) setState(() => line.note = result);
   }
 
   void _incrementLine(_StaffEntryCartLine line) =>
@@ -537,7 +607,13 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     setState(() => _sendingCart = true);
     await widget.onStaffEntry(selection, [
       for (final line in _cartLines)
-        (productId: line.product.id, quantity: line.quantity),
+        (
+          productId: line.product.id,
+          quantity: line.quantity,
+          selectedModifiers: line.selectedModifiers,
+          excludedIngredients: line.excludedIngredients,
+          note: line.note,
+        ),
     ]);
     if (!mounted) return;
     setState(() {
@@ -609,6 +685,38 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     );
   }
 
+  Widget _buildProductSearchField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
+      child: TextField(
+        key: const Key('productSearchField'),
+        controller: _productSearchController,
+        onChanged: (value) => setState(() => _productSearchQuery = value),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: 'Ürün ara...',
+          prefixIcon: const Icon(Icons.search_rounded, size: 20),
+          suffixIcon: _productSearchQuery.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.clear_rounded, size: 18),
+                  onPressed: () => setState(() {
+                    _productSearchController.clear();
+                    _productSearchQuery = '';
+                  }),
+                ),
+          contentPadding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+          border: const OutlineInputBorder(
+            borderRadius: AppRadius.kPill,
+            borderSide: BorderSide(color: AppColors.border),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildProductGrid(List<MenuProduct> products) {
     if (products.isEmpty) {
       return const Center(
@@ -628,7 +736,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
         final product = products[index];
         return _StaffEntryProductCard(
           product: product,
-          onTap: () => _addToCart(product),
+          onTap: () => _onProductTap(product),
         );
       },
     );
@@ -1232,21 +1340,45 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                           Padding(
                             padding:
                                 const EdgeInsets.only(bottom: AppSpacing.sm),
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Expanded(
-                                  child: Text(line.product.name,
-                                      style: AppTypography.bodyMedium),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(line.product.name,
+                                          style: AppTypography.bodyMedium),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.note_add_outlined,
+                                          size: 18),
+                                      tooltip: line.note.isEmpty
+                                          ? 'Not Ekle'
+                                          : 'Notu Düzenle',
+                                      onPressed: () => _editLineNote(line),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.remove, size: 18),
+                                      onPressed: () => _decrementLine(line),
+                                    ),
+                                    Text('${line.quantity}'),
+                                    IconButton(
+                                      icon: const Icon(Icons.add, size: 18),
+                                      onPressed: () => _incrementLine(line),
+                                    ),
+                                  ],
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.remove, size: 18),
-                                  onPressed: () => _decrementLine(line),
-                                ),
-                                Text('${line.quantity}'),
-                                IconButton(
-                                  icon: const Icon(Icons.add, size: 18),
-                                  onPressed: () => _incrementLine(line),
-                                ),
+                                if (line.summaryText.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                        left: AppSpacing.sm),
+                                    child: Text(
+                                      line.summaryText,
+                                      style: AppTypography.bodySmall.copyWith(
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
                               ],
                             ),
                           ),
@@ -1322,9 +1454,12 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                             style: AppTypography.labelMedium,
                             overflow: TextOverflow.ellipsis),
                       ),
-                      Text('${_cartTotal.toStringAsFixed(0)} TL',
-                          style: AppTypography.bodyMedium
-                              .copyWith(fontWeight: FontWeight.bold)),
+                      Text(
+                        '${_cartTotal.toStringAsFixed(0)} TL',
+                        key: const Key('staffEntryCartTotal'),
+                        style: AppTypography.bodyMedium
+                            .copyWith(fontWeight: FontWeight.bold),
+                      ),
                     ],
                   ),
                   const SizedBox(height: AppSpacing.sm),
@@ -1364,13 +1499,24 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     final categories = ref.watch(menuCategoriesProvider);
     final allProducts =
         ref.watch(menuProductsProvider).where((p) => p.isAvailable).toList();
-    final visibleProducts = _categoryFilter == _staffEntryAllCategoriesSentinel
+    final categoryFiltered = _categoryFilter == _staffEntryAllCategoriesSentinel
         ? allProducts
         : allProducts.where((p) => p.categoryId == _categoryFilter).toList();
+    final searchQuery = _productSearchQuery.trim().toLowerCase();
+    final visibleProducts = searchQuery.isEmpty
+        ? categoryFiltered
+        : categoryFiltered
+            .where((p) => p.name.toLowerCase().contains(searchQuery))
+            .toList();
 
     return LayoutBuilder(builder: (context, constraints) {
       final isWide = constraints.maxWidth >= AppBreakpoints.tablet;
-      final grid = _buildProductGrid(visibleProducts);
+      final grid = Column(
+        children: [
+          _buildProductSearchField(),
+          Expanded(child: _buildProductGrid(visibleProducts)),
+        ],
+      );
       final adisyon = _buildAdisyonPanel(context);
       if (!isWide) {
         return Column(
@@ -1690,14 +1836,113 @@ const _staffEntryWalkInSentinel = '__named_walk_in__';
 const _staffEntryExistingCustomerSentinel = '__existing_customer__';
 const _staffEntryAllCategoriesSentinel = '__all_categories__';
 
+/// The quick note-edit popup for a pending cart line. A dedicated
+/// `StatefulWidget` (rather than a `TextEditingController` created and
+/// disposed inline around `showDialog`) so the controller's lifetime is
+/// tied to this widget's own `State` — disposed when Flutter actually
+/// unmounts it (after the dialog's exit transition finishes), not
+/// synchronously the instant `Navigator.pop` returns, which raced the
+/// still-animating-out route and threw "a TextEditingController was used
+/// after being disposed".
+class _LineNoteDialog extends StatefulWidget {
+  const _LineNoteDialog({required this.initialNote});
+
+  final String initialNote;
+
+  @override
+  State<_LineNoteDialog> createState() => _LineNoteDialogState();
+}
+
+class _LineNoteDialogState extends State<_LineNoteDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialNote);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.kLarge),
+      title: const Text('Sipariş Notu'),
+      content: TextField(
+        key: const Key('lineNoteField'),
+        controller: _controller,
+        maxLength: 200,
+        maxLines: 3,
+        autofocus: true,
+        decoration: const InputDecoration(hintText: 'Not ekleyin...'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Vazgeç'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, _controller.text.trim()),
+          child: const Text('Kaydet'),
+        ),
+      ],
+    );
+  }
+}
+
 /// One accumulated line in the cart being built — mutable [quantity] only
 /// (never a second [MenuProduct] for the same [product.id]; re-tapping a
 /// card increments the existing line instead, see `_StaffEntryScreenState
 /// ._addToCart`).
 class _StaffEntryCartLine {
-  _StaffEntryCartLine({required this.product});
+  _StaffEntryCartLine({
+    required this.product,
+    this.selectedModifiers = const [],
+    this.excludedIngredients = const [],
+    this.note = '',
+  });
+
   final MenuProduct product;
+  final List<SelectedModifier> selectedModifiers;
+  final List<String> excludedIngredients;
+  String note;
   int quantity = 1;
+
+  double get unitPrice =>
+      product.basePrice +
+      selectedModifiers.fold(0.0, (sum, m) => sum + m.extraPrice);
+
+  double get totalRowPrice => unitPrice * quantity;
+
+  /// Distinguishes configurations of the same product, so two differently
+  /// customized orders never silently merge quantities — see
+  /// `_PosWorkbenchState._mergeOrAddLine`. Two lines with the same product
+  /// and an empty, unconfigured cart line (no modifiers, no exclusions, no
+  /// note) share the same key, matching the old merge-by-product-id-only
+  /// behavior for products with no `ModifierGroup`s.
+  String get customizationKey {
+    final modifierIds = [for (final m in selectedModifiers) m.optionId]..sort();
+    final excluded = List<String>.from(excludedIngredients)..sort();
+    return '${modifierIds.join(',')}|${excluded.join(',')}|$note';
+  }
+
+  /// "Basmati, +Avokado, Çıkar: Mısır / Not: Sosu ayrı olsun" — the
+  /// human-readable summary shown under this line in the pending-cart
+  /// list. Empty when the line has no customization at all.
+  String get summaryText {
+    final parts = <String>[
+      for (final m in selectedModifiers)
+        m.extraPrice > 0 ? '+${m.optionName}' : m.optionName,
+      for (final ingredient in excludedIngredients) 'Çıkar: $ingredient',
+      if (note.isNotEmpty) 'Not: $note',
+    ];
+    return parts.join(' / ');
+  }
 }
 
 /// Vertical category-rail card (2026-11-02 touch-POS redesign) — a small
@@ -1826,6 +2071,11 @@ class _StaffEntryProductCard extends StatelessWidget {
                 '${product.basePrice.toStringAsFixed(0)} TL',
                 style: AppTypography.bodySmall.copyWith(
                     color: AppColors.primary, fontWeight: FontWeight.bold),
+              ),
+              PosNutritionAllergenBadge(
+                nutrition: product.nutrition,
+                allergens: product.allergens,
+                dense: true,
               ),
             ],
           ),
