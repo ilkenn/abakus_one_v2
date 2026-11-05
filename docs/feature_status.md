@@ -10486,3 +10486,47 @@ service-request tests were not expected to be affected and were not re-run. New 
 open_table_guest_session_from_qr_scan.dart`, `features/qr/presentation/{screens/
 table_guest_entry_screen.dart,widgets/table_context_badge.dart,providers/
 active_table_context_provider.dart}`, plus their corresponding test files.
+
+### Self-Order QR — Faz 2: allergen pictograms/filter + sold-out ("Tükendi") state (2026-11-05)
+
+Second phase of the same user-approved plan (see Faz 1 above). Binds `MenuProduct.allergens`/
+`isAvailable` — both real, pre-existing fields with no prior UI consumer — into the QR menu vitrine.
+
+1. **Allergen pictograms**: `MenuScreen`'s `_ProductListCard` now renders a small `AllergenIcons`
+   row (tooltip = the allergen name) under a product's description whenever `allergens` is
+   non-empty. `AllergenIcons` itself already existed (product owner, 2026-11-03) but had exactly one
+   consumer before this — the POS product-customization dialog — never the customer-facing menu.
+2. **Allergen filter row (new)**: `allergenFilterProvider` (`features/menu/presentation/providers/
+   allergen_filter_provider.dart`) holds the set of allergens the guest has chosen to exclude;
+   `availableAllergensProvider` (`menu_catalog_provider.dart`) derives the sorted, distinct allergen
+   list across the active catalog. `MenuScreen` renders one filter chip per allergen beneath the
+   category tabs (hidden entirely when the catalog has none) and excludes any product listing a
+   selected allergen from the list — an exclusion filter, not a highlight, matching the original
+   "alerjen filtreleri" rule.
+3. **Sold-out ("Tükendi") state**: an `isAvailable == false` product (`Item 86`) stays visible on the
+   menu — never hidden — but its photo dims, its price badge becomes a "Tükendi" pill, and its
+   quick-add button is disabled (`onPressed: null`). Applied consistently everywhere a sold-out
+   product could otherwise still be bought, not just the card: `ProductDetailScreen`'s "Sepete Ekle"
+   button (now "Tükendi" and disabled), `QrMenuStoryBar`'s focused quick-view (its own add button
+   hidden, a "· Tükendi" label shown next to the price), and `drinkCrossSellProductsProvider` (sold-
+   out drinks no longer offered as a cross-sell chip at all, since that chip has no detail screen of
+   its own to show a disabled state on).
+4. **"No banner, straight to category tabs" — already satisfied, not rebuilt**: re-checked against
+   the 2026-10-29 zero-friction-entry decision (`table_guest_entry_screen.dart`) — there is no
+   intermediate welcome/confirm screen in the dine-in QR path; a scan lands directly on `MenuScreen`
+   with its category tabs and product vitrine visible. Nothing to change for this rule.
+
+`flutter analyze` (whole project) clean. `flutter test` (whole project): 3880 passing (up from Faz
+1's 3865 — 15 new tests: `allergen_filter_provider_test.dart` (5), `menu_catalog_provider_test.dart`
+(3, new — first dedicated test file for that provider), plus additions to the existing
+`menu_screen_test.dart` (5), `product_detail_screen_test.dart` (1), `qr_menu_story_bar_test.dart`
+(1)). `functions`: no backend files touched this phase; `npx tsc --noEmit` re-confirmed clean anyway.
+New files: `features/menu/presentation/providers/allergen_filter_provider.dart`,
+`test/features/menu/presentation/providers/{allergen_filter_provider,menu_catalog_provider}_test.dart`.
+Updated: `features/menu/presentation/{providers/menu_catalog_provider.dart,screens/menu_screen.dart,
+screens/product_detail_screen.dart,widgets/qr_menu_story_bar.dart}`, plus their corresponding
+pre-existing test files.
+
+**Deferred, not done this pass**: Faz 3 (gerçek zamanlı ortak sepet), Faz 4 (isimlendirme/hibrit
+gönderim/iptal), Faz 5 (çağrı butonları/POS zili/onay→yazdırma), Faz 6 (canlı adisyon/kapanış/offline
+senkron) — same sequential gate as before.
