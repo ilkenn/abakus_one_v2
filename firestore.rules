@@ -708,6 +708,69 @@ service cloud.firestore {
       allow write: if false; // Cloud Function (Admin SDK) only.
     }
 
+    // ---------------------------------------------------------------------
+    // Self-Order QR Faz 3 â€” the live, multi-device-shared pre-submission
+    // cart for one table session. Deliberately the ONE table-session-
+    // scoped collection in this file that allows a DIRECT client write
+    // (every other one above â€” tableGuestSessions/tableSessions/
+    // guestSubAccounts/checks â€” is Cloud-Function-only). This is safe
+    // specifically BECAUSE this collection is never authoritative: a line's
+    // `price` here is display-only, re-derived from the real catalog
+    // server-side by `submitDineInOrder` at actual order-submission time
+    // (Faz 4), exactly like the pre-existing `items` request payload that
+    // function already never trusts. A malicious write here can at most
+    // corrupt what tablemates SEE in the shared basket before submitting,
+    // never what they're actually charged.
+    //
+    // `isTableSessionCartParticipant` reuses `guestSubAccounts`' own
+    // deterministic id (`deterministicIdentitySubAccountId` in
+    // `functions/src/tableSessionConfig.ts`) â€” that sub-account document is
+    // created by `openTableGuestSession` at QR-scan time, strictly BEFORE a
+    // guest could ever reach the menu/cart, so `exists()` here is a cheap,
+    // always-available participancy proof requiring no new document.
+    // ---------------------------------------------------------------------
+
+    function dineInSubAccountIdFor(tableSessionId) {
+      return 'subaccount-' + tableSessionId + '-' + request.auth.uid;
+    }
+
+    function isTableSessionCartParticipant(tableSessionId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/guestSubAccounts/$(dineInSubAccountIdFor(tableSessionId)));
+    }
+
+    function isValidCartLineShape() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'addedBySubAccountId', 'productId', 'name', 'desc', 'price',
+          'quantity', 'selectedProtein', 'selectedSauce',
+          'removedIngredients', 'extraIngredients', 'extraCostPerUnit',
+          'selectedModifiers', 'note', 'customizationsKey', 'createdAt',
+        ]) &&
+        data.quantity is int && data.quantity > 0 && data.quantity <= 50 &&
+        data.price is number && data.price >= 0 &&
+        data.productId is string && data.productId.size() > 0 &&
+        data.name is string &&
+        data.note.size() <= 500;
+    }
+
+    match /tableSessionCarts/{tableSessionId}/lines/{lineId} {
+      // Any participant may see the WHOLE shared basket, not just their own
+      // lines â€” that is the entire point of "ortak sepet."
+      allow read: if isTableSessionCartParticipant(tableSessionId);
+      // A write may only ever claim the caller's OWN deterministic
+      // sub-account id as `addedBySubAccountId` â€” never another guest's,
+      // and never the table-wide `staffGeneral` id (staff never writes
+      // this collection from this app).
+      allow create, update: if isTableSessionCartParticipant(tableSessionId) &&
+        request.resource.data.addedBySubAccountId == dineInSubAccountIdFor(tableSessionId) &&
+        isValidCartLineShape();
+      // Only the original adder may remove their own line â€” never a
+      // different guest clearing someone else's basket entry.
+      allow delete: if isTableSessionCartParticipant(tableSessionId) &&
+        resource.data.addedBySubAccountId == dineInSubAccountIdFor(tableSessionId);
+    }
+
     // AP-3 Wave 2 â€” Check/allocation model (corrected report Â§2, Stage B
     // mandatory refinement #3). No customer/guest ever reads any of these
     // four directly â€” a check is a staff/POS-operational construct, not a

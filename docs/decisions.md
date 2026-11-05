@@ -19790,3 +19790,49 @@ existing `TableContextBadge` for the guest to override.
 See `docs/feature_status.md`'s "Self-Order QR — Faz 1" entry for the full file list and test
 verification status.
 for the full file list and test results.
+
+## ADR-055 — Self-Order QR Faz 3: shared-cart attribution key and direct-client-write authorization model (2026-11-05)
+
+- Tarih: 2026-11-05
+- Durum: Accepted
+
+### Context
+
+Third phase of the same plan — "Ortak Canlı Sepet" (realtime shared table cart). The user's own
+bullet list specified `tableSessionCarts/{tableSessionId}`, row-level `addedByGuestSessionId`
+tracking, and `.snapshots()`-based sync, but left two genuinely consequential architecture
+decisions unresolved, both surfaced explicitly before coding per CLAUDE.md §15:
+
+1. **Attribution key.** Investigating `submitDineInOrder.ts` found every existing order LINE is
+   already attributed by `subAccountId` (`deterministicIdentitySubAccountId(tableSessionId, uid)`),
+   never a raw `tableGuestSessions` document id — and Faz 1's own "QR re-scan extends the session"
+   behavior mints a brand-new `tableGuestSessions` document on every scan. Using the literal
+   `addedByGuestSessionId` the user specified would make a guest's own earlier cart lines look like
+   a different guest's the moment they re-scanned to extend their time.
+2. **Write path.** Every other table-session-scoped collection in `firestore.rules`
+   (`tableGuestSessions`/`tableSessions`/`guestSubAccounts`/`checks`) is Cloud-Function-only —
+   `allow write: if false` — a deliberate, repeatedly-reaffirmed discipline (see that file's own
+   "AP-3 Wave 1 SECURITY CORRECTION" comment). A shared, multi-writer cart could follow that same
+   pattern, or could allow direct client writes gated by Security Rules — a real security-posture
+   fork, not a style choice.
+
+Asked the user directly (`AskUserQuestion`) with a recommendation on each, rather than silently
+picking either.
+
+### Decision
+
+**Attribution key**: `addedBySubAccountId`, referencing `guestSubAccounts`, not
+`addedByGuestSessionId` — stable across a re-scan, and already the same identity Faz 4's submission
+step attributes order lines by.
+
+**Write path**: direct client → Firestore, gated by `firestore.rules`, not a new Cloud Function per
+mutation. Justified specifically because this collection, unlike every other one in that file, is
+never authoritative — `submitDineInOrder` has always re-derived real pricing server-side from
+`productId`/`quantity`/modifiers alone, ignoring whatever a client sends, so a forged cart-line field
+can at most corrupt what tablemates see in the live basket before submitting, never what they're
+actually charged. Rules enforce that a write may only ever claim the caller's own deterministic
+sub-account id, reusing the existing `guestSubAccounts` document (created at QR-scan time, before a
+guest could ever reach the cart) as a cheap, already-available participancy/ownership proof.
+
+See `docs/feature_status.md`'s "Self-Order QR — Faz 3" entry for the full file list, data-model
+detail, and test verification status.

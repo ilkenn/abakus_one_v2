@@ -2,11 +2,32 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
 import '../../../orders/domain/models/order_channel.dart';
 import '../../domain/models/cart_item.dart';
+import 'dine_in_table_cart_notifier.dart';
 
 class CartNotifier extends Notifier<List<CartItem>> {
   @override
   List<CartItem> build() {
     return const [];
+  }
+
+  /// The exact key `addToCart` uses to decide "same configuration, bump
+  /// quantity" vs "new line" — pulled out so a subclass (Self-Order QR
+  /// Faz 3's `DineInTableCartNotifier`) can compute the identical key for
+  /// its own, Firestore-backed merge logic without duplicating this rule.
+  String computeCustomizationsKey({
+    required String id,
+    required String selectedProtein,
+    required String selectedSauce,
+    required List<String> removedIngredients,
+    required List<String> extraIngredients,
+    required List<SelectedModifier> selectedModifiers,
+    required String note,
+    required String customizationsKey,
+  }) {
+    if (customizationsKey.isNotEmpty) return customizationsKey;
+    final sortedModifierIds = selectedModifiers.map((m) => m.optionId).toList()
+      ..sort();
+    return '${id}_${selectedProtein}_${selectedSauce}_${removedIngredients.join(",")}_${extraIngredients.join(",")}_${sortedModifierIds.join(",")}_$note';
   }
 
   void addToCart({
@@ -25,12 +46,16 @@ class CartNotifier extends Notifier<List<CartItem>> {
     String customizationsKey = '',
     OrderChannel? pricedForChannel,
   }) {
-    final sortedModifierIds = selectedModifiers.map((m) => m.optionId).toList()
-      ..sort();
-
-    final String targetKey = customizationsKey.isNotEmpty
-        ? customizationsKey
-        : '${id}_${selectedProtein}_${selectedSauce}_${removedIngredients.join(",")}_${extraIngredients.join(",")}_${sortedModifierIds.join(",")}_$note';
+    final String targetKey = computeCustomizationsKey(
+      id: id,
+      selectedProtein: selectedProtein,
+      selectedSauce: selectedSauce,
+      removedIngredients: removedIngredients,
+      extraIngredients: extraIngredients,
+      selectedModifiers: selectedModifiers,
+      note: note,
+      customizationsKey: customizationsKey,
+    );
 
     final existingIndex = state.indexWhere((item) =>
         (item.customizationsKey.isNotEmpty &&
@@ -156,8 +181,16 @@ class CartNotifier extends Notifier<List<CartItem>> {
   }
 }
 
+/// Self-Order QR Faz 3 — the real, app-wide cart is a
+/// [DineInTableCartNotifier] (a [CartNotifier] subclass) so it can
+/// transparently mirror the live, shared `tableSessionCarts` collection
+/// whenever a table context is active, while behaving identically to the
+/// plain base class for every other channel. `preorderCartProvider`
+/// (`features/reservation`) deliberately keeps instantiating the plain
+/// `CartNotifier` directly — never this subclass — so its own isolated
+/// cart never reacts to `activeTableContextProvider` at all.
 final cartProvider = NotifierProvider<CartNotifier, List<CartItem>>(() {
-  return CartNotifier();
+  return DineInTableCartNotifier();
 });
 
 final cartTotalPriceProvider = Provider<double>((ref) {

@@ -52,6 +52,17 @@ class CartItem {
   /// actually read.
   final OrderChannel? pricedForChannel;
 
+  /// Self-Order QR Faz 3 — the deterministic `guestSubAccounts/{id}` that
+  /// added this exact line, `null` for every cart item outside the shared
+  /// dine-in-QR table cart (takeaway/delivery/personal dine-in, and every
+  /// item added before this field existed). Deliberately keyed on
+  /// `subAccountId`, not the per-scan `tableGuestSessions` document id —
+  /// `deterministicIdentitySubAccountId` is stable across a QR re-scan
+  /// (Faz 1's session-extend mints a brand-new session document every
+  /// time), so a guest's own earlier lines never appear to belong to "a
+  /// different guest" just because they re-scanned to extend their time.
+  final String? addedBySubAccountId;
+
   const CartItem({
     required this.id,
     required this.name,
@@ -67,6 +78,7 @@ class CartItem {
     this.note = '',
     this.customizationsKey = '',
     this.pricedForChannel,
+    this.addedBySubAccountId,
   });
 
   /// Sum of this item's [extraCostPerUnit] and every selected modifier's
@@ -93,6 +105,7 @@ class CartItem {
     String? note,
     String? customizationsKey,
     OrderChannel? pricedForChannel,
+    String? addedBySubAccountId,
   }) {
     return CartItem(
       id: id ?? this.id,
@@ -109,6 +122,7 @@ class CartItem {
       note: note ?? this.note,
       customizationsKey: customizationsKey ?? this.customizationsKey,
       pricedForChannel: pricedForChannel ?? this.pricedForChannel,
+      addedBySubAccountId: addedBySubAccountId ?? this.addedBySubAccountId,
     );
   }
 }

@@ -774,6 +774,231 @@ test('guestSubAccounts: branch staff with full org+branch claims CANNOT read ano
 });
 
 // ---------------------------------------------------------------------
+// Self-Order QR Faz 3 — tableSessionCarts/{tableSessionId}/lines/{lineId}.
+// The one table-session-scoped collection allowing a direct client write
+// (never authoritative — see firestore.rules' own comment on this block).
+// ---------------------------------------------------------------------
+
+test('tableSessionCarts: a participant (existing guestSubAccounts doc for their own uid) can create their own line', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/subaccount-ts-cart-1-guest-cart-1'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-cart-1',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-cart-1',
+      displayName: '',
+      status: 'open',
+    });
+  });
+  const participant = testEnv.authenticatedContext('guest-cart-1').firestore();
+
+  await assertSucceeds(
+    setDoc(doc(participant, 'tableSessionCarts/ts-cart-1/lines/line-1'), {
+      addedBySubAccountId: 'subaccount-ts-cart-1-guest-cart-1',
+      productId: 'prod-1',
+      name: 'Test Ürün',
+      desc: '',
+      price: 50,
+      quantity: 1,
+      selectedProtein: '',
+      selectedSauce: '',
+      removedIngredients: [],
+      extraIngredients: [],
+      extraCostPerUnit: 0,
+      selectedModifiers: [],
+      note: '',
+      customizationsKey: 'prod-1',
+    }),
+  );
+});
+
+test('tableSessionCarts: a participant can READ a line another guest at the SAME table added — the whole point of a shared cart', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/subaccount-ts-cart-2-guest-a'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-cart-2',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-a',
+      displayName: '',
+      status: 'open',
+    });
+    await setDoc(doc(db, 'guestSubAccounts/subaccount-ts-cart-2-guest-b'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-cart-2',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-b',
+      displayName: '',
+      status: 'open',
+    });
+    await setDoc(doc(db, 'tableSessionCarts/ts-cart-2/lines/line-by-a'), {
+      addedBySubAccountId: 'subaccount-ts-cart-2-guest-a',
+      productId: 'prod-1',
+      name: 'Test Ürün',
+      desc: '',
+      price: 50,
+      quantity: 1,
+      selectedProtein: '',
+      selectedSauce: '',
+      removedIngredients: [],
+      extraIngredients: [],
+      extraCostPerUnit: 0,
+      selectedModifiers: [],
+      note: '',
+      customizationsKey: 'prod-1',
+    });
+  });
+  const guestB = testEnv.authenticatedContext('guest-b').firestore();
+
+  await assertSucceeds(getDoc(doc(guestB, 'tableSessionCarts/ts-cart-2/lines/line-by-a')));
+});
+
+test('tableSessionCarts: someone who never scanned this table (no guestSubAccounts doc) cannot read the shared cart at all', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/subaccount-ts-cart-3-guest-a'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-cart-3',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-a',
+      displayName: '',
+      status: 'open',
+    });
+    await setDoc(doc(db, 'tableSessionCarts/ts-cart-3/lines/line-by-a'), {
+      addedBySubAccountId: 'subaccount-ts-cart-3-guest-a',
+      productId: 'prod-1',
+      name: 'Test Ürün',
+      desc: '',
+      price: 50,
+      quantity: 1,
+      selectedProtein: '',
+      selectedSauce: '',
+      removedIngredients: [],
+      extraIngredients: [],
+      extraCostPerUnit: 0,
+      selectedModifiers: [],
+      note: '',
+      customizationsKey: 'prod-1',
+    });
+  });
+  const outsider = testEnv.authenticatedContext('never-scanned-this-table').firestore();
+
+  await assertFails(getDoc(doc(outsider, 'tableSessionCarts/ts-cart-3/lines/line-by-a')));
+});
+
+test('tableSessionCarts: a participant cannot forge a line claiming ANOTHER guest\'s addedBySubAccountId — IDOR/impersonation protection', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/subaccount-ts-cart-4-guest-a'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-cart-4',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-a',
+      displayName: '',
+      status: 'open',
+    });
+  });
+  const guestA = testEnv.authenticatedContext('guest-a').firestore();
+
+  await assertFails(
+    setDoc(doc(guestA, 'tableSessionCarts/ts-cart-4/lines/line-forged'), {
+      addedBySubAccountId: 'subaccount-ts-cart-4-staffGeneral',
+      productId: 'prod-1',
+      name: 'Test Ürün',
+      desc: '',
+      price: 50,
+      quantity: 1,
+      selectedProtein: '',
+      selectedSauce: '',
+      removedIngredients: [],
+      extraIngredients: [],
+      extraCostPerUnit: 0,
+      selectedModifiers: [],
+      note: '',
+      customizationsKey: 'prod-1',
+    }),
+  );
+});
+
+test('tableSessionCarts: a different guest at the same table cannot delete someone else\'s line', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/subaccount-ts-cart-5-guest-a'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-cart-5',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-a',
+      displayName: '',
+      status: 'open',
+    });
+    await setDoc(doc(db, 'guestSubAccounts/subaccount-ts-cart-5-guest-b'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-cart-5',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-b',
+      displayName: '',
+      status: 'open',
+    });
+    await setDoc(doc(db, 'tableSessionCarts/ts-cart-5/lines/line-by-a'), {
+      addedBySubAccountId: 'subaccount-ts-cart-5-guest-a',
+      productId: 'prod-1',
+      name: 'Test Ürün',
+      desc: '',
+      price: 50,
+      quantity: 1,
+      selectedProtein: '',
+      selectedSauce: '',
+      removedIngredients: [],
+      extraIngredients: [],
+      extraCostPerUnit: 0,
+      selectedModifiers: [],
+      note: '',
+      customizationsKey: 'prod-1',
+    });
+  });
+  const guestB = testEnv.authenticatedContext('guest-b').firestore();
+
+  await assertFails(deleteDoc(doc(guestB, 'tableSessionCarts/ts-cart-5/lines/line-by-a')));
+});
+
+test('tableSessionCarts: a line with an out-of-range quantity is rejected', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'guestSubAccounts/subaccount-ts-cart-6-guest-a'), {
+      organizationId: 'org-1',
+      branchId: 'branch-1',
+      tableSessionId: 'ts-cart-6',
+      ownerType: 'guestSession',
+      ownerAuthUid: 'guest-a',
+      displayName: '',
+      status: 'open',
+    });
+  });
+  const guestA = testEnv.authenticatedContext('guest-a').firestore();
+
+  await assertFails(
+    setDoc(doc(guestA, 'tableSessionCarts/ts-cart-6/lines/line-bad-qty'), {
+      addedBySubAccountId: 'subaccount-ts-cart-6-guest-a',
+      productId: 'prod-1',
+      name: 'Test Ürün',
+      desc: '',
+      price: 50,
+      quantity: 0,
+      selectedProtein: '',
+      selectedSauce: '',
+      removedIngredients: [],
+      extraIngredients: [],
+      extraCostPerUnit: 0,
+      selectedModifiers: [],
+      note: '',
+      customizationsKey: 'prod-1',
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------
 // AP-3 Wave 2 — checks/checkAllocations/checkFinancialAdjustments/
 // orderLineAllocationLedgers: no direct client read path at all, for
 // anyone (staff or customer) — same fail-closed discipline as

@@ -10527,6 +10527,69 @@ Updated: `features/menu/presentation/{providers/menu_catalog_provider.dart,scree
 screens/product_detail_screen.dart,widgets/qr_menu_story_bar.dart}`, plus their corresponding
 pre-existing test files.
 
-**Deferred, not done this pass**: Faz 3 (gerçek zamanlı ortak sepet), Faz 4 (isimlendirme/hibrit
-gönderim/iptal), Faz 5 (çağrı butonları/POS zili/onay→yazdırma), Faz 6 (canlı adisyon/kapanış/offline
-senkron) — same sequential gate as before.
+### Self-Order QR — Faz 3: realtime shared table cart (2026-11-05)
+
+Third phase of the same user-approved plan. Two explicit architecture decisions were raised and
+resolved before implementation (see ADR — `docs/decisions.md`):
+1. **Attribution key**: `addedBySubAccountId` (not `addedByGuestSessionId`) — keyed on the existing
+   `guestSubAccounts` deterministic id (`deterministicIdentitySubAccountId`), stable across a QR
+   re-scan (Faz 1 mints a fresh `tableGuestSessions` doc every time, which would otherwise make a
+   guest's own earlier lines look like "someone else's" after extending their session). Also matches
+   `submitDineInOrder.ts`'s own existing per-order-line `subAccountId` attribution.
+2. **Write path**: direct client → Firestore writes, gated by `firestore.rules`, not a new Cloud
+   Function per mutation — the one table-session-scoped collection in this codebase allowed to work
+   this way, because it is deliberately never authoritative: `submitDineInOrder` always re-derives
+   real pricing server-side regardless of what a cart line claims.
+
+**Data model**: `tableSessionCarts/{tableSessionId}/lines/{lineId}` — one document per
+`(addedBySubAccountId, customizationsKey)` pair (not a single array-holding doc), so two guests
+adding the same product concurrently never contend on the same document, and a guest's own repeat
+add of an identical configuration merges via an atomic `FieldValue.increment`, no read-before-write
+needed. `firestore.rules`: any participant (proven via an `exists()` check against their own already-
+created `guestSubAccounts` doc, never a new document) may read the whole shared basket; a write may
+only ever claim the caller's own deterministic id, with a field allow-list/shape guard
+(`isValidCartLineShape`).
+
+**Dart wiring**: `cartProvider`'s real instance is now `DineInTableCartNotifier` (a `CartNotifier`
+subclass) — while `activeTableContextProvider` is null it delegates straight to the unchanged base
+class (takeaway/delivery/personal dine-in untouched, byte-for-byte), and the instant a table context
+is active it mirrors the live `tableSessionCarts` collection via `.snapshots()` instead of a private
+list. `preorderCartProvider` (`features/reservation`) deliberately keeps instantiating the plain base
+`CartNotifier` directly, so its own isolated cart never reacts to this. Every mutation
+(increment/decrement/remove/clear) is additionally scoped to lines the current device's own sub-
+account actually owns — a tap on a tablemate's line (now visible in the shared list) is a safe no-op,
+never a cross-guest mutation, matching the security rule regardless.
+
+**Disclosed interim limitation (resolved in Faz 4, not this phase)**: `clearCart()` can only delete
+the caller's own lines (the security rule enforces this), so until Faz 4 wires `submitDineInOrder` to
+delete the exact submitted lines server-side (Admin SDK, bypasses the ownership lock), a post-
+submission clear in this phase alone would not empty a multi-guest cart. `DineInCheckoutScreen`
+itself is untouched this phase — it still reads the full shared cart at submission time, which is a
+side effect of sharing state, not a Faz 3 feature; Faz 4 ("Hibrit Gönderim") adds the explicit choice.
+
+`flutter analyze` (whole project) clean. `flutter test` (whole project): **3897 passing** (up from
+Faz 2's 3880 — 17 new tests across `cart_item_test.dart` (new, 5), `table_session_cart_firestore_
+client_test.dart` (new, 4, pure `deterministicCartLineId` logic), `dine_in_table_cart_notifier_test
+.dart` (new, 8, fake-Firestore-backed — ownership guards, snapshot sync, local-mode fallback)). Two
+pre-existing test files needed a `tableSessionCartFirestoreClientProvider` fake override added
+(`dine_in_checkout_screen_test.dart`, `table_guest_entry_screen_test.dart`) — both now reaching
+MenuScreen/building `cartProvider` with an active table context, which would otherwise touch the
+real Firestore SDK under `flutter test`. New shared test helper:
+`test/features/cart/test_support/fake_table_session_cart_firestore_client.dart`.
+
+**Not run**: `firestore-tests/` emulator suite (`npm run test:emulator`) — same environment limitation
+as every prior phase's backend work: `firebase-tools` now requires Java 21+, this environment has 17.
+New rules tests were still written (`firestore-tests/rules.test.js`, 7 new cases covering participant
+read, cross-guest read denial, impersonation/IDOR rejection, ownership-locked delete, and shape
+validation) and must be run against a real emulator before this collection is ever deployed —
+disclosed, not silently skipped.
+
+New files: `lib/features/cart/data/table_session_cart_firestore_client.dart`,
+`lib/features/cart/presentation/providers/{dine_in_table_cart_notifier,
+table_session_cart_dependencies_provider}.dart`, `lib/features/qr/domain/identity/
+dine_in_sub_account_id.dart`. Updated: `firestore.rules`, `lib/features/cart/{domain/models/
+cart_item.dart,presentation/providers/cart_provider.dart}`, plus the test files named above.
+
+**Deferred, not done this pass**: Faz 4 (isimlendirme/hibrit gönderim/iptal), Faz 5 (çağrı butonları/
+POS zili/onay→yazdırma), Faz 6 (canlı adisyon/kapanış/offline senkron) — same sequential gate as
+before.

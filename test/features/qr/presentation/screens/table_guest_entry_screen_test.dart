@@ -4,12 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/bootstrap/firebase_ready_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/otp_screen.dart';
+import 'package:abakus_one_v2/features/cart/presentation/providers/table_session_cart_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/menu/presentation/screens/menu_screen.dart';
 import 'package:abakus_one_v2/features/qr/data/table_guest_session_gateway.dart';
 import 'package:abakus_one_v2/features/qr/data/technical_identity_provider.dart';
 import 'package:abakus_one_v2/features/qr/presentation/providers/active_table_context_provider.dart';
 import 'package:abakus_one_v2/features/qr/presentation/providers/table_guest_session_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/qr/presentation/screens/table_guest_entry_screen.dart';
+import '../../../cart/test_support/fake_table_session_cart_firestore_client.dart';
 
 class _FakeTableGuestSessionGateway implements TableGuestSessionGateway {
   _FakeTableGuestSessionGateway({
@@ -112,6 +114,11 @@ Future<
       firebaseReadyProvider.overrideWithValue(firebaseReady),
       tableGuestSessionGatewayProvider.overrideWithValue(gateway),
       technicalIdentityProviderProvider.overrideWithValue(identity),
+      // Self-Order QR Faz 3 — reaching MenuScreen builds `cartProvider`
+      // with an active table context, which would otherwise touch the
+      // real Firestore SDK (unavailable under `flutter test`).
+      tableSessionCartFirestoreClientProvider
+          .overrideWithValue(FakeTableSessionCartFirestoreClient()),
     ],
   );
   addTearDown(container.dispose);
@@ -149,6 +156,8 @@ void main() {
         tableGuestSessionGatewayProvider.overrideWithValue(gateway),
         technicalIdentityProviderProvider
             .overrideWithValue(_FakeTechnicalIdentityProvider()),
+        tableSessionCartFirestoreClientProvider
+            .overrideWithValue(FakeTableSessionCartFirestoreClient()),
       ],
     );
     addTearDown(container.dispose);
@@ -197,6 +206,8 @@ void main() {
         tableGuestSessionGatewayProvider.overrideWithValue(gateway),
         technicalIdentityProviderProvider
             .overrideWithValue(_FakeTechnicalIdentityProvider()),
+        tableSessionCartFirestoreClientProvider
+            .overrideWithValue(FakeTableSessionCartFirestoreClient()),
       ],
     );
     addTearDown(container.dispose);

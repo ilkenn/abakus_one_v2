@@ -11,8 +11,10 @@ import 'package:abakus_one_v2/features/campaigns/presentation/providers/campaign
 import 'package:abakus_one_v2/features/cart/data/submit_dine_in_order_gateway.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/dine_in_order_dependencies_provider.dart';
+import 'package:abakus_one_v2/features/cart/presentation/providers/table_session_cart_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/cart/presentation/screens/dine_in_checkout_screen.dart';
 import 'package:abakus_one_v2/features/cart/presentation/screens/order_success_screen.dart';
+import '../../test_support/fake_table_session_cart_firestore_client.dart';
 import 'package:abakus_one_v2/features/loyalty/data/loyalty_gateway.dart';
 import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_account_snapshot.dart';
 import 'package:abakus_one_v2/features/loyalty/domain/models/loyalty_history_entry.dart';
@@ -33,8 +35,25 @@ import 'package:abakus_one_v2/features/qr/domain/models/active_table_context.dar
 import 'package:abakus_one_v2/features/qr/domain/models/guest_session.dart';
 import 'package:abakus_one_v2/features/qr/domain/models/table_session.dart';
 import 'package:abakus_one_v2/features/qr/data/table_guest_session_firestore_client.dart';
+import 'package:abakus_one_v2/features/qr/data/technical_identity_provider.dart';
 import 'package:abakus_one_v2/features/qr/presentation/providers/active_table_context_provider.dart';
 import 'package:abakus_one_v2/features/qr/presentation/providers/table_guest_session_dependencies_provider.dart';
+
+/// Self-Order QR Faz 3 — `cartProvider` now resolves a deterministic
+/// `addedBySubAccountId` via this provider whenever a table context is
+/// active, so every test that exercises `DineInCheckoutScreen` with one
+/// needs a fixed, non-Firebase-backed uid. Mirrors
+/// `table_guest_entry_screen_test.dart`'s own private fake exactly.
+class _FakeTechnicalIdentityProvider implements TechnicalIdentityProvider {
+  const _FakeTechnicalIdentityProvider(this.uid);
+  final String uid;
+
+  @override
+  String? get currentUid => uid;
+
+  @override
+  Future<String> ensureSignedIn() async => uid;
+}
 
 /// Boncuk Loyalty Program P7-D.1 (2026-08-24) — `DineInCheckoutScreen` now
 /// submits through `SubmitDineInOrderGateway` (the real implementation
@@ -381,6 +400,14 @@ void main() {
       overrides: [
         tableGuestSessionFirestoreClientProvider
             .overrideWithValue(fakeSessionClient),
+        // Self-Order QR Faz 3 — `cartProvider` writes through to this
+        // instead of the real Firestore SDK (unavailable under
+        // `flutter test`) whenever `activeTableContextProvider` is set
+        // below.
+        tableSessionCartFirestoreClientProvider
+            .overrideWithValue(FakeTableSessionCartFirestoreClient()),
+        technicalIdentityProviderProvider.overrideWithValue(
+            const _FakeTechnicalIdentityProvider('fake-firebase-uid')),
         canonicalOrderRepositoryProvider.overrideWithValue(gateway.repository),
         orderIdentityProvider.overrideWithValue(gateway.identityProvider),
         submitDineInOrderGatewayProvider.overrideWithValue(gateway),
