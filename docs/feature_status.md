@@ -10593,3 +10593,73 @@ cart_item.dart,presentation/providers/cart_provider.dart}`, plus the test files 
 **Deferred, not done this pass**: Faz 4 (isimlendirme/hibrit gönderim/iptal), Faz 5 (çağrı butonları/
 POS zili/onay→yazdırma), Faz 6 (canlı adisyon/kapanış/offline senkron) — same sequential gate as
 before.
+
+### Self-Order QR — Faz 4: naming (already satisfied), hybrid submission, customer self-cancel (2026-11-05)
+
+Fourth phase of the same plan. Per the user's explicit "no further pausing through Faz 6" direction,
+the remaining judgment calls below were made directly (best-practice, matching existing codebase
+precedent) rather than raised as new `AskUserQuestion` forks — still disclosed here in full rather
+than silently decided.
+
+1. **İsimlendirme ("Adınız nedir?") — investigated, not rebuilt.** `DineInCheckoutScreen` already
+   captures a guest's display name reactively: it submits, and only if the server rejects with
+   `dineIn/guest-display-name-required` (a guest's genuinely first order at this table — the sub-
+   account has no name yet) does it show a name dialog and resubmit with `guestDisplayName` set.
+   This already satisfies the rule's literal requirement ("modal on confirm") — the modal appears
+   exactly when the guest taps confirm, on whichever submission actually needs a name. Not changed
+   to a proactive pre-check: that would mean an extra live read before every single submission for a
+   guest who already has a name, for no behavior change.
+2. **Hybrid submission** ("Sadece Kendi Ürünlerimi Gönder"/"Tüm Masayı Gönder"): `DineInCheckout
+   Screen` gained a `DineInSubmissionScope` toggle, shown ONLY once the shared cart (Faz 3) actually
+   has more than one contributor (`_isMultiGuestCart`) — a solo guest has nothing to choose between.
+   Defaults to "own items only" (the safer choice — never silently submits, and pays for, a
+   tablemate's items without an explicit switch). The scoped subset is computed client-side
+   (`_scopedCartItems`) from data Faz 3 already mirrors locally; no new read.
+3. **Clearing the shared cart after submission — now fully server-side.** `submitDineInOrder.ts`
+   accepts an optional `submittedCartLineIds: string[]` (the exact `tableSessionCarts` document ids
+   this submission consumed, computed client-side via the same `deterministicCartLineId` Faz 3
+   already uses) and deletes them — via the Admin SDK, inside the SAME transaction as order creation
+   — right after the order document is written. This is what actually resolves Faz 3's own disclosed
+   interim limitation ("`clearCart()` can only delete the caller's own lines"): the server bypasses
+   that ownership lock entirely, which is exactly what lets "Tüm Masayı Gönder" correctly clear a
+   tablemate's line a client could never delete directly. `DineInCheckoutScreen` no longer calls
+   `clearCart()` at all — the existing `tableSessionCarts` snapshot listener picks up the deletion
+   automatically once the transaction commits.
+4. **Customer self-cancel** ("mutfak/kasa onayına kadar iptal edebilir"): the first real, server-
+   authoritative dine-in order cancellation in this app. New callable `cancelMyPendingDineInOrder`
+   mirrors `cancelTakeawayOrder.ts`'s own customer-self-cancel shape closely, with one deliberate
+   difference — **no `requireRealCustomer` gate**, since a dine-in guest is very often anonymous;
+   ownership is proven via `order.guestAuthUid === request.auth.uid` instead (set for both identity
+   types by `submitDineInOrder`, unlike `customerId`, which stays `null` for a guest).
+   `pendingConfirmation`-only, exactly the "until kitchen/kasa onayına kadar" boundary; no reason
+   code collected, mirroring `cancelTakeawayOrder.ts`'s own identical precedent. Wired into
+   `order_detail_screen.dart` for `channel == dineInQr` orders specifically, gated on the REAL
+   `lifecycleStatus` enum (not the existing screen's own looser legacy-label `canCancel` check, which
+   would have wrongly still allowed a cancel attempt once `confirmed`) — every other channel's
+   existing (already-mock, pre-dating this phase) cancel button/dialog is completely untouched.
+
+**Architecture-layering correction made while implementing, not a separate decision point**: the new
+cancel gateway was placed under `features/orders/data/` (mirroring `DineInCounterProposalGateway`'s
+own precedent), not `features/cart/data/` alongside `SubmitDineInOrderGateway` — `cart` already
+imports from `orders` (`OrderModel`/`ordersProvider`), so putting an orders-only concern in `cart`
+and importing it back from `orders` would have created this codebase's first feature-import cycle.
+
+`flutter analyze` (whole project) clean. `flutter test` (whole project): see test run below for the
+updated count — new/extended coverage: `dine_in_checkout_screen_test.dart` (new "hibrit gönderim"
+group, 4 cases, plus the pre-existing "sepet temizlenir" case now verifying the server-side-deletion
+simulation), `order_detail_screen_test.dart` (new "gerçek dine-in müşteri iptali" group, 5 cases).
+`functions`: `npx tsc --noEmit` clean. **Not run**: `firestore-tests/`/Cloud Functions emulator
+suites — same Java 21+ environment limitation disclosed every prior phase; `submitDineInOrder.ts`'s
+own existing emulator test file (`src/test/submitDineInOrder.test.ts`) was not extended with a new
+`submittedCartLineIds` case for the same reason — type-check-only verification for every backend
+change this phase, consistent with every phase before it.
+
+New files: `functions/src/cancelMyPendingDineInOrder.ts`, `lib/features/orders/data/
+cancel_dine_in_order_gateway.dart`, `lib/features/orders/presentation/providers/
+cancel_dine_in_order_dependencies_provider.dart`. Updated: `functions/src/{index.ts,
+submitDineInOrder.ts}`, `lib/features/cart/{data/submit_dine_in_order_gateway.dart,presentation/
+screens/dine_in_checkout_screen.dart}`, `lib/features/orders/presentation/screens/
+order_detail_screen.dart`, plus the test files named above.
+
+**Deferred, not done this pass**: Faz 5 (çağrı butonları/POS zili/onay→yazdırma), Faz 6 (canlı
+adisyon/kapanış/offline senkron) — same sequential gate as before.

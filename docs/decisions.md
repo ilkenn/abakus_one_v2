@@ -19836,3 +19836,41 @@ guest could ever reach the cart) as a cheap, already-available participancy/owne
 
 See `docs/feature_status.md`'s "Self-Order QR — Faz 3" entry for the full file list, data-model
 detail, and test verification status.
+
+## ADR-056 — Self-Order QR Faz 4: server-side atomic cart clearing, and cancel-gateway placement (2026-11-05)
+
+- Tarih: 2026-11-05
+- Durum: Accepted
+
+### Context
+
+Fourth phase of the same plan — "İsimlendirme, Hibrit Gönderim, İptal." Per the user's explicit
+"no further pausing through Faz 6" instruction, this ADR records decisions made directly rather than
+asked, so they remain reviewable after the fact rather than silently buried in code:
+
+1. Faz 3 left a disclosed interim limitation: the shared cart's `clearCart()` can only ever delete
+   the caller's own lines (the Security Rule's ownership lock), so "Tüm Masayı Gönder" (send the
+   whole table) had no way to actually clear a tablemate's already-submitted line from the client.
+2. The new customer-self-cancel gateway needed a home. `features/cart/data/` (alongside
+   `SubmitDineInOrderGateway`) was the naive first choice, but `cart` already imports `orders`'
+   `OrderModel`/`ordersProvider` — putting a cancel-an-already-created-order concern in `cart` and
+   importing it back from `orders` (to wire the button in `order_detail_screen.dart`) would create
+   this codebase's first feature-import cycle.
+
+### Decision
+
+**Server-side atomic clearing**: `submitDineInOrder.ts` now accepts an optional
+`submittedCartLineIds: string[]` and deletes those exact `tableSessionCarts` documents via the
+Admin SDK, in the same transaction as order creation — bypassing the client-side ownership lock
+entirely, which is exactly what makes "Tüm Masayı Gönder" correct. The client computes the ids
+itself (same `deterministicCartLineId` Faz 3 already uses); the server only ever deletes an id the
+caller names, never re-derives one — consistent with this collection's established "never
+authoritative" framing (ADR-055).
+
+**Cancel-gateway placement**: `features/orders/data/cancel_dine_in_order_gateway.dart`, mirroring
+`DineInCounterProposalGateway`'s own precedent — cancelling an order is purely an orders-lifecycle
+concern with no cart involvement, so it belongs where every other order-lifecycle gateway already
+lives, keeping `cart → orders` the only direction this dependency ever runs.
+
+See `docs/feature_status.md`'s "Self-Order QR — Faz 4" entry for the full file list and test
+verification status.

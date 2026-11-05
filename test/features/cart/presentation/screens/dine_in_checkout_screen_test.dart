@@ -9,6 +9,7 @@ import 'package:abakus_one_v2/features/campaigns/data/campaign_gateway.dart';
 import 'package:abakus_one_v2/features/campaigns/domain/models/campaign.dart';
 import 'package:abakus_one_v2/features/campaigns/presentation/providers/campaigns_provider.dart';
 import 'package:abakus_one_v2/features/cart/data/submit_dine_in_order_gateway.dart';
+import 'package:abakus_one_v2/features/cart/domain/models/cart_item.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/dine_in_order_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/table_session_cart_dependencies_provider.dart';
@@ -70,12 +71,19 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     required this.identityProvider,
     required this.cartItemsSnapshot,
     required this.resolveCustomerId,
+    this.cartFirestoreClient,
   });
 
   final CanonicalOrderRepository repository;
   final OrderIdentityProvider identityProvider;
   final List Function() cartItemsSnapshot;
   final String? Function() resolveCustomerId;
+
+  /// Self-Order QR Faz 4 — when set, [submit] simulates
+  /// `submitDineInOrder`'s own atomic, server-side deletion of
+  /// `submittedCartLineIds` so tests can verify the shared cart actually
+  /// empties after a successful submission, exactly like production.
+  final FakeTableSessionCartFirestoreClient? cartFirestoreClient;
 
   final Map<String, dynamic> _orderIdByKey = {};
   int callCount = 0;
@@ -84,6 +92,7 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
   String? lastSelectedCampaignId;
   List<Map<String, dynamic>>? lastRequestItems;
   String? lastGuestDisplayName;
+  List<String>? lastSubmittedCartLineIds;
 
   String catalogRewardTitleToReturn = 'Test Ödülü';
   int catalogRewardBoncukCostToReturn = 100;
@@ -105,6 +114,7 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     String? selectedRewardId,
     String? selectedCampaignId,
     String? guestDisplayName,
+    List<String> submittedCartLineIds = const [],
   }) async {
     callCount += 1;
     lastTableSessionId = tableSessionId;
@@ -112,6 +122,7 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     lastSelectedCampaignId = selectedCampaignId;
     lastGuestDisplayName = guestDisplayName;
     lastRequestItems = [for (final item in items) item.toJson()];
+    lastSubmittedCartLineIds = submittedCartLineIds;
 
     final pendingHold = holdUntil;
     if (pendingHold != null) await pendingHold.future;
@@ -199,6 +210,15 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
       );
     }
     await repository.submitOrder(order);
+
+    // Self-Order QR Faz 4 — simulates `submitDineInOrder`'s own atomic
+    // deletion of exactly the consumed shared-cart lines.
+    final client = cartFirestoreClient;
+    if (client != null) {
+      for (final lineId in submittedCartLineIds) {
+        client.removeLineById(tableSessionId, lineId);
+      }
+    }
 
     return SubmitDineInOrderResult(
       orderId: orderId.value,
@@ -363,6 +383,7 @@ void main() {
       ({
         ProviderContainer container,
         _FakeSubmitDineInOrderGateway gateway,
+        FakeTableSessionCartFirestoreClient cartClient,
       })> pumpWithSeededCart(
     WidgetTester tester, {
     ActiveTableContext? tableContext,
@@ -372,6 +393,10 @@ void main() {
     _FakeLoyaltyGateway? loyaltyGateway,
     // ignore: library_private_types_in_public_api
     _FakeCampaignGateway? campaignGateway,
+    // Self-Order QR Faz 4 — a tablemate's own lines, already present in
+    // the shared cart before this device adds its own "Falafel Bowl"
+    // below; lets a test set up a genuinely multi-guest cart.
+    List<CartItem> otherGuestLines = const [],
   }) async {
     // The CatalogRewardCard adds substantial height for a real-customer
     // scenario — the default test surface is too short for the ListView's
@@ -388,12 +413,14 @@ void main() {
       fakeSessionClient.seed(tableContext.session.id, sessionSnapshot);
     }
 
+    final fakeCartClient = FakeTableSessionCartFirestoreClient();
     late final ProviderContainer container;
     final gateway = _FakeSubmitDineInOrderGateway(
       repository: InMemoryCanonicalOrderRepository(),
       identityProvider: InMemoryOrderIdentityProvider(),
       cartItemsSnapshot: () => container.read(cartProvider),
       resolveCustomerId: () => signedInCustomer?.uid,
+      cartFirestoreClient: fakeCartClient,
     );
 
     container = ProviderContainer(
@@ -405,7 +432,7 @@ void main() {
         // `flutter test`) whenever `activeTableContextProvider` is set
         // below.
         tableSessionCartFirestoreClientProvider
-            .overrideWithValue(FakeTableSessionCartFirestoreClient()),
+            .overrideWithValue(fakeCartClient),
         technicalIdentityProviderProvider.overrideWithValue(
             const _FakeTechnicalIdentityProvider('fake-firebase-uid')),
         canonicalOrderRepositoryProvider.overrideWithValue(gateway.repository),
@@ -431,6 +458,9 @@ void main() {
 
     if (tableContext != null) {
       container.read(activeTableContextProvider.notifier).set(tableContext);
+      if (otherGuestLines.isNotEmpty) {
+        fakeCartClient.seed(tableContext.session.id, otherGuestLines);
+      }
     }
     container.read(cartProvider.notifier).addToCart(
           id: 'p1',
@@ -447,7 +477,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    return (container: container, gateway: gateway);
+    return (container: container, gateway: gateway, cartClient: fakeCartClient);
   }
 
   testWidgets(
@@ -514,6 +544,121 @@ void main() {
       expect(pumped.container.read(cartProvider), isEmpty);
     },
   );
+
+  group('Self-Order QR Faz 4 — hibrit gonderim (coklu misafir sepeti)', () {
+    const otherGuestLine = CartItem(
+      id: 'p2',
+      name: 'Tavuk Şiş',
+      desc: '',
+      price: 50.0,
+      quantity: 1,
+      customizationsKey: 'p2',
+      addedBySubAccountId: 'subaccount-tgs-1-other-guest-uid',
+    );
+
+    testWidgets('tek misafirlik sepette hibrit secim karti hic gorunmez',
+        (tester) async {
+      await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+      );
+
+      expect(
+          find.text('Bu siparişte kimin ürünleri gönderilsin?'), findsNothing);
+    });
+
+    testWidgets(
+        'coklu misafir sepetinde hibrit secim karti gorunur, varsayilan '
+        '"Sadece Kendi Ürünlerimi Gönder"dir', (tester) async {
+      await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        otherGuestLines: const [otherGuestLine],
+      );
+
+      expect(find.text('Bu siparişte kimin ürünleri gönderilsin?'),
+          findsOneWidget);
+      expect(find.text('Seçilen tutar: 200 TL'), findsOneWidget);
+    });
+
+    testWidgets(
+        'varsayilan modda (Sadece Kendi) gonderilen items sadece kendi '
+        'urunumu icerir, submittedCartLineIds de sadece benim satirimi '
+        'kapsar', (tester) async {
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        otherGuestLines: const [otherGuestLine],
+      );
+
+      // The submit button's own price label always reflects the whole
+      // shared cart (250 TL) — informational, matching "here's everything
+      // at the table" — only the "Seçilen tutar" line above reflects the
+      // scoped (own-only) amount.
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 250 TL'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.lastRequestItems, [
+        {
+          'kind': 'product',
+          'productId': 'p1',
+          'quantity': 2,
+          'selectedModifiers': <Map<String, String>>[],
+          'note': '',
+          'excludedIngredients': <String>[],
+        },
+      ]);
+      expect(pumped.gateway.lastSubmittedCartLineIds, hasLength(1));
+      // Tablemate's line stays untouched — the ownership-locked Security
+      // Rule couldn't delete it anyway, but the point is this mode never
+      // even tries.
+      expect(
+        pumped.cartClient.linesFor('tgs-1').map((item) => item.id),
+        contains('p2'),
+      );
+    });
+
+    testWidgets(
+        '"Tüm Masayı Gönder" secilince gonderilen items herkesin '
+        'urunlerini icerir ve her ikisinin satiri da silinir', (tester) async {
+      final pumped = await pumpWithSeededCart(
+        tester,
+        tableContext: _context(),
+        sessionSnapshot: TableGuestSessionSnapshot(
+          status: 'active',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+        otherGuestLines: const [otherGuestLine],
+      );
+
+      await tester.tap(find.text('Tüm Masayı Gönder'));
+      await tester.pumpAndSettle();
+      expect(find.text('Seçilen tutar: 250 TL'), findsOneWidget);
+
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Siparişi Ver · 250 TL'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(pumped.gateway.lastRequestItems, hasLength(2));
+      expect(pumped.gateway.lastSubmittedCartLineIds, hasLength(2));
+      expect(pumped.container.read(cartProvider), isEmpty);
+    });
+  });
 
   testWidgets(
       'hizli cift dokunma sadece bir gateway cagrisi yapar (yinelenen '

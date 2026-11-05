@@ -115,6 +115,7 @@ export { submitDineInOrder } from "./submitDineInOrder";
 export { respondToDineInOrderLines } from "./respondToDineInOrderLines";
 export { advanceDineInOrderStatus } from "./advanceDineInOrderStatus";
 export { refundDineInOrder } from "./refundDineInOrder";
+export { cancelMyPendingDineInOrder } from "./cancelMyPendingDineInOrder";
 
 // AP-3 Wave 1 SECURITY CORRECTION — the sole staff/POS read path for
 // tableSessions/guestSubAccounts/checks/checkAllocations (all four are

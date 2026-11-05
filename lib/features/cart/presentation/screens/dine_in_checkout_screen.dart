@@ -6,6 +6,8 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
+import '../../../../shared/widgets/cards/option_selection_card.dart';
+import '../../../../shared/widgets/layout/app_section_header.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../domain/models/cart_item.dart';
 import '../../../campaigns/domain/models/campaign.dart';
@@ -15,15 +17,23 @@ import '../../../loyalty/presentation/providers/loyalty_providers.dart';
 import '../../../orders/domain/models/order_id.dart';
 import '../../../orders/domain/models/order_model.dart';
 import '../../../orders/presentation/providers/orders_provider.dart';
+import '../../../qr/domain/identity/dine_in_sub_account_id.dart';
 import '../../../qr/presentation/providers/active_table_context_provider.dart';
 import '../../../qr/presentation/providers/table_guest_session_dependencies_provider.dart';
 import '../../../qr/presentation/widgets/table_context_badge.dart';
 import '../../data/submit_dine_in_order_gateway.dart';
+import '../../data/table_session_cart_firestore_client.dart';
 import '../providers/cart_provider.dart';
 import '../providers/dine_in_order_dependencies_provider.dart';
 import '../widgets/campaign_selection_card.dart';
 import '../widgets/catalog_reward_card.dart';
 import 'order_success_screen.dart';
+
+/// Self-Order QR Faz 4 — "Sadece Kendi Ürünlerimi Gönder" vs "Tüm Masayı
+/// Gönder" (23-rule plan §4). Only ever meaningful once the shared cart
+/// (Faz 3) actually holds more than one contributor — see
+/// [_DineInCheckoutScreenState._isMultiGuestCart].
+enum DineInSubmissionScope { ownItemsOnly, wholeTable }
 
 /// Checkout for a "Masada Sipariş" (dine-in QR) order — a separate,
 /// self-contained screen rather than a conditional branch woven through
@@ -88,6 +98,11 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
   /// doc comment for why an early, speculative read isn't worth adding).
   String? _guestDisplayName;
 
+  /// Self-Order QR Faz 4 — defaults to "only my own items," the safer
+  /// choice (never silently submits, and pays for, a tablemate's items
+  /// without an explicit switch).
+  DineInSubmissionScope _submissionScope = DineInSubmissionScope.ownItemsOnly;
+
   @override
   void initState() {
     super.initState();
@@ -125,6 +140,61 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
             ],
             note: item.note,
             excludedIngredients: item.removedIngredients,
+          ),
+    ];
+  }
+
+  /// Self-Order QR Faz 4 — `true` only once the shared cart (Faz 3)
+  /// genuinely holds more than one contributor; a solo guest never sees
+  /// the hybrid-submission choice at all, since both modes would submit
+  /// the exact same thing.
+  bool _isMultiGuestCart(List<CartItem> cartItems) {
+    final contributors =
+        cartItems.map((item) => item.addedBySubAccountId).toSet();
+    return contributors.length > 1;
+  }
+
+  /// `null` whenever there's no active table session, or nobody is
+  /// signed in to Firebase Auth yet — mirrors `DineInTableCartNotifier
+  /// ._currentSubAccountId`'s identical reasoning/guard.
+  String? get _myOwnSubAccountId {
+    final tableContext = ref.read(activeTableContextProvider);
+    if (tableContext == null) return null;
+    final uid = ref.read(technicalIdentityProviderProvider).currentUid;
+    if (uid == null) return null;
+    return deterministicIdentitySubAccountId(
+      tableSessionId: tableContext.session.id,
+      uid: uid,
+    );
+  }
+
+  /// The cart narrowed to whatever [_submissionScope] actually means —
+  /// "Tüm Masayı Gönder" is every line, unchanged; "Sadece Kendi
+  /// Ürünlerimi Gönder" keeps only this device's own lines (plus, purely
+  /// defensively, any line with no attribution at all, which should not
+  /// occur inside an active table session but is never silently dropped).
+  List<CartItem> _scopedCartItems(List<CartItem> cartItems) {
+    if (_submissionScope == DineInSubmissionScope.wholeTable) return cartItems;
+    final myId = _myOwnSubAccountId;
+    return cartItems
+        .where((item) =>
+            item.addedBySubAccountId == null ||
+            item.addedBySubAccountId == myId)
+        .toList();
+  }
+
+  /// The exact `tableSessionCarts` line ids this submission is about to
+  /// consume — sent to `submitDineInOrder` so it can delete them
+  /// atomically with order creation (Faz 4; see that gateway method's own
+  /// doc comment). A line with no attribution has no Firestore document
+  /// to delete in the first place.
+  List<String> _computeSubmittedCartLineIds(List<CartItem> scopedItems) {
+    return [
+      for (final item in scopedItems)
+        if (item.addedBySubAccountId != null)
+          deterministicCartLineId(
+            addedBySubAccountId: item.addedBySubAccountId!,
+            customizationsKey: item.customizationsKey,
           ),
     ];
   }
@@ -287,7 +357,12 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
     }
 
     final cartItems = ref.read(cartProvider);
-    if (cartItems.isEmpty) {
+    // Self-Order QR Faz 4 — "Sadece Kendi Ürünlerimi Gönder" narrows this
+    // before the empty check, so choosing that mode with nothing of my
+    // own in a tablemate-only cart correctly reads as "my scope is
+    // empty," not "the whole table's cart is empty."
+    final scopedItems = _scopedCartItems(cartItems);
+    if (scopedItems.isEmpty) {
       setState(() {
         _isSubmitting = false;
         _submitError = 'Sepetin boş.';
@@ -300,11 +375,12 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
       final result = await gateway.submit(
         submissionKey: _submissionKey,
         tableSessionId: tableContext.session.id,
-        items: _buildOrderItems(cartItems),
+        items: _buildOrderItems(scopedItems),
         customerNote: _noteController.text.trim(),
         selectedRewardId: _selectedRewardId,
         selectedCampaignId: _selectedCampaignId,
         guestDisplayName: _guestDisplayName,
+        submittedCartLineIds: _computeSubmittedCartLineIds(scopedItems),
       );
 
       final order = await ref
@@ -332,7 +408,13 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
               tableName: tableContext.tableName,
             ),
           );
-      ref.read(cartProvider.notifier).clearCart();
+      // Self-Order QR Faz 4 — no client-side `clearCart()` here anymore:
+      // `submitDineInOrder` deletes exactly the `submittedCartLineIds`
+      // lines server-side (Admin SDK), atomically with order creation.
+      // That already covers both hybrid modes correctly — including
+      // "Tüm Masayı Gönder," where a client-side `clearCart()` could
+      // only ever delete this device's OWN lines (the ownership-locked
+      // Security Rule applies regardless of which mode was chosen).
 
       // Boncuk Loyalty P7-D.1 — a catalog-reward redemption debits the
       // customer's Loyalty account; refresh their displayed balance/reward
@@ -530,6 +612,55 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
                       ],
                     ),
                   ),
+                  // Self-Order QR Faz 4 — "Sadece Kendi Ürünlerimi Gönder"
+                  // vs "Tüm Masayı Gönder." Only shown once the shared
+                  // cart (Faz 3) genuinely holds more than one
+                  // contributor — a solo guest has nothing to choose
+                  // between.
+                  if (_isMultiGuestCart(cartItems)) ...[
+                    const SizedBox(height: AppSpacing.lg),
+                    AppCard(
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const AppSectionHeader(
+                            title: 'Bu siparişte kimin ürünleri gönderilsin?',
+                            subtitle:
+                                'Masadaki diğer misafirler de bu sepete ürün '
+                                'ekledi.',
+                            isRequired: true,
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          OptionSelectionCard(
+                            name: 'Sadece Kendi Ürünlerimi Gönder',
+                            extraPrice: 0,
+                            isSelected: _submissionScope ==
+                                DineInSubmissionScope.ownItemsOnly,
+                            onTap: () => setState(() => _submissionScope =
+                                DineInSubmissionScope.ownItemsOnly),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          OptionSelectionCard(
+                            name: 'Tüm Masayı Gönder',
+                            extraPrice: 0,
+                            isSelected: _submissionScope ==
+                                DineInSubmissionScope.wholeTable,
+                            onTap: () => setState(() => _submissionScope =
+                                DineInSubmissionScope.wholeTable),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Text(
+                            'Seçilen tutar: '
+                            '${_scopedCartItems(cartItems).fold<double>(0, (sum, item) => sum + item.totalRowPrice).toStringAsFixed(0)} TL',
+                            style: AppTypography.bodyMedium.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   // Boncuk Loyalty Program P7-D.1 (2026-08-24) — real
                   // customer only; an anonymous table guest never sees this
                   // card at all, not even a disabled/zero state.

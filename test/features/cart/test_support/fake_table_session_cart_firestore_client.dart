@@ -117,6 +117,23 @@ class FakeTableSessionCartFirestoreClient
     _emitCurrent(tableSessionId);
   }
 
+  /// Test-only convenience — a synchronous snapshot of the current lines,
+  /// for assertions that don't want to deal with [watchLines]' stream.
+  List<CartItem> linesFor(String tableSessionId) {
+    return _linesByTableSession[tableSessionId]?.values.toList() ??
+        const <CartItem>[];
+  }
+
+  /// Test-only convenience — simulates `submitDineInOrder`'s own atomic,
+  /// Admin-SDK deletion of the exact lines a submission consumed (Faz 4).
+  /// Takes the raw Firestore document id directly (unlike [removeLine],
+  /// which re-derives it) since that's exactly what the real callable
+  /// receives from the client and deletes without re-deriving anything.
+  void removeLineById(String tableSessionId, String lineId) {
+    _linesByTableSession[tableSessionId]?.remove(lineId);
+    _emitCurrent(tableSessionId);
+  }
+
   /// Test-only convenience — seeds lines directly without going through
   /// [upsertLine]'s merge semantics, for tests that just need a fixed
   /// starting cart.

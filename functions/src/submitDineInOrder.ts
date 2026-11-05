@@ -132,6 +132,36 @@ function sanitizeTableSessionId(raw: unknown): string {
   return raw;
 }
 
+const MAX_SUBMITTED_CART_LINE_IDS = MAX_ITEMS_PER_ORDER;
+
+/**
+ * Self-Order QR Faz 4 — which `tableSessionCarts/{tableSessionId}/lines`
+ * documents this exact submission consumed, so the write phase below can
+ * delete precisely those lines once the order is created. The CLIENT
+ * computes each id itself (`deterministicCartLineId`, already known from
+ * adding the line in the first place) — the server never re-derives it,
+ * it only ever deletes an id the caller names.
+ *
+ * Deliberately **not** authorization-sensitive: deleting the wrong id (or
+ * none at all) only leaves a stale display-only cart line behind — see
+ * `firestore.rules`' own comment on why `tableSessionCarts` is never
+ * treated as authoritative. Admin SDK deletes bypass that collection's
+ * ownership-locked Security Rule entirely, which is exactly what lets
+ * "Tüm Masayı Gönder" clear lines the submitting caller doesn't own — a
+ * client could never do that directly.
+ */
+function sanitizeSubmittedCartLineIds(raw: unknown): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) invalid("submittedCartLineIds must be an array.");
+  if (raw.length > MAX_SUBMITTED_CART_LINE_IDS) invalid("submittedCartLineIds has too many entries.");
+  return raw.map((id, index) => {
+    if (typeof id !== "string" || id.length === 0) {
+      invalid(`submittedCartLineIds[${index}] must be a non-empty string.`);
+    }
+    return id;
+  });
+}
+
 function sanitizeCustomerNote(raw: unknown): string {
   if (raw === undefined || raw === null) return "";
   if (typeof raw !== "string") invalid("customerNote must be a string.");
@@ -513,6 +543,11 @@ export const submitDineInOrder = onCall(
     const tableSessionId = mode === "guestSession" ? sanitizeTableSessionId(data.tableSessionId) : "";
     const rawItems = parseItems(data.items);
     if (rawItems.length > MAX_ITEMS_PER_ORDER) invalid("too many items in one order.");
+    // Self-Order QR Faz 4 — guestSession mode only; staffEntry has no
+    // shared-cart concept to clear.
+    const submittedCartLineIds = mode === "guestSession"
+      ? sanitizeSubmittedCartLineIds(data.submittedCartLineIds)
+      : [];
     const customerNote = sanitizeCustomerNote(data.customerNote);
     const requestedBoncukAmount = sanitizeRequestedBoncukAmountShapeOnly(data.requestedBoncukAmount);
     const selectedRewardId = sanitizeSelectedRewardId(data.selectedRewardId);
@@ -1304,6 +1339,19 @@ export const submitDineInOrder = onCall(
           lineStatus,
         }),
       );
+
+      // Self-Order QR Faz 4 — clears exactly the shared-cart lines this
+      // submission consumed (whichever of "Sadece Kendi Ürünlerimi
+      // Gönder"/"Tüm Masayı Gönder" the client chose), atomically with
+      // order creation. Admin SDK — bypasses `tableSessionCarts`'s own
+      // ownership-locked Security Rule, which a client-side delete could
+      // never do for another guest's line.
+      for (const lineId of submittedCartLineIds) {
+        tx.delete(
+          db.collection("tableSessionCarts").doc(resolvedTableSessionId)
+            .collection("lines").doc(lineId),
+        );
+      }
 
       if (mode === "staffEntry") {
         writeAuditEvent({

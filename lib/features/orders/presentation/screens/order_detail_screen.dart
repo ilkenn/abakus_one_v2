@@ -4,7 +4,11 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/theme/app_radius.dart';
+import '../../data/cancel_dine_in_order_gateway.dart';
+import '../../domain/models/order_channel.dart';
 import '../../domain/models/order_model.dart';
+import '../../domain/models/order_status.dart';
+import '../providers/cancel_dine_in_order_dependencies_provider.dart';
 import '../providers/orders_provider.dart';
 
 class OrderDetailScreen extends ConsumerStatefulWidget {
@@ -19,6 +23,11 @@ class OrderDetailScreen extends ConsumerStatefulWidget {
 class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   String? _selectedReason;
   final TextEditingController _customReasonController = TextEditingController();
+
+  /// Self-Order QR Faz 4 — true only while the real
+  /// `cancelMyPendingDineInOrder` call is in flight; disables the cancel
+  /// button so a second tap can't fire a duplicate request.
+  bool _isCancellingDineInOrder = false;
 
   // Değerlendirme State'leri
   int _overallRating = 0;
@@ -50,6 +59,67 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     _commentController.dispose();
     _courierCommentController.dispose();
     super.dispose();
+  }
+
+  /// Self-Order QR Faz 4 — a simple Evet/Hayır confirm, no reason picker:
+  /// mirrors `cancelMyPendingDineInOrder`'s own design (`terminalReasonCode:
+  /// null`, matching `cancelTakeawayOrder.ts`'s identical customer-self-
+  /// cancel precedent) — a customer cancelling their own pending order is
+  /// not an operational incident needing a staff-facing reason taxonomy.
+  Future<void> _showRealDineInCancelDialog(
+    BuildContext context,
+    OrderModel currentOrder,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Siparişi İptal Et'),
+        content: const Text(
+          'Bu siparişi iptal etmek istediğinize emin misiniz?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Siparişi İptal Et'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isCancellingDineInOrder = true);
+    try {
+      await ref
+          .read(cancelDineInOrderGatewayProvider)
+          .cancel(orderId: currentOrder.id);
+      ref.invalidate(ordersProvider);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Siparişiniz başarıyla iptal edilmiştir.'),
+        ),
+      );
+    } on CancelDineInOrderException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error.code == 'failed-precondition'
+                ? 'Bu sipariş artık müşteri tarafından iptal edilemez — '
+                    'zaten yanıtlanmış.'
+                : 'Sipariş iptal edilirken bir sorun oluştu. Lütfen tekrar '
+                    'dene.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isCancellingDineInOrder = false);
+    }
   }
 
   void _showCancelDialog(BuildContext context, OrderModel currentOrder) {
@@ -279,6 +349,19 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     final bool canCancel = freshOrder.status == 'Onay Bekliyor' ||
         freshOrder.status == 'Bekliyor' ||
         freshOrder.status == 'Onaylandı';
+
+    // Self-Order QR Faz 4 — a real, server-authoritative cancel for a
+    // dine-in order, gated on the REAL lifecycle enum, never the legacy
+    // Turkish label `canCancel` above uses: that label collapses both
+    // `pendingConfirmation` AND `confirmed` into "cancellable," but the
+    // real rule is "until kitchen/kasa onayına kadar" — `confirmed` means
+    // staff has already responded, so it must NOT be cancellable here
+    // even though the legacy label alone can't tell the two apart.
+    final bool isDineInOrder = freshOrder.channel == OrderChannel.dineInQr;
+    final bool dineInCustomerCancellable = isDineInOrder &&
+        freshOrder.lifecycleStatus == OrderStatus.pendingConfirmation;
+    final bool showCancelButton =
+        isDineInOrder ? dineInCustomerCancellable : canCancel;
 
     return Scaffold(
       appBar: AppBar(
@@ -773,7 +856,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 ],
               ),
             ),
-            if (canCancel)
+            if (showCancelButton)
               Container(
                 padding: const EdgeInsets.all(AppSpacing.xl),
                 decoration: const BoxDecoration(
@@ -783,7 +866,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 child: SizedBox(
                   width: double.infinity,
                   child: OutlinedButton(
-                    onPressed: () => _showCancelDialog(context, freshOrder),
+                    onPressed: _isCancellingDineInOrder
+                        ? null
+                        : () => isDineInOrder
+                            ? _showRealDineInCancelDialog(context, freshOrder)
+                            : _showCancelDialog(context, freshOrder),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.red,
                       side: const BorderSide(color: Colors.red),

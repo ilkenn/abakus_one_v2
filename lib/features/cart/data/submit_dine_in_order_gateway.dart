@@ -162,6 +162,14 @@ abstract interface class SubmitDineInOrderGateway {
   /// until a name is supplied. Never used for `mode: "staffEntry"` (that
   /// flow's own sub-account naming is a POS-side concern, not this
   /// customer-facing gateway's).
+  /// Self-Order QR Faz 4 — the exact `tableSessionCarts/{tableSessionId}/
+  /// lines` document ids this submission consumed (whichever of "Sadece
+  /// Kendi Ürünlerimi Gönder"/"Tüm Masayı Gönder" the customer chose,
+  /// computed by `DineInCheckoutScreen` via `deterministicCartLineId`).
+  /// The server deletes exactly these once the order is created, in the
+  /// same transaction — including a tablemate's line, which a direct
+  /// client delete could never do (`firestore.rules`' ownership lock on
+  /// that collection). Empty/omitted leaves the shared cart untouched.
   Future<SubmitDineInOrderResult> submit({
     required String submissionKey,
     required String tableSessionId,
@@ -170,6 +178,7 @@ abstract interface class SubmitDineInOrderGateway {
     String? selectedRewardId,
     String? selectedCampaignId,
     String? guestDisplayName,
+    List<String> submittedCartLineIds = const [],
   });
 }
 
@@ -188,6 +197,7 @@ class FirebaseSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     String? selectedRewardId,
     String? selectedCampaignId,
     String? guestDisplayName,
+    List<String> submittedCartLineIds = const [],
   }) async {
     final payload = {
       'submissionKey': submissionKey,
@@ -200,6 +210,8 @@ class FirebaseSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
       // "absent == null" contract exactly.
       if (selectedCampaignId != null) 'selectedCampaignId': selectedCampaignId,
       if (guestDisplayName != null) 'guestDisplayName': guestDisplayName,
+      if (submittedCartLineIds.isNotEmpty)
+        'submittedCartLineIds': submittedCartLineIds,
     };
     // 2026-10-30 — same Windows REST-callable bridge as `cash_register_
     // gateway.dart`/`payment_gateway.dart` — `cloud_functions` has no
