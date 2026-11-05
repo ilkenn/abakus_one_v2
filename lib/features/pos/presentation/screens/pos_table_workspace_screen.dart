@@ -19,11 +19,16 @@ import '../../../menu/domain/models/menu_category.dart';
 import '../../../menu/domain/models/menu_product.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
 import '../../../menu/presentation/providers/menu_catalog_provider.dart';
+import '../../../orders/domain/models/order_id.dart';
+import '../../../orders/presentation/providers/orders_provider.dart';
 import '../../data/payment_gateway.dart';
 import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
+import '../../domain/kitchen/kitchen_ticket_mapper.dart';
+import '../../domain/kitchen/kitchen_ticket_type.dart';
 import '../providers/actor_session_provider.dart';
 import '../providers/kds_dependencies_provider.dart';
+import '../providers/kitchen_ticket_dependencies_provider.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
 import '../widgets/pos_product_customization_dialog.dart';
@@ -95,6 +100,44 @@ class _PosTableWorkspaceScreenState
     }
   }
 
+  /// Self-Order QR Faz 5 (23-rule plan §6, "onay sonrası mutfak yazdırma")
+  /// — fires right after a successful line ACCEPT (never on reject). Never
+  /// allowed to fail the accept action itself: a printer being
+  /// unreachable/misconfigured has no bearing on whether the kitchen
+  /// should have already been told about an accepted line through other
+  /// means (KDS board) — this is best-effort, additional output, exactly
+  /// like `NoOpKitchenTicketPrintProvider`'s own "no security consequence
+  /// if absent" framing.
+  Future<void> _printKitchenTicketForAcceptedLine(
+    PosDeviceContext ctx,
+    String orderId,
+  ) async {
+    try {
+      final order = await ref
+          .read(canonicalOrderRepositoryProvider)
+          .findById(OrderId(orderId));
+      if (order == null) return;
+      final branch =
+          await ref.read(branchRepositoryProvider).findById(ctx.branchId);
+      final printerSettings =
+          await ref.read(receiptPrinterSettingsProvider.future);
+      final ticket = KitchenTicketMapper.fromOrder(
+        ticketId: ref.read(kitchenTicketIdGeneratorProvider).nextTicketId(),
+        order: order,
+        type: KitchenTicketType.initial,
+        restaurantName: 'Abaküs',
+        branchName: branch?.name ?? ctx.branchId,
+        firedAt: DateTime.now(),
+      );
+      await ref.read(printKitchenTicketProvider).call(
+            ticket: ticket,
+            printerName: printerSettings.printerName,
+          );
+    } catch (_) {
+      // Disclosed, deliberate swallow — see this method's own doc comment.
+    }
+  }
+
   Future<T?> _runAction<T>(Future<T> Function() action) async {
     setState(() {
       _busy = true;
@@ -162,12 +205,17 @@ class _PosTableWorkspaceScreenState
       checkId: _openedCheckId,
       busy: _busy,
       actionError: _actionError,
-      onAcceptReject: (orderId, lineIndex, accept) => _runAction(
-        () => ref.read(posActionGatewayProvider).respondToOrderLines(
+      onAcceptReject: (orderId, lineIndex, accept) => _runAction(() async {
+        final result =
+            await ref.read(posActionGatewayProvider).respondToOrderLines(
           orderId: orderId,
           decisions: [(lineIndex: lineIndex, accept: accept)],
-        ),
-      ),
+        );
+        if (accept) {
+          await _printKitchenTicketForAcceptedLine(ctx, orderId);
+        }
+        return result;
+      }),
       onPropose: (orderId, lineIndex, productId, quantity, reasonCode,
               reasonMessage) =>
           _runAction(

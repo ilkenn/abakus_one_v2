@@ -63,6 +63,7 @@ class _FakeTableGuestSessionGateway implements TableGuestSessionGateway {
   Future<void> createServiceRequest({
     required String guestSessionId,
     required ServiceRequestType type,
+    String? note,
   }) async {
     throw UnimplementedError('Not used by TableGuestEntryScreen.');
   }

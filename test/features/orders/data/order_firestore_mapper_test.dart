@@ -773,6 +773,48 @@ void main() {
     });
 
     test(
+        'Self-Order QR Faz 5 — orderedByName round-trips through Firestore '
+        'exactly, and reads back null for a pre-Faz-5 document with no '
+        'such key at all', () async {
+      final order = await SubmitCustomerOrder(
+        clock: FakeClock(DateTime(2026, 11, 5, 19, 30)),
+        identityProvider: InMemoryOrderIdentityProvider(),
+        repository: InMemoryCanonicalOrderRepository(),
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+      ).call(
+        cartItems: const [
+          CartItem(id: 'p1', name: 'Bowl', desc: '', price: 100.0, quantity: 1),
+        ],
+        customerId: 'uid-1',
+        channel: OrderChannel.dineInQr,
+      );
+      final withName = order.copyWith(lineApprovalStates: const [
+        OrderLineApprovalState(
+          lineIndex: 0,
+          status: DineInLineStatus.accepted,
+          orderedByName: 'Ahmet',
+        ),
+      ]);
+
+      final data =
+          OrderFirestoreMapper.toFirestore(withName, organizationId: 'org-1');
+      final restored =
+          OrderFirestoreMapper.fromFirestore(Map<String, dynamic>.from(data));
+
+      expect((data['lines'] as List).single['orderedByName'], 'Ahmet');
+      expect(restored.lineApprovalStates.single.orderedByName, 'Ahmet');
+
+      final rawLines = List<Map<String, dynamic>>.from(
+          (data['lines'] as List).map((l) => Map<String, dynamic>.from(l)));
+      rawLines[0].remove('orderedByName');
+      final preF5Data = Map<String, dynamic>.from(data)..['lines'] = rawLines;
+      final restoredPreF5 = OrderFirestoreMapper.fromFirestore(preF5Data);
+
+      expect(restoredPreF5.lineApprovalStates.single.orderedByName, isNull);
+    });
+
+    test(
         'a proposedChange line with a full counter-proposal snapshot '
         'round-trips every field exactly, including a NEGATIVE price '
         'difference (a cheaper substitute)', () async {

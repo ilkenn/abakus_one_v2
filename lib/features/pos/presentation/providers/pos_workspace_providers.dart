@@ -9,6 +9,7 @@ import '../../../admin/presentation/providers/trusted_device_session_providers.d
 import '../../../printing/data/windows_raw_printer_adapter.dart';
 import '../../application/use_cases/capture_offline_cash_payment.dart';
 import '../../application/use_cases/ensure_offline_lease.dart';
+import '../../application/use_cases/print_kitchen_ticket.dart';
 import '../../application/use_cases/print_table_receipt.dart';
 import '../../application/use_cases/sync_offline_payment_outbox.dart';
 import '../../data/cash_register_gateway.dart';
@@ -149,6 +150,16 @@ final receiptPrinterSettingsProvider =
 final printTableReceiptProvider = Provider<PrintTableReceipt>((ref) {
   return PrintTableReceipt(
     operationalViewGateway: ref.watch(posOperationalViewGatewayProvider),
+    rawPrinterAdapter: ref.watch(rawPrinterAdapterProvider),
+  );
+});
+
+/// Self-Order QR Faz 5 — same Windows printer queue as the till receipt
+/// (`ReceiptPrinterSettings`'s own "POS80 Printer" default; the 23-rule
+/// plan's own §6 names this exact queue for the kitchen ticket too, not a
+/// separate device).
+final printKitchenTicketProvider = Provider<PrintKitchenTicket>((ref) {
+  return PrintKitchenTicket(
     rawPrinterAdapter: ref.watch(rawPrinterAdapterProvider),
   );
 });

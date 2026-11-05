@@ -30,12 +30,20 @@ abstract final class KitchenTicketMapper {
     final lines = <KitchenTicketLine>[];
     for (var i = 0; i < order.lines.length; i++) {
       final orderLine = order.lines[i];
+      // Self-Order QR Faz 5 — `lineApprovalStates` is index-paired with
+      // `lines` (see that class's own doc comment); a channel without the
+      // concept at all (every non-dine-in order) has an empty list here,
+      // so this always falls back to `null` for them.
+      final approvalState = order.lineApprovalStates
+          .where((state) => state.lineIndex == i)
+          .firstOrNull;
       lines.add(KitchenTicketLine(
         id: '$ticketId-line-$i',
         productName: orderLine.productName,
         quantity: orderLine.quantity,
         ingredientSummary: _ingredientSummaryFor(orderLine),
         note: orderLine.kitchenNote,
+        orderedByName: approvalState?.orderedByName,
       ));
     }
 

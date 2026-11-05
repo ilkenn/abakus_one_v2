@@ -30,6 +30,7 @@ class KitchenTicketLine {
     /// of free-text warnings, not fabricated, so the ticket layout is
     /// ready the moment that data source exists.
     this.warnings = const [],
+    this.orderedByName,
   });
 
   final String id;
@@ -38,4 +39,10 @@ class KitchenTicketLine {
   final List<String> ingredientSummary;
   final String note;
   final List<String> warnings;
+
+  /// Self-Order QR Faz 5 (23-rule plan §6) — "Siparişi Veren Kişi Adı".
+  /// `null` for every non-`dineInQr` order and for a `dineInQr` order
+  /// predating this field — see `KitchenTicketMapper`'s own doc comment
+  /// for the "whole-table submission" scope caveat.
+  final String? orderedByName;
 }

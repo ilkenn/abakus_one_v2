@@ -47,5 +47,17 @@ void main() {
     expect(tr.serviceRequestSent, isNot(en.serviceRequestSent));
     expect(
         tr.serviceRequestFailedGeneric, isNot(en.serviceRequestFailedGeneric));
+    // Self-Order QR Faz 5.
+    expect(tr.requestHelpTooltip, isNot(en.requestHelpTooltip));
+    expect(tr.requestSheetTitle, isNot(en.requestSheetTitle));
+    expect(tr.requestTeaOption, isNot(en.requestTeaOption));
+    expect(tr.requestBillOption, isNot(en.requestBillOption));
+    expect(tr.requestAshtrayOrServiceOption,
+        isNot(en.requestAshtrayOrServiceOption));
+    expect(tr.requestClearTableOption, isNot(en.requestClearTableOption));
+    expect(tr.requestCustomNoteOption, isNot(en.requestCustomNoteOption));
+    expect(tr.customNoteInputHint, isNot(en.customNoteInputHint));
+    expect(tr.customNoteSendLabel, isNot(en.customNoteSendLabel));
+    expect(tr.dismissLabel, isNot(en.dismissLabel));
   });
 }

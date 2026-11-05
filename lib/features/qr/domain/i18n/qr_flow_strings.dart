@@ -36,6 +36,16 @@ class QrFlowStrings {
     required this.billTooltip,
     required this.serviceRequestSent,
     required this.serviceRequestFailedGeneric,
+    required this.requestHelpTooltip,
+    required this.requestSheetTitle,
+    required this.requestTeaOption,
+    required this.requestBillOption,
+    required this.requestAshtrayOrServiceOption,
+    required this.requestClearTableOption,
+    required this.requestCustomNoteOption,
+    required this.customNoteInputHint,
+    required this.customNoteSendLabel,
+    required this.dismissLabel,
   });
 
   final String welcomeTitle;
@@ -59,6 +69,23 @@ class QrFlowStrings {
   final String billTooltip;
   final String serviceRequestSent;
   final String serviceRequestFailedGeneric;
+
+  /// Self-Order QR Faz 5 — the single "Talep İlet" button's own tooltip,
+  /// opening the bottom sheet with all 5 options below. [waiterTooltip]/
+  /// [billTooltip] are no longer referenced by any screen (the two
+  /// separate tap targets they labeled were consolidated into this one
+  /// button) — kept rather than removed so this phase touches nothing
+  /// else about this class's existing shape/tests.
+  final String requestHelpTooltip;
+  final String requestSheetTitle;
+  final String requestTeaOption;
+  final String requestBillOption;
+  final String requestAshtrayOrServiceOption;
+  final String requestClearTableOption;
+  final String requestCustomNoteOption;
+  final String customNoteInputHint;
+  final String customNoteSendLabel;
+  final String dismissLabel;
 
   static const QrFlowStrings tr = QrFlowStrings._(
     welcomeTitle: 'Abaküs Street Food\'a Hoş Geldiniz',
@@ -88,6 +115,16 @@ class QrFlowStrings {
     billTooltip: 'Hesap İste',
     serviceRequestSent: 'İsteğiniz iletildi.',
     serviceRequestFailedGeneric: 'İsteğiniz gönderilirken bir sorun oluştu.',
+    requestHelpTooltip: 'Talep İlet',
+    requestSheetTitle: 'Nasıl yardımcı olabiliriz?',
+    requestTeaOption: 'Çay İste',
+    requestBillOption: 'Hesap İste',
+    requestAshtrayOrServiceOption: 'Kül Tablası / Servis İste',
+    requestClearTableOption: 'Masayı Temizle',
+    requestCustomNoteOption: 'Özel Not',
+    customNoteInputHint: 'İsteğinizi buraya yazın...',
+    customNoteSendLabel: 'Gönder',
+    dismissLabel: 'Vazgeç',
   );
 
   static const QrFlowStrings en = QrFlowStrings._(
@@ -123,6 +160,16 @@ class QrFlowStrings {
     billTooltip: 'Request Bill',
     serviceRequestSent: 'Your request has been sent.',
     serviceRequestFailedGeneric: 'Something went wrong sending your request.',
+    requestHelpTooltip: 'Send a Request',
+    requestSheetTitle: 'How can we help?',
+    requestTeaOption: 'Request Tea',
+    requestBillOption: 'Request Bill',
+    requestAshtrayOrServiceOption: 'Request Ashtray / Service',
+    requestClearTableOption: 'Clear the Table',
+    requestCustomNoteOption: 'Custom Note',
+    customNoteInputHint: 'Write your request here...',
+    customNoteSendLabel: 'Send',
+    dismissLabel: 'Cancel',
   );
 
   static QrFlowStrings of(GuestLocale locale) => switch (locale) {

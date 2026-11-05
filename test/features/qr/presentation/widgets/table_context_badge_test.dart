@@ -15,6 +15,7 @@ import 'package:abakus_one_v2/features/qr/presentation/widgets/table_context_bad
 class _FakeTableGuestSessionGateway implements TableGuestSessionGateway {
   String? lastGuestSessionId;
   ServiceRequestType? lastType;
+  String? lastNote;
   int callCount = 0;
 
   @override
@@ -29,10 +30,12 @@ class _FakeTableGuestSessionGateway implements TableGuestSessionGateway {
   Future<void> createServiceRequest({
     required String guestSessionId,
     required ServiceRequestType type,
+    String? note,
   }) async {
     callCount++;
     lastGuestSessionId = guestSessionId;
     lastType = type;
+    lastNote = note;
   }
 }
 
@@ -149,13 +152,50 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byIcon(Icons.room_service_outlined));
+    await tester.tap(find.byIcon(Icons.campaign_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Çay İste'));
     await tester.pumpAndSettle();
 
     expect(gateway.callCount, 1);
     expect(gateway.lastGuestSessionId, 'tsession-1');
     expect(gateway.lastType, ServiceRequestType.callWaiter);
     expect(find.text('İsteğiniz iletildi.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Talep Ilet -> Ozel Not, not girilip Gonder\'e basinca customNote '
+      'turunde ve dogru notla istegi gonderir', (tester) async {
+    final gateway = _FakeTableGuestSessionGateway();
+    final firestoreClient = _FakeTableGuestSessionFirestoreClient();
+    final container = ProviderContainer(overrides: [
+      tableGuestSessionGatewayProvider.overrideWithValue(gateway),
+      tableGuestSessionFirestoreClientProvider
+          .overrideWithValue(firestoreClient),
+    ]);
+    addTearDown(container.dispose);
+    container.read(activeTableContextProvider.notifier).set(_fakeContext());
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: Scaffold(body: TableContextBadge()),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byIcon(Icons.campaign_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Özel Not'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Lütfen peçete getirin');
+    await tester.tap(find.text('Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.callCount, 1);
+    expect(gateway.lastType, ServiceRequestType.customNote);
+    expect(gateway.lastNote, 'Lütfen peçete getirin');
   });
 
   // 2026-09-29 — Client Staleness Check: an early, visual-only warning
@@ -188,8 +228,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Abaküs Ortaköy · Masa 12'), findsNothing);
-      expect(find.byIcon(Icons.room_service_outlined), findsNothing);
-      expect(find.byIcon(Icons.receipt_long_outlined), findsNothing);
+      expect(find.byIcon(Icons.campaign_outlined), findsNothing);
     });
 
     testWidgets(
@@ -287,8 +326,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('Abaküs Ortaköy · Masa 12'), findsOneWidget);
-      expect(find.byIcon(Icons.room_service_outlined), findsOneWidget);
-      expect(find.byIcon(Icons.receipt_long_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.campaign_outlined), findsOneWidget);
     });
   });
 
@@ -342,9 +380,19 @@ void main() {
       await tester.tap(find.text('🇬🇧'));
       await tester.pump();
 
-      expect(find.byTooltip('Call Waiter'), findsOneWidget);
-      expect(find.byTooltip('Request Bill'), findsOneWidget);
-      expect(find.byTooltip('Garson Çağır'), findsNothing);
+      expect(find.byTooltip('Send a Request'), findsOneWidget);
+      expect(find.byTooltip('Talep İlet'), findsNothing);
+
+      await tester.tap(find.byIcon(Icons.campaign_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('How can we help?'), findsOneWidget);
+      expect(find.text('Request Tea'), findsOneWidget);
+      expect(find.text('Request Bill'), findsOneWidget);
+      expect(find.text('Request Ashtray / Service'), findsOneWidget);
+      expect(find.text('Clear the Table'), findsOneWidget);
+      expect(find.text('Custom Note'), findsOneWidget);
+      expect(find.text('Çay İste'), findsNothing);
     });
 
     testWidgets(

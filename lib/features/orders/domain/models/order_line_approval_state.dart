@@ -24,6 +24,7 @@ class OrderLineApprovalState {
     required this.lineIndex,
     required this.status,
     this.counterProposal,
+    this.orderedByName,
   });
 
   final int lineIndex;
@@ -36,15 +37,26 @@ class OrderLineApprovalState {
   /// proposal.
   final DineInCounterProposal? counterProposal;
 
+  /// Self-Order QR Faz 5 (23-rule plan §6 kitchen-ticket format,
+  /// "Siparişi Veren Kişi Adı") — the name `submitDineInOrder.ts` resolved
+  /// for whoever submitted this order, denormalized onto every line at
+  /// creation time (see that file's own `resolvedOrderedByName` doc
+  /// comment for the "whole-table submission" scope caveat). `null` for
+  /// every non-`dineInQr` order, and for a `dineInQr` order predating this
+  /// field.
+  final String? orderedByName;
+
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other is OrderLineApprovalState &&
             other.lineIndex == lineIndex &&
             other.status == status &&
-            other.counterProposal == counterProposal);
+            other.counterProposal == counterProposal &&
+            other.orderedByName == orderedByName);
   }
 
   @override
-  int get hashCode => Object.hash(lineIndex, status, counterProposal);
+  int get hashCode =>
+      Object.hash(lineIndex, status, counterProposal, orderedByName);
 }

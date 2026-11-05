@@ -2,6 +2,8 @@ import 'package:abakus_one_v2/features/orders/domain/models/order.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_line.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/dine_in_line_status.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_line_approval_state.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_line_modifier_selection.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_number.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
@@ -258,6 +260,72 @@ void main() {
       );
 
       expect(ticket.lines.single.ingredientSummary, isEmpty);
+    });
+  });
+
+  group('KitchenTicketMapper.fromOrder — orderedByName (Self-Order QR Faz 5)',
+      () {
+    test(
+        'lineApprovalStates.orderedByName taniyorsa, index-eslesen satira '
+        'aktarilir', () {
+      final line = OrderLine.create(
+        productId: 'p1',
+        productName: 'Mexifit Bowl',
+        quantity: 1,
+        unitPrice: Money.fromWhole(194, Currency.tryLira),
+        taxRate: TaxPolicy.defaultRate,
+      );
+      final order = Order(
+        id: OrderId('order-1'),
+        orderNumber: OrderNumber('DI-00000001'),
+        status: OrderStatus.pendingConfirmation,
+        channel: OrderChannel.dineInQr,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+        tableId: 'table-1',
+        lines: [line],
+        lineApprovalStates: const [
+          OrderLineApprovalState(
+            lineIndex: 0,
+            status: DineInLineStatus.accepted,
+            orderedByName: 'Ahmet',
+          ),
+        ],
+        pricing: PriceCalculator.calculate(
+            lines: [line], currency: Currency.tryLira),
+        timestamps: OrderTimestamps(created: DateTime(2026, 11, 5)),
+      );
+
+      final ticket = KitchenTicketMapper.fromOrder(
+        ticketId: 'ticket-3',
+        order: order,
+        type: KitchenTicketType.initial,
+        restaurantName: 'Test Restaurant',
+        branchName: 'Merkez Şube',
+        firedAt: DateTime(2026, 11, 5, 12, 0),
+      );
+
+      expect(ticket.lines.single.orderedByName, 'Ahmet');
+    });
+
+    test(
+        'lineApprovalStates bos ise (bu alandan once olusturulmus bir '
+        'siparis) orderedByName null kalir, hata firlatmaz', () {
+      final order = _buildOrder(
+        channel: OrderChannel.dineInQr,
+        status: OrderStatus.pendingConfirmation,
+      );
+
+      final ticket = KitchenTicketMapper.fromOrder(
+        ticketId: 'ticket-4',
+        order: order,
+        type: KitchenTicketType.initial,
+        restaurantName: 'Test Restaurant',
+        branchName: 'Merkez Şube',
+        firedAt: DateTime(2026, 7, 28, 12, 0),
+      );
+
+      expect(ticket.lines.single.orderedByName, isNull);
     });
   });
 }

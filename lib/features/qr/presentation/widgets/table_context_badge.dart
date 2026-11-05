@@ -59,13 +59,17 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
   }
 
   Future<void> _requestService(
-      String guestSessionId, ServiceRequestType type) async {
+    String guestSessionId,
+    ServiceRequestType type, {
+    String? note,
+  }) async {
     if (_busyType != null) return;
     setState(() => _busyType = type);
     try {
       await ref.read(tableGuestSessionGatewayProvider).createServiceRequest(
             guestSessionId: guestSessionId,
             type: type,
+            note: note,
           );
       if (!mounted) return;
       final strings = QrFlowStrings.of(ref.read(guestLocaleProvider));
@@ -86,6 +90,117 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
     } finally {
       if (mounted) setState(() => _busyType = null);
     }
+  }
+
+  /// Self-Order QR Faz 5 (23-rule plan §5) — the single "Talep İlet" entry
+  /// point: a bottom sheet listing all 5 options. Tapping "Özel Not"
+  /// swaps the sheet's own content for a text field + send button
+  /// (`StatefulBuilder`-managed) rather than opening a second, stacked
+  /// dialog on top of this one.
+  void _openRequestSheet(
+    BuildContext context,
+    String guestSessionId,
+    QrFlowStrings strings,
+  ) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        bool showNoteInput = false;
+        final noteController = TextEditingController();
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            void requestAndClose(ServiceRequestType type, {String? note}) {
+              Navigator.pop(sheetContext);
+              _requestService(guestSessionId, type, note: note);
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      strings.requestSheetTitle,
+                      style: AppTypography.titleMedium.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    if (!showNoteInput) ...[
+                      _RequestOptionRow(
+                        icon: Icons.local_cafe_outlined,
+                        label: strings.requestTeaOption,
+                        onTap: () =>
+                            requestAndClose(ServiceRequestType.callWaiter),
+                      ),
+                      _RequestOptionRow(
+                        icon: Icons.receipt_long_outlined,
+                        label: strings.requestBillOption,
+                        onTap: () =>
+                            requestAndClose(ServiceRequestType.requestBill),
+                      ),
+                      _RequestOptionRow(
+                        icon: Icons.cleaning_services_outlined,
+                        label: strings.requestAshtrayOrServiceOption,
+                        onTap: () => requestAndClose(
+                          ServiceRequestType.ashtrayOrService,
+                        ),
+                      ),
+                      _RequestOptionRow(
+                        icon: Icons.table_bar_outlined,
+                        label: strings.requestClearTableOption,
+                        onTap: () =>
+                            requestAndClose(ServiceRequestType.clearTable),
+                      ),
+                      _RequestOptionRow(
+                        icon: Icons.sticky_note_2_outlined,
+                        label: strings.requestCustomNoteOption,
+                        onTap: () => setSheetState(() => showNoteInput = true),
+                      ),
+                    ] else ...[
+                      TextField(
+                        controller: noteController,
+                        autofocus: true,
+                        maxLength: 300,
+                        maxLines: 3,
+                        decoration: InputDecoration(
+                          hintText: strings.customNoteInputHint,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(sheetContext),
+                            child: Text(strings.dismissLabel),
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          ElevatedButton(
+                            onPressed: () {
+                              final note = noteController.text.trim();
+                              if (note.isEmpty) return;
+                              requestAndClose(
+                                ServiceRequestType.customNote,
+                                note: note,
+                              );
+                            },
+                            child: Text(strings.customNoteSendLabel),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -153,23 +268,11 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
             if (!isStale) ...[
               const SizedBox(width: AppSpacing.sm),
               _ServiceRequestTapTarget(
-                icon: Icons.room_service_outlined,
-                tooltip: strings.waiterTooltip,
-                busy: _busyType == ServiceRequestType.callWaiter,
-                onTap: () => _requestService(
-                  guestSessionId,
-                  ServiceRequestType.callWaiter,
-                ),
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              _ServiceRequestTapTarget(
-                icon: Icons.receipt_long_outlined,
-                tooltip: strings.billTooltip,
-                busy: _busyType == ServiceRequestType.requestBill,
-                onTap: () => _requestService(
-                  guestSessionId,
-                  ServiceRequestType.requestBill,
-                ),
+                icon: Icons.campaign_outlined,
+                tooltip: strings.requestHelpTooltip,
+                busy: _busyType != null,
+                onTap: () =>
+                    _openRequestSheet(context, guestSessionId, strings),
               ),
             ],
           ],
@@ -234,6 +337,40 @@ class _FlagTapTarget extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.xs),
           child: Text(locale.flagEmoji, style: const TextStyle(fontSize: 14)),
+        ),
+      ),
+    );
+  }
+}
+
+/// Self-Order QR Faz 5 — one row within the "Talep İlet" bottom sheet.
+class _RequestOptionRow extends StatelessWidget {
+  const _RequestOptionRow({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: AppRadius.kMedium,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+          child: Row(
+            children: [
+              Icon(icon, size: 20, color: AppColors.primary),
+              const SizedBox(width: AppSpacing.md),
+              Text(label, style: AppTypography.bodyLarge),
+            ],
+          ),
         ),
       ),
     );

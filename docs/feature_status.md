@@ -10663,3 +10663,79 @@ order_detail_screen.dart`, plus the test files named above.
 
 **Deferred, not done this pass**: Faz 5 (çağrı butonları/POS zili/onay→yazdırma), Faz 6 (canlı
 adisyon/kapanış/offline senkron) — same sequential gate as before.
+
+### Self-Order QR — Faz 5: çağrı butonları, POS zili, onay→mutfak yazdırma (2026-11-05)
+
+Fifth phase. Per the user's "no further pausing" direction, implementation choices below were made
+directly and disclosed here, not raised as new approval-gated questions.
+
+1. **Çağrı butonları**: `ServiceRequestType` extended with the three pre-approved new values
+   (`ashtrayOrService`, `clearTable`, `customNote`) alongside the existing `callWaiter`/
+   `requestBill`. The rule's 5th UI option, "Çay İste," deliberately reuses `callWaiter` rather than
+   adding a 6th backend type — a tea request is just a specific instance of "call the waiter for
+   something," the same bucket every other free-form waiter ask already falls into.
+   `TableContextBadge`'s two separate icon buttons (waiter/bill) were consolidated into one "Talep
+   İlet" button opening a bottom sheet with all 5 options — matching the rule's own "a 'Talep İlet'
+   button with options" wording, which describes one entry point, not five standing icons. "Özel
+   Not" swaps the sheet's content for a text field + send button in place, never a second stacked
+   dialog. `createServiceRequest` (client + `functions/src/serviceRequests.ts`) gained an optional
+   `note`, required server-side only when `type === "customNote"`.
+2. **POS zili**: `PosBranchOverviewScreen`'s existing 8-second poll now also compares the branch's
+   total "needs attention" count (`pendingQrLineCount` + `pendingServiceRequests.length`, summed
+   across every table) against the previous poll's own total, and calls `SystemSound.play(SystemSoundType.alert)`
+   only when that total went UP — a genuinely new order/çağrı arrived, never when an existing one is
+   simply resolved (by this device or another). The POS card-level icon/tooltip for each pending
+   request was extended to the 3 new types (`Icons.cleaning_services_outlined`/
+   `Icons.sticky_note_2_outlined`, plus a tooltip surfacing the guest's own typed text for
+   `customNote`).
+3. **Onay → Mutfak Yazdırma — the first real kitchen-ticket printer integration.** `KitchenTicket
+   PrintProvider`/`NoOpKitchenTicketPrintProvider` (pre-existing) were explicitly "domain/contract
+   only, no printer hardware integration exists" — this phase adds the real one, mirroring the
+   already-shipped till-receipt pattern (ADR-053) rather than wiring through that older, now-
+   vestigial seam: a new `EscPosKitchenTicketEncoder` (same ESC/POS primitives/WPC1254 codepage as
+   `EscPosReceiptEncoder`, kept as its own self-contained file rather than sharing code — the two
+   document layouts are genuinely different, and the existing receipt encoder stays byte-for-byte
+   unchanged) + a new `PrintKitchenTicket` use case, both reusing the existing, already-approved
+   `RawPrinterAdapter`/`ReceiptPrinterSettings` ("POS80 Printer" — the same queue name the 23-rule
+   plan's own §6 names for the kitchen ticket too, not a separate device). Wired into
+   `PosTableWorkspaceScreen`'s existing per-line accept action: a successful ACCEPT (never a reject)
+   re-reads the canonical `Order` and fires a real print, wrapped in a try/catch that swallows any
+   printer failure — printing is best-effort additional output, never allowed to block or fail the
+   accept action itself, same "no security consequence if absent" framing the `NoOp` provider's own
+   doc comment already stated.
+
+   **Required format fully implemented** (Ürün Adı, Adet, Siparişi Veren Kişi Adı, Reçete İçeriği,
+   Tercih Notları) — the one previously-missing field, "Siparişi Veren Kişi Adı," needed new
+   plumbing: `OrderLineApprovalState` (the existing dine-in-only, index-paired-with-`Order.lines`
+   extension point — deliberately kept OUT of the channel-agnostic `OrderLine` itself, matching that
+   class's own established pattern) gained `orderedByName`, denormalized by `submitDineInOrder.ts`
+   onto every line at order-creation time from the resolved submitter's own name.
+   **Disclosed scope decision**: this is the SUBMITTING guest's name on every line, not each
+   original cart-adder's own name — correct for "Sadece Kendi Ürünlerimi Gönder" and every solo-
+   guest table (the dominant case); a "Tüm Masayı Gönder" order prints the submitter's name on every
+   line rather than each contributor's own, since most guests have no name resolvable at all unless
+   they've already submitted their own order once this visit. A future pass can revisit this once a
+   reliable per-contributor name source exists.
+
+`flutter analyze` (whole project) clean. `flutter test` (whole project): see test run below for the
+updated count — new coverage: `esc_pos_kitchen_ticket_encoder_test.dart` (new, 5 cases — byte-level
+format verification, including the WPC1254 Turkish-character override table), `kitchen_ticket_mapper
+_test.dart` (+2, `orderedByName` propagation), `order_firestore_mapper_test.dart` (+1, round-trip +
+pre-Faz-5-document backward compatibility), `table_context_badge_test.dart` (updated for the
+consolidated button; +1 new customNote case), `qr_flow_strings_test.dart` (+10 new fields),
+`pos_branch_overview_screen_test.dart` (+2, SystemSound ding/no-ding). `functions`: `npx tsc --noEmit`
+clean. **Not run**: Cloud Functions emulator suite (`serviceRequests.test.ts` exists but is fully
+emulator-backed) — same Java 21+ environment limitation disclosed every prior phase.
+
+New files: `lib/features/printing/domain/esc_pos_kitchen_ticket_encoder.dart`, `lib/features/pos/
+application/use_cases/print_kitchen_ticket.dart`. Updated: `functions/src/{serviceRequests.ts,
+posOperationalView.ts,submitDineInOrder.ts}`, `lib/features/qr/{data/table_guest_session_gateway
+.dart,domain/i18n/qr_flow_strings.dart,presentation/widgets/table_context_badge.dart}`,
+`lib/features/pos/{data/pos_operational_view_gateway.dart,domain/kitchen/{kitchen_ticket_line,
+kitchen_ticket_mapper}.dart,presentation/{screens/{pos_branch_overview_screen,
+pos_table_workspace_screen}.dart,providers/pos_workspace_providers.dart}}`, `lib/features/orders/
+{domain/models/order_line_approval_state.dart,data/order_firestore_mapper.dart}`, plus the test
+files named above.
+
+**Deferred, not done this pass**: Faz 6 (canlı adisyon/kapanış/offline senkron) — same sequential
+gate as before.

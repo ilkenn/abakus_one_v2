@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MethodCall, SystemChannels;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -392,5 +393,131 @@ void main() {
     expect(actionGateway.lastResolvedRequestId, 'req-1');
     expect(gateway.callCount, greaterThan(callCountBeforeTap),
         reason: 'resolving must trigger a grid refresh');
+  });
+
+  group('Self-Order QR Faz 5 — POS zili (SystemSound)', () {
+    late List<MethodCall> platformCalls;
+
+    setUp(() {
+      platformCalls = [];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        platformCalls.add(call);
+        return null;
+      });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    testWidgets(
+        'bekleyen toplam sayi bir sonraki pollda artarsa SystemSound.alert '
+        'calinir (yeni bir siparis/cagri geldi)', (tester) async {
+      final gateway = _FakePosOperationalViewGateway()
+        ..tables = [
+          const PosBranchTableSummary(
+            tableId: 'table-1',
+            displayName: 'Masa 1',
+            status: 'occupied',
+            activeTableSessionId: 'tsess-1',
+            pendingQrLineCount: 0,
+          ),
+        ];
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            posOperationalViewGatewayProvider.overrideWithValue(gateway),
+            posDeviceContextProvider.overrideWithValue(
+              const PosDeviceContext(
+                organizationId: 'org-1',
+                branchId: 'branch-1',
+                deviceId: 'device-1',
+                deviceSessionId: 'session-1',
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: PosBranchOverviewScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // The initial load itself must never ding — nothing to compare the
+      // first snapshot against.
+      expect(
+        platformCalls.where((c) => c.method == 'SystemSound.play'),
+        isEmpty,
+      );
+
+      // A new QR order line arrives at the table before the next poll.
+      gateway.tables = [
+        const PosBranchTableSummary(
+          tableId: 'table-1',
+          displayName: 'Masa 1',
+          status: 'occupied',
+          activeTableSessionId: 'tsess-1',
+          pendingQrLineCount: 1,
+        ),
+      ];
+      await tester.pump(const Duration(seconds: 9));
+
+      expect(
+        platformCalls.where((c) => c.method == 'SystemSound.play'),
+        isNotEmpty,
+      );
+    });
+
+    testWidgets(
+        'bekleyen toplam sayi azalirsa (staff baska cihazdan cozdu) '
+        'SystemSound.alert CALINMAZ', (tester) async {
+      final gateway = _FakePosOperationalViewGateway()
+        ..tables = [
+          const PosBranchTableSummary(
+            tableId: 'table-1',
+            displayName: 'Masa 1',
+            status: 'occupied',
+            activeTableSessionId: 'tsess-1',
+            pendingQrLineCount: 2,
+          ),
+        ];
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            posOperationalViewGatewayProvider.overrideWithValue(gateway),
+            posDeviceContextProvider.overrideWithValue(
+              const PosDeviceContext(
+                organizationId: 'org-1',
+                branchId: 'branch-1',
+                deviceId: 'device-1',
+                deviceSessionId: 'session-1',
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: PosBranchOverviewScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      gateway.tables = [
+        const PosBranchTableSummary(
+          tableId: 'table-1',
+          displayName: 'Masa 1',
+          status: 'occupied',
+          activeTableSessionId: 'tsess-1',
+          pendingQrLineCount: 1,
+        ),
+      ];
+      await tester.pump(const Duration(seconds: 9));
+
+      expect(
+        platformCalls.where((c) => c.method == 'SystemSound.play'),
+        isEmpty,
+      );
+    });
   });
 }

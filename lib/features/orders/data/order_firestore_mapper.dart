@@ -340,6 +340,7 @@ abstract final class OrderFirestoreMapper {
         'counterProposal': approvalState?.counterProposal == null
             ? null
             : _counterProposalToFirestore(approvalState!.counterProposal!),
+        'orderedByName': approvalState?.orderedByName,
       };
 
   static OrderLine _lineFromFirestore(Map<String, dynamic> data) {
@@ -379,6 +380,7 @@ abstract final class OrderFirestoreMapper {
           ? null
           : _counterProposalFromFirestore(
               Map<String, dynamic>.from(data['counterProposal'] as Map)),
+      orderedByName: data['orderedByName'] as String?,
     );
   }
 

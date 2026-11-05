@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemSound, SystemSoundType;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
@@ -89,6 +90,18 @@ class _PosBranchOverviewScreenState
     super.dispose();
   }
 
+  /// Self-Order QR Faz 5 (23-rule plan §6) — "POS zili": the sum of every
+  /// table's own `pendingQrLineCount` (orders awaiting the approval queue)
+  /// and `pendingServiceRequests` (çağrı butonları) — a single, generic
+  /// "needs staff attention" count this screen already has both halves of.
+  int _totalPendingAttentionCount(List<PosBranchTableSummary> tables) {
+    return tables.fold(
+      0,
+      (sum, table) =>
+          sum + table.pendingQrLineCount + table.pendingServiceRequests.length,
+    );
+  }
+
   Future<void> _load({bool poll = false}) async {
     final ctx = ref.read(posDeviceContextProvider);
     if (ctx == null) return;
@@ -105,6 +118,17 @@ class _PosBranchOverviewScreenState
       if (!mounted) return;
       if (page.unchanged) {
         return; // nothing changed — skip a redundant re-render.
+      }
+      // A higher total than last time means something NEW arrived (a
+      // fresh QR order line or a fresh çağrı), not just an existing one
+      // being resolved — only that case rings the bell. `_tables == null`
+      // (this screen's very first load) never dings — there is nothing
+      // to compare the initial snapshot against.
+      final previousCount =
+          _tables == null ? null : _totalPendingAttentionCount(_tables!);
+      final newCount = _totalPendingAttentionCount(page.tables);
+      if (previousCount != null && newCount > previousCount) {
+        SystemSound.play(SystemSoundType.alert);
       }
       setState(() {
         _tables = page.tables;
@@ -219,7 +243,24 @@ class _TableTileState extends ConsumerState<_TableTile> {
   IconData _iconFor(String type) => switch (type) {
         'callWaiter' => Icons.room_service_outlined,
         'requestBill' => Icons.receipt_long_outlined,
+        // Self-Order QR Faz 5.
+        'ashtrayOrService' => Icons.cleaning_services_outlined,
+        'clearTable' => Icons.cleaning_services_outlined,
+        'customNote' => Icons.sticky_note_2_outlined,
         _ => Icons.notifications_active_outlined,
+      };
+
+  /// Self-Order QR Faz 5 — a staff-facing label for the tooltip on each
+  /// request icon; for `customNote` this also surfaces the guest's own
+  /// typed text, since the icon alone can't convey free-form content.
+  String _labelFor(PosPendingServiceRequest request) => switch (request.type) {
+        'callWaiter' => 'Garson Çağrısı',
+        'requestBill' => 'Hesap İsteği',
+        'ashtrayOrService' => 'Kül Tablası / Servis İsteği',
+        'clearTable' => 'Masa Temizliği İsteği',
+        'customNote' =>
+          request.note == null ? 'Özel Not' : 'Özel Not: ${request.note}',
+        _ => request.type,
       };
 
   Future<void> _resolve(PosPendingServiceRequest request) async {
@@ -315,30 +356,33 @@ class _TableTileState extends ConsumerState<_TableTile> {
                     spacing: AppSpacing.xs,
                     children: [
                       for (final request in table.pendingServiceRequests)
-                        InkWell(
-                          borderRadius: AppRadius.kPill,
-                          onTap: () => _resolve(request),
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color:
-                                  AppColors.secondary.withValues(alpha: 0.14),
-                              shape: BoxShape.circle,
-                            ),
-                            child: _resolvingRequestId == request.requestId
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
+                        Tooltip(
+                          message: _labelFor(request),
+                          child: InkWell(
+                            borderRadius: AppRadius.kPill,
+                            onTap: () => _resolve(request),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color:
+                                    AppColors.secondary.withValues(alpha: 0.14),
+                                shape: BoxShape.circle,
+                              ),
+                              child: _resolvingRequestId == request.requestId
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppColors.secondary,
+                                      ),
+                                    )
+                                  : Icon(
+                                      _iconFor(request.type),
+                                      size: 14,
                                       color: AppColors.secondary,
                                     ),
-                                  )
-                                : Icon(
-                                    _iconFor(request.type),
-                                    size: 14,
-                                    color: AppColors.secondary,
-                                  ),
+                            ),
                           ),
                         ),
                     ],

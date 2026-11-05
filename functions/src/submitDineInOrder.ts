@@ -415,6 +415,8 @@ function buildDineInOrderDocument(params: {
   /** AP-3 Wave 1 (corrected report §1/§8/§10). */
   mode: DineInSubmissionMode;
   subAccountId: string;
+  /** Self-Order QR Faz 5 — see this file's own `resolvedOrderedByName` doc comment for scope. */
+  orderedByName: string | null;
   lineStatus: "pendingApproval" | "accepted";
 }) {
   const currencyCode = "TRY";
@@ -473,6 +475,7 @@ function buildDineInOrderDocument(params: {
       // `respondToDineInOrderLines` is the only writer of a per-line
       // divergence after this point.
       subAccountId: params.subAccountId,
+      orderedByName: params.orderedByName,
       status: params.lineStatus,
       counterProposal: null,
     })),
@@ -669,6 +672,19 @@ export const submitDineInOrder = onCall(
       // before its first tx.set()/tx.update()).
       let pendingSubAccountCreate: Omit<GuestSubAccountDoc, "createdAt"> | null = null;
       let pendingSubAccountNameStamp: string | null = null;
+      // Self-Order QR Faz 5 (23-rule plan §6 kitchen-ticket format,
+      // "Siparişi Veren Kişi Adı") — the SUBMITTER's own resolved display
+      // name, denormalized onto every line this call creates, exactly
+      // like `tableDisplayName`/`tableAreaName` are already snapshotted.
+      // Scope decision (disclosed, `docs/feature_status.md`): this is the
+      // name of whoever tapped submit, not each original cart-adder's own
+      // name — correct for "Sadece Kendi Ürünlerimi Gönder" and for every
+      // solo-guest table (the dominant case); a "Tüm Masayı Gönder"
+      // submission prints the submitter's name on every line rather than
+      // each contributor's own, a known simplification until there is a
+      // reliable per-contributor name to resolve (most guests have none
+      // stamped yet unless they've already submitted their own order).
+      let resolvedOrderedByName: string | null = null;
 
       if (mode === "guestSession") {
         const sessionRef = db.collection("tableGuestSessions").doc(tableSessionId);
@@ -747,6 +763,10 @@ export const submitDineInOrder = onCall(
           }
           pendingSubAccountNameStamp = guestDisplayName;
         }
+        resolvedOrderedByName =
+          subAccount.displayName && subAccount.displayName.trim().length > 0
+            ? subAccount.displayName
+            : pendingSubAccountNameStamp;
         lineStatus = "pendingApproval";
       } else {
         // ---------------------------------------------------------------
@@ -808,6 +828,11 @@ export const submitDineInOrder = onCall(
               createdByStaffUid: uid,
               version: 1,
             };
+          } else {
+            const existingDisplayName = (snap.data() as GuestSubAccountDoc).displayName;
+            resolvedOrderedByName = existingDisplayName && existingDisplayName.trim().length > 0
+              ? existingDisplayName
+              : null;
           }
         } else if (selection.mode === "namedWalkIn") {
           resolvedSubAccountId = db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc().id;
@@ -823,6 +848,7 @@ export const submitDineInOrder = onCall(
             createdByStaffUid: uid,
             version: 1,
           };
+          resolvedOrderedByName = selection.displayName;
         } else if (selection.mode === "staffGeneral") {
           resolvedSubAccountId = staffGeneralSubAccountId(resolvedTableSessionId);
           const snap = await tx.get(db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc(resolvedSubAccountId));
@@ -840,6 +866,7 @@ export const submitDineInOrder = onCall(
               version: 1,
             };
           }
+          resolvedOrderedByName = "Masa Geneli";
         } else {
           resolvedSubAccountId = selection.subAccountId;
           const snap = await tx.get(db.collection(GUEST_SUB_ACCOUNTS_COLLECTION).doc(resolvedSubAccountId));
@@ -848,6 +875,9 @@ export const submitDineInOrder = onCall(
           }
           const existing = snap.data() as GuestSubAccountDoc;
           customerId = existing.ownerType === "authenticatedCustomer" ? existing.ownerAuthUid : null;
+          resolvedOrderedByName = existing.displayName && existing.displayName.trim().length > 0
+            ? existing.displayName
+            : null;
         }
         // Trusted, permission-checked, device-bound staff entry IS the
         // approval (corrected report §10) — never `pendingApproval`, never
@@ -1336,6 +1366,7 @@ export const submitDineInOrder = onCall(
           discountMinorUnits: campaignDiscountMinorUnits,
           mode,
           subAccountId: resolvedSubAccountId,
+          orderedByName: resolvedOrderedByName,
           lineStatus,
         }),
       );

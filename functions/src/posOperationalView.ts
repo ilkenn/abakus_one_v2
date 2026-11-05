@@ -211,11 +211,14 @@ export const getPosBranchTableOverview = onCall(
       .where("branchId", "==", branchId)
       .where("status", "==", "pending")
       .get();
-    const pendingServiceRequestsByTableId = new Map<string, Array<{ requestId: string; type: string }>>();
+    const pendingServiceRequestsByTableId = new Map<string, Array<{ requestId: string; type: string; note: string | null }>>();
     for (const doc of pendingServiceRequestsSnap.docs) {
-      const tableId = doc.data().tableId as string;
+      const data = doc.data();
+      const tableId = data.tableId as string;
       const list = pendingServiceRequestsByTableId.get(tableId) ?? [];
-      list.push({ requestId: doc.id, type: String(doc.data().type) });
+      // Self-Order QR Faz 5 — `note` is only ever non-null for a
+      // `customNote` request; every other type always sent `null`.
+      list.push({ requestId: doc.id, type: String(data.type), note: (data.note as string | null | undefined) ?? null });
       pendingServiceRequestsByTableId.set(tableId, list);
     }
 

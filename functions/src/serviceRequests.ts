@@ -27,8 +27,23 @@ import { isTableGuestSessionActive } from "./tableGuestSessionConfig";
  */
 
 export const SERVICE_REQUESTS_COLLECTION = "serviceRequests";
-export type ServiceRequestType = "callWaiter" | "requestBill";
+/**
+ * Self-Order QR Faz 5 (23-rule plan §5) — `ashtrayOrService`/`clearTable`/
+ * `customNote` added alongside the pre-existing `callWaiter`/`requestBill`.
+ * The rule's own "Çay İste" option is deliberately NOT a 6th type here —
+ * it reuses `callWaiter` (a drink refill is just a specific instance of
+ * "call the waiter for something"), exactly like every other free-form
+ * waiter ask this type already covers.
+ */
+export type ServiceRequestType =
+  | "callWaiter"
+  | "requestBill"
+  | "ashtrayOrService"
+  | "clearTable"
+  | "customNote";
 export type ServiceRequestStatus = "pending" | "resolved";
+
+const MAX_NOTE_LENGTH = 300;
 
 export interface ServiceRequestDoc {
   organizationId: string;
@@ -37,6 +52,8 @@ export interface ServiceRequestDoc {
   tableDisplayName: string;
   tableSessionId: string;
   type: ServiceRequestType;
+  /** Only ever non-null for `type === "customNote"` — the guest's own typed text. */
+  note: string | null;
   status: ServiceRequestStatus;
   createdAt: Timestamp;
   resolvedAt: Timestamp | null;
@@ -50,8 +67,21 @@ function requireNonEmptyString(raw: unknown, field: string): string {
   if (typeof raw !== "string" || raw.length === 0) invalid(`${field} is required.`);
   return raw as string;
 }
+const SERVICE_REQUEST_TYPES: readonly ServiceRequestType[] = [
+  "callWaiter", "requestBill", "ashtrayOrService", "clearTable", "customNote",
+];
 function isServiceRequestType(raw: unknown): raw is ServiceRequestType {
-  return raw === "callWaiter" || raw === "requestBill";
+  return (SERVICE_REQUEST_TYPES as readonly unknown[]).includes(raw);
+}
+/** `customNote` requires real guest text; every other type sends none. */
+function sanitizeServiceRequestNote(raw: unknown, type: ServiceRequestType): string | null {
+  if (type !== "customNote") return null;
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    invalid("note is required for a customNote service request.");
+  }
+  const trimmed = (raw as string).trim();
+  if (trimmed.length > MAX_NOTE_LENGTH) invalid("note is too long.");
+  return trimmed;
 }
 
 // -----------------------------------------------------------------------
@@ -62,8 +92,11 @@ export const createServiceRequest = onCall({ enforceAppCheck: shouldEnforceAppCh
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
   const data = (request.data ?? {}) as Record<string, unknown>;
   const guestSessionId = requireNonEmptyString(data.guestSessionId, "guestSessionId");
-  if (!isServiceRequestType(data.type)) invalid('type must be "callWaiter" or "requestBill".');
+  if (!isServiceRequestType(data.type)) {
+    invalid(`type must be one of: ${SERVICE_REQUEST_TYPES.join(", ")}.`);
+  }
   const type = data.type;
+  const note = sanitizeServiceRequestNote(data.note, type);
   const uid = request.auth.uid;
 
   const db = getFirestore();
@@ -109,7 +142,7 @@ export const createServiceRequest = onCall({ enforceAppCheck: shouldEnforceAppCh
     const requestRef = db.collection(SERVICE_REQUESTS_COLLECTION).doc();
     const doc: ServiceRequestDoc = {
       organizationId, branchId, tableId, tableDisplayName, tableSessionId,
-      type, status: "pending", createdAt: now, resolvedAt: null, resolvedByStaffUid: null,
+      type, note, status: "pending", createdAt: now, resolvedAt: null, resolvedByStaffUid: null,
     };
     tx.set(requestRef, doc);
     if (type === "requestBill") {

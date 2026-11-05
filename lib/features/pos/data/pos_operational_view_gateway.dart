@@ -13,20 +13,28 @@ import '../../../core/services/functions/rest_callable_client.dart';
 /// client-side) — the server independently re-verifies all of it
 /// (`requireActiveDeviceSession`) regardless of what this gateway sends.
 
-/// One pending waiter-call/bill-request ping on a table — Dine-in Sprint 3.
-/// [type] is kept as a raw `String` (mirrors this file's own
-/// `PosTableOperationalView.status` precedent) — `'callWaiter'` or
-/// `'requestBill'`, forward-compatible with an unrecognized future value.
+/// One pending waiter-call/bill-request/etc. ping on a table — Dine-in
+/// Sprint 3, types extended Self-Order QR Faz 5. [type] is kept as a raw
+/// `String` (mirrors this file's own `PosTableOperationalView.status`
+/// precedent) — `'callWaiter'`/`'requestBill'`/`'ashtrayOrService'`/
+/// `'clearTable'`/`'customNote'`, forward-compatible with an unrecognized
+/// future value. [note] is only ever non-null for `'customNote'`.
 class PosPendingServiceRequest {
-  const PosPendingServiceRequest({required this.requestId, required this.type});
+  const PosPendingServiceRequest({
+    required this.requestId,
+    required this.type,
+    this.note,
+  });
 
   final String requestId;
   final String type;
+  final String? note;
 
   factory PosPendingServiceRequest.fromWire(Map<String, dynamic> data) {
     return PosPendingServiceRequest(
       requestId: data['requestId'] as String,
       type: data['type'] as String,
+      note: data['note'] as String?,
     );
   }
 }

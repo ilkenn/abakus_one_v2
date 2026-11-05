@@ -19874,3 +19874,46 @@ lives, keeping `cart → orders` the only direction this dependency ever runs.
 
 See `docs/feature_status.md`'s "Self-Order QR — Faz 4" entry for the full file list and test
 verification status.
+
+## ADR-057 — Self-Order QR Faz 5: real kitchen-ticket printer integration, mirroring the till-receipt pattern (2026-11-05)
+
+- Tarih: 2026-11-05
+- Durum: Accepted
+
+### Context
+
+Fifth phase — "Çağrı Butonları, POS Zili, Onay → Mutfak Yazdırma." `KitchenTicketPrintProvider`'s
+sole implementation, `NoOpKitchenTicketPrintProvider`, was explicitly documented as "domain/contract
+only this sprint — no printer hardware integration exists." Wiring a real one is a genuine hardware/
+architecture addition — the same category of change ADR-053 (till-receipt printing) already made
+and the user already approved once. Two implementation choices were made directly, per the user's
+"no further pausing" instruction, and are recorded here rather than silently decided:
+
+1. **Which seam to extend.** `receiptPrintProviderProvider`/`ReceiptPrintProvider` turned out to
+   already be vestigial — the REAL till-receipt feature (`PrintTableReceipt`) bypasses that older
+   abstraction entirely, calling `RawPrinterAdapter`/`EscPosReceiptEncoder` directly. Mirroring the
+   newer, real pattern (not the older NoOp-only seam) for the kitchen ticket was the natural choice.
+2. **Printer identity.** The 23-rule plan's own §6 names the SAME "POS80 Printer" queue for the
+   kitchen ticket as the till receipt — confirmed by reusing `ReceiptPrinterSettings` as-is, no new
+   settings class.
+
+### Decision
+
+New `EscPosKitchenTicketEncoder` (self-contained, not sharing code with `EscPosReceiptEncoder` — the
+two document layouts are genuinely different, and this keeps the already-shipped receipt encoder
+completely unchanged) + `PrintKitchenTicket` use case, both built on the existing `RawPrinterAdapter`/
+`ReceiptPrinterSettings`. Fired from `PosTableWorkspaceScreen`'s existing per-line ACCEPT action
+(never on reject), wrapped in a try/catch that swallows any printer failure — a kitchen ticket not
+printing must never block or fail the underlying accept decision.
+
+**Also resolved while implementing** (a correctness fix, not a separate decision point): the
+required print format's "Siparişi Veren Kişi Adı" field had no backing data at all —
+`OrderLine`/`Order` carried no per-line submitter name anywhere. Added `orderedByName` to the
+existing `OrderLineApprovalState` extension point (deliberately not `OrderLine` itself, matching
+that class's own "dine-in-only fields live in the parallel, index-paired list" precedent), denormalized by `submitDineInOrder.ts` at order-creation time. Scope caveat disclosed in
+`docs/feature_status.md`: this is the submitter's name, not each original cart-adder's own — exact
+for the dominant case (solo guest, or "Sadece Kendi Ürünlerimi Gönder"), a disclosed simplification
+for "Tüm Masayı Gönder."
+
+See `docs/feature_status.md`'s "Self-Order QR — Faz 5" entry for the full file list and test
+verification status.

@@ -1,13 +1,25 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
 
 /// Dine-in Sprint 3 — mirrors `functions/src/serviceRequests.ts`'s
-/// `ServiceRequestType` verbatim.
-enum ServiceRequestType { callWaiter, requestBill }
+/// `ServiceRequestType` verbatim. `ashtrayOrService`/`clearTable`/
+/// `customNote` added Self-Order QR Faz 5 (23-rule plan §5) — the rule's
+/// "Çay İste" option deliberately reuses [callWaiter] rather than a 6th
+/// type (see that file's own doc comment).
+enum ServiceRequestType {
+  callWaiter,
+  requestBill,
+  ashtrayOrService,
+  clearTable,
+  customNote,
+}
 
 extension ServiceRequestTypeWire on ServiceRequestType {
   String toWire() => switch (this) {
         ServiceRequestType.callWaiter => 'callWaiter',
         ServiceRequestType.requestBill => 'requestBill',
+        ServiceRequestType.ashtrayOrService => 'ashtrayOrService',
+        ServiceRequestType.clearTable => 'clearTable',
+        ServiceRequestType.customNote => 'customNote',
       };
 }
 
@@ -105,9 +117,13 @@ abstract interface class TableGuestSessionGateway {
   /// [ActiveTableContext.session]'s `id`, which is `opened.sessionId` —
   /// `ActiveTableContext.guestSession.id` is a LOCAL-only sequential id,
   /// never this document id, and must never be sent here).
+  /// [note] is required by the server when [type] is
+  /// [ServiceRequestType.customNote] (Self-Order QR Faz 5) — the guest's
+  /// own typed text; `null`/ignored for every other type.
   Future<void> createServiceRequest({
     required String guestSessionId,
     required ServiceRequestType type,
+    String? note,
   });
 }
 
@@ -166,6 +182,7 @@ class FirebaseTableGuestSessionGateway implements TableGuestSessionGateway {
   Future<void> createServiceRequest({
     required String guestSessionId,
     required ServiceRequestType type,
+    String? note,
   }) async {
     final callable = functions.FirebaseFunctions.instance
         .httpsCallable('createServiceRequest');
@@ -173,6 +190,7 @@ class FirebaseTableGuestSessionGateway implements TableGuestSessionGateway {
       await callable.call<Map<String, dynamic>>({
         'guestSessionId': guestSessionId,
         'type': type.toWire(),
+        if (note != null) 'note': note,
       });
     } on functions.FirebaseFunctionsException catch (error) {
       throw TableGuestSessionException(
