@@ -19,6 +19,7 @@ import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
+import '../widgets/print_table_receipt_action.dart';
 import 'end_of_day_screen.dart';
 import 'pos_cash_register_screen.dart';
 import 'pos_table_workspace_screen.dart';
@@ -195,6 +196,7 @@ class _TableTile extends ConsumerStatefulWidget {
 
 class _TableTileState extends ConsumerState<_TableTile> {
   String? _resolvingRequestId;
+  bool _printing = false;
 
   Color get _statusColor => switch (widget.table.status) {
         'available' => AppColors.primary,
@@ -239,95 +241,156 @@ class _TableTileState extends ConsumerState<_TableTile> {
     }
   }
 
+  /// Green quick-print button on an occupied/bill-requested card
+  /// (2026-11-05 printer integration) — prints the table's current ara
+  /// hesap fişi without entering the table workspace first. Fetches the
+  /// table's full operational view itself (the overview grid's own
+  /// summary doesn't carry line/check detail), so this works even though
+  /// [PosBranchTableSummary] doesn't expose a checkId.
+  Future<void> _print(PosDeviceContext ctx) async {
+    if (_printing) return;
+    setState(() => _printing = true);
+    try {
+      await printTableReceipt(
+        context: context,
+        ref: ref,
+        ctx: ctx,
+        tableId: widget.table.tableId,
+        checkId: null,
+        tableName: widget.table.displayName,
+      );
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final table = widget.table;
-    return InkWell(
-      borderRadius: AppRadius.kMedium,
-      onTap: () {
-        ref.read(selectedPosTableIdProvider.notifier).state = table.tableId;
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const PosTableWorkspaceScreen()),
-        );
-      },
-      child: AppCard(
-        borderColor: _statusColor.withValues(alpha: 0.35),
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.table_restaurant_rounded, color: _statusColor, size: 28),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              table.displayName,
-              style: AppTypography.titleMedium
-                  .copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm, vertical: 2),
-              decoration: BoxDecoration(
-                color: _statusColor.withValues(alpha: 0.12),
-                borderRadius: AppRadius.kPill,
-              ),
-              child: Text(
-                _statusLabel,
-                style: AppTypography.bodySmall
-                    .copyWith(color: _statusColor, fontWeight: FontWeight.bold),
-              ),
-            ),
-            if (table.pendingServiceRequests.isNotEmpty) ...[
-              const SizedBox(height: AppSpacing.xs),
-              Wrap(
-                spacing: AppSpacing.xs,
-                children: [
-                  for (final request in table.pendingServiceRequests)
-                    InkWell(
-                      borderRadius: AppRadius.kPill,
-                      onTap: () => _resolve(request),
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: AppColors.secondary.withValues(alpha: 0.14),
-                          shape: BoxShape.circle,
-                        ),
-                        child: _resolvingRequestId == request.requestId
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppColors.secondary,
-                                ),
-                              )
-                            : Icon(
-                                _iconFor(request.type),
-                                size: 14,
-                                color: AppColors.secondary,
-                              ),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-            const Spacer(),
-            if (table.pendingQrLineCount > 0)
-              Row(
-                children: [
-                  const Icon(Icons.qr_code_2_rounded,
-                      size: 16, color: AppColors.accent),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${table.pendingQrLineCount} bekleyen',
+    final deviceCtx = ref.watch(posDeviceContextProvider);
+    final canPrint = deviceCtx != null &&
+        (table.status == 'occupied' || table.status == 'billRequested');
+    return Stack(
+      children: [
+        InkWell(
+          borderRadius: AppRadius.kMedium,
+          onTap: () {
+            ref.read(selectedPosTableIdProvider.notifier).state = table.tableId;
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                  builder: (_) => const PosTableWorkspaceScreen()),
+            );
+          },
+          child: AppCard(
+            borderColor: _statusColor.withValues(alpha: 0.35),
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.table_restaurant_rounded,
+                    color: _statusColor, size: 28),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  table.displayName,
+                  style: AppTypography.titleMedium
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.sm, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _statusColor.withValues(alpha: 0.12),
+                    borderRadius: AppRadius.kPill,
+                  ),
+                  child: Text(
+                    _statusLabel,
                     style: AppTypography.bodySmall.copyWith(
-                        color: AppColors.accent, fontWeight: FontWeight.bold),
+                        color: _statusColor, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                if (table.pendingServiceRequests.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Wrap(
+                    spacing: AppSpacing.xs,
+                    children: [
+                      for (final request in table.pendingServiceRequests)
+                        InkWell(
+                          borderRadius: AppRadius.kPill,
+                          onTap: () => _resolve(request),
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color:
+                                  AppColors.secondary.withValues(alpha: 0.14),
+                              shape: BoxShape.circle,
+                            ),
+                            child: _resolvingRequestId == request.requestId
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppColors.secondary,
+                                    ),
+                                  )
+                                : Icon(
+                                    _iconFor(request.type),
+                                    size: 14,
+                                    color: AppColors.secondary,
+                                  ),
+                          ),
+                        ),
+                    ],
                   ),
                 ],
-              ),
-          ],
+                const Spacer(),
+                if (table.pendingQrLineCount > 0)
+                  Row(
+                    children: [
+                      const Icon(Icons.qr_code_2_rounded,
+                          size: 16, color: AppColors.accent),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${table.pendingQrLineCount} bekleyen',
+                        style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.accent,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
         ),
-      ),
+        if (canPrint)
+          Positioned(
+            top: AppSpacing.xs,
+            right: AppSpacing.xs,
+            child: InkWell(
+              borderRadius: AppRadius.kPill,
+              onTap: () => _print(deviceCtx),
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: const BoxDecoration(
+                  color: AppColors.success,
+                  shape: BoxShape.circle,
+                ),
+                child: _printing
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.onPrimary,
+                        ),
+                      )
+                    : const Icon(Icons.print_outlined,
+                        size: 14, color: AppColors.onPrimary),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

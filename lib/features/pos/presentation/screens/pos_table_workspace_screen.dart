@@ -19,6 +19,7 @@ import '../../../menu/domain/models/menu_category.dart';
 import '../../../menu/domain/models/menu_product.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
 import '../../../menu/presentation/providers/menu_catalog_provider.dart';
+import '../../data/payment_gateway.dart';
 import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../providers/actor_session_provider.dart';
@@ -26,6 +27,7 @@ import '../providers/kds_dependencies_provider.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
 import '../widgets/pos_product_customization_dialog.dart';
+import '../widgets/print_table_receipt_action.dart';
 import 'pos_cash_register_screen.dart';
 import 'pos_checkout_screen.dart';
 
@@ -63,6 +65,7 @@ class _PosTableWorkspaceScreenState
   String? get _tableId => ref.read(selectedPosTableIdProvider);
 
   Future<void> _load() async {
+    if (!mounted) return;
     final ctx = ref.read(posDeviceContextProvider);
     final tableId = _tableId;
     if (ctx == null || tableId == null) return;
@@ -348,15 +351,18 @@ class _PosTableWorkspaceScreenState
       onOpenCheckout: () {
         final checkId = _openedCheckId;
         if (checkId == null) return;
-        Navigator.of(context)
-            .push(MaterialPageRoute(
-              builder: (_) => PosCheckoutScreen(
-                ctx: ctx,
-                checkId: checkId,
-                view: view,
-              ),
-            ))
-            .then((_) => _load());
+        // Compact dialog (2026-11-05 sizing revision) — previously a
+        // full-page `Navigator.push`; `PosCheckoutScreen` now renders
+        // itself as a centered, fixed-width card, so it opens as a real
+        // dialog over the dimmed table workspace instead of replacing it.
+        showDialog<void>(
+          context: context,
+          builder: (_) => PosCheckoutScreen(
+            ctx: ctx,
+            checkId: checkId,
+            view: view,
+          ),
+        ).then((_) => _load());
       },
     );
   }
@@ -474,6 +480,88 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
 
   double get _cartTotal =>
       _cartLines.fold(0.0, (sum, line) => sum + line.totalRowPrice);
+
+  /// Multi-select on already-accepted lines (2026-11-04, product owner
+  /// redesign) — drives the big payment button's displayed amount and the
+  /// bulk-cancel trash icon. Each real cancellation still goes through the
+  /// existing per-line `requestAcceptedLineCancellation` call (looped, one
+  /// real request per selected line) — there is no bulk-cancel capability
+  /// server-side, so none is implied here.
+  final Set<({String orderId, int lineIndex})> _selectedAcceptedLines = {};
+
+  bool _isLineSelected(String orderId, int lineIndex) =>
+      _selectedAcceptedLines.contains((orderId: orderId, lineIndex: lineIndex));
+
+  void _toggleLineSelection(String orderId, int lineIndex) {
+    setState(() {
+      final key = (orderId: orderId, lineIndex: lineIndex);
+      if (_selectedAcceptedLines.contains(key)) {
+        _selectedAcceptedLines.remove(key);
+      } else {
+        _selectedAcceptedLines.add(key);
+      }
+    });
+  }
+
+  int get _allAcceptedLinesTotalMinorUnits {
+    var total = 0;
+    for (final order in widget.view.orders) {
+      for (final line in order.lines) {
+        if (line.status == 'accepted') {
+          total += line.unitPriceMinorUnits * line.quantity;
+        }
+      }
+    }
+    return total;
+  }
+
+  int get _selectedLinesTotalMinorUnits {
+    var total = 0;
+    for (final order in widget.view.orders) {
+      for (var i = 0; i < order.lines.length; i++) {
+        if (order.lines[i].status == 'accepted' &&
+            _isLineSelected(order.orderId, i)) {
+          total += order.lines[i].unitPriceMinorUnits * order.lines[i].quantity;
+        }
+      }
+    }
+    return total;
+  }
+
+  /// Selected-lines subtotal when something is selected, otherwise the
+  /// whole table's accepted-lines total — the "Ödeme Al: [Tutar]" button's
+  /// own display rule from the product owner's reference layout.
+  int get _paymentButtonAmountMinorUnits => _selectedAcceptedLines.isNotEmpty
+      ? _selectedLinesTotalMinorUnits
+      : _allAcceptedLinesTotalMinorUnits;
+
+  String _formatTl(int minorUnits) => (minorUnits / 100).toStringAsFixed(0);
+
+  Future<void> _showBulkCancelDialog(BuildContext context) async {
+    final selected = _selectedAcceptedLines.toList();
+    if (selected.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _ReasonDialog(
+        title: selected.length == 1
+            ? 'Ürünü İptal Et'
+            : '${selected.length} Ürünü İptal Et',
+        confirmLabel: 'İptal Talebi Gönder',
+        reasonCodes: const {
+          'customerRequest': 'Müşteri Talebi',
+          'kitchenError': 'Mutfak Hatası',
+          'other': 'Diğer',
+        },
+        onSubmit: (reasonCode, reasonMessage) async {
+          for (final line in selected) {
+            await widget.onCancelRequest(
+                line.orderId, line.lineIndex, reasonCode, reasonMessage);
+          }
+        },
+      ),
+    );
+    if (mounted) setState(() => _selectedAcceptedLines.clear());
+  }
 
   @override
   void dispose() {
@@ -799,13 +887,149 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     );
   }
 
-  /// Table-level tools — splits (needs an accepted line + a sub-account
-  /// to split from, same nested shape the old `_CheckPanel` already
-  /// used), headcount-equal split, discount/"Fiyat Düzeltmesi", transfer,
-  /// merge. Reuses every existing dialog unchanged; only the entry point
-  /// moved from always-visible buttons into this on-demand sheet
-  /// (product owner's explicit choice, 2026-10-31).
-  void _showQuickToolsSheet(BuildContext context) {
+  /// The 12-tile "... Diğer" grid modal (2026-11-04 redesign, replacing the
+  /// old flat "İşlemler" sheet). Only 4 tiles have a real backend action
+  /// behind them today — Hesabı Kapat, Masa Taşıma, Hesabı Böl, Hesabı
+  /// Göster. The other 8 (Grup Oluştur, Siparişleri Cariye Taşı, Yazdır,
+  /// Servis Ücreti, Not Ekle, Kişi Sayısı, Stoğu Biten Ürünler, Satışa
+  /// Kapalı Ürünler) map to capabilities that don't exist server-side yet
+  /// (confirmed by a dedicated investigation this session) — each renders
+  /// disabled/"Yakında" rather than being wired to something that would
+  /// silently no-op or misrepresent what the app can actually do.
+  void _showToolsGridModal(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        expand: false,
+        builder: (sheetContext, scrollController) => Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Diğer İşlemler', style: AppTypography.titleLarge),
+              const SizedBox(height: AppSpacing.md),
+              Expanded(
+                child: GridView.count(
+                  controller: scrollController,
+                  crossAxisCount: 3,
+                  mainAxisSpacing: AppSpacing.sm,
+                  crossAxisSpacing: AppSpacing.sm,
+                  childAspectRatio: 1.1,
+                  children: [
+                    _GridToolTile(
+                      icon: Icons.lock_outline,
+                      label: 'Hesabı Kapat',
+                      color: AppColors.info,
+                      onTap: _primaryPaymentAction == null
+                          ? null
+                          : () {
+                              Navigator.of(sheetContext).pop();
+                              _primaryPaymentAction?.call();
+                            },
+                    ),
+                    const _GridToolTile(
+                      icon: Icons.group_add_outlined,
+                      label: 'Grup Oluştur',
+                      color: AppColors.success,
+                      onTap: null,
+                    ),
+                    _GridToolTile(
+                      icon: Icons.table_restaurant_outlined,
+                      label: 'Masa Taşıma',
+                      color: AppColors.primary,
+                      onTap: widget.busy
+                          ? null
+                          : () => _showTransferDialog(
+                              context, widget.onTransfer, 'Masa Transferi'),
+                    ),
+                    _GridToolTile(
+                      icon: Icons.call_split,
+                      label: 'Hesabı Böl',
+                      color: AppColors.secondary,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        _showSplitToolsSheet(context);
+                      },
+                    ),
+                    const _GridToolTile(
+                      icon: Icons.move_up_outlined,
+                      label: 'Siparişleri Cariye Taşı',
+                      color: AppColors.error,
+                      onTap: null,
+                    ),
+                    _GridToolTile(
+                      icon: Icons.print_outlined,
+                      label: 'Yazdır',
+                      color: AppColors.accent,
+                      onTap: widget.checkId == null
+                          ? null
+                          : () {
+                              Navigator.of(sheetContext).pop();
+                              printTableReceipt(
+                                context: context,
+                                ref: ref,
+                                ctx: widget.ctx,
+                                tableId: widget.view.tableId,
+                                checkId: widget.checkId,
+                                tableName: widget.view.tableId,
+                              );
+                            },
+                    ),
+                    _GridToolTile(
+                      icon: Icons.receipt_long_outlined,
+                      label: 'Hesabı Göster',
+                      color: AppColors.info,
+                      onTap: widget.checkId == null
+                          ? null
+                          : () => _showAccountSummaryDialog(context),
+                    ),
+                    const _GridToolTile(
+                      icon: Icons.room_service_outlined,
+                      label: 'Servis Ücreti',
+                      color: AppColors.warning,
+                      onTap: null,
+                    ),
+                    const _GridToolTile(
+                      icon: Icons.note_add_outlined,
+                      label: 'Not Ekle',
+                      color: AppColors.error,
+                      onTap: null,
+                    ),
+                    const _GridToolTile(
+                      icon: Icons.groups_outlined,
+                      label: 'Kişi Sayısı',
+                      color: AppColors.primaryDark,
+                      onTap: null,
+                    ),
+                    const _GridToolTile(
+                      icon: Icons.no_food_outlined,
+                      label: 'Stoğu Biten Ürünler',
+                      color: AppColors.info,
+                      onTap: null,
+                    ),
+                    const _GridToolTile(
+                      icon: Icons.block_outlined,
+                      label: 'Satışa Kapalı Ürünler',
+                      color: AppColors.primaryLight,
+                      onTap: null,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// "Hesabı Böl" tile's own sub-sheet — the exact same split (product/
+  /// customer/quantity/free-amount/headcount) and discount-request dialogs
+  /// the old flat "İşlemler" sheet already had, just relocated behind this
+  /// tile instead of sitting inline at the top level.
+  void _showSplitToolsSheet(BuildContext context) {
     final view = widget.view;
     showModalBottomSheet<void>(
       context: context,
@@ -817,7 +1041,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
           controller: scrollController,
           padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
-            const Text('İşlemler', style: AppTypography.titleLarge),
+            const Text('Hesabı Böl', style: AppTypography.titleLarge),
             const SizedBox(height: AppSpacing.md),
             if (view.subAccounts.isNotEmpty) ...[
               const Text('Bölüştürme', style: AppTypography.labelLarge),
@@ -909,22 +1133,6 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                   ? null
                   : () => _showAdjustmentDialog(context, view, widget.checkId!),
               child: const Text('Fiyat Düzeltmesi Talep Et'),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            OutlinedButton(
-              onPressed: widget.busy
-                  ? null
-                  : () => _showTransferDialog(
-                      context, widget.onTransfer, 'Masa Transferi'),
-              child: const Text('Masa Transfer Et'),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            OutlinedButton(
-              onPressed: widget.busy
-                  ? null
-                  : () => _showTransferDialog(
-                      context, widget.onMerge, 'Masa Birleştir'),
-              child: const Text('Masa Birleştir'),
             ),
           ],
         ),
@@ -1107,37 +1315,161 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     );
   }
 
+  /// Status-aware table picker (2026-11-04, replacing the old free-text
+  /// "Hedef Masa Kimliği" field — product owner-reported dead-end: staff
+  /// had to already know a table's raw id). Reuses the exact same real
+  /// `getBranchOverview` call the branch overview screen itself uses for
+  /// its table grid; tapping a table confirms the transfer immediately,
+  /// no extra step.
   Future<void> _showTransferDialog(
     BuildContext context,
     _TransferMergeFn action,
     String title,
   ) async {
-    final controller = TextEditingController();
-    final targetTableId = await showDialog<String>(
+    List<PosBranchTableSummary>? tables;
+    Object? loadError;
+    try {
+      final page =
+          await ref.read(posOperationalViewGatewayProvider).getBranchOverview(
+                organizationId: widget.ctx.organizationId,
+                branchId: widget.ctx.branchId,
+                deviceId: widget.ctx.deviceId,
+                deviceSessionId: widget.ctx.deviceSessionId,
+              );
+      tables = page.tables;
+    } catch (e) {
+      loadError = e;
+    }
+    if (!context.mounted) return;
+
+    final currentTableId = widget.view.tableId;
+    final targetTableId = await showModalBottomSheet<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          key: const Key('targetTableIdField'),
-          controller: controller,
-          decoration: const InputDecoration(labelText: 'Hedef Masa Kimliği'),
+      isScrollControlled: true,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        expand: false,
+        builder: (sheetContext, scrollController) => Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: AppTypography.titleLarge),
+              const SizedBox(height: AppSpacing.md),
+              if (loadError != null)
+                Expanded(
+                  child: ErrorView(
+                      message: 'Masa listesi yüklenemedi: $loadError'),
+                )
+              else if (tables == null || tables.isEmpty)
+                const Expanded(
+                  child: Center(child: Text('Masa bulunamadı.')),
+                )
+              else
+                Expanded(
+                  child: GridView.builder(
+                    controller: scrollController,
+                    gridDelegate:
+                        const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 160,
+                      mainAxisSpacing: AppSpacing.sm,
+                      crossAxisSpacing: AppSpacing.sm,
+                      childAspectRatio: 1.1,
+                    ),
+                    itemCount: tables.length,
+                    itemBuilder: (context, index) {
+                      final table = tables![index];
+                      final isSelf = table.tableId == currentTableId;
+                      return _TargetTableCard(
+                        table: table,
+                        disabled: isSelf,
+                        onTap: isSelf
+                            ? null
+                            : () =>
+                                Navigator.of(sheetContext).pop(table.tableId),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Vazgeç'),
-          ),
-          ElevatedButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text.trim()),
-            child: const Text('Onayla'),
-          ),
-        ],
       ),
     );
     if (targetTableId != null && targetTableId.isNotEmpty) {
       await action(targetTableId);
     }
+  }
+
+  /// "Hesabı Göster" grid tile (2026-11-04) — a read-only summary reusing
+  /// the exact same real call the checkout screen itself refreshes from
+  /// (`PaymentGateway.getPaymentSessionView`); no new backend capability,
+  /// just a lighter-weight view of the one that already exists.
+  Future<void> _showAccountSummaryDialog(BuildContext context) async {
+    final checkId = widget.checkId;
+    if (checkId == null) return;
+    PaymentSessionView? session;
+    Object? error;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => FutureBuilder<PaymentSessionView>(
+        future: ref
+            .read(paymentGatewayProvider)
+            .getPaymentSessionView(ctx: widget.ctx, checkId: checkId),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const AlertDialog(
+              content: SizedBox(
+                height: 80,
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            );
+          }
+          if (snapshot.hasError) {
+            error = snapshot.error;
+            return AlertDialog(
+              title: const Text('Hesap Görüntülenemedi'),
+              content: Text('$error'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Kapat'),
+                ),
+              ],
+            );
+          }
+          session = snapshot.data;
+          final currency = session?.currencyCode ?? 'TRY';
+          final payable = (session?.payableAmountMinorUnits ?? 0) / 100;
+          final settled = (session?.settledAmountMinorUnits ?? 0) / 100;
+          final remaining = (session?.remainingAmountMinorUnits ?? 0) / 100;
+          return AlertDialog(
+            title: const Text('Hesabı Göster'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _AccountSummaryRow(
+                    label: 'Toplam',
+                    value: '${payable.toStringAsFixed(2)} $currency'),
+                _AccountSummaryRow(
+                    label: 'Tahsil Edilen',
+                    value: '${settled.toStringAsFixed(2)} $currency'),
+                _AccountSummaryRow(
+                    label: 'Kalan',
+                    value: '${remaining.toStringAsFixed(2)} $currency'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Kapat'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   /// `requestCheckFinancialAdjustment`'s own real server status
@@ -1160,13 +1492,59 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
   /// — the exact same 3-state logic the old `_CheckPanel` already had
   /// (verbatim), just the single visually-dominant action this screen's
   /// "büyük 'Ödeme Al / Hesabı Kapat' butonu" spec asks for.
+  /// The real action behind both the always-visible payment button and the
+  /// "Hesabı Kapat" grid tile (2026-11-04) — one place for the Hesap Aç →
+  /// Ödemeye Hazırla → Ödeme Al branching, so the tile can never drift from
+  /// the button's own real state machine.
+  VoidCallback? get _primaryPaymentAction {
+    final status = _currentCheckStatus;
+    if (widget.checkId == null) {
+      return widget.view.hasActiveSession && !widget.busy
+          ? widget.onOpenCheck
+          : null;
+    }
+    if (status == 'readyForPayment' || status == 'paid') {
+      return widget.busy ? null : widget.onOpenCheckout;
+    }
+    return widget.busy ? null : () => _ensureAllocationsThenFinalize();
+  }
+
+  /// `finalizeCheckReadyForPayment` genuinely rejects a check with zero
+  /// active allocations ("A check with no active allocations cannot be
+  /// finalized." — `checkOperations.ts`) — the real backend requires at
+  /// least one `splitByProduct` allocation to exist first, confirmed by
+  /// its own test (`checkOperations.test.ts`: "rejected with zero active
+  /// allocations, then succeeds once an allocation exists"). Staff never
+  /// explicitly splitting a single-guest table used to hit this as a dead-
+  /// end error (2026-11-04, product owner-reported). Fixed by
+  /// transparently creating one real allocation per already-accepted line
+  /// (via the exact same `splitByProduct` call the manual split dialogs
+  /// already use, assigned to that line's own existing sub-account) only
+  /// when none exist yet, then finalizing — no new backend capability,
+  /// just the existing one applied automatically instead of requiring a
+  /// manual split first.
+  Future<void> _ensureAllocationsThenFinalize() async {
+    final hasActiveAllocation =
+        widget.view.allocations.any((a) => a.status == 'active');
+    if (!hasActiveAllocation) {
+      for (final order in widget.view.orders) {
+        for (var i = 0; i < order.lines.length; i++) {
+          final line = order.lines[i];
+          final subAccountId = line.subAccountId;
+          if (line.status == 'accepted' && subAccountId != null) {
+            await widget.onSplit(subAccountId, order.orderId, i, 'product');
+          }
+        }
+      }
+    }
+    widget.onFinalize();
+  }
+
   Widget _buildPaymentButton() {
     final status = _currentCheckStatus;
     if (widget.checkId == null) {
       return ElevatedButton(
-        onPressed: widget.view.hasActiveSession && !widget.busy
-            ? widget.onOpenCheck
-            : null,
+        onPressed: _primaryPaymentAction,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
           foregroundColor: AppColors.onPrimary,
@@ -1177,18 +1555,20 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     }
     if (status == 'readyForPayment' || status == 'paid') {
       return ElevatedButton.icon(
-        onPressed: widget.busy ? null : widget.onOpenCheckout,
+        onPressed: _primaryPaymentAction,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
           foregroundColor: AppColors.onPrimary,
           minimumSize: const Size.fromHeight(48),
         ),
         icon: const Icon(Icons.point_of_sale_outlined),
-        label: Text(status == 'paid' ? 'Ödeme Detayı' : 'Ödeme Al'),
+        label: Text(status == 'paid'
+            ? 'Ödeme Detayı'
+            : 'Ödeme Al: ${_formatTl(_paymentButtonAmountMinorUnits)} ₺'),
       );
     }
     return ElevatedButton(
-      onPressed: widget.busy ? null : widget.onFinalize,
+      onPressed: _primaryPaymentAction,
       style: ElevatedButton.styleFrom(
         backgroundColor: AppColors.primary,
         foregroundColor: AppColors.onPrimary,
@@ -1286,6 +1666,22 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                 : ListView(
                     padding: const EdgeInsets.all(AppSpacing.md),
                     children: [
+                      // "N Seçili" badge (2026-11-04 redesign) — only when
+                      // at least one accepted line is checked.
+                      if (_selectedAcceptedLines.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Chip(
+                              label: Text('${_selectedAcceptedLines.length} '
+                                  'Seçili'),
+                              backgroundColor: AppColors.primaryExtraLight,
+                              labelStyle: AppTypography.labelMedium
+                                  .copyWith(color: AppColors.primary),
+                            ),
+                          ),
+                        ),
                       for (final order in view.orders)
                         if (order.lines.any((l) => l.status == 'accepted'))
                           Padding(
@@ -1306,6 +1702,13 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                                           bottom: AppSpacing.xs),
                                       child: Row(
                                         children: [
+                                          Checkbox(
+                                            value: _isLineSelected(
+                                                order.orderId, i),
+                                            onChanged: (_) =>
+                                                _toggleLineSelection(
+                                                    order.orderId, i),
+                                          ),
                                           Expanded(
                                             child: Text(
                                               '${order.lines[i].quantity}x ${order.lines[i].productName}',
@@ -1478,21 +1881,133 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                   ),
                   const SizedBox(height: AppSpacing.sm),
                 ],
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.more_horiz),
-                  label: const Text('İşlemler'),
-                  onPressed: widget.busy || widget.checkId == null
-                      ? null
-                      : () => _showQuickToolsSheet(context),
+                Row(
+                  children: [
+                    Expanded(child: _buildPaymentButton()),
+                    const SizedBox(width: AppSpacing.sm),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          color: AppColors.error),
+                      tooltip: 'Seçili Ürünleri İptal Et',
+                      style: IconButton.styleFrom(
+                        backgroundColor: AppColors.error.withValues(alpha: 0.1),
+                        minimumSize: const Size(48, 48),
+                      ),
+                      onPressed: widget.busy || _selectedAcceptedLines.isEmpty
+                          ? null
+                          : () => _showBulkCancelDialog(context),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                _buildPaymentButton(),
+                _buildQuickActionBar(context),
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// The 4-button quick-action bar (2026-11-04 redesign) replacing the old
+  /// single "İşlemler" button. "Garson / Cari" (a running-credit-account
+  /// subsystem that doesn't exist yet) remains shown disabled rather than
+  /// wired to something that would misrepresent what the app can do;
+  /// "Yazdır" is real as of the 2026-11-05 printer integration (the real
+  /// adisyon/ara hesap fişi, not just the kitchen ticket).
+  Widget _buildQuickActionBar(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _QuickActionButton(
+            icon: Icons.more_horiz,
+            label: '... Diğer',
+            color: AppColors.info,
+            onPressed: widget.busy ? null : () => _showToolsGridModal(context),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: _QuickActionButton(
+            icon: Icons.table_restaurant,
+            label: 'Taşı',
+            color: AppColors.warning,
+            onPressed: widget.busy
+                ? null
+                : () => _showTransferDialog(
+                    context, widget.onTransfer, 'Masa Transferi'),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        const Expanded(
+          child: _QuickActionButton(
+            icon: Icons.person,
+            label: 'Garson / Cari',
+            color: AppColors.primaryDark,
+            enabledLabel: 'Yakında',
+            onPressed: null,
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: _QuickActionButton(
+            icon: Icons.print,
+            label: 'Yazdır',
+            color: AppColors.textSecondary,
+            onPressed: widget.checkId == null
+                ? null
+                : () => printTableReceipt(
+                      context: context,
+                      ref: ref,
+                      ctx: widget.ctx,
+                      tableId: widget.view.tableId,
+                      checkId: widget.checkId,
+                      tableName: widget.view.tableId,
+                    ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Fixed "Çok Tercih Edilenler" showcase (2026-11-03, product owner
+  /// decision) — one curated id per catalog group, used only when the real
+  /// sales aggregation errors or genuinely has no history yet. Every id was
+  /// matched against `abakus_menu_catalog.dart` by hand; none are guessed.
+  static const List<String> _topSellersFallbackProductIds = [
+    // Bowl
+    'prod_bowl2_tatli_eksi_tavuk',
+    'prod_bowl2_citir_tavuk',
+    'prod_bowl2_somon_fume',
+    'prod_bowl2_izgara_anne_koftesi',
+    // Burger
+    'prod_burger2_double_chicken',
+    'prod_burger2_tripoli',
+    'prod_burger2_steak',
+    // Tava
+    'prod_tava_citir_tavuk',
+    'prod_tava_kremali_pestolu_tavuk',
+    'prod_tava_tatli_eksi_tavuk',
+    // Kahvaltı & Ekmek
+    'prod_kahvalti_clasico',
+    'prod_kahvalti_steak',
+    'prod_kahvalti_salmon',
+    // Wrap
+    'prod_wrap2_citir_tavuk',
+    'prod_wrap2_asian_chicken',
+    'prod_wrap2_kofte',
+    // Salata & Makarna
+    'prod_salata2_crispy_caesar',
+    'prod_makarna2_fettuccine_chicken_alfredo',
+    'prod_makarna2_citir_tavuk_fettuccine',
+  ];
+
+  List<MenuProduct> _resolveTopSellersFallback(List<MenuProduct> allProducts) {
+    final productById = {for (final p in allProducts) p.id: p};
+    return [
+      for (final id in _topSellersFallbackProductIds)
+        if (productById[id] != null) productById[id]!,
+    ];
   }
 
   @override
@@ -1505,18 +2020,36 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     // (a real backend aggregation) — every other category is already an
     // in-memory list, wrapped in `AsyncValue.data` so both paths share one
     // explicit loading/error/data handling below instead of two.
+    //
+    // No-sales-data / service-error fallback (2026-11-03, product owner
+    // decision): this tab must never show a dead error screen or an empty
+    // grid on day one — if the real aggregation errors, or legitimately
+    // returns nothing yet (no 30-day sales history), fall back to a fixed
+    // 19-product showcase (one of the 20 named items, "Emerald Green", does
+    // not exist in the catalog — product owner chose Somon Kahvaltı in its
+    // place) covering every category, so staff always have an immediate,
+    // populated starting tab.
     final categoryFilteredAsync = _categoryFilter ==
             _staffEntryTopSellersSentinel
-        ? ref.watch(topSellingProductsProvider(widget.ctx)).whenData(
-            (topSellers) {
-              final productById = {for (final p in allProducts) p.id: p};
-              return [
-                for (final entry in topSellers)
-                  if (productById[entry.productId] != null)
-                    productById[entry.productId]!,
-              ];
-            },
-          )
+        ? ref.watch(topSellingProductsProvider(widget.ctx)).when(
+              loading: () => const AsyncValue<List<MenuProduct>>.loading(),
+              error: (error, stackTrace) => AsyncValue.data(
+                _resolveTopSellersFallback(allProducts),
+              ),
+              data: (topSellers) {
+                final productById = {for (final p in allProducts) p.id: p};
+                final resolved = [
+                  for (final entry in topSellers)
+                    if (productById[entry.productId] != null)
+                      productById[entry.productId]!,
+                ];
+                return AsyncValue.data(
+                  resolved.isNotEmpty
+                      ? resolved
+                      : _resolveTopSellersFallback(allProducts),
+                );
+              },
+            )
         : AsyncValue.data(
             allProducts.where((p) => p.categoryId == _categoryFilter).toList(),
           );
@@ -2002,6 +2535,194 @@ class _StaffEntryCartLine {
 /// the generic placeholder) — empty only for the synthetic "Tümü" entry
 /// or a category with no products, in which case [icon] is shown
 /// instead.
+/// One tile in the target-table picker (2026-11-04) — same status
+/// labels/colors as `pos_branch_overview_screen.dart`'s own table grid.
+class _TargetTableCard extends StatelessWidget {
+  const _TargetTableCard({
+    required this.table,
+    required this.disabled,
+    required this.onTap,
+  });
+
+  final PosBranchTableSummary table;
+  final bool disabled;
+  final VoidCallback? onTap;
+
+  String get _statusLabel => switch (table.status) {
+        'available' => 'Boş',
+        'occupied' => 'Dolu',
+        'billRequested' => 'Hesap İstendi',
+        'cleaning' => 'Temizleniyor',
+        'disabled' => 'Kapalı',
+        _ => table.status,
+      };
+
+  Color get _statusColor => switch (table.status) {
+        'available' => AppColors.success,
+        'occupied' => AppColors.warning,
+        'billRequested' => AppColors.error,
+        _ => AppColors.textSecondary,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      child: InkWell(
+        onTap: onTap,
+        child: Opacity(
+          opacity: disabled ? 0.4 : 1,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(table.displayName,
+                  style: AppTypography.titleMedium,
+                  textAlign: TextAlign.center),
+              const SizedBox(height: AppSpacing.xs),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _statusColor.withValues(alpha: 0.15),
+                  borderRadius: AppRadius.kPill,
+                ),
+                child: Text(disabled ? 'Bu Masa' : _statusLabel,
+                    style:
+                        AppTypography.bodySmall.copyWith(color: _statusColor)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One row in the "Hesabı Göster" read-only summary dialog.
+class _AccountSummaryRow extends StatelessWidget {
+  const _AccountSummaryRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: AppTypography.bodyMedium),
+          Text(value,
+              style: AppTypography.bodyMedium
+                  .copyWith(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+}
+
+/// One of the 4 colored buttons in the quick-action bar beneath the big
+/// payment button (2026-11-04 redesign). `onPressed: null` renders it
+/// disabled; [enabledLabel] overrides the shown label only while disabled
+/// (used for "Yakında" on the two actions with no real backend yet).
+class _QuickActionButton extends StatelessWidget {
+  const _QuickActionButton({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onPressed,
+    this.enabledLabel,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback? onPressed;
+  final String? enabledLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDisabled = onPressed == null;
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        foregroundColor: AppColors.onPrimary,
+        disabledBackgroundColor: color.withValues(alpha: 0.35),
+        disabledForegroundColor: AppColors.onPrimary.withValues(alpha: 0.7),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.kMedium),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 22),
+          const SizedBox(height: 2),
+          Text(
+            isDisabled && enabledLabel != null ? enabledLabel! : label,
+            style: AppTypography.caption,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One tile in the 12-tile "... Diğer" grid modal (2026-11-04 redesign).
+/// `onTap: null` renders it disabled/greyed — used for every tile whose
+/// backend capability doesn't exist yet, so it's never presented as
+/// working when it isn't.
+class _GridToolTile extends StatelessWidget {
+  const _GridToolTile({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDisabled = onTap == null;
+    final tileColor = isDisabled ? AppColors.textDisabled : color;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: AppRadius.kMedium,
+      child: Container(
+        decoration: BoxDecoration(
+          color: tileColor,
+          borderRadius: AppRadius.kMedium,
+        ),
+        padding: const EdgeInsets.symmetric(
+            vertical: AppSpacing.sm, horizontal: AppSpacing.xs),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: AppColors.onPrimary, size: 26),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              isDisabled ? '$label (Yakında)' : label,
+              style: AppTypography.caption.copyWith(color: AppColors.onPrimary),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CategoryCard extends StatelessWidget {
   const _CategoryCard({
     required this.label,
