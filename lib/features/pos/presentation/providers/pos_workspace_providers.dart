@@ -1,11 +1,15 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../admin/domain/trusted_device/device_registration_state.dart';
 import '../../../admin/presentation/providers/trusted_device_session_providers.dart';
+import '../../../printing/data/windows_raw_printer_adapter.dart';
 import '../../application/use_cases/capture_offline_cash_payment.dart';
 import '../../application/use_cases/ensure_offline_lease.dart';
+import '../../application/use_cases/print_table_receipt.dart';
 import '../../application/use_cases/sync_offline_payment_outbox.dart';
 import '../../data/cash_register_gateway.dart';
 import '../../data/fiscal_offline_gateway.dart';
@@ -102,6 +106,52 @@ final posDeviceContextProvider = Provider<PosDeviceContext?>((ref) {
 /// Currently selected table (branch overview -> table workspace
 /// navigation) — `null` while on the branch overview itself.
 final selectedPosTableIdProvider = StateProvider<String?>((ref) => null);
+
+/// 2026-11-05 real printer integration. Fails closed with
+/// [UnavailableRawPrinterAdapter] off Windows (this app also builds for
+/// Android/iOS/Web) rather than attempting a `winspool.drv` FFI call that
+/// doesn't exist on those platforms.
+final rawPrinterAdapterProvider = Provider<RawPrinterAdapter>((ref) {
+  return Platform.isWindows
+      ? const WindowsRawPrinterAdapter()
+      : const UnavailableRawPrinterAdapter();
+});
+
+/// The staff-confirmed Windows-installed queue name for the till's 80mm
+/// ESC/POS printer, durable across app restarts via `shared_preferences`
+/// (same storage this file already uses for the offline payment outbox) —
+/// deliberately not a hardcoded constant: a different till/branch may have
+/// the printer installed under a different Windows queue name.
+class ReceiptPrinterSettings {
+  const ReceiptPrinterSettings(this._prefs);
+
+  final SharedPreferences _prefs;
+
+  static const _printerNameKey = 'posReceiptPrinterName';
+
+  /// The exact Windows queue name confirmed for the first till ("POS80
+  /// Printer") — used only until staff override it for a different device.
+  static const defaultPrinterName = 'POS80 Printer';
+
+  String get printerName =>
+      _prefs.getString(_printerNameKey) ?? defaultPrinterName;
+
+  Future<void> setPrinterName(String name) =>
+      _prefs.setString(_printerNameKey, name);
+}
+
+final receiptPrinterSettingsProvider =
+    FutureProvider<ReceiptPrinterSettings>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  return ReceiptPrinterSettings(prefs);
+});
+
+final printTableReceiptProvider = Provider<PrintTableReceipt>((ref) {
+  return PrintTableReceipt(
+    operationalViewGateway: ref.watch(posOperationalViewGatewayProvider),
+    rawPrinterAdapter: ref.watch(rawPrinterAdapterProvider),
+  );
+});
 
 /// AP-4 Wave D — the device-local, durable offline cash-payment queue
 /// (`docs`'s offline-outbox contract). `FutureProvider` because

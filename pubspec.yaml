@@ -13,6 +13,11 @@ dependencies:
   connectivity_plus: ^7.3.1
   cryptography: ^2.9.0
   cryptography_flutter: ^2.3.4
+  # 2026-11-05 — native-memory allocation (`calloc`/`.toNativeUtf16()`) for
+  # the same Windows raw-printer integration as `win32` below; already a
+  # transitive dependency of `win32`, promoted to direct since
+  # `windows_raw_printer_adapter.dart` imports it by name.
+  ffi: ^2.2.0
   firebase_app_check: ^0.4.6
   firebase_auth: ^6.5.7
   firebase_core: ^4.12.1
@@ -55,6 +60,15 @@ dependencies:
   latlong2: ^0.10.1
   mobile_scanner: ^7.0.0
   shared_preferences: ^2.5.5
+  # 2026-11-05 — real Windows raw-spooler printing for the 80mm ESC/POS
+  # till receipt (`features/printing/data/windows_raw_printer_adapter
+  # .dart`): the user-confirmed printer ("POS80 Printer") is a Windows-
+  # installed USB device reached only through `winspool.drv`
+  # (OpenPrinter/StartDocPrinter/WritePrinter) — win32 is the official,
+  # actively maintained Dart FFI binding for that API. Already a
+  # transitive dependency; promoted to direct since this feature calls it
+  # by name.
+  win32: ^6.4.0
 
 dev_dependencies:
   flutter_test:

@@ -267,6 +267,15 @@ test("getPosTableOperationalView: with a real device session, returns the table 
   assert.ok(subAccounts.some((s) => s.id === subAccountId));
   const orders = res.body.result?.orders as Array<{ id: string }>;
   assert.strictEqual(orders.length, 1);
+
+  // 2026-11-05 — the till-receipt print feature reads modifier/exclusion/
+  // note detail off this same projection (`PosOrderLineSummary` on the
+  // Flutter side); confirm it's actually surfaced, not dropped.
+  const line = (orders[0] as unknown as { lines: Array<Record<string, unknown>> }).lines[0];
+  assert.strictEqual(line.productId, f.productId);
+  assert.ok(Array.isArray(line.modifiers));
+  assert.ok(Array.isArray(line.excludedIngredients));
+  assert.strictEqual(typeof line.kitchenNote, "string");
 });
 
 // -----------------------------------------------------------------------

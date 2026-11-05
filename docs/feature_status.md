@@ -10333,3 +10333,95 @@ rather than silently assumed. New files: `functions/src/posTopSellingProducts.ts
 `pos_table_workspace_screen.dart`, `pos_table_workspace_screen_test.dart`,
 `end_of_day_screen_test.dart`, `pos_branch_overview_screen_test.dart`, `docs/business_rules.md`
 (BR-POS-001 moved from UNRESOLVED to VERIFIED).
+
+### Feature (2026-11-03, same day): "Çok Tercih Edilenler" no-data/error fallback; "İşlemler" button
+unblocked
+
+Two fixes to the "Çok Tercih Edilenler" (Top 20) and table-tools flows shipped the same day as
+BR-POS-001, both product-owner-reported after live testing:
+
+1. **Fallback showcase instead of a dead empty/error state.** `pos_table_workspace_screen.dart`'s
+   "Çok Tercih Edilenler" tab previously showed `LoadingView`/`ErrorView` with a retry button on a
+   backend error, and an explicit "Henüz yeterli satış verisi yok." message when the real 30-day
+   aggregation legitimately had no sales yet. Per product owner decision, both cases now fall back
+   to a fixed 19-product showcase (`_topSellersFallbackProductIds`, one curated real catalog id per
+   category group: Bowl/Burger/Tava/Kahvaltı & Ekmek/Wrap/Salata & Makarna) instead, so the tab is
+   never empty or broken on first use. One of the 20 names the product owner originally gave,
+   "Emerald Green," does not exist anywhere in the menu catalog — it only exists as an Abaküs
+   loyalty-bead color name in `docs/master_spec_migration.md`; flagged rather than guessed, and the
+   product owner chose `prod_kahvalti_salmon` in its place. The dedicated empty-state and error-state
+   tests were rewritten to assert the fallback grid renders instead (the old `ErrorView`/empty-text
+   assertions no longer apply, since those code paths no longer surface either).
+2. **"İşlemler" button unblocked.** The button's `onPressed` previously required
+   `widget.checkId != null`, which blocked it entirely for a table with no open check yet (e.g. an
+   available table) — even though the sheet it opens already has "Masa Transfer Et"/"Masa
+   Birleştir" gated only on `busy`, not on `checkId`. The outer gate is now `widget.busy` only, so
+   table tools are reachable regardless of table/check status. The product owner also asked for
+   "Hesabı Aç / Kapat" to be reachable from this same menu: rather than duplicating that state
+   machine, the sheet now calls the screen's own existing `_buildPaymentButton()` (Hesap Aç →
+   Ödemeye Hazırla → Ödeme Al/Ödeme Detayı) as its first item — same single source of truth as the
+   always-visible button beneath "İşlemler," not a second implementation.
+
+`flutter analyze`/`flutter test` (full suite, 3838 tests) green. New test: İşlemler reachable with
+no check open, exposing "Hesap Aç" and a working "Masa Transfer Et" without one. Updated:
+`pos_table_workspace_screen.dart`, `pos_table_workspace_screen_test.dart`.
+
+### Feature (2026-11-05): Real Windows USB ESC/POS till-receipt printing
+
+User confirmed real hardware (Windows-installed "POS80 Printer", 80mm USB ESC/POS clone) and asked
+for genuine printing — not another disabled placeholder — behind all three existing "Yazdır"
+entry points plus a new one on the Masalar grid.
+
+1. **Transport**: `win32`/`ffi` promoted from transitive to direct dependencies.
+   `features/printing/data/windows_raw_printer_adapter.dart` sends raw bytes straight to the named
+   Windows print queue via `winspool.drv` (`OpenPrinter`/`StartDocPrinter` with the `RAW` datatype/
+   `WritePrinter`) — genuinely Windows-only; fails closed with a Turkish message on every other
+   platform this app also builds for (Android/iOS/Web), mirroring every other `Unavailable*Gateway`.
+   The printer's Windows queue name is a `shared_preferences`-backed setting
+   (`ReceiptPrinterSettings`, default `"POS80 Printer"`), not a hardcoded constant — a different
+   till can have it installed under a different name.
+2. **Receipt content**: `features/pos/domain/receipts/table_receipt_builder.dart` builds a
+   `ReceiptDocument` from the same `PosTableOperationalView` the workspace/checkout screens already
+   load, totaling against the check's real `computedTotalMinorUnits` (never independently
+   recomputed). Per product-owner request, each line prints its standard recipe text
+   (`MenuProduct.description`, the same source the menu-PDF ingredient list already comes from)
+   plus the order-specific deviation (grouped modifier selections/excluded ingredients/kitchen
+   note), mirroring `KitchenTicketMapper`'s own grouping so the printed receipt and the kitchen
+   ticket never disagree about what was actually ordered.
+3. **Backend**: `getPosTableOperationalView` (`posOperationalView.ts`) now also projects
+   `productId`/`modifiers`/`excludedIngredients`/`kitchenNote` per line — already-stored `Order`
+   fields this read model simply didn't surface before; purely additive, no existing field changed.
+4. **Encoding**: `features/printing/domain/esc_pos_receipt_encoder.dart` — 48-char/80mm layout,
+   bold/double-size totals, `GS V 66 0` feed+cut. **Flagged, not vendor-verified**: Turkish text
+   uses the Windows-1254 (CP1254) codepage, selected via Epson's documented `ESC t 45` table-select
+   byte — the standard convention for this printer class and the same encoding Windows itself uses
+   for Turkish, but genuinely untested against the physical unit (`docs/kds_printer_stock_architecture
+   .md` §14/§24 already gates a real `PrinterAdapter` on a vendor ESC/POS manual that isn't
+   available here). If Turkish characters garble on the real printer, that table-select byte is the
+   first thing to check.
+5. **Trigger points wired**: the table workspace's quick-action bar "Yazdır" button and the
+   "... Diğer" grid tile's "Yazdır" (both previously disabled placeholders) now call the real
+   pipeline; a new green quick-print button appears on an occupied/bill-requested card in the
+   Masalar grid (`pos_branch_overview_screen.dart`), resolving the table's own open/ready-for-
+   payment check itself since the overview summary doesn't carry a checkId.
+
+**Deferred, not done this pass** (reported, not silently dropped): the Masalar grid's category
+tabs (Açık Masalar/İç Salon/Bahçe/Rezervasyon/Gel Al Paket/Paket Servis), per-card amount/zone
+display, and the blue "open TAHSİLAT directly from the card" quick button all remain outstanding —
+the zone/amount fields need their own `PosBranchTableSummary`/`getBranchOverview` extension, and
+the reservation/takeaway/delivery tabs need their own scoping decision; this pass focused on the
+printer integration the user asked for across three consecutive messages.
+
+`flutter analyze`/`dart format`/`flutter test` (full suite) green. `functions`: `npx tsc --noEmit`
+clean. **Not run**: the functions emulator suite — this environment's Java runtime is below the
+version `firebase-tools` now requires, a pre-existing environment limitation, not something this
+change introduced; the backend change was verified by type-check and manual review against
+`submitDineInOrder.ts`'s already-established field names only, not by an actual emulator test
+execution. New files: `features/printing/domain/{receipt_document,esc_pos_receipt_encoder}.dart`,
+`features/printing/data/windows_raw_printer_adapter.dart`,
+`features/pos/domain/receipts/table_receipt_builder.dart`,
+`features/pos/application/use_cases/print_table_receipt.dart`,
+`features/pos/presentation/widgets/print_table_receipt_action.dart`. Updated: `pubspec.yaml`
+(`win32`, `ffi`), `functions/src/posOperationalView.ts`,
+`functions/src/test/checkOperations.test.ts`, `pos_operational_view_gateway.dart`,
+`pos_workspace_providers.dart`, `pos_table_workspace_screen.dart`, `pos_branch_overview_screen.dart`.

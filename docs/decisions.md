@@ -19693,3 +19693,47 @@ asserting these items were reachable for a manager — all 6 rewritten to assert
 flag-enabled setup so the test also proves the freeze holds even if a flag is re-enabled. The other 4
 frozen items (`dispatch`/`campaigns`/`surveys`/`recipe-ingredient-links`) had no dedicated shell-level
 test. Verified: `flutter analyze` (whole project) and `flutter test` (whole project) both clean.
+
+## ADR-053 — Real till-receipt printing: Windows raw spooler (`winspool.drv`) over network/USB-direct (2026-11-05)
+
+- Tarih: 2026-11-05
+- Durum: Accepted
+
+### Context
+
+The "Yazdır" buttons in the POS workspace's quick-action bar and "... Diğer" grid tile had stood
+disabled since the 2026-11-04 redesign (`docs/kds_printer_stock_architecture.md` §14 already notes a
+real `PrinterAdapter` is gated on vendor hardware docs this project doesn't have). The user confirmed
+real, specific hardware this session: a Windows-installed "POS80 Printer" (80mm USB ESC/POS clone),
+and explicitly asked for the Windows Print Spooler / `winspool.drv` RAW path over the alternatives
+(a direct TCP:9100 socket, or a USB/HID driver bypassing Windows entirely).
+
+### Decision
+
+Reached `winspool.drv` through `package:win32`/`package:ffi` (promoted from transitive to direct
+dependencies) — `OpenPrinter`/`StartDocPrinter` with the `RAW` datatype/`WritePrinter`/
+`EndDocPrinter`/`ClosePrinter`, sending pre-built ESC/POS byte sequences straight through the
+already-installed Windows driver's queue, bypassing its page-rendering/GDI path entirely. This is
+Windows-only by construction (`winspool.drv` doesn't exist elsewhere) — `WindowsRawPrinterAdapter`
+fails closed with a Turkish message on Android/iOS/Web, mirroring every other `Unavailable*Gateway`
+in this codebase, rather than attempting a native call that would crash on a missing symbol.
+
+**Why this over the alternatives**: a TCP:9100 socket would skip Windows entirely and talk to the
+printer's own network stack, but this is a declared *USB* device reached only via an installed
+Windows driver — there's no IP to dial. A USB/HID driver bypassing Windows (raw bulk transfers via a
+library like `libusb`) would also work but needs the printer's USB vendor/product IDs and bypasses
+the Windows driver already successfully claiming the device, meaning fighting Windows for the
+endpoint instead of using what it already hands out. `winspool.drv` RAW is the standard, documented
+way Windows POS software has sent ESC/POS to a spooler-registered printer for decades, and is what
+the user explicitly asked for.
+
+**Known limitation, disclosed not silently assumed**: the ESC/POS codepage-select byte used for
+Turkish text (`ESC t 45`, Epson's documented WPC1254/Windows-1254 table) is a best-effort choice
+based on this printer class's common convention, not verified against this specific unit's own
+vendor manual — `docs/kds_printer_stock_architecture.md`'s own gating on vendor ESC/POS references
+still applies to that one byte. If Turkish characters print incorrectly on the real hardware, that
+table-select command (or the `GS V 66 0` cut command, also user-specified rather than independently
+verified) is the first thing to check against the printer's actual reference manual.
+
+See `docs/feature_status.md`'s "2026-11-05: Real Windows USB ESC/POS till-receipt printing" entry
+for the full file list and test results.

@@ -107,31 +107,81 @@ class PosBranchOverviewPage {
   final bool unchanged;
 }
 
+class PosOrderLineModifierSummary {
+  const PosOrderLineModifierSummary({
+    required this.groupName,
+    required this.optionName,
+    required this.quantity,
+    required this.unitExtraPriceMinorUnits,
+  });
+
+  final String groupName;
+  final String optionName;
+  final int quantity;
+  final int unitExtraPriceMinorUnits;
+
+  factory PosOrderLineModifierSummary.fromWire(Map<String, dynamic> data) {
+    final unitExtraPrice = data['unitExtraPrice'];
+    return PosOrderLineModifierSummary(
+      groupName: data['groupName'] as String? ?? '',
+      optionName: data['optionName'] as String? ?? '',
+      quantity: data['quantity'] as int? ?? 1,
+      unitExtraPriceMinorUnits: unitExtraPrice is Map
+          ? (unitExtraPrice['minorUnits'] as int? ?? 0)
+          : 0,
+    );
+  }
+}
+
 class PosOrderLineSummary {
   const PosOrderLineSummary({
+    this.productId,
     required this.productName,
     required this.quantity,
     required this.unitPriceMinorUnits,
     required this.status,
     required this.subAccountId,
+    this.modifiers = const [],
+    this.excludedIngredients = const [],
+    this.kitchenNote = '',
   });
 
+  final String? productId;
   final String productName;
   final int quantity;
   final int unitPriceMinorUnits;
   final String status;
   final String? subAccountId;
 
+  /// Mirrors `KitchenTicketMapper`'s inputs — the till receipt (2026-11-05)
+  /// prints the same selection detail the kitchen ticket already does, so
+  /// kitchen staff and the printed adisyon never disagree on what was
+  /// actually ordered.
+  final List<PosOrderLineModifierSummary> modifiers;
+  final List<String> excludedIngredients;
+  final String kitchenNote;
+
   factory PosOrderLineSummary.fromWire(
       Map<String, dynamic> data, int lineIndex) {
     final unitPrice = data['unitPrice'];
     return PosOrderLineSummary(
+      productId: data['productId'] as String?,
       productName: data['productName'] as String,
       quantity: data['quantity'] as int,
       unitPriceMinorUnits:
           unitPrice is Map ? (unitPrice['minorUnits'] as int? ?? 0) : 0,
       status: data['status'] as String? ?? 'accepted',
       subAccountId: data['subAccountId'] as String?,
+      modifiers: [
+        for (final raw in (data['modifiers'] as List? ?? const []))
+          PosOrderLineModifierSummary.fromWire(
+              Map<String, dynamic>.from(raw as Map)),
+      ],
+      excludedIngredients: [
+        for (final raw in (data['excludedIngredients'] as List? ?? const []))
+          raw as String,
+      ],
+      kitchenNote: data['kitchenNote'] as String? ?? '',
     );
   }
 }

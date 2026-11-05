@@ -117,11 +117,19 @@ export const getPosTableOperationalView = onCall(
           mode: o.mode,
           linesDispositionSummary: o.linesDispositionSummary,
           lines: (o.lines ?? []).map((line: Record<string, unknown>) => ({
+            productId: line.productId,
             productName: line.productName,
             quantity: line.quantity,
             unitPrice: line.unitPrice,
             status: line.status,
             subAccountId: line.subAccountId,
+            // 2026-11-05 — the till-receipt print feature needs the same
+            // modifier/exclusion/note detail `KitchenTicketMapper` already
+            // reads off the full `Order` document; this projection simply
+            // surfaces those already-stored fields, nothing new is computed.
+            modifiers: line.modifiers ?? [],
+            excludedIngredients: line.excludedIngredients ?? [],
+            kitchenNote: line.kitchenNote ?? "",
           })),
         };
       }),
