@@ -51,6 +51,7 @@ class _PosCashRegisterScreenState extends ConsumerState<PosCashRegisterScreen> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     final ctx = ref.read(posDeviceContextProvider);
     if (ctx == null) return;
     setState(() => _phase = _LoadPhase.loading);
@@ -73,6 +74,7 @@ class _PosCashRegisterScreenState extends ConsumerState<PosCashRegisterScreen> {
   }
 
   Future<void> _refreshSession() async {
+    if (!mounted) return;
     final ctx = ref.read(posDeviceContextProvider);
     final sessionId = _selectedSessionId;
     if (ctx == null || sessionId == null) return;
@@ -427,9 +429,11 @@ class _DrawerListPanel extends StatelessWidget {
         ),
         Expanded(
           child: drawers.isEmpty
-              ? const EmptyView(
+              ? EmptyView(
                   icon: Icons.point_of_sale_outlined,
                   message: 'Henüz kayıtlı kasa yok.',
+                  actionLabel: 'Varsayılan Ana Kasa Aç',
+                  onAction: busy ? null : () => onCreateDrawer('Ana Kasa'),
                 )
               : ListView(
                   padding:
