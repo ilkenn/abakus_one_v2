@@ -291,4 +291,91 @@ void main() {
       expect(find.byIcon(Icons.receipt_long_outlined), findsOneWidget);
     });
   });
+
+  // Self-Order QR Faz 1 — the guest's manual TR/EN override.
+  group('dil secici (TR/EN)', () {
+    testWidgets('her iki bayrak da gosterilir, tr varsayilan secili olur',
+        (tester) async {
+      final firestoreClient = _FakeTableGuestSessionFirestoreClient();
+      final container = ProviderContainer(overrides: [
+        tableGuestSessionFirestoreClientProvider
+            .overrideWithValue(firestoreClient),
+      ]);
+      addTearDown(container.dispose);
+      container.read(activeTableContextProvider.notifier).set(_fakeContext());
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(body: TableContextBadge()),
+          ),
+        ),
+      );
+
+      expect(find.text('🇹🇷'), findsOneWidget);
+      expect(find.text('🇬🇧'), findsOneWidget);
+      // Still the Turkish table label by default.
+      expect(find.text('Abaküs Ortaköy · Masa 12'), findsOneWidget);
+    });
+
+    testWidgets(
+        'EN bayragina dokununca rozet metni ve istek etiketleri Ingilizceye gecer',
+        (tester) async {
+      final firestoreClient = _FakeTableGuestSessionFirestoreClient();
+      final container = ProviderContainer(overrides: [
+        tableGuestSessionFirestoreClientProvider
+            .overrideWithValue(firestoreClient),
+      ]);
+      addTearDown(container.dispose);
+      container.read(activeTableContextProvider.notifier).set(_fakeContext());
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(body: TableContextBadge()),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('🇬🇧'));
+      await tester.pump();
+
+      expect(find.byTooltip('Call Waiter'), findsOneWidget);
+      expect(find.byTooltip('Request Bill'), findsOneWidget);
+      expect(find.byTooltip('Garson Çağır'), findsNothing);
+    });
+
+    testWidgets(
+        'sure dolmus durumda da dil secici hala gorunur ve calisir durumdadir',
+        (tester) async {
+      final firestoreClient = _FakeTableGuestSessionFirestoreClient();
+      final container = ProviderContainer(overrides: [
+        tableGuestSessionFirestoreClientProvider
+            .overrideWithValue(firestoreClient),
+      ]);
+      addTearDown(container.dispose);
+      container.read(activeTableContextProvider.notifier).set(
+            _fakeContext(expiresAt: DateTime(2020, 1, 1)),
+          );
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(body: TableContextBadge()),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('🇬🇧'));
+      await tester.pump();
+
+      expect(
+        find.text('Session expired — please scan the QR code again'),
+        findsOneWidget,
+      );
+    });
+  });
 }

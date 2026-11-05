@@ -116,6 +116,15 @@ Future<
   );
   addTearDown(container.dispose);
 
+  // Self-Order QR Faz 1 — these tests assert the Turkish copy, so the
+  // device locale this screen detects must be pinned to Turkish rather
+  // than whatever the test host's own default happens to be (the real
+  // `TableGuestEntryScreen` now renders in English for a detected `en`
+  // device locale). `table_guest_entry_screen_test.dart`'s English-locale
+  // behavior is covered by its own dedicated test instead.
+  tester.binding.platformDispatcher.localeTestValue = const Locale('tr');
+  addTearDown(tester.binding.platformDispatcher.clearLocaleTestValue);
+
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
@@ -143,6 +152,9 @@ void main() {
       ],
     );
     addTearDown(container.dispose);
+
+    tester.binding.platformDispatcher.localeTestValue = const Locale('tr');
+    addTearDown(tester.binding.platformDispatcher.clearLocaleTestValue);
 
     await tester.pumpWidget(
       UncontrolledProviderScope(
@@ -173,6 +185,42 @@ void main() {
     expect(find.byType(MenuScreen), findsOneWidget);
     expect(find.byType(LoginScreen), findsNothing);
     expect(find.byType(OtpScreen), findsNothing);
+  });
+
+  testWidgets(
+      'Self-Order QR Faz 1: cihaz dili en algilaninca ekran Ingilizce '
+      'gosterilir ve algilanan dil GuestSession\'a tasinir', (tester) async {
+    final gateway = _FakeTableGuestSessionGateway();
+    final container = ProviderContainer(
+      overrides: [
+        firebaseReadyProvider.overrideWithValue(true),
+        tableGuestSessionGatewayProvider.overrideWithValue(gateway),
+        technicalIdentityProviderProvider
+            .overrideWithValue(_FakeTechnicalIdentityProvider()),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    tester.binding.platformDispatcher.localeTestValue = const Locale('en');
+    addTearDown(tester.binding.platformDispatcher.clearLocaleTestValue);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: TableGuestEntryScreen(token: 'qr-token-abc'),
+        ),
+      ),
+    );
+    expect(find.text('Welcome to Abaküs Street Food'), findsOneWidget);
+    expect(find.text('Checking QR code...'), findsOneWidget);
+
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MenuScreen), findsOneWidget);
+    final context = container.read(activeTableContextProvider);
+    expect(context!.guestSession.detectedLanguageCode, 'en');
+    expect(context.guestSession.selectedLanguageCode, 'en');
   });
 
   testWidgets(

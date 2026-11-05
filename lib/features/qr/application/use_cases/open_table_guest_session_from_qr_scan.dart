@@ -46,7 +46,19 @@ class OpenTableGuestSessionFromQrScan {
   /// have already shown a friendly message for the common cases via that
   /// cheaper preview call; this is the fail-closed backstop, not the
   /// primary UX path for an already-known-bad token.
-  Future<ActiveTableContext> call(String token) async {
+  ///
+  /// [detectedLanguageCode] — Self-Order QR Faz 1: the raw ISO 639-1 code
+  /// the caller read off the device (e.g. `PlatformDispatcher.instance.
+  /// locale.languageCode`) at the moment the session opens. Passed in
+  /// rather than read here, since this class stays plain Dart with no
+  /// Flutter/`dart:ui` dependency — only the presentation layer (which
+  /// already has access to the platform locale) knows it. Defaults to
+  /// `'tr'` for any existing caller that hasn't been updated to pass it
+  /// (none today omit it deliberately — see call sites).
+  Future<ActiveTableContext> call(
+    String token, {
+    String detectedLanguageCode = 'tr',
+  }) async {
     await _identityProvider.ensureSignedIn();
     final opened = await _gateway.openSession(token);
 
@@ -67,8 +79,8 @@ class OpenTableGuestSessionFromQrScan {
       tableSessionId: opened.sessionId,
       branchId: opened.branchId,
       tableId: opened.tableId,
-      detectedLanguageCode: 'tr',
-      selectedLanguageCode: 'tr',
+      detectedLanguageCode: detectedLanguageCode,
+      selectedLanguageCode: detectedLanguageCode,
       authenticatedUserId: null,
       createdAt: now,
       lastSeenAt: now,

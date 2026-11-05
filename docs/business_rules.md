@@ -7044,6 +7044,39 @@ neither restated in full here nor duplicated between the two.
 - **Related Modules**: Orders, POS, Tables
 - **Business Rule IDs**: ADR-028, ADR-038, BR-TABLE-012, BR-SUBACCOUNT-008
 
+### BR-TABLE-014 — Table Guest Session TTL (2 hours), client-side expiry lock, and rescan-extends semantics (Self-Order QR Faz 1)
+- **Status**: IMPLEMENTED (2026-11-05) — `functions/src/tableGuestSessionConfig.ts`
+  (`TABLE_GUEST_SESSION_TTL_HOURS`), `lib/features/qr/presentation/widgets/table_context_badge.dart`,
+  `lib/features/cart/presentation/screens/dine_in_checkout_screen.dart`.
+- **Rule**: A `tableGuestSessions` document is valid for **2 hours** from creation
+  (`TABLE_GUEST_SESSION_TTL_HOURS`, env-overridable for emulator testing, never a client input) —
+  **corrects this file's own prior gap**: `tableGuestSessionConfig.ts`'s original comment claimed this
+  duration was recorded here under BR-TABLE-005, but BR-TABLE-005 is "Server-side-only QR token
+  resolution," an unrelated rule; no entry for the session TTL actually existed before this one. The
+  TTL was lowered from an earlier, undocumented 6-hour default to 2 hours as a direct, explicit product
+  decision, not a silent change.
+  - **Client-side lock**: `TableContextBadge` computes the same `expiresAt` boundary locally
+    (`DateTime.now().isAfter(session.expiresAt)`) and shows "Oturum süresi doldu — QR kodu tekrar
+    okutun" in place of the normal table indicator once expired, hiding the waiter-call/bill-request
+    tap targets.
+  - **Server-reverified lock at the point that matters**: `DineInCheckoutScreen._submitOrder` re-reads
+    the live `tableGuestSessions` record immediately before calling `submitDineInOrder` and refuses to
+    submit ("Masa oturumun artık aktif değil. Lütfen QR kodu tekrar okut.") if it is no longer active —
+    this was already correctly implemented before this rule existed; this entry documents it rather than
+    duplicating it with a second, redundant client-side gate. `submitDineInOrder`/BR-TABLE-008's own
+    Security Rule re-check (`status == 'active' && expiresAt > request.time`) is the actual
+    authoritative enforcement either way.
+  - **Rescan extends, by construction, not by a dedicated refresh endpoint**: `openTableGuestSession`
+    always creates a brand-new `tableGuestSessions` document on every call (never updates an existing
+    one's `expiresAt`), while reusing the same `TableSession`/`GuestSubAccount` (BR-TABLE-010) — so
+    scanning the same table's QR code again, even after the previous `tableGuestSessions` document
+    expired, simply opens a fresh session with a fresh 2-hour `expiresAt`, with cart/order/identity
+    continuity preserved via the deterministic sub-account id. No separate "extend session" callable
+    exists or is needed.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Table/QR, Orders
+- **Business Rule IDs**: BR-TABLE-008, BR-TABLE-010
+
 ### BR-DIRECTORY-001 — Two structurally separate Customer Directory projections (AP-3 continuation)
 - **Status**: IMPLEMENTED (2026-08-27) — `functions/src/customerDirectoryConfig.ts`/
   `customerDirectory.ts`/`completeCustomerProfile.ts`, emulator-tested (platform de-duplication,

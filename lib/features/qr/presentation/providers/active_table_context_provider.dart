@@ -7,6 +7,7 @@ import '../../application/use_cases/create_guest_session.dart';
 import '../../application/use_cases/resolve_table_qr_token.dart';
 import '../../data/dev_table_qr_seed.dart';
 import '../../data/table_qr_code_repository.dart';
+import '../../domain/i18n/guest_locale.dart';
 import '../../domain/models/active_table_context.dart';
 
 /// The [TableQrCodeRepository] currently in use — in-memory, seeded once
@@ -58,6 +59,21 @@ class ActiveTableContextNotifier extends Notifier<ActiveTableContext?> {
     state = context;
   }
 
+  /// Self-Order QR Faz 1 — the guest's manual override from
+  /// `TableContextBadge`'s flag switcher. Only changes
+  /// `GuestSession.selectedLanguageCode`; `detectedLanguageCode` (what the
+  /// device originally reported) is never overwritten, per
+  /// `docs/table_qr_architecture.md` §9.
+  void setLanguage(String languageCode) {
+    final current = state;
+    if (current == null) return;
+    state = current.copyWith(
+      guestSession: current.guestSession.copyWith(
+        selectedLanguageCode: languageCode,
+      ),
+    );
+  }
+
   /// No product rule defines when a customer's table context should be
   /// cleared today (see this feature's final report on "leaving table
   /// mode") — this method exists for completeness/tests, not because any
@@ -70,4 +86,15 @@ class ActiveTableContextNotifier extends Notifier<ActiveTableContext?> {
 final activeTableContextProvider =
     NotifierProvider<ActiveTableContextNotifier, ActiveTableContext?>(() {
   return ActiveTableContextNotifier();
+});
+
+/// Self-Order QR Faz 1 — derives the active [GuestLocale] from
+/// [activeTableContextProvider]'s `GuestSession.selectedLanguageCode`,
+/// falling back to `tr` when there is no active table context yet (the
+/// value is only actually rendered by screens reachable after a table
+/// context exists).
+final guestLocaleProvider = Provider<GuestLocale>((ref) {
+  final context = ref.watch(activeTableContextProvider);
+  if (context == null) return GuestLocale.tr;
+  return guestLocaleFromLanguageCode(context.guestSession.selectedLanguageCode);
 });

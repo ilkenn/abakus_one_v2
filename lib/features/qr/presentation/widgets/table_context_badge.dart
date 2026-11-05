@@ -7,6 +7,8 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../data/table_guest_session_gateway.dart';
+import '../../domain/i18n/guest_locale.dart';
+import '../../domain/i18n/qr_flow_strings.dart';
 import '../providers/active_table_context_provider.dart';
 import '../providers/table_guest_session_dependencies_provider.dart';
 
@@ -66,8 +68,9 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
             type: type,
           );
       if (!mounted) return;
+      final strings = QrFlowStrings.of(ref.read(guestLocaleProvider));
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('İsteğiniz iletildi.')),
+        SnackBar(content: Text(strings.serviceRequestSent)),
       );
     } on TableGuestSessionException catch (error) {
       if (!mounted) return;
@@ -76,10 +79,9 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
       );
     } catch (_) {
       if (!mounted) return;
+      final strings = QrFlowStrings.of(ref.read(guestLocaleProvider));
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('İsteğiniz gönderilirken bir sorun oluştu.'),
-        ),
+        SnackBar(content: Text(strings.serviceRequestFailedGeneric)),
       );
     } finally {
       if (mounted) setState(() => _busyType = null);
@@ -91,6 +93,8 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
     final tableContext = ref.watch(activeTableContextProvider);
     if (tableContext == null) return const SizedBox.shrink();
     final guestSessionId = tableContext.session.id;
+    final locale = ref.watch(guestLocaleProvider);
+    final strings = QrFlowStrings.of(locale);
 
     final localExpired = tableContext.session.expiresAt != null &&
         DateTime.now().isAfter(tableContext.session.expiresAt!);
@@ -134,7 +138,7 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
             Flexible(
               child: Text(
                 isStale
-                    ? 'Oturum süresi doldu — QR kodu tekrar okutun'
+                    ? strings.badgeExpiredMessage
                     : '${tableContext.branchName} · ${tableContext.tableName}',
                 style: AppTypography.labelLarge.copyWith(
                   color: accentColor,
@@ -144,11 +148,13 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            const SizedBox(width: AppSpacing.sm),
+            _LanguageSwitcher(current: locale),
             if (!isStale) ...[
               const SizedBox(width: AppSpacing.sm),
               _ServiceRequestTapTarget(
                 icon: Icons.room_service_outlined,
-                tooltip: 'Garson Çağır',
+                tooltip: strings.waiterTooltip,
                 busy: _busyType == ServiceRequestType.callWaiter,
                 onTap: () => _requestService(
                   guestSessionId,
@@ -158,7 +164,7 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
               const SizedBox(width: AppSpacing.xs),
               _ServiceRequestTapTarget(
                 icon: Icons.receipt_long_outlined,
-                tooltip: 'Hesap İste',
+                tooltip: strings.billTooltip,
                 busy: _busyType == ServiceRequestType.requestBill,
                 onTap: () => _requestService(
                   guestSessionId,
@@ -167,6 +173,67 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Self-Order QR Faz 1 — the guest's manual TR/EN override, placed in the
+/// one spot every dine-in-facing screen already renders while a table is
+/// active (this badge). Only the two [GuestLocale] values with real
+/// content are offered — never a flag for a language this phase has no
+/// translated strings for, which would misrepresent unfinished work as
+/// available.
+class _LanguageSwitcher extends ConsumerWidget {
+  const _LanguageSwitcher({required this.current});
+
+  final GuestLocale current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final locale in GuestLocale.values) ...[
+          _FlagTapTarget(
+            locale: locale,
+            selected: locale == current,
+            onTap: locale == current
+                ? null
+                : () => ref
+                    .read(activeTableContextProvider.notifier)
+                    .setLanguage(locale.languageCode),
+          ),
+          if (locale != GuestLocale.values.last)
+            const SizedBox(width: AppSpacing.xs),
+        ],
+      ],
+    );
+  }
+}
+
+class _FlagTapTarget extends StatelessWidget {
+  const _FlagTapTarget({
+    required this.locale,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final GuestLocale locale;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: AppRadius.kPill,
+      onTap: onTap,
+      child: Opacity(
+        opacity: selected ? 1.0 : 0.45,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xs),
+          child: Text(locale.flagEmoji, style: const TextStyle(fontSize: 14)),
         ),
       ),
     );

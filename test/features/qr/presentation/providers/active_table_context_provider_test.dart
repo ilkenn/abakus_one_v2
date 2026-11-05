@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/qr/data/dev_table_qr_seed.dart';
+import 'package:abakus_one_v2/features/qr/domain/i18n/guest_locale.dart';
 import 'package:abakus_one_v2/features/qr/domain/models/active_table_context.dart';
 import 'package:abakus_one_v2/features/qr/presentation/providers/active_table_context_provider.dart';
 import 'package:abakus_one_v2/features/qr/presentation/providers/table_session_dependencies_provider.dart';
@@ -160,5 +161,67 @@ void main() {
     container.read(activeTableContextProvider.notifier).clear();
 
     expect(container.read(activeTableContextProvider), isNull);
+  });
+
+  group('guestLocaleProvider / setLanguage (Self-Order QR Faz 1)', () {
+    test(
+        'falls back to GuestLocale.tr when there is no active table '
+        'context yet', () {
+      expect(container.read(guestLocaleProvider), GuestLocale.tr);
+    });
+
+    test(
+        'reflects the guest session\'s selectedLanguageCode once a table '
+        'context exists', () async {
+      final resolution = await container
+          .read(resolveTableQrTokenProvider)
+          .call(DevTableQrSeed.validTokenTable12);
+      final session = await container.read(openTableSessionProvider).call(
+            restaurantId: resolution.restaurantId!,
+            branchId: resolution.branchId!,
+            tableId: resolution.tableId!,
+          );
+      final guestSession = container.read(createGuestSessionProvider).call(
+            tableSessionId: session.id,
+            branchId: resolution.branchId!,
+            tableId: resolution.tableId!,
+          );
+      container.read(activeTableContextProvider.notifier).set(
+            ActiveTableContext(
+              restaurantId: resolution.restaurantId!,
+              branchId: resolution.branchId!,
+              branchName: resolution.branchDisplayName!,
+              tableId: resolution.tableId!,
+              tableName: resolution.tableDisplayName!,
+              session: session,
+              guestSession: guestSession,
+            ),
+          );
+
+      // `CreateGuestSession` (the older, dev-only path this test uses)
+      // still hardcodes 'tr' — unchanged by this phase (see
+      // `OpenTableGuestSessionFromQrScan`'s own doc comment on why that
+      // class is deliberately left as-is, not deleted).
+      expect(container.read(guestLocaleProvider), GuestLocale.tr);
+
+      container.read(activeTableContextProvider.notifier).setLanguage('en');
+
+      expect(container.read(guestLocaleProvider), GuestLocale.en);
+      // detectedLanguageCode is never overwritten by a manual switch.
+      expect(
+        container
+            .read(activeTableContextProvider)!
+            .guestSession
+            .detectedLanguageCode,
+        'tr',
+      );
+    });
+
+    test('setLanguage is a no-op when there is no active table context', () {
+      container.read(activeTableContextProvider.notifier).setLanguage('en');
+
+      expect(container.read(activeTableContextProvider), isNull);
+      expect(container.read(guestLocaleProvider), GuestLocale.tr);
+    });
   });
 }

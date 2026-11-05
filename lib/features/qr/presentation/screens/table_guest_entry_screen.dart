@@ -11,6 +11,8 @@ import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../navigation/presentation/providers/navigation_provider.dart';
 import '../../../navigation/presentation/screens/main_navigation_screen.dart';
 import '../../data/table_guest_session_gateway.dart';
+import '../../domain/i18n/guest_locale.dart';
+import '../../domain/i18n/qr_flow_strings.dart';
 import '../providers/active_table_context_provider.dart';
 import '../providers/table_guest_session_dependencies_provider.dart';
 
@@ -64,6 +66,24 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
   /// confirmed).
   String? _tableDisplayName;
 
+  /// Self-Order QR Faz 1 — detected once, at the moment this screen opens
+  /// (before any `GuestSession` exists to read it back from), straight off
+  /// the device's own locale. Deliberately *not* re-read from
+  /// `guestLocaleProvider`: that only reflects state after a table context
+  /// exists, which is exactly what this screen is still in the process of
+  /// creating — an English-speaking guest's "Checking QR code..." should
+  /// never flash in Turkish first.
+  ///
+  /// Reads `WidgetsBinding.instance.platformDispatcher`, never the bare
+  /// `dart:ui` `PlatformDispatcher.instance` singleton directly — the
+  /// latter bypasses `TestWidgetsFlutterBinding` entirely, so a widget
+  /// test's `tester.binding.platformDispatcher.localeTestValue` override
+  /// would silently have no effect on it.
+  late final GuestLocale _locale = guestLocaleFromLanguageCode(
+      WidgetsBinding.instance.platformDispatcher.locale.languageCode);
+
+  QrFlowStrings get _strings => QrFlowStrings.of(_locale);
+
   @override
   void initState() {
     super.initState();
@@ -90,8 +110,7 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
       if (!mounted) return;
       setState(() {
         _phase = _EntryPhase.error;
-        _errorMessage =
-            'Şu anda bağlantı kurulamıyor. Lütfen daha sonra tekrar dene.';
+        _errorMessage = _strings.connectionUnavailable;
       });
       return;
     }
@@ -141,8 +160,7 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
       if (!mounted) return;
       setState(() {
         _phase = _EntryPhase.error;
-        _errorMessage =
-            'QR kod okunurken bir sorun oluştu. Lütfen tekrar dene.';
+        _errorMessage = _strings.sessionOpenError;
       });
     }
   }
@@ -153,7 +171,7 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
     try {
       final tableContext = await ref
           .read(openTableGuestSessionFromQrScanProvider)
-          .call(widget.token);
+          .call(widget.token, detectedLanguageCode: _locale.languageCode);
 
       ref.read(activeTableContextProvider.notifier).set(tableContext);
 
@@ -200,7 +218,7 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
       if (!mounted) return;
       setState(() {
         _phase = _EntryPhase.error;
-        _errorMessage = 'Masa açılırken bir sorun oluştu. Lütfen tekrar dene.';
+        _errorMessage = _strings.sessionOpenError;
       });
     }
   }
@@ -209,24 +227,20 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
   /// `QrScannerScreen._messageFor`'s exact vocabulary.
   String _messageForStatus(String status) {
     return switch (status) {
-      'notFound' => 'Bu QR kod tanınmadı. Lütfen masandaki kodu tekrar okut.',
-      'invalid' =>
-        'Bu QR kod şu anda geçerli değil. Lütfen masandaki kodu kontrol et '
-            'veya bir çalışana bildir.',
-      'expired' => 'Bu QR kodun süresi dolmuş. Lütfen bir çalışana bildir.',
-      'reserved' => 'Bu masa rezerve edilmiştir. Lütfen yetkili ile görüşün.',
-      _ => 'Bu QR kod şu anda kullanılamıyor. Lütfen tekrar dene.',
+      'notFound' => _strings.statusNotFound,
+      'invalid' => _strings.statusInvalid,
+      'expired' => _strings.statusExpired,
+      'reserved' => _strings.statusReserved,
+      _ => _strings.statusUnknown,
     };
   }
 
   String _messageForExceptionCode(String code) {
     return switch (code) {
-      'not-found' => 'Bu QR kod tanınmadı. Lütfen masandaki kodu tekrar okut.',
-      'failed-precondition' =>
-        'Bu QR kod şu anda kullanılamıyor. Lütfen bir çalışana bildir.',
-      'resource-exhausted' =>
-        'Çok fazla deneme yapıldı. Lütfen biraz bekleyip tekrar dene.',
-      _ => 'Masa açılırken bir sorun oluştu. Lütfen tekrar dene.',
+      'not-found' => _strings.exceptionNotFound,
+      'failed-precondition' => _strings.exceptionFailedPrecondition,
+      'resource-exhausted' => _strings.exceptionResourceExhausted,
+      _ => _strings.exceptionUnknown,
     };
   }
 
@@ -236,16 +250,18 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: switch (_phase) {
-          _EntryPhase.resolving => const _BrandedWelcome(
-              statusMessage: 'QR kod kontrol ediliyor...',
+          _EntryPhase.resolving => _BrandedWelcome(
+              strings: _strings,
+              statusMessage: _strings.checkingQr,
             ),
           _EntryPhase.openingSession => _BrandedWelcome(
+              strings: _strings,
               tableDisplayName: _tableDisplayName,
-              statusMessage: 'Masa açılıyor...',
+              statusMessage: _strings.openingTable,
             ),
           _EntryPhase.error => ErrorView(
               message: _errorMessage!,
-              retryLabel: 'Tekrar Dene',
+              retryLabel: _strings.retryLabel,
               onRetry: _resolve,
             ),
         },
@@ -260,10 +276,15 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
 /// (CLAUDE.md §1), and the table name only once it's actually known from
 /// the server (never guessed/shown early).
 class _BrandedWelcome extends StatelessWidget {
+  final QrFlowStrings strings;
   final String? tableDisplayName;
   final String statusMessage;
 
-  const _BrandedWelcome({this.tableDisplayName, required this.statusMessage});
+  const _BrandedWelcome({
+    required this.strings,
+    this.tableDisplayName,
+    required this.statusMessage,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -273,15 +294,15 @@ class _BrandedWelcome extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Abaküs Street Food\'a Hoş Geldiniz',
+            Text(
+              strings.welcomeTitle,
               style: AppTypography.headlineMedium,
               textAlign: TextAlign.center,
             ),
             if (tableDisplayName != null) ...[
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Masa: $tableDisplayName',
+                strings.tableLabel(tableDisplayName!),
                 style: AppTypography.titleMedium.copyWith(
                   color: AppColors.textSecondary,
                 ),

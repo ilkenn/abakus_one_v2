@@ -19736,4 +19736,57 @@ table-select command (or the `GS V 66 0` cut command, also user-specified rather
 verified) is the first thing to check against the printer's actual reference manual.
 
 See `docs/feature_status.md`'s "2026-11-05: Real Windows USB ESC/POS till-receipt printing" entry
+for the receipt content design and test verification status.
+
+## ADR-054 — Self-Order QR Faz 1: session TTL 6h→2h, and hand-written TR/EN guest-locale infrastructure (2026-11-05)
+
+- Tarih: 2026-11-05
+- Durum: Accepted
+
+### Context
+
+First phase of a larger, user-approved "Masalarda QR Kod ile Sipariş" plan (23 operational rules
+across 6 fazlar). Two Faz-1-scoped decisions needed explicit sign-off before coding, per CLAUDE.md
+§15's No Silent Decisions rule:
+
+1. `tableGuestSessionConfig.ts`'s `DEFAULT_TABLE_GUEST_SESSION_TTL_HOURS` was already a deliberately
+   documented 6-hour default — the new request asked for 1 hour, a direct conflict with an existing,
+   intentional business decision, not a case where "obviously correct" was clear from the code alone.
+2. The customer menu has zero real multi-language content today (`GuestSession.detectedLanguageCode`/
+   `selectedLanguageCode` were modeled fields with no real UI behind them) — fabricating unverified
+   translations for several languages at once risked presenting wrong content as finished work.
+
+Asked the user directly (`AskUserQuestion`) rather than picking either extreme unilaterally.
+
+### Decision
+
+**TTL**: settled at **2 hours** (between the prior 6h and the newly-requested 1h) — a real, disclosed
+business-rule change (`docs/business_rules.md` BR-TABLE-014, which also fills a real pre-existing gap:
+`tableGuestSessionConfig.ts`'s original comment claimed this was already recorded under BR-TABLE-005,
+which has always been a different, unrelated rule — no table-session-TTL entry actually existed before
+this one). No change was needed to the "rescan extends the session" requirement: `openTableGuestSession`
+already mints a brand-new `tableGuestSessions` document with a fresh `expiresAt` on every call while
+reusing the same `TableSession`/`GuestSubAccount`, so a rescan already "extends" by construction — no
+new refresh endpoint was built.
+
+**Lock enforcement**: investigated before writing any new gate, since CLAUDE.md's reuse-first rule
+applies — found `DineInCheckoutScreen._submitOrder` already re-reads the live session and blocks
+submission with a friendly Turkish message when expired, and `TableContextBadge` already shows "Oturum
+süresi doldu — QR kodu tekrar okutun" once the locally-held `expiresAt` has passed. Both predate this
+Faz; no new lock code was added, since doing so would have duplicated already-correct behavior.
+
+**Language**: TR+EN only, with real (not machine-translated) strings, built as a small hand-written
+lookup (`lib/features/qr/domain/i18n/`) rather than adopting `flutter_localizations`'s ARB/
+`flutter gen-l10n` pipeline — the latter is a code-generation step, which CLAUDE.md §2 explicitly says
+this project doesn't use anywhere (no `build_runner`/`freezed`/`json_serializable`, no generation step
+at all). Scope is the dine-in QR entry/status flow only (`TableGuestEntryScreen`, `TableContextBadge`,
+the session-expired message) — not a retroactive translation of the entire pre-existing customer menu/
+cart/checkout UI, which remains Turkish-only exactly as it was; extending real translated content to
+more screens, and to more languages, is explicitly left for later, content-authorship-gated work, not
+silently promised here. Detected via `PlatformDispatcher.instance.locale.languageCode` at session-open
+time (falls back to `tr` for anything other than `en`), with a manual TR/EN flag toggle next to the
+existing `TableContextBadge` for the guest to override.
+
+See `docs/feature_status.md`'s "Self-Order QR — Faz 1" entry for the full file list and test
+verification status.
 for the full file list and test results.

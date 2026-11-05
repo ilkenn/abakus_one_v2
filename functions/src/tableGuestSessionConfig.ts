@@ -4,25 +4,32 @@
  * future consumer — a session-refresh endpoint, Phase 3's `orders` rule
  * mirror logic) never hardcodes these independently.
  *
- * **No pre-existing business rule defines a table-visit session duration**
- * (`docs/business_rules.md`/`docs/table_qr_architecture.md` have no such
- * standard as of this writing — confirmed by search before picking a
- * value) — this constant is this phase's own new decision, recorded here
- * and in `docs/business_rules.md`'s BR-TABLE-005 update. 6 hours: long
- * enough to cover a full dine-in visit (a slow, multi-course, multi-order
- * meal) without being effectively unbounded — "the default service window
- * is hour-scale," not day-scale or minute-scale.
+ * **Corrected 2026-11-05 (Self-Order QR Faz 1)**: this file's original
+ * comment claimed the TTL was "recorded in docs/business_rules.md's
+ * BR-TABLE-005 update" — that never actually happened; BR-TABLE-005 is
+ * (and always was) "Server-side-only QR token resolution," an unrelated
+ * rule. The TTL now has its own real entry, `docs/business_rules.md`'s
+ * BR-TABLE-014, which this comment should have pointed to from the start.
+ *
+ * **Explicit business-rule change, 2026-11-05**: lowered from 6 hours to
+ * **2 hours** per direct product decision (BR-TABLE-014) — a deliberate,
+ * approved change to the previously-documented default, not a silent
+ * override. Re-scanning the table's QR code while the visit is still
+ * active opens a brand-new `tableGuestSessions` document with a fresh
+ * `expiresAt` (see `openTableGuestSession.ts`) — this is how "re-scanning
+ * extends the session" already works by construction; there is no
+ * separate refresh/extend endpoint, and none is needed.
  *
  * Overridable via the `TABLE_GUEST_SESSION_TTL_HOURS` environment variable
  * (a real Cloud Functions runtime config value, not a client input) so a
  * local/dev Functions emulator run can use a short TTL to exercise
  * expiry-boundary behavior quickly, without ever touching this file or
  * affecting a real deployed (staging/production) environment, which never
- * sets this variable and always gets the documented 6-hour default. This
+ * sets this variable and always gets the documented 2-hour default. This
  * mirrors `FirebaseAuthEmulatorConfig`'s own "compile-time/environment
  * override, safe default" shape on the Dart side.
  */
-const DEFAULT_TABLE_GUEST_SESSION_TTL_HOURS = 6;
+const DEFAULT_TABLE_GUEST_SESSION_TTL_HOURS = 2;
 
 function readTtlHours(): number {
   const raw = process.env.TABLE_GUEST_SESSION_TTL_HOURS;

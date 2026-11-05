@@ -10425,3 +10425,64 @@ execution. New files: `features/printing/domain/{receipt_document,esc_pos_receip
 (`win32`, `ffi`), `functions/src/posOperationalView.ts`,
 `functions/src/test/checkOperations.test.ts`, `pos_operational_view_gateway.dart`,
 `pos_workspace_providers.dart`, `pos_table_workspace_screen.dart`, `pos_branch_overview_screen.dart`.
+
+### Self-Order QR — Faz 1: Session TTL (2h) + TR/EN guest-locale infrastructure (2026-11-05)
+
+First phase of a 6-faz, user-approved "Masalarda QR Kod ile Sipariş" plan (23 operational rules).
+Branch `feature/qr-self-order` (off `phase-7/profile-redesign`'s tip, not `main` — see
+`docs/decisions.md` ADR-054 for why). See ADR-054 and `docs/business_rules.md` BR-TABLE-014 for the
+full decision record; this entry is the implementation summary.
+
+1. **Session TTL**: `tableGuestSessionConfig.ts`'s `DEFAULT_TABLE_GUEST_SESSION_TTL_HOURS` lowered
+   from 6 to **2** — an explicit, user-approved business-rule change, not a silent one. Also fills a
+   real pre-existing documentation gap: the file's own comment claimed this was recorded under
+   BR-TABLE-005, which has always been "Server-side-only QR token resolution" — no table-session-TTL
+   entry actually existed before BR-TABLE-014.
+2. **Lock + rescan-extend — investigated, not rebuilt**: before writing any new gate, checked what
+   already exists (reuse-first). Found both already correctly implemented ahead of this phase:
+   `TableContextBadge` already shows "Oturum süresi doldu — QR kodu tekrar okutun" once the locally-
+   held `expiresAt` passes, and `DineInCheckoutScreen._submitOrder` already re-reads the live session
+   server-side and blocks submission with a friendly message if it's no longer active. "Re-scan
+   extends" also needed no new code: `openTableGuestSession` already mints a brand-new
+   `tableGuestSessions` document with a fresh `expiresAt` on every call while reusing the same
+   `TableSession`/`GuestSubAccount` — scanning again after expiry just opens a fresh 2-hour session,
+   by construction.
+3. **TR/EN guest-locale infrastructure (new)**: `features/qr/domain/i18n/{guest_locale,
+   qr_flow_strings}.dart` — a small hand-written lookup (not `flutter_localizations`'s ARB/
+   `gen-l10n` pipeline, which generates code; CLAUDE.md §2 says this project has no code-generation
+   step anywhere). Scope is the dine-in QR entry/status flow only — `TableGuestEntryScreen` (welcome/
+   status/error messages), `TableContextBadge` (expired message, waiter/bill tooltips, service-
+   request snackbars) — **not** a retroactive translation of the pre-existing customer menu/cart/
+   checkout UI, which stays Turkish-only, unchanged. `OpenTableGuestSessionFromQrScan.call` now takes
+   an optional `detectedLanguageCode` (default `'tr'`, so no existing caller broke); `TableGuestEntryScreen`
+   supplies it from `WidgetsBinding.instance.platformDispatcher.locale.languageCode` (deliberately not
+   the bare `dart:ui` `PlatformDispatcher.instance` singleton, which bypasses Flutter's test binding
+   entirely and would make the behavior untestable). A manual TR🇹🇷/EN🇬🇧 flag switcher sits in
+   `TableContextBadge` (`ActiveTableContextNotifier.setLanguage`, a new method, only ever changes
+   `GuestSession.selectedLanguageCode` — `detectedLanguageCode` is never overwritten, per
+   `docs/table_qr_architecture.md` §9).
+4. **Regression caught and fixed during this pass**: 10 existing `table_guest_entry_screen_test.dart`
+   tests asserted Turkish copy without pinning the device locale — once rendering became locale-
+   sensitive, Flutter's test environment's own default (`en`) broke them. Fixed properly (not
+   papered over) by having those tests explicitly set
+   `tester.binding.platformDispatcher.localeTestValue = const Locale('tr')`, since that's what they
+   were always implicitly assuming.
+
+**Deferred, not done this pass** (reported, not silently dropped): every other Faz of the larger
+plan — menü vitrini alerjen/stok UI (Faz 2), gerçek zamanlı ortak sepet (Faz 3), isimlendirme/hibrit
+gönderim/iptal hakkı (Faz 4), çağrı butonları/POS zili/onay→yazdırma (Faz 5), canlı adisyon/kapanış/
+offline senkron (Faz 6) — remain outstanding, each gated on the previous one's sign-off per the
+user's explicit "sıralı ilerleyelim" instruction.
+
+`flutter analyze` (whole project) clean. `flutter test` (whole project): see test run below.
+`functions`: `npx tsc --noEmit` clean; `tableGuestSessionConfig.test.ts` (pure, no emulator needed)
+10/10 passing against the new TTL=2 default. **Not run**: the functions emulator suite — same
+pre-existing Java-version environment limitation disclosed in the printing feature entry above; no
+backend logic beyond the TTL constant changed this phase, so the emulator-gated dine-in order/
+service-request tests were not expected to be affected and were not re-run. New files:
+`features/qr/domain/i18n/{guest_locale,qr_flow_strings}.dart`, plus matching new tests
+(`test/features/qr/domain/i18n/{guest_locale,qr_flow_strings}_test.dart`). Updated:
+`functions/src/tableGuestSessionConfig.ts`, `features/qr/application/use_cases/
+open_table_guest_session_from_qr_scan.dart`, `features/qr/presentation/{screens/
+table_guest_entry_screen.dart,widgets/table_context_badge.dart,providers/
+active_table_context_provider.dart}`, plus their corresponding test files.

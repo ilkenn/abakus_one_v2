@@ -192,6 +192,42 @@ void main() {
   });
 
   test(
+      'detectedLanguageCode defaults to tr when the caller omits it '
+      '(Self-Order QR Faz 1)', () async {
+    final identity = _FakeTechnicalIdentityProvider('anon-uid-lang-default');
+    final gateway = _FakeTableGuestSessionGateway(openResult: opened);
+    final useCase = OpenTableGuestSessionFromQrScan(
+      gateway: gateway,
+      identityProvider: identity,
+      guestSessionIdGenerator: SequentialGuestSessionIdGenerator(),
+    );
+
+    final context = await useCase.call('some-token');
+
+    expect(context.guestSession.detectedLanguageCode, 'tr');
+    expect(context.guestSession.selectedLanguageCode, 'tr');
+  });
+
+  test(
+      'threads an explicit detectedLanguageCode into both '
+      'detectedLanguageCode and selectedLanguageCode — selected starts '
+      'equal to detected, per docs/table_qr_architecture.md §9', () async {
+    final identity = _FakeTechnicalIdentityProvider('anon-uid-lang-en');
+    final gateway = _FakeTableGuestSessionGateway(openResult: opened);
+    final useCase = OpenTableGuestSessionFromQrScan(
+      gateway: gateway,
+      identityProvider: identity,
+      guestSessionIdGenerator: SequentialGuestSessionIdGenerator(),
+    );
+
+    final context =
+        await useCase.call('some-token', detectedLanguageCode: 'en');
+
+    expect(context.guestSession.detectedLanguageCode, 'en');
+    expect(context.guestSession.selectedLanguageCode, 'en');
+  });
+
+  test(
       'propagates a gateway failure (invalid/expired/notFound token) '
       'without producing a context', () async {
     final identity = _FakeTechnicalIdentityProvider('anon-uid-2');
