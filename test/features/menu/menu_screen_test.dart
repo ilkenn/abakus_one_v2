@@ -42,6 +42,35 @@ const _plainProduct = MenuProduct(
   imageKey: 'does-not-exist',
 );
 
+const _soldOutProduct = MenuProduct(
+  id: 'test_sold_out_prod',
+  categoryId: 'test_cat',
+  name: 'Tükenen Test Ürün',
+  description: 'Test açıklaması',
+  basePrice: 40,
+  imageKey: 'does-not-exist',
+  isAvailable: false,
+);
+
+const _allergenicProduct = MenuProduct(
+  id: 'test_allergenic_prod',
+  categoryId: 'test_cat',
+  name: 'Glutenli Test Ürün',
+  description: 'Test açıklaması',
+  basePrice: 35,
+  imageKey: 'does-not-exist',
+  allergens: ['gluten'],
+);
+
+const _noAllergenProduct = MenuProduct(
+  id: 'test_no_allergen_prod',
+  categoryId: 'test_cat',
+  name: 'Alerjensiz Test Ürün',
+  description: 'Test açıklaması',
+  basePrice: 25,
+  imageKey: 'does-not-exist',
+);
+
 void main() {
   late ProviderContainer container;
 
@@ -170,6 +199,118 @@ void main() {
 
         expect(container.read(cartProvider), isEmpty);
         expect(find.byType(ProductDetailScreen), findsOneWidget);
+      },
+    );
+  });
+
+  group('tukenen urun (isAvailable == false) — Self-Order QR Faz 2', () {
+    testWidgets(
+      'Tukendi etiketi gorunur ve hizli sepete ekle butonu devre disidir',
+      (tester) async {
+        container.dispose();
+        container = ProviderContainer(
+          overrides: [
+            menuProductsProvider.overrideWithValue([_soldOutProduct]),
+          ],
+        );
+        await pumpMenuScreen(tester);
+
+        expect(find.text('Tükendi'), findsOneWidget);
+
+        final addButton = tester.widget<IconButton>(
+          find.ancestor(
+            of: find.byTooltip('Tükendi'),
+            matching: find.byType(IconButton),
+          ),
+        );
+        expect(addButton.onPressed, isNull);
+      },
+    );
+
+    testWidgets(
+      'musait bir urunde Tukendi etiketi gorunmez, hizli ekle aktiftir',
+      (tester) async {
+        container.dispose();
+        container = ProviderContainer(
+          overrides: [
+            menuProductsProvider.overrideWithValue([_plainProduct]),
+          ],
+        );
+        await pumpMenuScreen(tester);
+
+        expect(find.text('Tükendi'), findsNothing);
+
+        final addButton = tester.widget<IconButton>(
+          find.ancestor(
+            of: find.byTooltip('Sepete ekle'),
+            matching: find.byType(IconButton),
+          ),
+        );
+        expect(addButton.onPressed, isNotNull);
+      },
+    );
+  });
+
+  group('alerjen ikonlari ve filtresi — Self-Order QR Faz 2', () {
+    testWidgets(
+      'bir urunun alerjenleri varsa kartinda bir ikon gosterilir',
+      (tester) async {
+        container.dispose();
+        container = ProviderContainer(
+          overrides: [
+            menuProductsProvider.overrideWithValue([_allergenicProduct]),
+          ],
+        );
+        await pumpMenuScreen(tester);
+
+        expect(find.byTooltip('gluten'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'hicbir urunde alerjen yoksa alerjen filtre sirasi hic gorunmez',
+      (tester) async {
+        container.dispose();
+        container = ProviderContainer(
+          overrides: [
+            menuProductsProvider.overrideWithValue([_noAllergenProduct]),
+          ],
+        );
+        await pumpMenuScreen(tester);
+
+        expect(find.text('gluten'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'bir alerjen filtresi secilince o alerjeni iceren urun listeden '
+      'gizlenir',
+      (tester) async {
+        // Iki tam-boy urun karti ayni anda, kaydirmadan gorunur olmali —
+        // varsayilan test yuzeyi (800x600) bunun icin yeterince uzun degil.
+        tester.view.physicalSize = const Size(800, 1600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        container.dispose();
+        container = ProviderContainer(
+          overrides: [
+            menuProductsProvider.overrideWithValue(
+              [_allergenicProduct, _noAllergenProduct],
+            ),
+          ],
+        );
+        await pumpMenuScreen(tester);
+
+        expect(find.text('Glutenli Test Ürün'), findsOneWidget);
+        expect(find.text('Alerjensiz Test Ürün'), findsOneWidget);
+
+        await tester.tap(find.text('gluten'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Glutenli Test Ürün'), findsNothing);
+        expect(find.text('Alerjensiz Test Ürün'), findsOneWidget);
       },
     );
   });

@@ -169,6 +169,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
   double get _totalPrice => _unitPrice * _quantity;
 
   void _addToCart() {
+    if (!widget.product.isAvailable) return;
     if (!_allGroupsValid) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -259,9 +260,32 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const TableContextBadge(),
-                            Text(
-                              widget.product.name,
-                              style: AppTypography.headlineMedium,
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    widget.product.name,
+                                    style: AppTypography.headlineMedium,
+                                  ),
+                                ),
+                                if (!widget.product.isAvailable)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: AppSpacing.sm,
+                                      vertical: 4,
+                                    ),
+                                    decoration: const BoxDecoration(
+                                      color: AppColors.textDisabled,
+                                      borderRadius: AppRadius.kPill,
+                                    ),
+                                    child: Text(
+                                      'Tükendi',
+                                      style: AppTypography.labelLarge.copyWith(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                             const SizedBox(height: AppSpacing.xs),
                             Text(
@@ -444,7 +468,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                       Expanded(
                         flex: 2,
                         child: ElevatedButton.icon(
-                          onPressed: _allGroupsValid ? _addToCart : null,
+                          onPressed:
+                              (_allGroupsValid && widget.product.isAvailable)
+                                  ? _addToCart
+                                  : null,
                           style: ElevatedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(
                               vertical: AppSpacing.md,
@@ -454,7 +481,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                             Icons.add_shopping_cart_rounded,
                             size: 18,
                           ),
-                          label: const Text('Sepete Ekle'),
+                          label: Text(
+                            widget.product.isAvailable
+                                ? 'Sepete Ekle'
+                                : 'Tükendi',
+                          ),
                         ),
                       ),
                     ],

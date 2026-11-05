@@ -26,6 +26,20 @@ final menuProductsProvider = Provider<List<MenuProduct>>((ref) {
       .toList();
 });
 
+/// Every distinct `MenuProduct.allergens` entry across the active catalog,
+/// sorted for a stable chip order — Self-Order QR Faz 2's allergen-filter
+/// row. Empty when no active product declares an allergen, which
+/// [MenuScreen] treats as "hide the filter row entirely."
+final availableAllergensProvider = Provider<List<String>>((ref) {
+  final allergens = ref
+      .watch(menuProductsProvider)
+      .expand((product) => product.allergens)
+      .toSet()
+      .toList();
+  allergens.sort();
+  return allergens;
+});
+
 /// The real site's "Çok Satanlar" (best sellers) cross-listing — scoped to
 /// [menuProductsProvider]'s already-active set, not the raw catalog, so a
 /// pre-refresh featured product hidden by [menuCategoriesProvider]'s
@@ -40,9 +54,15 @@ final featuredMenuProductsProvider = Provider<List<MenuProduct>>((ref) {
 /// the spec's "Soğuk Çay"/"Su" are not real catalog items, so they are
 /// deliberately not synthesized here; this provider only ever surfaces
 /// real, orderable products.
+///
+/// Self-Order QR Faz 2: also excludes `isAvailable == false` drinks — this
+/// single-tap chip has no detail screen of its own to show a "Tükendi"
+/// state on, so a sold-out drink is left out entirely rather than offered
+/// as a tappable add.
 final drinkCrossSellProductsProvider = Provider<List<MenuProduct>>((ref) {
   return ref
       .watch(menuProductsProvider)
-      .where((p) => p.categoryId == AbakusMenuCatalog.drinkCategory.id)
+      .where((p) =>
+          p.categoryId == AbakusMenuCatalog.drinkCategory.id && p.isAvailable)
       .toList();
 });

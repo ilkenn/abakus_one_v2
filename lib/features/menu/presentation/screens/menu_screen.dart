@@ -19,6 +19,8 @@ import '../../../qr/presentation/widgets/table_context_badge.dart';
 import '../../../restaurant/presentation/providers/restaurant_status_provider.dart';
 import '../../domain/models/menu_product.dart';
 import '../../domain/pricing/channel_pricing_policy.dart';
+import '../../domain/services/allergen_icons.dart';
+import '../providers/allergen_filter_provider.dart';
 import '../providers/channel_price_display_provider.dart';
 import '../providers/menu_catalog_provider.dart';
 import '../providers/menu_filter_provider.dart';
@@ -56,6 +58,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
     final categories = ref.watch(menuCategoriesProvider);
     final allProducts = ref.watch(menuProductsProvider);
     final selectedFilter = ref.watch(menuFilterProvider);
+    final availableAllergens = ref.watch(availableAllergensProvider);
+    final excludedAllergens = ref.watch(allergenFilterProvider);
     final isRestaurantOpen = ref.watch(
       restaurantStatusProvider.select((s) => s.isOpen && s.acceptsOrders),
     );
@@ -80,7 +84,9 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
       final matchesQuery = query.isEmpty ||
           product.name.toLowerCase().contains(query) ||
           product.description.toLowerCase().contains(query);
-      return matchesCategory && matchesQuery;
+      final matchesAllergenFilter = excludedAllergens.isEmpty ||
+          !product.allergens.any(excludedAllergens.contains);
+      return matchesCategory && matchesQuery && matchesAllergenFilter;
     }).toList();
 
     return Scaffold(
@@ -194,6 +200,33 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
                 },
               ),
             ),
+            if (availableAllergens.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              SizedBox(
+                height: AppThemeConstants.categoryListHeight,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                  itemCount: availableAllergens.length,
+                  itemBuilder: (context, index) {
+                    final allergen = availableAllergens[index];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.xs,
+                      ),
+                      child: _AllergenFilterChip(
+                        allergen: allergen,
+                        isExcluded: excludedAllergens.contains(allergen),
+                        onTap: () => ref
+                            .read(allergenFilterProvider.notifier)
+                            .toggle(allergen),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.md),
             Expanded(
               child: filteredProducts.isEmpty
@@ -327,6 +360,66 @@ class _CategoryChip extends StatelessWidget {
   }
 }
 
+/// Self-Order QR Faz 2 — an exclusion filter chip for one allergen
+/// ([MenuProduct.allergens] entry). Selected ("excluded") means "hide
+/// products listing this allergen," shown with [AllergenIcons]'s own
+/// pictogram so the chip reads at a glance without needing the allergen's
+/// name spelled out first.
+class _AllergenFilterChip extends StatelessWidget {
+  final String allergen;
+  final bool isExcluded;
+  final VoidCallback onTap;
+
+  const _AllergenFilterChip({
+    required this.allergen,
+    required this.isExcluded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '$allergen içermeyenleri göster',
+      selected: isExcluded,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: AppThemeConstants.categoryTransitionDuration,
+          curve: Curves.easeInOut,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          decoration: BoxDecoration(
+            color: isExcluded ? AppColors.error : AppColors.surfaceVariant,
+            borderRadius: AppRadius.kMedium,
+            border: Border.all(
+              color: isExcluded ? AppColors.error : AppColors.border,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                AllergenIcons.iconFor(allergen),
+                size: 16,
+                color: isExcluded ? AppColors.onPrimary : AppColors.textPrimary,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                allergen,
+                style: AppTypography.labelLarge.copyWith(
+                  color:
+                      isExcluded ? AppColors.onPrimary : AppColors.textPrimary,
+                  decoration: isExcluded ? TextDecoration.lineThrough : null,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ProductListCard extends ConsumerStatefulWidget {
   final MenuProduct product;
 
@@ -350,6 +443,10 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
 
   void _quickAddToCart() {
     final product = widget.product;
+    // Defensive — the quick-add button is already disabled (onPressed:
+    // null) whenever `!isAvailable`, so this only guards against a stray
+    // programmatic call.
+    if (!product.isAvailable) return;
     // A product with modifier groups needs Product Detail's selection UI —
     // adding it directly here would silently skip required choices instead
     // of enforcing them.
@@ -397,6 +494,7 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
       channelContext: channelContext,
       policy: policy,
     );
+    final isAvailable = product.isAvailable;
 
     return AnimatedScale(
       scale: _isPressed ? 0.98 : 1.0,
@@ -425,14 +523,21 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
               children: [
                 Stack(
                   children: [
-                    ProductImage(
-                      imageKey: product.imageKey,
-                      categoryId: product.categoryId,
-                      width: double.infinity,
-                      height: 210,
-                      borderRadius: BorderRadius.zero,
-                      placeholderIconSize: 56,
-                      heroTag: 'product_image_${product.id}',
+                    Opacity(
+                      // Sold-out products (`Item 86`) stay visible on the
+                      // menu — never hidden — but dimmed so the "Tükendi"
+                      // badge below reads as a disabled state, not a normal
+                      // listing.
+                      opacity: isAvailable ? 1.0 : 0.45,
+                      child: ProductImage(
+                        imageKey: product.imageKey,
+                        categoryId: product.categoryId,
+                        width: double.infinity,
+                        height: 210,
+                        borderRadius: BorderRadius.zero,
+                        placeholderIconSize: 56,
+                        heroTag: 'product_image_${product.id}',
+                      ),
                     ),
                     Positioned(
                       top: AppSpacing.sm,
@@ -473,29 +578,39 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
                       bottom: AppSpacing.sm,
                       left: AppSpacing.sm,
                       child: GlassCard(
-                        tintColor: QrMenuColors.glassBadgeTint,
+                        tintColor: isAvailable
+                            ? QrMenuColors.glassBadgeTint
+                            : AppColors.textPrimary.withValues(alpha: 0.75),
                         borderRadius: AppRadius.kPill,
                         padding: const EdgeInsets.symmetric(
                           horizontal: AppSpacing.md,
                           vertical: AppSpacing.xs,
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (product.isFeatured) ...[
-                              const Icon(
-                                Icons.star_rounded,
-                                size: 14,
-                                color: QrMenuColors.gold,
+                        child: isAvailable
+                            ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (product.isFeatured) ...[
+                                    const Icon(
+                                      Icons.star_rounded,
+                                      size: 14,
+                                      color: QrMenuColors.gold,
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ],
+                                  Text(
+                                    '${displayPrice.toStringAsFixed(0)} TL',
+                                    style: QrMenuTypography.badge,
+                                  ),
+                                ],
+                              )
+                            : Text(
+                                'Tükendi',
+                                style: QrMenuTypography.badge.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                              const SizedBox(width: 4),
-                            ],
-                            Text(
-                              '${displayPrice.toStringAsFixed(0)} TL',
-                              style: QrMenuTypography.badge,
-                            ),
-                          ],
-                        ),
                       ),
                     ),
                   ],
@@ -520,6 +635,27 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      if (product.allergens.isNotEmpty) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (final allergen in product.allergens)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.only(right: AppSpacing.xs),
+                                child: Tooltip(
+                                  message: allergen,
+                                  child: Icon(
+                                    AllergenIcons.iconFor(allergen),
+                                    size: 16,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: AppSpacing.md),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -529,11 +665,12 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
                             style: AppTypography.priceLarge,
                           ),
                           IconButton.filled(
-                            tooltip: 'Sepete ekle',
-                            onPressed: _quickAddToCart,
+                            tooltip: isAvailable ? 'Sepete ekle' : 'Tükendi',
+                            onPressed: isAvailable ? _quickAddToCart : null,
                             style: IconButton.styleFrom(
                               backgroundColor: AppColors.primary,
                               foregroundColor: AppColors.onPrimary,
+                              disabledBackgroundColor: AppColors.textDisabled,
                               shape: const RoundedRectangleBorder(
                                 borderRadius: AppRadius.kSmall,
                               ),

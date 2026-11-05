@@ -60,6 +60,16 @@ const _testProduct = MenuProduct(
   modifierGroups: [_sauceGroup, _extrasGroup],
 );
 
+const _soldOutProduct = MenuProduct(
+  id: 'test_sold_out_prod',
+  categoryId: 'test_cat',
+  name: 'Tukenen Bowl',
+  description: 'Test aciklamasi',
+  basePrice: 80,
+  imageKey: 'does-not-exist',
+  isAvailable: false,
+);
+
 void main() {
   Future<void> pumpScreen(WidgetTester tester) async {
     await tester.pumpWidget(
@@ -250,5 +260,28 @@ void main() {
 
     expect(find.byType(TableContextBadge), findsOneWidget);
     expect(find.text('Abaküs Ortaköy · Masa 12'), findsOneWidget);
+  });
+
+  group('tukenen urun (isAvailable == false) — Self-Order QR Faz 2', () {
+    testWidgets(
+      'Tukendi etiketi gorunur ve Sepete Ekle butonu devre disidir',
+      (tester) async {
+        await tester.pumpWidget(
+          const ProviderScope(
+            child: MaterialApp(
+              home: ProductDetailScreen(product: _soldOutProduct),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Tükendi'), findsWidgets);
+
+        final addButton = tester.widget<ElevatedButton>(
+          find.widgetWithText(ElevatedButton, 'Tükendi'),
+        );
+        expect(addButton.onPressed, isNull);
+      },
+    );
   });
 }

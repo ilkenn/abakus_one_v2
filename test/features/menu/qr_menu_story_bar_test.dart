@@ -26,6 +26,17 @@ const _special2 = MenuProduct(
   isFeatured: true,
 );
 
+const _soldOutSpecial = MenuProduct(
+  id: 'story_prod_sold_out',
+  categoryId: 'test_cat',
+  name: 'Tükenen Özel',
+  description: 'Günün tükenen ürünü',
+  basePrice: 70,
+  imageKey: 'does-not-exist',
+  isFeatured: true,
+  isAvailable: false,
+);
+
 void main() {
   Future<void> pumpStoryBar(
     WidgetTester tester, {
@@ -99,4 +110,18 @@ void main() {
 
     expect(find.byType(ProductDetailScreen), findsOneWidget);
   });
+
+  testWidgets(
+    'tukenen (isAvailable == false) bir urunun odakli goruntulemesinde '
+    'Sepete Ekle butonu yoktur, Tükendi etiketi gorunur',
+    (tester) async {
+      await pumpStoryBar(tester, featured: const [_soldOutSpecial]);
+
+      await tester.tap(find.bySemanticsLabel('Tükenen Özel, öne çıkan ürün'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sepete Ekle'), findsNothing);
+      expect(find.textContaining('Tükendi'), findsOneWidget);
+    },
+  );
 }

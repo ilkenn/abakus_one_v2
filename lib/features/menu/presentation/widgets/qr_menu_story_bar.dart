@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/qr_menu_theme.dart';
@@ -119,7 +120,7 @@ class _StoryQuickView extends ConsumerWidget {
       channelContext: channelContext,
       policy: policy,
     );
-    final canQuickAdd = product.modifierGroups.isEmpty;
+    final canQuickAdd = product.modifierGroups.isEmpty && product.isAvailable;
 
     return SafeArea(
       child: Container(
@@ -148,16 +149,31 @@ class _StoryQuickView extends ConsumerWidget {
                 children: [
                   Text(product.name, style: QrMenuTypography.title),
                   const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    '${price.toStringAsFixed(0)} TL',
-                    // `primary`, not `terracotta` — Verified: at 18px/w600
-                    // this doesn't clear WCAG's large-text bar, and
-                    // terracotta-on-white is only 4.23:1 (below the 4.5:1
-                    // normal-text floor). `primary`-on-white is 12.30:1
-                    // (see `qr_menu_theme.dart`'s contrast log).
-                    style: QrMenuTypography.title.copyWith(
-                      color: QrMenuColors.primary,
-                    ),
+                  Row(
+                    children: [
+                      Text(
+                        '${price.toStringAsFixed(0)} TL',
+                        // `primary`, not `terracotta` — Verified: at
+                        // 18px/w600 this doesn't clear WCAG's large-text
+                        // bar, and terracotta-on-white is only 4.23:1
+                        // (below the 4.5:1 normal-text floor). `primary`-
+                        // on-white is 12.30:1 (see `qr_menu_theme.dart`'s
+                        // contrast log).
+                        style: QrMenuTypography.title.copyWith(
+                          color: QrMenuColors.primary,
+                        ),
+                      ),
+                      if (!product.isAvailable) ...[
+                        const SizedBox(width: AppSpacing.sm),
+                        Text(
+                          '· Tükendi',
+                          style: QrMenuTypography.bodySecondary.copyWith(
+                            color: AppColors.textDisabled,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
