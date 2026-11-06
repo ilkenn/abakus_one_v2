@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/printing/domain/esc_pos_receipt_encoder.dart';
+import 'package:abakus_one_v2/features/printing/domain/receipt_codepage.dart';
 import 'package:abakus_one_v2/features/printing/domain/receipt_document.dart';
 
 /// 2026-11-06 physical print test fix — '₺' (U+20BA) has no slot in any
@@ -62,6 +63,57 @@ void main() {
 
     expect(containsText(bytes, 'TOPLAM'), isTrue);
     expect(containsText(bytes, '300.00 TL'), isTrue);
+  });
+
+  test(
+      'varsayilan kodlama ESC t 45 (WPC1254) gonderir, codepage parametresi '
+      'ESC t 19ya (PC857) gecirir — 2026-11-06 fiziksel self-test sonucu', () {
+    final wpc1254Bytes = EscPosReceiptEncoder.encode(buildDoc());
+    final pc857Bytes = EscPosReceiptEncoder.encode(
+      buildDoc(),
+      codepage: ReceiptCodepage.pc857,
+    );
+
+    // ESC @ (init) ardindan ESC t n: bayt dizisi [0x1B,0x40,0x1B,0x74,n].
+    expect(wpc1254Bytes.sublist(0, 5), [0x1B, 0x40, 0x1B, 0x74, 45]);
+    expect(pc857Bytes.sublist(0, 5), [0x1B, 0x40, 0x1B, 0x74, 19]);
+  });
+
+  test(
+      'PC857 modunda Turkce harfler kendi dogrulanmis bayt degerleriyle '
+      'basilir (iconv-lite cp857 ile dogrulandi, tahmin edilmedi)', () {
+    final bytes = EscPosReceiptEncoder.encode(
+      buildDoc(lines: const [
+        ReceiptLineItem(
+          quantity: 1,
+          productName: 'Çılgın Şöhret Üçlü',
+          unitPriceMinorUnits: 100,
+          totalPriceMinorUnits: 100,
+        ),
+      ]),
+      codepage: ReceiptCodepage.pc857,
+    );
+
+    bool containsBytes(List<int> needle) {
+      for (var i = 0; i <= bytes.length - needle.length; i++) {
+        var matched = true;
+        for (var j = 0; j < needle.length; j++) {
+          if (bytes[i + j] != needle[j]) {
+            matched = false;
+            break;
+          }
+        }
+        if (matched) return true;
+      }
+      return false;
+    }
+
+    // Ç=0x80, ı=0x8D, Ş=0x9E, Ü=0x9A — "productName" alani Latin-1
+    // passthrough DEGIL, PC857'nin kendi 0x80-0xFF duzenini kullanmali.
+    expect(containsBytes([0x80]), isTrue); // Ç
+    expect(containsBytes([0x8D]), isTrue); // ı
+    expect(containsBytes([0x9E]), isTrue); // Ş
+    expect(containsBytes([0x9A]), isTrue); // Ü
   });
 
   test('TRY disi bir para birimi kendi kodunu degismeden kullanir', () {

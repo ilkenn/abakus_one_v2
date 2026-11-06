@@ -10860,16 +10860,52 @@ original request before implementing it — all three disclosed here per CLAUDE.
    across printer vendors** — Epson's DM-series uses `n=13`, Star's CBM820 uses `n=8`, and this
    printer's actual brand/model is unknown (same "no vendor manual" gap the original WPC1254
    attempt already disclosed), so guessing a third unverified number carries real risk of selecting
-   the wrong table again; (b) more importantly, **CP857 historically does not include Ş/ş or Ğ/ğ at
-   all** (it only added ı/İ to CP850's base Western-European set) — switching to it would likely trade
-   today's Ş/ğ garbling for a *structural* inability to print Ş/ğ correctly at all, on exactly the
-   letters the user named as broken. Presented to the user as a Decision Review; they chose to keep
-   pursuing a correctly-selected WPC1254 (the only table of the two with full Turkish support)
-   instead. **Not yet implemented**: doing this correctly needs either the printer's actual model
-   name or its self-test page (most ESC/POS 80mm clones print a diagnostics page listing their real
-   supported codepage table when the feed button is held during power-on) — blocked on that input,
-   not on any remaining code work; the current `ESC t 45` byte is left unchanged pending it.
+   the wrong table again; (b) more importantly, my own recollection at the time was that **CP857
+   historically does not include Ş/ş or Ğ/ğ at all** — switching to it would likely trade today's
+   Ş/ğ garbling for a *structural* inability to print Ş/ğ correctly, on exactly the letters the user
+   named as broken (this recollection was later found to be WRONG once actually verified — see the
+   polish-round-2 entry below). Presented to the user as a Decision Review; they chose to keep
+   pursuing a correctly-selected WPC1254 instead. **Not yet implemented**: doing this correctly
+   needs either the printer's actual model name or its self-test page — blocked on that input, not
+   on any remaining code work; the current `ESC t 45` byte is left unchanged pending it.
 
 `flutter analyze` (whole project): clean (one pre-existing-pattern `info`, not an error, on
 `AppConstants.googleReviewUrl`'s intentionally-nullable type). `flutter test` (whole project): 3936
 passing, 0 failures (+4 over the post-Faz-6 baseline of 3932).
+
+### Post-Faz-6 polish, round 2: self-test-page-driven codepage fallback (2026-11-06)
+
+The user ran the printer's own self-test page and reported: default codepage is CP437 (confirms why
+every Turkish letter was garbled pre-WPC1254), and gave the printer's own `ESC t 19` index for its
+PC857 table as a fallback if `ESC t 45` (WPC1254, kept as the primary/default) doesn't render
+correctly. Two things were verified rather than guessed this round, using `iconv-lite` (already a
+`functions/node_modules` dependency — no new tool added) as a real, authoritative codec reference
+instead of memory or web-search fragments:
+
+- **CP857 DOES include Ş/ş/Ğ/ğ** (at 0x9E/0x9F/0xA6/0xA7) — the previous entry's "CP857 lacks
+  Turkish Ş/Ğ" concern was a real finding at the time (based on fragmentary/uncertain recollection,
+  disclosed as such) but turned out to be **incorrect** once actually checked against a real codec.
+  Corrected here rather than left standing.
+- **PC857's 0x80–0xFF byte layout is NOT Latin-1-compatible** (unlike WPC1254, which mostly is) —
+  the existing "pass through runes ≤0xFF, override 6 specific letters" shortcut is only valid for
+  WPC1254; the PC857 path needed its own explicit table (verified: Ç=0x80, ç=0x87, Ö=0x99, ö=0x94,
+  Ü=0x9A, ü=0x81, Ğ=0xA6, ğ=0xA7, İ=0x98, ı=0x8D, Ş=0x9E, ş=0x9F) with only plain ASCII (≤0x7F)
+  safe to pass through unmapped.
+
+**Implemented**: new `ReceiptCodepage` enum (`lib/features/printing/domain/receipt_codepage.dart`,
+`wpc1254`/`pc857`) accepted as an optional parameter by both `EscPosReceiptEncoder.encode`/
+`EscPosKitchenTicketEncoder.encode` (default `wpc1254`, so every existing call site/test is
+unaffected). `ReceiptPrinterSettings` (`pos_workspace_providers.dart`) gained a persisted `codepage`
+getter/setter mirroring `printerName`'s exact `shared_preferences` pattern. **Disclosed, deliberate
+scope limit**: there is no UI toggle for this setting yet (same as `printerName`, which also has
+none) — ESC/POS has no feedback channel, so software cannot auto-detect which table rendered
+correctly; switching requires calling `setCodepage` once a physical test confirms which table this
+unit actually needs. `PrintTableReceipt`/`PrintKitchenTicket` and their two UI call sites
+(`print_table_receipt_action.dart`, `pos_table_workspace_screen.dart`) now thread
+`printerSettings.codepage` through on every print.
+
+New tests: `pos_workspace_providers_test.dart` (new, 3 cases — default/round-trip/persistence-
+across-restart, mirroring `offline_payment_outbox_repository_test.dart`'s own pattern), +2 cases
+each in `esc_pos_receipt_encoder_test.dart`/`esc_pos_kitchen_ticket_encoder_test.dart` (codepage
+byte selection + PC857 Turkish-letter byte verification). `flutter analyze`: clean. `flutter test`
+(whole project): 3942 passing, 0 failures (+6 over 3936).

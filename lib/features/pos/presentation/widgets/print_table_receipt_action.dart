@@ -47,6 +47,7 @@ Future<void> printTableReceipt({
           branchName: branchName,
           printerName: printerSettings.printerName,
           recipeFor: (productId) => productById[productId]?.description ?? '',
+          codepage: printerSettings.codepage,
         );
 
     if (!context.mounted) return;

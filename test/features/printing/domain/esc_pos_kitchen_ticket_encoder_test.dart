@@ -6,6 +6,7 @@ import 'package:abakus_one_v2/features/pos/domain/kitchen/kitchen_ticket_header.
 import 'package:abakus_one_v2/features/pos/domain/kitchen/kitchen_ticket_line.dart';
 import 'package:abakus_one_v2/features/pos/domain/kitchen/kitchen_ticket_type.dart';
 import 'package:abakus_one_v2/features/printing/domain/esc_pos_kitchen_ticket_encoder.dart';
+import 'package:abakus_one_v2/features/printing/domain/receipt_codepage.dart';
 
 /// Self-Order QR Faz 5 (23-rule plan §6) — proves the encoded ESC/POS byte
 /// stream actually contains the 5 required per-line fields: Ürün Adı,
@@ -118,6 +119,19 @@ void main() {
 
     expect(containsText(bytes, '  -> Karbonhidrat: Meksika Pilavı'), isTrue);
     expect(containsText(bytes, '  -> Not: Az baharatlı olsun'), isTrue);
+  });
+
+  test(
+      'varsayilan kodlama ESC t 45 (WPC1254) gonderir, codepage parametresi '
+      'ESC t 19ya (PC857) gecirir — 2026-11-06 fiziksel self-test sonucu', () {
+    final wpc1254Bytes = EscPosKitchenTicketEncoder.encode(buildTicket());
+    final pc857Bytes = EscPosKitchenTicketEncoder.encode(
+      buildTicket(),
+      codepage: ReceiptCodepage.pc857,
+    );
+
+    expect(wpc1254Bytes.sublist(0, 5), [0x1B, 0x40, 0x1B, 0x74, 45]);
+    expect(pc857Bytes.sublist(0, 5), [0x1B, 0x40, 0x1B, 0x74, 19]);
   });
 
   test('birden fazla satir, her biri kendi 5 alanini ayri ayri yazdirir', () {

@@ -132,6 +132,7 @@ class _PosTableWorkspaceScreenState
       await ref.read(printKitchenTicketProvider).call(
             ticket: ticket,
             printerName: printerSettings.printerName,
+            codepage: printerSettings.codepage,
           );
     } catch (_) {
       // Disclosed, deliberate swallow — see this method's own doc comment.

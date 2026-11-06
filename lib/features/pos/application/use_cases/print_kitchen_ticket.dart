@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../../printing/data/windows_raw_printer_adapter.dart';
 import '../../../printing/domain/esc_pos_kitchen_ticket_encoder.dart';
+import '../../../printing/domain/receipt_codepage.dart';
 import '../../domain/kitchen/kitchen_ticket.dart';
 
 /// Encodes an already-built [KitchenTicket] to ESC/POS bytes and sends it
@@ -18,8 +19,10 @@ class PrintKitchenTicket {
   Future<void> call({
     required KitchenTicket ticket,
     required String printerName,
+    ReceiptCodepage codepage = ReceiptCodepage.wpc1254,
   }) async {
-    final Uint8List bytes = EscPosKitchenTicketEncoder.encode(ticket);
+    final Uint8List bytes =
+        EscPosKitchenTicketEncoder.encode(ticket, codepage: codepage);
     await rawPrinterAdapter.printRaw(
       printerName: printerName,
       bytes: bytes,

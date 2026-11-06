@@ -7,6 +7,7 @@ import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../admin/domain/trusted_device/device_registration_state.dart';
 import '../../../admin/presentation/providers/trusted_device_session_providers.dart';
 import '../../../printing/data/windows_raw_printer_adapter.dart';
+import '../../../printing/domain/receipt_codepage.dart';
 import '../../application/use_cases/capture_offline_cash_payment.dart';
 import '../../application/use_cases/ensure_offline_lease.dart';
 import '../../application/use_cases/print_kitchen_ticket.dart';
@@ -129,6 +130,7 @@ class ReceiptPrinterSettings {
   final SharedPreferences _prefs;
 
   static const _printerNameKey = 'posReceiptPrinterName';
+  static const _codepageKey = 'posReceiptPrinterCodepage';
 
   /// The exact Windows queue name confirmed for the first till ("POS80
   /// Printer") — used only until staff override it for a different device.
@@ -139,6 +141,25 @@ class ReceiptPrinterSettings {
 
   Future<void> setPrinterName(String name) =>
       _prefs.setString(_printerNameKey, name);
+
+  /// Which `ESC t` character-code table [EscPosReceiptEncoder]/
+  /// [EscPosKitchenTicketEncoder] select before printing — see
+  /// [ReceiptCodepage]'s own doc comment. Defaults to
+  /// [ReceiptCodepage.wpc1254] (full Turkish support); there is no
+  /// automated way to detect from software whether a given table rendered
+  /// correctly on the physical printer (ESC/POS has no such feedback
+  /// channel), so this is a one-time, staff-confirmed choice, durable
+  /// across restarts exactly like [printerName] above.
+  ReceiptCodepage get codepage {
+    final stored = _prefs.getString(_codepageKey);
+    return ReceiptCodepage.values.firstWhere(
+      (c) => c.name == stored,
+      orElse: () => ReceiptCodepage.wpc1254,
+    );
+  }
+
+  Future<void> setCodepage(ReceiptCodepage value) =>
+      _prefs.setString(_codepageKey, value.name);
 }
 
 final receiptPrinterSettingsProvider =

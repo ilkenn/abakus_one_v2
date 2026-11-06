@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../../printing/data/windows_raw_printer_adapter.dart';
 import '../../../printing/domain/esc_pos_receipt_encoder.dart';
+import '../../../printing/domain/receipt_codepage.dart';
 import '../../data/pos_action_gateway.dart' show PosDeviceContext;
 import '../../data/pos_operational_view_gateway.dart';
 import '../../domain/receipts/table_receipt_builder.dart';
@@ -35,6 +36,7 @@ class PrintTableReceipt {
     required String branchName,
     required String printerName,
     required String Function(String productId) recipeFor,
+    ReceiptCodepage codepage = ReceiptCodepage.wpc1254,
   }) async {
     final view = await operationalViewGateway.getTableView(
       organizationId: ctx.organizationId,
@@ -67,7 +69,8 @@ class PrintTableReceipt {
       recipeFor: recipeFor,
     );
 
-    final Uint8List bytes = EscPosReceiptEncoder.encode(document);
+    final Uint8List bytes =
+        EscPosReceiptEncoder.encode(document, codepage: codepage);
 
     await rawPrinterAdapter.printRaw(
       printerName: printerName,
