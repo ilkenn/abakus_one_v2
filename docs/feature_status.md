@@ -10954,3 +10954,45 @@ test rendered that branch (only the `completed` view, a different widget tree, h
 
 New tests: `pos_checkout_screen_test.dart` (+3 cases). `flutter analyze`: clean. `flutter test`
 (whole project): see the final gate run below for the updated count.
+
+### Adım 2 — Kasa & Masalar UI / Performans İyileştirmeleri (2026-11-06)
+
+Four-part package. Full reasoning in `docs/decisions.md` ADR-060.
+
+1. **Masalar 5-sekme bölge filtresi.** `PosBranchOverviewScreen` now shows `[Tümü, Bahçe, Salon,
+   Teras, Paket / Gel-Al]` filter chips above the grid, reusing `RestaurantTable.areaName` (free
+   text, already set at table-creation time) — a new field on the wire (`getPosBranchTableOverview`
+   now passes it through) but not a new concept. **Disclosed, not silently faked**: "Paket /
+   Gel-Al" isn't a real table/area — this screen's data model is table-centric only, with no
+   takeaway-order query or card design of its own. Selecting it shows an explicit placeholder
+   ("Paket / Gel-Al sipariş yönetimi bu ekranda henüz yok"), never a silently empty or wrong table
+   list.
+2. **Masa kartı hızlı aksiyonları.** The green "Yazdır" quick button already existed
+   (2026-11-05). Added a new blue "Ödeme Al" button (`AppColors.info`) right next to it, gated the
+   same way (occupied/billRequested only) — fetches the table's view, resolves its open/ready-for-
+   payment check (`resolveOpenOrReadyForPaymentCheckId`, extracted from `PrintTableReceipt`'s own
+   private method so both quick actions share one resolution rule, not two copies), and opens the
+   compact checkout modal directly.
+3. **Kompakt tahsilat modalı & taşma düzeltmesi.** `PosCheckoutScreen` returned a full `Scaffold`+
+   `AppBar` — despite an inaccurate pre-existing comment in `pos_table_workspace_screen.dart`
+   claiming it already rendered as "a centered, fixed-width card." It now returns a `Dialog`
+   (mirroring `PosProductCustomizationDialog`'s own already-established pattern), capped at 430px
+   wide with a custom header replacing the AppBar. `_AmountRow`'s `RenderFlex` overflow (found while
+   building PAX A910SF support, ADR-059) is fixed: the label gets `Expanded`+ellipsis, the money
+   amount gets `Flexible`+`FittedBox` — the amount's digits are never clipped/truncated, only its
+   font scales down under real pressure, since truncating a money figure would misrepresent it.
+4. **Görsel önbellek optimizasyonu.** `ProductImage`'s own `cacheWidth`/`cacheHeight` decode-size
+   optimization already existed (`lib/shared/widgets/images/product_image.dart`, documented in its
+   own doc comment) — but several call sites passed `width/height: double.infinity`, which silently
+   skips it (the resize decorator requires a finite value). Fixed the menu's main scrolling list
+   card, both story-bar images, the product detail hero image, and the staff POS order-entry grid's
+   tile — each via `LayoutBuilder` (dynamic/responsive sizing) or a known constant (the fixed-size
+   story ring), never a guessed/hardcoded screen-width assumption.
+
+New/updated tests: `pos_branch_overview_screen_test.dart` (+5 cases — area-tab filtering, the
+takeaway placeholder, "Ödeme Al" success/no-open-check paths), `pos_checkout_screen_test.dart`
+(updated to show the dialog via a real `showDialog` call, matching the new production shape, rather
+than pumping it as bare body content). `flutter analyze`: clean. `functions`: `npx tsc --noEmit`
+clean (the `areaName` passthrough is additive only; **not** covered by a new emulator test — same
+Java 21+ environment limitation disclosed every prior phase). `flutter test` (whole project): see
+the final gate run below for the updated count.

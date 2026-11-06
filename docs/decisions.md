@@ -20049,3 +20049,41 @@ full modal→honest-message→no-server-call path, and cancel-closes-with-no-mes
 never-resolving fake to avoid racing the stub's own near-instant resolution).
 
 `flutter analyze`: clean. `flutter test`: see the final gate run for the updated whole-project count.
+
+## ADR-060 — Kasa & Masalar UI / Performans İyileştirmeleri (2026-11-06)
+
+- Tarih: 2026-11-06
+- Durum: Accepted
+
+### Context
+
+Second roadmap item: Masalar screen 5-tab area filter, per-card quick payment action, a compact
+checkout modal, and image decode-size optimization. Three real findings shaped what was actually
+built, each resolved directly rather than silently guessed or silently skipped:
+
+1. **"Paket / Gel-Al" isn't a real table/area.** `getPosBranchTableOverview` only ever reads
+   `restaurantTables`; there is no takeaway-order query or card shape in this screen's data model.
+   Building a genuinely functional 5th tab would need its own backend query and card design — a
+   separate decision, not a filter tab. Implemented as an honest, explicit placeholder instead of
+   either skipping the tab entirely or quietly mapping it to an always-empty table list.
+2. **The checkout modal's "already compact" comment was stale.** `pos_table_workspace_screen.dart`
+   claimed (2026-11-05 dated comment) that `PosCheckoutScreen` "now renders itself as a centered,
+   fixed-width card" — but it still returned a full `Scaffold`+`AppBar`, which stretches to fill
+   almost the entire `showDialog` surface regardless of device size. Verified against the actual
+   code before touching it, not trusted at face value; fixed for real this time, mirroring
+   `PosProductCustomizationDialog`'s own already-established `Dialog`-returning-widget pattern
+   (confirmed working via its own existing usage) rather than inventing a new shape.
+3. **`ProductImage`'s decode-size optimization already existed but wasn't exercised.** Its own doc
+   comment already explains the `cacheWidth`/`cacheHeight` mechanism; the actual gap was several
+   call sites passing `width/height: double.infinity`, which the resize decorator silently skips
+   (it requires a finite value) — not a missing feature, a half-wired one. Fixed at the highest-
+   traffic call sites (the menu's scrolling list, the staff POS grid, the story bar, the product
+   detail hero) via `LayoutBuilder` or a known constant, never a hardcoded width guess.
+
+### Decision
+
+Implemented all four roadmap items as scoped above; the one genuinely new capability gap (real
+Paket/Gel-Al order data) is disclosed as a separate future decision in `docs/feature_status.md`,
+not built speculatively now.
+
+See `docs/feature_status.md`'s "Adım 2" entry for the full file list and test verification status.

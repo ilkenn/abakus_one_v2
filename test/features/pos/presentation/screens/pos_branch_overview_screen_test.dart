@@ -20,6 +20,13 @@ class _FakePosOperationalViewGateway implements PosOperationalViewGateway {
   List<PosBranchTableSummary> tables = const [];
   int callCount = 0;
 
+  /// 2026-11-06 — "Ödeme Al" quick action. `null` (the default) keeps
+  /// [getTableView] throwing, matching every pre-existing test in this
+  /// file that never exercises it; the new PAX/payment tests below set
+  /// this explicitly.
+  PosTableOperationalView? tableView;
+  int getTableViewCallCount = 0;
+
   @override
   Future<PosBranchOverviewPage> getBranchOverview({
     required String organizationId,
@@ -46,7 +53,10 @@ class _FakePosOperationalViewGateway implements PosOperationalViewGateway {
     required String deviceId,
     required String deviceSessionId,
   }) async {
-    throw UnimplementedError();
+    getTableViewCallCount += 1;
+    final view = tableView;
+    if (view == null) throw UnimplementedError();
+    return view;
   }
 
   @override
@@ -518,6 +528,213 @@ void main() {
         platformCalls.where((c) => c.method == 'SystemSound.play'),
         isEmpty,
       );
+    });
+  });
+
+  group('Masalar 5-sekme bölge filtresi (2026-11-06)', () {
+    Future<void> pump(
+        WidgetTester tester, _FakePosOperationalViewGateway gateway) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            posOperationalViewGatewayProvider.overrideWithValue(gateway),
+            posDeviceContextProvider.overrideWithValue(
+              const PosDeviceContext(
+                organizationId: 'org-1',
+                branchId: 'branch-1',
+                deviceId: 'device-1',
+                deviceSessionId: 'session-1',
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: PosBranchOverviewScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets(
+        '"Tümü" varsayılan sekmedir ve her bölgeden masayı birlikte gösterir',
+        (tester) async {
+      final gateway = _FakePosOperationalViewGateway()
+        ..tables = [
+          const PosBranchTableSummary(
+            tableId: 'table-1',
+            displayName: 'Masa 1',
+            status: 'available',
+            activeTableSessionId: null,
+            pendingQrLineCount: 0,
+            areaName: 'Bahçe',
+          ),
+          const PosBranchTableSummary(
+            tableId: 'table-2',
+            displayName: 'Masa 2',
+            status: 'available',
+            activeTableSessionId: null,
+            pendingQrLineCount: 0,
+            areaName: 'Salon',
+          ),
+        ];
+      await pump(tester, gateway);
+
+      expect(find.text('Masa 1'), findsOneWidget);
+      expect(find.text('Masa 2'), findsOneWidget);
+    });
+
+    testWidgets('bir bölge sekmesi sadece o bölgedeki masaları gösterir',
+        (tester) async {
+      final gateway = _FakePosOperationalViewGateway()
+        ..tables = [
+          const PosBranchTableSummary(
+            tableId: 'table-1',
+            displayName: 'Masa 1',
+            status: 'available',
+            activeTableSessionId: null,
+            pendingQrLineCount: 0,
+            areaName: 'Bahçe',
+          ),
+          const PosBranchTableSummary(
+            tableId: 'table-2',
+            displayName: 'Masa 2',
+            status: 'available',
+            activeTableSessionId: null,
+            pendingQrLineCount: 0,
+            areaName: 'Salon',
+          ),
+        ];
+      await pump(tester, gateway);
+
+      await tester.tap(find.text('Salon'));
+      await tester.pump();
+
+      expect(find.text('Masa 1'), findsNothing);
+      expect(find.text('Masa 2'), findsOneWidget);
+    });
+
+    testWidgets(
+        '"Paket / Gel-Al" sekmesi gerçek veri olmadığını açıkça belirten bir '
+        'yer tutucu gösterir, asla sessizce boş bir masa listesi değil',
+        (tester) async {
+      final gateway = _FakePosOperationalViewGateway()
+        ..tables = [
+          const PosBranchTableSummary(
+            tableId: 'table-1',
+            displayName: 'Masa 1',
+            status: 'available',
+            activeTableSessionId: null,
+            pendingQrLineCount: 0,
+            areaName: 'Bahçe',
+          ),
+        ];
+      await pump(tester, gateway);
+
+      await tester.tap(find.text('Paket / Gel-Al'));
+      await tester.pump();
+
+      expect(find.text('Masa 1'), findsNothing);
+      expect(
+        find.textContaining(
+            'Paket / Gel-Al sipariş yönetimi bu ekranda henüz yok'),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('"Ödeme Al" hızlı aksiyonu (2026-11-06)', () {
+    const occupiedTable = PosBranchTableSummary(
+      tableId: 'table-1',
+      displayName: 'Masa 1',
+      status: 'occupied',
+      activeTableSessionId: 'tsess-1',
+      pendingQrLineCount: 0,
+    );
+
+    testWidgets(
+        'acik hesabi olan bir masada butona basmak PosCheckoutScreen\'i '
+        'cözümlenen checkId ile açar', (tester) async {
+      final gateway = _FakePosOperationalViewGateway()
+        ..tables = [occupiedTable]
+        ..tableView = const PosTableOperationalView(
+          tableId: 'table-1',
+          status: 'occupied',
+          tableSessionId: 'tsess-1',
+          subAccounts: [],
+          checks: [
+            {'id': 'check-1', 'status': 'open'},
+          ],
+          orders: [],
+        );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            posOperationalViewGatewayProvider.overrideWithValue(gateway),
+            posDeviceContextProvider.overrideWithValue(
+              const PosDeviceContext(
+                organizationId: 'org-1',
+                branchId: 'branch-1',
+                deviceId: 'device-1',
+                deviceSessionId: 'session-1',
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: PosBranchOverviewScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.byIcon(Icons.payments_outlined));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(gateway.getTableViewCallCount, 1);
+      expect(find.text('Ödeme'), findsOneWidget,
+          reason: 'the compact checkout modal must now be open');
+    });
+
+    testWidgets(
+        'acik hesabi olmayan bir masada butona basmak bir uyari gosterir, '
+        'PosCheckoutScreen asla acilmaz', (tester) async {
+      final gateway = _FakePosOperationalViewGateway()
+        ..tables = [occupiedTable]
+        ..tableView = const PosTableOperationalView(
+          tableId: 'table-1',
+          status: 'occupied',
+          tableSessionId: 'tsess-1',
+          subAccounts: [],
+          checks: [
+            {'id': 'check-1', 'status': 'paid'},
+          ],
+          orders: [],
+        );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            posOperationalViewGatewayProvider.overrideWithValue(gateway),
+            posDeviceContextProvider.overrideWithValue(
+              const PosDeviceContext(
+                organizationId: 'org-1',
+                branchId: 'branch-1',
+                deviceId: 'device-1',
+                deviceSessionId: 'session-1',
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: PosBranchOverviewScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.byIcon(Icons.payments_outlined));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Ödeme'), findsNothing);
+      expect(find.text('Bu masada açık bir hesap yok.'), findsOneWidget);
     });
   });
 }

@@ -46,7 +46,8 @@ class PrintTableReceipt {
       deviceSessionId: ctx.deviceSessionId,
     );
 
-    final resolvedCheckId = checkId ?? _resolveOpenCheckId(view);
+    final resolvedCheckId =
+        checkId ?? resolveOpenOrReadyForPaymentCheckId(view);
     if (resolvedCheckId == null) {
       throw const PosOperationalViewException(
         'no-open-check',
@@ -77,22 +78,5 @@ class PrintTableReceipt {
       bytes: bytes,
       jobName: 'Adisyon - $tableName',
     );
-  }
-
-  /// Prefers `readyForPayment` (staff already asked for the bill) over
-  /// `open`, then falls back to the first `open` check — `paid`/
-  /// `cancelled` checks are never a valid print target.
-  String? _resolveOpenCheckId(PosTableOperationalView view) {
-    final readyForPayment = view.checks
-        .where((c) => c['status'] == 'readyForPayment')
-        .map((c) => c['id'] as String?)
-        .whereType<String>();
-    if (readyForPayment.isNotEmpty) return readyForPayment.first;
-
-    final open = view.checks
-        .where((c) => c['status'] == 'open')
-        .map((c) => c['id'] as String?)
-        .whereType<String>();
-    return open.isNotEmpty ? open.first : null;
   }
 }

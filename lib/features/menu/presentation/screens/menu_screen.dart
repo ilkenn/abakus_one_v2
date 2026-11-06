@@ -529,14 +529,24 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
                       // badge below reads as a disabled state, not a normal
                       // listing.
                       opacity: isAvailable ? 1.0 : 0.45,
-                      child: ProductImage(
-                        imageKey: product.imageKey,
-                        categoryId: product.categoryId,
-                        width: double.infinity,
-                        height: 210,
-                        borderRadius: BorderRadius.zero,
-                        placeholderIconSize: 56,
-                        heroTag: 'product_image_${product.id}',
+                      // `LayoutBuilder` resolves the card's own real,
+                      // finite on-screen width — `ProductImage`'s
+                      // `cacheWidth` optimization (see its own doc comment)
+                      // only activates for a finite `width`, and the
+                      // previous `double.infinity` here (meant as "fill the
+                      // available width," which it visually did) silently
+                      // skipped it for every card in this scrolling list —
+                      // the single highest-impact menu image call site.
+                      child: LayoutBuilder(
+                        builder: (context, constraints) => ProductImage(
+                          imageKey: product.imageKey,
+                          categoryId: product.categoryId,
+                          width: constraints.maxWidth,
+                          height: 210,
+                          borderRadius: BorderRadius.zero,
+                          placeholderIconSize: 56,
+                          heroTag: 'product_image_${product.id}',
+                        ),
                       ),
                     ),
                     Positioned(

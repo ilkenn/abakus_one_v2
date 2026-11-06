@@ -178,15 +178,35 @@ Future<_FakePaymentGateway> _pumpCompletedCheckout(
       overrides: [
         paymentGatewayProvider.overrideWithValue(gateway),
       ],
-      child: const MaterialApp(
-        home: PosCheckoutScreen(
-          ctx: _ctx,
-          checkId: 'check-1',
-          view: _view,
+      // 2026-11-06 compact-modal redesign — `PosCheckoutScreen` now
+      // returns a bare `Dialog`, exactly like `PosProductCustomization
+      // Dialog`'s own existing pattern, and like that widget it is only
+      // ever actually shown via `showDialog` in production
+      // (`pos_table_workspace_screen.dart`'s `onOpenCheckout`) — a
+      // `Dialog` relies on its surrounding `ModalRoute`/`Overlay` for
+      // correct sizing/positioning, so pumping it as plain body content
+      // (as this test did before that redesign) no longer represents
+      // real usage.
+      child: MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const PosCheckoutScreen(
+                  ctx: _ctx,
+                  checkId: 'check-1',
+                  view: _view,
+                ),
+              ),
+              child: const Text('Ödemeyi Aç'),
+            ),
+          ),
         ),
       ),
     ),
   );
+  await tester.tap(find.text('Ödemeyi Aç'));
   await tester.pumpAndSettle();
   return gateway;
 }
@@ -300,14 +320,6 @@ void main() {
     testWidgets(
         '"PAX Cihazı ile Oku" butonu sadece Kredi Kartı tenderi secildiginde gorunur',
         (tester) async {
-      // The default test surface is wide enough to trigger
-      // PosCheckoutScreen's side-by-side (summary + tender) layout, whose
-      // narrow summary column overflows for an OPEN session (unlike the
-      // completed-view tests above, which never render that column) —
-      // narrower here to force the single-column layout instead.
-      tester.view.physicalSize = const Size(599, 900);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
       await _pumpCompletedCheckout(tester, session: openSession());
 
       expect(find.byKey(const Key('collectViaPaxButton')), findsNothing,
@@ -323,15 +335,16 @@ void main() {
         'PAX butonuna basinca "POS Cihazından Kart Bekleniyor..." modali acilir, '
         'gercek cihaz baglantisi olmadigindan dogru/yapilandirilmadi mesaji gosterir, '
         've gateway.recordPaymentAttempt hic cagrilmaz', (tester) async {
-      tester.view.physicalSize = const Size(599, 900);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
       final gateway =
           await _pumpCompletedCheckout(tester, session: openSession());
 
       await tester.tap(find.text('Kredi/Banka Kartı (Sandbox)'));
       await tester.pump();
       await tester.enterText(find.widgetWithText(TextField, 'Tutar'), '40,00');
+      // The button sits below the fold of the compact modal's own
+      // scrollable tender panel — scroll it into view before tapping,
+      // exactly like a real finger would need to.
+      await tester.ensureVisible(find.byKey(const Key('collectViaPaxButton')));
       await tester.tap(find.byKey(const Key('collectViaPaxButton')));
       await tester.pump();
 
@@ -357,9 +370,6 @@ void main() {
 
     testWidgets('modal "İptal" ile kapatilinca hicbir mesaj gosterilmez',
         (tester) async {
-      tester.view.physicalSize = const Size(599, 900);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
       // A never-resolving client — the real terminal takes real seconds;
       // this proves "İptal" closes the dialog on its own, never racing
       // against the (otherwise near-instant) stub's own resolution.
@@ -372,20 +382,35 @@ void main() {
             paxGmp3TerminalClientProvider
                 .overrideWithValue(_NeverResolvingPaxClient(neverResolves)),
           ],
-          child: const MaterialApp(
-            home: PosCheckoutScreen(
-              ctx: _ctx,
-              checkId: 'check-1',
-              view: _view,
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => ElevatedButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => const PosCheckoutScreen(
+                      ctx: _ctx,
+                      checkId: 'check-1',
+                      view: _view,
+                    ),
+                  ),
+                  child: const Text('Ödemeyi Aç'),
+                ),
+              ),
             ),
           ),
         ),
       );
+      await tester.tap(find.text('Ödemeyi Aç'));
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Kredi/Banka Kartı (Sandbox)'));
       await tester.pump();
       await tester.enterText(find.widgetWithText(TextField, 'Tutar'), '40,00');
+      // The button sits below the fold of the compact modal's own
+      // scrollable tender panel — scroll it into view before tapping,
+      // exactly like a real finger would need to.
+      await tester.ensureVisible(find.byKey(const Key('collectViaPaxButton')));
       await tester.tap(find.byKey(const Key('collectViaPaxButton')));
       await tester.pump();
       expect(find.text('POS Cihazından Kart Bekleniyor...'), findsOneWidget);

@@ -23,7 +23,25 @@ import '../widgets/pos_operational_rail.dart';
 import '../widgets/print_table_receipt_action.dart';
 import 'end_of_day_screen.dart';
 import 'pos_cash_register_screen.dart';
+import 'pos_checkout_screen.dart';
 import 'pos_table_workspace_screen.dart';
+
+/// Masalar grid'inin bölge filtresi (2026-11-06) — `RestaurantTable
+/// .areaName`'in zaten taşıdığı serbest metni kullanır, yeni bir alan
+/// değil. [takeaway] gerçek bir masa/alan değil — bu ekranın bugünkü veri
+/// modelinde paket/gel-al siparişleri için ayrı bir sorgu/kart tasarımı
+/// yok; seçildiğinde bunu açıkça gösteren bir yer tutucu render edilir,
+/// asla sessizce boş/yanlış bir masa listesi değil.
+enum _AreaTab {
+  all('Tümü'),
+  garden('Bahçe'),
+  hall('Salon'),
+  terrace('Teras'),
+  takeaway('Paket / Gel-Al');
+
+  const _AreaTab(this.label);
+  final String label;
+}
 
 /// The real POS branch/table overview — AP-3 continuation (`docs/decisions
 /// .md` ADR-041's own "no longer blocked" follow-up). Consumes the real
@@ -51,6 +69,7 @@ class _PosBranchOverviewScreenState
   List<PosBranchTableSummary>? _tables;
   String? _version;
   Object? _error;
+  _AreaTab _selectedAreaTab = _AreaTab.all;
 
   @override
   void initState() {
@@ -190,8 +209,63 @@ class _PosBranchOverviewScreenState
         message: 'Bu şubede kayıtlı masa yok.',
       );
     }
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.lg,
+            AppSpacing.lg,
+            AppSpacing.sm,
+          ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: AppSpacing.sm,
+              children: [
+                for (final tab in _AreaTab.values)
+                  ChoiceChip(
+                    label: Text(tab.label),
+                    selected: _selectedAreaTab == tab,
+                    onSelected: (_) => setState(() => _selectedAreaTab = tab),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        Expanded(child: _buildTableGrid(tables)),
+      ],
+    );
+  }
+
+  Widget _buildTableGrid(List<PosBranchTableSummary> tables) {
+    if (_selectedAreaTab == _AreaTab.takeaway) {
+      // Disclosed placeholder, not a silently empty/wrong list — this
+      // screen's data model today is table-centric only
+      // (`getPosBranchTableOverview` reads `restaurantTables`); showing
+      // real paket/gel-al orders here needs its own query and card
+      // design, a separate decision from this filter tab.
+      return const EmptyView(
+        icon: Icons.takeout_dining_outlined,
+        message: 'Paket / Gel-Al sipariş yönetimi bu ekranda henüz yok.',
+      );
+    }
+    final filtered = _selectedAreaTab == _AreaTab.all
+        ? tables
+        : tables.where((t) => t.areaName == _selectedAreaTab.label).toList();
+    if (filtered.isEmpty) {
+      return EmptyView(
+        icon: Icons.table_restaurant_outlined,
+        message: '${_selectedAreaTab.label} bölgesinde masa yok.',
+      );
+    }
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        0,
+        AppSpacing.lg,
+        AppSpacing.lg,
+      ),
       child: GridView.builder(
         gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
           maxCrossAxisExtent: 220,
@@ -199,9 +273,9 @@ class _PosBranchOverviewScreenState
           crossAxisSpacing: AppSpacing.md,
           childAspectRatio: 1.1,
         ),
-        itemCount: tables.length,
+        itemCount: filtered.length,
         itemBuilder: (context, index) => _TableTile(
-          table: tables[index],
+          table: filtered[index],
           onResolved: () => _load(),
         ),
       ),
@@ -221,6 +295,7 @@ class _TableTile extends ConsumerStatefulWidget {
 class _TableTileState extends ConsumerState<_TableTile> {
   String? _resolvingRequestId;
   bool _printing = false;
+  bool _startingPayment = false;
 
   Color get _statusColor => switch (widget.table.status) {
         'available' => AppColors.primary,
@@ -302,6 +377,48 @@ class _TableTileState extends ConsumerState<_TableTile> {
       );
     } finally {
       if (mounted) setState(() => _printing = false);
+    }
+  }
+
+  /// Blue quick-payment button on an occupied/bill-requested card
+  /// (2026-11-06) — opens the compact ödeme modal directly on the
+  /// table's currently open/ready-for-payment check, without entering
+  /// the table workspace first. Mirrors [_print]'s own "fetch the view,
+  /// then resolve the check" shape, reusing the same resolution function
+  /// [PrintTableReceipt] already uses (`resolveOpenOrReadyForPaymentCheckId`).
+  Future<void> _payNow(PosDeviceContext ctx) async {
+    if (_startingPayment) return;
+    setState(() => _startingPayment = true);
+    try {
+      final view =
+          await ref.read(posOperationalViewGatewayProvider).getTableView(
+                organizationId: ctx.organizationId,
+                branchId: ctx.branchId,
+                tableId: widget.table.tableId,
+                deviceId: ctx.deviceId,
+                deviceSessionId: ctx.deviceSessionId,
+              );
+      final checkId = resolveOpenOrReadyForPaymentCheckId(view);
+      if (checkId == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bu masada açık bir hesap yok.')),
+        );
+        return;
+      }
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) =>
+            PosCheckoutScreen(ctx: ctx, checkId: checkId, view: view),
+      );
+      widget.onResolved();
+    } on PosOperationalViewException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _startingPayment = false);
     }
   }
 
@@ -411,27 +528,57 @@ class _TableTileState extends ConsumerState<_TableTile> {
           Positioned(
             top: AppSpacing.xs,
             right: AppSpacing.xs,
-            child: InkWell(
-              borderRadius: AppRadius.kPill,
-              onTap: () => _print(deviceCtx),
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: const BoxDecoration(
-                  color: AppColors.success,
-                  shape: BoxShape.circle,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Mavi "Ödeme Al" (2026-11-06) — tahsilat akışını masa
+                // kartından, çalışma alanına girmeden tetikler.
+                InkWell(
+                  borderRadius: AppRadius.kPill,
+                  onTap: () => _payNow(deviceCtx),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: const BoxDecoration(
+                      color: AppColors.info,
+                      shape: BoxShape.circle,
+                    ),
+                    child: _startingPayment
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.onPrimary,
+                            ),
+                          )
+                        : const Icon(Icons.payments_outlined,
+                            size: 14, color: AppColors.onPrimary),
+                  ),
                 ),
-                child: _printing
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.onPrimary,
-                        ),
-                      )
-                    : const Icon(Icons.print_outlined,
-                        size: 14, color: AppColors.onPrimary),
-              ),
+                const SizedBox(width: AppSpacing.xs),
+                InkWell(
+                  borderRadius: AppRadius.kPill,
+                  onTap: () => _print(deviceCtx),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: const BoxDecoration(
+                      color: AppColors.success,
+                      shape: BoxShape.circle,
+                    ),
+                    child: _printing
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.onPrimary,
+                            ),
+                          )
+                        : const Icon(Icons.print_outlined,
+                            size: 14, color: AppColors.onPrimary),
+                  ),
+                ),
+              ],
             ),
           ),
       ],

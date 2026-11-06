@@ -346,40 +346,87 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
     }
   }
 
+  // Kompakt tahsilat modalı (2026-11-06) — bu ekran sadece
+  // `showDialog(builder: (_) => PosCheckoutScreen(...))` ile açılıyor
+  // (`pos_table_workspace_screen.dart`'ın tek çağrı noktası), hiçbir yerde
+  // tam sayfa `Navigator.push` ile değil — bu yüzden burada doğrudan bir
+  // `Dialog` döndürmek güvenli ve bu kod tabanındaki aynı deseni
+  // (`PosProductCustomizationDialog`'un kendisi de `Dialog` döndürüyor)
+  // izliyor. Önceki tam-ekran `Scaffold`+`AppBar`, masaüstü/tabletteki
+  // gerçek genişliği hiç sınırlamıyordu — bu düzeltilen gerçek bir
+  // davranış, sadece kozmetik değil.
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('Ödeme'),
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-      ),
-      body: SafeArea(
-        child: switch (_phase) {
-          _LoadPhase.loading =>
-            const LoadingView(message: 'Ödeme bilgileri yükleniyor...'),
-          _LoadPhase.error => ErrorView(
-              message: 'Ödeme bilgileri yüklenemedi: $_loadError',
-              onRetry: _bootstrap,
-            ),
-          _LoadPhase.ready => _CheckoutBody(
-              checkId: widget.checkId,
-              view: widget.view,
-              session: _session!,
-              busy: _busy,
-              actionError: _actionError,
-              unknownOutcomeNotice: _unknownOutcomeNotice,
-              isOffline: _isOffline,
-              queuedEntries: _queuedEntries,
-              offlineSyncNotice: _offlineSyncNotice,
-              onSyncNow: () => unawaited(_syncOfflineQueue()),
-              onSubmitTender: _submitTender,
-              onSubmitRefund: _submitRefund,
-              onRefresh: _refresh,
-            ),
-        },
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.85;
+    return Dialog(
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.kLarge),
+      insetPadding: const EdgeInsets.all(AppSpacing.xl),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 430, maxHeight: maxHeight),
+        child: Material(
+          color: AppColors.background,
+          borderRadius: AppRadius.kLarge,
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              Container(
+                color: AppColors.surface,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.lg,
+                  vertical: AppSpacing.md,
+                ),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text('Ödeme', style: AppTypography.titleLarge),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                      tooltip: 'Kapat',
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1, color: AppColors.border),
+              // `Expanded`, not `Flexible` — `_CheckoutBody`'s own tender
+              // panel relies on a bounded ancestor height for its internal
+              // `Expanded`/`SingleChildScrollView` to work at all; the
+              // loading/error states fill the same space, centered, rather
+              // than shrink-wrapping — a materially better look than the
+              // small floating box a tight fit would otherwise produce.
+              Expanded(
+                child: switch (_phase) {
+                  _LoadPhase.loading => const Center(
+                      child:
+                          LoadingView(message: 'Ödeme bilgileri yükleniyor...'),
+                    ),
+                  _LoadPhase.error => Center(
+                      child: ErrorView(
+                        message: 'Ödeme bilgileri yüklenemedi: $_loadError',
+                        onRetry: _bootstrap,
+                      ),
+                    ),
+                  _LoadPhase.ready => _CheckoutBody(
+                      checkId: widget.checkId,
+                      view: widget.view,
+                      session: _session!,
+                      busy: _busy,
+                      actionError: _actionError,
+                      unknownOutcomeNotice: _unknownOutcomeNotice,
+                      isOffline: _isOffline,
+                      queuedEntries: _queuedEntries,
+                      offlineSyncNotice: _offlineSyncNotice,
+                      onSyncNow: () => unawaited(_syncOfflineQueue()),
+                      onSubmitTender: _submitTender,
+                      onSubmitRefund: _submitRefund,
+                      onRefresh: _refresh,
+                    ),
+                },
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -830,8 +877,26 @@ class _AmountRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: style),
-          Text('$amount', style: style),
+          // The label shrinks/ellipsizes under width pressure (a narrow
+          // compact-modal panel, `emphasize`'s larger font, a long label)
+          // — the money amount never does: `FittedBox` scales its font
+          // down as a last resort instead, since truncating/clipping a
+          // digit in an amount would misrepresent money, however briefly.
+          Expanded(
+            child: Text(
+              label,
+              style: style,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: Text('$amount', style: style),
+            ),
+          ),
         ],
       ),
     );

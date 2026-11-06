@@ -232,6 +232,10 @@ export const getPosBranchTableOverview = onCall(
         activeTableSessionId,
         pendingQrLineCount: activeTableSessionId ? (pendingCountsBySessionId.get(activeTableSessionId) ?? 0) : 0,
         pendingServiceRequests: pendingServiceRequestsByTableId.get(d.id) ?? [],
+        // 2026-11-06 — "Masalar 5-sekme düzeni": the Flutter grid's own
+        // area/zone filter tabs, reusing `RestaurantTable.areaName` (free
+        // text, already set at table-creation time) — never a new field.
+        areaName: (table.areaName as string | undefined) ?? "",
         version: table.revision ?? null,
       };
     });

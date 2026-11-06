@@ -71,6 +71,7 @@ class PosBranchTableSummary {
     required this.activeTableSessionId,
     required this.pendingQrLineCount,
     this.pendingServiceRequests = const [],
+    this.areaName = '',
   });
 
   final String tableId;
@@ -80,10 +81,16 @@ class PosBranchTableSummary {
   final int pendingQrLineCount;
   final List<PosPendingServiceRequest> pendingServiceRequests;
 
+  /// `RestaurantTable.areaName` (free text, e.g. "Bahçe"/"Salon"/"Teras"),
+  /// passed straight through — the Masalar grid's own area-filter tabs
+  /// (2026-11-06). Empty when the table has none set.
+  final String areaName;
+
   factory PosBranchTableSummary.fromWire(Map<String, dynamic> data) {
     return PosBranchTableSummary(
       tableId: data['tableId'] as String,
       displayName: data['displayName'] as String,
+      areaName: data['areaName'] as String? ?? '',
       status: data['status'] as String,
       activeTableSessionId: data['activeTableSessionId'] as String?,
       pendingQrLineCount: data['pendingQrLineCount'] as int,
@@ -300,6 +307,26 @@ class PosTableOperationalView {
       ],
     );
   }
+}
+
+/// Prefers `readyForPayment` (staff already asked for the bill) over
+/// `open`, then falls back to the first `open` check — `paid`/`cancelled`
+/// checks are never a valid target. Shared by `PrintTableReceipt` and the
+/// Masalar grid's "Ödeme Al" quick action (2026-11-06) — both need the
+/// exact same "which check does this table's own quick action apply to"
+/// resolution.
+String? resolveOpenOrReadyForPaymentCheckId(PosTableOperationalView view) {
+  final readyForPayment = view.checks
+      .where((c) => c['status'] == 'readyForPayment')
+      .map((c) => c['id'] as String?)
+      .whereType<String>();
+  if (readyForPayment.isNotEmpty) return readyForPayment.first;
+
+  final open = view.checks
+      .where((c) => c['status'] == 'open')
+      .map((c) => c['id'] as String?)
+      .whereType<String>();
+  return open.isNotEmpty ? open.first : null;
 }
 
 class PosOperationalViewException implements Exception {

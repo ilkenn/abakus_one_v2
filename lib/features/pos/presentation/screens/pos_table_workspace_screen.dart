@@ -2870,11 +2870,18 @@ class _StaffEntryProductCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: ProductImage(
-                  imageKey: product.imageKey,
-                  categoryId: product.categoryId,
-                  width: double.infinity,
-                  height: double.infinity,
+                // `LayoutBuilder` resolves the tile's real, finite
+                // on-screen size — `double.infinity` here previously
+                // skipped `ProductImage`'s `cacheWidth`/`cacheHeight`
+                // decode-size optimization entirely for every tile in this
+                // scrolling staff order-entry grid.
+                child: LayoutBuilder(
+                  builder: (context, constraints) => ProductImage(
+                    imageKey: product.imageKey,
+                    categoryId: product.categoryId,
+                    width: constraints.maxWidth,
+                    height: constraints.maxHeight,
+                  ),
                 ),
               ),
               const SizedBox(height: AppSpacing.xs),

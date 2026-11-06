@@ -89,11 +89,16 @@ class _StoryRing extends StatelessWidget {
             ),
           ),
           child: ClipOval(
+            // A known, fixed size (unlike the scrolling menu list's own
+            // cards) — passed directly rather than `double.infinity`, which
+            // skipped `ProductImage`'s `cacheWidth`/`cacheHeight` decode-
+            // size optimization entirely (see its own doc comment) for
+            // every ring in this horizontally-scrolling bar.
             child: ProductImage(
               imageKey: product.imageKey,
               categoryId: product.categoryId,
-              width: double.infinity,
-              height: double.infinity,
+              width: QrMenuStoryBar._ringSize - 2 * QrMenuStoryBar._imageInset,
+              height: QrMenuStoryBar._ringSize - 2 * QrMenuStoryBar._imageInset,
               borderRadius: BorderRadius.zero,
               placeholderIconSize: 28,
             ),
@@ -134,13 +139,15 @@ class _StoryQuickView extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ProductImage(
-              imageKey: product.imageKey,
-              categoryId: product.categoryId,
-              width: double.infinity,
-              height: 200,
-              borderRadius: BorderRadius.zero,
-              placeholderIconSize: 64,
+            LayoutBuilder(
+              builder: (context, constraints) => ProductImage(
+                imageKey: product.imageKey,
+                categoryId: product.categoryId,
+                width: constraints.maxWidth,
+                height: 200,
+                borderRadius: BorderRadius.zero,
+                placeholderIconSize: 64,
+              ),
             ),
             Padding(
               padding: const EdgeInsets.all(AppSpacing.lg),

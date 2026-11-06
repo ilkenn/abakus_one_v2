@@ -245,14 +245,16 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ProductImage(
-                        heroTag: 'product_image_${widget.product.id}',
-                        imageKey: widget.product.imageKey,
-                        categoryId: widget.product.categoryId,
-                        width: double.infinity,
-                        height: 320,
-                        borderRadius: BorderRadius.zero,
-                        placeholderIconSize: 88,
+                      LayoutBuilder(
+                        builder: (context, constraints) => ProductImage(
+                          heroTag: 'product_image_${widget.product.id}',
+                          imageKey: widget.product.imageKey,
+                          categoryId: widget.product.categoryId,
+                          width: constraints.maxWidth,
+                          height: 320,
+                          borderRadius: BorderRadius.zero,
+                          placeholderIconSize: 88,
+                        ),
                       ),
                       Padding(
                         padding: const EdgeInsets.all(AppSpacing.xl),
