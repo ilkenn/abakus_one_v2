@@ -7,14 +7,16 @@ class AppConstants {
 
   /// Self-Order QR Faz 6 (23-rule plan §8, "Kapanış + Google review") —
   /// the restaurant's Google Business Profile review link, opened from
-  /// [TableContextBadge] once a table visit ends. **Deliberately `null`**:
-  /// there is no real Google Business Profile review URL recorded anywhere
-  /// in this codebase to source it from (confirmed by a repo-wide search),
-  /// and CLAUDE.md forbids fabricating business data such as a guessed
-  /// link. Every call site treats `null` as "don't show the review
-  /// prompt" — never as a broken or placeholder link shown to a real
-  /// customer. Set this to the real review URL (e.g.
-  /// `https://g.page/r/<id>/review`) once it's available; no other code
-  /// change is needed for the prompt to start appearing.
-  static const String? googleReviewUrl = null;
+  /// [TableContextBadge] once a table visit ends.
+  ///
+  /// **2026-11-06, explicit user instruction**: set to this placeholder
+  /// value directly by the user ("yer tutucu olarak... bağlayıp
+  /// url_launcher tıklandığında açılacak şekilde hazır tutalım") — not a
+  /// value this codebase guessed or fabricated. The user has acknowledged
+  /// this is a placeholder, not yet the business's real, verified review
+  /// deep link; replace it with the real one (from the business's Google
+  /// Business Profile "Ask for reviews" link, or a real `g.page/r/<id>
+  /// /review` short link) whenever that's available — no other code
+  /// change is needed for the prompt to keep working once it's swapped.
+  static const String? googleReviewUrl = 'https://g.page/r/resto-menum/review';
 }

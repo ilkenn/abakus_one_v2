@@ -111,6 +111,15 @@ void main() {
     expect(containsText(bytes, 'KOPYA'), isTrue);
   });
 
+  test(
+      'recete icerigi ve tercih notlari girintili, "->" isaretiyle basilir '
+      '(2026-11-06 fiziksel cikti testi)', () {
+    final bytes = EscPosKitchenTicketEncoder.encode(buildTicket());
+
+    expect(containsText(bytes, '  -> Karbonhidrat: Meksika Pilavı'), isTrue);
+    expect(containsText(bytes, '  -> Not: Az baharatlı olsun'), isTrue);
+  });
+
   test('birden fazla satir, her biri kendi 5 alanini ayri ayri yazdirir', () {
     final bytes = EscPosKitchenTicketEncoder.encode(buildTicket(
       lines: const [

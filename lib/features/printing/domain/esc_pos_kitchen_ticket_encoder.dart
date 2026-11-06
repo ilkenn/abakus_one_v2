@@ -63,11 +63,16 @@ abstract final class EscPosKitchenTicketEncoder {
     for (final line in ticket.lines) {
       writeLine('${line.quantity} x ${line.productName}', bold: true);
       writeLine('  Sipariş Veren: ${line.orderedByName ?? "-"}');
+      // Reçete içeriği/opsiyon satırları — mutfak personelinin eksiksiz
+      // hazırlaması için ürünün altına girintili, "->" işaretli basılır
+      // (2026-11-06 fiziksel çıktı testi). ASCII "->" deliberately, not a
+      // Unicode arrow (→) — see `_encodeTurkish` below: anything outside
+      // its override table prints as '?' on this printer.
       for (final ingredient in line.ingredientSummary) {
-        writeLine('  $ingredient');
+        writeLine('  -> $ingredient');
       }
       if (line.note.isNotEmpty) {
-        writeLine('  Not: ${line.note}');
+        writeLine('  -> Not: ${line.note}');
       }
       for (final warning in line.warnings) {
         writeLine('  ! $warning', bold: true);

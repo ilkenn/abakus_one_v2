@@ -104,8 +104,13 @@ abstract final class EscPosReceiptEncoder {
     return '$clippedLeft${' ' * (padding > 0 ? padding : 1)}$right';
   }
 
+  // '₺' (U+20BA) has no slot in any classic 8-bit ESC/POS codepage table
+  // (CP1254/CP857/CP850/...) — every one of them predates the Turkish
+  // Lira symbol itself, so sending it always fell back to '?' regardless
+  // of which table was selected. 'TL' prints correctly everywhere,
+  // exactly as requested (2026-11-06 physical print test).
   static String _formatAmount(int minorUnits, String currencyCode) {
-    final symbol = currencyCode == 'TRY' ? '₺' : currencyCode;
+    final symbol = currencyCode == 'TRY' ? 'TL' : currencyCode;
     return '${(minorUnits / 100).toStringAsFixed(2)} $symbol';
   }
 

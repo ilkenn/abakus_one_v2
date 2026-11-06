@@ -10833,3 +10833,43 @@ qr_flow_strings.dart,presentation/widgets/table_context_badge.dart}`, `pubspec.y
 **All six phases of the Self-Order QR plan are now closed out**, with the one disclosed exception
 (Canlı Adisyon) and the one disclosed signal limitation (Kapanış detection) both called out above
 rather than presented as complete.
+
+### Post-Faz-6 polish: Google review link, physical printer-output fixes (2026-11-06)
+
+Follow-up pass after a real physical print test of the Faz 5 kitchen-ticket printing. Two items
+were decided directly by the user (not this codebase guessing), and one investigation changed the
+original request before implementing it — all three disclosed here per CLAUDE.md §15.
+
+1. **`AppConstants.googleReviewUrl`** — set to `'https://g.page/r/resto-menum/review'` **by explicit
+   user instruction**, who stated it's a placeholder, not yet the business's real verified link.
+   Previously `null` by this codebase's own design (no fabricated link) — now non-null because the
+   user, not this codebase, supplied the value.
+2. **₺ → 'TL' fallback (till receipt)** — `EscPosReceiptEncoder._formatAmount` no longer sends '₺'
+   (U+20BA): that symbol has no slot in any classic 8-bit ESC/POS codepage table (every one of them
+   predates the Turkish Lira sign), so it always printed as '?' regardless of which codepage was
+   selected. 'TL' prints correctly on any table. New test: `esc_pos_receipt_encoder_test.dart` (3
+   cases — first test file for this encoder).
+3. **Reçete/opsiyon satırları, kitchen ticket** — `EscPosKitchenTicketEncoder` now prints each
+   `ingredientSummary` entry and the line note indented with an ASCII `"->"` marker (not a Unicode
+   arrow `→` — deliberately: anything outside the encoder's Turkish-letter override table falls back
+   to `?`, the exact bug class this pass is otherwise fixing). +1 test case.
+4. **Codepage (CP857 vs. WPC1254) — the original request was changed, not silently implemented.**
+   The user's physical test found Ş/ğ/ı/İ garbled and asked to switch to CP857/PC857. Investigation
+   (web search against Epson's own ESC/POS reference + a Star Micronics manual) found two real
+   problems with that specific ask: (a) the `ESC t n` byte index for PC857 is **not standardized
+   across printer vendors** — Epson's DM-series uses `n=13`, Star's CBM820 uses `n=8`, and this
+   printer's actual brand/model is unknown (same "no vendor manual" gap the original WPC1254
+   attempt already disclosed), so guessing a third unverified number carries real risk of selecting
+   the wrong table again; (b) more importantly, **CP857 historically does not include Ş/ş or Ğ/ğ at
+   all** (it only added ı/İ to CP850's base Western-European set) — switching to it would likely trade
+   today's Ş/ğ garbling for a *structural* inability to print Ş/ğ correctly at all, on exactly the
+   letters the user named as broken. Presented to the user as a Decision Review; they chose to keep
+   pursuing a correctly-selected WPC1254 (the only table of the two with full Turkish support)
+   instead. **Not yet implemented**: doing this correctly needs either the printer's actual model
+   name or its self-test page (most ESC/POS 80mm clones print a diagnostics page listing their real
+   supported codepage table when the feed button is held during power-on) — blocked on that input,
+   not on any remaining code work; the current `ESC t 45` byte is left unchanged pending it.
+
+`flutter analyze` (whole project): clean (one pre-existing-pattern `info`, not an error, on
+`AppConstants.googleReviewUrl`'s intentionally-nullable type). `flutter test` (whole project): 3936
+passing, 0 failures (+4 over the post-Faz-6 baseline of 3932).
