@@ -1,11 +1,11 @@
 {
-    "name": "abakus_one_v2",
-    "short_name": "abakus_one_v2",
+    "name": "Abaküs",
+    "short_name": "Abaküs",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Abaküs Street Food - Masada QR ile sipariş ve sadakat programı.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -10739,3 +10739,97 @@ files named above.
 
 **Deferred, not done this pass**: Faz 6 (canlı adisyon/kapanış/offline senkron) — same sequential
 gate as before.
+
+### Self-Order QR — Faz 6: Kapanış/Google review + offline sipariş senkronizasyonu; Canlı Adisyon deliberately deferred (2026-11-06)
+
+Sixth and final phase of this sequential run. Per the user's "no further pausing" direction,
+implementation choices below were made directly and disclosed here, not raised as new
+approval-gated questions. One of the three sub-items (Canlı Adisyon) could not be honestly
+implemented within this pass at all — see its own section below rather than being silently
+dropped.
+
+1. **Offline sipariş kuyruklanması (implemented).** New `core/services/connectivity/
+   NetworkConnectivityMonitor` (+ real `ConnectivityPlusNetworkMonitor`, wrapping
+   `connectivity_plus`) — deliberately a fresh copy of the courier feature's own structurally
+   identical class rather than an import of it, to avoid introducing the first `cart`/`qr` →
+   `courier` cross-feature dependency. `DineInCheckoutScreen._submitOrder` now checks connectivity
+   immediately before the real `submitDineInOrder` call: offline, the submission (exact same
+   payload the gateway would have received, including the already-computed
+   `submittedCartLineIds`) is written to a new local, durable queue
+   (`PendingDineInSubmission` + `DineInOfflineOrderQueueRepository` /
+   `SharedPreferencesDineInOfflineOrderQueueRepository`, mirroring POS's own `OfflinePaymentOutbox
+   Repository` storage shape but deliberately simpler — no lease/sequence tracking, since each
+   entry's own `submissionKey` is already globally idempotent server-side) and the customer sees a
+   clear Turkish message instead of a failed network call. A new `SyncOfflineDineInOrders` use
+   case replays every queued entry independently (one still-offline/rejected entry never blocks
+   the rest) — triggered both on this screen's own `initState` (covers "was already offline, is
+   online again by the time this screen next opens") and on a live reconnect signal while the
+   screen stays open (`NetworkConnectivityMonitor.onStatusChanged`).
+   **Root-cause note on a self-caught regression**: the first working version of this wiring broke
+   10 of the pre-existing `dine_in_checkout_screen_test.dart` cases with "pumpAndSettle timed out" —
+   traced (systematic-debugging) to the screen's new `initState` calling through to
+   `SharedPreferences.getInstance()`/`connectivity_plus`'s platform channel, neither of which is
+   mocked in a plain widget test (mirrors why `offline_payment_outbox_repository_test.dart` always
+   calls `SharedPreferences.setMockInitialValues({})` first). Fixed at the root by (a) wrapping the
+   screen's own connectivity determination in a try/catch that defaults to "online" when the signal
+   is unreadable — strictly safer than silently queueing every order whenever the signal merely
+   can't be read — and (b) adding real fakes
+   (`_FakeNetworkConnectivityMonitor`/`_FakeDineInOfflineOrderQueueRepository`) wired into every
+   existing `pumpWithSeededCart` container, not a symptom-level timeout/skip.
+2. **Kapanış + Google review (implemented, with a disclosed signal limitation).** `TableContextBadge`
+   now also shows a "Teşekkürler, bizi Google'da değerlendirir misiniz?" prompt (opened via the
+   newly-added `url_launcher` dependency) once the table visit ends. **This reuses the badge's own
+   pre-existing `isStale` detection (local TTL expiry OR a non-`active` live `tableGuestSessions`
+   status) — it does NOT distinguish a genuine staff-initiated closure from mere TTL staleness**,
+   because the backend currently has no signal that could: `functions/src/tableGuestSessionConfig
+   .ts`'s own doc comment states `tableGuestSessions.status` only ever gets written as `"active"`
+   today ("Phase 3 wires the others" — closed/revoked/expired are typed but never actually
+   produced by any Cloud Function yet). The staff-side `tableSessions` collection DOES get a real,
+   authoritative closure (`tableSessionClosure.ts`'s `releaseTableIfReady`, triggered off `checks`
+   reaching a terminal status) — but nothing today propagates that event into the customer-facing
+   `tableGuestSessions` document the client actually watches. Wiring that propagation (a new
+   Firestore trigger/Cloud Function) is itself a backend architecture change needing its own
+   explicit approval, out of scope for this pass. **Also disclosed**: the review link itself is
+   `null` by design (`core/config/app_constants.dart`'s new `AppConstants.googleReviewUrl`) — there
+   is no real Google Business Profile review URL recorded anywhere in this codebase, and
+   fabricating one would ship a broken/misleading link to real customers. The prompt is
+   structurally complete and will start appearing the moment that one constant is set to the
+   business's real link; no other code change is needed.
+3. **Canlı Adisyon (live running bill) — deliberately NOT implemented this pass.** Reasoned through,
+   not silently dropped: building this correctly requires a new customer-readable projection of
+   `checks`/`checkAllocations` — today `allow read: if false` for any non-staff caller, with the
+   only existing read path being the staff-only `getPosTableOperationalView`. Opening any part of
+   that financial data to an anonymous table guest is a genuine authorization-model change (new
+   Security Rules, likely a new narrow Cloud Function returning a derived, non-sensitive view
+   rather than the raw `checks` documents, a new client gateway, new tests) — exactly the kind of
+   security-sensitive surface this project's own forward-looking security rules (CLAUDE.md §9) flag
+   as needing real server-side authorization, not something to bolt on inside an already-large,
+   sequential six-phase pass. **Suggested future-phase shape**: a dedicated `getLiveTableBill`
+   callable (mirrors `getPosTableOperationalView`'s own "narrow read-only slice, nothing raw"
+   pattern) returning only {lines, running total, applied discounts} for the caller's own active
+   `tableSessionId` — re-verified against the same ownership check every other dine-in customer
+   callable already uses — rather than any direct client read of `checks`.
+
+`flutter analyze` (whole project) clean. `flutter test` (whole project): see test run below for the
+updated count — new coverage: `pending_dine_in_submission_test.dart` (new, 3 cases),
+`dine_in_offline_order_queue_repository_test.dart` (new, 6 cases), `sync_offline_dine_in_orders_test
+.dart` (new, 4 cases), `dine_in_checkout_screen_test.dart` (+2, offline-queue-on-submit +
+auto-flush-on-reconnect), `qr_flow_strings_test.dart` (+2 fields). `functions`: untouched this phase
+— `npx tsc --noEmit` re-confirmed clean regardless. **Not run**: Cloud Functions emulator suite —
+same Java 21+ environment limitation disclosed every prior phase (moot this phase anyway, since no
+backend file changed).
+
+New files: `lib/core/services/connectivity/{network_connectivity_monitor,
+connectivity_plus_network_monitor}.dart`, `lib/features/cart/domain/models/
+pending_dine_in_submission.dart`, `lib/features/cart/data/dine_in_offline_order_queue_repository
+.dart`, `lib/features/cart/application/use_cases/sync_offline_dine_in_orders.dart`, plus the four
+new test files named above. Updated: `lib/features/cart/presentation/{screens/
+dine_in_checkout_screen.dart,providers/dine_in_order_dependencies_provider.dart}`,
+`lib/core/config/app_constants.dart` (first real content), `lib/features/qr/{domain/i18n/
+qr_flow_strings.dart,presentation/widgets/table_context_badge.dart}`, `pubspec.yaml`/`pubspec.lock`
+(`url_launcher` ^6.3.0), `web/{manifest.json,index.html}` (PWA branding: "abakus_one_v2" →
+"Abaküs" — pre-approved, not previously committed), plus the test files named above.
+
+**All six phases of the Self-Order QR plan are now closed out**, with the one disclosed exception
+(Canlı Adisyon) and the one disclosed signal limitation (Kapanış detection) both called out above
+rather than presented as complete.

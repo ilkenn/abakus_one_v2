@@ -60,6 +60,10 @@ dependencies:
   latlong2: ^0.10.1
   mobile_scanner: ^7.0.0
   shared_preferences: ^2.5.5
+  # Self-Order QR Faz 6 (23-rule plan §7) — opens the Google Maps review
+  # link from the post-payment "Teşekkürler" screen. User-approved
+  # (plan-approval message).
+  url_launcher: ^6.3.0
   # 2026-11-05 — real Windows raw-spooler printing for the 80mm ESC/POS
   # till receipt (`features/printing/data/windows_raw_printer_adapter
   # .dart`): the user-confirmed printer ("POS80 Printer") is a Windows-

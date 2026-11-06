@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../../core/config/app_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -29,6 +31,19 @@ import '../providers/table_guest_session_dependencies_provider.dart';
 /// dine-in-facing screen renders while a table is active, so the request
 /// buttons live here rather than a new widget with its own conditional-
 /// render logic to duplicate.
+///
+/// Self-Order QR Faz 6 (23-rule plan §8, "Kapanış + Google review") — when
+/// the visit ends, this badge also offers a Google review link (if
+/// [AppConstants.googleReviewUrl] is configured). **Disclosed scope
+/// limitation**: "ended" here means exactly what [isStale] below already
+/// meant before this phase — local TTL expiry OR a non-`active`
+/// `tableGuestSessions.status` — because the backend has no other signal
+/// to distinguish a genuine staff-initiated closure from mere staleness:
+/// `functions/src/tableGuestSessionConfig.ts` only ever writes `status:
+/// 'active'` today ("Phase 3 wires the others"). A future phase that wires
+/// a real closure signal (e.g. a trigger propagating the staff-side
+/// `tableSessions` closure into this collection) could narrow this to fire
+/// only on a genuine closure.
 class TableContextBadge extends ConsumerStatefulWidget {
   const TableContextBadge({super.key});
 
@@ -203,6 +218,18 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
     );
   }
 
+  Future<void> _openGoogleReview(String url) async {
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (!mounted) return;
+      final strings = QrFlowStrings.of(ref.read(guestLocaleProvider));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(strings.serviceRequestFailedGeneric)),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tableContext = ref.watch(activeTableContextProvider);
@@ -225,59 +252,104 @@ class _TableContextBadgeState extends ConsumerState<TableContextBadge> {
     final isStale = localExpired || liveStale;
 
     final accentColor = isStale ? AppColors.error : AppColors.primary;
+    const reviewUrl = AppConstants.googleReviewUrl;
 
-    return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.sm),
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
-        ),
-        decoration: BoxDecoration(
-          color: isStale
-              ? AppColors.error.withValues(alpha: 0.1)
-              : AppColors.primaryExtraLight,
-          borderRadius: AppRadius.kPill,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              isStale
-                  ? Icons.warning_amber_rounded
-                  : Icons.table_restaurant_rounded,
-              size: 16,
-              color: accentColor,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: AppSpacing.sm),
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
             ),
-            const SizedBox(width: AppSpacing.xs),
-            Flexible(
-              child: Text(
-                isStale
-                    ? strings.badgeExpiredMessage
-                    : '${tableContext.branchName} · ${tableContext.tableName}',
-                style: AppTypography.labelLarge.copyWith(
+            decoration: BoxDecoration(
+              color: isStale
+                  ? AppColors.error.withValues(alpha: 0.1)
+                  : AppColors.primaryExtraLight,
+              borderRadius: AppRadius.kPill,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isStale
+                      ? Icons.warning_amber_rounded
+                      : Icons.table_restaurant_rounded,
+                  size: 16,
                   color: accentColor,
-                  fontWeight: FontWeight.bold,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                const SizedBox(width: AppSpacing.xs),
+                Flexible(
+                  child: Text(
+                    isStale
+                        ? strings.badgeExpiredMessage
+                        : '${tableContext.branchName} · ${tableContext.tableName}',
+                    style: AppTypography.labelLarge.copyWith(
+                      color: accentColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                _LanguageSwitcher(current: locale),
+                if (!isStale) ...[
+                  const SizedBox(width: AppSpacing.sm),
+                  _ServiceRequestTapTarget(
+                    icon: Icons.campaign_outlined,
+                    tooltip: strings.requestHelpTooltip,
+                    busy: _busyType != null,
+                    onTap: () =>
+                        _openRequestSheet(context, guestSessionId, strings),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (isStale && reviewUrl != null)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.sm),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              decoration: const BoxDecoration(
+                color: AppColors.primaryExtraLight,
+                borderRadius: AppRadius.kMedium,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.star_rounded,
+                    size: 16,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Flexible(
+                    child: Text(
+                      strings.reviewPromptMessage,
+                      style: AppTypography.labelLarge,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  TextButton(
+                    onPressed: () => _openGoogleReview(reviewUrl),
+                    child: Text(strings.reviewPromptCta),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: AppSpacing.sm),
-            _LanguageSwitcher(current: locale),
-            if (!isStale) ...[
-              const SizedBox(width: AppSpacing.sm),
-              _ServiceRequestTapTarget(
-                icon: Icons.campaign_outlined,
-                tooltip: strings.requestHelpTooltip,
-                busy: _busyType != null,
-                onTap: () =>
-                    _openRequestSheet(context, guestSessionId, strings),
-              ),
-            ],
-          ],
-        ),
-      ),
+          ),
+      ],
     );
   }
 }

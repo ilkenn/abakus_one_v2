@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/auth/real_customer_check.dart';
+import '../../../../core/services/connectivity/network_connectivity_monitor.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -17,6 +20,7 @@ import '../../../loyalty/presentation/providers/loyalty_providers.dart';
 import '../../../orders/domain/models/order_id.dart';
 import '../../../orders/domain/models/order_model.dart';
 import '../../../orders/presentation/providers/orders_provider.dart';
+import '../../domain/models/pending_dine_in_submission.dart';
 import '../../../qr/domain/identity/dine_in_sub_account_id.dart';
 import '../../../qr/presentation/providers/active_table_context_provider.dart';
 import '../../../qr/presentation/providers/table_guest_session_dependencies_provider.dart';
@@ -103,16 +107,51 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
   /// without an explicit switch).
   DineInSubmissionScope _submissionScope = DineInSubmissionScope.ownItemsOnly;
 
+  /// Self-Order QR Faz 6 (23-rule plan §7, "offline order queueing with
+  /// auto-flush on reconnect").
+  StreamSubscription<NetworkConnectivityStatus>? _connectivitySubscription;
+
   @override
   void initState() {
     super.initState();
     _noteController = TextEditingController();
     _selectedPaymentMethod = _paymentMethods.first;
     _submissionKey = DateTime.now().microsecondsSinceEpoch.toString();
+    // Covers both "already online when this screen opens" (something
+    // queued earlier this visit) and a live reconnect while it's open.
+    unawaited(_flushOfflineQueue());
+    try {
+      _connectivitySubscription =
+          ref.read(networkConnectivityMonitorProvider).onStatusChanged.listen(
+        (status) {
+          if (status == NetworkConnectivityStatus.online) {
+            unawaited(_flushOfflineQueue());
+          }
+        },
+        // The platform channel this wraps isn't available in every
+        // environment (e.g. widget tests) — a stream error here must
+        // never surface as an unhandled exception; the next manual
+        // submit attempt still determines connectivity on its own.
+        onError: (_) {},
+      );
+    } catch (_) {
+      // Same reasoning as above — reconnect auto-flush is a convenience,
+      // never a requirement for the screen to function.
+    }
+  }
+
+  Future<void> _flushOfflineQueue() async {
+    try {
+      final sync = await ref.read(syncOfflineDineInOrdersProvider.future);
+      await sync.call();
+    } catch (_) {
+      // Best-effort — the next reconnect/screen-open tries again.
+    }
   }
 
   @override
   void dispose() {
+    _connectivitySubscription?.cancel();
     _noteController.dispose();
     super.dispose();
   }
@@ -366,6 +405,50 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
       setState(() {
         _isSubmitting = false;
         _submitError = 'Sepetin boş.';
+      });
+      return;
+    }
+
+    // Self-Order QR Faz 6 — checked BEFORE attempting the real network
+    // call, so a known-offline device never wastes a guaranteed-to-fail
+    // round-trip: the order is queued immediately and replayed
+    // automatically once connectivity returns (this screen's own
+    // `_flushOfflineQueue`, triggered on reconnect and on next open).
+    // If the connectivity signal itself can't be read (platform channel
+    // unavailable, as in widget tests), default to "online" — attempting
+    // the real submission is strictly safer than silently queueing every
+    // order whenever this signal is merely unreadable.
+    NetworkConnectivityStatus connectivity;
+    try {
+      connectivity =
+          await ref.read(networkConnectivityMonitorProvider).currentStatus();
+    } catch (_) {
+      connectivity = NetworkConnectivityStatus.online;
+    }
+    if (connectivity == NetworkConnectivityStatus.offline) {
+      final submittedCartLineIds = _computeSubmittedCartLineIds(scopedItems);
+      final queueRepository =
+          await ref.read(dineInOfflineOrderQueueRepositoryProvider.future);
+      await queueRepository.enqueue(
+        PendingDineInSubmission(
+          submissionKey: _submissionKey,
+          tableSessionId: tableContext.session.id,
+          items: [
+            for (final item in _buildOrderItems(scopedItems)) item.toJson(),
+          ],
+          customerNote: _noteController.text.trim(),
+          selectedRewardId: _selectedRewardId,
+          selectedCampaignId: _selectedCampaignId,
+          guestDisplayName: _guestDisplayName,
+          submittedCartLineIds: submittedCartLineIds,
+          queuedAt: DateTime.now(),
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _isSubmitting = false;
+        _submitError = 'Bağlantı yok. Siparişiniz, bağlantı sağlanır '
+            'sağlanmaz otomatik olarak gönderilecek.';
       });
       return;
     }

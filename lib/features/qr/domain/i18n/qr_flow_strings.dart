@@ -46,6 +46,8 @@ class QrFlowStrings {
     required this.customNoteInputHint,
     required this.customNoteSendLabel,
     required this.dismissLabel,
+    required this.reviewPromptMessage,
+    required this.reviewPromptCta,
   });
 
   final String welcomeTitle;
@@ -87,6 +89,13 @@ class QrFlowStrings {
   final String customNoteSendLabel;
   final String dismissLabel;
 
+  /// Self-Order QR Faz 6 — shown in [TableContextBadge] once the table
+  /// visit ends (see that widget's own doc comment for exactly which
+  /// signal "ended" means today). Only rendered at all when
+  /// `AppConstants.googleReviewUrl` is non-null.
+  final String reviewPromptMessage;
+  final String reviewPromptCta;
+
   static const QrFlowStrings tr = QrFlowStrings._(
     welcomeTitle: 'Abaküs Street Food\'a Hoş Geldiniz',
     checkingQr: 'QR kod kontrol ediliyor...',
@@ -125,6 +134,9 @@ class QrFlowStrings {
     customNoteInputHint: 'İsteğinizi buraya yazın...',
     customNoteSendLabel: 'Gönder',
     dismissLabel: 'Vazgeç',
+    reviewPromptMessage: 'Ziyaretiniz için teşekkürler! Bizi Google\'da '
+        'değerlendirir misiniz?',
+    reviewPromptCta: 'Google\'da Değerlendir',
   );
 
   static const QrFlowStrings en = QrFlowStrings._(
@@ -170,6 +182,8 @@ class QrFlowStrings {
     customNoteInputHint: 'Write your request here...',
     customNoteSendLabel: 'Send',
     dismissLabel: 'Cancel',
+    reviewPromptMessage: 'Thanks for visiting! Would you rate us on Google?',
+    reviewPromptCta: 'Rate Us on Google',
   );
 
   static QrFlowStrings of(GuestLocale locale) => switch (locale) {

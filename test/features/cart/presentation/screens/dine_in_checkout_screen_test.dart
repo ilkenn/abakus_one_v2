@@ -8,8 +8,11 @@ import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider
 import 'package:abakus_one_v2/features/campaigns/data/campaign_gateway.dart';
 import 'package:abakus_one_v2/features/campaigns/domain/models/campaign.dart';
 import 'package:abakus_one_v2/features/campaigns/presentation/providers/campaigns_provider.dart';
+import 'package:abakus_one_v2/core/services/connectivity/network_connectivity_monitor.dart';
+import 'package:abakus_one_v2/features/cart/data/dine_in_offline_order_queue_repository.dart';
 import 'package:abakus_one_v2/features/cart/data/submit_dine_in_order_gateway.dart';
 import 'package:abakus_one_v2/features/cart/domain/models/cart_item.dart';
+import 'package:abakus_one_v2/features/cart/domain/models/pending_dine_in_submission.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/dine_in_order_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/table_session_cart_dependencies_provider.dart';
@@ -54,6 +57,51 @@ class _FakeTechnicalIdentityProvider implements TechnicalIdentityProvider {
 
   @override
   Future<String> ensureSignedIn() async => uid;
+}
+
+/// Self-Order QR Faz 6 — a fixed, never-emitting "always online" signal so
+/// the screen's own connectivity check always proceeds to the real
+/// submission path in tests, never the offline-queue path, unless a test
+/// explicitly asks for the offline branch via [status].
+class _FakeNetworkConnectivityMonitor implements NetworkConnectivityMonitor {
+  _FakeNetworkConnectivityMonitor({
+    this.status = NetworkConnectivityStatus.online,
+    Stream<NetworkConnectivityStatus>? statusChanges,
+  }) : _statusChanges = statusChanges ?? const Stream.empty();
+
+  NetworkConnectivityStatus status;
+  final Stream<NetworkConnectivityStatus> _statusChanges;
+
+  @override
+  Future<NetworkConnectivityStatus> currentStatus() async => status;
+
+  @override
+  Stream<NetworkConnectivityStatus> get onStatusChanged => _statusChanges;
+}
+
+/// Self-Order QR Faz 6 — an in-memory stand-in for
+/// `SharedPreferencesDineInOfflineOrderQueueRepository`, avoiding any real
+/// `shared_preferences` plugin-channel traffic under `flutter test`.
+class _FakeDineInOfflineOrderQueueRepository
+    implements DineInOfflineOrderQueueRepository {
+  final List<PendingDineInSubmission> _entries = [];
+
+  @override
+  Future<void> enqueue(PendingDineInSubmission submission) async {
+    if (_entries.any((e) => e.submissionKey == submission.submissionKey)) {
+      return;
+    }
+    _entries.add(submission);
+  }
+
+  @override
+  Future<List<PendingDineInSubmission>> findAll() async =>
+      List.unmodifiable(_entries);
+
+  @override
+  Future<void> remove(String submissionKey) async {
+    _entries.removeWhere((e) => e.submissionKey == submissionKey);
+  }
 }
 
 /// Boncuk Loyalty Program P7-D.1 (2026-08-24) — `DineInCheckoutScreen` now
@@ -384,6 +432,8 @@ void main() {
         ProviderContainer container,
         _FakeSubmitDineInOrderGateway gateway,
         FakeTableSessionCartFirestoreClient cartClient,
+        // ignore: library_private_types_in_public_api
+        _FakeDineInOfflineOrderQueueRepository queueRepository,
       })> pumpWithSeededCart(
     WidgetTester tester, {
     ActiveTableContext? tableContext,
@@ -397,6 +447,15 @@ void main() {
     // the shared cart before this device adds its own "Falafel Bowl"
     // below; lets a test set up a genuinely multi-guest cart.
     List<CartItem> otherGuestLines = const [],
+    // Self-Order QR Faz 6 — defaults to "online" so every pre-existing
+    // test still exercises the real submission path; a dedicated offline
+    // test overrides this to exercise the queueing path instead.
+    NetworkConnectivityStatus connectivityStatus =
+        NetworkConnectivityStatus.online,
+    // Self-Order QR Faz 6 — lets a reconnect test drive the screen's own
+    // `initState` subscription directly, mirroring a real `connectivity_
+    // plus` status change.
+    Stream<NetworkConnectivityStatus>? connectivityStatusChanges,
   }) async {
     // The CatalogRewardCard adds substantial height for a real-customer
     // scenario — the default test surface is too short for the ListView's
@@ -414,6 +473,7 @@ void main() {
     }
 
     final fakeCartClient = FakeTableSessionCartFirestoreClient();
+    final fakeQueueRepository = _FakeDineInOfflineOrderQueueRepository();
     late final ProviderContainer container;
     final gateway = _FakeSubmitDineInOrderGateway(
       repository: InMemoryCanonicalOrderRepository(),
@@ -442,6 +502,18 @@ void main() {
             .overrideWithValue(loyaltyGateway ?? _FakeLoyaltyGateway()),
         campaignGatewayProvider
             .overrideWithValue(campaignGateway ?? _FakeCampaignGateway()),
+        // Self-Order QR Faz 6 — never touch the real `connectivity_plus`
+        // platform channel or `shared_preferences` plugin under
+        // `flutter test`.
+        networkConnectivityMonitorProvider.overrideWithValue(
+          _FakeNetworkConnectivityMonitor(
+            status: connectivityStatus,
+            statusChanges: connectivityStatusChanges,
+          ),
+        ),
+        dineInOfflineOrderQueueRepositoryProvider.overrideWith(
+          (ref) async => fakeQueueRepository,
+        ),
         if (signedInCustomer != null)
           authProvider.overrideWith(
             () => SeededAuthNotifier(
@@ -477,7 +549,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    return (container: container, gateway: gateway, cartClient: fakeCartClient);
+    return (
+      container: container,
+      gateway: gateway,
+      cartClient: fakeCartClient,
+      queueRepository: fakeQueueRepository,
+    );
   }
 
   testWidgets(
@@ -1185,4 +1262,76 @@ void main() {
       expect(find.byType(OrderSuccessScreen), findsOneWidget);
     },
   );
+
+  group('Self-Order QR Faz 6 — offline siparis kuyruklanmasi', () {
+    testWidgets(
+      'cihaz offline ise gateway hic cagrilmaz, siparis yerel kuyruga eklenir ve kullaniciya bildirilir',
+      (tester) async {
+        final pumped = await pumpWithSeededCart(
+          tester,
+          tableContext: _context(),
+          sessionSnapshot: TableGuestSessionSnapshot(
+            status: 'active',
+            expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          ),
+          connectivityStatus: NetworkConnectivityStatus.offline,
+        );
+
+        await tester.tap(
+          find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+        );
+        await tester.pumpAndSettle();
+
+        expect(pumped.gateway.callCount, 0,
+            reason: 'offline iken gercek gateway hic cagrilmamali');
+        expect(find.byType(OrderSuccessScreen), findsNothing);
+        expect(
+          find.textContaining('Bağlantı yok'),
+          findsOneWidget,
+        );
+
+        final queued = await pumped.queueRepository.findAll();
+        expect(queued, hasLength(1));
+        expect(queued.single.tableSessionId, 'tgs-1');
+        // The cart is a server-driven mirror once a submission actually
+        // reaches the server (Faz 4) — an offline-queued submission never
+        // reached the server, so the local cart is deliberately left
+        // untouched until the real flush succeeds.
+        expect(pumped.container.read(cartProvider), isNotEmpty);
+      },
+    );
+
+    testWidgets(
+      'yeniden baglanti sinyali gelince kuyruktaki siparis otomatik gonderilir',
+      (tester) async {
+        final connectivityController =
+            StreamController<NetworkConnectivityStatus>.broadcast();
+        addTearDown(connectivityController.close);
+        final pumped = await pumpWithSeededCart(
+          tester,
+          tableContext: _context(),
+          sessionSnapshot: TableGuestSessionSnapshot(
+            status: 'active',
+            expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          ),
+          connectivityStatus: NetworkConnectivityStatus.offline,
+          connectivityStatusChanges: connectivityController.stream,
+        );
+
+        await tester.tap(
+          find.widgetWithText(ElevatedButton, 'Siparişi Ver · 200 TL'),
+        );
+        await tester.pumpAndSettle();
+        expect(await pumped.queueRepository.findAll(), hasLength(1));
+        expect(pumped.gateway.callCount, 0);
+
+        connectivityController.add(NetworkConnectivityStatus.online);
+        await tester.pumpAndSettle();
+
+        expect(pumped.gateway.callCount, 1,
+            reason: 'reconnect must auto-flush the queued submission');
+        expect(await pumped.queueRepository.findAll(), isEmpty);
+      },
+    );
+  });
 }

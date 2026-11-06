@@ -19917,3 +19917,57 @@ for "Tüm Masayı Gönder."
 
 See `docs/feature_status.md`'s "Self-Order QR — Faz 5" entry for the full file list and test
 verification status.
+
+## ADR-058 — Self-Order QR Faz 6: offline order queueing design, Kapanış signal limitation, and Canlı Adisyon deferral (2026-11-06)
+
+- Tarih: 2026-11-06
+- Durum: Accepted
+
+### Context
+
+Sixth and final phase — "Canlı Adisyon, Kapanış, Offline Senkronizasyon." Three independent
+sub-decisions were made directly, per the user's "no further pausing" instruction, and are recorded
+here rather than silently decided.
+
+1. **Offline queue shape.** Mirrors POS's own `OfflinePaymentOutboxRepository` storage pattern
+   (`shared_preferences`, one JSON array under one key) but deliberately simpler: no
+   lease/sequence/device-ordering concept, because a guest's own order has none to preserve — each
+   queued entry's `submissionKey` is already globally idempotent server-side
+   (`submitDineInOrder.ts`), so entries replay independently, in any order, on any later attempt. A
+   brand-new `core/services/connectivity/NetworkConnectivityMonitor` was written rather than
+   importing the courier feature's structurally identical class, specifically to avoid introducing
+   the first `cart`/`qr` → `courier` cross-feature dependency (the existing dependency direction is
+   one-way: neither `cart` nor `qr` has ever imported from `courier`).
+2. **Kapanış trigger signal — a disclosed limitation, not a new backend feature.** The 23-rule plan
+   asked for this to fire on genuine closure. Investigation found the backend has no such signal
+   today: `tableGuestSessionConfig.ts` only ever writes `status: "active"` to the
+   `tableGuestSessions` documents the customer client watches (closed/revoked/expired are typed but
+   unused — "Phase 3 wires the others," per that file's own comment). The staff-side `tableSessions`
+   collection IS genuinely closed (`tableSessionClosure.ts`), but nothing propagates that into the
+   customer-facing collection. Rather than fabricate a signal or silently build a new Firestore
+   trigger (itself an unapproved backend architecture change), this phase reuses the existing
+   `isStale` detection `TableContextBadge` already had (TTL expiry OR non-active status) — honestly
+   weaker than "genuine closure," disclosed as such in `docs/feature_status.md`, not presented as
+   the real thing.
+3. **Google review link — left unset, not fabricated.** No real Google Business Profile review URL
+   exists anywhere in this codebase. `AppConstants.googleReviewUrl` (`core/config/app_constants.dart`
+   — this phase's first real content in a previously-empty placeholder file) is `null` by design;
+   every call site treats `null` as "don't show the prompt." Shipping a guessed/placeholder link
+   would mislead real customers — the mechanism is complete and will activate the moment the real
+   URL is supplied, no code change required.
+4. **Canlı Adisyon — deferred, not implemented.** `checks`/`checkAllocations` are `allow read: if
+   false` for any non-staff caller today; the only existing read path is the staff-only
+   `getPosTableOperationalView`. Giving an anonymous table guest any live-bill visibility is a real
+   authorization-model change (new Security Rules, a new narrow server-side projection, a new
+   client gateway, new tests) — too large and too security-sensitive to responsibly bolt on inside
+   an already-large six-phase sequential pass. See `docs/feature_status.md`'s Faz 6 entry for the
+   suggested future `getLiveTableBill`-shaped approach.
+
+### Decision
+
+Implement (1) and (3) as described; implement (2) with its limitation explicitly disclosed rather
+than silently narrowed in scope; do not implement (4) at all this pass — reasoned through and
+reported, not silently dropped, per CLAUDE.md §14/§15.
+
+See `docs/feature_status.md`'s "Self-Order QR — Faz 6" entry for the full file list and test
+verification status.

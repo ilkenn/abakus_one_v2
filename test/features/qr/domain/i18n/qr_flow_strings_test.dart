@@ -59,5 +59,8 @@ void main() {
     expect(tr.customNoteInputHint, isNot(en.customNoteInputHint));
     expect(tr.customNoteSendLabel, isNot(en.customNoteSendLabel));
     expect(tr.dismissLabel, isNot(en.dismissLabel));
+    // Self-Order QR Faz 6.
+    expect(tr.reviewPromptMessage, isNot(en.reviewPromptMessage));
+    expect(tr.reviewPromptCta, isNot(en.reviewPromptCta));
   });
 }
