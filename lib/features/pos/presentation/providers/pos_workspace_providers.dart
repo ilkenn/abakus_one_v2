@@ -8,6 +8,7 @@ import '../../../admin/domain/trusted_device/device_registration_state.dart';
 import '../../../admin/presentation/providers/trusted_device_session_providers.dart';
 import '../../../printing/data/windows_raw_printer_adapter.dart';
 import '../../../printing/domain/receipt_codepage.dart';
+import '../../data/pax_gmp3_terminal_client.dart';
 import '../../application/use_cases/capture_offline_cash_payment.dart';
 import '../../application/use_cases/ensure_offline_lease.dart';
 import '../../application/use_cases/print_kitchen_ticket.dart';
@@ -166,6 +167,52 @@ final receiptPrinterSettingsProvider =
     FutureProvider<ReceiptPrinterSettings>((ref) async {
   final prefs = await SharedPreferences.getInstance();
   return ReceiptPrinterSettings(prefs);
+});
+
+/// The branch's PAX A910SF terminal address, durable across app restarts
+/// via `shared_preferences` — same reasoning as [ReceiptPrinterSettings]:
+/// a different till/branch may have the terminal provisioned at a
+/// different LAN IP/port, so this is never a hardcoded constant.
+class PaxTerminalSettings {
+  const PaxTerminalSettings(this._prefs);
+
+  final SharedPreferences _prefs;
+
+  static const _ipKey = 'posPaxTerminalIp';
+  static const _portKey = 'posPaxTerminalPort';
+
+  /// The device IP the operator's own setup notes gave (2026-11-06) —
+  /// used only until staff override it for a different terminal/branch.
+  static const defaultIp = '192.168.1.86';
+
+  /// Standard ECR/GMP-3 TCP socket default; configurable to 8080 per the
+  /// operator's own note that the terminal's port can be changed from its
+  /// settings.
+  static const defaultPort = 9000;
+
+  String get ip => _prefs.getString(_ipKey) ?? defaultIp;
+
+  Future<void> setIp(String value) => _prefs.setString(_ipKey, value);
+
+  int get port => _prefs.getInt(_portKey) ?? defaultPort;
+
+  Future<void> setPort(int value) => _prefs.setInt(_portKey, value);
+}
+
+final paxTerminalSettingsProvider =
+    FutureProvider<PaxTerminalSettings>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  return PaxTerminalSettings(prefs);
+});
+
+/// **No real implementation exists yet** — see
+/// [UnavailablePaxGmp3TerminalClient]'s own doc comment
+/// (`docs/decisions.md` ADR-032). Always resolves to the unavailable
+/// stub, on every platform, until real PAX SDK/GMP-3 vendor
+/// documentation is obtained and a real implementation is built behind
+/// this same provider.
+final paxGmp3TerminalClientProvider = Provider<PaxGmp3TerminalClient>((ref) {
+  return const UnavailablePaxGmp3TerminalClient();
 });
 
 final printTableReceiptProvider = Provider<PrintTableReceipt>((ref) {

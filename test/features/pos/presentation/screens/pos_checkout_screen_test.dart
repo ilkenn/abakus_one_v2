@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:abakus_one_v2/features/pos/data/pax_gmp3_terminal_client.dart';
 import 'package:abakus_one_v2/features/pos/data/payment_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
@@ -22,6 +25,7 @@ class _FakePaymentGateway implements PaymentGateway {
 
   PaymentSessionView session;
   int refundCallCount = 0;
+  int recordPaymentAttemptCallCount = 0;
   ({
     String refundType,
     int amountMinorUnits,
@@ -58,8 +62,11 @@ class _FakePaymentGateway implements PaymentGateway {
     int? requestedBoncukAmount,
     String? cashSessionId,
     ({String leaseId, int deviceSequence})? offlineLease,
-  }) async =>
-      const PaymentAttemptResult(attemptId: 'attempt-1', status: 'succeeded');
+  }) async {
+    recordPaymentAttemptCallCount += 1;
+    return const PaymentAttemptResult(
+        attemptId: 'attempt-1', status: 'succeeded');
+  }
 
   @override
   Future<RefundRequestResult> requestPaymentRefund({
@@ -105,6 +112,20 @@ class _FakePaymentGateway implements PaymentGateway {
       approvalRequestId: 'approval-1',
     );
   }
+}
+
+class _NeverResolvingPaxClient implements PaxGmp3TerminalClient {
+  _NeverResolvingPaxClient(this._completer);
+
+  final Completer<PaxTerminalResult> _completer;
+
+  @override
+  Future<PaxTerminalResult> collectPayment({
+    required int amountMinorUnits,
+    required String currencyCode,
+    required String idempotencyKey,
+  }) =>
+      _completer.future;
 }
 
 const _ctx = PosDeviceContext(
@@ -252,6 +273,128 @@ void main() {
         ),
       );
       expect(button.onPressed, isNull);
+    });
+  });
+
+  group('PosCheckoutScreen — PAX A910SF "Kredi Kartı" collection (2026-11-06)',
+      () {
+    PaymentSessionView openSession() {
+      return const PaymentSessionView(
+        exists: true,
+        sessionId: 'session-1',
+        sessionStatus: 'collecting',
+        payableAmountMinorUnits: 4000,
+        settledAmountMinorUnits: 0,
+        currencyCode: 'TRY',
+        subAccountAllocations: [
+          PaymentSubAccountAllocation(
+            subAccountId: 'sub-1',
+            payableAmountMinorUnits: 4000,
+          ),
+        ],
+        attempts: [],
+        refunds: [],
+      );
+    }
+
+    testWidgets(
+        '"PAX Cihazı ile Oku" butonu sadece Kredi Kartı tenderi secildiginde gorunur',
+        (tester) async {
+      // The default test surface is wide enough to trigger
+      // PosCheckoutScreen's side-by-side (summary + tender) layout, whose
+      // narrow summary column overflows for an OPEN session (unlike the
+      // completed-view tests above, which never render that column) —
+      // narrower here to force the single-column layout instead.
+      tester.view.physicalSize = const Size(599, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await _pumpCompletedCheckout(tester, session: openSession());
+
+      expect(find.byKey(const Key('collectViaPaxButton')), findsNothing,
+          reason: 'varsayilan tender nakit, PAX butonu henuz gorunmemeli');
+
+      await tester.tap(find.text('Kredi/Banka Kartı (Sandbox)'));
+      await tester.pump();
+
+      expect(find.byKey(const Key('collectViaPaxButton')), findsOneWidget);
+    });
+
+    testWidgets(
+        'PAX butonuna basinca "POS Cihazından Kart Bekleniyor..." modali acilir, '
+        'gercek cihaz baglantisi olmadigindan dogru/yapilandirilmadi mesaji gosterir, '
+        've gateway.recordPaymentAttempt hic cagrilmaz', (tester) async {
+      tester.view.physicalSize = const Size(599, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final gateway =
+          await _pumpCompletedCheckout(tester, session: openSession());
+
+      await tester.tap(find.text('Kredi/Banka Kartı (Sandbox)'));
+      await tester.pump();
+      await tester.enterText(find.widgetWithText(TextField, 'Tutar'), '40,00');
+      await tester.tap(find.byKey(const Key('collectViaPaxButton')));
+      await tester.pump();
+
+      expect(find.text('POS Cihazından Kart Bekleniyor...'), findsOneWidget);
+      expect(find.textContaining('Tutar:'), findsOneWidget);
+
+      // The stubbed client resolves near-instantly with "unavailable" —
+      // no need to wait out the 30s countdown.
+      await tester.pumpAndSettle();
+
+      expect(find.text('POS Cihazından Kart Bekleniyor...'), findsNothing,
+          reason: 'modal must have closed once the client resolved');
+      expect(
+        find.textContaining('PAX A910SF / GMP-3 entegrasyonu'),
+        findsOneWidget,
+        reason: 'the honest "not configured" message must be shown, never '
+            'a fabricated approval/decline',
+      );
+      expect(gateway.recordPaymentAttemptCallCount, 0,
+          reason: 'an unavailable terminal result must never be recorded '
+              'server-side as if it were a real tender');
+    });
+
+    testWidgets('modal "İptal" ile kapatilinca hicbir mesaj gosterilmez',
+        (tester) async {
+      tester.view.physicalSize = const Size(599, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      // A never-resolving client — the real terminal takes real seconds;
+      // this proves "İptal" closes the dialog on its own, never racing
+      // against the (otherwise near-instant) stub's own resolution.
+      final neverResolves = Completer<PaxTerminalResult>();
+      final gateway = _FakePaymentGateway(openSession());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            paymentGatewayProvider.overrideWithValue(gateway),
+            paxGmp3TerminalClientProvider
+                .overrideWithValue(_NeverResolvingPaxClient(neverResolves)),
+          ],
+          child: const MaterialApp(
+            home: PosCheckoutScreen(
+              ctx: _ctx,
+              checkId: 'check-1',
+              view: _view,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Kredi/Banka Kartı (Sandbox)'));
+      await tester.pump();
+      await tester.enterText(find.widgetWithText(TextField, 'Tutar'), '40,00');
+      await tester.tap(find.byKey(const Key('collectViaPaxButton')));
+      await tester.pump();
+      expect(find.text('POS Cihazından Kart Bekleniyor...'), findsOneWidget);
+
+      await tester.tap(find.text('İptal'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('POS Cihazından Kart Bekleniyor...'), findsNothing);
+      expect(find.textContaining('PAX A910SF'), findsNothing);
     });
   });
 }

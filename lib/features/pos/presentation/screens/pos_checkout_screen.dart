@@ -16,6 +16,7 @@ import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../application/use_cases/capture_offline_cash_payment.dart';
+import '../../data/pax_gmp3_terminal_client.dart';
 import '../../data/payment_gateway.dart';
 import '../../data/pos_action_gateway.dart' show PosDeviceContext;
 import '../../data/pos_operational_view_gateway.dart';
@@ -853,7 +854,7 @@ const _tenderTypeLabels = {
 /// that can only ever come back declined.
 const _kSandboxOnlyTenderTypes = {'card', 'mealCard'};
 
-class _TenderPanel extends StatefulWidget {
+class _TenderPanel extends ConsumerStatefulWidget {
   const _TenderPanel({
     required this.checkId,
     required this.session,
@@ -877,10 +878,10 @@ class _TenderPanel extends StatefulWidget {
   final Future<void> Function() onRefresh;
 
   @override
-  State<_TenderPanel> createState() => _TenderPanelState();
+  ConsumerState<_TenderPanel> createState() => _TenderPanelState();
 }
 
-class _TenderPanelState extends State<_TenderPanel> {
+class _TenderPanelState extends ConsumerState<_TenderPanel> {
   String _tenderType = 'cash';
   String? _targetSubAccountId;
   final _amountController = TextEditingController();
@@ -955,6 +956,56 @@ class _TenderPanelState extends State<_TenderPanel> {
     _boncukController.clear();
   }
 
+  /// "Kredi Kartı" tenderi için ayrı, acık bir yol — PAX A910SF terminaline
+  /// doğrudan LAN üzerinden bağlanmayı dener. **Henüz gerçek bir cihaz
+  /// iletişimi yok** (`docs/decisions.md` ADR-032) — [PaxGmp3TerminalClient]
+  /// her zaman [PaxTerminalOutcome.unavailable] döner; bu metod o dürüst
+  /// sonucu kullanıcıya gösterir, asla sahte bir onay/red uydurmaz ve asla
+  /// `widget.onSubmitTender`'ı çağırmaz (kaydedilecek gerçek bir sonuç yok).
+  Future<void> _collectViaPax() async {
+    final parsed = double.tryParse(_amountController.text.replaceAll(',', '.'));
+    if (parsed == null || parsed <= 0) return;
+    final amount = Money.fromLegacyDoubleTry(parsed);
+    final idempotencyKey =
+        '${widget.checkId}-pax-${DateTime.now().microsecondsSinceEpoch}';
+
+    final result = await showDialog<PaxTerminalResult?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _PaxCollectCardPaymentDialog(
+        amount: amount,
+        onCollect: () => ref.read(paxGmp3TerminalClientProvider).collectPayment(
+              amountMinorUnits: amount.minorUnits,
+              currencyCode: widget.session.currencyCode ?? 'TRY',
+              idempotencyKey: idempotencyKey,
+            ),
+      ),
+    );
+    if (result == null || !mounted) return; // cancelled
+
+    final message = switch (result.outcome) {
+      PaxTerminalOutcome.unavailable =>
+        result.message ?? 'PAX A910SF / GMP-3 entegrasyonu yapılandırılmadı.',
+      PaxTerminalOutcome.declined => result.message ?? 'Kart reddedildi.',
+      PaxTerminalOutcome.timedOut =>
+        'POS cihazından yanıt alınamadı. Cihazın kendi ekranını kontrol '
+            'edin — sonuç netleşene kadar aynı tutarı tekrar denemeyin.',
+      PaxTerminalOutcome.cancelled => null,
+      // Disclosed, deliberate scope boundary — no real device ever
+      // produces this outcome today (see UnavailablePaxGmp3TerminalClient's
+      // own doc comment), and recording a client-reported card approval
+      // server-side needs its own dedicated verification design before
+      // this branch may ever call `widget.onSubmitTender`.
+      PaxTerminalOutcome.approved =>
+        'Onaylandı (Auth: ${result.authCode ?? "-"}) ama bu sürümde '
+            'sunucuya otomatik kaydedilemiyor — Nakit/diğer yöntemle '
+            'manuel olarak kaydedin.',
+    };
+    if (message == null) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _openRefundDialog() async {
     await showDialog<void>(
       context: context,
@@ -1023,6 +1074,18 @@ class _TenderPanelState extends State<_TenderPanel> {
                         ),
                   ],
                 ),
+                if (_tenderType == 'card') ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      key: const Key('collectViaPaxButton'),
+                      onPressed: widget.busy ? null : _collectViaPax,
+                      icon: const Icon(Icons.point_of_sale_outlined, size: 18),
+                      label: const Text('PAX Cihazı ile Oku'),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.md),
                 if (allocations.length > 1) ...[
                   const Text('Hesap', style: AppTypography.labelLarge),
@@ -1365,6 +1428,95 @@ class _RefundDialogState extends State<_RefundDialog> {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2))
               : const Text('Talebi Gönder'),
+        ),
+      ],
+    );
+  }
+}
+
+/// "POS Cihazından Kart Bekleniyor..." modal — kicks off [onCollect]
+/// immediately and races it against a visible countdown; either the
+/// terminal client resolves first (today: always, near-instantly, with
+/// [PaxTerminalOutcome.unavailable] — see [UnavailablePaxGmp3TerminalClient])
+/// or the countdown reaches zero first, which this dialog itself resolves
+/// as [PaxTerminalOutcome.timedOut] — a real client implementation later
+/// plugs in behind the exact same race/cancel contract with no UI change
+/// needed. Popping with `null` means the cashier tapped "İptal" before
+/// either happened.
+class _PaxCollectCardPaymentDialog extends StatefulWidget {
+  const _PaxCollectCardPaymentDialog({
+    required this.amount,
+    required this.onCollect,
+  });
+
+  final Money amount;
+  final Future<PaxTerminalResult> Function() onCollect;
+
+  @override
+  State<_PaxCollectCardPaymentDialog> createState() =>
+      _PaxCollectCardPaymentDialogState();
+}
+
+class _PaxCollectCardPaymentDialogState
+    extends State<_PaxCollectCardPaymentDialog> {
+  static const _totalSeconds = 30;
+  int _remainingSeconds = _totalSeconds;
+  Timer? _countdownTimer;
+  bool _settled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_settled) return;
+      if (_remainingSeconds <= 1) {
+        _finish(const PaxTerminalResult(outcome: PaxTerminalOutcome.timedOut));
+        return;
+      }
+      setState(() => _remainingSeconds -= 1);
+    });
+    widget.onCollect().then((result) {
+      if (!_settled) _finish(result);
+    });
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
+
+  void _finish(PaxTerminalResult? result) {
+    if (_settled || !mounted) return;
+    _settled = true;
+    _countdownTimer?.cancel();
+    Navigator.of(context).pop(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('POS Cihazından Kart Bekleniyor...'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Lütfen Kartı Okutunuz (Tutar: ${widget.amount})',
+            style: AppTypography.bodyLarge,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          const CircularProgressIndicator(),
+          const SizedBox(height: AppSpacing.sm),
+          Text('$_remainingSeconds sn',
+              style: AppTypography.bodySmall
+                  .copyWith(color: AppColors.textSecondary)),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => _finish(null),
+          child: const Text('İptal'),
         ),
       ],
     );

@@ -19971,3 +19971,81 @@ reported, not silently dropped, per CLAUDE.md §14/§15.
 
 See `docs/feature_status.md`'s "Self-Order QR — Faz 6" entry for the full file list and test
 verification status.
+
+## ADR-059 — PAX A910SF ECR/GMP-3 "Kredi Kartı" collection: honest scaffolding only, real wire protocol still blocked (2026-11-06)
+
+- Tarih: 2026-11-06
+- Durum: Accepted
+
+### Context
+
+The user asked to wire a direct TCP-socket ECR/GMP-3 integration to a physical PAX A910SF terminal
+(IP `192.168.1.86`, port 9000/8080) into the "kompakt tahsilat ekranı," based on their own notes
+(not official vendor documentation). Before writing any code, two pre-existing findings were
+surfaced and confirmed with the user rather than silently resolved:
+
+1. **`docs/payment_cash_fiscal_architecture.md` §14/§21/§22 and ADR-032 ("Locked")** already govern
+   this exact device — YN ÖKC/GMP-3/PAX A910SF is a `CONTROLLED_EXTERNAL_DEPENDENCY`: no vendor
+   protocol detail may be written without official PAX SDK/GMP-3 documentation, and real-hardware
+   acceptance testing is a hard gate before any production transaction. A pre-existing stub
+   (`lib/features/payment/data/adapters/pax_teb_adapter.dart`) already disclosed exactly this. The
+   user confirmed: build everything honestly buildable without the real protocol (UI, settings,
+   state machine), leave the actual wire call as an honest "not configured" — the same split this
+   codebase's own AP-4 payment/fiscal waves already established (ADR-044–047).
+2. **Two parallel, non-interoperating payment subsystems exist.** `PosCheckoutScreen` (reached from
+   `pos_table_workspace_screen.dart`) is the real, reachable, canonical AP-4 screen, calling
+   `PaymentGateway.recordPaymentAttempt` (server-mediated: the backend itself calls the payment
+   provider). `PosPaymentScreen`/`PaymentSessionController`/`PaymentService`/the
+   `PaymentProviderAdapter` registry (where `PaxTebTerminalAdapter` actually lives, and whose
+   `AddPaymentSplit.call` already has the right shape — `transactionReference`/`authorizationCode`/
+   `terminalId` — for "the client already got an approval from a local device") is orphaned: reached
+   only via `PosCashierScreen`, which nothing in the app's real navigation ever opens. The user
+   confirmed: extend the real, reachable screen (`PosCheckoutScreen`), not the dead one.
+
+### Decision
+
+Built, Flutter-only, nothing on the backend:
+
+- `PaxGmp3TerminalClient` (`lib/features/pos/data/pax_gmp3_terminal_client.dart`) — a new interface
+  separate from `PaymentProviderAdapter` (that one belongs to the orphaned subsystem; this screen
+  doesn't use it). `PaxTerminalOutcome` mirrors this codebase's own locked "an ambiguous/unavailable
+  outcome is never shown as success or failure" shape (`PaymentAttemptStatus`'s own `timedOut`
+  precedent). `UnavailablePaxGmp3TerminalClient` is the only implementation — always resolves
+  `unavailable`, exactly like `PaxTebTerminalAdapter`/`UnavailablePaymentGateway`/every other
+  not-yet-wired boundary in this codebase.
+- `PaxTerminalSettings` (IP/port, persisted via `shared_preferences`) — added to
+  `pos_workspace_providers.dart` alongside `ReceiptPrinterSettings`, same pattern, same "no UI
+  toggle yet" disclosed gap (there is no settings screen for either one today).
+  `paxGmp3TerminalClientProvider` always resolves the unavailable stub.
+- `PosCheckoutScreen`'s `_TenderPanel`: a new "PAX Cihazı ile Oku" button, visible only when the
+  `card` tender chip is selected (the existing `_kSandboxOnlyTenderTypes` release-build gate on
+  `card` is left completely unchanged — the PAX flow is reachable only wherever `card` already was).
+  Tapping it opens a "POS Cihazından Kart Bekleniyor..." modal (countdown + "İptal", matching the
+  operator's own described UX) that calls the client and shows its honest result — never calls
+  `onSubmitTender`/`recordPaymentAttempt` for an `unavailable`/`cancelled`/`timedOut` outcome, since
+  there is nothing real to record.
+- **Explicitly NOT built, disclosed rather than silently deferred**: any change to
+  `recordPaymentAttempt` (Flutter or `functions/src/paymentEngine.ts`) to accept a client-reported
+  external authorization. Reasoning, beyond "premature/parallel work ahead of a working adapter"
+  (mirrors ADR-046's own reasoning for deferring the offline-sync use case ahead of its API client):
+  naively trusting a client-supplied "approved: true" + authCode for a card payment, with no
+  independent server-side verification, is a real fraud vector — the kind of thing a compromised or
+  buggy trusted device could exploit to record a payment that was never actually charged. This
+  codebase's existing trusted-device gate (`PosDeviceContext`) is necessary but not sufficient on
+  its own. Designing the actual trust/verification model (end-of-day reconciliation against the
+  acquirer's own settlement report, as the canonical architecture doc's own §16 already anticipates;
+  ideally a signed/verifiable terminal response once real GMP-3 docs exist) is its own dedicated
+  decision for once a real adapter exists to call — not something to bolt onto the canonical payment
+  engine today with no way to test it safely.
+- **Found and disclosed, not fixed (out of scope)**: `_SummaryPanel`'s `_AmountRow` (inside
+  `pos_checkout_screen.dart`) has no `Expanded`/`Flexible` wrapping and overflows for an open
+  (non-completed) session at common narrow/tablet widths — never caught before because no existing
+  test ever rendered that branch (only the `completed` view, a different widget tree, had coverage).
+  Worked around in the new tests via a wider test surface; the underlying overflow itself is a
+  pre-existing bug, reported here per CLAUDE.md §14, not fixed as a drive-by.
+
+New tests: `pos_checkout_screen_test.dart` (+3 cases — button visibility gated on tender type, the
+full modal→honest-message→no-server-call path, and cancel-closes-with-no-message using a
+never-resolving fake to avoid racing the stub's own near-instant resolution).
+
+`flutter analyze`: clean. `flutter test`: see the final gate run for the updated whole-project count.

@@ -10909,3 +10909,48 @@ across-restart, mirroring `offline_payment_outbox_repository_test.dart`'s own pa
 each in `esc_pos_receipt_encoder_test.dart`/`esc_pos_kitchen_ticket_encoder_test.dart` (codepage
 byte selection + PC857 Turkish-letter byte verification). `flutter analyze`: clean. `flutter test`
 (whole project): 3942 passing, 0 failures (+6 over 3936).
+
+### PAX A910SF ECR/GMP-3 "Kredi Kartı" collection — honest scaffolding, real protocol still blocked (2026-11-06)
+
+Full reasoning/decisions in `docs/decisions.md` ADR-059 — summary here. The user asked for a direct
+TCP-socket ECR/GMP-3 integration to a physical PAX A910SF terminal; this is **not implemented**, by
+design, because `docs/payment_cash_fiscal_architecture.md` §14/§21/§22 and ADR-032 ("Locked") already
+gate exactly this device as a `CONTROLLED_EXTERNAL_DEPENDENCY` — no vendor protocol detail without
+official PAX SDK/GMP-3 documentation, real-hardware acceptance testing is a hard gate. Confirmed
+with the user before writing any code; they chose to build everything else.
+
+**Also found and resolved before implementing**: this codebase has two parallel, non-interoperating
+payment subsystems — the real/reachable one (`PosCheckoutScreen` → `PaymentGateway
+.recordPaymentAttempt`, server-mediated) and an orphaned one (`PosPaymentScreen`/
+`PaymentSessionController`/`PaymentService`/the `PaymentProviderAdapter` registry, reached only via
+`PosCashierScreen`, which nothing in the app's real navigation opens — this is where the pre-existing
+`PaxTebTerminalAdapter` stub actually lives). Confirmed with the user: extend the real, reachable
+screen, not the dead one.
+
+**Implemented** (Flutter-only, nothing on the backend): `PaxGmp3TerminalClient` interface +
+`UnavailablePaxGmp3TerminalClient` (`lib/features/pos/data/pax_gmp3_terminal_client.dart`) — always
+resolves "unavailable," exactly like every other not-yet-wired boundary in this codebase.
+`PaxTerminalSettings` (IP/port, persisted — default `192.168.1.86`/`9000` per the operator's own
+setup notes) added to `pos_workspace_providers.dart` alongside `ReceiptPrinterSettings`. New "PAX
+Cihazı ile Oku" button in `PosCheckoutScreen`'s `_TenderPanel`, visible only when the `card` tender
+chip is selected — the existing `_kSandboxOnlyTenderTypes` release-build gate on `card` is
+unchanged, so the whole PAX flow stays exactly as reachable/unreachable as `card` already was.
+Tapping it opens a "POS Cihazından Kart Bekleniyor..." modal (countdown + "İptal") that calls the
+client and shows its honest result — never fabricates a success/decline, never calls
+`onSubmitTender` for an outcome with nothing real to record.
+
+**Explicitly deferred, not silently dropped**: extending `recordPaymentAttempt` (Flutter +
+`functions/src/paymentEngine.ts`) to accept a client-reported external terminal authorization.
+Beyond being premature ahead of a working adapter, naively trusting a client-supplied "approved"
+result with no independent server-side verification is a real fraud vector this codebase's existing
+trusted-device gate alone doesn't fully close — the actual trust/verification model (end-of-day
+reconciliation against the acquirer's settlement report, ideally a signed terminal response once
+real GMP-3 docs exist) is its own dedicated decision for once a real adapter exists to call.
+
+**Found and disclosed, not fixed (pre-existing, out of scope)**: `PosCheckoutScreen`'s
+`_SummaryPanel`/`_AmountRow` has no `Expanded`/`Flexible` wrapping and overflows for an open
+(non-completed) session at common narrow/tablet widths — never caught before because no existing
+test rendered that branch (only the `completed` view, a different widget tree, had coverage).
+
+New tests: `pos_checkout_screen_test.dart` (+3 cases). `flutter analyze`: clean. `flutter test`
+(whole project): see the final gate run below for the updated count.
