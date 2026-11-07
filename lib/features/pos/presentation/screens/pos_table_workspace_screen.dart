@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemSound, SystemSoundType;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/layout/app_breakpoints.dart';
@@ -17,6 +18,7 @@ import '../../../admin/presentation/screens/approval_inbox_screen.dart';
 import '../../../admin/presentation/screens/trusted_device_status_screen.dart';
 import '../../../menu/domain/models/menu_category.dart';
 import '../../../menu/domain/models/menu_product.dart';
+import '../../../menu/domain/models/sale_unit.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
 import '../../../menu/presentation/providers/menu_catalog_provider.dart';
 import '../../../orders/domain/models/order_id.dart';
@@ -33,6 +35,7 @@ import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
 import '../widgets/pos_product_customization_dialog.dart';
 import '../widgets/print_table_receipt_action.dart';
+import '../widgets/weight_entry_dialog.dart';
 import 'pos_cash_register_screen.dart';
 import 'pos_checkout_screen.dart';
 
@@ -510,6 +513,12 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
   final _productSearchController = TextEditingController();
   String _productSearchQuery = '';
 
+  /// Adım 4 (2026-11-07) — set when a USB barkod okuyucu (HID keyboard
+  /// emulator) submits a code via [_buildProductSearchField]'s
+  /// `onSubmitted` that matches no [MenuProduct.barcode] in the catalog.
+  /// Cleared on the next keystroke or successful match.
+  String? _barcodeNotFoundMessage;
+
   String _accountSelection = _staffEntryTableGeneralSentinel;
   final _walkInNameController = TextEditingController();
   final _customerSearchController = TextEditingController();
@@ -656,6 +665,10 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
   /// [PosProductCustomizationDialog] first — dismissing it (back button,
   /// tap outside) adds nothing.
   Future<void> _onProductTap(MenuProduct product) async {
+    if (product.saleUnit == SaleUnit.kilogram) {
+      await WeightEntryDialog.show(context, product);
+      return;
+    }
     if (!_needsCustomization(product)) {
       _mergeOrAddLine(_StaffEntryCartLine(product: product));
       return;
@@ -818,18 +831,57 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     );
   }
 
-  Widget _buildProductSearchField() {
+  /// Adım 4 (2026-11-07) — a USB barkod okuyucu (HID keyboard emulator)
+  /// types the barcode's digits straight into whatever text field has
+  /// focus, then sends Enter. Reusing this existing search field's
+  /// `onSubmitted` (rather than a new, separate global keyboard listener)
+  /// means the exact same field staff already use to find a product by
+  /// name also accepts a scanned barcode — an exact match against
+  /// [MenuProduct.barcode] adds 1 to the cart (through [_onProductTap], so
+  /// a required-modifier product still opens its customization dialog
+  /// first); no match clears nothing and surfaces an inline error plus an
+  /// alert sound, so staff immediately see the scan didn't register.
+  void _handleBarcodeSubmit(String rawValue, List<MenuProduct> allProducts) {
+    final value = rawValue.trim();
+    if (value.isEmpty) return;
+    MenuProduct? match;
+    for (final product in allProducts) {
+      if (product.barcode == value) {
+        match = product;
+        break;
+      }
+    }
+    if (match == null) {
+      SystemSound.play(SystemSoundType.alert);
+      setState(() => _barcodeNotFoundMessage = 'Barkod bulunamadı: $value');
+      return;
+    }
+    SystemSound.play(SystemSoundType.click);
+    setState(() {
+      _barcodeNotFoundMessage = null;
+      _productSearchController.clear();
+      _productSearchQuery = '';
+    });
+    _onProductTap(match);
+  }
+
+  Widget _buildProductSearchField(List<MenuProduct> allProducts) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
           AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
       child: TextField(
         key: const Key('productSearchField'),
         controller: _productSearchController,
-        onChanged: (value) => setState(() => _productSearchQuery = value),
+        onChanged: (value) => setState(() {
+          _productSearchQuery = value;
+          _barcodeNotFoundMessage = null;
+        }),
+        onSubmitted: (value) => _handleBarcodeSubmit(value, allProducts),
         decoration: InputDecoration(
           isDense: true,
-          hintText: 'Ürün ara...',
+          hintText: 'Ürün ara veya barkod okut...',
           prefixIcon: const Icon(Icons.search_rounded, size: 20),
+          errorText: _barcodeNotFoundMessage,
           suffixIcon: _productSearchQuery.isEmpty
               ? null
               : IconButton(
@@ -837,6 +889,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                   onPressed: () => setState(() {
                     _productSearchController.clear();
                     _productSearchQuery = '';
+                    _barcodeNotFoundMessage = null;
                   }),
                 ),
           contentPadding: const EdgeInsets.symmetric(
@@ -2173,7 +2226,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       final isWide = constraints.maxWidth >= AppBreakpoints.tablet;
       final grid = Column(
         children: [
-          _buildProductSearchField(),
+          _buildProductSearchField(allProducts),
           Expanded(
             child: visibleProductsAsync.when(
               loading: () => const LoadingView(

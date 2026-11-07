@@ -11073,3 +11073,68 @@ case — full close-and-print flow, İkram Toplamı on-screen and in the preview
 tests updated for the new choice-sheet step — zero behavior change for the single-check path they
 cover). `flutter analyze`: clean. `functions`: `npx tsc --noEmit` clean. `flutter test` (whole
 project): see the final gate run below for the updated count.
+
+### Adım 4 — Tamamlayıcı Donanım Entegrasyonları (2026-11-07)
+
+Full reasoning in `docs/decisions.md` ADR-062. One fork required explicit confirmation (cash-drawer
+trigger point); part 3 (gramaj/weight entry) hit the same kind of real architectural wall ADR-059
+(PAX) already established a precedent for, and was resolved the same way — honest scaffolding,
+real wiring deferred as its own decision.
+
+1. **Para Çekmecesi (Cash Drawer).** New `kCashDrawerKickBytes` (`ESC p 0 25 250` —
+   `printing/domain/cash_drawer_signal.dart`, the operator's own literal hardware spec, kept as a
+   constant, not re-derived). **Corrected finding**: payment confirmation
+   (`recordPaymentAttempt`/offline cash capture) and receipt printing ("Yazdır") are two fully
+   independent flows in this codebase — a cash payment is never auto-printed, so "signal when the
+   receipt prints" and "signal when the payment is confirmed" are genuinely different behaviors, not
+   two phrasings of the same thing. Raised as a Decision Review; user confirmed: fire on confirmed
+   cash-tender success, so the cashier never has to print a receipt just to get the drawer open.
+   **Done**: new `_maybeKickCashDrawer('cash')` helper in `pos_checkout_screen.dart`, called from
+   both `_submitTender`'s `succeeded` branch and `_submitOfflineCashTender`'s captured branch — sends
+   the kick bytes to the SAME printer queue the till receipt already uses (the drawer is physically
+   wired through the printer's RJ11/RJ12 port, never a separate connection). A drawer-signal failure
+   is swallowed, never surfaced as a payment error — the cash payment already succeeded and must
+   never be rolled back over a hardware signal the cashier can always trigger by hand. Gated by new,
+   persisted `ReceiptPrinterSettings.openCashDrawerOnCashPayment` (default `true`) — same
+   durable-preference-no-dedicated-UI-yet pattern as `printerName`/`codepage`/the PAX ip/port.
+2. **Masaüstü Barkod Okuyucu Desteği.** New, additive, nullable `MenuProduct.barcode` field.
+   **Done**: the existing product-search field's `onSubmitted` (`pos_table_workspace_screen.dart`)
+   now matches the submitted text exactly against every product's `barcode` — a USB HID scanner
+   types into whatever field has focus and sends Enter, so reusing the field staff already have open
+   avoids a new, separate global keyboard listener. A match adds 1 through the existing
+   `_onProductTap` (a required-modifier product still opens its customization dialog first); no
+   match clears nothing, plays `SystemSoundType.alert` (same pattern as the Masalar screen's own
+   "new order arrived" ding), and shows an inline "Barkod bulunamadı: <kod>" error on the field.
+   **No existing catalog product was given a fabricated barcode** — every real product's `barcode`
+   stays `null` until a real one is entered through a catalog-editing path that doesn't exist yet
+   (out of this item's scope); only a test fixture product has one.
+3. **Tartılı Ürünler İçin Gramaj Giriş Desteği.** **Corrected finding**: `MenuProduct` had no
+   "sold by weight" concept at all, and separately, the backend order-line `quantity` the entire
+   dine-in/takeaway pricing pipeline relies on is a mandatory integer capped at 20
+   (`MAX_ITEM_QUANTITY`, `submitTakeawayOrder.ts`) with pricing computed server-side as
+   `basePrice × integer quantity` — there is no server concept of weight-based/fractional pricing at
+   all. A real gram amount sent as `quantity` would be rejected outright even before the missing-
+   pricing-concept problem. Raised as a Decision Review (build the backend pricing architecture now,
+   genuinely out of "hardware integration" scope, vs. the honest-scaffolding split already
+   established for PAX); user confirmed: scaffolding only, same as PAX. **Done**: new
+   `MenuProduct.saleUnit` (`SaleUnit.piece`/`SaleUnit.kilogram`, defaults to `piece` — zero behavior
+   change for every existing product) routes a kilogram product to a new `WeightEntryDialog`
+   instead of the normal single-tap-add. Staff can type a weight or try a new `ScaleReaderPort`
+   interface (mirrors `PaxGmp3TerminalClient`'s own shape; `UnavailableScaleReaderPort` always
+   resolves "Bağlı seri port terazi bulunamadı" — no real scale protocol has been specified either),
+   and see the resulting estimated price (`basePrice` read as ₺/kg) for their own reference.
+   **Deliberately never adds a cart line** — turning a gram reading into a real priced order line is
+   left as its own, separate, disclosed decision, to be made once the backend pricing-architecture
+   question above is actually resolved; this dialog is today a staff reference tool, not an ordering
+   path.
+
+New tests: `cash_drawer_signal_test.dart` (new, 1 case), `scale_reader_port_test.dart` (new, 1 case),
+`pos_workspace_providers_test.dart` (+2 cases for `openCashDrawerOnCashPayment`),
+`pos_checkout_screen_test.dart` (+4 cases — cash-tender success fires the drawer signal with the
+exact bytes/printer name; Boncuk tender never fires it; the setting-off path never fires it; a
+drawer-signal failure never surfaces as a payment error), `menu_product_test.dart` (+3 cases for
+`barcode`/`saleUnit` defaults and `copyWith`), `pos_table_workspace_screen_test.dart` (+5 cases — 2
+for barcode match/no-match, 3 for the weight-entry dialog opening/estimating/closing and the
+scale-unavailable message). `flutter analyze`: clean (pre-existing, disclosed
+`app_constants.dart` info aside). `functions`: no backend changes this pass. `flutter test` (whole
+project): 3974 passing, 0 failures (+16 over the Adım 3 baseline of 3958).

@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
+import 'package:abakus_one_v2/features/menu/domain/models/sale_unit.dart';
+import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
@@ -383,6 +385,7 @@ Future<_Fakes> _pump(
   WidgetTester tester, {
   required PosTableOperationalView initialView,
   KitchenProjectionRepository? kitchenRepo,
+  List<Override> extraOverrides = const [],
 }) async {
   final viewGateway = _FakePosOperationalViewGateway()
     ..viewToReturn = initialView;
@@ -399,6 +402,7 @@ Future<_Fakes> _pump(
         selectedPosTableIdProvider.overrideWith((ref) => 'table-1'),
         kitchenProjectionRepositoryProvider
             .overrideWithValue(kitchenRepository),
+        ...extraOverrides,
       ],
       child: const MaterialApp(home: PosTableWorkspaceScreen()),
     ),
@@ -1247,6 +1251,168 @@ void main() {
         findsOneWidget,
         reason: "clearing search must restore the Bowl'lar category grid",
       );
+    });
+  });
+
+  group('Barkod okuyucu (Adım 4, 2026-11-07)', () {
+    PosTableOperationalView emptyOpenTableView() {
+      return const PosTableOperationalView(
+        tableId: 'table-1',
+        status: 'occupied',
+        tableSessionId: 'tsess-1',
+        subAccounts: [],
+        checks: [],
+        orders: [],
+      );
+    }
+
+    const barcodedProduct = MenuProduct(
+      id: 'prod_test_barcoded',
+      categoryId: 'cat_test',
+      name: 'Test Ürünü',
+      description: 'Test açıklaması',
+      basePrice: 50,
+      imageKey: 'placeholder',
+      barcode: '8690123456789',
+    );
+
+    List<Override> productOverrides() => [
+          menuProductsProvider.overrideWithValue(const [barcodedProduct]),
+        ];
+
+    testWidgets(
+        'eslesen bir barkod Enter ile gonderilince urun tek tikla sepete '
+        'eklenir ve arama kutusu temizlenir', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester,
+          initialView: emptyOpenTableView(),
+          extraOverrides: productOverrides());
+
+      await tester.enterText(
+          find.byKey(const Key('productSearchField')), '8690123456789');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
+          findsOneWidget,
+          reason: 'barkod eslesmesi urunu tek adimda sepete eklemeli');
+      final searchField =
+          tester.widget<TextField>(find.byKey(const Key('productSearchField')));
+      expect(searchField.controller!.text, isEmpty);
+    });
+
+    testWidgets(
+        'eslesmeyen bir barkod sepete hicbir sey eklemez ve hata metni '
+        'gosterir', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester,
+          initialView: emptyOpenTableView(),
+          extraOverrides: productOverrides());
+
+      await tester.enterText(
+          find.byKey(const Key('productSearchField')), '0000000000000');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
+          findsNothing);
+      expect(find.textContaining('Barkod bulunamadı'), findsOneWidget);
+    });
+  });
+
+  group('Tartılı ürün gramaj girişi (Adım 4, 2026-11-07)', () {
+    PosTableOperationalView emptyOpenTableView() {
+      return const PosTableOperationalView(
+        tableId: 'table-1',
+        status: 'occupied',
+        tableSessionId: 'tsess-1',
+        subAccounts: [],
+        checks: [],
+        orders: [],
+      );
+    }
+
+    const weighedProduct = MenuProduct(
+      id: 'prod_test_tartili',
+      categoryId: 'cat_test',
+      name: 'Tartılı Test Ürünü',
+      description: 'Test açıklaması',
+      basePrice: 200,
+      imageKey: 'placeholder',
+      saleUnit: SaleUnit.kilogram,
+    );
+
+    testWidgets(
+        'kg bazli urune dokununca Gramaj modali acilir, sepete hicbir sey '
+        'eklenmez', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester, initialView: emptyOpenTableView(), extraOverrides: [
+        menuProductsProvider.overrideWithValue(const [weighedProduct]),
+      ]);
+
+      await tester.enterText(
+          find.byKey(const Key('productSearchField')), 'Tartılı Test');
+      await tester.pump();
+      await tester.tap(find.text('Tartılı Test Ürünü'));
+      await tester.pump();
+
+      expect(find.text('Gramaj / Miktar Girin'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
+          findsNothing,
+          reason: 'gramaj girisi henuz sepete/fiyatlandirmaya baglanmadi');
+    });
+
+    testWidgets(
+        'gramaj girilince tahmini tutar hesaplanir, Kapat sepete bir sey '
+        'eklemeden modali kapatir', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester, initialView: emptyOpenTableView(), extraOverrides: [
+        menuProductsProvider.overrideWithValue(const [weighedProduct]),
+      ]);
+
+      await tester.enterText(
+          find.byKey(const Key('productSearchField')), 'Tartılı Test');
+      await tester.pump();
+      await tester.tap(find.text('Tartılı Test Ürünü'));
+      await tester.pump();
+
+      await tester.enterText(find.byKey(const Key('weightGramsField')), '500');
+      await tester.pump();
+
+      expect(find.textContaining('Tahmini Tutar: 100.00 TL'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('closeWeightEntryDialogButton')));
+      await tester.pump();
+
+      expect(find.text('Gramaj / Miktar Girin'), findsNothing);
+      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
+          findsNothing);
+    });
+
+    testWidgets('"Teraziden Oku" bagli terazi yoksa dürüst mesaj gosterir',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester, initialView: emptyOpenTableView(), extraOverrides: [
+        menuProductsProvider.overrideWithValue(const [weighedProduct]),
+      ]);
+
+      await tester.enterText(
+          find.byKey(const Key('productSearchField')), 'Tartılı Test');
+      await tester.pump();
+      await tester.tap(find.text('Tartılı Test Ürünü'));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('readFromScaleButton')));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.textContaining('Bağlı seri port terazi bulunamadı'),
+          findsOneWidget);
     });
   });
 

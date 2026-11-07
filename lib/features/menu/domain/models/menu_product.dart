@@ -2,6 +2,7 @@ import '../../../orders/domain/models/order_channel.dart';
 import '../pricing/channel_price_rule.dart';
 import 'modifier_group.dart';
 import 'product_nutrition.dart';
+import 'sale_unit.dart';
 
 /// A sellable menu item.
 ///
@@ -64,6 +65,21 @@ class MenuProduct {
   /// [removableIngredients].
   final List<String>? removableIngredientsOverride;
 
+  /// Adım 4 (2026-11-07) — the physical barcode printed/affixed on this
+  /// product, matched exactly (no normalization) against a USB HID barcode
+  /// scanner's keystroke input in the POS order-entry screen. `null` for
+  /// every product with no physical barcode assigned — never a fabricated
+  /// value: this prototype has no real barcode data source yet, so no
+  /// existing catalog product is given an invented one.
+  final String? barcode;
+
+  /// Adım 4 (2026-11-07) — defaults to [SaleUnit.piece] for every product
+  /// defined before this existed (zero behavior change). [SaleUnit.kilogram]
+  /// opens the "Gramaj / Miktar Girin" entry dialog instead of adding
+  /// straight to the cart — see `WeightEntryDialog`'s doc comment for the
+  /// deliberately NOT-yet-wired-to-pricing scope of that dialog.
+  final SaleUnit saleUnit;
+
   const MenuProduct({
     required this.id,
     required this.categoryId,
@@ -79,6 +95,8 @@ class MenuProduct {
     this.allergens = const [],
     this.portionLabel,
     this.removableIngredientsOverride,
+    this.barcode,
+    this.saleUnit = SaleUnit.piece,
   });
 
   /// The ingredient names a customer may toggle off ("İçinden Çıkar") for
@@ -116,6 +134,8 @@ class MenuProduct {
     List<String>? allergens,
     String? portionLabel,
     List<String>? removableIngredientsOverride,
+    String? barcode,
+    SaleUnit? saleUnit,
   }) {
     return MenuProduct(
       id: id ?? this.id,
@@ -134,6 +154,8 @@ class MenuProduct {
       portionLabel: portionLabel ?? this.portionLabel,
       removableIngredientsOverride:
           removableIngredientsOverride ?? this.removableIngredientsOverride,
+      barcode: barcode ?? this.barcode,
+      saleUnit: saleUnit ?? this.saleUnit,
     );
   }
 }

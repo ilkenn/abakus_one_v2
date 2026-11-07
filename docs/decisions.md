@@ -20127,3 +20127,67 @@ Z-Raporu (no existing correct aggregate to read it from without risking a wrong 
 official financial document).
 
 See `docs/feature_status.md`'s "Adım 3" entry for the full file list and test verification status.
+
+## ADR-062 — Tamamlayıcı Donanım Entegrasyonları: kasa çekmecesi, barkod okuyucu, gramaj girişinin dürüst kapsamı (2026-11-07)
+
+- Tarih: 2026-11-07
+- Durum: Accepted
+
+### Context
+
+Fourth roadmap item. One genuine fork required explicit confirmation (cash-drawer trigger point),
+and one part hit a real architectural wall once checked against the backend, resolved the same way
+ADR-059 (PAX) already established: build the honest, disclosed scaffolding, defer the real wiring
+as its own decision.
+
+1. **Cash-drawer trigger point.** `recordPaymentAttempt`/the offline cash-capture path (payment
+   confirmation) and `printTableReceipt` ("Yazdır") are two fully independent flows in this
+   codebase — a cash payment is never auto-printed. Presented to the user as a fork: fire the drawer
+   signal on confirmed cash-tender success (reaches the till even if staff never print), or only
+   when a cash-tendered check's receipt is printed. Confirmed: tender success — `_submitTender`'s
+   `succeeded` branch and `_submitOfflineCashTender`'s captured branch both call a new
+   `_maybeKickCashDrawer('cash')` helper in `pos_checkout_screen.dart`, sending
+   `kCashDrawerKickBytes` (`ESC p 0 25 250`, the operator's own literal hardware spec) to the same
+   printer queue the till receipt already uses (the drawer is wired through the printer's own
+   RJ11/RJ12 port, not a separate device). A drawer-signal failure is swallowed — the cash payment
+   already succeeded and must never be rolled back or flagged as an error over a hardware signal
+   the cashier can always trigger by hand. Gated by a new, persisted
+   `ReceiptPrinterSettings.openCashDrawerOnCashPayment` (default `true`), same pattern/precedent as
+   `printerName`/`codepage`/the PAX ip/port settings — a durable preference with a sensible
+   default, no dedicated settings UI built yet either.
+
+2. **Gramaj (weight) entry hit the same wall PAX did, for two independent reasons.** `MenuProduct`
+   had no "sold by weight" concept at all, AND the backend order-line `quantity` the whole
+   dine-in/takeaway pricing pipeline relies on is a **mandatory integer capped at 20**
+   (`MAX_ITEM_QUANTITY`, `submitTakeawayOrder.ts`) with pricing computed server-side as
+   `basePrice × integer quantity` — there is no server concept of fractional/weight-based pricing
+   at all. Sending a real gram amount (e.g. 350) as `quantity` would be rejected outright, and even
+   without that cap there is no pricing path for it. Presented to the user as a fork — build the
+   real backend/pricing architecture now (out of "hardware integration" scope, a genuine
+   architecture change of its own), or the honest-scaffolding split already established for PAX.
+   Confirmed: scaffolding only. `MenuProduct.saleUnit` (`SaleUnit.piece`/`SaleUnit.kilogram`,
+   defaults to `piece`) routes a kilogram product to a new `WeightEntryDialog` instead of the
+   normal single-tap-add; it lets staff type a weight or try `ScaleReaderPort` (a new interface
+   mirroring `PaxGmp3TerminalClient`'s own shape — `UnavailableScaleReaderPort` always resolves
+   "no scale connected," since no real serial-port scale protocol has been specified either), and
+   shows the resulting estimated price for staff's own reference. **Deliberately never adds a cart
+   line** — turning a gram reading into a real priced order line is left as a separate, disclosed
+   decision once the pricing-architecture question above is actually resolved.
+
+3. **Barcode scanning.** `MenuProduct.barcode` (nullable, additive) is matched exactly against a
+   USB HID barcode scanner's keystroke input, reusing the existing product-search field's
+   `onSubmitted` rather than a new global keyboard listener — the scanner types into whatever field
+   has focus and sends Enter, and this is the field staff already have open during order entry. A
+   match adds 1 through the existing `_onProductTap` path (so a required-modifier product still
+   opens its customization dialog); no match clears nothing, plays an alert sound, and shows an
+   inline "Barkod bulunamadı" message. No existing catalog product was given a fabricated barcode
+   — every real product's `barcode` stays `null` until staff/admin enter a real one through a
+   catalog-editing path that doesn't exist yet (out of this item's scope).
+
+### Decision
+
+Implemented all three items at the scope confirmed above. The weight-to-priced-order-line wiring
+and a real serial-port scale protocol are both explicitly deferred, not silently dropped — see
+`docs/feature_status.md`'s "Adım 4" entry.
+
+See `docs/feature_status.md`'s "Adım 4" entry for the full file list and test verification status.

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:connectivity_plus/connectivity_plus.dart' as connectivity_plus;
 import 'package:flutter/foundation.dart' show kReleaseMode;
@@ -22,6 +23,7 @@ import '../../data/pos_action_gateway.dart' show PosDeviceContext;
 import '../../data/pos_operational_view_gateway.dart';
 import '../../domain/offline/offline_outbox_status.dart';
 import '../../domain/offline/offline_queued_cash_payment.dart';
+import '../../../printing/domain/cash_drawer_signal.dart';
 import '../providers/pos_workspace_providers.dart';
 
 /// The real, canonical AP-4 checkout panel — replaces the "Ödeme işlemi bu
@@ -240,6 +242,7 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
       );
       switch (result) {
         case OfflineCashPaymentCaptured():
+          await _maybeKickCashDrawer('cash');
           setState(() => _offlineSyncNotice =
               'Nakit tahsilat offline olarak kaydedildi. Bağlantı geri '
                   'geldiğinde otomatik olarak senkronize edilecek.');
@@ -287,6 +290,8 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
         // provider answer never arrived. Never shown as success.
         setState(() => _unknownOutcomeNotice =
             'Ödeme sonucu belirsiz (durum: ${result.status}). Lütfen aşağıdaki hareket listesini kontrol edin, aynı tutarı tekrar tahsil ETMEYİN.');
+      } else if (result.status == 'succeeded') {
+        await _maybeKickCashDrawer(tenderType);
       }
       await _refresh();
     } on PaymentGatewayException catch (e) {
@@ -303,6 +308,31 @@ class _PosCheckoutScreenState extends ConsumerState<PosCheckoutScreen> {
       await _refresh();
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Adım 4 (2026-11-07) — fires [kCashDrawerKickBytes] at the configured
+  /// printer queue right after a cash tender is confirmed (online
+  /// `succeeded`, or the offline capture path). The drawer is physically
+  /// wired through the printer's RJ11/RJ12 port, so this reuses the same
+  /// `ReceiptPrinterSettings.printerName`/`rawPrinterAdapterProvider` the
+  /// till receipt already uses — never a separate device/connection. A
+  /// failure here (printer offline, drawer unwired) is swallowed: the cash
+  /// payment itself already succeeded and must never be rolled back or
+  /// flagged as an error because a drawer signal didn't make it through —
+  /// the cashier can always open the drawer by hand.
+  Future<void> _maybeKickCashDrawer(String tenderType) async {
+    if (tenderType != 'cash') return;
+    try {
+      final settings = await ref.read(receiptPrinterSettingsProvider.future);
+      if (!settings.openCashDrawerOnCashPayment) return;
+      await ref.read(rawPrinterAdapterProvider).printRaw(
+            printerName: settings.printerName,
+            bytes: Uint8List.fromList(kCashDrawerKickBytes),
+            jobName: 'Kasa Çekmecesi',
+          );
+    } catch (_) {
+      // Disclosed, deliberate no-op — see doc comment above.
     }
   }
 

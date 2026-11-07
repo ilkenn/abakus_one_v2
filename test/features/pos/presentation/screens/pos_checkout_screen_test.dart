@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:abakus_one_v2/features/pos/data/pax_gmp3_terminal_client.dart';
 import 'package:abakus_one_v2/features/pos/data/payment_gateway.dart';
@@ -6,9 +7,12 @@ import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/pos_checkout_screen.dart';
+import 'package:abakus_one_v2/features/printing/data/windows_raw_printer_adapter.dart';
+import 'package:abakus_one_v2/features/printing/domain/cash_drawer_signal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Regression coverage for AP-4 Wave F's refund-UI-reachability fix
 /// (`docs/decisions.md`'s "Flow #7" entry): once a [PaymentSessionView]
@@ -422,4 +426,196 @@ void main() {
       expect(find.textContaining('PAX A910SF'), findsNothing);
     });
   });
+
+  group('PosCheckoutScreen — Kasa Çekmecesi (Adım 4, 2026-11-07)', () {
+    PaymentSessionView openSession() {
+      return const PaymentSessionView(
+        exists: true,
+        sessionId: 'session-1',
+        sessionStatus: 'collecting',
+        payableAmountMinorUnits: 4000,
+        settledAmountMinorUnits: 0,
+        currencyCode: 'TRY',
+        subAccountAllocations: [
+          PaymentSubAccountAllocation(
+            subAccountId: 'sub-1',
+            payableAmountMinorUnits: 4000,
+          ),
+        ],
+        attempts: [],
+        refunds: [],
+      );
+    }
+
+    Future<_RecordingRawPrinterAdapter> pumpOpenCheckout(
+      WidgetTester tester, {
+      _FakePaymentGateway? gateway,
+    }) async {
+      final adapter = _RecordingRawPrinterAdapter();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            paymentGatewayProvider.overrideWithValue(
+                gateway ?? _FakePaymentGateway(openSession())),
+            rawPrinterAdapterProvider.overrideWithValue(adapter),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => ElevatedButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => const PosCheckoutScreen(
+                      ctx: _ctx,
+                      checkId: 'check-1',
+                      view: _view,
+                    ),
+                  ),
+                  child: const Text('Ödemeyi Aç'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Ödemeyi Aç'));
+      await tester.pumpAndSettle();
+      return adapter;
+    }
+
+    testWidgets(
+        'nakit tahsilat sunucuda basariyla onaylaninca kasa cekmecesi '
+        'sinyali ayni yazici kuyruguna gonderilir', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final adapter = await pumpOpenCheckout(tester);
+
+      await tester.enterText(
+          find.byKey(const Key('checkoutAmountField')), '40,00');
+      await tester
+          .ensureVisible(find.byKey(const Key('checkoutSubmitTenderButton')));
+      await tester.tap(find.byKey(const Key('checkoutSubmitTenderButton')));
+      await tester.pumpAndSettle();
+
+      final drawerCalls =
+          adapter.calls.where((c) => c.jobName == 'Kasa Çekmecesi').toList();
+      expect(drawerCalls, hasLength(1));
+      expect(drawerCalls.single.bytes, equals(kCashDrawerKickBytes));
+      expect(drawerCalls.single.printerName,
+          ReceiptPrinterSettings.defaultPrinterName);
+    });
+
+    testWidgets(
+        'Boncuk tenderinde kasa cekmecesi tetiklenmez (yalnizca nakit '
+        'icin)', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final adapter = await pumpOpenCheckout(tester);
+
+      await tester.ensureVisible(find.text('Boncuk'));
+      await tester.tap(find.text('Boncuk'));
+      await tester.pump();
+      await tester.enterText(
+          find.byKey(const Key('checkoutAmountField')), '40,00');
+      await tester.ensureVisible(
+          find.widgetWithText(TextField, 'Kullanılacak Boncuk Adedi'));
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Kullanılacak Boncuk Adedi'), '100');
+      await tester
+          .ensureVisible(find.byKey(const Key('checkoutSubmitTenderButton')));
+      await tester.tap(find.byKey(const Key('checkoutSubmitTenderButton')));
+      await tester.pumpAndSettle();
+
+      expect(
+          adapter.calls.where((c) => c.jobName == 'Kasa Çekmecesi'), isEmpty);
+    });
+
+    testWidgets(
+        '"Nakit Odemede Para Cekmecesini Ac" ayari kapatilmissa sinyal '
+        'gonderilmez', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await ReceiptPrinterSettings(await SharedPreferences.getInstance())
+          .setOpenCashDrawerOnCashPayment(false);
+      final adapter = await pumpOpenCheckout(tester);
+
+      await tester.enterText(
+          find.byKey(const Key('checkoutAmountField')), '40,00');
+      await tester
+          .ensureVisible(find.byKey(const Key('checkoutSubmitTenderButton')));
+      await tester.tap(find.byKey(const Key('checkoutSubmitTenderButton')));
+      await tester.pumpAndSettle();
+
+      expect(
+          adapter.calls.where((c) => c.jobName == 'Kasa Çekmecesi'), isEmpty);
+    });
+
+    testWidgets(
+        'cekmece sinyali basarisiz olsa bile zaten onaylanmis odeme hata '
+        'olarak gosterilmez', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final failingAdapter = _ThrowingRawPrinterAdapter();
+      final gateway = _FakePaymentGateway(openSession());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            paymentGatewayProvider.overrideWithValue(gateway),
+            rawPrinterAdapterProvider.overrideWithValue(failingAdapter),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => ElevatedButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => const PosCheckoutScreen(
+                      ctx: _ctx,
+                      checkId: 'check-1',
+                      view: _view,
+                    ),
+                  ),
+                  child: const Text('Ödemeyi Aç'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Ödemeyi Aç'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.byKey(const Key('checkoutAmountField')), '40,00');
+      await tester
+          .ensureVisible(find.byKey(const Key('checkoutSubmitTenderButton')));
+      await tester.tap(find.byKey(const Key('checkoutSubmitTenderButton')));
+      await tester.pumpAndSettle();
+
+      expect(gateway.recordPaymentAttemptCallCount, 1,
+          reason: 'the payment itself must still be recorded as succeeded');
+      expect(find.textContaining('hata'), findsNothing);
+    });
+  });
+}
+
+class _RecordingRawPrinterAdapter implements RawPrinterAdapter {
+  final List<({String printerName, Uint8List bytes, String jobName})> calls =
+      [];
+
+  @override
+  Future<void> printRaw({
+    required String printerName,
+    required Uint8List bytes,
+    required String jobName,
+  }) async {
+    calls.add((printerName: printerName, bytes: bytes, jobName: jobName));
+  }
+}
+
+class _ThrowingRawPrinterAdapter implements RawPrinterAdapter {
+  @override
+  Future<void> printRaw({
+    required String printerName,
+    required Uint8List bytes,
+    required String jobName,
+  }) async {
+    throw const RawPrinterException('Yazıcı bulunamadı.');
+  }
 }

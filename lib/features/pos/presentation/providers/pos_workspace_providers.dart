@@ -21,6 +21,7 @@ import '../../data/offline_payment_outbox_repository.dart';
 import '../../data/payment_gateway.dart';
 import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
+import '../../data/scale_reader_port.dart';
 
 /// AP-3 continuation — POS workspace provider wiring, gated end-to-end on
 /// the real trusted-device session (`docs/decisions.md` ADR-041). No
@@ -132,6 +133,8 @@ class ReceiptPrinterSettings {
 
   static const _printerNameKey = 'posReceiptPrinterName';
   static const _codepageKey = 'posReceiptPrinterCodepage';
+  static const _openCashDrawerOnCashPaymentKey =
+      'posOpenCashDrawerOnCashPayment';
 
   /// The exact Windows queue name confirmed for the first till ("POS80
   /// Printer") — used only until staff override it for a different device.
@@ -161,6 +164,16 @@ class ReceiptPrinterSettings {
 
   Future<void> setCodepage(ReceiptCodepage value) =>
       _prefs.setString(_codepageKey, value.name);
+
+  /// Adım 4 (2026-11-07) — whether a successfully-confirmed cash tender
+  /// should fire [kCashDrawerKickBytes] at the same printer queue. Defaults
+  /// to `true` (the operator's own requested default); staff can still turn
+  /// it off for a till with no drawer wired to the printer.
+  bool get openCashDrawerOnCashPayment =>
+      _prefs.getBool(_openCashDrawerOnCashPaymentKey) ?? true;
+
+  Future<void> setOpenCashDrawerOnCashPayment(bool value) =>
+      _prefs.setBool(_openCashDrawerOnCashPaymentKey, value);
 }
 
 final receiptPrinterSettingsProvider =
@@ -213,6 +226,13 @@ final paxTerminalSettingsProvider =
 /// this same provider.
 final paxGmp3TerminalClientProvider = Provider<PaxGmp3TerminalClient>((ref) {
   return const UnavailablePaxGmp3TerminalClient();
+});
+
+/// Adım 4 (2026-11-07) — same "no real transport yet" reasoning as
+/// [paxGmp3TerminalClientProvider]. Always resolves to the unavailable
+/// stub until a real serial-port scale protocol is specified.
+final scaleReaderPortProvider = Provider<ScaleReaderPort>((ref) {
+  return const UnavailableScaleReaderPort();
 });
 
 final printTableReceiptProvider = Provider<PrintTableReceipt>((ref) {

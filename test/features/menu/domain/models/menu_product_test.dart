@@ -1,4 +1,5 @@
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
+import 'package:abakus_one_v2/features/menu/domain/models/sale_unit.dart';
 import 'package:abakus_one_v2/features/menu/domain/pricing/channel_price_rule.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
@@ -125,6 +126,59 @@ void main() {
       );
       final updated = product.copyWith(basePrice: 500);
       expect(updated.removableIngredients, ['Mısır']);
+    });
+  });
+
+  group('MenuProduct.barcode / saleUnit (Adım 4, 2026-11-07)', () {
+    test(
+        'barcode defaults to null, saleUnit defaults to piece — existing '
+        'product literals stay unchanged', () {
+      const product = MenuProduct(
+        id: 'p1',
+        categoryId: 'cat_bowl',
+        name: 'Bowl',
+        description: '',
+        basePrice: 500,
+        imageKey: 'bowl',
+      );
+      expect(product.barcode, isNull);
+      expect(product.saleUnit, SaleUnit.piece);
+    });
+
+    test('copyWith replaces barcode/saleUnit without touching other fields',
+        () {
+      const product = MenuProduct(
+        id: 'p1',
+        categoryId: 'cat_bowl',
+        name: 'Bowl',
+        description: '',
+        basePrice: 500,
+        imageKey: 'bowl',
+      );
+      final updated = product.copyWith(
+        barcode: '8690000000001',
+        saleUnit: SaleUnit.kilogram,
+      );
+      expect(updated.barcode, '8690000000001');
+      expect(updated.saleUnit, SaleUnit.kilogram);
+      expect(updated.name, 'Bowl');
+    });
+
+    test('copyWith with no argument preserves the existing barcode/saleUnit',
+        () {
+      const product = MenuProduct(
+        id: 'p1',
+        categoryId: 'cat_bowl',
+        name: 'Bowl',
+        description: '',
+        basePrice: 500,
+        imageKey: 'bowl',
+        barcode: '8690000000001',
+        saleUnit: SaleUnit.kilogram,
+      );
+      final updated = product.copyWith(name: 'Bowl v2');
+      expect(updated.barcode, '8690000000001');
+      expect(updated.saleUnit, SaleUnit.kilogram);
     });
   });
 }

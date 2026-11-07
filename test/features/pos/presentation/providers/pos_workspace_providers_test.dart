@@ -40,4 +40,25 @@ void main() {
       expect(reopened.codepage, ReceiptCodepage.pc857);
     });
   });
+
+  group('ReceiptPrinterSettings.openCashDrawerOnCashPayment', () {
+    test('defaults to true when nothing has ever been stored', () async {
+      SharedPreferences.setMockInitialValues({});
+      final settings =
+          ReceiptPrinterSettings(await SharedPreferences.getInstance());
+
+      expect(settings.openCashDrawerOnCashPayment, isTrue);
+    });
+
+    test('setOpenCashDrawerOnCashPayment(false) round-trips the value',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final settings =
+          ReceiptPrinterSettings(await SharedPreferences.getInstance());
+
+      await settings.setOpenCashDrawerOnCashPayment(false);
+
+      expect(settings.openCashDrawerOnCashPayment, isFalse);
+    });
+  });
 }
