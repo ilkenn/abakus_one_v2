@@ -20087,3 +20087,43 @@ Paket/Gel-Al order data) is disclosed as a separate future decision in `docs/fea
 not built speculatively now.
 
 See `docs/feature_status.md`'s "Adım 2" entry for the full file list and test verification status.
+
+## ADR-061 — Finansal & Kasa Operasyonları: Split Bill'in gerçek yeri, PIN yerine mevcut uzaktan onay, gerçek Z Raporu baskısı (2026-11-06/07)
+
+- Tarih: 2026-11-06 / 2026-11-07
+- Durum: Accepted
+
+### Context
+
+Third roadmap item. Two of its three parts contradicted the literal request once checked against
+the real backend/architecture; both were raised as Decision Reviews and resolved with the user's
+explicit, informed confirmation before any further code was written — never silently redirected,
+never silently complied with against a verified constraint.
+
+1. **Split Bill's real placement.** The request was "add 'Parçalı Öde' to `PosCheckoutScreen`." A
+   first implementation attempt (reverted before committing) discovered `requireOpenUnlockedCheck`
+   gates every split callable server-side — `PosCheckoutScreen` only ever opens once a check is
+   already `readyForPayment`/`paid`, a state split is structurally rejected from. Presented to the
+   user; confirmed: move the entry point to `pos_table_workspace_screen.dart`'s own payment button,
+   while the check is still `open`.
+2. **Manager PIN vs. the existing remote-approval lock.** The request was a local manager PIN
+   gating cancellation/İkram. `docs/admin_pos_architecture.md` §16 (**Locked**) already requires
+   remote approval for exactly these two actions — synchronous, fail-closed, self-approval
+   structurally forbidden, no connectivity-bypass. A local PIN would either conflict with that lock
+   or need to be a new PIN-storage/authentication surface (hashed PINs, rate-limiting) — genuinely
+   new security architecture, not a UI tweak. Presented to the user; confirmed: skip the PIN, fix
+   only the cancellation reason-code list to the 3 real reasons requested (Müşteri Vazgeçti/Hatalı
+   Giriş/Mutfak Fire-Zayi) — "İkram" deliberately excluded from that list (see
+   `docs/feature_status.md`'s Adım 3 entry for why conflating it with cancellation would corrupt
+   stock accounting).
+
+### Decision
+
+Implemented both correctly-placed designs above, plus the real Z-Raporu ESC/POS printing (replacing
+the now-stale `UnconfiguredZReportPrinterAdapter`, which predated this session's real printer
+integration). Two items are explicitly deferred, not silently dropped: a safe per-line İkram action
+(needs backend verification this pass's budget didn't reach) and an "İptal Toplamı" figure on the
+Z-Raporu (no existing correct aggregate to read it from without risking a wrong number on an
+official financial document).
+
+See `docs/feature_status.md`'s "Adım 3" entry for the full file list and test verification status.

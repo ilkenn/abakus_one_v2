@@ -13,6 +13,7 @@ import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../data/cash_register_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../../data/z_report_printer_adapter.dart';
+import '../../domain/cash/z_report_content.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
 
@@ -185,19 +186,30 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
         businessDate: refreshed.businessDate ?? '',
         openedAt: DateTime.now(),
         closedAt: DateTime.now(),
-        currencySymbol: _currency(0).currency.symbol,
+        // '₺' (U+20BA) has no slot in any classic 8-bit ESC/POS codepage
+        // table — the same real printer-garbling bug already fixed for
+        // the till receipt (`EscPosReceiptEncoder._formatAmount`). 'TL'
+        // prints correctly everywhere.
+        currencySymbol: _currency(0).currency.isoCode == 'TRY'
+            ? 'TL'
+            : _currency(0).currency.symbol,
         openingFloatMinorUnits: session.openingFloatAmountMinorUnits ?? 0,
         cashMinorUnits: revenue?.cashMinorUnits ?? 0,
         cardMinorUnits: revenue?.cardMinorUnits ?? 0,
         otherMinorUnits: revenue?.otherMinorUnits ?? 0,
         totalMinorUnits: revenue?.totalMinorUnits ?? 0,
+        complimentaryMinorUnits: revenue?.complimentaryMinorUnits ?? 0,
         expectedAmountMinorUnits: countResult.expectedAmountMinorUnits,
         actualAmountMinorUnits: actualAmountMinorUnits,
         varianceType: countResult.varianceType,
         varianceAmountMinorUnits: countResult.varianceAmountMinorUnits,
       );
-      final printResult =
-          await const UnconfiguredZReportPrinterAdapter().print(content);
+      final printerSettings =
+          await ref.read(receiptPrinterSettingsProvider.future);
+      final printResult = await resolveZReportPrinterAdapter(
+        rawPrinterAdapter: ref.read(rawPrinterAdapterProvider),
+        printerName: printerSettings.printerName,
+      ).print(content, codepage: printerSettings.codepage);
       if (!mounted) return;
       setState(() {
         _receiptText = content.toReceiptText();
@@ -434,6 +446,14 @@ class _ReadyViewState extends State<_ReadyView> {
                     value: widget.currencyOf(revenue.totalMinorUnits),
                     bold: true,
                   ),
+                  if (revenue.complimentaryMinorUnits != 0) ...[
+                    const Divider(),
+                    _RevenueRow(
+                      label: 'İkram Toplamı',
+                      value: widget.currencyOf(revenue.complimentaryMinorUnits),
+                      color: AppColors.warning,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -525,17 +545,23 @@ class _ReadyViewState extends State<_ReadyView> {
 }
 
 class _RevenueRow extends StatelessWidget {
-  const _RevenueRow(
-      {required this.label, required this.value, this.bold = false});
+  const _RevenueRow({
+    required this.label,
+    required this.value,
+    this.bold = false,
+    this.color,
+  });
   final String label;
   final Money value;
   final bool bold;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    final style = bold
-        ? AppTypography.titleMedium.copyWith(fontWeight: FontWeight.bold)
-        : AppTypography.bodyLarge;
+    final style = (bold
+            ? AppTypography.titleMedium.copyWith(fontWeight: FontWeight.bold)
+            : AppTypography.bodyLarge)
+        .copyWith(color: color);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(

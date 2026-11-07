@@ -1,95 +1,23 @@
 /// Gün Sonu (Kasa Kapanışı) — the receipt-printer transport boundary.
 ///
-/// **No real ESC/POS transport exists in this app.** A confirmed check
-/// before writing this file found no thermal-printer package in
-/// `pubspec.yaml` and no printer transport anywhere in `lib/` — mirrors
-/// `functions/src/fiscalAdapter.ts`'s own honest structure for the identical
-/// reason: this is real, tested, forward-groundwork code with no live
-/// hardware trigger yet, never code that pretends to produce real thermal
-/// output. Adding a printer package is a dependency/architecture change
-/// (CLAUDE.md §5/§15) — out of this pass's scope.
-///
-/// [ZReportContent.toReceiptText] is the one real, verifiable artifact this
-/// file produces today — the actual plain-text content a real ESC/POS
-/// driver would print once a transport is wired in. The screen shows this
-/// text on-screen as the "Yazdırmaya Hazır" preview regardless of transport
-/// availability.
+/// **Corrected 2026-11-06 (Adım 3)** — this file previously said "no real
+/// ESC/POS transport exists in this app," which was true when it was
+/// written but is now stale: the 2026-11-05 till-receipt feature wired a
+/// real `RawPrinterAdapter`/`WindowsRawPrinterAdapter` (Windows
+/// `winspool.drv`, same "POS80 Printer" queue), since reused for the
+/// kitchen ticket too. [WindowsZReportPrinterAdapter] below reuses that
+/// same real transport — no new dependency, no new architecture, the
+/// identical pattern `PrintTableReceipt`/`PrintKitchenTicket` already use.
+/// [UnconfiguredZReportPrinterAdapter] remains the honest fallback for
+/// every platform `WindowsRawPrinterAdapter` doesn't cover.
 library;
 
-/// Everything a Z-Raporu receipt needs to render — assembled by the caller
-/// from already-fetched [CashSessionView]/[DailyRevenueSummary]/
-/// [CashCountResult] data, never re-fetched here.
-class ZReportContent {
-  const ZReportContent({
-    required this.branchDisplayName,
-    required this.sessionId,
-    required this.businessDate,
-    required this.openedAt,
-    required this.closedAt,
-    required this.currencySymbol,
-    required this.openingFloatMinorUnits,
-    required this.cashMinorUnits,
-    required this.cardMinorUnits,
-    required this.otherMinorUnits,
-    required this.totalMinorUnits,
-    required this.expectedAmountMinorUnits,
-    required this.actualAmountMinorUnits,
-    required this.varianceType,
-    required this.varianceAmountMinorUnits,
-  });
+import 'dart:io' show Platform;
 
-  final String branchDisplayName;
-  final String sessionId;
-  final String businessDate;
-  final DateTime openedAt;
-  final DateTime closedAt;
-  final String currencySymbol;
-  final int openingFloatMinorUnits;
-  final int cashMinorUnits;
-  final int cardMinorUnits;
-  final int otherMinorUnits;
-  final int totalMinorUnits;
-  final int expectedAmountMinorUnits;
-  final int actualAmountMinorUnits;
-  final String varianceType; // 'over' | 'short' | 'exact'
-  final int varianceAmountMinorUnits;
-
-  String _fmt(int minorUnits) =>
-      '$currencySymbol${(minorUnits / 100).toStringAsFixed(2)}';
-
-  String get varianceLabel => switch (varianceType) {
-        'over' => 'Fazla',
-        'short' => 'Eksik',
-        _ => 'Tam',
-      };
-
-  /// Plain-text, fixed-width-friendly Z-Raporu content — a real ESC/POS
-  /// driver could take this as-is once a transport exists.
-  String toReceiptText() {
-    final buffer = StringBuffer()
-      ..writeln('=' * 32)
-      ..writeln('Z RAPORU')
-      ..writeln(branchDisplayName)
-      ..writeln('=' * 32)
-      ..writeln('Tarih: $businessDate')
-      ..writeln('Kasa Oturumu: $sessionId')
-      ..writeln('Açılış: $openedAt')
-      ..writeln('Kapanış: $closedAt')
-      ..writeln('-' * 32)
-      ..writeln('Açılış Bakiyesi: ${_fmt(openingFloatMinorUnits)}')
-      ..writeln('-' * 32)
-      ..writeln('Nakit: ${_fmt(cashMinorUnits)}')
-      ..writeln('Kredi Kartı: ${_fmt(cardMinorUnits)}')
-      ..writeln('Diğer: ${_fmt(otherMinorUnits)}')
-      ..writeln('TOPLAM CİRO: ${_fmt(totalMinorUnits)}')
-      ..writeln('-' * 32)
-      ..writeln('Beklenen Nakit: ${_fmt(expectedAmountMinorUnits)}')
-      ..writeln('Sayılan Nakit: ${_fmt(actualAmountMinorUnits)}')
-      ..writeln('Fark: $varianceLabel ${_fmt(varianceAmountMinorUnits)}')
-      ..writeln('=' * 32);
-    return buffer.toString();
-  }
-}
+import '../../printing/data/windows_raw_printer_adapter.dart';
+import '../../printing/domain/esc_pos_z_report_encoder.dart';
+import '../../printing/domain/receipt_codepage.dart';
+import '../domain/cash/z_report_content.dart';
 
 class ZReportPrintResult {
   const ZReportPrintResult({required this.succeeded, required this.message});
@@ -98,20 +26,73 @@ class ZReportPrintResult {
 }
 
 abstract interface class ZReportPrinterAdapter {
-  Future<ZReportPrintResult> print(ZReportContent content);
+  Future<ZReportPrintResult> print(
+    ZReportContent content, {
+    ReceiptCodepage codepage,
+  });
 }
 
-/// The honest "no real printer is configured" adapter — what this app
-/// actually has today. Never fabricates a successful print.
+/// The real implementation — encodes [ZReportContent] via
+/// [EscPosZReportEncoder] and sends it to the configured Windows printer
+/// through the same [RawPrinterAdapter] the till receipt/kitchen ticket
+/// already use.
+class WindowsZReportPrinterAdapter implements ZReportPrinterAdapter {
+  const WindowsZReportPrinterAdapter({
+    required this.rawPrinterAdapter,
+    required this.printerName,
+  });
+
+  final RawPrinterAdapter rawPrinterAdapter;
+  final String printerName;
+
+  @override
+  Future<ZReportPrintResult> print(
+    ZReportContent content, {
+    ReceiptCodepage codepage = ReceiptCodepage.wpc1254,
+  }) async {
+    try {
+      final bytes = EscPosZReportEncoder.encode(content, codepage: codepage);
+      await rawPrinterAdapter.printRaw(
+        printerName: printerName,
+        bytes: bytes,
+        jobName: 'Z Raporu - ${content.sessionId}',
+      );
+      return const ZReportPrintResult(succeeded: true, message: 'Yazdırıldı.');
+    } on RawPrinterException catch (e) {
+      return ZReportPrintResult(succeeded: false, message: e.message);
+    }
+  }
+}
+
+/// The honest "no real printer transport on this platform" adapter —
+/// what every non-Windows build actually has today. Never fabricates a
+/// successful print.
 class UnconfiguredZReportPrinterAdapter implements ZReportPrinterAdapter {
   const UnconfiguredZReportPrinterAdapter();
 
   @override
-  Future<ZReportPrintResult> print(ZReportContent content) async {
+  Future<ZReportPrintResult> print(
+    ZReportContent content, {
+    ReceiptCodepage codepage = ReceiptCodepage.wpc1254,
+  }) async {
     return const ZReportPrintResult(
       succeeded: false,
       message: 'Bu cihazda yapılandırılmış bir ESC/POS yazıcı bağlantısı yok. '
           'Rapor içeriği önizlemede görüntüleniyor.',
     );
   }
+}
+
+/// `Platform.isWindows ? WindowsZReportPrinterAdapter : Unconfigured...` —
+/// same fail-closed-off-Windows shape as `rawPrinterAdapterProvider`.
+ZReportPrinterAdapter resolveZReportPrinterAdapter({
+  required RawPrinterAdapter rawPrinterAdapter,
+  required String printerName,
+}) {
+  return Platform.isWindows
+      ? WindowsZReportPrinterAdapter(
+          rawPrinterAdapter: rawPrinterAdapter,
+          printerName: printerName,
+        )
+      : const UnconfiguredZReportPrinterAdapter();
 }

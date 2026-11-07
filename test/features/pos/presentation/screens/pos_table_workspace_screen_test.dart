@@ -525,6 +525,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
+      // Adım 3 (2026-11-06) — "Ödemeye Hazırla" now opens a "Tek Hesap
+      // Olarak Öde" / "Parçalı Öde" choice sheet first; pumpAndSettle lets
+      // the sheet's entrance animation finish before tapping into it.
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Tek Hesap Olarak Öde'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
@@ -541,6 +546,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Tek Hesap Olarak Öde'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
@@ -593,10 +600,108 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Tek Hesap Olarak Öde'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(fakes.actionGateway.splitByProductCallCount, 0);
+      expect(fakes.actionGateway.finalizeCallCount, 1);
+    });
+  });
+
+  group('Parçalı Öde (Adım 3, 2026-11-06) — "Ödemeye Hazırla" seçim sayfası',
+      () {
+    testWidgets(
+        'Esit Bolusum: en az 2 hesap secilmeden "Böl" butonu devre disi kalir',
+        (tester) async {
+      await _pump(tester, initialView: _acceptedLineViewTwoSubAccounts());
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Parçalı Öde'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Eşit Bölüşüm'), findsWidgets);
+      final confirmButton = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Böl'),
+      );
+      expect(confirmButton.onPressed, isNull,
+          reason: 'henüz hiçbir hesap seçilmedi');
+
+      await tester.tap(find.text('Ayşe'));
+      await tester.pump();
+      final stillDisabled = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Böl'),
+      );
+      expect(stillDisabled.onPressed, isNull,
+          reason: 'sadece 1 hesap seçili, en az 2 gerekiyor');
+
+      await tester.tap(find.text('Mehmet'));
+      await tester.pump();
+      final enabled = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Böl'),
+      );
+      expect(enabled.onPressed, isNotNull);
+    });
+
+    testWidgets(
+        'Esit Bolusum onaylaninca splitEqualByHeadcount secilen hesaplarla '
+        'cagrilir, sonra finalize edilir', (tester) async {
+      final fakes =
+          await _pump(tester, initialView: _acceptedLineViewTwoSubAccounts());
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Parçalı Öde'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Ayşe'));
+      await tester.tap(find.text('Mehmet'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Böl'));
+      await tester.pumpAndSettle();
+
+      expect(fakes.actionGateway.splitEqualByHeadcountCallCount, 1);
+      expect(fakes.actionGateway.lastHeadcountSubAccountIds,
+          unorderedEquals(['sub-1', 'sub-2']));
+      expect(fakes.actionGateway.finalizeCallCount, 1);
+    });
+
+    testWidgets(
+        'Kalem Secimi onaylaninca secili her satir icin splitByProduct '
+        'hedef hesaba cagrilir, sonra finalize edilir', (tester) async {
+      final fakes =
+          await _pump(tester, initialView: _acceptedLineViewTwoSubAccounts());
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Parçalı Öde'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Kalem Seçimi'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining('Klasik Bowl'),
+      ));
+      await tester.pump();
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Mehmet').last);
+      await tester.pumpAndSettle();
+
+      final confirm = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Böl'),
+      );
+      expect(confirm.onPressed, isNotNull);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Böl'));
+      await tester.pumpAndSettle();
+
+      expect(fakes.actionGateway.splitByProductCallCount, 1);
       expect(fakes.actionGateway.finalizeCallCount, 1);
     });
   });

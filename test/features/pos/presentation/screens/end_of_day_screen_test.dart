@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:abakus_one_v2/features/pos/data/cash_register_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
@@ -105,21 +106,28 @@ class _FakeCashRegisterGateway implements CashRegisterGateway {
   }) async =>
       throw UnimplementedError();
 
+  CashCountResult? countResult;
+  bool closeCalled = false;
+
   @override
   Future<CashCountResult> submitCashCount({
     required PosDeviceContext ctx,
     required String sessionId,
     required int actualAmountMinorUnits,
     String notes = '',
-  }) async =>
-      throw UnimplementedError();
+  }) async {
+    final result = countResult;
+    if (result == null) throw UnimplementedError();
+    return result;
+  }
 
   @override
   Future<void> closeCashSession({
     required PosDeviceContext ctx,
     required String sessionId,
-  }) async =>
-      throw UnimplementedError();
+  }) async {
+    closeCalled = true;
+  }
 }
 
 const _ctx = PosDeviceContext(
@@ -251,5 +259,91 @@ void main() {
         find.byKey(const Key('actualAmountField')), '148.00');
     await tester.pump();
     expect(find.textContaining('Tahmini Fark: Eksik'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Ikram Toplami nonzero oldugunda ciro ozetinde gosterilir ve gun kapatildiginda '
+      'onizleme metnine de yazilir', (tester) async {
+    // ReceiptPrinterSettings (read while closing/printing) needs
+    // SharedPreferences.getInstance() — unmocked, this leaves the async
+    // chain unresolved and the screen stuck before _EodPhase.closed.
+    SharedPreferences.setMockInitialValues({});
+    final overviewGateway = _FakePosOperationalViewGateway();
+    final cashGateway = _FakeCashRegisterGateway()
+      ..drawers = [
+        const CashDrawerSummary(
+          drawerId: 'drawer-1',
+          name: 'Ana Kasa',
+          isActive: true,
+          openSession:
+              CashOpenSessionSummary(sessionId: 'sess-1', status: 'approved'),
+        ),
+      ]
+      ..sessionView = CashSessionView(
+        exists: true,
+        sessionId: 'sess-1',
+        drawerId: 'drawer-1',
+        // 'approved' — EndOfDayScreen re-fetches this AFTER submitCashCount
+        // and only proceeds to closeCashSession once this is 'approved'
+        // (an exact-variance count auto-approves server-side).
+        status: 'approved',
+        businessDate: '2026-09-11',
+        openingFloatAmountMinorUnits: 0,
+        settledAmountMinorUnits: 10000,
+        currencyCode: 'TRY',
+        cashRegisterModel: 'sharedDrawer',
+        movements: [
+          CashMovementSummary(
+            type: 'cashSale',
+            amountMinorUnits: 10000,
+            reason: 'Satış',
+            timestamp: DateTime(2026, 9, 11, 10),
+          ),
+        ],
+      )
+      ..revenueSummary = const DailyRevenueSummary(
+        sessionId: 'sess-1',
+        currencyCode: 'TRY',
+        cashMinorUnits: 10000,
+        cardMinorUnits: 20000,
+        otherMinorUnits: 0,
+        totalMinorUnits: 30000,
+        complimentaryMinorUnits: 1500,
+      )
+      ..countResult = const CashCountResult(
+        countId: 'count-1',
+        expectedAmountMinorUnits: 10000,
+        varianceType: 'exact',
+        varianceAmountMinorUnits: 0,
+        approvalRequestId: '',
+      );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          posOperationalViewGatewayProvider.overrideWithValue(overviewGateway),
+          cashRegisterGatewayProvider.overrideWithValue(cashGateway),
+          posDeviceContextProvider.overrideWithValue(_ctx),
+        ],
+        child: const MaterialApp(home: EndOfDayScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('İkram Toplamı'), findsOneWidget);
+    expect(find.textContaining('TRY 15.00'), findsOneWidget,
+        reason: '1500 minor units formatted via Money.toString()');
+
+    await tester.enterText(
+        find.byKey(const Key('actualAmountField')), '100.00');
+    await tester.pump();
+    await tester.tap(find.text('Günü Kapat ve Z Raporu Al'));
+    await tester.pumpAndSettle();
+
+    expect(cashGateway.closeCalled, isTrue);
+    expect(find.text('Gün kapatıldı'), findsOneWidget);
+    expect(find.textContaining('İkram Toplamı: TL15.00'), findsOneWidget,
+        reason: 'the plain-text preview must include the comp total too');
   });
 }

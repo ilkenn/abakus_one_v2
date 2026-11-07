@@ -10,6 +10,7 @@ import { generateCorrelationId, sanitizeClientRequestId } from "./correlationId"
 import { createApprovalRequest } from "./remoteApproval";
 import type { ActionHandlerParams, ActionHandlerResult } from "./remoteApproval";
 import { BRANCH_PAYMENT_CONFIG_COLLECTION, PAYMENT_ATTEMPTS_COLLECTION, type BranchPaymentConfigDoc, type PaymentAttemptDoc } from "./paymentDomain";
+import { CHECK_FINANCIAL_ADJUSTMENTS_COLLECTION } from "./checkAllocationConfig";
 import {
   CASH_DRAWERS_COLLECTION,
   CASH_SESSIONS_COLLECTION,
@@ -803,6 +804,32 @@ export const getDailyRevenueSummary = onCall({ enforceAppCheck: shouldEnforceApp
     }
   }
 
+  // Adım 3 (2026-11-06) — "İkram Toplamı" for the Z-Raporu. Summing EVERY
+  // active `checkFinancialAdjustments` doc (not just `complimentary`-type
+  // ones) nets out correctly on its own: `reverseCheckFinancialAdjustment`
+  // writes a new active record with a NEGATIVE `appliedAmountMinorUnits`,
+  // so a comp that was later reversed contributes zero here, exactly as
+  // the Z-Raporu should show. **Disclosed scope**: this covers İkram
+  // (comp) only — a parallel "İptal Toplamı" (the money value of
+  // cancelled-after-acceptance order lines) is NOT included: this
+  // codebase's order-line model has no price field of its own (pricing
+  // lives at the check/allocation level), and `applyAcceptedLineCancellation`
+  // never touches any check/allocation total — there is no existing,
+  // correct aggregate to read this from without guessing at a
+  // reconstruction, which risks reporting a wrong figure on an official
+  // financial report. Left out rather than approximated.
+  const adjustmentsSnap = await db.collection(CHECK_FINANCIAL_ADJUSTMENTS_COLLECTION)
+    .where("branchId", "==", ctx.branchId)
+    .where("status", "==", "active")
+    .where("createdAt", ">=", session.openedAt)
+    .limit(DAILY_REVENUE_ATTEMPT_LIMIT)
+    .get();
+  let complimentaryMinorUnits = 0;
+  for (const doc of adjustmentsSnap.docs) {
+    const amount = doc.data().appliedAmountMinorUnits as number | null;
+    if (typeof amount === "number") complimentaryMinorUnits += amount;
+  }
+
   return {
     sessionId,
     currencyCode: session.currencyCode,
@@ -810,5 +837,6 @@ export const getDailyRevenueSummary = onCall({ enforceAppCheck: shouldEnforceApp
     cardMinorUnits,
     otherMinorUnits,
     totalMinorUnits: cashMinorUnits + cardMinorUnits + otherMinorUnits,
+    complimentaryMinorUnits,
   };
 });

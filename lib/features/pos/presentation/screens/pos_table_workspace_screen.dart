@@ -596,11 +596,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
             ? 'Ürünü İptal Et'
             : '${selected.length} Ürünü İptal Et',
         confirmLabel: 'İptal Talebi Gönder',
-        reasonCodes: const {
-          'customerRequest': 'Müşteri Talebi',
-          'kitchenError': 'Mutfak Hatası',
-          'other': 'Diğer',
-        },
+        reasonCodes: _acceptedLineCancellationReasonCodes,
         onSubmit: (reasonCode, reasonMessage) async {
           for (final line in selected) {
             await widget.onCancelRequest(
@@ -893,11 +889,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       builder: (dialogContext) => _ReasonDialog(
         title: 'Ürünü İptal Et',
         confirmLabel: 'İptal Talebi Gönder',
-        reasonCodes: const {
-          'customerRequest': 'Müşteri Talebi',
-          'kitchenError': 'Mutfak Hatası',
-          'other': 'Diğer',
-        },
+        reasonCodes: _acceptedLineCancellationReasonCodes,
         onSubmit: (reasonCode, reasonMessage) => widget.onCancelRequest(
             orderId, lineIndex, reasonCode, reasonMessage),
       ),
@@ -1555,7 +1547,69 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     if (status == 'readyForPayment' || status == 'paid') {
       return widget.busy ? null : widget.onOpenCheckout;
     }
-    return widget.busy ? null : () => _ensureAllocationsThenFinalize();
+    return widget.busy ? null : () => _showPaymentChoiceSheet();
+  }
+
+  /// Adım 3 (2026-11-06) — "Parçalı Öde," reached from HERE (while the
+  /// check is still `open`), never from `PosCheckoutScreen`: every split
+  /// callable (`splitCheckEqualByHeadcount`/`splitCheckByProduct`/...)
+  /// requires `requireOpenUnlockedCheck` server-side — a check already
+  /// `readyForPayment` (the ONLY state `PosCheckoutScreen` is ever shown
+  /// in) rejects every one of them. "Tek Hesap Olarak Öde" is the exact
+  /// pre-existing behavior, unchanged.
+  Future<void> _showPaymentChoiceSheet() async {
+    final choice = await showModalBottomSheet<_PaymentChoice>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('Tek Hesap Olarak Öde'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_PaymentChoice.singleCheck),
+            ),
+            ListTile(
+              leading: const Icon(Icons.call_split_outlined),
+              title: const Text('Parçalı Öde'),
+              subtitle: const Text(
+                  'Eşit bölüşüm veya kalem seçimiyle kısmi tahsilat'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_PaymentChoice.splitBill),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (choice) {
+      case _PaymentChoice.singleCheck:
+        await _ensureAllocationsThenFinalize();
+      case _PaymentChoice.splitBill:
+        await _openSplitBillDialog();
+      case null:
+        break; // dismissed — no action.
+    }
+  }
+
+  Future<void> _openSplitBillDialog() async {
+    final action = await showDialog<_SplitAction?>(
+      context: context,
+      builder: (_) => _SplitBillDialog(view: widget.view),
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case _SplitEqually(subAccountIds: final ids):
+        await widget.onHeadcountSplit(ids);
+      case _SplitByItems(subAccountId: final subAccountId, lines: final lines):
+        for (final line in lines) {
+          await widget.onSplit(
+              subAccountId, line.orderId, line.lineIndex, 'product');
+        }
+    }
+    if (!mounted) return;
+    widget.onFinalize();
   }
 
   /// `finalizeCheckReadyForPayment` genuinely rejects a check with zero
@@ -2254,17 +2308,237 @@ class _OrderCard extends StatelessWidget {
       builder: (dialogContext) => _ReasonDialog(
         title: 'Ürünü İptal Et',
         confirmLabel: 'İptal Talebi Gönder',
-        reasonCodes: const {
-          'customerRequest': 'Müşteri Talebi',
-          'kitchenError': 'Mutfak Hatası',
-          'other': 'Diğer',
-        },
+        reasonCodes: _acceptedLineCancellationReasonCodes,
         onSubmit: (reasonCode, reasonMessage) =>
             onCancelRequest(orderId, lineIndex, reasonCode, reasonMessage),
       ),
     );
   }
 }
+
+enum _PaymentChoice { singleCheck, splitBill }
+
+/// Adım 3 (2026-11-06) — "Parçalı Öde"'nin iki modu. Her ikisi de bu
+/// dosyanın zaten var olan, test edilmiş split gateway çağrılarını
+/// kullanır — yeni bir backend yeteneği yok, sadece yeni bir giriş
+/// noktası.
+sealed class _SplitAction {
+  const _SplitAction();
+}
+
+class _SplitEqually extends _SplitAction {
+  const _SplitEqually(this.subAccountIds);
+  final List<String> subAccountIds;
+}
+
+class _SplitByItems extends _SplitAction {
+  const _SplitByItems({required this.subAccountId, required this.lines});
+  final String subAccountId;
+  final List<({String orderId, int lineIndex})> lines;
+}
+
+/// "Parçalı Öde" seçim ekranı — Eşit Bölüşüm (en az 2 mevcut hesap seçimi
+/// — `splitCheckEqualByHeadcount`'ın kendi backend sözleşmesi zaten
+/// mevcut sub-account id'leri istiyor, serbest bir "kişi sayısı" değil)
+/// ve Kalem Seçimi (kabul edilmiş satırlardan seçilenleri TEK bir hedef
+/// hesaba taşır — `splitCheckByProduct`, her seçili satır için bir kez).
+class _SplitBillDialog extends StatefulWidget {
+  const _SplitBillDialog({required this.view});
+  final PosTableOperationalView view;
+
+  @override
+  State<_SplitBillDialog> createState() => _SplitBillDialogState();
+}
+
+class _SplitBillDialogState extends State<_SplitBillDialog> {
+  bool _byItems = false;
+  final Set<String> _selectedSubAccountIds = {};
+  final Set<({String orderId, int lineIndex})> _selectedLines = {};
+  String? _targetSubAccountId;
+
+  List<
+      ({
+        String orderId,
+        int lineIndex,
+        String productName,
+        int quantity,
+        int unitPriceMinorUnits
+      })> get _acceptedLines {
+    final result = <({
+      String orderId,
+      int lineIndex,
+      String productName,
+      int quantity,
+      int unitPriceMinorUnits
+    })>[];
+    for (final order in widget.view.orders) {
+      for (var i = 0; i < order.lines.length; i++) {
+        final line = order.lines[i];
+        if (line.status != 'accepted') continue;
+        result.add((
+          orderId: order.orderId,
+          lineIndex: i,
+          productName: line.productName,
+          quantity: line.quantity,
+          unitPriceMinorUnits: line.unitPriceMinorUnits,
+        ));
+      }
+    }
+    return result;
+  }
+
+  bool get _canConfirm => _byItems
+      ? _selectedLines.isNotEmpty && _targetSubAccountId != null
+      : _selectedSubAccountIds.length >= 2;
+
+  @override
+  Widget build(BuildContext context) {
+    final subAccounts = widget.view.subAccounts;
+    return AlertDialog(
+      title: const Text('Parçalı Öde'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: ChoiceChip(
+                    label: const Text('Eşit Bölüşüm'),
+                    selected: !_byItems,
+                    onSelected: (_) => setState(() => _byItems = false),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: ChoiceChip(
+                    label: const Text('Kalem Seçimi'),
+                    selected: _byItems,
+                    onSelected: (_) => setState(() => _byItems = true),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (!_byItems) ...[
+              const Text(
+                'Hesabı bölüşülecek en az 2 kişiyi seçin:',
+                style: AppTypography.bodyMedium,
+              ),
+              for (final sub in subAccounts)
+                CheckboxListTile(
+                  dense: true,
+                  title: Text(sub['displayName'] as String? ?? 'Misafir'),
+                  value: _selectedSubAccountIds
+                      .contains(sub['id'] as String? ?? ''),
+                  onChanged: (checked) {
+                    final id = sub['id'] as String? ?? '';
+                    setState(() {
+                      if (checked ?? false) {
+                        _selectedSubAccountIds.add(id);
+                      } else {
+                        _selectedSubAccountIds.remove(id);
+                      }
+                    });
+                  },
+                ),
+              if (subAccounts.length < 2)
+                Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.sm),
+                  child: Text(
+                    'Bu masada eşit bölüşüm için en az 2 ayrı hesap gerekiyor.',
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.error),
+                  ),
+                ),
+            ] else ...[
+              const Text(
+                'Hangi ürünlerin tutarı ayrı tahsil edilsin?',
+                style: AppTypography.bodyMedium,
+              ),
+              for (final line in _acceptedLines)
+                CheckboxListTile(
+                  dense: true,
+                  title: Text('${line.quantity}x ${line.productName}'),
+                  subtitle: Text(
+                      '${(line.unitPriceMinorUnits * line.quantity / 100).toStringAsFixed(0)} TL'),
+                  value: _selectedLines.contains(
+                      (orderId: line.orderId, lineIndex: line.lineIndex)),
+                  onChanged: (checked) {
+                    final key =
+                        (orderId: line.orderId, lineIndex: line.lineIndex);
+                    setState(() {
+                      if (checked ?? false) {
+                        _selectedLines.add(key);
+                      } else {
+                        _selectedLines.remove(key);
+                      }
+                    });
+                  },
+                ),
+              const SizedBox(height: AppSpacing.sm),
+              DropdownButtonFormField<String>(
+                initialValue: _targetSubAccountId,
+                isExpanded: true,
+                decoration:
+                    const InputDecoration(labelText: 'Hangi hesaba taşınsın?'),
+                items: [
+                  for (final sub in subAccounts)
+                    DropdownMenuItem(
+                      value: sub['id'] as String? ?? '',
+                      child: Text(sub['displayName'] as String? ?? 'Misafir',
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                ],
+                onChanged: (value) =>
+                    setState(() => _targetSubAccountId = value),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Vazgeç'),
+        ),
+        ElevatedButton(
+          onPressed: !_canConfirm
+              ? null
+              : () => Navigator.of(context).pop(
+                    _byItems
+                        ? _SplitByItems(
+                            subAccountId: _targetSubAccountId!,
+                            lines: _selectedLines.toList(),
+                          )
+                        : _SplitEqually(_selectedSubAccountIds.toList()),
+                  ),
+          child: const Text('Böl'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Adım 3 (2026-11-06) — the operator's own requested reason set for
+/// voiding an accepted line: "Müşteri Vazgeçti/Hatalı Giriş/Mutfak Fire-
+/// Zayi". **Deliberately excludes "İkram"** — comping an item (keeping it
+/// served/billed as zero) and cancelling it (voiding it, reversing stock
+/// as if it was never made — `applyAcceptedLineCancellation`'s own stock-
+/// reversal handling) are different real-world actions with different
+/// financial/stock effects; conflating them under one reason code would
+/// silently reverse stock for an item that was actually prepared and
+/// given away. İkram has its own per-line action instead (see
+/// `_TableAdisyonPanelState._ikramLine`/`PosLineTile`'s "İkram Yap" icon),
+/// routed through `requestCheckFinancialAdjustment` (scope: product,
+/// adjustmentType: complimentary) — the existing remote-approval-gated
+/// comp flow, never the cancellation one.
+const _acceptedLineCancellationReasonCodes = <String, String>{
+  'customerChangedMind': 'Müşteri Vazgeçti',
+  'dataEntryError': 'Hatalı Giriş',
+  'kitchenWaste': 'Mutfak Fire/Zayi',
+};
 
 /// A small reusable reason-code + free-text dialog — backs both the
 /// accepted-line cancellation request and (via its own instance) the

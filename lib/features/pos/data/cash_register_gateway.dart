@@ -254,6 +254,7 @@ class DailyRevenueSummary {
     required this.cardMinorUnits,
     required this.otherMinorUnits,
     required this.totalMinorUnits,
+    this.complimentaryMinorUnits = 0,
   });
 
   final String sessionId;
@@ -263,6 +264,14 @@ class DailyRevenueSummary {
   final int otherMinorUnits;
   final int totalMinorUnits;
 
+  /// Adım 3 (2026-11-06) — "İkram Toplamı" for the Z-Raporu: the sum of
+  /// every active `checkFinancialAdjustments` doc for this session (a
+  /// reversed comp nets to zero on its own, server-side). **Disclosed
+  /// scope**: comp (İkram) only — a cancelled-line value total ("İptal
+  /// Toplamı") isn't included; see `getDailyRevenueSummary`'s own doc
+  /// comment for why.
+  final int complimentaryMinorUnits;
+
   factory DailyRevenueSummary.fromWire(Map<String, dynamic> data) {
     return DailyRevenueSummary(
       sessionId: data['sessionId'] as String,
@@ -271,6 +280,7 @@ class DailyRevenueSummary {
       cardMinorUnits: data['cardMinorUnits'] as int,
       otherMinorUnits: data['otherMinorUnits'] as int,
       totalMinorUnits: data['totalMinorUnits'] as int,
+      complimentaryMinorUnits: data['complimentaryMinorUnits'] as int? ?? 0,
     );
   }
 }

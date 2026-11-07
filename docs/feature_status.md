@@ -10996,3 +10996,80 @@ than pumping it as bare body content). `flutter analyze`: clean. `functions`: `n
 clean (the `areaName` passthrough is additive only; **not** covered by a new emulator test — same
 Java 21+ environment limitation disclosed every prior phase). `flutter test` (whole project): see
 the final gate run below for the updated count.
+
+### Adım 3 — Finansal & Kasa Operasyonları (2026-11-06/07)
+
+Full reasoning in `docs/decisions.md` ADR-061. Three-part package; the user's literal request for
+part 1 (where "Parçalı Öde" lives) and part 2 (a local manager PIN) both had to be corrected against
+real, verified constraints — see ADR-061 for the Decision Review raised on each, and the user's own
+confirmed answers.
+
+1. **Parçalı Ödeme (Split Bill).** Equal split (`splitEqualByHeadcount`) and item-based split
+   (`splitByProduct`/`splitByQuantity`/`splitByCustomer`) already existed, already tested, already
+   reachable from `pos_table_workspace_screen.dart`'s "... Diğer" grid. **Corrected finding**: every
+   split callable requires the check to still be `open` server-side (`requireOpenUnlockedCheck`) —
+   but `PosCheckoutScreen` only ever opens once a check is already `readyForPayment`/`paid`. Adding
+   "Parçalı Öde" *inside* the compact checkout modal, as originally asked, would mean every tap
+   fails with a backend precondition error — the modal opens strictly too late in the check's own
+   lifecycle for any split to still be legal. **Corrected placement** (user-confirmed): the
+   workspace screen's own main payment button, while the check is still `open`. Tapping "Ödemeye
+   Hazırla" there now opens a "Tek Hesap Olarak Öde" / "Parçalı Öde" choice sheet (the single-check
+   path is 100% unchanged — same call, same tests, just one extra tap through the sheet). "Parçalı
+   Öde" opens `_SplitBillDialog` with two modes:
+   - **Eşit Bölüşüm**: a checklist of this table's own *existing* sub-accounts (≥2 required) —
+     `splitCheckEqualByHeadcount`'s real contract takes existing sub-account ids, never a free-typed
+     headcount number; there is no "create N new guests" capability to build a number-entry UI
+     against.
+   - **Kalem Seçimi**: a checklist of accepted order lines + one target sub-account, calling
+     `splitByProduct` once per selected line — mirroring exactly how `_ensureAllocationsThenFinalize`
+     (2026-11-04) already loops over lines for its own auto-allocation fallback.
+
+   Either mode finishes by calling the existing `onFinalize` (`finalizeCheckReadyForPayment`)
+   directly — no new backend capability anywhere in this item.
+2. **Zayi / İptal & İkram Yetkilendirmesi.** Reason-required cancellation
+   (`requestAcceptedLineCancellation`) and İkram/comp (`requestCheckFinancialAdjustment`,
+   `adjustmentType: "complimentary"`) already existed, already remote-approval-gated
+   (`docs/admin_pos_architecture.md` §16, **Locked**: self-approval forbidden, fail-closed offline,
+   no bypass). **Corrected finding**: a local manager PIN, as originally asked, would either
+   conflict with that lock or need to be a genuinely new PIN-storage/authentication feature (hashed
+   PIN, rate-limiting) — raised as a Decision Review; user confirmed: skip the PIN, fix only the
+   reason list. **Done**: the 3 existing cancellation-reason dialogs (`pos_table_workspace_screen
+   .dart`) now share one real list — `{customerChangedMind: "Müşteri Vazgeçti", dataEntryError:
+   "Hatalı Giriş", kitchenWaste: "Mutfak Fire/Zayi"}` — replacing the old generic 3-code set.
+   **"İkram" is deliberately excluded from this list, not merged in**: cancelling a line reverses
+   its stock (`applyAcceptedLineCancellation`'s own stock-reversal handling, for an item treated as
+   never made); comping a line keeps it served/billed-zero. Conflating the two under one reason code
+   would silently reverse stock for food that was actually prepared and given away. **Not built this
+   pass, disclosed rather than guessed at**: a genuinely safe per-line "İkram Yap" action needs
+   `requestCheckFinancialAdjustment`'s `scope: "product"` path, which requires a `CheckAllocationDoc`
+   to already exist for that specific line — and whether `splitByProduct` is safely re-callable for
+   a line that already has one (vs. creating a duplicate allocation) was not verified against the
+   real backend before this pass's budget ran out. The existing whole-check/sub-account İkram flow
+   (`_AdjustmentDialog`, already built) remains the only sanctioned path until that's resolved.
+3. **Gün Sonu (Z Raporu) & Kasa Kapanışı.** Cash counting, variance calc, manager-approval-for-
+   variance, and the report's own content/text preview all already existed
+   (`EndOfDayScreen`/`cashRegisterEngine.ts`). **Corrected finding**: `UnconfiguredZReportPrinterAdapter`
+   was the ONLY adapter, with a doc comment claiming "no real ESC/POS transport exists in this app"
+   — true when written, stale now (the 2026-11-05 till-receipt feature wired a real
+   `RawPrinterAdapter`/`WindowsRawPrinterAdapter`). **Done**: new `EscPosZReportEncoder` (mirrors
+   `EscPosReceiptEncoder`/`EscPosKitchenTicketEncoder`'s exact primitives/codepage choice) +
+   `WindowsZReportPrinterAdapter`, wired into `EndOfDayScreen` in place of the stub — same
+   "POS80 Printer" queue, same `ReceiptPrinterSettings.codepage`. `ZReportContent` moved to a new
+   domain file (`pos/domain/cash/z_report_content.dart`) to avoid a `printing/domain` →
+   `pos/data` → `printing/domain` import cycle the encoder would otherwise have created. Also added:
+   "İkram Toplamı" — `getDailyRevenueSummary` now sums every active `checkFinancialAdjustments` doc
+   for the session (a reversed comp nets to zero on its own). **Disclosed, not included**: "İptal
+   Toplamı" (the money value of cancelled-after-acceptance lines) — this codebase's order-line model
+   has no price field of its own, pricing lives at the check/allocation level, and
+   `applyAcceptedLineCancellation` never touches any check/allocation total; there is no existing,
+   correct aggregate to read this from without risking a wrong number on an official financial
+   report, so it's left out rather than approximated. Also fixed, same bug class as the till
+   receipt: `₺` (no codepage slot on any classic ESC/POS table) → `TL`, in both the printed receipt
+   and the on-screen text preview.
+
+New tests: `esc_pos_z_report_encoder_test.dart` (new, 4 cases), `end_of_day_screen_test.dart` (+1
+case — full close-and-print flow, İkram Toplamı on-screen and in the preview text),
+`pos_table_workspace_screen_test.dart` (+3 cases for Split Bill; 3 pre-existing "Ödemeye Hazırla"
+tests updated for the new choice-sheet step — zero behavior change for the single-check path they
+cover). `flutter analyze`: clean. `functions`: `npx tsc --noEmit` clean. `flutter test` (whole
+project): see the final gate run below for the updated count.
