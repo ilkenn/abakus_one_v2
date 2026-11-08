@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../pos/domain/kitchen/kitchen_ticket.dart';
 import 'receipt_codepage.dart';
+import 'turkish_ascii_transliteration.dart';
 
 /// Encodes a [KitchenTicket] into the raw ESC/POS byte stream for an 80mm
 /// thermal printer — Self-Order QR Faz 5 (23-rule plan §6, "onay sonrası
@@ -99,7 +100,9 @@ abstract final class EscPosKitchenTicketEncoder {
 
   /// Identical table/reasoning to `EscPosReceiptEncoder._encodeTurkish` —
   /// see that method's own doc comment.
-  static List<int> _encodeTurkish(String text, ReceiptCodepage codepage) {
+  static List<int> _encodeTurkish(String rawText, ReceiptCodepage codepage) {
+    // 2026-11-08 — see turkish_ascii_transliteration.dart's own doc comment.
+    final text = transliterateTurkishToAscii(rawText);
     if (codepage == ReceiptCodepage.pc857) {
       const pc857 = <int, int>{
         0x00C7: 0x80, // Ç

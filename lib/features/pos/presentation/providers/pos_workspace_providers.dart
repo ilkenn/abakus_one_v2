@@ -166,11 +166,14 @@ class ReceiptPrinterSettings {
       _prefs.setString(_codepageKey, value.name);
 
   /// Adım 4 (2026-11-07) — whether a successfully-confirmed cash tender
-  /// should fire [kCashDrawerKickBytes] at the same printer queue. Defaults
-  /// to `true` (the operator's own requested default); staff can still turn
-  /// it off for a till with no drawer wired to the printer.
+  /// should fire [kCashDrawerKickBytes] at the same printer queue.
+  /// **Default flipped to `false` 2026-11-08** (operator's own explicit
+  /// instruction: no physical drawer wired to the printer for the till
+  /// currently under test) — still a real, working feature behind this
+  /// same persisted setting, just off until a till that actually has a
+  /// drawer turns it on.
   bool get openCashDrawerOnCashPayment =>
-      _prefs.getBool(_openCashDrawerOnCashPaymentKey) ?? true;
+      _prefs.getBool(_openCashDrawerOnCashPaymentKey) ?? false;
 
   Future<void> setOpenCashDrawerOnCashPayment(bool value) =>
       _prefs.setBool(_openCashDrawerOnCashPaymentKey, value);

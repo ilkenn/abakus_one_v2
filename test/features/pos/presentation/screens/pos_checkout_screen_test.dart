@@ -487,6 +487,8 @@ void main() {
         'nakit tahsilat sunucuda basariyla onaylaninca kasa cekmecesi '
         'sinyali ayni yazici kuyruguna gonderilir', (tester) async {
       SharedPreferences.setMockInitialValues({});
+      await ReceiptPrinterSettings(await SharedPreferences.getInstance())
+          .setOpenCashDrawerOnCashPayment(true);
       final adapter = await pumpOpenCheckout(tester);
 
       await tester.enterText(
@@ -508,6 +510,8 @@ void main() {
         'Boncuk tenderinde kasa cekmecesi tetiklenmez (yalnizca nakit '
         'icin)', (tester) async {
       SharedPreferences.setMockInitialValues({});
+      await ReceiptPrinterSettings(await SharedPreferences.getInstance())
+          .setOpenCashDrawerOnCashPayment(true);
       final adapter = await pumpOpenCheckout(tester);
 
       await tester.ensureVisible(find.text('Boncuk'));
@@ -529,11 +533,9 @@ void main() {
     });
 
     testWidgets(
-        '"Nakit Odemede Para Cekmecesini Ac" ayari kapatilmissa sinyal '
-        'gonderilmez', (tester) async {
+        '"Nakit Odemede Para Cekmecesini Ac" ayari kapaliyken (2026-11-08 '
+        'yeni varsayilan) sinyal gonderilmez', (tester) async {
       SharedPreferences.setMockInitialValues({});
-      await ReceiptPrinterSettings(await SharedPreferences.getInstance())
-          .setOpenCashDrawerOnCashPayment(false);
       final adapter = await pumpOpenCheckout(tester);
 
       await tester.enterText(
@@ -551,6 +553,8 @@ void main() {
         'cekmece sinyali basarisiz olsa bile zaten onaylanmis odeme hata '
         'olarak gosterilmez', (tester) async {
       SharedPreferences.setMockInitialValues({});
+      await ReceiptPrinterSettings(await SharedPreferences.getInstance())
+          .setOpenCashDrawerOnCashPayment(true);
       final failingAdapter = _ThrowingRawPrinterAdapter();
       final gateway = _FakePaymentGateway(openSession());
       await tester.pumpWidget(

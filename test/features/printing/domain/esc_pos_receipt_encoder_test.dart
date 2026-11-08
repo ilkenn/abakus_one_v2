@@ -80,8 +80,10 @@ void main() {
   });
 
   test(
-      'PC857 modunda Turkce harfler kendi dogrulanmis bayt degerleriyle '
-      'basilir (iconv-lite cp857 ile dogrulandi, tahmin edilmedi)', () {
+      '2026-11-08: fiziksel yazici ESC t secimini Turkce harfler icin '
+      'dogru uygulamadigi icin, Turkce harfler artik PC857 OZEL bayt '
+      'tablosu degil, duz ASCII olarak basilir (hangi codepage secili '
+      'olursa olsun)', () {
     final bytes = EscPosReceiptEncoder.encode(
       buildDoc(lines: const [
         ReceiptLineItem(
@@ -108,12 +110,13 @@ void main() {
       return false;
     }
 
-    // Ç=0x80, ı=0x8D, Ş=0x9E, Ü=0x9A — "productName" alani Latin-1
-    // passthrough DEGIL, PC857'nin kendi 0x80-0xFF duzenini kullanmali.
-    expect(containsBytes([0x80]), isTrue); // Ç
-    expect(containsBytes([0x8D]), isTrue); // ı
-    expect(containsBytes([0x9E]), isTrue); // Ş
-    expect(containsBytes([0x9A]), isTrue); // Ü
+    // "Cilgin Sohret Uclu" — plain ASCII, matches regardless of codepage.
+    expect(containsBytes('Cilgin Sohret Uclu'.codeUnits), isTrue);
+    // The old PC857-specific override bytes must NEVER appear anymore —
+    // proves this isn't accidentally still using the override table.
+    expect(containsBytes([0x80]), isFalse); // old Ç byte
+    expect(containsBytes([0x9E]), isFalse); // old Ş byte
+    expect(containsBytes([0x9A]), isFalse); // old Ü byte
   });
 
   test('TRY disi bir para birimi kendi kodunu degismeden kullanir', () {
@@ -141,10 +144,39 @@ void main() {
   });
 }
 
-/// Mirrors `EscPosReceiptEncoder._encodeTurkish`'s exact override table —
-/// kept as a small, deliberate duplication, never importing the private
-/// method itself.
-List<int> _encodeTurkishLikeEncoder(String text) {
+/// Mirrors `EscPosReceiptEncoder._encodeTurkish`'s exact behavior — 2026-
+/// 11-08: transliterates Turkish letters to ASCII first (see
+/// `turkish_ascii_transliteration.dart`), then falls back to the WPC1254
+/// override table for anything that still isn't plain ASCII (never
+/// reached by a Turkish letter anymore, kept for parity with the real
+/// method). Kept as a small, deliberate duplication, never importing the
+/// private method itself.
+List<int> _encodeTurkishLikeEncoder(String rawText) {
+  const transliteration = <int, String>{
+    0x00C7: 'C',
+    0x00E7: 'c',
+    0x00D6: 'O',
+    0x00F6: 'o',
+    0x00DC: 'U',
+    0x00FC: 'u',
+    0x011E: 'G',
+    0x011F: 'g',
+    0x0130: 'I',
+    0x0131: 'i',
+    0x015E: 'S',
+    0x015F: 's',
+  };
+  final buffer = StringBuffer();
+  for (final rune in rawText.runes) {
+    final replacement = transliteration[rune];
+    if (replacement != null) {
+      buffer.write(replacement);
+    } else {
+      buffer.writeCharCode(rune);
+    }
+  }
+  final text = buffer.toString();
+
   const overrides = <int, int>{
     0x011E: 0xD0, // Ğ
     0x011F: 0xF0, // ğ

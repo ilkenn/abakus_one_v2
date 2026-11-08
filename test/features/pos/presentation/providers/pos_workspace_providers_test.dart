@@ -42,23 +42,25 @@ void main() {
   });
 
   group('ReceiptPrinterSettings.openCashDrawerOnCashPayment', () {
-    test('defaults to true when nothing has ever been stored', () async {
+    test(
+        'defaults to false when nothing has ever been stored (2026-11-08: '
+        'no drawer wired on the till under test)', () async {
       SharedPreferences.setMockInitialValues({});
       final settings =
           ReceiptPrinterSettings(await SharedPreferences.getInstance());
 
-      expect(settings.openCashDrawerOnCashPayment, isTrue);
+      expect(settings.openCashDrawerOnCashPayment, isFalse);
     });
 
-    test('setOpenCashDrawerOnCashPayment(false) round-trips the value',
+    test('setOpenCashDrawerOnCashPayment(true) round-trips the value',
         () async {
       SharedPreferences.setMockInitialValues({});
       final settings =
           ReceiptPrinterSettings(await SharedPreferences.getInstance());
 
-      await settings.setOpenCashDrawerOnCashPayment(false);
+      await settings.setOpenCashDrawerOnCashPayment(true);
 
-      expect(settings.openCashDrawerOnCashPayment, isFalse);
+      expect(settings.openCashDrawerOnCashPayment, isTrue);
     });
   });
 }

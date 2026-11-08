@@ -11211,3 +11211,22 @@ this codebase's own established, already-passing emulator-test fixture patterns 
 disclosed as unverified by a real run rather than claimed as passing. `flutter analyze`: clean
 (same pre-existing `app_constants.dart` info). `flutter test` (whole project): 3987 passing, 0
 failures (+13 over the Adım 4 baseline of 3974).
+
+### Printer Turkish-letter fix: ASCII transliteration, cash-drawer default off (2026-11-08)
+
+Full reasoning in `docs/decisions.md` ADR-064. Real-hardware testing on the Windows dev machine
+found the 2026-11-06 physical-self-test-driven WPC1254 codepage selection still not rendering
+Turkish letters correctly — ASCII text printed fine, Turkish letters specifically did not, the
+signature of a printer not actually honoring `ESC t` for Turkish codepages at all. Per the user's
+own explicit instruction: new `turkish_ascii_transliteration.dart` transliterates every receipt-
+bound string to plain ASCII (ş→s, ğ→g, ı→i, ç→c, ö→o, ü→u + capitals) BEFORE the existing per-
+codepage byte tables run, applied to all three encoders (till receipt, kitchen ticket, Z-raporu) for
+consistency — the WPC1254/PC857 tables stay in place, just never reached by a Turkish letter anymore.
+Also: `ReceiptPrinterSettings.openCashDrawerOnCashPayment` default flipped to `false` (no drawer
+wired on the till under test) — still a real, working, persisted setting.
+
+New test: `turkish_ascii_transliteration_test.dart` (4 cases). Updated: the three encoder test
+files' `_encodeTurkishLikeEncoder` helpers and the receipt encoder's PC857 test (now asserts ASCII
+output, not the old override bytes), `pos_workspace_providers_test.dart`/`pos_checkout_screen_test
+.dart` for the new cash-drawer default. `flutter analyze`: clean. `flutter test` (whole project):
+3991 passing, 0 failures (+4 over 3987).

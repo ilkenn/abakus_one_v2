@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'receipt_codepage.dart';
 import 'receipt_document.dart';
+import 'turkish_ascii_transliteration.dart';
 
 /// Encodes a [ReceiptDocument] into the raw ESC/POS byte stream for an
 /// 80mm thermal till printer (~48-character line width at the printer's
@@ -135,7 +136,15 @@ abstract final class EscPosReceiptEncoder {
   ///
   /// Either way, anything outside what the selected table actually
   /// supports falls back to `?` rather than sending an undefined byte.
-  static List<int> _encodeTurkish(String text, ReceiptCodepage codepage) {
+  static List<int> _encodeTurkish(String rawText, ReceiptCodepage codepage) {
+    // 2026-11-08 — see turkish_ascii_transliteration.dart's own doc comment:
+    // physical testing showed this specific printer not honoring the
+    // ESC t codepage selection below for Turkish letters. Transliterating
+    // first means every Turkish letter is already plain ASCII (≤0x7F) by
+    // the time the per-codepage logic below runs, so it always takes the
+    // safe passthrough branch for them regardless of which table ends up
+    // actually active on the hardware.
+    final text = transliterateTurkishToAscii(rawText);
     if (codepage == ReceiptCodepage.pc857) {
       const pc857 = <int, int>{
         0x00C7: 0x80, // Ç

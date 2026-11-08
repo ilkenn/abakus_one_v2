@@ -20272,3 +20272,50 @@ assertions), `npx tsc --noEmit` clean, but genuinely unverified by a real run; d
 claimed as passing. Every Flutter-side behavior is verified by a real, passing `flutter test` run.
 
 See `docs/feature_status.md`'s "Adım 5" entry for the full file list and test verification status.
+
+## ADR-064 — Printer Turkish letters: ASCII transliteration fallback, correcting ADR's own earlier WPC1254/PC857 codepage fix (2026-11-08)
+
+- Tarih: 2026-11-08
+- Durum: Accepted
+
+### Context
+
+Real-hardware printing (local Windows test machine, physical POS80 printer) showed ADR from
+2026-11-06 (`ESC t 45`/WPC1254 selected per that printer's own physical self-test) still not
+correctly rendering Turkish letters — ASCII-only text (notes/descriptions) printed fine, Turkish
+letters specifically did not. The signature symptom of a printer that doesn't actually honor the
+`ESC t` codepage-select command for Turkish tables at all and silently stays on its own default
+(CP437) regardless of what byte follows — not something a third codepage guess can fix without
+another physical self-test this pass had no way to run.
+
+User's own explicit, reasoned request: transliterate Turkish letters to the nearest ASCII letter
+(ş→s, ğ→g, ı→i, ç→c, ö→o, ü→u, and capitals) for every receipt-bound string, independent of
+whatever codepage the hardware actually honors. This is the standard, hardware-independent
+workaround for exactly this class of problem — never relying on a printer's own codepage switching
+for characters outside ASCII. A printed "Citir Tavuk" instead of "Çıtır Tavuk" is a readable, honest
+degradation, not a corrupted character — the same quality bar the codepage work itself was held to
+(ADR's 2026-11-06 entry), just a different mechanism once that one proved unreliable in practice.
+
+### Decision
+
+New `turkish_ascii_transliteration.dart` (`printing/domain/`) — applied inside all three encoders'
+own `_encodeTurkish` (`EscPosReceiptEncoder`, `EscPosKitchenTicketEncoder`, `EscPosZReportEncoder`,
+kept consistent across all three, not just the till receipt the user named) as the FIRST step,
+before the existing per-codepage byte-table logic. After transliteration every Turkish letter is
+already plain ASCII, so the WPC1254/PC857 override tables built 2026-11-06 are never reached by one
+anymore — left in place (not deleted), still real/tested/correct for any other ≤0xFF content, and
+still the right fallback if transliteration is ever disabled. `ESC t` codepage selection itself is
+still sent (harmless, no reason to remove).
+
+Also per explicit instruction: `ReceiptPrinterSettings.openCashDrawerOnCashPayment`'s default
+flipped `true` → `false` (Adım 4, 2026-11-07's own default) — no drawer wired to the printer
+currently under test. Still a real, working, persisted setting; a till with a drawer turns it on.
+
+New test: `turkish_ascii_transliteration_test.dart`. Updated:
+`esc_pos_receipt_encoder_test.dart`/`esc_pos_kitchen_ticket_encoder_test.dart`/
+`esc_pos_z_report_encoder_test.dart`'s own `_encodeTurkishLikeEncoder` test helpers (transliterate
+first, mirroring the real encoders) and the receipt encoder's PC857 test (now asserts ASCII output
+and that the old override bytes never appear, instead of asserting the old override bytes directly).
+`pos_workspace_providers_test.dart`/`pos_checkout_screen_test.dart` updated for the new cash-drawer
+default. `flutter analyze`: clean. `flutter test` (whole project): 3991 passing, 0 failures (+4 over
+the Adım 5 baseline of 3987).
