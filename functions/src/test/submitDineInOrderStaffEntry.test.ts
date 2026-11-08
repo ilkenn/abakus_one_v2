@@ -215,6 +215,15 @@ test("submitDineInOrder staffEntry: a permission- and device-checked staff entry
   for (const line of order!.lines as Array<{ status: string }>) {
     assert.strictEqual(line.status, "accepted");
   }
+  // 2026-11-08 bug fix — the order-level `status` field was unconditionally
+  // "pendingConfirmation" regardless of lineStatus, even though every line's
+  // own status, linesDispositionSummary, and the kitchen/stock-enqueue gate
+  // already correctly branched on it. `firestore_kitchen_ticket_repository
+  // .dart`'s `_kitchenEligibleStatuses` (confirmed/preparing/ready) never
+  // matched "pendingConfirmation", so a staff-entered order silently never
+  // reached the KDS board — kitchenWorkItems were enqueued correctly, the
+  // order itself just never satisfied the KDS screen's own Firestore query.
+  assert.strictEqual(order!.status, "confirmed");
 
   const subAccountId = body.result?.subAccountId as string;
   const subAccount = (await db().collection("guestSubAccounts").doc(subAccountId).get()).data()!;

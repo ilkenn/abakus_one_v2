@@ -426,7 +426,25 @@ function buildDineInOrderDocument(params: {
     organizationId: params.organizationId,
     orderId: params.orderId,
     orderNumber: params.orderNumber,
-    status: "pendingConfirmation",
+    // 2026-11-08 bug fix — this was unconditionally "pendingConfirmation"
+    // regardless of `lineStatus`, even though `linesDispositionSummary`
+    // two fields below (and the kitchen/stock-enqueue gate above, and
+    // every line's own `status`) already correctly branch on it. A
+    // staffEntry order's lines are written `accepted` immediately
+    // ("trusted staff entry IS the approval" — this file's own stated
+    // precedent), but the ORDER itself stayed stuck at
+    // `pendingConfirmation` forever, which `firestore_kitchen_ticket_
+    // repository.dart`'s `_kitchenEligibleStatuses` (`confirmed`/
+    // `preparing`/`ready`) never matches — the real cause of a staff-
+    // entered order never appearing on the KDS board, with no exception
+    // anywhere (kitchenWorkItems were still correctly enqueued; the KDS
+    // screen's OWN query over `orders` simply never returned the order in
+    // the first place). `confirmed` mirrors exactly what
+    // `advanceDineInOrderStatus(targetStatus: "confirmed")` would transition
+    // a guestSession order to once staff confirms it — staffEntry starts
+    // there directly instead of needing that same confirmation performed
+    // a second time by the same staff member who just created the order.
+    status: params.lineStatus === "accepted" ? "confirmed" : "pendingConfirmation",
     channel: "dineInQr",
     pricingAuthority: ORDER_PRICING_AUTHORITY_SERVER_V1,
     branchId: params.branchId,
