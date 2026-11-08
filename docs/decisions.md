@@ -20191,3 +20191,84 @@ and a real serial-port scale protocol are both explicitly deferred, not silently
 `docs/feature_status.md`'s "Adım 4" entry.
 
 See `docs/feature_status.md`'s "Adım 4" entry for the full file list and test verification status.
+
+## ADR-063 — İleri Operasyon & Servis Akışları: Paket/Gel-Al personel akışı, Mutfak↔Misafir durum köprüsü (büyük ölçüde zaten vardı), Canlı Adisyon Gateway'i (2026-11-07/08)
+
+- Tarih: 2026-11-07 / 2026-11-08
+- Durum: Accepted
+
+### Context
+
+Roadmap's final item, three parts. Research (three parallel investigations) found: part 2 was
+mostly already built and just needed one small, genuinely-missing piece; part 1 needed a real,
+disclosed terminology correction plus a real, disclosed backend API-contract addition; part 3 was
+already fully specified by ADR-058 itself and needed no further correction — only implementation.
+
+1. **Paket / Gel-Al.** The user's literal "Hazırlanıyor, Yolda, Teslim Edildi" status list doesn't
+   match the real takeaway lifecycle (`advanceTakeawayOrderStatus.ts`'s own locked
+   `confirmed -> preparing -> ready -> completed`) — **"Yolda" does not exist for pickup**; that's
+   `outForDelivery`, a delivery-only concept (a courier), never applicable to a customer walking in
+   to collect their own order. Corrected to the real statuses, reusing `admin_orders_screen.dart`'s
+   own already-established Turkish labels verbatim for app-wide consistency ("Onay Bekliyor" /
+   "Onaylandı" / "Hazırlanıyor" / "Hazır, Gelip Alabilir" / "Tamamlandı") rather than inventing new
+   wording for the same statuses. Separately, **"yeni paket sipariş açma" was genuinely net-new**:
+   `submitTakeawayOrder` only ever accepted a real phone-verified customer or a QR-guest-session
+   caller — there was no staff-initiated path at all. Raised as a Decision Review (add a new
+   `mode: "staffEntry"` backend branch, mirroring `submitDineInOrder.ts`'s own AP-3 Wave 1
+   `staffEntry` discriminator exactly, vs. deferring order creation and only wiring list/status this
+   pass); user confirmed: add it. Implemented as a new, explicitly-mode-discriminated branch checked
+   BEFORE the two existing shape-based branches, so every existing caller (QR counter guest,
+   authenticated in-app customer) is completely unaffected. Requires `manageTakeawayOrders` (the
+   SAME permission `advanceTakeawayOrderStatus`/`respondToTakeawayOrder` already require, not
+   `manageDineInOrders`) + branch access + an active device session — never trusts a client-supplied
+   `restaurantId`, deriving it server-side from the `branches/{branchId}` doc instead. Written
+   directly at `status: "confirmed"` (skipping `pendingConfirmation` — the staff member creating it
+   already is that approval step, same reasoning `submitDineInOrder.ts`'s own `staffEntry` mode
+   established), so it's immediately ready for the existing, unmodified
+   `advanceTakeawayOrderStatus`/`KitchenActionGateway.advanceOrderStatus` lifecycle. No Boncuk/
+   reward/campaign supported (disclosed simplification, same as dine-in `staffEntry`). Also
+   discovered and closed, as a side effect: `TakeawayOrderResponseGateway` (confirm/reject a
+   guest-placed order) had **zero client callers anywhere in this app** before this pass (per that
+   file's own pre-existing doc comment) — now wired into the new POS screen, closing a real gap
+   where a guest-placed takeaway order could never reach KDS at all.
+2. **KDS↔misafir durum köprüsü.** **Corrected finding, good news**: most of this already worked.
+   `transitionKitchenWorkItem`'s `allSiblingsReady` response already drives
+   `KitchenActionGateway.advanceOrderStatus`, which writes the canonical `Order.status` the guest's
+   own "Aktif Siparişin" screen already live-reads via `orderStatusStreamProvider` — already reaching
+   `OrderStatus.ready` → "Paketleniyor / Servise Hazır" today, for every channel, with no new code.
+   The one genuinely missing piece: the **Masalar grid card** (as opposed to the table workspace
+   screen's own already-existing per-order "X/Y hazır" badge) had no kitchen-ready signal at all —
+   only `pendingQrLineCount`. Added `kitchenReadyOrderCount` to `getPosBranchTableOverview`,
+   computed from the SAME `orders` snapshot already fetched for `pendingQrLineCount` (no second
+   query) by counting orders whose top-level `status` has reached `"ready"`, and a new "Mutfakta
+   Hazır" badge on the grid card. Deliberately no new sound — the existing alert sound is reserved
+   for new-QR-order arrivals; reusing it for a different event would blur what staff are being told.
+3. **Canlı Adisyon Okuma Gateway'i.** ADR-058 had already fully specified this (a `getLiveTableBill`
+   callable mirroring `getPosTableOperationalView`'s "narrow read-only slice, nothing raw" pattern,
+   returning `{lines, running total, applied discounts}` for the caller's own active
+   `tableSessionId`, re-verified via the SAME ownership check `submitDineInOrder.ts`'s `guestSession`
+   mode already uses) — implemented exactly as specified, no correction needed. **No Security Rules
+   change** — `checks`/`checkFinancialAdjustments` stay `allow read: if false` for every non-Admin-
+   SDK caller exactly as before; this reads via the Admin SDK from inside an authorization-checked
+   Cloud Function, same boundary every other guest-facing read already uses. The running total is
+   computed from `orders`' own `accepted` lines directly, never from `checks.computedTotalMinorUnits`
+   — that field only reflects money already explicitly allocated/split, which stays near zero for
+   the common "nobody has split yet" case even as the guest keeps ordering; the discount source is
+   genuinely-unambiguous `checkFinancialAdjustments` records instead, avoiding the exact
+   subtotal-vs-computedTotal conflation `TableReceiptBuilder` itself is careful not to make.
+   **Disclosed scope boundary**: the running total does not net out a partial/split payment already
+   made against it — narrowing this to "what do I personally still owe" is a separate, larger
+   question left for a future pass. User-confirmed UI placement: a small "Masa Toplamı" banner on
+   the existing "Aktif Siparişin" guest screen (tap to see the line breakdown), not a new dedicated
+   screen — matches ADR-058's own "hafif" (lightweight) framing.
+
+### Decision
+
+Implemented all three items at the scope corrected/confirmed above. Two backend-only test files
+(`getLiveTableBill.test.ts`, `submitTakeawayOrderStaffEntry.test.ts`) could not be executed in this
+environment — the Firebase emulator requires a JDK 21+ this sandbox doesn't have — written to mirror
+this codebase's own established, already-passing emulator-test patterns exactly (fixture pipeline,
+assertions), `npx tsc --noEmit` clean, but genuinely unverified by a real run; disclosed rather than
+claimed as passing. Every Flutter-side behavior is verified by a real, passing `flutter test` run.
+
+See `docs/feature_status.md`'s "Adım 5" entry for the full file list and test verification status.

@@ -70,6 +70,7 @@ class PosBranchTableSummary {
     required this.status,
     required this.activeTableSessionId,
     required this.pendingQrLineCount,
+    this.kitchenReadyOrderCount = 0,
     this.pendingServiceRequests = const [],
     this.areaName = '',
   });
@@ -79,6 +80,12 @@ class PosBranchTableSummary {
   final String status;
   final String? activeTableSessionId;
   final int pendingQrLineCount;
+
+  /// Adım 5 (2026-11-07) — how many of this table's orders have already
+  /// reached `status == "ready"` (every kitchen line confirmed ready) but
+  /// haven't moved past that yet — the Masalar grid card's "Mutfakta Hazır"
+  /// badge.
+  final int kitchenReadyOrderCount;
   final List<PosPendingServiceRequest> pendingServiceRequests;
 
   /// `RestaurantTable.areaName` (free text, e.g. "Bahçe"/"Salon"/"Teras"),
@@ -94,6 +101,7 @@ class PosBranchTableSummary {
       status: data['status'] as String,
       activeTableSessionId: data['activeTableSessionId'] as String?,
       pendingQrLineCount: data['pendingQrLineCount'] as int,
+      kitchenReadyOrderCount: data['kitchenReadyOrderCount'] as int? ?? 0,
       pendingServiceRequests: [
         for (final raw in (data['pendingServiceRequests'] as List? ?? const []))
           PosPendingServiceRequest.fromWire(

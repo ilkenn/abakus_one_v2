@@ -10,6 +10,8 @@ import 'package:abakus_one_v2/features/admin/data/trusted_device_session_gateway
 import 'package:abakus_one_v2/features/admin/domain/trusted_device/trusted_device.dart';
 import 'package:abakus_one_v2/features/admin/presentation/providers/admin_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/admin/presentation/providers/trusted_device_session_providers.dart';
+import 'package:abakus_one_v2/features/orders/data/canonical_order_repository.dart';
+import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
@@ -355,6 +357,52 @@ void main() {
   });
 
   testWidgets(
+      'Adım 5 (2026-11-07): kitchenReadyOrderCount > 0 gosterir "Mutfakta '
+      'Hazır" rozetini, 0 iken hic gostermez', (tester) async {
+    final gateway = _FakePosOperationalViewGateway()
+      ..tables = [
+        const PosBranchTableSummary(
+          tableId: 'table-1',
+          displayName: 'Masa 1',
+          status: 'occupied',
+          activeTableSessionId: 'tsess-1',
+          pendingQrLineCount: 0,
+          kitchenReadyOrderCount: 1,
+        ),
+        const PosBranchTableSummary(
+          tableId: 'table-2',
+          displayName: 'Masa 2',
+          status: 'occupied',
+          activeTableSessionId: 'tsess-2',
+          pendingQrLineCount: 0,
+          kitchenReadyOrderCount: 0,
+        ),
+      ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          posOperationalViewGatewayProvider.overrideWithValue(gateway),
+          posDeviceContextProvider.overrideWithValue(
+            const PosDeviceContext(
+              organizationId: 'org-1',
+              branchId: 'branch-1',
+              deviceId: 'device-1',
+              deviceSessionId: 'session-1',
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: PosBranchOverviewScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('Mutfakta Hazır'), findsOneWidget,
+        reason: 'Masa 1 kitchenReadyOrderCount > 0, rozet gorunmeli');
+  });
+
+  testWidgets(
       'a pending service request badge is shown and one tap resolves it, refreshing the grid',
       (tester) async {
     final gateway = _FakePosOperationalViewGateway()
@@ -533,7 +581,10 @@ void main() {
 
   group('Masalar 5-sekme bölge filtresi (2026-11-06)', () {
     Future<void> pump(
-        WidgetTester tester, _FakePosOperationalViewGateway gateway) async {
+      WidgetTester tester,
+      _FakePosOperationalViewGateway gateway, {
+      List<Override> extraOverrides = const [],
+    }) async {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -546,6 +597,7 @@ void main() {
                 deviceSessionId: 'session-1',
               ),
             ),
+            ...extraOverrides,
           ],
           child: const MaterialApp(home: PosBranchOverviewScreen()),
         ),
@@ -613,9 +665,8 @@ void main() {
     });
 
     testWidgets(
-        '"Paket / Gel-Al" sekmesi gerçek veri olmadığını açıkça belirten bir '
-        'yer tutucu gösterir, asla sessizce boş bir masa listesi değil',
-        (tester) async {
+        'Adım 5 (2026-11-07): "Paket / Gel-Al" sekmesi artik gercek Paket '
+        'Siparisleri ekranini acar, masa listesini degil', (tester) async {
       final gateway = _FakePosOperationalViewGateway()
         ..tables = [
           const PosBranchTableSummary(
@@ -627,17 +678,21 @@ void main() {
             areaName: 'Bahçe',
           ),
         ];
-      await pump(tester, gateway);
+      await pump(
+        tester,
+        gateway,
+        extraOverrides: [
+          canonicalOrderRepositoryProvider
+              .overrideWithValue(InMemoryCanonicalOrderRepository()),
+        ],
+      );
 
       await tester.tap(find.text('Paket / Gel-Al'));
       await tester.pump();
 
       expect(find.text('Masa 1'), findsNothing);
-      expect(
-        find.textContaining(
-            'Paket / Gel-Al sipariş yönetimi bu ekranda henüz yok'),
-        findsOneWidget,
-      );
+      expect(find.text('Paket / Gel-Al Siparişleri'), findsOneWidget);
+      expect(find.text('Yeni Paket Sipariş'), findsOneWidget);
     });
   });
 

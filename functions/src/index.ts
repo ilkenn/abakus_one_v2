@@ -125,6 +125,12 @@ export { getPosTableOperationalView, getPosBranchTableOverview } from "./posOper
 // POS "Çok Tercih Edilenler" (Top 20 best-sellers), 2026-11-03 — BR-POS-001.
 export { getTopSellingProducts } from "./posTopSellingProducts";
 
+// Adım 5 (2026-11-07) — "Canlı Adisyon Okuma Gateway'i" (ADR-058's deferred
+// item, now implemented): the sole guest-facing read path for a table's own
+// live, running bill. Same `checks`/`checkFinancialAdjustments` lockdown as
+// above — this reads via the Admin SDK, no Security Rules change.
+export { getLiveTableBill } from "./getLiveTableBill";
+
 // AP-3 Wave 2 — money-safe Check/allocation model.
 export {
   openCheck,

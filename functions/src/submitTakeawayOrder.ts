@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onCall, HttpsError, type CallableRequest } from "firebase-functions/v2/https";
 import { getFirestore, Firestore, Timestamp } from "firebase-admin/firestore";
 import { resolveActiveTakeawayBranch } from "./takeawayScope";
 import {
@@ -17,6 +17,8 @@ import {
   type OrderLineModifierInput,
 } from "./takeawayPricing";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
+import { requireStaffPermission, requireBranchAccess } from "./staffAuthorization";
+import { requireActiveDeviceSession } from "./trustedDevice";
 import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "./orderPricingAuthority";
 import {
   LOYALTY_ACCOUNTS_COLLECTION,
@@ -520,14 +522,40 @@ export const submitTakeawayOrder = onCall(
     // fourth hand-rolled pairwise check.
     enforceBenefitExclusivity({ requestedBoncukAmount, selectedRewardId, selectedCampaignId });
 
+    const db = getFirestore();
+
+    // Adım 5 (2026-11-07) — "Paket / Gel-Al" POS entry point. Checked
+    // FIRST, before the two existing shape-based branches below, exactly
+    // like `submitDineInOrder.ts`'s own explicit `mode` discriminator
+    // (AP-3 Wave 1) — a staff-entered request never falls through to the
+    // `hasGuestField`/`hasAuthenticatedFields` dispatch, so every existing
+    // caller (QR counter guest, authenticated in-app customer) is
+    // completely unaffected by this addition.
+    if (data.mode === "staffEntry") {
+      return submitStaffEntryOrder(db, {
+        staffUid: uid,
+        submissionKey,
+        rawItems,
+        contactFirstName,
+        contactLastName,
+        contactPhone,
+        organizationId: data.organizationId,
+        branchId: data.branchId,
+        deviceId: data.deviceId,
+        deviceSessionId: data.deviceSessionId,
+        requestedBoncukAmount,
+        selectedRewardId,
+        selectedCampaignId,
+        request,
+      });
+    }
+
     const hasGuestField = typeof data.takeawaySessionId === "string";
     const hasAuthenticatedFields =
       data.restaurantId !== undefined ||
       data.branchId !== undefined ||
       data.pickupMode !== undefined ||
       data.pickupTime !== undefined;
-
-    const db = getFirestore();
 
     // ---------------------------------------------------------------
     // Branch dispatch — Faz D.4.1: determined by ENTRY MODE (whether the
@@ -763,6 +791,164 @@ async function submitGuestOrder(
         catalogReward: null,
         campaign: null,
         discountMinorUnits: 0,
+        actor: "customer",
+      }),
+    );
+
+    return { orderId, orderNumber, duplicate: false };
+  });
+}
+
+// -----------------------------------------------------------------------
+// Staff-entered path (Adım 5, 2026-11-07) — "Paket / Gel-Al" POS screen's
+// "Yeni Paket Sipariş" action. Mirrors `submitDineInOrder.ts`'s own
+// `staffEntry` mode: a trusted, permission-checked, device-bound staff
+// entry IS the approval (same reasoning, same disclosed simplification —
+// no Boncuk/reward/campaign benefit selection supported for a staff-
+// entered takeaway order either). Written directly at `status: "confirmed"`
+// (skipping `pendingConfirmation` — there is no separate "staff confirms
+// it" step left to perform, the staff member creating it already is
+// that step) so it's immediately ready for `advanceTakeawayOrderStatus`'s
+// existing `confirmed -> preparing -> ready -> completed` lifecycle,
+// reused completely unchanged.
+// -----------------------------------------------------------------------
+
+async function submitStaffEntryOrder(
+  db: Firestore,
+  params: {
+    staffUid: string;
+    submissionKey: string;
+    rawItems: RawItem[];
+    contactFirstName: string;
+    contactLastName: string;
+    contactPhone: string;
+    organizationId: unknown;
+    branchId: unknown;
+    deviceId: unknown;
+    deviceSessionId: unknown;
+    requestedBoncukAmount: number;
+    selectedRewardId: string | null;
+    selectedCampaignId: string | null;
+    request: CallableRequest;
+  },
+) {
+  const {
+    staffUid,
+    submissionKey,
+    rawItems,
+    contactFirstName,
+    contactLastName,
+    contactPhone,
+    requestedBoncukAmount,
+    selectedRewardId,
+    selectedCampaignId,
+    request,
+  } = params;
+
+  if (requestedBoncukAmount > 0 || selectedRewardId !== null || selectedCampaignId !== null) {
+    invalid("Boncuk/reward/campaign selection is not supported for staff-entered takeaway orders.");
+  }
+  if (typeof params.organizationId !== "string" || params.organizationId.length === 0) {
+    invalid("organizationId is required.");
+  }
+  if (typeof params.branchId !== "string" || params.branchId.length === 0) {
+    invalid("branchId is required.");
+  }
+  if (typeof params.deviceId !== "string" || params.deviceId.length === 0) {
+    invalid("deviceId is required.");
+  }
+  if (typeof params.deviceSessionId !== "string" || params.deviceSessionId.length === 0) {
+    invalid("deviceSessionId is required.");
+  }
+  const organizationId = params.organizationId as string;
+  const branchId = params.branchId as string;
+  const deviceId = params.deviceId as string;
+  const deviceSessionId = params.deviceSessionId as string;
+
+  // `manageTakeawayOrders` — the SAME permission `advanceTakeawayOrderStatus`/
+  // `respondToTakeawayOrder.ts` already require for every other staff
+  // action on a takeaway order, not `manageDineInOrders` (a different
+  // channel's own permission).
+  await requireStaffPermission(request, organizationId, "manageTakeawayOrders");
+  await requireBranchAccess(request, organizationId, branchId);
+  await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
+
+  // `resolveActiveTakeawayBranch` is deliberately NOT reused here — it
+  // also gates on the branch's own guest-facing "paused/busy" self-service
+  // flag, which doesn't apply to a staff member physically at the till
+  // creating a walk-in order (they already know, in person, whether the
+  // kitchen can take it). `restaurantId` is server-derived from the
+  // branch doc, never accepted as client input — mirrors
+  // `getPosTableOperationalView`'s own table-doc ownership check.
+  const branchDoc = await db.collection("branches").doc(branchId).get();
+  if (!branchDoc.exists || branchDoc.data()!.organizationId !== organizationId) {
+    throw new HttpsError("not-found", "Branch not found.");
+  }
+  const restaurantId = branchDoc.data()!.restaurantId as string;
+
+  const orderId = deriveOrderId(staffUid, submissionKey);
+  const orderNumber = deriveOrderNumber(orderId);
+
+  return db.runTransaction(async (tx) => {
+    const policy = await loadCanonicalChannelPricingPolicy(db, restaurantId);
+    const { lines, normalizedItems } = await buildLines(db, rawItems, { restaurantId }, policy);
+    const pricing = computeOrderPriceBreakdown(lines);
+
+    const fingerprint = computeRequestFingerprint({
+      path: "staffEntry",
+      organizationId,
+      branchId,
+      items: normalizedItems,
+      contactFirstName,
+      contactLastName,
+      contactPhone,
+    });
+
+    const orderRef = db.collection("orders").doc(orderId);
+    const existing = await tx.get(orderRef);
+    if (existing.exists) {
+      const existingData = existing.data()!;
+      if (existingData.takeawaySubmissionFingerprint !== fingerprint) {
+        throw new HttpsError(
+          "failed-precondition",
+          "submissionKey was already used with a different order payload.",
+        );
+      }
+      return { orderId, orderNumber: existingData.orderNumber, duplicate: true };
+    }
+
+    const now = new Date();
+
+    tx.set(
+      orderRef,
+      buildOrderDocument({
+        organizationId,
+        orderId,
+        orderNumber,
+        channel: "takeaway",
+        branchId,
+        restaurantId,
+        customerId: null,
+        guestAuthUid: null,
+        takeawayEntrySessionId: null,
+        pickupMode: "asap",
+        pickupTime: null,
+        status: "confirmed",
+        scheduledFor: null,
+        estimatedReadyAt: null,
+        contactFirstName,
+        contactLastName,
+        contactPhone,
+        lines,
+        pricing,
+        now,
+        fingerprint,
+        selectedBenefitType: "none",
+        boncukRedemption: null,
+        catalogReward: null,
+        campaign: null,
+        discountMinorUnits: 0,
+        actor: "staff",
       }),
     );
 
@@ -1555,6 +1741,7 @@ async function submitAuthenticatedOrder(
         catalogReward: pendingCatalogReward ? pendingCatalogReward.orderSnapshot : null,
         campaign: campaignOrderSnapshot,
         discountMinorUnits: campaignDiscountMinorUnits,
+        actor: "customer",
       }),
     );
 
@@ -1714,7 +1901,10 @@ function buildOrderDocument(params: {
    * confused with [pickupMode] — see `OrderStatus.scheduled`'s own Dart doc
    * comment for why these are independent axes.
    */
-  status: "pendingConfirmation" | "scheduled";
+  // Adım 5 (2026-11-07) — `"confirmed"` added for the staff-entered path
+  // only (`submitStaffEntryOrder`); every pre-existing caller still only
+  // ever passes `pendingConfirmation`/`scheduled`, unchanged.
+  status: "pendingConfirmation" | "scheduled" | "confirmed";
   /** Set only when [status] is `"scheduled"`. */
   scheduledFor: Date | null;
   /** Set only when the branch was `busy` at submission time. */
@@ -1754,6 +1944,10 @@ function buildOrderDocument(params: {
    * never a separately-computed or approximated figure.
    */
   discountMinorUnits: number;
+  /** Adım 5 (2026-11-07) — who placed this order, stamped into
+   * `statusHistory[0].actor`; `"customer"` preserves every pre-existing
+   * caller's exact previous behavior unchanged. */
+  actor: "customer" | "staff";
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -1858,7 +2052,7 @@ function buildOrderDocument(params: {
         id: `${params.orderId}-transition-1`,
         type: "statusChange",
         description: `Status changed from created to ${params.status}`,
-        actor: "customer",
+        actor: params.actor,
         timestamp: params.now.toISOString(),
         previousValue: "created",
         newValue: params.status,

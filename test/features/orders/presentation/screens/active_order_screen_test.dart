@@ -12,6 +12,12 @@ import 'package:abakus_one_v2/features/orders/presentation/providers/dine_in_cou
 import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
 import 'package:abakus_one_v2/features/orders/presentation/screens/active_order_screen.dart';
 import 'package:abakus_one_v2/features/cart/domain/models/cart_item.dart';
+import 'package:abakus_one_v2/features/qr/data/live_table_bill_gateway.dart';
+import 'package:abakus_one_v2/features/qr/domain/models/active_table_context.dart';
+import 'package:abakus_one_v2/features/qr/domain/models/guest_session.dart';
+import 'package:abakus_one_v2/features/qr/domain/models/table_session.dart';
+import 'package:abakus_one_v2/features/qr/presentation/providers/active_table_context_provider.dart';
+import 'package:abakus_one_v2/features/qr/presentation/providers/live_table_bill_provider.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
 import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:abakus_one_v2/shared/widgets/feedback/empty_view.dart';
@@ -99,11 +105,13 @@ Future<void> _pump(
   WidgetTester tester, {
   required CanonicalOrderRepository repository,
   String? orderId,
+  List<Override> extraOverrides = const [],
 }) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         canonicalOrderRepositoryProvider.overrideWithValue(repository),
+        ...extraOverrides,
       ],
       child: MaterialApp(
         home: ActiveOrderScreen(orderId: orderId),
@@ -111,6 +119,55 @@ Future<void> _pump(
     ),
   );
   await tester.pumpAndSettle();
+}
+
+/// Adım 5 (2026-11-07) — "Canlı Adisyon" banner fixtures.
+class _FakeLiveTableBillGateway implements LiveTableBillGateway {
+  _FakeLiveTableBillGateway(this.bill);
+  final LiveTableBill bill;
+
+  @override
+  Future<LiveTableBill> getLiveTableBill({required String tableSessionId}) =>
+      Future.value(bill);
+}
+
+class _FixedActiveTableContextNotifier extends ActiveTableContextNotifier {
+  _FixedActiveTableContextNotifier(this._fixed);
+  final ActiveTableContext _fixed;
+  @override
+  ActiveTableContext? build() => _fixed;
+}
+
+ActiveTableContext _activeTableContextFixture() {
+  final now = DateTime(2026, 11, 7, 19, 0);
+  return ActiveTableContext(
+    restaurantId: 'restaurant-1',
+    branchId: 'branch-1',
+    branchName: 'Ortaköy',
+    tableId: 'table-1',
+    tableName: 'Masa 3',
+    session: TableSession(
+      id: 'guest-session-1',
+      restaurantId: 'restaurant-1',
+      branchId: 'branch-1',
+      tableId: 'table-1',
+      status: TableSessionStatus.active,
+      openedAt: now,
+      guestSessionIds: const [],
+      activeOrderIds: const [],
+    ),
+    guestSession: GuestSession(
+      id: 'local-guest-1',
+      tableSessionId: 'guest-session-1',
+      branchId: 'branch-1',
+      tableId: 'table-1',
+      detectedLanguageCode: 'tr',
+      selectedLanguageCode: 'tr',
+      createdAt: now,
+      lastSeenAt: now,
+      status: GuestSessionStatus.active,
+    ),
+  );
 }
 
 void main() {
@@ -384,4 +441,110 @@ void main() {
       expect(statusBadgeSemantics('Sipariş Alındı'), findsNothing);
     },
   );
+
+  group('"Canlı Adisyon" masa toplamı banner\'ı (Adım 5, 2026-11-07)', () {
+    testWidgets(
+        'dineInQr siparişinde, aktif masa baglami ve dolu bir hesap varken '
+        'banner "Masa Toplamı" gosterir; dokununca satir dokumu acilir',
+        (tester) async {
+      final repository = InMemoryCanonicalOrderRepository();
+      final order = await _buildDineInOrder(repository: repository);
+      await repository.submitOrder(order);
+      const bill = LiveTableBill(
+        currencyCode: 'TRY',
+        subtotalMinorUnits: 30000,
+        appliedDiscountsMinorUnits: 5000,
+        runningTotalMinorUnits: 25000,
+        lines: [
+          LiveTableBillLineSummary(
+            productName: 'Klasik Bowl',
+            quantity: 2,
+            unitPriceMinorUnits: 15000,
+          ),
+        ],
+      );
+
+      await _pump(
+        tester,
+        repository: repository,
+        orderId: order.id.value,
+        extraOverrides: [
+          activeTableContextProvider.overrideWith(() =>
+              _FixedActiveTableContextNotifier(_activeTableContextFixture())),
+          liveTableBillGatewayProvider
+              .overrideWithValue(_FakeLiveTableBillGateway(bill)),
+        ],
+      );
+
+      expect(find.text('Masa Toplamı'), findsOneWidget);
+      expect(find.text('250 TL'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Masa Toplamı'));
+      await tester.tap(find.text('Masa Toplamı'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Masa Hesabı'), findsOneWidget);
+      expect(find.textContaining('2x Klasik Bowl'), findsOneWidget);
+      expect(find.text('-50 TL'), findsOneWidget);
+    });
+
+    testWidgets(
+        'aktif masa baglami yokken (orn. takeaway/signed-in musteri '
+        'gecmisi) banner hic gorunmez', (tester) async {
+      final repository = InMemoryCanonicalOrderRepository();
+      final order = await _buildDineInOrder(repository: repository);
+      await repository.submitOrder(order);
+
+      await _pump(tester, repository: repository, orderId: order.id.value);
+
+      expect(find.text('Masa Toplamı'), findsNothing);
+    });
+
+    testWidgets(
+        'dineInQr olmayan bir kanalda (ornegin takeaway) banner hic '
+        'gorunmez, aktif masa baglami olsa bile', (tester) async {
+      final repository = InMemoryCanonicalOrderRepository();
+      final order = await SubmitCustomerOrder(
+        clock: FakeClock(DateTime(2026, 8, 5, 18, 30)),
+        identityProvider: InMemoryOrderIdentityProvider(),
+        repository: repository,
+        branchId: 'branch-1',
+        restaurantId: 'restaurant-1',
+      ).call(
+        cartItems: [
+          const CartItem(
+              id: 'p1', name: 'Paket Kutu', desc: '', price: 100, quantity: 1),
+        ],
+        customerId: 'uid-1',
+        channel: OrderChannel.takeaway,
+      );
+      await repository.submitOrder(order);
+      const bill = LiveTableBill(
+        currencyCode: 'TRY',
+        subtotalMinorUnits: 10000,
+        appliedDiscountsMinorUnits: 0,
+        runningTotalMinorUnits: 10000,
+        lines: [
+          LiveTableBillLineSummary(
+              productName: 'Paket Kutu',
+              quantity: 1,
+              unitPriceMinorUnits: 10000),
+        ],
+      );
+
+      await _pump(
+        tester,
+        repository: repository,
+        orderId: order.id.value,
+        extraOverrides: [
+          activeTableContextProvider.overrideWith(() =>
+              _FixedActiveTableContextNotifier(_activeTableContextFixture())),
+          liveTableBillGatewayProvider
+              .overrideWithValue(_FakeLiveTableBillGateway(bill)),
+        ],
+      );
+
+      expect(find.text('Masa Toplamı'), findsNothing);
+    });
+  });
 }

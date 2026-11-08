@@ -25,6 +25,7 @@ import 'end_of_day_screen.dart';
 import 'pos_cash_register_screen.dart';
 import 'pos_checkout_screen.dart';
 import 'pos_table_workspace_screen.dart';
+import 'pos_takeaway_orders_screen.dart';
 
 /// Masalar grid'inin bölge filtresi (2026-11-06) — `RestaurantTable
 /// .areaName`'in zaten taşıdığı serbest metni kullanır, yeni bir alan
@@ -183,14 +184,14 @@ class _PosBranchOverviewScreenState
                 MaterialPageRoute(builder: (_) => const EndOfDayScreen()),
               ),
             ),
-            Expanded(child: _buildContent()),
+            Expanded(child: _buildContent(ctx)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildContent() {
+  Widget _buildContent(PosDeviceContext ctx) {
     final error = _error;
     final tables = _tables;
     if (error != null && tables == null) {
@@ -233,22 +234,21 @@ class _PosBranchOverviewScreenState
             ),
           ),
         ),
-        Expanded(child: _buildTableGrid(tables)),
+        Expanded(child: _buildTableGrid(tables, ctx)),
       ],
     );
   }
 
-  Widget _buildTableGrid(List<PosBranchTableSummary> tables) {
+  Widget _buildTableGrid(
+      List<PosBranchTableSummary> tables, PosDeviceContext ctx) {
     if (_selectedAreaTab == _AreaTab.takeaway) {
-      // Disclosed placeholder, not a silently empty/wrong list — this
-      // screen's data model today is table-centric only
-      // (`getPosBranchTableOverview` reads `restaurantTables`); showing
-      // real paket/gel-al orders here needs its own query and card
-      // design, a separate decision from this filter tab.
-      return const EmptyView(
-        icon: Icons.takeout_dining_outlined,
-        message: 'Paket / Gel-Al sipariş yönetimi bu ekranda henüz yok.',
-      );
+      // Adım 5 (2026-11-07) — real paket/gel-al order management,
+      // replacing the disclosed placeholder ADR-060 left here (this
+      // screen's table-centric data model has no takeaway-order query of
+      // its own; `PosTakeawayOrdersScreen` reads `CanonicalOrderRepository
+      // .watchByBranch` directly instead, exactly like the Admin Siparişler
+      // screen already does).
+      return PosTakeawayOrdersScreen(ctx: ctx);
     }
     final filtered = _selectedAreaTab == _AreaTab.all
         ? tables
@@ -506,6 +506,33 @@ class _TableTileState extends ConsumerState<_TableTile> {
                   ),
                 ],
                 const Spacer(),
+                // Adım 5 (2026-11-07) — "Mutfakta Hazır": at least one of
+                // this table's orders has reached `status == "ready"`
+                // (every kitchen line confirmed ready) and is waiting to be
+                // served — visual-only, no sound (the existing alert sound
+                // is reserved for new-QR-order arrivals; conflating the two
+                // events under one cue would blur what staff are being
+                // told).
+                if (table.kitchenReadyOrderCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.restaurant_rounded,
+                            size: 16, color: AppColors.success),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            'Mutfakta Hazır',
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.bodySmall.copyWith(
+                                color: AppColors.success,
+                                fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (table.pendingQrLineCount > 0)
                   Row(
                     children: [

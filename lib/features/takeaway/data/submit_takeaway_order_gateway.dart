@@ -211,6 +211,28 @@ abstract interface class SubmitTakeawayOrderGateway {
     required String contactLastName,
     required String contactPhone,
   });
+
+  /// Adım 5 (2026-11-07) — "Paket / Gel-Al" POS screen's "Yeni Paket
+  /// Sipariş" action. [organizationId]/[branchId]/[deviceId]/
+  /// [deviceSessionId] mirror every other staff/device-gated POS action in
+  /// this codebase (e.g. `PosActionGateway.submitStaffEntryOrder`'s own
+  /// dine-in equivalent) — the server independently re-verifies staff
+  /// permission (`manageTakeawayOrders`), branch access, and the device
+  /// session; nothing here is trusted as authorization on its own. No
+  /// Boncuk/reward/campaign parameter exists on this method — the server
+  /// rejects a staff-entered order outright if any is sent (see
+  /// `submitTakeawayOrder.ts`'s own disclosed simplification).
+  Future<SubmitTakeawayOrderResult> submitStaffEntryOrder({
+    required String submissionKey,
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String deviceSessionId,
+    required List<TakeawayOrderItem> items,
+    required String contactFirstName,
+    required String contactLastName,
+    required String contactPhone,
+  });
 }
 
 class FirebaseSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
@@ -305,6 +327,47 @@ class FirebaseSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
       throw SubmitTakeawayOrderException(
         error.code,
         error.message ?? 'Takeaway order could not be submitted.',
+      );
+    }
+  }
+
+  @override
+  Future<SubmitTakeawayOrderResult> submitStaffEntryOrder({
+    required String submissionKey,
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String deviceSessionId,
+    required List<TakeawayOrderItem> items,
+    required String contactFirstName,
+    required String contactLastName,
+    required String contactPhone,
+  }) async {
+    final callable = functions.FirebaseFunctions.instance
+        .httpsCallable('submitTakeawayOrder');
+    try {
+      final result = await callable.call<Map<String, dynamic>>({
+        'mode': 'staffEntry',
+        'submissionKey': submissionKey,
+        'organizationId': organizationId,
+        'branchId': branchId,
+        'deviceId': deviceId,
+        'deviceSessionId': deviceSessionId,
+        'items': [for (final item in items) item.toJson()],
+        'contactFirstName': contactFirstName,
+        'contactLastName': contactLastName,
+        'contactPhone': contactPhone,
+      });
+      final data = result.data;
+      return SubmitTakeawayOrderResult(
+        orderId: data['orderId'] as String,
+        orderNumber: data['orderNumber'] as String,
+        duplicate: data['duplicate'] as bool,
+      );
+    } on functions.FirebaseFunctionsException catch (error) {
+      throw SubmitTakeawayOrderException(
+        error.code,
+        error.message ?? 'Paket sipariş oluşturulamadı.',
       );
     }
   }

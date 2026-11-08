@@ -11138,3 +11138,76 @@ for barcode match/no-match, 3 for the weight-entry dialog opening/estimating/clo
 scale-unavailable message). `flutter analyze`: clean (pre-existing, disclosed
 `app_constants.dart` info aside). `functions`: no backend changes this pass. `flutter test` (whole
 project): 3974 passing, 0 failures (+16 over the Adım 3 baseline of 3958).
+
+### Adım 5 — İleri Operasyon & Servis Akışları (2026-11-07/08)
+
+Full reasoning in `docs/decisions.md` ADR-063. Final roadmap item, three parts — researched via
+three parallel investigations before any code was written. Part 2 turned out to be mostly
+already-working (good news, not a correction); parts 1 and 3 each had one real finding.
+
+1. **Paket / Gel-Al Ekranı.** **Corrected finding**: the requested "Hazırlanıyor, Yolda, Teslim
+   Edildi" status list doesn't match the real takeaway lifecycle — pickup has no courier/"Yolda"
+   step (`outForDelivery` is delivery-only). Corrected to the real
+   `confirmed -> preparing -> ready -> completed` chain, reusing `admin_orders_screen.dart`'s own
+   already-established Turkish labels ("Onaylandı"/"Hazırlanıyor"/"Hazır, Gelip Alabilir"/
+   "Tamamlandı") rather than inventing new wording for the same statuses. **Second corrected
+   finding**: "yeni paket sipariş açma" (staff-initiated order creation) was genuinely net-new —
+   `submitTakeawayOrder` only ever accepted a phone-verified customer or a QR-guest-session caller.
+   User confirmed adding a new `mode: "staffEntry"` branch, mirroring `submitDineInOrder.ts`'s own
+   AP-3 Wave 1 `staffEntry` discriminator — checked first, before the two existing shape-based
+   branches, so no existing caller is affected. Requires `manageTakeawayOrders` (not
+   `manageDineInOrders`) + branch access + an active device session; derives `restaurantId`
+   server-side from the `branches/{branchId}` doc, never from client input. Written directly at
+   `status: "confirmed"` (the staff entry IS the approval), immediately ready for the existing,
+   unmodified `advanceTakeawayOrderStatus` lifecycle. No Boncuk/reward/campaign (disclosed
+   simplification, mirrors dine-in `staffEntry`). **Done, new**: `lib/features/pos/presentation/
+   screens/pos_takeaway_orders_screen.dart` (live order list, filtered to the statuses staff can
+   still act on; confirm/reject a pending guest order — reusing `TakeawayOrderResponseGateway`,
+   which had **zero client callers anywhere in this app** before this pass per its own doc comment,
+   closing a real gap where a guest-placed takeaway order could never reach KDS; advance
+   confirmed/preparing/ready via the existing, unmodified `KitchenActionGateway.advanceOrderStatus`
+   — the exact dispatch the KDS board already uses for every channel) and
+   `pos_new_takeaway_order_screen.dart` (the staff order-creation flow — contact fields + a flat
+   searchable product list reusing `PosProductCustomizationDialog` for modifier-bearing products,
+   deliberately not the full category-tabbed grid, matching "temel arayüz" scope). Wired into the
+   Masalar screen's existing "Paket / Gel-Al" tab, replacing ADR-060's disclosed placeholder.
+2. **KDS (Mutfak Ekranı) Çift Yönlü Durum Takibi.** **Corrected finding, good news**: most of this
+   already worked with zero new code. `transitionKitchenWorkItem`'s `allSiblingsReady` response
+   already drives `KitchenActionGateway.advanceOrderStatus`, writing the canonical `Order.status`
+   the guest's own "Aktif Siparişin" screen already live-reads — already reaching
+   `OrderStatus.ready` → "Paketleniyor / Servise Hazır" today. The one real gap: the Masalar **grid
+   card** (distinct from the table workspace screen's own existing per-order "X/Y hazır" badge) had
+   no kitchen-ready signal at all. **Done**: new `kitchenReadyOrderCount` on
+   `getPosBranchTableOverview` (computed from the SAME `orders` snapshot already fetched for
+   `pendingQrLineCount`, no second query — counts orders with `status == "ready"`), rendered as a
+   new "Mutfakta Hazır" badge on the grid card. Deliberately no new sound — the existing alert is
+   reserved for new-QR-order arrivals, reusing it here would blur what staff are being told.
+3. **Canlı Adisyon Okuma Gateway'i.** ADR-058 had already fully specified this; implemented exactly
+   as specified, no correction needed. New `getLiveTableBill` Cloud Function — mirrors
+   `getPosTableOperationalView`'s "narrow read-only slice, nothing raw" shape, ownership-verified via
+   the SAME `tableGuestSessions`/`guestAuthUid`/`isTableGuestSessionActive` check
+   `submitDineInOrder.ts`'s `guestSession` mode already uses. **No Security Rules change** —
+   `checks`/`checkFinancialAdjustments` stay locked down for every non-Admin-SDK caller; this reads
+   via the Admin SDK from inside an authorization-checked function, same boundary every other
+   guest-facing read already uses. The running total sums `orders`' own `accepted` lines directly
+   (never `checks.computedTotalMinorUnits`, which only reflects money already allocated/split and
+   stays near zero for an unsplit check even as the guest keeps ordering — the exact trap
+   `TableReceiptBuilder` is already careful to avoid); discounts come from genuinely-unambiguous
+   `checkFinancialAdjustments` records. **Disclosed scope boundary**: does not net out a
+   partial/split payment already made — "what do I personally still owe" is a separate, larger
+   question for a future pass. **Done**: `live_table_bill_gateway.dart` + `live_table_bill_provider
+   .dart` (new Flutter gateway/provider) wired into a new "Masa Toplamı" banner
+   (`_LiveTableBillBanner`) on the existing "Aktif Siparişin" screen (polls every 15s, mirrors
+   `PosBranchOverviewScreen`'s own poll shape; tap for a line-breakdown bottom sheet) — user-confirmed
+   placement, matching ADR-058's "hafif" framing over a new dedicated screen.
+
+New tests: `pos_branch_overview_screen_test.dart` (+1 for `kitchenReadyOrderCount`, 1 rewritten for
+the real Paket/Gel-Al screen replacing the placeholder test), `pos_takeaway_orders_screen_test.dart`
+(new, 6 cases), `pos_new_takeaway_order_screen_test.dart` (new, 3 cases), `active_order_screen_test
+.dart` (+3 for the Masa Toplamı banner). Backend: `getLiveTableBill.test.ts`,
+`submitTakeawayOrderStaffEntry.test.ts` (both new) — **written, `npx tsc --noEmit` clean, but NOT
+executed**: this sandbox's Firebase emulator requires a JDK 21+ that isn't available here. Mirrors
+this codebase's own established, already-passing emulator-test fixture patterns exactly, but
+disclosed as unverified by a real run rather than claimed as passing. `flutter analyze`: clean
+(same pre-existing `app_constants.dart` info). `flutter test` (whole project): 3987 passing, 0
+failures (+13 over the Adım 4 baseline of 3974).

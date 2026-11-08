@@ -122,6 +122,26 @@ class _FakeSubmitTakeawayOrderGateway implements SubmitTakeawayOrderGateway {
       duplicate: false,
     );
   }
+
+  /// Adım 5 (2026-11-07) — the POS staff-entry path; not exercised by this
+  /// customer-facing guest checkout screen.
+  @override
+  Future<SubmitTakeawayOrderResult> submitStaffEntryOrder({
+    required String submissionKey,
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String deviceSessionId,
+    required List<TakeawayOrderItem> items,
+    required String contactFirstName,
+    required String contactLastName,
+    required String contactPhone,
+  }) {
+    throw UnimplementedError(
+      'submitStaffEntryOrder is not exercised by TakeawayGuestCheckoutScreen '
+      '— see pos_takeaway_orders_screen_test.dart.',
+    );
+  }
 }
 
 /// In-memory fake — never touches real `shared_preferences` platform

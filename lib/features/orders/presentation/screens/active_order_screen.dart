@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -12,6 +14,8 @@ import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
 import '../../../menu/data/abakus_menu_catalog.dart';
 import '../../../profile/presentation/screens/help_screen.dart';
+import '../../../qr/data/live_table_bill_gateway.dart';
+import '../../../qr/presentation/providers/live_table_bill_provider.dart';
 import '../../domain/models/courier_visibility.dart';
 import '../../domain/models/order_channel.dart';
 import '../../domain/models/order_item_snapshot.dart';
@@ -155,13 +159,13 @@ class _ActiveOrderByCurrentSession extends ConsumerWidget {
   }
 }
 
-class _ActiveOrderBody extends StatelessWidget {
+class _ActiveOrderBody extends ConsumerWidget {
   final OrderModel order;
 
   const _ActiveOrderBody({required this.order});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isCancelled = order.lifecycleStatus == OrderStatus.cancelled ||
         order.lifecycleStatus == OrderStatus.rejected;
     final isDelivered = !isCancelled &&
@@ -194,6 +198,15 @@ class _ActiveOrderBody extends StatelessWidget {
             ),
           const SizedBox(height: AppSpacing.xl),
           _OrderSummaryCard(order: order),
+          // Adım 5 (2026-11-07) — "Canlı Adisyon": the TABLE's running
+          // total (every guest's accepted lines, not just this order's
+          // own) — only meaningful for a QR dine-in table visit, never for
+          // takeaway/delivery/a staff-entered order with no guest table
+          // context at all.
+          if (order.channel == OrderChannel.dineInQr) ...[
+            const SizedBox(height: AppSpacing.xl),
+            const _LiveTableBillBanner(),
+          ],
           const SizedBox(height: AppSpacing.xl),
           _DeliveryOrTableInfoCard(order: order),
           const SizedBox(height: AppSpacing.xl),
@@ -1032,6 +1045,147 @@ class _ActionButtons extends ConsumerWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// Adım 5 (2026-11-07) — "Canlı Adisyon" banner. Polls `liveTableBillProvider`
+/// on a bounded interval (mirrors `PosBranchOverviewScreen`'s own poll
+/// shape) rather than opening a new Firestore listener — matches ADR-058's
+/// "hafif" (lightweight) framing for this feature. Renders nothing while
+/// loading, on error, or once there is genuinely nothing ordered yet
+/// (`lines.isEmpty`) — this banner is supplementary context, not the
+/// screen's primary content, so a transient hiccup here must never show a
+/// scary error on top of the guest's own order-tracking screen.
+class _LiveTableBillBanner extends ConsumerStatefulWidget {
+  const _LiveTableBillBanner();
+
+  @override
+  ConsumerState<_LiveTableBillBanner> createState() =>
+      _LiveTableBillBannerState();
+}
+
+class _LiveTableBillBannerState extends ConsumerState<_LiveTableBillBanner> {
+  static const _pollInterval = Duration(seconds: 15);
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(
+      _pollInterval,
+      (_) => ref.invalidate(liveTableBillProvider),
+    );
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final billAsync = ref.watch(liveTableBillProvider);
+    final bill = billAsync.valueOrNull;
+    if (bill == null || bill.lines.isEmpty) return const SizedBox.shrink();
+
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: InkWell(
+        onTap: () => _showLineBreakdown(context, bill),
+        child: Row(
+          children: [
+            const Icon(Icons.receipt_long_rounded, color: AppColors.primary),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                'Masa Toplamı',
+                style: AppTypography.bodyMedium.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            Text(
+              '${(bill.runningTotalMinorUnits / 100).toStringAsFixed(0)} TL',
+              style: AppTypography.titleMedium.copyWith(
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            const Icon(Icons.chevron_right_rounded,
+                color: AppColors.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showLineBreakdown(BuildContext context, LiveTableBill bill) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Masa Hesabı', style: AppTypography.titleMedium),
+              const SizedBox(height: AppSpacing.md),
+              for (final line in bill.lines)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${line.quantity}x ${line.productName}',
+                          style: AppTypography.bodyMedium,
+                        ),
+                      ),
+                      Text(
+                        '${(line.unitPriceMinorUnits * line.quantity / 100).toStringAsFixed(0)} TL',
+                        style: AppTypography.bodyMedium,
+                      ),
+                    ],
+                  ),
+                ),
+              if (bill.appliedDiscountsMinorUnits > 0) ...[
+                const Divider(height: AppSpacing.lg),
+                Row(
+                  children: [
+                    const Expanded(
+                        child:
+                            Text('İndirim', style: AppTypography.bodyMedium)),
+                    Text(
+                      '-${(bill.appliedDiscountsMinorUnits / 100).toStringAsFixed(0)} TL',
+                      style: AppTypography.bodyMedium
+                          .copyWith(color: AppColors.primary),
+                    ),
+                  ],
+                ),
+              ],
+              const Divider(height: AppSpacing.lg),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Toplam',
+                        style: AppTypography.bodyMedium
+                            .copyWith(fontWeight: FontWeight.bold)),
+                  ),
+                  Text(
+                    '${(bill.runningTotalMinorUnits / 100).toStringAsFixed(0)} TL',
+                    style: AppTypography.titleMedium
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

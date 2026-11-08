@@ -191,15 +191,26 @@ export const getPosBranchTableOverview = onCall(
     // page (realistically a small number of tables), never an unbounded
     // branch-wide scan.
     const pendingCountsBySessionId = new Map<string, number>();
+    // Adım 5 (2026-11-07) — "Mutfakta Hazır" grid-card badge: counts orders
+    // whose top-level `status` has already reached "ready" (every kitchen
+    // line for that order confirmed ready — see `transitionKitchenWorkItem`
+    // /`advanceDineInOrderStatus`'s own "allSiblingsReady" gate), reusing
+    // the SAME `orders` snapshot already fetched for pendingQrLineCount
+    // above rather than a second query.
+    const kitchenReadyCountsBySessionId = new Map<string, number>();
     await Promise.all(
       activeTableSessionIds.map(async (tableSessionId) => {
         const ordersSnap = await db.collection("orders").where("dineInSessionGroupId", "==", tableSessionId).get();
-        let count = 0;
+        let pendingCount = 0;
+        let readyCount = 0;
         for (const orderDoc of ordersSnap.docs) {
-          const lines = (orderDoc.data().lines ?? []) as Array<{ status: string }>;
-          count += lines.filter((l) => l.status === "pendingApproval" || l.status === "proposedChange").length;
+          const order = orderDoc.data();
+          const lines = (order.lines ?? []) as Array<{ status: string }>;
+          pendingCount += lines.filter((l) => l.status === "pendingApproval" || l.status === "proposedChange").length;
+          if (order.status === "ready") readyCount += 1;
         }
-        pendingCountsBySessionId.set(tableSessionId, count);
+        pendingCountsBySessionId.set(tableSessionId, pendingCount);
+        kitchenReadyCountsBySessionId.set(tableSessionId, readyCount);
       }),
     );
 
@@ -231,6 +242,7 @@ export const getPosBranchTableOverview = onCall(
         status: (table.statusOverride as string | undefined) ?? String(table.status ?? "available"),
         activeTableSessionId,
         pendingQrLineCount: activeTableSessionId ? (pendingCountsBySessionId.get(activeTableSessionId) ?? 0) : 0,
+        kitchenReadyOrderCount: activeTableSessionId ? (kitchenReadyCountsBySessionId.get(activeTableSessionId) ?? 0) : 0,
         pendingServiceRequests: pendingServiceRequestsByTableId.get(d.id) ?? [],
         // 2026-11-06 — "Masalar 5-sekme düzeni": the Flutter grid's own
         // area/zone filter tabs, reusing `RestaurantTable.areaName` (free
@@ -241,7 +253,7 @@ export const getPosBranchTableOverview = onCall(
     });
 
     const versionSource = tables
-      .map((t) => `${t.tableId}:${t.status}:${t.activeTableSessionId ?? ""}:${t.pendingQrLineCount}:${t.pendingServiceRequests.map((r) => r.requestId).sort().join(",")}`)
+      .map((t) => `${t.tableId}:${t.status}:${t.activeTableSessionId ?? ""}:${t.pendingQrLineCount}:${t.kitchenReadyOrderCount}:${t.pendingServiceRequests.map((r) => r.requestId).sort().join(",")}`)
       .join("|");
     const version = createHash("sha256").update(versionSource).digest("hex").slice(0, 24);
 
