@@ -650,4 +650,49 @@ void main() {
           isNull);
     });
   });
+
+  // 2026-11-09 — floor-stand QR "vitrin" menu.
+  group('AppRouteGuard.resolve — showcase menu', () {
+    test('/menu is public: no redirect, even signed out and pre-onboarding',
+        () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.menuShowcase,
+          isAuthenticated: false,
+          isGuest: false,
+          isOnboardingComplete: false,
+          isRealCustomer: false,
+        ),
+        isNull,
+      );
+    });
+
+    test('?mode=showcase on another location redirects to /menu', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.onboarding,
+          isAuthenticated: false,
+          isGuest: false,
+          isOnboardingComplete: false,
+          isRealCustomer: false,
+          showcaseRequested: true,
+        ),
+        AppRoutes.menuShowcase,
+      );
+    });
+
+    test('a table QR link always wins over ?mode=showcase', () {
+      expect(
+        AppRouteGuard.resolve(
+          location: AppRoutes.tableGuest('token-1'),
+          isAuthenticated: false,
+          isGuest: false,
+          isOnboardingComplete: false,
+          isRealCustomer: false,
+          showcaseRequested: true,
+        ),
+        isNull,
+      );
+    });
+  });
 }

@@ -18,6 +18,7 @@ import '../../features/platform/presentation/screens/platform_shell_screen.dart'
 import '../../features/reservation/presentation/screens/reservation_confirmation_screen.dart';
 import '../../features/reservation/presentation/screens/reservation_detail_screen.dart';
 import '../../features/reservation/presentation/screens/reservation_flow_screen.dart';
+import '../../features/qr/presentation/screens/menu_showcase_screen.dart';
 import '../../features/qr/presentation/screens/table_guest_entry_screen.dart';
 import '../../features/takeaway/presentation/screens/takeaway_guest_entry_screen.dart';
 import '../auth/real_customer_check.dart';
@@ -122,6 +123,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         isOnboardingComplete: isOnboardingComplete,
         isRealCustomer: realCustomer,
         needsProfileCompletion: needsProfileCompletion,
+        showcaseRequested: state.uri.queryParameters['mode'] ==
+            AppRoutes.showcaseModeQueryValue,
       );
     },
     routes: [
@@ -184,6 +187,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // behind the onboarding/login/OTP gate — see
       // `AppRouteGuard.resolve`'s own explicit bypass for this prefix,
       // mirroring the Gel Al QR route immediately above.
+      // 2026-11-09 — public read-only showcase menu (floor-stand QR); see
+      // `AppRoutes.menuShowcase` and `AppRouteGuard.resolve`'s bypass.
+      GoRoute(
+        path: AppRoutes.menuShowcase,
+        pageBuilder: (context, state) {
+          return _fadeTransitionPage(const MenuShowcaseScreen());
+        },
+      ),
       GoRoute(
         path: '${AppRoutes.tableGuestPrefix}/:token',
         pageBuilder: (context, state) {

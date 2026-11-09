@@ -1,3 +1,4 @@
+import '../../../cart/presentation/guards/cart_add_guard.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -232,6 +233,7 @@ class _StoryQuickView extends ConsumerWidget {
                               ),
                             ),
                             onPressed: () {
+                              if (!allowCartAdd(context, ref)) return;
                               HapticFeedback.lightImpact();
                               ref.read(cartProvider.notifier).addToCart(
                                     id: product.id,

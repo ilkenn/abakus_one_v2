@@ -56,7 +56,18 @@ abstract final class AppRouteGuard {
     required bool isOnboardingComplete,
     required bool isRealCustomer,
     bool needsProfileCompletion = false,
+    bool showcaseRequested = false,
   }) {
+    // 2026-11-09 — the read-only showcase menu is public (floor-stand QR,
+    // no sign-in), checked before everything else for the same reason as
+    // the QR guest flows below. `?mode=showcase` on any other location
+    // ([showcaseRequested]) is sent to it — except a table QR link, which
+    // always wins (a scanned table means ordering is allowed).
+    if (location == AppRoutes.menuShowcase) return null;
+    if (showcaseRequested && !location.startsWith(AppRoutes.tableGuestPrefix)) {
+      return AppRoutes.menuShowcase;
+    }
+
     // Faz D.4 — the Gel Al QR guest flow is public by design: a customer
     // scanning a kasadaki QR has not signed in to anything yet, and must
     // never be bounced through onboarding/login/OTP just to view a menu

@@ -1,3 +1,4 @@
+import '../../../cart/presentation/guards/cart_add_guard.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -145,6 +146,7 @@ class _FavoriteItemRow extends ConsumerWidget {
                   minHeight: AppThemeConstants.minTapTargetSize,
                 ),
                 onPressed: () {
+                  if (!allowCartAdd(context, ref)) return;
                   ref.read(cartProvider.notifier).addToCart(
                         id: productId,
                         name: product['name']!,

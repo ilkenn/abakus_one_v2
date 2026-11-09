@@ -14,6 +14,7 @@ import '../../data/table_guest_session_gateway.dart';
 import '../../domain/i18n/guest_locale.dart';
 import '../../domain/i18n/qr_flow_strings.dart';
 import '../providers/active_table_context_provider.dart';
+import '../providers/menu_showcase_mode_provider.dart';
 import '../providers/table_guest_session_dependencies_provider.dart';
 
 enum _EntryPhase { resolving, openingSession, error }
@@ -174,6 +175,8 @@ class _TableGuestEntryScreenState extends ConsumerState<TableGuestEntryScreen> {
           .call(widget.token, detectedLanguageCode: _locale.languageCode);
 
       ref.read(activeTableContextProvider.notifier).set(tableContext);
+      // 2026-11-09 — a scanned table ends the read-only showcase menu.
+      ref.read(menuShowcaseModeProvider.notifier).exit();
 
       if (!mounted) return;
       // AP-3 wave 7 fix — this used to `pushReplacement` a bare `MenuScreen`

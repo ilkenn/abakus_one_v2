@@ -1,3 +1,4 @@
+import '../../../cart/presentation/guards/cart_add_guard.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -77,6 +78,7 @@ class _BowlBuilderScreenState extends ConsumerState<BowlBuilderScreen> {
   }
 
   void _addToCart(BuildContext context, WidgetRef ref) {
+    if (!allowCartAdd(context, ref)) return;
     final selectedModifiers = ref.read(bowlBuilderSelectedModifiersProvider);
     final state = ref.read(bowlBuilderProvider);
     final unitPrice = ref.read(bowlBuilderTotalPriceProvider);

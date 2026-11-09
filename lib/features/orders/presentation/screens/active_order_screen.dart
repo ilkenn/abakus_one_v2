@@ -1,3 +1,4 @@
+import '../../../cart/presentation/guards/cart_add_guard.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -934,6 +935,7 @@ class _ActionButtons extends ConsumerWidget {
   const _ActionButtons({required this.order, required this.isDelivered});
 
   void _reorder(BuildContext context, WidgetRef ref) {
+    if (!allowCartAdd(context, ref)) return;
     if (order.items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

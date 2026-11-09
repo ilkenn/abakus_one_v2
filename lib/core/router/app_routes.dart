@@ -41,6 +41,16 @@ abstract final class AppRoutes {
 
   static String tableGuest(String token) => '$tableGuestPrefix/$token';
 
+  /// 2026-11-09 — the public, read-only "vitrin" menu for the floor-stand
+  /// QR at the shop entrance: browse categories/products/allergens/prices,
+  /// no ordering. Login-free like [tableGuestPrefix]; any location with
+  /// `?mode=showcase` is redirected here too. Ordering only becomes
+  /// possible by scanning a table's own QR ([tableGuest]).
+  static const String menuShowcase = '/menu';
+
+  /// The `mode` query value that opens [menuShowcase] from any location.
+  static const String showcaseModeQueryValue = 'showcase';
+
   /// AP-2 Stage B — the Admin/staff shell entry point. Staff/Platform
   /// authorization is an entirely separate identity system from the
   /// customer [authProvider]/[AppRouteGuard] stack (Firebase email/

@@ -20442,3 +20442,35 @@ uses project `demo-abakus-one-emulator` while that emulator runs single-project 
 Flutter: `pos_table_workspace_screen_test.dart` +5 (Siparişi Onayla ×2, cancel wording/message by
 role ×3), existing send-button tests repointed to the new button. `flutter analyze`: only the
 pre-existing `app_constants.dart` info. `flutter test` (whole project): 4034 passing, 0 failures.
+
+## ADR-068 — Read-only "vitrin" menu for the entrance floor-stand QR (2026-11-09)
+
+- Tarih: 2026-11-09
+- Durum: Accepted
+
+### Context
+
+A floor-stand QR at the entrance should let passers-by browse the menu without being able to order.
+Ordering must start only from a table's own QR.
+
+### Decision
+
+- **Route**: a dedicated public route `/menu` (`AppRoutes.menuShowcase`). `?mode=showcase` on any
+  other location redirects there, except a table QR link, which always wins. The product owner
+  rejected the alternative "no table parameter ⇒ showcase", which would have turned the normal
+  customer app (login, takeaway, delivery) into a showcase too.
+- **Screen**: `MenuShowcaseScreen` wraps the real `MenuScreen` unchanged (categories, products,
+  allergen filter, prices from the in-app catalog: no sign-in, no backend read), with an info banner
+  and no cart tab.
+- **Gate**: `allowCartAdd` (cart presentation guard) runs before every one of the 7 add-to-cart call
+  sites (menu quick-add, product detail + drink cross-sell, story bar, bowl builder, favorites,
+  reorder). In showcase it adds nothing and shows "Sipariş verebilmek için lütfen oturduğunuz masadaki
+  QR kodu okutun."
+- **State**: `isMenuShowcaseActiveProvider` = showcase flag AND no active table context. Scanning a
+  table QR (`/table/:token`) sets the table context, which lifts the restriction; the entry screen
+  also clears the flag. The flag is not persisted.
+
+### Consequences
+
+The modal text is Turkish only: there is no guest-language selection before a table session exists.
+Prices shown follow the same default channel a freshly-scanned table guest sees.

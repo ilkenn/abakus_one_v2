@@ -1,3 +1,4 @@
+import '../../../cart/presentation/guards/cart_add_guard.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -178,6 +179,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
       );
       return;
     }
+    if (!allowCartAdd(context, ref)) return;
 
     HapticFeedback.lightImpact();
     ref.read(cartProvider.notifier).addToCart(
@@ -672,6 +674,7 @@ class _DrinkQuickAddChip extends ConsumerWidget {
         child: InkWell(
           borderRadius: AppRadius.kPill,
           onTap: () {
+            if (!allowCartAdd(context, ref)) return;
             HapticFeedback.lightImpact();
             ref.read(cartProvider.notifier).addToCart(
                   id: drink.id,
