@@ -26,6 +26,9 @@ import '../../../orders/presentation/providers/orders_provider.dart';
 import '../../data/payment_gateway.dart';
 import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
+import '../../domain/authorization/actor_session.dart';
+import '../../domain/authorization/pos_authorized_action.dart';
+import '../../domain/authorization/role_permission_map.dart';
 import '../../domain/kitchen/kitchen_ticket_mapper.dart';
 import '../../domain/kitchen/kitchen_ticket_type.dart';
 import '../providers/actor_session_provider.dart';
@@ -143,16 +146,20 @@ class _PosTableWorkspaceScreenState
   }
 
   Future<T?> _runAction<T>(Future<T> Function() action) async {
+    // 2026-11-09 — every setState here is mount-guarded: an action's
+    // response can arrive after this screen was closed (seen on real use:
+    // "setState() called after dispose()" from the catch below).
+    if (!mounted) return null;
     setState(() {
       _busy = true;
       _actionError = null;
     });
     try {
       final result = await action();
-      await _load();
+      if (mounted) await _load();
       return result;
     } on PosActionException catch (e) {
-      setState(() => _actionError = e.message);
+      if (mounted) setState(() => _actionError = e.message);
       return null;
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -257,17 +264,29 @@ class _PosTableWorkspaceScreenState
           ],
         ),
       ),
-      onCancelRequest: (orderId, lineIndex, reasonCode, reasonMessage) =>
-          _runAction(
-        () =>
-            ref.read(posActionGatewayProvider).requestAcceptedLineCancellation(
-                  ctx: ctx,
-                  orderId: orderId,
-                  lineIndex: lineIndex,
-                  reasonCode: reasonCode,
-                  reasonMessage: reasonMessage,
-                ),
-      ),
+      onCancelRequest: (orderId, lineIndex, reasonCode, reasonMessage) async {
+        final result = await _runAction(
+          () => ref
+              .read(posActionGatewayProvider)
+              .requestAcceptedLineCancellation(
+                ctx: ctx,
+                orderId: orderId,
+                lineIndex: lineIndex,
+                reasonCode: reasonCode,
+                reasonMessage: reasonMessage,
+              ),
+        );
+        if (result == null || !mounted) return;
+        // ADR-066 — reports what the server actually did, never what the
+        // button wording assumed.
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(
+            content: Text(result.applied
+                ? 'Ürün iptal edildi.'
+                : 'İptal talebi yönetici onayına gönderildi.'),
+          ));
+      },
       onOpenCheck: () async {
         final tableSessionId = view.tableSessionId;
         if (tableSessionId == null) return;
@@ -604,7 +623,8 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
         title: selected.length == 1
             ? 'Ürünü İptal Et'
             : '${selected.length} Ürünü İptal Et',
-        confirmLabel: 'İptal Talebi Gönder',
+        confirmLabel: _lineCancelConfirmLabel(
+            _cancelsAcceptedLineDirectly(ref.read(actorSessionProvider))),
         reasonCodes: _acceptedLineCancellationReasonCodes,
         onSubmit: (reasonCode, reasonMessage) async {
           for (final line in selected) {
@@ -941,7 +961,8 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       context: context,
       builder: (dialogContext) => _ReasonDialog(
         title: 'Ürünü İptal Et',
-        confirmLabel: 'İptal Talebi Gönder',
+        confirmLabel: _lineCancelConfirmLabel(
+            _cancelsAcceptedLineDirectly(ref.read(actorSessionProvider))),
         reasonCodes: _acceptedLineCancellationReasonCodes,
         onSubmit: (reasonCode, reasonMessage) => widget.onCancelRequest(
             orderId, lineIndex, reasonCode, reasonMessage),
@@ -974,6 +995,8 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                 onAcceptReject: widget.onAcceptReject,
                 onPropose: widget.onPropose,
                 onCancelRequest: widget.onCancelRequest,
+                cancelsDirectly: _cancelsAcceptedLineDirectly(
+                    ref.read(actorSessionProvider)),
               ),
           ],
         ),
@@ -1591,6 +1614,11 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
   /// Ödemeye Hazırla → Ödeme Al branching, so the tile can never drift from
   /// the button's own real state machine.
   VoidCallback? get _primaryPaymentAction {
+    // 2026-11-08 — never finalize/pay while unsent items are in the cart:
+    // "Ödemeye Hazırla" only covers lines already sent to the kitchen, so
+    // the unsent ones would silently miss both the kitchen and the bill.
+    // Also disables the "Hesabı Kapat" grid tile, which shares this action.
+    if (_cartLines.isNotEmpty) return null;
     final status = _currentCheckStatus;
     if (widget.checkId == null) {
       return widget.view.hasActiveSession && !widget.busy
@@ -1694,6 +1722,33 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       }
     }
     widget.onFinalize();
+  }
+
+  /// 2026-11-08 — "Siparişi Onayla": sends the unsent cart to the kitchen
+  /// in one `submitStaffEntryOrder` call ([_sendCart]); the order is
+  /// created `confirmed` with its `kitchenWorkItems` enqueued server-side
+  /// in the same transaction, so it lands on the KDS immediately. Replaces
+  /// the old, visually secondary "Siparişi Mutfağa Gönder" button, which
+  /// sat above the always-prominent payment button and was easy to miss.
+  Widget _buildConfirmOrderButton() {
+    final enabled =
+        !_sendingCart && !widget.busy && _resolveAccountSelection() != null;
+    return ElevatedButton.icon(
+      key: const Key('confirmStaffEntryOrderButton'),
+      onPressed: enabled ? _sendCart : null,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.primary,
+        foregroundColor: AppColors.onPrimary,
+        minimumSize: const Size.fromHeight(48),
+      ),
+      icon: _sendingCart
+          ? const SizedBox.square(
+              dimension: AppSpacing.md,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.restaurant_outlined),
+      label: const Text('Siparişi Onayla'),
+    );
   }
 
   Widget _buildPaymentButton() {
@@ -1880,7 +1935,10 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                                                 Icons.remove_circle_outline,
                                                 size: 18,
                                                 color: AppColors.error),
-                                            tooltip: 'İptal Talebi Gönder',
+                                            tooltip: _lineCancelConfirmLabel(
+                                                _cancelsAcceptedLineDirectly(
+                                                    ref.watch(
+                                                        actorSessionProvider))),
                                             onPressed: widget.busy
                                                 ? null
                                                 : () => _showCancelDialog(
@@ -2023,23 +2081,18 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                     ],
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  ElevatedButton(
-                    onPressed:
-                        !_sendingCart && _resolveAccountSelection() != null
-                            ? _sendCart
-                            : null,
-                    child: _sendingCart
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('Siparişi Mutfağa Gönder'),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
                 ],
                 Row(
                   children: [
-                    Expanded(child: _buildPaymentButton()),
+                    // 2026-11-08 — while there are unsent items, the one
+                    // prominent action is "Siparişi Onayla" (sends them to
+                    // the kitchen); the payment flow only returns once the
+                    // cart is sent or emptied.
+                    Expanded(
+                      child: _cartLines.isNotEmpty
+                          ? _buildConfirmOrderButton()
+                          : _buildPaymentButton(),
+                    ),
                     const SizedBox(width: AppSpacing.sm),
                     IconButton(
                       icon: const Icon(Icons.delete_outline,
@@ -2281,6 +2334,7 @@ class _OrderCard extends StatelessWidget {
     required this.onAcceptReject,
     required this.onPropose,
     required this.onCancelRequest,
+    this.cancelsDirectly = false,
   });
 
   final PosTableOrderSummary order;
@@ -2288,6 +2342,10 @@ class _OrderCard extends StatelessWidget {
   final _AcceptRejectFn onAcceptReject;
   final _ProposeFn onPropose;
   final _CancelLineFn onCancelRequest;
+
+  /// ADR-066 — the signed-in actor cancels without remote approval; only
+  /// changes the wording, the server decides.
+  final bool cancelsDirectly;
 
   @override
   Widget build(BuildContext context) {
@@ -2328,6 +2386,7 @@ class _OrderCard extends StatelessWidget {
                     ? () => _showCancelDialog(
                         context, order.orderId, i, onCancelRequest)
                     : null,
+                cancelLabel: _lineCancelConfirmLabel(cancelsDirectly),
               ),
           ],
         ),
@@ -2360,7 +2419,7 @@ class _OrderCard extends StatelessWidget {
       context: context,
       builder: (dialogContext) => _ReasonDialog(
         title: 'Ürünü İptal Et',
-        confirmLabel: 'İptal Talebi Gönder',
+        confirmLabel: _lineCancelConfirmLabel(cancelsDirectly),
         reasonCodes: _acceptedLineCancellationReasonCodes,
         onSubmit: (reasonCode, reasonMessage) =>
             onCancelRequest(orderId, lineIndex, reasonCode, reasonMessage),
@@ -2619,6 +2678,30 @@ class _ReasonDialogState extends State<_ReasonDialog> {
   late String _reasonCode = widget.reasonCodes.keys.first;
   final _messageController = TextEditingController();
 
+  /// 2026-11-09 — true while [_ReasonDialog.onSubmit] is in flight. Both
+  /// buttons are disabled meanwhile: a real report (6 identical
+  /// `requestAcceptedLineCancellation` calls for one line, each ~7s on the
+  /// emulator) came from the confirm button accepting repeated taps with
+  /// no feedback while the first call was still running.
+  bool _submitting = false;
+
+  Future<void> _submit() async {
+    if (_submitting) return;
+    final message = _messageController.text.trim();
+    if (message.isEmpty) return;
+    final navigator = Navigator.of(context);
+    setState(() => _submitting = true);
+    try {
+      await widget.onSubmit(_reasonCode, message);
+    } catch (_) {
+      // Stay open so the user can retry; the screen's own action runner
+      // already surfaces backend errors (`_actionError`).
+      if (mounted) setState(() => _submitting = false);
+      return;
+    }
+    if (mounted) navigator.pop();
+  }
+
   @override
   void dispose() {
     _messageController.dispose();
@@ -2654,18 +2737,17 @@ class _ReasonDialogState extends State<_ReasonDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
           child: const Text('Vazgeç'),
         ),
         ElevatedButton(
-          onPressed: () async {
-            final message = _messageController.text.trim();
-            if (message.isEmpty) return;
-            final navigator = Navigator.of(context);
-            await widget.onSubmit(_reasonCode, message);
-            navigator.pop();
-          },
-          child: Text(widget.confirmLabel),
+          onPressed: _submitting ? null : _submit,
+          child: _submitting
+              ? const SizedBox.square(
+                  dimension: AppSpacing.md,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(widget.confirmLabel),
         ),
       ],
     );
@@ -2679,6 +2761,7 @@ class _LineRow extends StatelessWidget {
     this.onReject,
     this.onPropose,
     this.onCancelRequest,
+    this.cancelLabel = 'İptal Talebi Gönder',
   });
 
   final PosOrderLineSummary line;
@@ -2686,6 +2769,7 @@ class _LineRow extends StatelessWidget {
   final VoidCallback? onReject;
   final VoidCallback? onPropose;
   final VoidCallback? onCancelRequest;
+  final String cancelLabel;
 
   Color get _statusColor => switch (line.status) {
         'pendingApproval' => AppColors.warning,
@@ -2770,7 +2854,7 @@ class _LineRow extends StatelessWidget {
                   IconButton(
                     icon: const Icon(Icons.remove_circle_outline,
                         color: AppColors.error),
-                    tooltip: 'İptal Talebi Gönder',
+                    tooltip: cancelLabel,
                     onPressed: onCancelRequest,
                   ),
               ],
@@ -2780,6 +2864,19 @@ class _LineRow extends StatelessWidget {
     );
   }
 }
+
+/// ADR-066 (2026-11-08) — whether [session]'s roles let it cancel an
+/// accepted line without a second staff member's approval (manager tier
+/// and above, mirroring the server's `approveAcceptedLineCancellation`).
+/// UI wording only — the server re-checks and reports what it actually did
+/// (`AcceptedLineCancellationResult.applied`).
+bool _cancelsAcceptedLineDirectly(ActorSession? session) =>
+    session != null &&
+    RolePermissionMap.allows(
+        session.roles, PosAuthorizedAction.approveAcceptedLineCancellation);
+
+String _lineCancelConfirmLabel(bool cancelsDirectly) =>
+    cancelsDirectly ? 'Ürünü İptal Et' : 'İptal Talebi Gönder';
 
 const _staffEntryTableGeneralSentinel = '__table_general__';
 const _staffEntryWalkInSentinel = '__named_walk_in__';

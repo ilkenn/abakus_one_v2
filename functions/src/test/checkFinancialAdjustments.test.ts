@@ -281,6 +281,57 @@ test("requestAcceptedLineCancellation: only an accepted line is eligible; approv
   assert.strictEqual(event.data()!.preparationStarted, false, "a freshly-accepted, still-pendingConfirmation order has not started preparation");
 });
 
+// ADR-066 (2026-11-08) — manager-tier requesters cancel directly.
+for (const who of ["manager", "admin1"] as const) {
+  test(`requestAcceptedLineCancellation (ADR-066): a ${who} cancels DIRECTLY — applied in the same call, no approval request, same provenance/event + an audit event`, async () => {
+    const f = await setupFixture();
+    const { orderId } = await openCheckWithOneAllocatedLine(f);
+    const actor = f[who];
+
+    const request = await callCallable(REQUEST_CANCELLATION_URL, { ...checkCtx(f), orderId, lineIndex: 0, reasonCode: "kitchenError", reasonMessage: "Yanlış ürün girildi." }, actor.idToken);
+    assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
+    assert.strictEqual(request.body.result?.applied, true);
+    assert.strictEqual(request.body.result?.approvalRequestId, null);
+
+    const orderDoc = await db().collection("orders").doc(orderId).get();
+    const line = (orderDoc.data()!.lines as Array<Record<string, unknown>>)[0];
+    assert.strictEqual(line.status, "cancelledAfterAcceptance");
+    const cancellation = line.cancellation as Record<string, unknown>;
+    assert.strictEqual(cancellation.requestedByStaffUid, actor.uid);
+    assert.strictEqual(cancellation.approvedByStaffUid, actor.uid);
+    assert.strictEqual(cancellation.approvalMode, "managerDirect");
+    assert.strictEqual(cancellation.approvalRequestRef, null);
+    assert.strictEqual(cancellation.reasonCode, "kitchenError");
+
+    const cancellationRequestId = request.body.result?.cancellationRequestId as string;
+    const requestDoc = await db().collection("acceptedLineCancellationRequests").doc(cancellationRequestId).get();
+    assert.strictEqual(requestDoc.data()!.status, "applied");
+    assert.strictEqual(requestDoc.data()!.approvalMode, "managerDirect");
+
+    const event = await db().collection("orderLineCancellationEvents").doc(`${orderId}_0`).get();
+    assert.ok(event.exists);
+
+    const audit = await db().collection("auditEvents").doc(`${cancellationRequestId}-managerDirect`).get();
+    assert.ok(audit.exists, "a manager-direct cancellation must leave an audit event");
+    assert.strictEqual(audit.data()!.type, "acceptedLineCancellation.appliedByManagerDirect");
+    assert.strictEqual(audit.data()!.actorUid, actor.uid);
+    assert.strictEqual(audit.data()!.reasonCode, "kitchenError");
+  });
+}
+
+test("requestAcceptedLineCancellation (ADR-066): a staff requester still goes to remote approval — the line stays accepted until a manager approves", async () => {
+  const f = await setupFixture();
+  const { orderId } = await openCheckWithOneAllocatedLine(f);
+
+  const request = await callCallable(REQUEST_CANCELLATION_URL, { ...checkCtx(f), orderId, lineIndex: 0, reasonCode: "kitchenError", reasonMessage: "Yanlış ürün." }, f.staff.idToken);
+  assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
+  assert.strictEqual(request.body.result?.applied, false);
+  assert.ok(request.body.result?.approvalRequestId);
+
+  const orderDoc = await db().collection("orders").doc(orderId).get();
+  assert.strictEqual((orderDoc.data()!.lines as Array<Record<string, unknown>>)[0].status, "accepted");
+});
+
 test("requestAcceptedLineCancellation: a pendingApproval or rejected line is not eligible (only ACCEPTED lines)", async () => {
   const f = await setupFixture();
   const { idToken, uid: guestUid } = await signUpAnonymously();

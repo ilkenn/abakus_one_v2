@@ -7112,9 +7112,20 @@ neither restated in full here nor duplicated between the two.
   line. An idempotent downstream event (`orderLineCancellationEvents/{orderId}_{lineIndex}`,
   deterministic id, `.set()` not `.create()`) records whether kitchen preparation had already started
   — AP-5's own future stock/waste/fire reconciliation consumer, not built or implied by this rule.
+- **Amendment (2026-11-08, ADR-066, product-owner decision)**: a requester who already holds
+  `approveAcceptedLineCancellation` (`manager`/`admin`/`tenantOwner`) **cancels directly**: the
+  server applies the same void (same line provenance, same stock/kitchen cancellation, same
+  downstream event) in the request's own transaction, with no approval request. The reason
+  (`reasonCode` + `reasonMessage`) stays mandatory, and an `auditEvents` entry
+  (`acceptedLineCancellation.appliedByManagerDirect`) records actor, roles and reason. The line's
+  `cancellation.approvalMode` is `managerDirect` (`approvedByStaffUid` = requester,
+  `approvalRequestRef` = `null`). Lower roles (`staff`) keep the four-eyes remote-approval flow above,
+  unchanged. The server decides, never a client flag; the POS button wording ("Ürünü İptal Et" vs
+  "İptal Talebi Gönder") is presentation only. Accepted trade-off: a manager-tier user can now void a
+  line with no second person; the mandatory reason and audit trail are the remaining control.
 - **Owner Agent**: restaurant_domain / security_engineer
 - **Related Modules**: Orders, POS, KDS (AP-5 boundary), Stock (AP-5 boundary)
-- **Business Rule IDs**: ADR-029, ADR-031, `docs/order_operations_architecture.md` §12,
+- **Business Rule IDs**: ADR-029, ADR-031, ADR-066, `docs/order_operations_architecture.md` §12,
   `docs/kds_printer_stock_architecture.md` (AP-5 consumer boundary)
 
 ### BR-ORDER-015 — Every QR submission awaits cashier approval

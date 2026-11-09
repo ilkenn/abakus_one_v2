@@ -61,6 +61,22 @@ class PosActionException implements Exception {
   String toString() => 'PosActionException($code): $message';
 }
 
+/// 2026-11-08 (ADR-066) — what `requestAcceptedLineCancellation` actually
+/// did. A manager-tier caller's cancellation is [applied] immediately
+/// (no [approvalRequestId]); a lower role's goes to remote approval and
+/// stays pending until a manager approves it.
+class AcceptedLineCancellationResult {
+  const AcceptedLineCancellationResult({
+    required this.cancellationRequestId,
+    required this.applied,
+    this.approvalRequestId,
+  });
+
+  final String cancellationRequestId;
+  final bool applied;
+  final String? approvalRequestId;
+}
+
 abstract interface class PosActionGateway {
   // --- Line decisions (guestSession-mode orders only) ------------------
   Future<void> respondToOrderLines({
@@ -156,7 +172,7 @@ abstract interface class PosActionGateway {
   });
 
   // --- Accepted-line cancellation / financial adjustment (remote-approval-gated) ---
-  Future<String> requestAcceptedLineCancellation({
+  Future<AcceptedLineCancellationResult> requestAcceptedLineCancellation({
     required PosDeviceContext ctx,
     required String orderId,
     required int lineIndex,
@@ -431,7 +447,7 @@ class FirebasePosActionGateway implements PosActionGateway {
   }
 
   @override
-  Future<String> requestAcceptedLineCancellation({
+  Future<AcceptedLineCancellationResult> requestAcceptedLineCancellation({
     required PosDeviceContext ctx,
     required String orderId,
     required int lineIndex,
@@ -445,7 +461,14 @@ class FirebasePosActionGateway implements PosActionGateway {
       'reasonCode': reasonCode,
       'reasonMessage': reasonMessage,
     });
-    return result['approvalRequestId'] as String;
+    // ADR-066 — `approvalRequestId` is null for a manager-direct
+    // cancellation; `applied` is absent only from a pre-ADR-066 backend
+    // (always remote approval then).
+    return AcceptedLineCancellationResult(
+      cancellationRequestId: result['cancellationRequestId'] as String? ?? '',
+      applied: result['applied'] as bool? ?? false,
+      approvalRequestId: result['approvalRequestId'] as String?,
+    );
   }
 
   @override
@@ -601,7 +624,7 @@ class UnavailablePosActionGateway implements PosActionGateway {
       _unavailable();
 
   @override
-  Future<String> requestAcceptedLineCancellation({
+  Future<AcceptedLineCancellationResult> requestAcceptedLineCancellation({
     required PosDeviceContext ctx,
     required String orderId,
     required int lineIndex,

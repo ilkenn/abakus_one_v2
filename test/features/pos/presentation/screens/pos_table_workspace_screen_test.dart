@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,7 +10,10 @@ import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_line_status.dart';
+import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/pos_table_workspace_screen.dart';
@@ -257,7 +262,7 @@ class _FakePosActionGateway implements PosActionGateway {
   int financialAdjustmentRequestCallCount = 0;
 
   @override
-  Future<String> requestAcceptedLineCancellation({
+  Future<AcceptedLineCancellationResult> requestAcceptedLineCancellation({
     required PosDeviceContext ctx,
     required String orderId,
     required int lineIndex,
@@ -265,8 +270,23 @@ class _FakePosActionGateway implements PosActionGateway {
     required String reasonMessage,
   }) async {
     cancellationRequestCallCount += 1;
-    return 'approval-cancel-1';
+    final gate = cancellationGate;
+    if (gate != null) await gate.future;
+    return AcceptedLineCancellationResult(
+      cancellationRequestId: 'cancel-req-1',
+      applied: cancellationAppliesDirectly,
+      approvalRequestId:
+          cancellationAppliesDirectly ? null : 'approval-cancel-1',
+    );
   }
+
+  /// ADR-066 — what the fake backend reports: `true` simulates a
+  /// manager-tier caller (applied immediately).
+  bool cancellationAppliesDirectly = false;
+
+  /// When set, `requestAcceptedLineCancellation` stays in flight until this
+  /// completes — simulates a slow backend for the double-tap test.
+  Completer<void>? cancellationGate;
 
   @override
   Future<String> requestCheckFinancialAdjustment({
@@ -1110,8 +1130,7 @@ void main() {
 
     testWidgets(
         'tapping a product card twice accumulates quantity 2 in the cart, '
-        'and Siparişi Mutfağa Gönder submits both units in one call',
-        (tester) async {
+        'and Siparişi Onayla submits both units in one call', (tester) async {
       await tester.binding.setSurfaceSize(const Size(1200, 1400));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final fakes = await _pump(tester, initialView: emptyOpenTableView());
@@ -1140,8 +1159,7 @@ void main() {
       // target the compact dropdown starts on, satisfying the redesign's
       // "tek dokunuşla anında sepete eklenmeli" requirement without a
       // blocking step before the first tap.
-      await tester
-          .tap(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'));
+      await tester.tap(find.byKey(const Key('confirmStaffEntryOrderButton')));
       await tester.pumpAndSettle();
 
       expect(fakes.actionGateway.submitStaffEntryOrderCallCount, 1);
@@ -1166,8 +1184,8 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await _pump(tester, initialView: emptyOpenTableView());
 
-      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
-          findsNothing,
+      expect(
+          find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing,
           reason: 'the whole send-cart section is hidden while empty');
 
       await tester.tap(find.text('İçecekler'));
@@ -1180,7 +1198,7 @@ void main() {
       await tester.tap(cocaColaCard);
       await tester.pump();
 
-      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
+      expect(find.byKey(const Key('confirmStaffEntryOrderButton')),
           findsOneWidget);
     });
   });
@@ -1294,8 +1312,8 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
-          findsOneWidget,
+      expect(
+          find.byKey(const Key('confirmStaffEntryOrderButton')), findsOneWidget,
           reason: 'barkod eslesmesi urunu tek adimda sepete eklemeli');
       final searchField =
           tester.widget<TextField>(find.byKey(const Key('productSearchField')));
@@ -1316,8 +1334,8 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
-          findsNothing);
+      expect(
+          find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing);
       expect(find.textContaining('Barkod bulunamadı'), findsOneWidget);
     });
   });
@@ -1360,8 +1378,8 @@ void main() {
       await tester.pump();
 
       expect(find.text('Gramaj / Miktar Girin'), findsOneWidget);
-      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
-          findsNothing,
+      expect(
+          find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing,
           reason: 'gramaj girisi henuz sepete/fiyatlandirmaya baglanmadi');
     });
 
@@ -1389,8 +1407,8 @@ void main() {
       await tester.pump();
 
       expect(find.text('Gramaj / Miktar Girin'), findsNothing);
-      expect(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'),
-          findsNothing);
+      expect(
+          find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing);
     });
 
     testWidgets('"Teraziden Oku" bagli terazi yoksa dürüst mesaj gosterir',
@@ -1643,8 +1661,7 @@ void main() {
 
       expect(find.textContaining('Pirinç / Basmati Pilavı'), findsOneWidget);
 
-      await tester
-          .tap(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'));
+      await tester.tap(find.byKey(const Key('confirmStaffEntryOrderButton')));
       await tester.pumpAndSettle();
 
       final items = fakes.actionGateway.lastStaffEntryItems!;
@@ -1704,12 +1721,186 @@ void main() {
 
       expect(find.textContaining('Not: Sosu ayrı olsun'), findsOneWidget);
 
-      await tester
-          .tap(find.widgetWithText(ElevatedButton, 'Siparişi Mutfağa Gönder'));
+      await tester.tap(find.byKey(const Key('confirmStaffEntryOrderButton')));
       await tester.pumpAndSettle();
 
       expect(fakes.actionGateway.lastStaffEntryItems!.first['note'],
           'Sosu ayrı olsun');
+    });
+  });
+
+  // 2026-11-08 — "Siparişi Onayla" replaces the payment button while the
+  // cart has unsent items.
+  group('Siparişi Onayla (2026-11-08)', () {
+    Future<_Fakes> pumpWithOpenCheckAndCartItem(WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1280, 720));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final fakes = await _pump(tester, initialView: _acceptedLineView());
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'),
+          findsOneWidget);
+
+      await tester.tap(find.text('İçecekler'));
+      await tester.pump();
+      final card = find.descendant(
+        of: find.byType(GridView),
+        matching: find.text('CocaCola Şişe'),
+      );
+      await tester.ensureVisible(card);
+      await tester.tap(card);
+      await tester.pump();
+      return fakes;
+    }
+
+    testWidgets(
+        'with unsent items the primary button is Siparişi Onayla and the '
+        'payment flow is hidden', (tester) async {
+      await pumpWithOpenCheckAndCartItem(tester);
+
+      expect(find.text('Siparişi Onayla'), findsOneWidget);
+      expect(
+          find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'), findsNothing,
+          reason: 'finalizing now would leave the unsent items off both '
+              'the kitchen and the bill');
+    });
+
+    testWidgets(
+        'Siparişi Onayla sends the cart to the kitchen in one call, then the '
+        'payment button returns', (tester) async {
+      final fakes = await pumpWithOpenCheckAndCartItem(tester);
+
+      await tester.tap(find.byKey(const Key('confirmStaffEntryOrderButton')));
+      await tester.pumpAndSettle();
+
+      expect(fakes.actionGateway.submitStaffEntryOrderCallCount, 1);
+      expect(find.text('Siparişi Onayla'), findsNothing);
+      expect(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'),
+          findsOneWidget);
+    });
+  });
+
+  // ADR-066 (2026-11-08) — manager-tier users cancel directly.
+  group('accepted-line cancellation wording by role (ADR-066)', () {
+    Future<_Fakes> pumpAs(
+      WidgetTester tester, {
+      required Set<StaffRole> roles,
+      required bool serverAppliesDirectly,
+    }) async {
+      final fakes = await _pump(
+        tester,
+        initialView: _acceptedLineView(),
+        extraOverrides: [
+          actorSessionProvider.overrideWith((ref) => ActorSession(
+                actorId: 'actor-1',
+                roles: roles,
+                activeRole: roles.first,
+              )),
+        ],
+      );
+      fakes.actionGateway.cancellationAppliesDirectly = serverAppliesDirectly;
+      return fakes;
+    }
+
+    Future<void> submitCancel(WidgetTester tester, String label) async {
+      await tester.tap(find.byTooltip(label));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const Key('reasonMessageField')), 'Yanlış ürün girildi');
+      await tester.tap(find.widgetWithText(ElevatedButton, label));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets(
+        'a manager sees Ürünü İptal Et and is told the item was cancelled',
+        (tester) async {
+      final fakes = await pumpAs(tester,
+          roles: {StaffRole.manager}, serverAppliesDirectly: true);
+
+      expect(find.byTooltip('İptal Talebi Gönder'), findsNothing);
+      await submitCancel(tester, 'Ürünü İptal Et');
+
+      expect(fakes.actionGateway.cancellationRequestCallCount, 1);
+      expect(find.text('Ürün iptal edildi.'), findsOneWidget);
+    });
+
+    testWidgets(
+        'staff still sees İptal Talebi Gönder and is told it went for approval',
+        (tester) async {
+      final fakes = await pumpAs(tester,
+          roles: {StaffRole.staff}, serverAppliesDirectly: false);
+
+      await submitCancel(tester, 'İptal Talebi Gönder');
+
+      expect(fakes.actionGateway.cancellationRequestCallCount, 1);
+      expect(find.text('İptal talebi yönetici onayına gönderildi.'),
+          findsOneWidget);
+    });
+
+    testWidgets(
+        'the message follows what the server did, not the button wording',
+        (tester) async {
+      await pumpAs(tester,
+          roles: {StaffRole.manager}, serverAppliesDirectly: false);
+
+      await submitCancel(tester, 'Ürünü İptal Et');
+
+      expect(find.text('İptal talebi yönetici onayına gönderildi.'),
+          findsOneWidget);
+    });
+  });
+
+  // 2026-11-09 — real report: 6 identical cancel calls for one line from
+  // repeated taps while the first call was still in flight.
+  group('reason dialog double-submit guard (2026-11-09)', () {
+    testWidgets(
+        'while the cancel call is in flight the buttons are locked, a spinner '
+        'shows, repeated taps send nothing more, and the dialog closes after',
+        (tester) async {
+      final fakes = await _pump(tester, initialView: _acceptedLineView());
+      final gate = Completer<void>();
+      fakes.actionGateway.cancellationGate = gate;
+
+      await tester.tap(find.byTooltip('İptal Talebi Gönder'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const Key('reasonMessageField')), 'Yanlış ürün girildi');
+
+      final confirm = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(ElevatedButton),
+      );
+      await tester.tap(confirm);
+      await tester.pump();
+
+      expect(fakes.actionGateway.cancellationRequestCallCount, 1);
+      expect(
+          find.descendant(
+            of: find.byType(AlertDialog),
+            matching: find.byType(CircularProgressIndicator),
+          ),
+          findsOneWidget);
+      expect(tester.widget<ElevatedButton>(confirm).onPressed, isNull);
+      expect(
+          tester
+              .widget<TextButton>(find.widgetWithText(TextButton, 'Vazgeç'))
+              .onPressed,
+          isNull);
+
+      for (var i = 0; i < 5; i++) {
+        await tester.tap(confirm, warnIfMissed: false);
+        await tester.pump();
+      }
+      expect(fakes.actionGateway.cancellationRequestCallCount, 1,
+          reason: 'repeated taps must not fire a second request');
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(fakes.actionGateway.cancellationRequestCallCount, 1);
     });
   });
 }

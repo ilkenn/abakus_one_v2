@@ -53,6 +53,13 @@ enum PosAuthorizedAction {
   reopenTableCheck,
   transferOrMergeAfterPayment,
   cancelAfterPreparation,
+
+  /// 2026-11-08 (ADR-066) — cancel an already-accepted order line directly,
+  /// without a second staff member's approval. Mirrors the server's own
+  /// `approveAcceptedLineCancellation` permission (manager tier and above);
+  /// the server re-checks it — this client-side value only picks the
+  /// button wording ("Ürünü İptal Et" vs "İptal Talebi Gönder").
+  approveAcceptedLineCancellation,
   packageCompletionOverride,
   reprintOrDuplicateReceipt,
   operationalCorrection,

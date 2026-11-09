@@ -106,6 +106,7 @@ abstract final class RolePermissionMap {
     PosAuthorizedAction.reopenOrder,
     PosAuthorizedAction.reopenTableCheck,
     PosAuthorizedAction.cancelAfterPreparation,
+    PosAuthorizedAction.approveAcceptedLineCancellation,
     PosAuthorizedAction.packageCompletionOverride,
     PosAuthorizedAction.reprintOrDuplicateReceipt,
     PosAuthorizedAction.reviewCashReconciliation,

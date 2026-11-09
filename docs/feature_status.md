@@ -11230,3 +11230,39 @@ files' `_encodeTurkishLikeEncoder` helpers and the receipt encoder's PC857 test 
 output, not the old override bytes), `pos_workspace_providers_test.dart`/`pos_checkout_screen_test
 .dart` for the new cash-drawer default. `flutter analyze`: clean. `flutter test` (whole project):
 3991 passing, 0 failures (+4 over 3987).
+
+### KDS card footer actions + "no skipping" status-chain fix (2026-11-08)
+
+Full reasoning in `docs/decisions.md` ADR-065. KDS cards now have a footer: **Hazırlanıyor**
+(`confirmed`), **Hazırlandı** (`preparing`), **Teslim Edildi** (`ready`; dine-in/reservation →
+`served`, takeaway → `completed`; none for delivery, which hands off to the courier flow), plus a
+secondary **İptal Et** for every lifecycle channel with a reason dialog. Fixed the `Cannot advance
+from "confirmed" directly to "ready"` error: the board/detail screen used to jump the order straight
+to `ready` once all lines were ready, while nothing had moved it off `confirmed`. The new
+`AdvanceKitchenOrder` use case always walks the exact chain. Confirm/reject stays on the POS (not
+added to KDS). Client-only change, no Cloud Functions edits. **Visual Review Bekleniyor**: the footer
+layout has not been checked on the real KDS screen yet. `flutter test` (whole project): 4029
+passing, 0 failures.
+
+### POS "Siparişi Onayla" + manager-direct line cancellation (2026-11-08)
+
+Full reasoning in `docs/decisions.md` ADR-066, business rule BR-ORDER-019 amendment. While a
+table's cart has unsent items, the POS workspace's primary button is now **Siparişi Onayla** (sends
+them to the kitchen; the order lands on the KDS immediately). The payment flow (Hesap Aç / Ödemeye
+Hazırla / Ödeme Al) is hidden until the cart is sent, so unsent items can no longer silently miss the
+bill. Accepted-line cancellation: manager/admin/tenantOwner now see **Ürünü İptal Et** and the line
+is voided immediately (reason mandatory, audit event written); staff keep **İptal Talebi Gönder**
+(manager approval). Backend emulator tests written but not executed (see ADR-066). **Visual Review
+Bekleniyor**. `flutter test` (whole project): 4034 passing, 0 failures.
+
+### POS reason dialog double-submit guard + `_runAction` dispose safety (2026-11-09)
+
+Found on real use of ADR-066: one bulk cancel produced 6 identical `requestAcceptedLineCancellation`
+calls for the same line. The confirm button kept accepting taps with no feedback while the first
+call (~7s on the emulator) was in flight. The server applied one and rejected the other five, so no
+data was corrupted. `_ReasonDialog` (shared by line cancel, bulk cancel and replacement proposal) now
+locks both buttons and shows a spinner while submitting, closes when the call finishes, and stays
+open if it throws. `_PosTableWorkspaceScreenState._runAction` mount-guards every `setState`; this
+fixes the `setState() called after dispose()` seen when responses arrived after the screen closed.
+New widget test (double-tap sends exactly one request). `flutter test` (whole project): 4035
+passing, 0 failures.

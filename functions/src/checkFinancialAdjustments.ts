@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import type { CallableRequest } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import type { Firestore, Transaction } from "firebase-admin/firestore";
 import { requireStaffPermission, requireBranchAccess } from "./staffAuthorization";
 import { requireActiveDeviceSession } from "./trustedDevice";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
@@ -320,6 +321,39 @@ interface AcceptedLineCancellationRequestDoc {
   status: "pendingApproval" | "applied" | "rejected";
   createdAt: Timestamp;
   version: number;
+  /**
+   * 2026-11-08 (ADR-066) — how the cancellation was authorized:
+   * `remoteApproval` (a second, eligible staff member approved it via
+   * `respondToApprovalRequest`) or `managerDirect` (the requester already
+   * held `approveAcceptedLineCancellation` and the cancellation was applied
+   * immediately). Absent on documents written before this field existed —
+   * those are all `remoteApproval`.
+   */
+  approvalMode?: "remoteApproval" | "managerDirect";
+}
+
+/**
+ * 2026-11-08 (ADR-066) — whether the caller may authorize an accepted-line
+ * cancellation themselves. Product-owner decision: a manager-tier user
+ * (`manager`/`admin`/`tenantOwner` — exactly the roles holding
+ * `approveAcceptedLineCancellation` in `DEFAULT_STAFF_ROLE_PERMISSIONS`)
+ * cancels directly instead of sending an approval request they could
+ * never approve themselves (`respondToApprovalRequest` forbids self-
+ * approval). Lower roles keep the four-eyes remote-approval flow. Only a
+ * `permission-denied` is downgraded to `false`; any other failure (e.g. a
+ * stale/revoked token) still propagates.
+ */
+async function callerMayApproveLineCancellation(
+  request: CallableRequest,
+  organizationId: string,
+): Promise<boolean> {
+  try {
+    await requireStaffPermission(request, organizationId, "approveAcceptedLineCancellation");
+    return true;
+  } catch (error) {
+    if (error instanceof HttpsError && error.code === "permission-denied") return false;
+    throw error;
+  }
 }
 
 export const requestAcceptedLineCancellation = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
@@ -338,6 +372,7 @@ export const requestAcceptedLineCancellation = onCall({ enforceAppCheck: shouldE
   await requireStaffPermission(request, organizationId, "manageDineInOrders");
   await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
+  const managerDirect = await callerMayApproveLineCancellation(request, organizationId);
 
   const db = getFirestore();
   return db.runTransaction(async (tx) => {
@@ -359,7 +394,37 @@ export const requestAcceptedLineCancellation = onCall({ enforceAppCheck: shouldE
       requestedByStaffUid: request.auth!.uid, reasonCode, reasonMessage,
       approvalRequestRef: "", status: "pendingApproval", createdAt: now, version: 1,
     };
-    tx.set(requestRef, doc);
+
+    if (managerDirect) {
+      // ADR-066 — applied in THIS transaction, through the exact same
+      // void/stock/kitchen/event logic the remote-approval handler uses.
+      // Every read inside `voidAcceptedLineInTransaction` still happens
+      // before this transaction's first write.
+      const applied = await voidAcceptedLineInTransaction({
+        tx,
+        db,
+        cancellationRequest: doc,
+        approvalRequestRef: null,
+        approvedByStaffUid: request.auth!.uid,
+        now,
+      });
+      tx.set(requestRef, { ...doc, status: "applied", version: 2, approvalMode: "managerDirect" });
+      const token = request.auth!.token as Record<string, unknown>;
+      const rolesByOrg = token.roles as Record<string, unknown> | undefined;
+      writeAuditEvent({
+        tx, db, eventId: `${requestRef.id}-managerDirect`, organizationId, branchId,
+        type: "acceptedLineCancellation.appliedByManagerDirect", targetRef: orderRef.path,
+        previousValue: { lineIndex, status: "accepted" },
+        newValue: { lineIndex, status: "cancelledAfterAcceptance", preparationStarted: applied.preparationStarted },
+        actorType: "staff", actorUid: request.auth!.uid,
+        actorRoles: Array.isArray(rolesByOrg?.[organizationId]) ? (rolesByOrg![organizationId] as string[]) : null,
+        reasonCode, reasonMessage,
+        correlationId: generateCorrelationId(), clientRequestId: sanitizeClientRequestId(data.clientRequestId), now,
+      });
+      return { cancellationRequestId: requestRef.id, approvalRequestId: null, applied: true };
+    }
+
+    tx.set(requestRef, { ...doc, approvalMode: "remoteApproval" });
 
     const approval = await createApprovalRequest({
       organizationId, branchId, actionType: "acceptedLineCancellation",
@@ -368,7 +433,7 @@ export const requestAcceptedLineCancellation = onCall({ enforceAppCheck: shouldE
     });
     tx.update(requestRef, { approvalRequestRef: approval.requestId });
 
-    return { cancellationRequestId: requestRef.id, approvalRequestId: approval.requestId };
+    return { cancellationRequestId: requestRef.id, approvalRequestId: approval.requestId, applied: false };
   });
 });
 
@@ -386,6 +451,37 @@ export async function applyAcceptedLineCancellation(params: ActionHandlerParams)
     throw new HttpsError("failed-precondition", `Cancellation request is already "${cancellationRequest.status}".`);
   }
 
+  const applied = await voidAcceptedLineInTransaction({
+    tx,
+    db,
+    cancellationRequest,
+    approvalRequestRef: approval.requestId,
+    approvedByStaffUid: respondedByActorUid,
+    now,
+  });
+  tx.update(requestRef, { status: "applied", version: cancellationRequest.version + 1 });
+
+  return { newValue: { lineIndex: cancellationRequest.lineIndex, preparationStarted: applied.preparationStarted } };
+}
+
+/**
+ * The actual void of one accepted line — shared (ADR-066) by the
+ * remote-approval handler above and `requestAcceptedLineCancellation`'s
+ * manager-direct path, so both authorization routes produce the exact same
+ * line provenance, stock/kitchen cancellation, and downstream event. All of
+ * its reads happen before its first write; the caller writes the
+ * cancellation-request document itself afterwards.
+ */
+async function voidAcceptedLineInTransaction(params: {
+  tx: Transaction;
+  db: Firestore;
+  cancellationRequest: AcceptedLineCancellationRequestDoc;
+  /** `null` for a manager-direct cancellation (no approval request exists). */
+  approvalRequestRef: string | null;
+  approvedByStaffUid: string;
+  now: Timestamp;
+}): Promise<{ preparationStarted: boolean }> {
+  const { tx, db, cancellationRequest, approvalRequestRef, approvedByStaffUid: respondedByActorUid, now } = params;
   const orderRef = db.collection("orders").doc(cancellationRequest.orderId);
   const orderSnap = await tx.get(orderRef);
   if (!orderSnap.exists) throw new HttpsError("not-found", "The order no longer exists.");
@@ -429,12 +525,12 @@ export async function applyAcceptedLineCancellation(params: ActionHandlerParams)
       approvedByStaffUid: respondedByActorUid,
       reasonCode: cancellationRequest.reasonCode,
       reasonMessage: cancellationRequest.reasonMessage,
-      approvalRequestRef: approval.requestId,
+      approvalRequestRef,
+      approvalMode: approvalRequestRef === null ? "managerDirect" : "remoteApproval",
       cancelledAt: now.toDate().toISOString(),
     },
   };
   tx.update(orderRef, { lines });
-  tx.update(requestRef, { status: "applied", version: cancellationRequest.version + 1 });
   applyCancellationStockHandling(tx, db, stockPlan);
 
   // Idempotent downstream event — deterministic id, `.set()` not `.create()`
@@ -448,7 +544,7 @@ export async function applyAcceptedLineCancellation(params: ActionHandlerParams)
     organizationId: cancellationRequest.organizationId,
     branchId: cancellationRequest.branchId,
     preparationStarted,
-    approvalRequestRef: approval.requestId,
+    approvalRequestRef,
     recordedAt: now,
     // AP-5 Sprint 3 — this handler IS the consumer this field was always
     // meant for; processed inline, so this is set true immediately, never
@@ -456,7 +552,7 @@ export async function applyAcceptedLineCancellation(params: ActionHandlerParams)
     consumedByStockReconciliation: true,
   });
 
-  return { newValue: { lineIndex: cancellationRequest.lineIndex, preparationStarted } };
+  return { preparationStarted };
 }
 
 // -----------------------------------------------------------------------

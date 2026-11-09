@@ -191,7 +191,7 @@ class _FakePosActionGateway implements PosActionGateway {
       throw UnimplementedError();
 
   @override
-  Future<String> requestAcceptedLineCancellation({
+  Future<AcceptedLineCancellationResult> requestAcceptedLineCancellation({
     required PosDeviceContext ctx,
     required String orderId,
     required int lineIndex,

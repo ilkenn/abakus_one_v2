@@ -20319,3 +20319,126 @@ and that the old override bytes never appear, instead of asserting the old overr
 `pos_workspace_providers_test.dart`/`pos_checkout_screen_test.dart` updated for the new cash-drawer
 default. `flutter analyze`: clean. `flutter test` (whole project): 3991 passing, 0 failures (+4 over
 the Adım 5 baseline of 3987).
+
+## ADR-065 — KDS card footer actions + strict order-status chain fix (no `confirmed -> ready` skip) (2026-11-08)
+
+- Tarih: 2026-11-08
+- Durum: Accepted
+
+### Context
+
+After 1658cdb made staff-entry dine-in orders start at `confirmed`, KDS cards appeared, but (1) no
+card offered any order-level action and (2) the board threw `Cannot advance from "confirmed"
+directly to "ready" — only the exact next status is allowed, no skipping`. Root cause: kitchen work
+items (lines, `kitchenWorkItems`) and the order (`orders.status`) are tracked separately.
+`KitchenDisplayBoardScreen._advanceLine` and `KitchenOrderDetailsScreen._transition` moved lines
+along and, once `transitionKitchenWorkItem` reported `allSiblingsReady`, called
+`advance*OrderStatus(targetStatus: 'ready')` — but nothing ever advanced the order off
+`confirmed`, and every channel's callable (`DINE_IN_NEXT_STATUS`/`TAKEAWAY_NEXT_STATUS`/
+`DELIVERY_NEXT_STATUS`/reservation) accepts only the exact next status. Cards had no order-level
+buttons because `KitchenTicketHeader` never carried the order's status, although
+`FirestoreKitchenTicketRepository` already reads it from `orders`.
+
+### Decision
+
+Client-side fix; no backend change. `transitionKitchenWorkItem.ts` deliberately does not touch order
+status (its own doc comment), so composing lifecycle logic there was rejected.
+
+- `KitchenTicketHeader.orderStatus` (new, nullable, additive; filled by `KitchenTicketMapper
+  .fromOrder`). `null` for non-order-derived tickets, which get no order actions.
+- `KitchenOrderActionPolicy` (domain, pure): `confirmed` → "Hazırlanıyor", `preparing` →
+  "Hazırlandı", `ready` → "Teslim Edildi" (dine-in/reservation → `served`, takeaway → `completed`);
+  cancel allowed in `confirmed`/`preparing`/`ready`.
+- `AdvanceKitchenOrder` (application use case) sequences the calls: order first, then lines walked
+  one legal step at a time (`queued -> acknowledged -> preparing -> ready`, `recalled ->
+  preparing`); "Hazırlandı" from a still-`confirmed` order goes through `preparing` first;
+  `syncOrderAfterLineTransition` replaces both screens' old direct `'ready'` call (a line starting
+  preparation moves a `confirmed` order to `preparing`; the last line ready moves it to `ready`,
+  through `preparing` if needed). Not atomic across calls; every backend step is idempotent for a
+  repeated same-status request (`duplicate: true`), so pressing the same button again recovers a
+  partial failure.
+- `KitchenActionGateway.cancelOrder` (new; API-contract addition): `dineInQr` →
+  `advanceDineInOrderStatus(cancelled)`, `takeaway`/`delivery`/`reservationPreorder` → their
+  existing `cancel*OrderForStaff` callables. `DineInCancellationReasonCode.guestLeft` is sent as
+  `customerNoShow` for non-dine-in channels (the only difference between the four server enums).
+  The server keeps enforcing escalated (manager-tier) cancellation once takeaway/delivery is
+  `preparing`.
+- Card footer (`_OrderActionFooter`): one primary button plus a secondary "İptal Et", disabled
+  while a call is in flight, hidden without Firebase. The cancel reason dialog moved to
+  `presentation/widgets/kitchen_order_cancel_dialog.dart`, shared by board and detail screen.
+
+Scope decisions, confirmed by the user 2026-11-08:
+- **No Onayla/Reddet on KDS** — `pendingConfirmation` stays off the kitchen board
+  (`_kitchenEligibleStatuses`); confirmation remains a POS action.
+- **Teslim Edildi: dine-in + reservation + takeaway.** Takeaway `completed` triggers Boncuk earning
+  server-side (`onOrderCompleted.ts`) — now reachable from the kitchen by explicit choice.
+  Delivery gets no hand-off button (`ready -> outForDelivery` is the courier flow's).
+- **İptal Et: all lifecycle channels** (previously dine-in only on the detail screen).
+- `dineInStaff` has no lifecycle callable (staff dine-in orders are stored as `dineInQr`), so it
+  gets no actions.
+
+### Consequences
+
+New: `kitchen_order_action_policy.dart`, `advance_kitchen_order.dart`,
+`kitchen_order_cancel_dialog.dart`. Tests: `kitchen_order_action_policy_test.dart`,
+`advance_kitchen_order_test.dart`, `kitchen_action_gateway_cancel_test.dart` (Windows REST path:
+exact callable + payload per channel), board `order footer actions` group (8 cases incl. the
+regression), detail-screen cancel-visibility tests rewritten for the new rule. `flutter analyze`:
+only the pre-existing `app_constants.dart` info. `flutter test` (whole project): 4029 passing,
+0 failures.
+
+## ADR-066 — POS: "Siparişi Onayla" as the primary action for unsent items; manager-tier direct accepted-line cancellation (2026-11-08)
+
+- Tarih: 2026-11-08
+- Durum: Accepted
+
+### Context
+
+Two issues reported from real use on the Windows POS:
+
+1. Items added to a table "did not reach the KDS". Investigation found the backend path correct:
+   `submitStaffEntryOrder` (`submitDineInOrder.ts`, `staffEntry`) creates the order `confirmed` and
+   enqueues its `kitchenWorkItems` in the same transaction. The send button ("Siparişi Mutfağa
+   Gönder") existed and rendered correctly (measured at 1280×720 / 1366×768 / 1920×1080), but as a
+   plain secondary button above the always-prominent "Ödemeye Hazırla". And "Ödemeye Hazırla"
+   stayed enabled while unsent items were in the cart: finalizing then covers only already-sent
+   lines, so the unsent ones silently missed both the kitchen and the bill.
+2. Cancelling an accepted line always sent an approval request ("İptal Talebi Gönder"), even for a
+   manager — who could never approve it, because `respondToApprovalRequest` structurally forbids
+   self-approval.
+
+### Decision
+
+1. While the cart has unsent items, the workspace's one primary button is **"Siparişi Onayla"**
+   (sends the cart via the existing `submitStaffEntryOrder`). The old separate button is removed.
+   `_primaryPaymentAction` returns `null` while the cart is non-empty, which also disables the
+   "Hesabı Kapat" tile; the Hesap Aç → Ödemeye Hazırla → Ödeme Al flow returns once the cart is
+   sent or emptied. Auto-send on every tap was considered and rejected (one kitchen ticket/print per
+   tap; a mis-tap becomes a cancellation).
+2. **Authorization change** (product-owner decision, BR-ORDER-019 amendment):
+   `requestAcceptedLineCancellation` checks `approveAcceptedLineCancellation` (only
+   `permission-denied` downgrades to the old flow). If the caller holds it, the void is applied in the
+   same transaction through `voidAcceptedLineInTransaction`, now shared with the remote-approval
+   handler `applyAcceptedLineCancellation`, so line provenance, stock/kitchen cancellation and the
+   downstream event are identical on both paths. The direct path also writes
+   `acceptedLineCancellationRequests` (`status: applied`, `approvalMode: managerDirect`) and an
+   `auditEvents` entry. Reason stays mandatory. Response gains `applied`; `approvalRequestId` is
+   `null` when applied (**API-contract change**: `PosActionGateway.requestAcceptedLineCancellation`
+   now returns `AcceptedLineCancellationResult` — the old `as String` cast would have thrown on
+   `null`).
+   Client: new `PosAuthorizedAction.approveAcceptedLineCancellation` (manager tier) picks the
+   wording "Ürünü İptal Et" vs "İptal Talebi Gönder"; the SnackBar reports what the server actually
+   did (`applied`), not what the wording assumed.
+
+### Consequences
+
+Manager-tier users lose four-eyes control on line voids; the mandatory reason and audit event are
+the remaining control. Staff behavior is unchanged.
+
+Tests: `checkFinancialAdjustments.test.ts` +3 emulator cases (manager-direct and admin-direct incl.
+audit/provenance; staff still pending). **Written and `tsc`-clean, but NOT executed**: the suite
+needs its own `firebase emulators:exec` on the ports the user's running dev emulator occupies, and
+uses project `demo-abakus-one-emulator` while that emulator runs single-project `abakus-one-dev`.
+Flutter: `pos_table_workspace_screen_test.dart` +5 (Siparişi Onayla ×2, cancel wording/message by
+role ×3), existing send-button tests repointed to the new button. `flutter analyze`: only the
+pre-existing `app_constants.dart` info. `flutter test` (whole project): 4034 passing, 0 failures.
