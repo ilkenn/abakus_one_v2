@@ -515,21 +515,26 @@ function buildDineInOrderDocument(params: {
     // discipline: `pricing` above already reflects the campaign discount
     // baked in; `campaign` is the read-only immutable audit snapshot.
     campaign: params.campaign,
+    // 2026-11-09 — kept consistent with `status` above: a staffEntry
+    // order (lines auto-`accepted`) is born `confirmed`, so its first
+    // history entry and `timestamps.confirmed` say so too (previously
+    // always "created -> pendingConfirmation" / `null`, contradicting the
+    // order's own status).
     statusHistory: [
       {
         id: `${params.orderId}-transition-1`,
         type: "statusChange",
-        description: "Status changed from created to pendingConfirmation",
-        actor: "customer",
+        description: `Status changed from created to ${params.lineStatus === "accepted" ? "confirmed" : "pendingConfirmation"}`,
+        actor: params.mode === "staffEntry" ? "staff" : "customer",
         timestamp: params.now.toISOString(),
         previousValue: "created",
-        newValue: "pendingConfirmation",
+        newValue: params.lineStatus === "accepted" ? "confirmed" : "pendingConfirmation",
       },
     ],
     version: 1,
     timestamps: {
       created: params.now.toISOString(),
-      confirmed: null,
+      confirmed: params.lineStatus === "accepted" ? params.now.toISOString() : null,
       preparing: null,
       ready: null,
       served: null,

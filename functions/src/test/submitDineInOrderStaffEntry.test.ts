@@ -224,6 +224,11 @@ test("submitDineInOrder staffEntry: a permission- and device-checked staff entry
   // reached the KDS board — kitchenWorkItems were enqueued correctly, the
   // order itself just never satisfied the KDS screen's own Firestore query.
   assert.strictEqual(order!.status, "confirmed");
+  // 2026-11-09 — history and timestamps agree with that status.
+  const firstTransition = (order!.statusHistory as Array<Record<string, unknown>>)[0];
+  assert.strictEqual(firstTransition.newValue, "confirmed");
+  assert.strictEqual(firstTransition.actor, "staff");
+  assert.ok((order!.timestamps as Record<string, unknown>).confirmed, "timestamps.confirmed must be set");
 
   const subAccountId = body.result?.subAccountId as string;
   const subAccount = (await db().collection("guestSubAccounts").doc(subAccountId).get()).data()!;
