@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -116,7 +117,7 @@ final selectedPosTableIdProvider = StateProvider<String?>((ref) => null);
 /// Android/iOS/Web) rather than attempting a `winspool.drv` FFI call that
 /// doesn't exist on those platforms.
 final rawPrinterAdapterProvider = Provider<RawPrinterAdapter>((ref) {
-  return Platform.isWindows
+  return !kIsWeb && Platform.isWindows
       ? const WindowsRawPrinterAdapter()
       : const UnavailableRawPrinterAdapter();
 });
