@@ -9,10 +9,8 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_theme_constants.dart';
 import '../../../../core/theme/qr_menu_theme.dart';
-import '../../../../shared/widgets/cards/bowl_builder_feature_card.dart';
 import '../../../../shared/widgets/cards/glass_card.dart';
 import '../../../../shared/widgets/images/product_image.dart';
-import '../../../bowl_builder/presentation/screens/bowl_builder_screen.dart';
 import '../../../cart/presentation/providers/cart_provider.dart';
 import '../../../cart/presentation/providers/shopping_channel_provider.dart';
 import '../../../favorites/presentation/providers/favorites_provider.dart';
@@ -155,17 +153,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-              child: BowlBuilderFeatureCard(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const BowlBuilderScreen(),
-                  ),
-                ),
-              ),
-            ),
+            // ADR-069 (2026-11-09): the "Kendi Bowl'unu Yarat" card was
+            // removed with the Bowl Builder product.
             const SizedBox(height: AppSpacing.lg),
             // "Şefin Seçimi" / today's-specials story bar — real
             // `featuredMenuProductsProvider` data, hides itself when empty.

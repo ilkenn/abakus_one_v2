@@ -529,11 +529,11 @@ test("11/12. Gel Al packaging surcharge and delivery surcharge are never applied
   assert.strictEqual(order!.pricing.deliveryFee.minorUnits, 0);
 });
 
-test("13. bowl canonical pricing — ingredient total plus zero channel adjustment", async () => {
+test("13. a custom bowl item is rejected (ADR-069: Bowl Builder withdrawn)", async () => {
   const fixture = await seedPreorderFixture();
   const { idToken } = await createRealPhoneUser();
 
-  const { body } = await callCallable(
+  const { httpStatus, body } = await callCallable(
     SUBMIT_URL,
     {
       submissionKey: nextId("key"),
@@ -548,9 +548,8 @@ test("13. bowl canonical pricing — ingredient total plus zero channel adjustme
     idToken,
   );
 
-  const order = await getOrder(body.result!.preorderOrderId as string);
-  assert.strictEqual(order!.lines[0].unitPrice.minorUnits, 0, "bowl channel adjustment for reservationPreorder is unconfigured, hence zero");
-  assert.strictEqual(order!.pricing.grandTotal.minorUnits, 3000, "ingredient total only");
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
 });
 
 test("14. an inactive product is rejected fail-closed", async () => {

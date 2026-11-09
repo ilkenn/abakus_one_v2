@@ -212,6 +212,10 @@ function sanitizeSubmissionKey(raw: unknown): string {
 // `boncukRedemptionErrors.ts` (imported above), reused verbatim by
 // `submitDeliveryOrder.ts`. Behavior unchanged.
 
+/** ADR-069 — the refusal text for a withdrawn custom-bowl item. */
+export const BOWL_BUILDER_WITHDRAWN_MESSAGE =
+  'custom bowl items (kind "bowl") are no longer accepted.';
+
 export function parseItems(raw: unknown): RawItem[] {
   if (!Array.isArray(raw) || raw.length === 0) invalid("items must be a non-empty array.");
   if (raw.length > MAX_ITEMS_PER_ORDER) invalid("too many items in one order.");
@@ -227,14 +231,12 @@ export function parseItems(raw: unknown): RawItem[] {
       };
     }
     if (item.kind === "bowl") {
-      return {
-        kind: "bowl",
-        quantity: item.quantity,
-        ingredientIds: item.ingredientIds,
-        note: item.note,
-      };
+      // ADR-069 (2026-11-09): "Kendi Bowl'unu Yarat" was withdrawn from the
+      // product. Custom bowls are refused at this one shared gate (takeaway,
+      // delivery, dine-in); buildBowlLine stays in place, unreachable.
+      return invalid(BOWL_BUILDER_WITHDRAWN_MESSAGE);
     }
-    return invalid('each item must have kind "product" or "bowl".');
+    return invalid('each item must have kind "product".');
   });
 }
 

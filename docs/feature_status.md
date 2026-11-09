@@ -11285,3 +11285,10 @@ passing, 0 failures.
 - **Customer QR menu kg restriction** (ADR-067 follow-up): kg products stay visible but can't be
   added; the attempt shows "Bu ürün gramajla satılır; lütfen garsonunuzdan isteyin." POS unaffected.
 - **Visual Review Bekleniyor** for all three.
+
+### "Kendi Bowl'unu Yarat" wizard withdrawn (ADR-069, 2026-11-09)
+
+- Home and Menu no longer show the Bowl Builder entry; the server rejects `kind: "bowl"` items on every
+  channel. The 64-ingredient catalog and its seed are kept. Ready bowls (`cat_bowl2`) and their options
+  are unchanged; rebuilding those options from the floor-stand menu PDF is the approved next step.
+- **Visual Review Bekleniyor**.

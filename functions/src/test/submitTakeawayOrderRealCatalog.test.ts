@@ -250,11 +250,10 @@ test("real catalog: a real İçecekler (beverage) product prices at basePrice un
   assert.strictEqual(order.pricing.grandTotal.minorUnits, drink.basePriceMinorUnits);
 });
 
-test("real catalog: a bowl built from real, migrated Bowl Builder ingredients prices with the +20 TL channel adjustment applied exactly once, ingredient prices canonical", async () => {
+test("real catalog: a custom bowl item built from a real, migrated ingredient is rejected (ADR-069: Bowl Builder withdrawn)", async () => {
   const chain = sharedChain;
   const { idToken } = await createRealPhoneUser();
   const protein = exportData.bowlIngredients.find((i) => i.categoryId === "protein")!;
-  const carbs = exportData.bowlIngredients.find((i) => i.categoryId === "carbs")!;
 
   const { httpStatus, body } = await callCallable(
     SUBMIT_URL,
@@ -268,7 +267,7 @@ test("real catalog: a bowl built from real, migrated Bowl Builder ingredients pr
         {
           kind: "bowl",
           quantity: 1,
-          ingredientIds: [protein.id, carbs.id],
+          ingredientIds: [protein.id],
         },
       ],
       ...CONTACT,
@@ -276,11 +275,8 @@ test("real catalog: a bowl built from real, migrated Bowl Builder ingredients pr
     idToken,
   );
 
-  assert.strictEqual(httpStatus, 200);
-  const order = (await admin.firestore().collection("orders").doc(body.result!.orderId as string).get()).data()!;
-  const expectedIngredientTotal = protein.priceMinorUnits + carbs.priceMinorUnits;
-  assert.strictEqual(order.lines[0].unitPrice.minorUnits, 2000, "the bowl's unitPrice is the +20 TL adjustment only");
-  assert.strictEqual(order.pricing.grandTotal.minorUnits, expectedIngredientTotal + 2000);
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
 });
 
 test("real catalog: an explicit/fixed product-level override still takes precedence over the real Faz A default when layered onto the real catalog", async () => {

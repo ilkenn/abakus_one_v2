@@ -622,7 +622,7 @@ test("dine-in: no channel surcharge leaks in from takeaway/delivery — unconfig
   assert.strictEqual(order?.lines[0].unitPrice.minorUnits, 10000, "no takeaway/delivery surcharge applied to dine-in");
 });
 
-test("dine-in: Bowl Builder items are priced with their channel adjustment plus ingredient total", async () => {
+test("dine-in: a custom bowl item is rejected (ADR-069: Bowl Builder withdrawn), even with a real seeded ingredient", async () => {
   const chain = await seedChain();
   const ingredientId = nextId("ingredient");
   await db().collection("bowlIngredients").doc(ingredientId).set({
@@ -640,9 +640,8 @@ test("dine-in: Bowl Builder items are priced with their channel adjustment plus 
     }),
     idToken,
   );
-  assert.strictEqual(httpStatus, 200, JSON.stringify(body));
-  const order = await orderDoc(body.result!.orderId as string);
-  assert.strictEqual(order?.pricing.grandTotal.minorUnits, 5000, "no dineIn channel policy seeded -> 0 adjustment + 5000 ingredient");
+  assert.strictEqual(httpStatus, 400, JSON.stringify(body));
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
 });
 
 // =========================================================================

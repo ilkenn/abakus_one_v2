@@ -20530,3 +20530,37 @@ Ordering must start only from a table's own QR.
 
 The modal text is Turkish only: there is no guest-language selection before a table session exists.
 Prices shown follow the same default channel a freshly-scanned table guest sees.
+
+## ADR-069 — "Kendi Bowl'unu Yarat" wizard withdrawn; ready-bowl options to follow the menu PDF (2026-11-09)
+
+- Tarih: 2026-11-09
+- Durum: Accepted
+
+### Context
+
+The product owner clarified, with the floor-stand menu PDF ("Abaküs Street Food - Ayaklı Menü - A3"),
+that its 9 groups (Extra Protein, Karbonhidrat, Salata, Sebze, Meyve, Turşu, Toppings, Peynir, Sos) are
+**not** a standalone build-your-own wizard: they are the extra/swap options of the ready bowls
+(Tatlı Ekşi Tavuk Bowl, …), chosen on the product detail screen.
+
+### Decision
+
+- **Wizard removed from the product surface**: the Home `CompactBowlBuilderCard` and the Menu
+  `BowlBuilderFeatureCard` are no longer shown. `features/bowl_builder/` and those widgets stay in
+  place, unreferenced (no deletion without a separate decision).
+- **Server refuses custom bowls**: `parseItems` (takeaway/delivery/dine-in) and the reservation
+  preorder parser reject `kind: "bowl"` items with `invalid-argument`
+  (`BOWL_BUILDER_WITHDRAWN_MESSAGE`); `buildBowlLine` stays, unreachable.
+- **Catalog kept**: the 64 Bowl Builder ingredients stay in `bowl_builder_catalog.dart`, the export and
+  the `bowlIngredients` seed. They are not the PDF's list (different items and prices), so they are not
+  reused as ready-bowl options.
+- **Next step (approved, separate change)**: rebuild the ready bowls' modifier groups from the PDF's 9
+  groups and prices. Groups with both prices (Karbonhidrat, Salata, Sebze, Meyve, Turşu) become a
+  single-select "Değişim" group (the bowl's default free, others at the swap price) plus a
+  multi-select "Ekstra" group (extra price).
+
+### Consequences
+
+Tests: the 5 backend custom-bowl pricing tests now assert the rejection (emulator tests, written and
+tsc-clean, not executed here); the Home/Menu/navigation widget tests now assert the entry points are
+absent.

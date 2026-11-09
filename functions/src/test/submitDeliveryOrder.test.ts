@@ -601,61 +601,18 @@ test("submitDeliveryOrder: multiple quantity is handled correctly (lineTotal = u
   assert.strictEqual(order.data()?.pricing?.grossSubtotal?.minorUnits, 24000 * 3);
 });
 
-test("submitDeliveryOrder: Bowl Builder receives the +140 TL adjustment exactly ONCE per bowl, never per ingredient", async () => {
+test("submitDeliveryOrder: a custom bowl item is rejected (ADR-069: Bowl Builder withdrawn), even with a real seeded ingredient", async () => {
   const fixture = await seedFullValidFixture();
-  const secondIngredientId = nextId("ingredient2");
-  await seedBowlIngredient(secondIngredientId, fixture.chain.restaurantId, fixture.chain.organizationId, {
-    priceMinorUnits: 3000,
-  });
-  const { body } = await callCallable(
+  const { httpStatus, body } = await callCallable(
     SUBMIT_URL,
     validSubmission({
       savedAddressId: fixture.savedAddressId,
-      items: [
-        {
-          kind: "bowl",
-          quantity: 1,
-          ingredientIds: [fixture.bowlIngredientId, secondIngredientId],
-        },
-      ],
+      items: [{ kind: "bowl", quantity: 1, ingredientIds: [fixture.bowlIngredientId] }],
     }),
     fixture.idToken,
   );
-  const orderId = body.result?.orderId as string;
-  const order = await db().collection("orders").doc(orderId).get();
-  const lines = order.data()?.lines as {
-    unitPrice: { minorUnits: number };
-    modifiers: { unitExtraPrice: { minorUnits: number } }[];
-  }[];
-  // Bowl unitPrice is the +140 channel adjustment ONLY — never multiplied
-  // by ingredient count, never added per-ingredient.
-  assert.strictEqual(lines[0].unitPrice.minorUnits, 14000);
-  // Ingredient prices live entirely in modifiers, summing to 5000+3000.
-  const modifierSum = lines[0].modifiers.reduce((s, m) => s + m.unitExtraPrice.minorUnits, 0);
-  assert.strictEqual(modifierSum, 8000);
-});
-
-test("submitDeliveryOrder: ingredient-level surcharge manipulation is impossible — forged ingredient prices in the payload are ignored", async () => {
-  const fixture = await seedFullValidFixture();
-  const { body } = await callCallable(
-    SUBMIT_URL,
-    validSubmission({
-      savedAddressId: fixture.savedAddressId,
-      items: [
-        {
-          kind: "bowl",
-          quantity: 1,
-          ingredientIds: [fixture.bowlIngredientId],
-          ingredientPrices: { [fixture.bowlIngredientId]: 1 }, // forged, never read
-        },
-      ],
-    }),
-    fixture.idToken,
-  );
-  const orderId = body.result?.orderId as string;
-  const order = await db().collection("orders").doc(orderId).get();
-  const lines = order.data()?.lines as { modifiers: { unitExtraPrice: { minorUnits: number } }[] }[];
-  assert.strictEqual(lines[0].modifiers[0].unitExtraPrice.minorUnits, 5000); // the real, seeded price
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
 });
 
 test("submitDeliveryOrder: prices are always freshly resolved, never stale/cached — a price change is reflected on the next distinct submission", async () => {

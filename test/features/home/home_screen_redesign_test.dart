@@ -7,7 +7,6 @@ import 'package:abakus_one_v2/core/theme/app_spacing.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
-import 'package:abakus_one_v2/features/bowl_builder/presentation/screens/bowl_builder_screen.dart';
 import 'package:abakus_one_v2/features/campaigns/presentation/screens/campaigns_screen.dart';
 import 'package:abakus_one_v2/features/delivery/presentation/screens/delivery_address_selection_screen.dart';
 import 'package:abakus_one_v2/features/home/presentation/screens/home_screen.dart';
@@ -413,28 +412,12 @@ void main() {
     });
   });
 
-  group('5. Kendi Bowl\'unu Yarat (H.2 — tek konsolide promo)', () {
-    testWidgets('Home\'da tam olarak TEK Bowl Builder promosu bulunur', (
-      tester,
-    ) async {
+  group('5. Kendi Bowl\'unu Yarat kaldirildi (ADR-069)', () {
+    testWidgets('Home\'da Bowl Builder promosu yok', (tester) async {
       await pumpHome(tester);
 
-      expect(find.byType(CompactBowlBuilderCard), findsOneWidget);
-    });
-
-    testWidgets('kartina dokununca push ile BowlBuilderScreen acilir', (
-      tester,
-    ) async {
-      await pumpHome(tester);
-
-      final cta = find.descendant(
-        of: find.byType(CompactBowlBuilderCard),
-        matching: find.text('Bowl\'unu Oluştur'),
-      );
-      await scrollToAndTap(tester, cta);
-      await tester.pumpAndSettle();
-
-      expect(find.byType(BowlBuilderScreen), findsOneWidget);
+      expect(find.byType(CompactBowlBuilderCard), findsNothing);
+      expect(find.text('Bowl\'unu Oluştur'), findsNothing);
     });
   });
 

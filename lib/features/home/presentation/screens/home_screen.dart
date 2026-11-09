@@ -6,7 +6,6 @@ import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
-import '../../../bowl_builder/presentation/screens/bowl_builder_screen.dart';
 import '../../../delivery/presentation/screens/delivery_address_selection_screen.dart';
 import '../../../navigation/presentation/providers/navigation_provider.dart';
 import '../../../notifications/presentation/screens/notifications_screen.dart';
@@ -18,7 +17,6 @@ import '../../../takeaway/presentation/screens/takeaway_branch_selection_screen.
 import '../widgets/active_order_banner.dart';
 import '../widgets/boncuk_section.dart';
 import '../widgets/community_preview_section.dart';
-import '../widgets/compact_bowl_builder_card.dart';
 import '../widgets/home_category_section.dart';
 import '../widgets/home_hero_carousel.dart';
 import '../widgets/home_top_bar.dart';
@@ -28,9 +26,8 @@ import '../widgets/weekly_editorial_section.dart';
 
 /// The customer Home screen — H.2 true redesign. Section order follows the
 /// locked final Home composition: header, real 3-slide promo carousel,
-/// 2×2 order modes, conditional active context, Boncuk, categories, one
-/// compact Bowl Builder promo, Abaküs'ün Favorileri, Topluluk & Yorumlar,
-/// weekly editorial spotlight.
+/// 2×2 order modes, conditional active context, Boncuk, categories,
+/// Abaküs'ün Favorileri, Topluluk & Yorumlar, weekly editorial spotlight.
 ///
 /// `FeaturedContentSection` is deliberately omitted from this tree — the
 /// hero carousel now owns the primary-promotion role it used to play, and
@@ -38,8 +35,10 @@ import '../widgets/weekly_editorial_section.dart';
 /// is untouched, per the no-silent-deletion rule; only this screen's
 /// reference to it was removed. `HomeHeroSection`/`BuildBowlBanner` (the
 /// two previous, separate Bowl Builder promos) are likewise no longer
-/// referenced here, superseded by the single `CompactBowlBuilderCard`
-/// below — both files are left in place, now orphaned, not deleted.
+/// referenced here. ADR-069 (2026-11-09) then withdrew Bowl Builder
+/// entirely, so `CompactBowlBuilderCard` is no longer shown either — all
+/// three files, and `features/bowl_builder/`, stay in place, orphaned, not
+/// deleted.
 ///
 /// Each section is its own component (see `features/home/presentation/
 /// widgets/`) — this screen only assembles them, wires navigation, and
@@ -180,19 +179,8 @@ class HomeScreen extends ConsumerWidget {
                       const SizedBox(height: AppSpacing.xl),
                       const HomeCategorySection(),
 
-                      // 7. ONE compact Kendi Bowl'unu Yarat promo (H.2
-                      // consolidation — the previous two separate promos,
-                      // `HomeHeroSection`/`BuildBowlBanner`, are no longer
-                      // referenced here; see class doc comment).
-                      const SizedBox(height: AppSpacing.xl),
-                      CompactBowlBuilderCard(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const BowlBuilderScreen(),
-                          ),
-                        ),
-                      ),
+                      // 7. (ADR-069, 2026-11-09) The "Kendi Bowl'unu Yarat"
+                      // promo was removed with the Bowl Builder product.
 
                       // 8. Abaküs'ün Favorileri — real featured-product data,
                       // restaurant/editorial picks (not a saved-favorites

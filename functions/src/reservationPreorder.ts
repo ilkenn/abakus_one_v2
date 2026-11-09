@@ -25,7 +25,11 @@ import {
   type SelectedBenefitType,
 } from "./boncukRedemptionErrors";
 import type { CatalogRewardOrderSnapshot } from "./submitTakeawayOrder";
-import { sanitizeExcludedIngredients, requireModifierGroupsSatisfied } from "./submitTakeawayOrder";
+import {
+  BOWL_BUILDER_WITHDRAWN_MESSAGE,
+  sanitizeExcludedIngredients,
+  requireModifierGroupsSatisfied,
+} from "./submitTakeawayOrder";
 import { enforceBenefitExclusivity } from "./benefitExclusivity";
 import type { CampaignOrderSnapshot } from "./campaignEngine";
 import type { CampaignPriceableLine } from "./campaignPricing";
@@ -178,14 +182,10 @@ export function parsePreorderRequest(raw: unknown): ParsedPreorderRequest | null
       };
     }
     if (item.kind === "bowl") {
-      return {
-        kind: "bowl" as const,
-        quantity: item.quantity,
-        ingredientIds: item.ingredientIds,
-        note: item.note,
-      };
+      // ADR-069: custom bowls withdrawn (see submitTakeawayOrder.parseItems).
+      return invalid(BOWL_BUILDER_WITHDRAWN_MESSAGE);
     }
-    return invalid('each preorder item must have kind "product" or "bowl".');
+    return invalid('each preorder item must have kind "product".');
   });
   const requestedBoncukAmount = sanitizeRequestedBoncukAmount(data.requestedBoncukAmount);
   const selectedRewardId = sanitizeSelectedRewardId(data.selectedRewardId);

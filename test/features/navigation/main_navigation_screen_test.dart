@@ -172,41 +172,17 @@ void main() {
     );
   });
 
-  group('Bowl Builder artik bir sekme degil', () {
+  group('Bowl Builder kaldirildi (ADR-069)', () {
     testWidgets(
-      'Home\'daki Kendi Bowlunu Yarat CTA\'sina dokununca push ile '
-      'BowlBuilderScreen acilir, sekme degismez',
+      'ne Home\'da ne Menu\'de Kendi Bowlunu Yarat girisi var',
       (tester) async {
         await pumpShell(tester);
+        expect(find.text('Bowl\'unu Oluştur'), findsNothing);
 
-        final cta = find.text('Bowl\'unu Oluştur').first;
-        await tester.dragUntilVisible(
-          cta,
-          find.byType(Scrollable).first,
-          const Offset(0, -300),
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(cta);
-        await tester.pumpAndSettle();
-
-        expect(find.byType(BowlBuilderScreen), findsOneWidget);
-        expect(container.read(navigationProvider), AppTab.home);
-      },
-    );
-
-    testWidgets(
-      'Menu\'deki Kendi Bowlunu Yarat kartina dokununca push ile '
-      'BowlBuilderScreen acilir, sekme degismez',
-      (tester) async {
-        await pumpShell(tester);
         await tester.tap(find.text('Menü'));
         await tester.pumpAndSettle();
-
-        await tester.tap(find.text('Kendi Bowlunu Yarat'));
-        await tester.pumpAndSettle();
-
-        expect(find.byType(BowlBuilderScreen), findsOneWidget);
-        expect(container.read(navigationProvider), AppTab.menu);
+        expect(find.text('Kendi Bowlunu Yarat'), findsNothing);
+        expect(find.byType(BowlBuilderScreen), findsNothing);
       },
     );
   });

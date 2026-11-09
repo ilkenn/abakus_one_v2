@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:abakus_one_v2/features/bowl_builder/presentation/screens/bowl_builder_screen.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_group.dart';
@@ -91,23 +90,11 @@ void main() {
   }
 
   testWidgets(
-    'Kendi Bowlunu Yarat karti aramaya gerek olmadan Menu acilir acilmaz gorunur',
+    'Kendi Bowlunu Yarat karti Menu\'de yok (ADR-069: Bowl Builder kaldirildi)',
     (tester) async {
       await pumpMenuScreen(tester);
 
-      expect(find.text('Kendi Bowlunu Yarat'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'Kendi Bowlunu Yarat kartina dokununca BowlBuilderScreen push edilir',
-    (tester) async {
-      await pumpMenuScreen(tester);
-
-      await tester.tap(find.text('Kendi Bowlunu Yarat'));
-      await tester.pumpAndSettle();
-
-      expect(find.byType(BowlBuilderScreen), findsOneWidget);
+      expect(find.text('Kendi Bowlunu Yarat'), findsNothing);
     },
   );
 

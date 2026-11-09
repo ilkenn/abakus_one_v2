@@ -781,7 +781,7 @@ test("Pricing: a normal product gets +20 TL, and quantity 2 applies the adjustme
   assert.strictEqual(order.pricing.grandTotal.minorUnits, 90000);
 });
 
-test("Bowl: ingredient prices are canonical (client-sent bogus prices are never read at all), +20 applied exactly once, quantity 2 applies it twice — never once per ingredient", async () => {
+test("Bowl: a custom bowl item is rejected (ADR-069: Bowl Builder withdrawn), even with real seeded ingredients", async () => {
   const chain = await seedValidChain();
   const chicken = nextId("ingredient");
   const rice = nextId("ingredient");
@@ -816,20 +816,8 @@ test("Bowl: ingredient prices are canonical (client-sent bogus prices are never 
     idToken,
   );
 
-  assert.strictEqual(httpStatus, 200);
-  const order = (await admin.firestore().collection("orders").doc(body.result!.orderId as string).get()).data()!;
-  const line = order.lines[0];
-  // ingredientTotal = 15000+5000+2000 = 22000; unitPrice(adjustment)=2000;
-  // (2000+22000)*2 = 48000. If +20 were (incorrectly) applied per
-  // ingredient instead, the total would be very different (48000 vs. a
-  // per-ingredient-adjusted total like (2000*3+22000)*2=92000) — this
-  // assertion distinguishes the two.
-  assert.strictEqual(line.unitPrice.minorUnits, 2000, "the bowl's own unitPrice must be the +20 adjustment only");
-  assert.strictEqual(
-    line.modifiers.reduce((sum: number, m: any) => sum + m.unitExtraPrice.minorUnits, 0),
-    22000,
-  );
-  assert.strictEqual(order.pricing.grandTotal.minorUnits, 48000);
+  assert.strictEqual(httpStatus, 400);
+  assert.strictEqual(body.error?.status, "INVALID_ARGUMENT");
 });
 
 // =======================================================================
