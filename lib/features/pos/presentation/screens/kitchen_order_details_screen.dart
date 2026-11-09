@@ -375,7 +375,7 @@ class _WorkItemDetailCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${line.quantity}x ${line.productName}',
+          Text('${line.quantityLabel} ${line.productName}',
               style: AppTypography.bodyLarge),
           for (final ingredient in line.ingredientSummary)
             Text('- $ingredient',

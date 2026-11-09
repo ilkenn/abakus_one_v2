@@ -324,6 +324,9 @@ async function buildLines(
         selectedModifiers: item.selectedModifiers ?? [],
         note: item.note ?? "",
         excludedIngredients: item.excludedIngredients ?? [],
+        // ADR-067 — part of the fingerprint: two submissions differing
+        // only in weight are different orders.
+        weightGrams: line.weightGrams ?? null,
       });
       campaignLines.push({
         lineIndex,
@@ -481,6 +484,9 @@ function buildDineInOrderDocument(params: {
         quantity: m.quantity,
       })),
       quantity: line.quantity,
+      // ADR-067 — whole grams for a sold-by-weight line (`unitPrice` is
+      // then that weight's price); `null` for every per-piece line.
+      weightGrams: line.weightGrams ?? null,
       unitPrice: moneyField(line.unitPriceMinorUnits),
       lineDiscount: moneyField(line.lineDiscountMinorUnits),
       taxRateBasisPoints: line.taxBasisPoints,

@@ -107,6 +107,12 @@ export interface ComputedOrderLine {
   categoryId: string | null;
   modifiers: OrderLineModifierInput[];
   quantity: number;
+  /**
+   * ADR-067 (2026-11-09) — whole grams for a product sold by weight
+   * (`unitPriceMinorUnits` is then already that weight's price and
+   * `quantity` is 1). Absent for every per-piece line.
+   */
+  weightGrams?: number;
   unitPriceMinorUnits: number;
   modifierTotalMinorUnits: number;
   lineSubtotalMinorUnits: number;

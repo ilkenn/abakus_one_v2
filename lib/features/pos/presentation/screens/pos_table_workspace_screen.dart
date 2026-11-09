@@ -29,6 +29,7 @@ import '../../data/pos_operational_view_gateway.dart';
 import '../../domain/authorization/actor_session.dart';
 import '../../domain/authorization/pos_authorized_action.dart';
 import '../../domain/authorization/role_permission_map.dart';
+import '../../../orders/domain/order_line_quantity_label.dart';
 import '../../domain/kitchen/kitchen_ticket_mapper.dart';
 import '../../domain/kitchen/kitchen_ticket_type.dart';
 import '../providers/actor_session_provider.dart';
@@ -260,6 +261,8 @@ class _PosTableWorkspaceScreenState
                 ],
                 'note': item.note,
                 'excludedIngredients': item.excludedIngredients,
+                // ADR-067 — priced server-side from the per-kg price.
+                if (item.weightGrams != null) 'weightGrams': item.weightGrams,
               },
           ],
         ),
@@ -452,6 +455,7 @@ typedef _StaffEntryFn = Future<String?> Function(
               List<SelectedModifier> selectedModifiers,
               List<String> excludedIngredients,
               String note,
+              int? weightGrams,
             })>
         items);
 typedef _CancelLineFn = Future<void> Function(
@@ -686,7 +690,12 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
   /// tap outside) adds nothing.
   Future<void> _onProductTap(MenuProduct product) async {
     if (product.saleUnit == SaleUnit.kilogram) {
-      await WeightEntryDialog.show(context, product);
+      // ADR-067 — a sold-by-weight product becomes one line carrying its
+      // grams (never merged with another weight); the server prices it.
+      final grams = await WeightEntryDialog.show(context, product);
+      if (grams == null || !mounted) return;
+      setState(() => _cartLines
+          .add(_StaffEntryCartLine(product: product, weightGrams: grams)));
       return;
     }
     if (!_needsCustomization(product)) {
@@ -779,6 +788,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
           selectedModifiers: line.selectedModifiers,
           excludedIngredients: line.excludedIngredients,
           note: line.note,
+          weightGrams: line.weightGrams,
         ),
     ]);
     if (!mounted) return;
@@ -1922,7 +1932,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                                           ),
                                           Expanded(
                                             child: Text(
-                                              '${order.lines[i].quantity}x ${order.lines[i].productName}',
+                                              '${order.lines[i].quantityLabel} ${order.lines[i].productName}',
                                               style: AppTypography.bodyMedium,
                                             ),
                                           ),
@@ -1975,15 +1985,29 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                                           : 'Notu Düzenle',
                                       onPressed: () => _editLineNote(line),
                                     ),
-                                    IconButton(
-                                      icon: const Icon(Icons.remove, size: 18),
-                                      onPressed: () => _decrementLine(line),
-                                    ),
-                                    Text('${line.quantity}'),
-                                    IconButton(
-                                      icon: const Icon(Icons.add, size: 18),
-                                      onPressed: () => _incrementLine(line),
-                                    ),
+                                    if (line.weightGrams != null) ...[
+                                      // ADR-067 — a weight line has no
+                                      // +/-: re-enter it to change the weight.
+                                      Text(formatWeightGrams(line.weightGrams!),
+                                          key: const Key('cartLineWeight')),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_outline,
+                                            size: 18),
+                                        tooltip: 'Satırı Kaldır',
+                                        onPressed: () => _decrementLine(line),
+                                      ),
+                                    ] else ...[
+                                      IconButton(
+                                        icon:
+                                            const Icon(Icons.remove, size: 18),
+                                        onPressed: () => _decrementLine(line),
+                                      ),
+                                      Text('${line.quantity}'),
+                                      IconButton(
+                                        icon: const Icon(Icons.add, size: 18),
+                                        onPressed: () => _incrementLine(line),
+                                      ),
+                                    ],
                                   ],
                                 ),
                                 if (line.summaryText.isNotEmpty)
@@ -2474,14 +2498,16 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
         int lineIndex,
         String productName,
         int quantity,
-        int unitPriceMinorUnits
+        int unitPriceMinorUnits,
+        String quantityLabel
       })> get _acceptedLines {
     final result = <({
       String orderId,
       int lineIndex,
       String productName,
       int quantity,
-      int unitPriceMinorUnits
+      int unitPriceMinorUnits,
+      String quantityLabel
     })>[];
     for (final order in widget.view.orders) {
       for (var i = 0; i < order.lines.length; i++) {
@@ -2493,6 +2519,7 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
           productName: line.productName,
           quantity: line.quantity,
           unitPriceMinorUnits: line.unitPriceMinorUnits,
+          quantityLabel: line.quantityLabel,
         ));
       }
     }
@@ -2572,7 +2599,7 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
               for (final line in _acceptedLines)
                 CheckboxListTile(
                   dense: true,
-                  title: Text('${line.quantity}x ${line.productName}'),
+                  title: Text('${line.quantityLabel} ${line.productName}'),
                   subtitle: Text(
                       '${(line.unitPriceMinorUnits * line.quantity / 100).toStringAsFixed(0)} TL'),
                   value: _selectedLines.contains(
@@ -2801,7 +2828,7 @@ class _LineRow extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text('${line.quantity}x ${line.productName}',
+                child: Text('${line.quantityLabel} ${line.productName}',
                     style: AppTypography.bodyMedium),
               ),
               Container(
@@ -2958,6 +2985,7 @@ class _StaffEntryCartLine {
     this.selectedModifiers = const [],
     this.excludedIngredients = const [],
     this.note = '',
+    this.weightGrams,
   });
 
   final MenuProduct product;
@@ -2966,9 +2994,25 @@ class _StaffEntryCartLine {
   String note;
   int quantity = 1;
 
-  double get unitPrice =>
-      product.basePrice +
-      selectedModifiers.fold(0.0, (sum, m) => sum + m.extraPrice);
+  /// ADR-067 — whole grams for a sold-by-weight product (quantity stays 1);
+  /// `null` for every per-piece line.
+  final int? weightGrams;
+
+  /// For a weight line, an estimate of the server's own price
+  /// (per-kg price × grams / 1000, half-up to the kuruş); the server's
+  /// computation is authoritative.
+  double get unitPrice {
+    final grams = weightGrams;
+    final basePrice = grams == null
+        ? product.basePrice
+        : estimatedWeightPriceMinorUnits(
+              pricePerKgMinorUnits: (product.basePrice * 100).round(),
+              grams: grams,
+            ) /
+            100;
+    return basePrice +
+        selectedModifiers.fold(0.0, (sum, m) => sum + m.extraPrice);
+  }
 
   double get totalRowPrice => unitPrice * quantity;
 
@@ -2981,7 +3025,7 @@ class _StaffEntryCartLine {
   String get customizationKey {
     final modifierIds = [for (final m in selectedModifiers) m.optionId]..sort();
     final excluded = List<String>.from(excludedIngredients)..sort();
-    return '${modifierIds.join(',')}|${excluded.join(',')}|$note';
+    return '${modifierIds.join(',')}|${excluded.join(',')}|$note|${weightGrams ?? ''}';
   }
 
   /// "Basmati, +Avokado, Çıkar: Mısır / Not: Sosu ayrı olsun" — the

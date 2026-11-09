@@ -29,6 +29,7 @@ class OrderLine {
     required this.kitchenNote,
     required this.customerNote,
     required this.excludedIngredients,
+    this.weightGrams,
   });
 
   /// Builds a line, computing [modifierTotal]/[lineSubtotal]/[lineTotal]/
@@ -61,6 +62,7 @@ class OrderLine {
     String kitchenNote = '',
     String customerNote = '',
     List<String> excludedIngredients = const [],
+    int? weightGrams,
   }) {
     if (quantity <= 0) {
       throw NonPositiveQuantityViolation(
@@ -104,6 +106,7 @@ class OrderLine {
       kitchenNote: kitchenNote,
       customerNote: customerNote,
       excludedIngredients: List.unmodifiable(excludedIngredients),
+      weightGrams: weightGrams,
     );
   }
 
@@ -155,6 +158,11 @@ class OrderLine {
   /// `submitTakeawayOrder.ts`'s `sanitizeExcludedIngredients`.
   final List<String> excludedIngredients;
 
+  /// ADR-067 (2026-11-09) — whole grams for a product sold by weight
+  /// (POS dine-in only): [quantity] is then 1 and [unitPrice] is already
+  /// that weight's server-computed price. `null` for every per-piece line.
+  final int? weightGrams;
+
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
@@ -169,6 +177,7 @@ class OrderLine {
             other.tax == tax &&
             other.kitchenNote == kitchenNote &&
             other.customerNote == customerNote &&
+            other.weightGrams == weightGrams &&
             _listEquals(other.excludedIngredients, excludedIngredients));
   }
 
@@ -184,6 +193,7 @@ class OrderLine {
         kitchenNote,
         customerNote,
         Object.hashAll(excludedIngredients),
+        weightGrams,
       );
 
   static bool _listEquals<T>(List<T> a, List<T> b) {

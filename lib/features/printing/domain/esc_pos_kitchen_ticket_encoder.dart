@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../orders/domain/order_line_quantity_label.dart';
 import '../../pos/domain/kitchen/kitchen_ticket.dart';
 import 'receipt_codepage.dart';
 import 'turkish_ascii_transliteration.dart';
@@ -69,7 +70,14 @@ abstract final class EscPosKitchenTicketEncoder {
     // Lines — Ürün Adı/Adet, Siparişi Veren Kişi Adı, Reçete İçeriği,
     // Tercih Notları, in that order, for every line.
     for (final line in ticket.lines) {
-      writeLine('${line.quantity} x ${line.productName}', bold: true);
+      // ADR-067 — a sold-by-weight line prints its weight ("350 g ...").
+      final weightGrams = line.weightGrams;
+      writeLine(
+        weightGrams == null
+            ? '${line.quantity} x ${line.productName}'
+            : '${formatWeightGrams(weightGrams)} ${line.productName}',
+        bold: true,
+      );
       writeLine('  Sipariş Veren: ${line.orderedByName ?? "-"}');
       // Reçete içeriği/opsiyon satırları — mutfak personelinin eksiksiz
       // hazırlaması için ürünün altına girintili, "->" işaretli basılır

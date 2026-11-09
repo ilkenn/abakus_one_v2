@@ -50,6 +50,8 @@ export interface CatalogExportProduct {
    * (`"150g"`, `"4 adet"`, ...). `null`/absent where the source menu
    * states none. */
   portionLabel?: string | null;
+  /** ADR-067 (2026-11-09) — mirrors `MenuProduct.saleUnit`; absent → `piece`. */
+  saleUnit?: "piece" | "kilogram";
 }
 
 export interface CatalogExportIngredient {
@@ -146,6 +148,7 @@ export async function migrateCanonicalCatalog(
         channelPriceOverrides: product.channelPriceOverrides,
         allergens: product.allergens ?? [],
         portionLabel: product.portionLabel ?? null,
+        saleUnit: product.saleUnit === "kilogram" ? "kilogram" : "piece",
       },
     }),
   );

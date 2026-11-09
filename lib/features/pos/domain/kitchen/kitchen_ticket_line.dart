@@ -1,3 +1,5 @@
+import '../../../orders/domain/order_line_quantity_label.dart';
+
 /// One product block on a [KitchenTicket] — a full, frozen snapshot, never
 /// a live product reference (mirrors `OrderLine`/
 /// `OrderLineModifierSelection`'s own "snapshot, don't reference"
@@ -31,6 +33,7 @@ class KitchenTicketLine {
     /// ready the moment that data source exists.
     this.warnings = const [],
     this.orderedByName,
+    this.weightGrams,
   });
 
   final String id;
@@ -45,4 +48,12 @@ class KitchenTicketLine {
   /// predating this field — see `KitchenTicketMapper`'s own doc comment
   /// for the "whole-table submission" scope caveat.
   final String? orderedByName;
+
+  /// ADR-067 (2026-11-09) — whole grams for a sold-by-weight line
+  /// ([quantity] is then 1); `null` for every per-piece line.
+  final int? weightGrams;
+
+  /// "2x" / "350 g" — see `orderLineQuantityLabel`.
+  String get quantityLabel =>
+      orderLineQuantityLabel(quantity: quantity, weightGrams: weightGrams);
 }

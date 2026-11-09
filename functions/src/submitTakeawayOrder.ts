@@ -153,6 +153,8 @@ export interface RawProductItem {
   selectedModifiers?: unknown;
   note?: unknown;
   excludedIngredients?: unknown;
+  /** ADR-067 — grams for a product sold by weight; see `resolveWeightGrams`. */
+  weightGrams?: unknown;
 }
 
 export interface RawBowlItem {
@@ -244,6 +246,57 @@ export function requireValidQuantity(raw: unknown, context: string): number {
   if (quantity <= 0) invalid(`${context}: quantity must be positive.`);
   if (quantity > MAX_ITEM_QUANTITY) invalid(`${context}: quantity exceeds the maximum allowed.`);
   return quantity;
+}
+
+/** ADR-067 — the only commercial channel that accepts sold-by-weight lines (POS dine-in). */
+const DINE_IN_WEIGHT_CHANNEL = "dineIn";
+
+/** ADR-067 — bounds for one sold-by-weight line, in whole grams. */
+export const MIN_WEIGHT_GRAMS = 1;
+export const MAX_WEIGHT_GRAMS = 20000;
+
+/**
+ * ADR-067 (2026-11-09) — weight-based (kg) pricing, product-owner decision:
+ * POS dine-in only for now, price = per-kg price × grams / 1000, rounded
+ * to the nearest kuruş (half-up). Returns `null` for a normal per-piece
+ * product. The product's own `saleUnit` (from the canonical catalog,
+ * never from the client) decides which rule applies:
+ * - `kilogram`: `weightGrams` must be an integer in
+ *   [MIN_WEIGHT_GRAMS, MAX_WEIGHT_GRAMS], `quantity` must be 1, and the
+ *   channel must be dine-in;
+ * - `piece`: `weightGrams` must be absent.
+ */
+export function resolveWeightGrams(params: {
+  rawWeightGrams: unknown;
+  saleUnit: "piece" | "kilogram" | undefined;
+  quantity: number;
+  channel: string;
+  context: string;
+}): number | null {
+  const { rawWeightGrams, quantity, channel, context } = params;
+  const soldByWeight = params.saleUnit === "kilogram";
+  const provided = rawWeightGrams !== undefined && rawWeightGrams !== null;
+  if (!soldByWeight) {
+    if (provided) invalid(`${context}: weightGrams is only allowed for products sold by weight.`);
+    return null;
+  }
+  if (channel !== DINE_IN_WEIGHT_CHANNEL) {
+    invalid(`${context}: products sold by weight can only be ordered at the table (POS) for now.`);
+  }
+  if (typeof rawWeightGrams !== "number" || !Number.isInteger(rawWeightGrams)) {
+    invalid(`${context}: weightGrams (whole grams) is required for a product sold by weight.`);
+  }
+  const grams = rawWeightGrams as number;
+  if (grams < MIN_WEIGHT_GRAMS || grams > MAX_WEIGHT_GRAMS) {
+    invalid(`${context}: weightGrams must be between ${MIN_WEIGHT_GRAMS} and ${MAX_WEIGHT_GRAMS}.`);
+  }
+  if (quantity !== 1) invalid(`${context}: a sold-by-weight line must have quantity 1.`);
+  return grams;
+}
+
+/** Per-kg price × grams / 1000, rounded half-up to the nearest minor unit. */
+export function weightedUnitPriceMinorUnits(pricePerKgMinorUnits: number, grams: number): number {
+  return Math.round((pricePerKgMinorUnits * grams) / 1000);
 }
 
 // -----------------------------------------------------------------------
@@ -376,18 +429,31 @@ export async function buildProductLine(
   // `freeUnitCount` therefore automatically covers that surcharge too, with
   // no separate surcharge-specific logic (see `buildOrderLine`'s own P7-C
   // doc comment).
-  const unitPriceMinorUnits = resolveProductUnitPriceMinorUnits({
+  const channelUnitPriceMinorUnits = resolveProductUnitPriceMinorUnits({
     product: product!,
     channel,
     policy,
   });
+  // ADR-067 — for a product sold by weight, the catalog price is per kg;
+  // the line's unit price is that weight's price (quantity stays 1).
+  const weightGrams = resolveWeightGrams({
+    rawWeightGrams: item.weightGrams,
+    saleUnit: product!.saleUnit,
+    quantity,
+    channel,
+    context: `product "${productId}"`,
+  });
+  const unitPriceMinorUnits =
+    weightGrams === null
+      ? channelUnitPriceMinorUnits
+      : weightedUnitPriceMinorUnits(channelUnitPriceMinorUnits, weightGrams);
 
   const note = typeof item.note === "string" ? item.note.slice(0, 500) : "";
   const excludedIngredients = sanitizeExcludedIngredients(
     item.excludedIngredients,
     `product "${productId}"`,
   );
-  return buildOrderLine({
+  const line = buildOrderLine({
     productId: product!.id,
     productName: product!.name,
     categoryId: product!.categoryId,
@@ -400,6 +466,7 @@ export async function buildProductLine(
     freeUnitCount,
     campaignDiscountMinorUnits,
   });
+  return weightGrams === null ? line : { ...line, weightGrams };
 }
 
 export async function buildBowlLine(

@@ -20443,6 +20443,54 @@ Flutter: `pos_table_workspace_screen_test.dart` +5 (Siparişi Onayla ×2, cancel
 role ×3), existing send-button tests repointed to the new button. `flutter analyze`: only the
 pre-existing `app_constants.dart` info. `flutter test` (whole project): 4034 passing, 0 failures.
 
+## ADR-067 — Sold-by-weight (kg) products: server-side gram pricing, POS dine-in only (2026-11-09)
+
+- Tarih: 2026-11-09
+- Durum: Accepted
+
+### Context
+
+ADR-062 deliberately stopped `WeightEntryDialog` at a staff reference tool: the backend's order-line
+`quantity` is an integer (max 20) priced `unit price × quantity`, with no weight concept. The product
+owner asked for the real flow and chose, among the options presented: **POS only, round to the
+kuruş**.
+
+### Decision
+
+- **Catalog**: `saleUnit` (`piece`|`kilogram`) is carried from the Dart catalog (`MenuProduct.saleUnit`)
+  through `tool/export_menu_catalog.dart`, `catalogMigration.ts` and `takeawayCatalog.ts`
+  (`CanonicalMenuProduct.saleUnit`, absent → `piece`). For `kilogram`, `basePriceMinorUnits` is the
+  per-kg price.
+- **Pricing** (BR-ORDER-020): `buildProductLine` calls `resolveWeightGrams`. A kg product requires
+  integer `weightGrams` in [1, 20000], quantity 1, and the dine-in channel; its unit price is
+  `round(perKg × grams / 1000)` (half-up). `weightGrams` on a per-piece product is rejected. Shared
+  with takeaway/delivery, which therefore reject kg lines instead of mispricing them.
+- **Order line**: `weightGrams` is stored on the dine-in order line, included in the submission
+  fingerprint, surfaced by `getPosTableOperationalView`, and mapped into the Dart `OrderLine`,
+  `PosOrderLineSummary` and `KitchenTicketLine`.
+- **Display**: `orderLineQuantityLabel`/`formatWeightGrams` (one helper) render "350 g" / "1,5 kg" on
+  the POS bill and split dialog, the KDS board and detail screens, and the printed kitchen ticket.
+- **POS input**: `WeightEntryDialog` now returns grams ("Sepete Ekle"), parsing "250", "250 g",
+  "1,5 kg", "1.5kg". A weight line is its own cart line (never merged) with no +/-; the estimate shown
+  mirrors the server's rounding.
+
+### Consequences / deferred
+
+Product-owner test set (2026-11-09): a new "Gramajlı Ürünler" category (`cat_gramajli`) with
+Dana Antrikot 1.400 TL/kg, Kuzu Pirzola 1.650 TL/kg, Meze Tabağı (Gramajlı) 450 TL/kg. Only those
+4 documents were upserted into the local emulator, so no other product's emulator state was
+overwritten. Re-running the export also brought `menu_catalog_export.json` back in sync with the
+Dart source: 21 products' modifier groups had been stale since af48a32 (Bowl add-on groups); no
+price changed. Marking more products means setting `saleUnit: SaleUnit.kilogram` (with a per-kg
+`basePrice`) in `AbakusMenuCatalog`, re-exporting, and re-syncing. Deferred and documented: stock/recipe consumption
+by weight, campaign quantity triggers for weight lines, a real scale protocol, kg ordering in the
+customer QR menu (a kg product reaching the QR cart would be rejected by the server at submit), and
+weight display on admin/customer order screens.
+
+Tests: `functions/src/test/weightPricing.test.ts` (4 pure unit tests, **executed and passing**),
+`order_line_quantity_label_test.dart`, POS workspace weight tests (cart line + `weightGrams`
+submission, invalid input).
+
 ## ADR-068 — Read-only "vitrin" menu for the entrance floor-stand QR (2026-11-09)
 
 - Tarih: 2026-11-09

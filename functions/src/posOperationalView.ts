@@ -120,6 +120,8 @@ export const getPosTableOperationalView = onCall(
             productId: line.productId,
             productName: line.productName,
             quantity: line.quantity,
+            // ADR-067 — grams for a sold-by-weight line, else null.
+            weightGrams: line.weightGrams ?? null,
             unitPrice: line.unitPrice,
             status: line.status,
             subAccountId: line.subAccountId,

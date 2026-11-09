@@ -54,6 +54,14 @@ export interface CanonicalMenuProduct {
   basePriceMinorUnits: number;
   modifierGroups: CanonicalModifierGroup[];
   channelPriceOverrides: Record<string, CanonicalChannelPriceRule>;
+  /**
+   * 2026-11-09 (ADR-067) — `kilogram` means [basePriceMinorUnits] is the
+   * price per kg and every order line must carry `weightGrams`. Absent on
+   * every existing document → `piece` (unchanged behavior). Optional so
+   * hand-built fixtures that predate it keep compiling; `undefined` is
+   * treated as `piece`.
+   */
+  saleUnit?: "piece" | "kilogram";
 }
 
 export interface CanonicalBowlIngredient {
@@ -147,6 +155,7 @@ export async function loadCanonicalMenuProduct(
       typeof data.basePriceMinorUnits === "number" ? data.basePriceMinorUnits : 0,
     modifierGroups: parseModifierGroups(data.modifierGroups),
     channelPriceOverrides: parseChannelPriceOverrides(data.channelPriceOverrides),
+    saleUnit: data.saleUnit === "kilogram" ? "kilogram" : "piece",
   };
 }
 

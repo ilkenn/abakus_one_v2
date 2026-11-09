@@ -323,6 +323,7 @@ abstract final class OrderFirestoreMapper {
             },
         ],
         'quantity': line.quantity,
+        'weightGrams': line.weightGrams,
         'unitPrice': _moneyToFirestore(line.unitPrice),
         'lineDiscount': _moneyToFirestore(line.lineDiscount),
         'taxRateBasisPoints': line.tax.rate.basisPoints,
@@ -361,6 +362,8 @@ abstract final class OrderFirestoreMapper {
       customerNote: data['customerNote'] as String? ?? '',
       excludedIngredients:
           (data['excludedIngredients'] as List?)?.cast<String>() ?? const [],
+      // ADR-067 — absent/null on every per-piece line.
+      weightGrams: (data['weightGrams'] as num?)?.toInt(),
     );
   }
 

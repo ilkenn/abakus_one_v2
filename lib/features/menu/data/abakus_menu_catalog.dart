@@ -3,6 +3,7 @@ import '../domain/models/menu_category.dart';
 import '../domain/models/menu_product.dart';
 import '../domain/models/modifier_group.dart';
 import '../domain/models/product_nutrition.dart';
+import '../domain/models/sale_unit.dart';
 import 'standard_modifier_groups.dart';
 
 /// THE REAL ABAKÜS MENU.
@@ -168,6 +169,17 @@ abstract final class AbakusMenuCatalog {
     isActive: true,
   );
 
+  /// ADR-067 (2026-11-09) — products sold by weight (`SaleUnit.kilogram`,
+  /// `basePrice` = TL per kg). POS dine-in only for now: the server
+  /// rejects them on takeaway/delivery and the customer QR menu has no
+  /// weight entry yet.
+  static const MenuCategory gramajliCategory = MenuCategory(
+    id: 'cat_gramajli',
+    name: 'Gramajlı Ürünler',
+    sortOrder: 16,
+    isActive: true,
+  );
+
   static const List<MenuCategory> categories = [
     bowlCategory,
     saladCategory,
@@ -185,6 +197,7 @@ abstract final class AbakusMenuCatalog {
     wrap2Category,
     makarna2Category,
     atistirmalik2Category,
+    gramajliCategory,
   ];
 
   /// The raw, hand-authored product literals — never read directly outside
@@ -1948,6 +1961,34 @@ abstract final class AbakusMenuCatalog {
       imageKey: 'aperatif-general-tso',
       isFeatured: true,
       portionLabel: '200g',
+    ),
+    // --- Gramajlı Ürünler (3) — ADR-067, product-owner test set 2026-11-09 ---
+    MenuProduct(
+      id: 'prod_gramaj_dana_antrikot',
+      categoryId: 'cat_gramajli',
+      name: 'Dana Antrikot',
+      description: 'Gramajla satılır.',
+      basePrice: 1400,
+      imageKey: 'gramaj-dana-antrikot',
+      saleUnit: SaleUnit.kilogram,
+    ),
+    MenuProduct(
+      id: 'prod_gramaj_kuzu_pirzola',
+      categoryId: 'cat_gramajli',
+      name: 'Kuzu Pirzola',
+      description: 'Gramajla satılır.',
+      basePrice: 1650,
+      imageKey: 'gramaj-kuzu-pirzola',
+      saleUnit: SaleUnit.kilogram,
+    ),
+    MenuProduct(
+      id: 'prod_gramaj_meze_tabagi',
+      categoryId: 'cat_gramajli',
+      name: 'Meze Tabağı (Gramajlı)',
+      description: 'Gramajla satılır.',
+      basePrice: 450,
+      imageKey: 'gramaj-meze-tabagi',
+      saleUnit: SaleUnit.kilogram,
     ),
   ];
 

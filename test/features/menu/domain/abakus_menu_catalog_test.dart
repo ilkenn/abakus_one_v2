@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:abakus_one_v2/features/menu/domain/models/sale_unit.dart';
 import 'package:abakus_one_v2/features/menu/data/abakus_menu_catalog.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 
@@ -9,7 +10,8 @@ void main() {
       'tamami hala AbakusMenuCatalog.categories icinde ama 6si artik '
       'isActive: false (test fixture kararliligi icin silinmedi — bkz. '
       'o kategorilerin kendi doc comment\'i)', () {
-    expect(AbakusMenuCatalog.categories.length, 16);
+    // 16 + 2026-11-09 "Gramajlı Ürünler" (ADR-067).
+    expect(AbakusMenuCatalog.categories.length, 17);
     final legacy = AbakusMenuCatalog.categories
         .where((c) => const {
               'cat_bowl',
@@ -58,6 +60,8 @@ void main() {
               'cat_makarna',
               'cat_atistirmalik',
               'cat_icecekler',
+              // 2026-11-09 — not part of the PDF refresh (ADR-067).
+              'cat_gramajli',
             }.contains(c.id))
         .toList();
     expect(refreshed.length, 9);
@@ -88,7 +92,8 @@ void main() {
     final activeProducts = container.read(menuProductsProvider);
     final featured = container.read(featuredMenuProductsProvider);
 
-    expect(activeCategories.length, 10); // 9 yeni + İçecekler
+    // 9 yeni + İçecekler + 2026-11-09 Gramajlı Ürünler (ADR-067).
+    expect(activeCategories.length, 11);
     expect(activeCategories.any((c) => c.id == 'cat_bowl'), isFalse);
     expect(activeProducts.any((p) => p.categoryId == 'cat_bowl'), isFalse);
     expect(activeProducts.any((p) => p.id == 'prod_cocacola'), isTrue);
@@ -111,7 +116,25 @@ void main() {
     // PDF refresh (yeni, aktif): Kahvaltı 3 + Tartineler 5 + Bowl'lar 21 +
     // Tavalar 20 + Salatalar 9 + Burgerler 9 + Wrap'ler 9 + Makarnalar 8 +
     // Aperatifler 8 = 92.
-    expect(AbakusMenuCatalog.products.length, 79 + 92 + 4);
+    // 2026-11-09: +3 sold-by-weight test products (ADR-067).
+    expect(AbakusMenuCatalog.products.length, 79 + 92 + 4 + 3);
+  });
+
+  test(
+      '2026-11-09 (ADR-067): Gramajlı Ürünler — exactly the 3 product-owner '
+      'test products, all sold by kg with a per-kg basePrice', () {
+    final weighed = AbakusMenuCatalog.products
+        .where((p) => p.saleUnit == SaleUnit.kilogram)
+        .toList();
+    expect(
+      {for (final p in weighed) p.name: p.basePrice},
+      {
+        'Dana Antrikot': 1400,
+        'Kuzu Pirzola': 1650,
+        'Meze Tabağı (Gramajlı)': 450,
+      },
+    );
+    expect(weighed.every((p) => p.categoryId == 'cat_gramajli'), isTrue);
   });
 
   test('her urun gecerli, bilinen bir kategoriye aittir', () {

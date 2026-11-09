@@ -259,7 +259,7 @@ class _LineTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${line.quantity}x ${line.productName}',
+                    '${line.quantityLabel} ${line.productName}',
                     style: AppTypography.bodyMedium.copyWith(
                       decoration: isReady ? TextDecoration.lineThrough : null,
                     ),

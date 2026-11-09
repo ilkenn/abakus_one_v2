@@ -6,6 +6,7 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../menu/domain/models/menu_product.dart';
+import '../../../orders/domain/order_line_quantity_label.dart';
 import '../../data/scale_reader_port.dart';
 import '../providers/pos_workspace_providers.dart';
 
@@ -17,21 +18,21 @@ import '../providers/pos_workspace_providers.dart';
 /// shows the resulting estimated price (reading [MenuProduct.basePrice] as
 /// ₺/kg).
 ///
-/// **Deliberately never adds a cart line** — the backend's order-line
-/// `quantity` is an integer capped at 20 with no weight-based pricing
-/// concept (see `docs/decisions.md`'s Adım 4 entry), so there is today no
-/// correct way to turn a gram reading into a real priced line. This is the
-/// same disclosed "real wiring is a separate decision" scope
-/// `UnavailablePaxGmp3TerminalClient` already established for the PAX
-/// terminal — a staff reference tool today, the UI this feature reuses
-/// once that pricing decision is made.
+/// **ADR-067 (2026-11-09)**: now returns the entered weight in whole grams
+/// ("Sepete Ekle") so the caller adds a real cart line carrying
+/// `weightGrams`; the server prices it from the catalog's per-kg price
+/// (`submitTakeawayOrder.ts`'s `resolveWeightGrams`). Accepts "250",
+/// "250 g", "1,5 kg", "1.5kg" (see `parseWeightInputToGrams`). Previously a
+/// staff reference tool only (no cart line), because the backend had no
+/// weight-pricing concept.
 class WeightEntryDialog extends ConsumerStatefulWidget {
   const WeightEntryDialog({super.key, required this.product});
 
   final MenuProduct product;
 
-  static Future<void> show(BuildContext context, MenuProduct product) {
-    return showDialog<void>(
+  /// The entered weight in whole grams, or `null` if dismissed.
+  static Future<int?> show(BuildContext context, MenuProduct product) {
+    return showDialog<int>(
       context: context,
       builder: (_) => WeightEntryDialog(product: product),
     );
@@ -52,8 +53,7 @@ class _WeightEntryDialogState extends ConsumerState<WeightEntryDialog> {
     super.dispose();
   }
 
-  double? get _grams =>
-      double.tryParse(_gramsController.text.replaceAll(',', '.'));
+  int? get _grams => parseWeightInputToGrams(_gramsController.text);
 
   Future<void> _readFromScale() async {
     setState(() {
@@ -73,11 +73,22 @@ class _WeightEntryDialogState extends ConsumerState<WeightEntryDialog> {
     });
   }
 
+  void _confirm() {
+    final grams = _grams;
+    if (grams == null) return;
+    Navigator.of(context).pop(grams);
+  }
+
   @override
   Widget build(BuildContext context) {
     final grams = _grams;
-    final estimatedPrice =
-        grams != null ? widget.product.basePrice * (grams / 1000) : null;
+    final hasInput = _gramsController.text.trim().isNotEmpty;
+    final estimatedMinorUnits = grams == null
+        ? null
+        : estimatedWeightPriceMinorUnits(
+            pricePerKgMinorUnits: (widget.product.basePrice * 100).round(),
+            grams: grams,
+          );
 
     return Dialog(
       shape: const RoundedRectangleBorder(borderRadius: AppRadius.kLarge),
@@ -104,14 +115,19 @@ class _WeightEntryDialogState extends ConsumerState<WeightEntryDialog> {
                 key: const Key('weightGramsField'),
                 controller: _gramsController,
                 autofocus: true,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: TextInputType.text,
                 onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
+                onSubmitted: (_) => _confirm(),
+                decoration: InputDecoration(
                   isDense: true,
                   labelText: 'Gramaj',
-                  suffixText: 'g',
-                  border: OutlineInputBorder(borderRadius: AppRadius.kMedium),
+                  hintText: 'örn. 250, 500 g, 1,5 kg',
+                  errorText: hasInput && grams == null
+                      ? 'Geçerli bir gramaj girin '
+                          '($minWeightGrams g – ${formatWeightGrams(maxWeightGrams)}).'
+                      : null,
+                  border:
+                      const OutlineInputBorder(borderRadius: AppRadius.kMedium),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -136,27 +152,29 @@ class _WeightEntryDialogState extends ConsumerState<WeightEntryDialog> {
                 ),
               ],
               const SizedBox(height: AppSpacing.md),
-              if (estimatedPrice != null)
+              if (grams != null && estimatedMinorUnits != null)
                 Text(
-                  'Tahmini Tutar: ${estimatedPrice.toStringAsFixed(2)} TL',
+                  '${formatWeightGrams(grams)} · Tahmini Tutar: '
+                  '${(estimatedMinorUnits / 100).toStringAsFixed(2)} TL',
+                  key: const Key('weightEstimatedPrice'),
                   style: AppTypography.priceMedium,
                 ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Bu gramaj henüz adisyona otomatik eklenmiyor — fiyatlandırma '
-                've sipariş satırı entegrasyonu ayrı bir adımda '
-                'tamamlanacak. Bu tutarı şimdilik sözlü/elle bildirin.',
-                style: AppTypography.bodySmall
-                    .copyWith(color: AppColors.textSecondary),
-              ),
               const SizedBox(height: AppSpacing.md),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  key: const Key('closeWeightEntryDialogButton'),
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Kapat'),
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    key: const Key('closeWeightEntryDialogButton'),
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Kapat'),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  ElevatedButton(
+                    key: const Key('confirmWeightEntryButton'),
+                    onPressed: grams == null ? null : _confirm,
+                    child: const Text('Sepete Ekle'),
+                  ),
+                ],
               ),
             ],
           ),

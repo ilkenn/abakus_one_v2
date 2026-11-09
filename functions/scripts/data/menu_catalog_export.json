@@ -1,5 +1,5 @@
 {
-  "exportedAt": "2026-10-30T13:48:47.271108",
+  "exportedAt": "2026-11-09T14:27:09.259928",
   "categories": [
     {
       "id": "cat_bowl",
@@ -112,6 +112,13 @@
       "sortOrder": 15,
       "isActive": true,
       "defaultStation": null
+    },
+    {
+      "id": "cat_gramajli",
+      "name": "Gramajlı Ürünler",
+      "sortOrder": 16,
+      "isActive": true,
+      "defaultStation": null
     }
   ],
   "products": [
@@ -172,7 +179,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_meatball_bowl",
@@ -231,7 +239,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_citirti_bowl",
@@ -290,7 +299,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_falafel_bowl",
@@ -349,7 +359,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_asian_chicken_bowl",
@@ -408,7 +419,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_ton_ton_bowl",
@@ -467,7 +479,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_golden_harmony",
@@ -526,7 +539,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_breakfast_bowl",
@@ -585,7 +599,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_sweet_sour_bowl",
@@ -644,7 +659,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_grill_salmon_bowl",
@@ -703,7 +719,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_gronola_bowl",
@@ -762,7 +779,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_smoke_salmon_bowl",
@@ -821,7 +839,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_chefs_fire",
@@ -880,7 +899,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_vegan_bowl",
@@ -939,7 +959,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_lokum_bowl",
@@ -998,7 +1019,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_atom_bowl",
@@ -1057,7 +1079,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_crispy_falafel_salad",
@@ -1116,7 +1139,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_avokado_salad",
@@ -1175,7 +1199,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_gavurdagi_salad",
@@ -1234,7 +1259,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_grill_caesar_salad",
@@ -1293,7 +1319,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_smoke_salmon_salad",
@@ -1352,7 +1379,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_crispy_caesar_salad",
@@ -1411,7 +1439,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_mixed_salad",
@@ -1470,7 +1499,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_coban_salad",
@@ -1529,7 +1559,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_ton_ton_salad",
@@ -1588,7 +1619,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_moms_chicken_salad",
@@ -1647,7 +1679,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_grill_salmon_salad",
@@ -1706,7 +1739,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_veggie_salad",
@@ -1765,7 +1799,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_pineapple_salad",
@@ -1824,7 +1859,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_akdeniz_salad",
@@ -1883,7 +1919,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_lokum_salad",
@@ -1942,7 +1979,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_rokato_salad",
@@ -2001,7 +2039,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_meatball_salad",
@@ -2060,7 +2099,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_egg_wrap",
@@ -2119,7 +2159,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_asian_chicken_wrap",
@@ -2178,7 +2219,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_smoke_salmon_wrap",
@@ -2237,7 +2279,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_mexico_steak_wrap",
@@ -2296,7 +2339,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_caesar_wrap",
@@ -2355,7 +2399,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_crispy_chicken_wrap",
@@ -2414,7 +2459,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_avokado_wrap",
@@ -2473,7 +2519,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_steak_wrap",
@@ -2532,7 +2579,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_mexico_chicken_wrap",
@@ -2591,7 +2639,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_grill_salmon_wrap",
@@ -2650,7 +2699,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_asian_steak_wrap",
@@ -2709,7 +2759,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_texas_steak_wrap",
@@ -2768,7 +2819,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_veggie_wrap",
@@ -2827,7 +2879,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_ton_ton_wrap",
@@ -2886,7 +2939,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_meatball_wrap",
@@ -2945,7 +2999,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_mexico_burger",
@@ -3004,7 +3059,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_cheese_burger",
@@ -3063,7 +3119,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_onion_burger",
@@ -3122,7 +3179,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_falafel_burger",
@@ -3181,7 +3239,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_double_chicken",
@@ -3240,7 +3299,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_grill_chicken",
@@ -3299,7 +3359,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_swiss_mushroom_burger",
@@ -3358,7 +3419,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tripoli_burger",
@@ -3417,7 +3479,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_steak_burger",
@@ -3476,7 +3539,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_smoke_house_burger",
@@ -3535,7 +3599,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_lokum_burger",
@@ -3594,7 +3659,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_abakus_burger",
@@ -3653,7 +3719,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_fettucine_beef_alfredo",
@@ -3712,7 +3779,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_fettucine_mushroom_alfredo",
@@ -3771,7 +3839,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_crispy_midye",
@@ -3830,7 +3899,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_beef_midye",
@@ -3889,7 +3959,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_fettucine_crispy_chicken_alfredo",
@@ -3948,7 +4019,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_fettucine_meatball_alfredo",
@@ -4007,7 +4079,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_meatball_midye",
@@ -4066,7 +4139,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_fettucine_chicken_alfredo",
@@ -4125,7 +4199,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_grill_chicken_midye",
@@ -4184,7 +4259,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_truflu_patates",
@@ -4243,7 +4319,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_sogan_halkasi",
@@ -4302,7 +4379,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_citir_falafel",
@@ -4361,7 +4439,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_cheddarli_patates_kizartmasi",
@@ -4420,7 +4499,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_citir_tavuk",
@@ -4479,7 +4559,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_patates_kizartmasi",
@@ -4538,7 +4619,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_acili_ayran",
@@ -4597,7 +4679,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_naneli_ayran",
@@ -4656,7 +4739,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_eksili_ayran",
@@ -4715,7 +4799,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_cocacola",
@@ -4774,7 +4859,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_fuse_tea_seftali",
@@ -4833,7 +4919,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_fuse_tea_limon",
@@ -4892,7 +4979,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_su_330",
@@ -4951,7 +5039,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_feslegenli_ayran",
@@ -5010,7 +5099,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_kahvalti_clasico",
@@ -5069,10 +5159,12 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [
+        "süt",
         "yumurta",
         "ceviz"
       ],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_kahvalti_steak",
@@ -5134,7 +5226,8 @@
         "süt",
         "yumurta"
       ],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_kahvalti_salmon",
@@ -5192,8 +5285,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "süt",
+        "balık"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tartine_pollo_croccante",
@@ -5257,7 +5354,8 @@
         "yumurta",
         "hardal"
       ],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tartine_verde_velluto",
@@ -5319,7 +5417,8 @@
         "gluten",
         "yumurta"
       ],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tartine_rosso_mattino",
@@ -5382,7 +5481,8 @@
         "süt",
         "yumurta"
       ],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tartine_sole_di_salmone",
@@ -5446,7 +5546,8 @@
         "yumurta",
         "balık"
       ],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tartine_trio_di_mare",
@@ -5509,7 +5610,8 @@
         "süt",
         "balık"
       ],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_tatli_eksi_tavuk",
@@ -5728,6 +5830,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -5775,8 +5997,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_tatli_aci_tavuk",
@@ -5995,6 +6221,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -6042,8 +6388,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam",
+        "soya"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_kremali_kekikli_tavuk",
@@ -6262,6 +6613,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -6309,8 +6780,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "süt",
+        "susam"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_barbeku_soslu_tavuk",
@@ -6529,6 +7004,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -6576,8 +7171,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam",
+        "soya"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_aci_soslu_tavuk",
@@ -6796,6 +7396,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -6843,8 +7563,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_soya_soslu_tavuk",
@@ -7063,6 +7787,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -7110,8 +7954,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam",
+        "soya"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_teriyaki_soslu_tavuk",
@@ -7330,6 +8179,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -7377,8 +8346,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam",
+        "soya"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_kori_soslu_tavuk",
@@ -7597,6 +8571,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -7644,8 +8738,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam",
+        "soya"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_kremali_mantarli_tavuk",
@@ -7864,6 +8963,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -7911,8 +9130,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam",
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_kremali_pesto_tavuk",
@@ -8131,6 +9355,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -8178,8 +9522,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam",
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_izgara_tavuk_gogsu",
@@ -8398,6 +9747,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -8445,8 +9914,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_izgara_tavuk_pirzola",
@@ -8665,6 +10138,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -8712,8 +10305,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_citir_tavuk",
@@ -8932,6 +10529,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -8979,8 +10696,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam",
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_aci_soslu_dana_bonfile",
@@ -9199,6 +10921,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -9246,8 +11088,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "susam",
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_izgara_anne_koftesi",
@@ -9466,6 +11313,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -9513,8 +11480,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "yumurta",
+        "susam"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_izgara_bonfile",
@@ -9733,6 +11705,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -9780,8 +11872,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "susam"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_izgara_somon",
@@ -10000,6 +12095,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -10047,8 +12262,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "120-150g"
+      "allergens": [
+        "balık",
+        "susam"
+      ],
+      "portionLabel": "120-150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_somon_fume",
@@ -10267,6 +12486,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -10314,8 +12653,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "100g"
+      "allergens": [
+        "balık",
+        "susam"
+      ],
+      "portionLabel": "100g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_ton_baligi",
@@ -10534,6 +12877,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -10581,8 +13044,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "120g"
+      "allergens": [
+        "balık",
+        "susam"
+      ],
+      "portionLabel": "120g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_falafel",
@@ -10801,6 +13268,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -10848,8 +13435,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "susam"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_bowl2_izgara_sebze_mix",
@@ -11068,6 +13658,126 @@
           ]
         },
         {
+          "id": "bowl_protein_addon",
+          "name": "İlave Protein",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "protein_addon_tavuk",
+              "name": "İlave Tavuk",
+              "extraPriceMinorUnits": 30000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_kofte",
+              "name": "İlave Köfte",
+              "extraPriceMinorUnits": 40000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_dana_bonfile",
+              "name": "İlave Dana Bonfile",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_izgara_somon",
+              "name": "İlave Izgara Somon",
+              "extraPriceMinorUnits": 45000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_somon_fume",
+              "name": "İlave Somon Füme",
+              "extraPriceMinorUnits": 55000,
+              "isAvailable": true
+            },
+            {
+              "id": "protein_addon_falafel",
+              "name": "İlave Falafel",
+              "extraPriceMinorUnits": 25000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_sauce_choice",
+          "name": "Sos Tercihi",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 5,
+          "options": [
+            {
+              "id": "sauce_choice_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sweet_chilli",
+              "name": "Sweet Chilli",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_choice_tahin",
+              "name": "Tahin",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
+          "id": "bowl_toppings",
+          "name": "Ekstra Topping",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 4,
+          "options": [
+            {
+              "id": "topping_avokado",
+              "name": "Avokado",
+              "extraPriceMinorUnits": 8000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_mantar_sote",
+              "name": "Mantar Sote",
+              "extraPriceMinorUnits": 5000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_parmesan",
+              "name": "Parmesan",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            },
+            {
+              "id": "topping_ceviz",
+              "name": "Ceviz",
+              "extraPriceMinorUnits": 6000,
+              "isAvailable": true
+            }
+          ]
+        },
+        {
           "id": "cross_sell_sauce",
           "name": "Ekstra Sos",
           "selectionType": "multiple",
@@ -11115,8 +13825,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "susam"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_citir_tavuk",
@@ -11174,8 +13888,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_tatli_eksi_tavuk",
@@ -11233,8 +13951,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "200g"
+      "allergens": [
+        "soya"
+      ],
+      "portionLabel": "200g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_kremali_pestolu_tavuk",
@@ -11292,8 +14013,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "200g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "200g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_kremali_mantarli_tavuk",
@@ -11351,8 +14075,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "200g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "200g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_izgara_tavuk_gogsu",
@@ -11410,8 +14137,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_barbeku_soslu_tavuk",
@@ -11469,8 +14199,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "200g"
+      "allergens": [
+        "gluten",
+        "süt"
+      ],
+      "portionLabel": "200g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_tatli_aci_tavuk",
@@ -11528,8 +14262,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "200g"
+      "allergens": [
+        "soya"
+      ],
+      "portionLabel": "200g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_izgara_tavuk_pirzola",
@@ -11587,8 +14324,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_kori_soslu_tavuk",
@@ -11646,8 +14386,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "200g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "200g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_soya_soslu_tavuk",
@@ -11705,8 +14448,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "200g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "200g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_acili_tavuk",
@@ -11764,8 +14510,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "200g"
+      "allergens": [
+        "gluten",
+        "süt"
+      ],
+      "portionLabel": "200g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_kremali_kekikli_tavuk",
@@ -11823,8 +14573,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "200g"
+      "allergens": [
+        "soya"
+      ],
+      "portionLabel": "200g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_ton_baligi",
@@ -11882,8 +14635,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "120g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "120g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_somon_fume",
@@ -11941,8 +14697,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "100g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "100g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_izgara_somon",
@@ -12000,8 +14759,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "120g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "120g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_anne_koftesi",
@@ -12059,8 +14821,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "gluten",
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_izgara_bonfile",
@@ -12118,8 +14884,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "soya"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_acili_bonfile",
@@ -12177,8 +14946,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_citir_falafel",
@@ -12236,8 +15008,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "4 adet"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "4 adet",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_tava_izgara_sebze_mix",
@@ -12295,8 +15070,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": "150g"
+      "allergens": [
+        "süt"
+      ],
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_salata2_veggie",
@@ -12355,7 +15133,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_salata2_grill_caesar",
@@ -12413,8 +15192,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "süt",
+        "gluten"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_salata2_crispy_caesar",
@@ -12472,8 +15255,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "süt"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_salata2_moms_chicken",
@@ -12531,8 +15318,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "hardal"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_salata2_crispy_falafel",
@@ -12590,8 +15381,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "susam"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_salata2_smoked_salmon",
@@ -12649,8 +15444,11 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "balık"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_salata2_ton_ton",
@@ -12708,8 +15506,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "balık",
+        "süt"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_salata2_ananas",
@@ -12768,7 +15570,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_salata2_dana_bonfile",
@@ -12826,8 +15629,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "hardal"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_burger2_double_chicken",
@@ -12935,8 +15742,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "süt",
+        "hardal"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_burger2_izgara_tavuk",
@@ -13044,8 +15856,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "süt",
+        "hardal"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_burger2_falafel",
@@ -13153,8 +15970,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "susam"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_burger2_tripoli",
@@ -13262,8 +16083,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "süt",
+        "yumurta"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_burger2_swiss_mushroom",
@@ -13371,8 +16197,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "süt"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_burger2_steak",
@@ -13480,8 +16310,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "süt"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_burger2_mexico_beef",
@@ -13589,8 +16423,12 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "süt"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_burger2_onion",
@@ -13698,8 +16536,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "süt",
+        "hardal"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_burger2_smoke_house",
@@ -13807,8 +16650,13 @@
         }
       ],
       "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null
+      "allergens": [
+        "gluten",
+        "süt",
+        "hardal"
+      ],
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_wrap2_asian_chicken",
@@ -13917,7 +16765,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_wrap2_caesar",
@@ -14026,7 +16875,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_wrap2_citir_tavuk",
@@ -14135,7 +16985,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_wrap2_citir_falafel",
@@ -14244,7 +17095,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_wrap2_ton_ton",
@@ -14353,7 +17205,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_wrap2_kahvalti",
@@ -14462,7 +17315,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_wrap2_kofte",
@@ -14571,7 +17425,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_wrap2_acili_bonfile",
@@ -14680,7 +17535,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_wrap2_asian_steak",
@@ -14789,7 +17645,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_makarna2_citir_tavuk_fettuccine",
@@ -14848,7 +17705,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_makarna2_kofte_fettuccine",
@@ -14907,7 +17765,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_makarna2_dana_bonfile_fettuccine",
@@ -14966,7 +17825,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_makarna2_fettuccine_chicken_alfredo",
@@ -15025,7 +17885,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_makarna2_pipette_kofte",
@@ -15084,7 +17945,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_makarna2_pipette_dana_bonfile",
@@ -15143,7 +18005,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_makarna2_pipette_citir_tavuk",
@@ -15202,7 +18065,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_makarna2_pipette_izgara_tavuk",
@@ -15261,7 +18125,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": null
+      "portionLabel": null,
+      "saleUnit": "piece"
     },
     {
       "id": "prod_aperatif_patates_kizartmasi",
@@ -15320,7 +18185,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": "120g"
+      "portionLabel": "120g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_aperatif_tatli_patates",
@@ -15379,7 +18245,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": "120g"
+      "portionLabel": "120g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_aperatif_truflu_patates",
@@ -15438,7 +18305,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": "120g"
+      "portionLabel": "120g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_aperatif_cheddarli_patates",
@@ -15497,7 +18365,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": "120g"
+      "portionLabel": "120g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_aperatif_citir_tavuk",
@@ -15556,7 +18425,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": "150g"
+      "portionLabel": "150g",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_aperatif_sogan_halkasi",
@@ -15615,7 +18485,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": "6 adet"
+      "portionLabel": "6 adet",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_aperatif_citir_falafel",
@@ -15674,7 +18545,8 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": "4 adet"
+      "portionLabel": "4 adet",
+      "saleUnit": "piece"
     },
     {
       "id": "prod_aperatif_general_tso",
@@ -15733,7 +18605,188 @@
       ],
       "channelPriceOverrides": {},
       "allergens": [],
-      "portionLabel": "200g"
+      "portionLabel": "200g",
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_gramaj_dana_antrikot",
+      "categoryId": "cat_gramajli",
+      "name": "Dana Antrikot",
+      "basePriceMinorUnits": 140000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "kilogram"
+    },
+    {
+      "id": "prod_gramaj_kuzu_pirzola",
+      "categoryId": "cat_gramajli",
+      "name": "Kuzu Pirzola",
+      "basePriceMinorUnits": 165000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "kilogram"
+    },
+    {
+      "id": "prod_gramaj_meze_tabagi",
+      "categoryId": "cat_gramajli",
+      "name": "Meze Tabağı (Gramajlı)",
+      "basePriceMinorUnits": 45000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "kilogram"
     }
   ],
   "bowlIngredients": [

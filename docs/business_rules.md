@@ -7128,6 +7128,24 @@ neither restated in full here nor duplicated between the two.
 - **Business Rule IDs**: ADR-029, ADR-031, ADR-066, `docs/order_operations_architecture.md` §12,
   `docs/kds_printer_stock_architecture.md` (AP-5 consumer boundary)
 
+### BR-ORDER-020 — Sold-by-weight (kg) lines are priced server-side from grams, POS dine-in only (2026-11-09)
+- **Status**: IMPLEMENTED (2026-11-09, ADR-067) — `functions/src/submitTakeawayOrder.ts`
+  (`resolveWeightGrams`/`weightedUnitPriceMinorUnits`, used by the shared `buildProductLine`).
+- **Rule**: A product whose canonical catalog `saleUnit` is `kilogram` has a **per-kg**
+  `basePriceMinorUnits`. Each of its order lines must carry `weightGrams` (whole grams,
+  1–20000) with `quantity` 1; the line's unit price is per-kg price × grams / 1000, rounded half-up
+  to the kuruş, computed by the server only (the client's figure is an estimate). `weightGrams` on a
+  per-piece product is rejected. Sold-by-weight lines are accepted only on the dine-in channel (POS
+  staff entry) for now; takeaway/delivery reject them. The sale unit always comes from the catalog,
+  never the client. The line stores `weightGrams`; POS, KDS and the kitchen ticket show it ("350 g",
+  "1,5 kg").
+- **Explicitly out of scope (deferred)**: stock/recipe consumption by weight (recipes are per
+  piece), campaign quantity triggers for weight lines, a real serial-port scale protocol, and
+  weight lines in the customer QR menu.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Orders, POS, KDS, Menu
+- **Business Rule IDs**: ADR-062, ADR-067
+
 ### BR-ORDER-015 — Every QR submission awaits cashier approval
 - **Status**: DECIDED — **partially real** (whole-order approval is real and server-authoritative per
   `submitDineInOrder.ts`/`advanceDineInOrderStatus.ts`, AP-0-confirmed); line-level detail below is new.

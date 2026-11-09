@@ -91,6 +91,9 @@ Future<void> main() async {
         // 2026-10-28 PDF menu refresh.
         'allergens': product.allergens,
         'portionLabel': product.portionLabel,
+        // ADR-067 (2026-11-09) — `kilogram` makes `basePriceMinorUnits` a
+        // per-kg price, priced server-side by `weightGrams`.
+        'saleUnit': product.saleUnit.name,
       },
   ];
 

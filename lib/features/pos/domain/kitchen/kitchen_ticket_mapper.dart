@@ -44,6 +44,7 @@ abstract final class KitchenTicketMapper {
         ingredientSummary: _ingredientSummaryFor(orderLine),
         note: orderLine.kitchenNote,
         orderedByName: approvalState?.orderedByName,
+        weightGrams: orderLine.weightGrams,
       ));
     }
 

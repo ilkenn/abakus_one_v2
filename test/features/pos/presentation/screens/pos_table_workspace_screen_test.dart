@@ -1363,8 +1363,8 @@ void main() {
     );
 
     testWidgets(
-        'kg bazli urune dokununca Gramaj modali acilir, sepete hicbir sey '
-        'eklenmez', (tester) async {
+        'kg bazli urune dokununca Gramaj modali acilir; onaylanana kadar '
+        'sepete hicbir sey eklenmez', (tester) async {
       await tester.binding.setSurfaceSize(const Size(1200, 1400));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await _pump(tester, initialView: emptyOpenTableView(), extraOverrides: [
@@ -1380,7 +1380,7 @@ void main() {
       expect(find.text('Gramaj / Miktar Girin'), findsOneWidget);
       expect(
           find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing,
-          reason: 'gramaj girisi henuz sepete/fiyatlandirmaya baglanmadi');
+          reason: 'gramaj onaylanmadan sepete satir eklenmemeli');
     });
 
     testWidgets(
@@ -1431,6 +1431,73 @@ void main() {
 
       expect(find.textContaining('Bağlı seri port terazi bulunamadı'),
           findsOneWidget);
+    });
+
+    // ADR-067 (2026-11-09) — the weight now becomes a real cart line.
+    testWidgets(
+        '"1,5 kg" girilip Sepete Ekle denince satir gramajla eklenir ve '
+        'Siparisi Onayla weightGrams ile gonderir', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final fakes = await _pump(tester,
+          initialView: emptyOpenTableView(),
+          extraOverrides: [
+            menuProductsProvider.overrideWithValue(const [weighedProduct]),
+          ]);
+
+      await tester.enterText(
+          find.byKey(const Key('productSearchField')), 'Tartılı Test');
+      await tester.pump();
+      await tester.tap(find.text('Tartılı Test Ürünü'));
+      await tester.pump();
+
+      await tester.enterText(
+          find.byKey(const Key('weightGramsField')), '1,5 kg');
+      await tester.pump();
+      expect(find.textContaining('1,5 kg · Tahmini Tutar: 300.00 TL'),
+          findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('confirmWeightEntryButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('cartLineWeight')), findsOneWidget);
+      expect(find.text('1,5 kg'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('confirmStaffEntryOrderButton')));
+      await tester.pumpAndSettle();
+
+      expect(fakes.actionGateway.submitStaffEntryOrderCallCount, 1);
+      final item = fakes.actionGateway.lastStaffEntryItems!.single;
+      expect(item['productId'], 'prod_test_tartili');
+      expect(item['quantity'], 1);
+      expect(item['weightGrams'], 1500);
+    });
+
+    testWidgets('gecersiz gramajda Sepete Ekle pasif kalir ve hata gosterilir',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester, initialView: emptyOpenTableView(), extraOverrides: [
+        menuProductsProvider.overrideWithValue(const [weighedProduct]),
+      ]);
+
+      await tester.enterText(
+          find.byKey(const Key('productSearchField')), 'Tartılı Test');
+      await tester.pump();
+      await tester.tap(find.text('Tartılı Test Ürünü'));
+      await tester.pump();
+
+      await tester.enterText(
+          find.byKey(const Key('weightGramsField')), '25 kg');
+      await tester.pump();
+
+      expect(find.textContaining('Geçerli bir gramaj girin'), findsOneWidget);
+      expect(
+          tester
+              .widget<ElevatedButton>(
+                  find.byKey(const Key('confirmWeightEntryButton')))
+              .onPressed,
+          isNull);
     });
   });
 

@@ -11266,3 +11266,20 @@ open if it throws. `_PosTableWorkspaceScreenState._runAction` mount-guards every
 fixes the `setState() called after dispose()` seen when responses arrived after the screen closed.
 New widget test (double-tap sends exactly one request). `flutter test` (whole project): 4035
 passing, 0 failures.
+
+### KDS "not reaching the kitchen": root cause, showcase menu, sold-by-weight lines (2026-11-09)
+
+- **KDS root cause (environment, not code)**: the Functions emulator kept one long-lived
+  `submitDineInOrder` worker started before 1658cdb, so staff orders were still born
+  `pendingConfirmation` and never matched the KDS query (`confirmed`/`preparing`/`ready`). Org,
+  branch and collection all matched. Data was exported, and the emulator was restarted with
+  `--import/--export-on-exit` (`C:\Projects\abakus_emulator_data`) so code reloads no longer cost the
+  test data. Also fixed: a staff order born `confirmed` now records that in its first `statusHistory`
+  entry and `timestamps.confirmed` (were "created → pendingConfirmation" / `null`).
+- **Showcase menu** (ADR-068): `/menu` (or `?mode=showcase`) is a public, read-only menu. Add to cart
+  shows "Sipariş verebilmek için lütfen oturduğunuz masadaki QR kodu okutun."; a table QR lifts it.
+- **Sold-by-weight** (ADR-067, BR-ORDER-020): POS weight entry ("250 g", "1,5 kg") now adds a real
+  line priced server-side (per-kg × grams / 1000, half-up). Test set seeded: "Gramajlı Ürünler" with
+  Dana Antrikot (1.400 TL/kg), Kuzu Pirzola (1.650 TL/kg), Meze Tabağı (Gramajlı) (450 TL/kg).
+  `flutter test` (whole project): 4051 passing, 0 failures.
+- **Visual Review Bekleniyor** for all three.

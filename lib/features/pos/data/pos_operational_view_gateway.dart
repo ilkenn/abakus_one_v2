@@ -1,3 +1,4 @@
+import '../../orders/domain/order_line_quantity_label.dart';
 import 'package:cloud_functions/cloud_functions.dart' as functions;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
@@ -167,6 +168,7 @@ class PosOrderLineSummary {
     this.modifiers = const [],
     this.excludedIngredients = const [],
     this.kitchenNote = '',
+    this.weightGrams,
   });
 
   final String? productId;
@@ -183,6 +185,15 @@ class PosOrderLineSummary {
   final List<PosOrderLineModifierSummary> modifiers;
   final List<String> excludedIngredients;
   final String kitchenNote;
+
+  /// ADR-067 (2026-11-09) — whole grams for a sold-by-weight line
+  /// ([quantity] is then 1, [unitPriceMinorUnits] that weight's price);
+  /// `null` for every per-piece line.
+  final int? weightGrams;
+
+  /// "2x" / "350 g" — see `orderLineQuantityLabel`.
+  String get quantityLabel =>
+      orderLineQuantityLabel(quantity: quantity, weightGrams: weightGrams);
 
   factory PosOrderLineSummary.fromWire(
       Map<String, dynamic> data, int lineIndex) {
@@ -205,6 +216,7 @@ class PosOrderLineSummary {
           raw as String,
       ],
       kitchenNote: data['kitchenNote'] as String? ?? '',
+      weightGrams: (data['weightGrams'] as num?)?.toInt(),
     );
   }
 }
