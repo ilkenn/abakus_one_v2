@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../menu/domain/models/menu_product.dart';
+import '../../../menu/domain/models/sale_unit.dart';
 import '../../../qr/presentation/providers/menu_showcase_mode_provider.dart';
 
 /// 2026-11-09 — the one check every "add to cart" entry point runs first.
@@ -11,13 +13,51 @@ import '../../../qr/presentation/providers/menu_showcase_mode_provider.dart';
 /// Kept synchronous on purpose: every call site adds to the cart
 /// synchronously, so the dialog is shown fire-and-forget and the caller
 /// simply returns.
-bool allowCartAdd(BuildContext context, WidgetRef ref) {
-  if (!ref.read(isMenuShowcaseActiveProvider)) return true;
-  showDialog<void>(
-    context: context,
-    builder: (_) => const ShowcaseOrderingBlockedDialog(),
-  );
-  return false;
+///
+/// 2026-11-09 (ADR-067 follow-up) — also refuses a [product] sold by
+/// weight: the customer app has no weight entry and the server rejects a
+/// kg line without `weightGrams`, so the guest is told to ask staff
+/// instead of failing at submit. Only customer-app entry points call this;
+/// the POS adds kg products through its own `WeightEntryDialog`.
+bool allowCartAdd(BuildContext context, WidgetRef ref, {MenuProduct? product}) {
+  if (ref.read(isMenuShowcaseActiveProvider)) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => const ShowcaseOrderingBlockedDialog(),
+    );
+    return false;
+  }
+  if (product?.saleUnit == SaleUnit.kilogram) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => const WeightProductOrderingBlockedDialog(),
+    );
+    return false;
+  }
+  return true;
+}
+
+/// "Bu ürün gramajla satılır; lütfen garsonunuzdan isteyin."
+class WeightProductOrderingBlockedDialog extends StatelessWidget {
+  const WeightProductOrderingBlockedDialog({super.key});
+
+  static const message =
+      'Bu ürün gramajla satılır; lütfen garsonunuzdan isteyin.';
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      icon: const Icon(Icons.scale_outlined),
+      title: const Text('Garsonla Sipariş'),
+      content: const Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Tamam'),
+        ),
+      ],
+    );
+  }
 }
 
 /// "Sipariş verebilmek için lütfen oturduğunuz masadaki QR kodu okutun."

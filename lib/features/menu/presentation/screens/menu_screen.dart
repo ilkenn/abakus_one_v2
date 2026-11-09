@@ -455,7 +455,7 @@ class _ProductListCardState extends ConsumerState<_ProductListCard> {
       _openDetail();
       return;
     }
-    if (!allowCartAdd(context, ref)) return;
+    if (!allowCartAdd(context, ref, product: product)) return;
     HapticFeedback.lightImpact();
     final channelContext = ref.read(shoppingChannelProvider);
     final policy = ref.read(channelPricingPolicySnapshotProvider).valueOrNull ??

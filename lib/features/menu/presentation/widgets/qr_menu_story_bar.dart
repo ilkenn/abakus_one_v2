@@ -233,7 +233,10 @@ class _StoryQuickView extends ConsumerWidget {
                               ),
                             ),
                             onPressed: () {
-                              if (!allowCartAdd(context, ref)) return;
+                              if (!allowCartAdd(context, ref,
+                                  product: product)) {
+                                return;
+                              }
                               HapticFeedback.lightImpact();
                               ref.read(cartProvider.notifier).addToCart(
                                     id: product.id,

@@ -20491,6 +20491,14 @@ Tests: `functions/src/test/weightPricing.test.ts` (4 pure unit tests, **executed
 `order_line_quantity_label_test.dart`, POS workspace weight tests (cart line + `weightGrams`
 submission, invalid input).
 
+**Follow-up (2026-11-09) — customer QR menu**: the product owner chose "visible, not addable". kg
+products stay listed with their per-kg price, but `allowCartAdd(context, ref, product:)` (the one
+customer-app add-to-cart gate, shared with ADR-068's showcase check) refuses a `SaleUnit.kilogram`
+product and shows "Bu ürün gramajla satılır; lütfen garsonunuzdan isteyin.", so the guest never
+reaches the server rejection. Wired into menu quick-add, product detail (main product + drink
+upsell) and the story-bar quick view; the showcase modal keeps precedence; the POS is unaffected
+(its own `WeightEntryDialog`). Test: `test/features/cart/presentation/guards/cart_add_guard_test.dart`.
+
 ## ADR-068 — Read-only "vitrin" menu for the entrance floor-stand QR (2026-11-09)
 
 - Tarih: 2026-11-09

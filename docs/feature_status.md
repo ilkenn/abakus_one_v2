@@ -11282,4 +11282,6 @@ passing, 0 failures.
   line priced server-side (per-kg × grams / 1000, half-up). Test set seeded: "Gramajlı Ürünler" with
   Dana Antrikot (1.400 TL/kg), Kuzu Pirzola (1.650 TL/kg), Meze Tabağı (Gramajlı) (450 TL/kg).
   `flutter test` (whole project): 4051 passing, 0 failures.
+- **Customer QR menu kg restriction** (ADR-067 follow-up): kg products stay visible but can't be
+  added; the attempt shows "Bu ürün gramajla satılır; lütfen garsonunuzdan isteyin." POS unaffected.
 - **Visual Review Bekleniyor** for all three.

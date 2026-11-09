@@ -179,7 +179,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
       );
       return;
     }
-    if (!allowCartAdd(context, ref)) return;
+    if (!allowCartAdd(context, ref, product: widget.product)) return;
 
     HapticFeedback.lightImpact();
     ref.read(cartProvider.notifier).addToCart(
@@ -674,7 +674,7 @@ class _DrinkQuickAddChip extends ConsumerWidget {
         child: InkWell(
           borderRadius: AppRadius.kPill,
           onTap: () {
-            if (!allowCartAdd(context, ref)) return;
+            if (!allowCartAdd(context, ref, product: drink)) return;
             HapticFeedback.lightImpact();
             ref.read(cartProvider.notifier).addToCart(
                   id: drink.id,
