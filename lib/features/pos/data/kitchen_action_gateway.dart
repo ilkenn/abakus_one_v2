@@ -10,6 +10,12 @@ import '../domain/kds/kitchen_line_status.dart';
 /// independently. Only meaningful for an already-`confirmed` (or later)
 /// dine-in order — `advanceDineInOrderStatus` is the one callable that
 /// accepts `targetStatus: 'cancelled'` with one of these codes.
+///
+/// 2026-11-08 — also the reason vocabulary for [KitchenActionGateway
+/// .cancelOrder] on every other channel: takeaway/delivery/reservation-
+/// preorder's own `*_CANCELLATION_REASON_CODES` are identical except
+/// `customerNoShow` in place of [guestLeft] — the gateway maps that one
+/// value onto the wire, so the KDS needs only this one closed set.
 enum DineInCancellationReasonCode {
   itemUnavailable,
   kitchenUnavailable,
@@ -91,6 +97,20 @@ abstract interface class KitchenActionGateway {
     required String channel,
     required String targetStatus,
     String? reasonCode,
+    String? reasonMessage,
+  });
+
+  /// 2026-11-08 — the KDS card's whole-order "İptal Et", for every channel
+  /// that has a staff cancellation callable: `dineInQr` via
+  /// `advanceDineInOrderStatus` (`targetStatus: 'cancelled'`), and
+  /// `takeaway`/`delivery`/`reservationPreorder` via their own dedicated
+  /// `cancel*OrderForStaff` callables — each server-side callable still
+  /// enforces its own permission tier (e.g. manager-only once a takeaway
+  /// order is `preparing`).
+  Future<void> cancelOrder({
+    required String orderId,
+    required String channel,
+    required DineInCancellationReasonCode reasonCode,
     String? reasonMessage,
   });
 }
@@ -195,6 +215,57 @@ class FirebaseKitchenActionGateway implements KitchenActionGateway {
       if (reasonMessage != null) 'reasonMessage': reasonMessage,
     });
   }
+
+  static const Map<String, String> _staffCancelFunctionByChannel = {
+    'takeaway': 'cancelTakeawayOrderForStaff',
+    'delivery': 'cancelDeliveryOrderForStaff',
+    'reservationPreorder': 'cancelReservationPreorderOrderForStaff',
+  };
+
+  /// `guestLeft` is dine-in's own wording; every other channel's server
+  /// enum spells the same concept `customerNoShow`.
+  static String _cancellationReasonWireValue(
+    DineInCancellationReasonCode code,
+    String channel,
+  ) {
+    if (code == DineInCancellationReasonCode.guestLeft &&
+        channel != 'dineInQr') {
+      return 'customerNoShow';
+    }
+    return code.name;
+  }
+
+  @override
+  Future<void> cancelOrder({
+    required String orderId,
+    required String channel,
+    required DineInCancellationReasonCode reasonCode,
+    String? reasonMessage,
+  }) async {
+    final wireReason = _cancellationReasonWireValue(reasonCode, channel);
+    if (channel == 'dineInQr') {
+      await advanceOrderStatus(
+        orderId: orderId,
+        channel: channel,
+        targetStatus: 'cancelled',
+        reasonCode: wireReason,
+        reasonMessage: reasonMessage,
+      );
+      return;
+    }
+    final functionName = _staffCancelFunctionByChannel[channel];
+    if (functionName == null) {
+      throw KitchenActionException(
+        'unknown-channel',
+        'Bilinmeyen sipariş kanalı: $channel',
+      );
+    }
+    await _call(functionName, {
+      'orderId': orderId,
+      'reasonCode': wireReason,
+      if (reasonMessage != null) 'reasonMessage': reasonMessage,
+    });
+  }
 }
 
 class UnavailableKitchenActionGateway implements KitchenActionGateway {
@@ -220,6 +291,15 @@ class UnavailableKitchenActionGateway implements KitchenActionGateway {
     required String channel,
     required String targetStatus,
     String? reasonCode,
+    String? reasonMessage,
+  }) async =>
+      _unavailable();
+
+  @override
+  Future<void> cancelOrder({
+    required String orderId,
+    required String channel,
+    required DineInCancellationReasonCode reasonCode,
     String? reasonMessage,
   }) async =>
       _unavailable();

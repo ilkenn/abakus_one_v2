@@ -1,4 +1,5 @@
 import '../../../orders/domain/models/order_channel.dart';
+import '../../../orders/domain/models/order_status.dart';
 
 /// The header block every printed/digital [KitchenTicket] must show.
 class KitchenTicketHeader {
@@ -13,7 +14,18 @@ class KitchenTicketHeader {
     this.tableLabel,
     this.customerName,
     this.channel = OrderChannel.delivery,
+    this.orderStatus,
   });
+
+  /// 2026-11-08 — the canonical order's own current [OrderStatus], additive
+  /// alongside [channel]. The KDS card's footer actions
+  /// (Hazırlanıyor/Hazırlandı/Teslim Edildi/İptal Et) key off this — the
+  /// backend's `advance*OrderStatus` callables accept only the EXACT next
+  /// status, so the card must know where the order actually is rather than
+  /// guess from its work items' line statuses (the two are tracked
+  /// separately). `null` for a ticket not derived from a real order
+  /// (in-memory/test tickets) — the card then shows no order-level actions.
+  final OrderStatus? orderStatus;
 
   final String restaurantName;
   final String branchName;

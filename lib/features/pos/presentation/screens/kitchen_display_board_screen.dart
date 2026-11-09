@@ -16,12 +16,14 @@ import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../application/use_cases/advance_kitchen_order.dart';
 import '../../application/use_cases/record_kitchen_event.dart';
 import '../../application/use_cases/transition_kitchen_work_item.dart';
 import '../../data/kitchen_action_gateway.dart';
 import '../../domain/authorization/pos_authorization_policy.dart';
 import '../../domain/kds/kitchen_delay_state.dart';
 import '../../domain/kds/kitchen_line_status.dart';
+import '../../domain/kds/kitchen_order_action_policy.dart';
 import '../../domain/kds/kitchen_station.dart';
 import '../../domain/kds/kitchen_station_labels.dart';
 import '../../domain/kds/kitchen_synchronization_state.dart';
@@ -30,6 +32,7 @@ import '../../domain/kitchen/kitchen_ticket.dart';
 import '../../domain/kitchen/kitchen_ticket_line.dart';
 import '../providers/kds_dependencies_provider.dart';
 import '../providers/kitchen_ticket_dependencies_provider.dart';
+import '../widgets/kitchen_order_cancel_dialog.dart';
 import '../../../printing/data/print_job_action_gateway.dart';
 import '../../../printing/domain/print_job.dart';
 import 'delayed_orders_screen.dart';
@@ -112,6 +115,10 @@ class _KitchenDisplayBoardScreenState
   bool _isFullscreen = false;
   String? _message;
   StreamSubscription<List<KitchenTicket>>? _ticketSubscription;
+
+  /// Orders with a footer action in flight — their buttons are disabled so
+  /// a double tap can't fire a second, overlapping call chain.
+  final Set<String> _busyOrderIds = {};
 
   /// Faz R.3C.2 — set when the repository denies this staff member access
   /// to [widget.branchId] (`firestore.rules`' `hasBranchAccess`, not the
@@ -333,7 +340,11 @@ class _KitchenDisplayBoardScreenState
   /// status via the already-real, already-tested `advance*OrderStatus`
   /// callable for that order's channel — closing the confirmed AP-0/AP-1
   /// gap where the board never called it at all.
-  Future<void> _advanceLine(KitchenWorkItem item, KitchenLineStatus to) async {
+  Future<void> _advanceLine(
+    KitchenTicket ticket,
+    KitchenWorkItem item,
+    KitchenLineStatus to,
+  ) async {
     if (ref.read(firebaseReadyProvider)) {
       try {
         final gateway = ref.read(kitchenActionGatewayProvider);
@@ -342,20 +353,23 @@ class _KitchenDisplayBoardScreenState
           to: to,
           expectedRevision: item.revision,
         );
-        final orderId = result.orderId;
-        final orderChannel = result.orderChannel;
-        if (result.allSiblingsReady &&
-            orderId != null &&
-            orderChannel != null) {
-          await gateway.advanceOrderStatus(
-            orderId: orderId,
-            channel: orderChannel,
-            targetStatus: 'ready',
-          );
-        }
+        // 2026-11-08 — previously jumped the order straight to `ready`
+        // once every line was ready, while nothing had ever moved it off
+        // `confirmed` — rejected by every `advance*OrderStatus` callable
+        // ("only the exact next status is allowed, no skipping").
+        await AdvanceKitchenOrder(gateway: gateway)
+            .syncOrderAfterLineTransition(
+          orderId: ticket.orderId.value,
+          channel: ticket.header.channel,
+          currentStatus: ticket.header.orderStatus,
+          lineTarget: to,
+          allSiblingsReady: result.allSiblingsReady,
+        );
+        if (!mounted) return;
         setState(() => _message = null);
         await _load();
       } on KitchenActionException catch (e) {
+        if (!mounted) return;
         setState(() => _message = e.message);
       }
       return;
@@ -389,6 +403,94 @@ class _KitchenDisplayBoardScreenState
     } on BusinessRuleViolation catch (e) {
       setState(() => _message = e.description);
     }
+  }
+
+  /// 2026-11-08 — the card footer's one-tap whole-order action
+  /// (Hazırlanıyor/Hazırlandı/Teslim Edildi). Re-reads every work item for
+  /// the order rather than using the board's station-/status-filtered
+  /// slice, so "Hazırlandı" never leaves another station's line behind
+  /// while marking the whole order ready.
+  Future<void> _runOrderAction(
+    KitchenTicket ticket,
+    KitchenOrderAction action,
+  ) async {
+    final status = ticket.header.orderStatus;
+    if (status == null || _busyOrderIds.contains(ticket.orderId.value)) {
+      return;
+    }
+    setState(() => _busyOrderIds.add(ticket.orderId.value));
+    try {
+      final useCase =
+          AdvanceKitchenOrder(gateway: ref.read(kitchenActionGatewayProvider));
+      final orderId = ticket.orderId.value;
+      final channel = ticket.header.channel;
+      switch (action) {
+        case KitchenOrderAction.startPreparing:
+          await useCase.startPreparing(
+            orderId: orderId,
+            channel: channel,
+            workItems: await _allWorkItemsFor(ticket),
+          );
+        case KitchenOrderAction.markReady:
+          await useCase.markReady(
+            orderId: orderId,
+            channel: channel,
+            currentStatus: status,
+            workItems: await _allWorkItemsFor(ticket),
+          );
+        case KitchenOrderAction.handOver:
+          await useCase.handOver(orderId: orderId, channel: channel);
+      }
+      if (!mounted) return;
+      setState(() => _message = null);
+      await _load();
+    } on KitchenActionException catch (e) {
+      if (!mounted) return;
+      setState(() => _message = e.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _message = 'Sipariş durumu güncellenemedi.');
+    } finally {
+      if (mounted) {
+        setState(() => _busyOrderIds.remove(ticket.orderId.value));
+      }
+    }
+  }
+
+  Future<void> _cancelOrder(KitchenTicket ticket) async {
+    if (_busyOrderIds.contains(ticket.orderId.value)) return;
+    final reason = await showKitchenOrderCancelDialog(
+      context,
+      channel: ticket.header.channel,
+    );
+    if (reason == null || !mounted) return;
+    setState(() => _busyOrderIds.add(ticket.orderId.value));
+    try {
+      await AdvanceKitchenOrder(
+        gateway: ref.read(kitchenActionGatewayProvider),
+      ).cancel(
+        orderId: ticket.orderId.value,
+        channel: ticket.header.channel,
+        reasonCode: reason,
+      );
+      if (!mounted) return;
+      setState(() => _message = null);
+      await _load();
+    } on KitchenActionException catch (e) {
+      if (!mounted) return;
+      setState(() => _message = e.message);
+    } finally {
+      if (mounted) {
+        setState(() => _busyOrderIds.remove(ticket.orderId.value));
+      }
+    }
+  }
+
+  Future<List<KitchenWorkItem>> _allWorkItemsFor(KitchenTicket ticket) async {
+    final items = await ref
+        .read(kitchenProjectionRepositoryProvider)
+        .findByOrderId(ticket.orderId);
+    return items.where((i) => i.kitchenTicketId == ticket.id).toList();
   }
 
   @override
@@ -554,12 +656,21 @@ class _KitchenDisplayBoardScreenState
       itemBuilder: (context, index) {
         final ticket = visibleTickets[index];
         final items = filteredByTicket[ticket.id] ?? const [];
+        // Order-level actions need the real backend — with no Firebase
+        // there's no order lifecycle to advance, so the footer is hidden.
+        final orderActionsEnabled = ref.read(firebaseReadyProvider);
         return KitchenOrderCard(
           ticket: ticket,
           workItems: items,
           now: now,
           thresholds: _defaultThresholds,
-          onLineTap: _advanceLine,
+          onLineTap: (item, to) => _advanceLine(ticket, item, to),
+          isOrderActionBusy: _busyOrderIds.contains(ticket.orderId.value),
+          onOrderAction: orderActionsEnabled
+              ? (action) => _runOrderAction(ticket, action)
+              : null,
+          onCancelOrder:
+              orderActionsEnabled ? () => _cancelOrder(ticket) : null,
           // Manual print from the KDS card is always a reprint: the
           // automatic job already fired at order acceptance (Sprint 4's
           // `requestPrintJobForAcceptance` server-side hook) by the time a
@@ -712,6 +823,9 @@ class KitchenOrderCard extends StatefulWidget {
     required this.onLineTap,
     required this.onOpenDetails,
     required this.onPrintRequested,
+    this.onOrderAction,
+    this.onCancelOrder,
+    this.isOrderActionBusy = false,
   });
 
   final KitchenTicket ticket;
@@ -721,6 +835,16 @@ class KitchenOrderCard extends StatefulWidget {
   final void Function(KitchenWorkItem item, KitchenLineStatus to) onLineTap;
   final VoidCallback onOpenDetails;
   final VoidCallback onPrintRequested;
+
+  /// 2026-11-08 — the footer's one-tap whole-order action. `null` hides
+  /// the footer's primary button entirely (e.g. no Firebase backend).
+  final ValueChanged<KitchenOrderAction>? onOrderAction;
+
+  /// 2026-11-08 — the footer's secondary "İptal Et". `null` hides it.
+  final VoidCallback? onCancelOrder;
+
+  /// True while a footer action for this order is in flight.
+  final bool isOrderActionBusy;
 
   static KitchenLineStatus? nextStatus(KitchenLineStatus current) {
     switch (current) {
@@ -961,8 +1085,80 @@ class _KitchenOrderCardState extends State<KitchenOrderCard>
                     style: AppTypography.labelLarge
                         .copyWith(color: AppColors.onPrimary)),
               ),
+            _OrderActionFooter(
+              ticket: ticket,
+              isBusy: widget.isOrderActionBusy,
+              onOrderAction: widget.onOrderAction,
+              onCancelOrder: widget.onCancelOrder,
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 2026-11-08 — the KDS card's footer: one primary button that advances the
+/// whole order exactly one step along the backend's strict chain
+/// (`KitchenOrderActionPolicy.primaryActionFor`), plus a secondary
+/// "İptal Et". Renders nothing when neither applies (e.g. a delivery order
+/// already `ready` — its hand-off is the courier flow's, not the
+/// kitchen's — or a ticket with no known order status).
+class _OrderActionFooter extends StatelessWidget {
+  const _OrderActionFooter({
+    required this.ticket,
+    required this.isBusy,
+    required this.onOrderAction,
+    required this.onCancelOrder,
+  });
+
+  final KitchenTicket ticket;
+  final bool isBusy;
+  final ValueChanged<KitchenOrderAction>? onOrderAction;
+  final VoidCallback? onCancelOrder;
+
+  @override
+  Widget build(BuildContext context) {
+    final channel = ticket.header.channel;
+    final status = ticket.header.orderStatus;
+    final onAction = onOrderAction;
+    final action = onAction == null
+        ? null
+        : KitchenOrderActionPolicy.primaryActionFor(channel, status);
+    final canCancel = onCancelOrder != null &&
+        KitchenOrderActionPolicy.canCancel(channel, status);
+    if (action == null && !canCancel) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.sm),
+      child: Row(
+        children: [
+          if (action != null)
+            Expanded(
+              child: ElevatedButton(
+                onPressed: isBusy ? null : () => onAction!(action),
+                child: isBusy
+                    ? const SizedBox.square(
+                        dimension: AppSpacing.md,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(
+                        KitchenOrderActionPolicy.labelFor(action),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+              ),
+            ),
+          if (action != null && canCancel) const SizedBox(width: AppSpacing.sm),
+          if (canCancel)
+            OutlinedButton(
+              onPressed: isBusy ? null : onCancelOrder,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.error,
+                side: const BorderSide(color: AppColors.error),
+              ),
+              child: const Text('İptal Et'),
+            ),
+        ],
       ),
     );
   }

@@ -1,7 +1,11 @@
+import 'package:abakus_one_v2/bootstrap/firebase_ready_provider.dart';
 import 'package:abakus_one_v2/core/theme/app_colors.dart';
 import 'package:abakus_one_v2/core/utils/clock_provider.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
 import 'package:abakus_one_v2/features/pos/data/kds_station_lock_store.dart';
+import 'package:abakus_one_v2/features/pos/data/kitchen_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_ticket_repository.dart';
 import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_station.dart';
@@ -20,6 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../test_support/fake_clock.dart';
 import '../../test_support/kds_test_fixtures.dart';
+import '../../test_support/recording_kitchen_action_gateway.dart';
 
 /// Faz R.3C.2 — simulates what `FirestoreKitchenTicketRepository` actually
 /// does when `firestore.rules`' `hasBranchAccess` denies the caller: the
@@ -108,10 +113,15 @@ void main() {
     KitchenProjectionRepository? projectionRepository,
     FakeClock? clock,
     KdsStationLockStore? stationLockStore,
+    KitchenActionGateway? actionGateway,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          if (actionGateway != null) ...[
+            firebaseReadyProvider.overrideWithValue(true),
+            kitchenActionGatewayProvider.overrideWithValue(actionGateway),
+          ],
           kitchenTicketRepositoryProvider.overrideWithValue(ticketRepository),
           kitchenProjectionRepositoryProvider.overrideWithValue(
               projectionRepository ?? InMemoryKitchenProjectionRepository()),
@@ -478,6 +488,165 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(KdsStationLockSettingsScreen), findsOneWidget);
+    });
+  });
+
+  // 2026-11-08 — card footer actions + the "confirmed -> ready, no
+  // skipping" fix.
+  group('order footer actions', () {
+    Future<RecordingKitchenActionGateway> pumpWithOrder(
+      WidgetTester tester, {
+      required OrderChannel channel,
+      required OrderStatus orderStatus,
+      KitchenLineStatus lineStatus = KitchenLineStatus.queued,
+      bool allSiblingsReady = false,
+      bool firebaseReady = true,
+    }) async {
+      final ticketRepository = InMemoryKitchenTicketRepository();
+      await ticketRepository.save(buildTestKitchenTicket(
+        channel: channel,
+        orderStatus: orderStatus,
+      ));
+      final projectionRepository = InMemoryKitchenProjectionRepository();
+      await projectionRepository
+          .createInitial(buildTestKitchenWorkItem(status: lineStatus));
+      final gateway =
+          RecordingKitchenActionGateway(allSiblingsReady: allSiblingsReady);
+      await pumpScreen(
+        tester,
+        ticketRepository: ticketRepository,
+        projectionRepository: projectionRepository,
+        actionGateway: firebaseReady ? gateway : null,
+      );
+      return gateway;
+    }
+
+    Finder primaryButton(String label) =>
+        find.widgetWithText(ElevatedButton, label);
+    final cancelButton = find.widgetWithText(OutlinedButton, 'İptal Et');
+
+    testWidgets(
+        'confirmed: [Hazırlanıyor] advances the order to preparing first, '
+        'then the line', (tester) async {
+      final gateway = await pumpWithOrder(tester,
+          channel: OrderChannel.dineInQr, orderStatus: OrderStatus.confirmed);
+
+      expect(primaryButton('Hazırlanıyor'), findsOneWidget);
+      expect(cancelButton, findsOneWidget);
+
+      await tester.tap(primaryButton('Hazırlanıyor'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.calls, [
+        'order:order-1/dineInQr->preparing',
+        'line:work-1->acknowledged@1',
+        'line:work-1->preparing@2',
+      ]);
+    });
+
+    testWidgets(
+        'preparing: [Hazırlandı] readies the line, then the order '
+        'preparing -> ready', (tester) async {
+      final gateway = await pumpWithOrder(tester,
+          channel: OrderChannel.takeaway,
+          orderStatus: OrderStatus.preparing,
+          lineStatus: KitchenLineStatus.preparing);
+
+      await tester.tap(primaryButton('Hazırlandı'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.calls, [
+        'line:work-1->ready@1',
+        'order:order-1/takeaway->ready',
+      ]);
+    });
+
+    testWidgets('ready dine-in: [Teslim Edildi] advances ready -> served',
+        (tester) async {
+      final gateway = await pumpWithOrder(tester,
+          channel: OrderChannel.dineInQr,
+          orderStatus: OrderStatus.ready,
+          lineStatus: KitchenLineStatus.ready);
+
+      await tester.tap(primaryButton('Teslim Edildi'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.calls, ['order:order-1/dineInQr->served']);
+    });
+
+    testWidgets(
+        'ready delivery: no [Teslim Edildi] (courier hand-off), cancel '
+        'still offered', (tester) async {
+      await pumpWithOrder(tester,
+          channel: OrderChannel.delivery,
+          orderStatus: OrderStatus.ready,
+          lineStatus: KitchenLineStatus.ready);
+
+      expect(primaryButton('Teslim Edildi'), findsNothing);
+      expect(cancelButton, findsOneWidget);
+    });
+
+    testWidgets('without the Firebase backend the footer is hidden',
+        (tester) async {
+      await pumpWithOrder(tester,
+          channel: OrderChannel.dineInQr,
+          orderStatus: OrderStatus.confirmed,
+          firebaseReady: false);
+
+      expect(primaryButton('Hazırlanıyor'), findsNothing);
+      expect(cancelButton, findsNothing);
+    });
+
+    testWidgets(
+        'regression: tapping the last line ready on a still-confirmed order '
+        'goes preparing -> ready, never the rejected confirmed -> ready',
+        (tester) async {
+      final gateway = await pumpWithOrder(tester,
+          channel: OrderChannel.dineInQr,
+          orderStatus: OrderStatus.confirmed,
+          lineStatus: KitchenLineStatus.preparing,
+          allSiblingsReady: true);
+
+      await tester.tap(find.textContaining('Ürün 0'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.calls, [
+        'line:work-1->ready@1',
+        'order:order-1/dineInQr->preparing',
+        'order:order-1/dineInQr->ready',
+      ]);
+    });
+
+    testWidgets('[İptal Et] asks for a reason, then cancels the order',
+        (tester) async {
+      final gateway = await pumpWithOrder(tester,
+          channel: OrderChannel.takeaway, orderStatus: OrderStatus.confirmed);
+
+      await tester.tap(cancelButton);
+      await tester.pumpAndSettle();
+      expect(find.text('Müşteri gelmedi'), findsOneWidget,
+          reason: 'non-dine-in channels word guestLeft as a no-show');
+
+      await tester.tap(find.text('Kapasite yetersiz'));
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.widgetWithText(ElevatedButton, 'Siparişi İptal Et'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.calls, ['cancel:order-1/takeaway/capacityUnavailable']);
+    });
+
+    testWidgets('backing out of the cancel dialog calls nothing',
+        (tester) async {
+      final gateway = await pumpWithOrder(tester,
+          channel: OrderChannel.dineInQr, orderStatus: OrderStatus.preparing);
+
+      await tester.tap(cancelButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Vazgeç'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.calls, isEmpty);
     });
   });
 }

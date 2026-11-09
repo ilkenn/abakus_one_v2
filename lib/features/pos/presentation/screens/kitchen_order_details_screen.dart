@@ -11,18 +11,20 @@ import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
-import '../../../orders/domain/models/order_channel.dart';
+import '../../application/use_cases/advance_kitchen_order.dart';
 import '../../application/use_cases/record_kitchen_event.dart';
 import '../../application/use_cases/transition_kitchen_work_item.dart';
 import '../../data/kitchen_action_gateway.dart';
 import '../../domain/authorization/pos_authorization_policy.dart';
 import '../../domain/kds/kitchen_line_status.dart';
+import '../../domain/kds/kitchen_order_action_policy.dart';
 import '../../domain/kds/kitchen_order_view.dart';
 import '../../domain/kds/kitchen_work_item.dart';
 import '../../domain/kitchen/kitchen_ticket.dart';
 import '../../domain/kitchen/kitchen_ticket_line.dart';
 import '../providers/kds_dependencies_provider.dart';
 import '../providers/kitchen_ticket_dependencies_provider.dart';
+import '../widgets/kitchen_order_cancel_dialog.dart';
 import 'kitchen_display_board_screen.dart' show KitchenOrderCard;
 
 /// Full detail view of one [KitchenTicket]'s [KitchenWorkItem]s — every
@@ -129,20 +131,25 @@ class _KitchenOrderDetailsScreenState
           expectedRevision: item.revision,
           reason: reason,
         );
-        final orderId = result.orderId;
-        final orderChannel = result.orderChannel;
-        if (result.allSiblingsReady &&
-            orderId != null &&
-            orderChannel != null) {
-          await gateway.advanceOrderStatus(
-            orderId: orderId,
-            channel: orderChannel,
-            targetStatus: 'ready',
+        // 2026-11-08 — keeps the order's own status in step with this
+        // line (never the rejected `confirmed -> ready` skip); see
+        // `AdvanceKitchenOrder.syncOrderAfterLineTransition`.
+        final ticket = _ticket;
+        if (ticket != null) {
+          await AdvanceKitchenOrder(gateway: gateway)
+              .syncOrderAfterLineTransition(
+            orderId: ticket.orderId.value,
+            channel: ticket.header.channel,
+            currentStatus: ticket.header.orderStatus,
+            lineTarget: to,
+            allSiblingsReady: result.allSiblingsReady,
           );
         }
+        if (!mounted) return;
         setState(() => _message = null);
         await _load();
       } on KitchenActionException catch (e) {
+        if (!mounted) return;
         setState(() => _message = e.message);
       }
       return;
@@ -181,55 +188,24 @@ class _KitchenOrderDetailsScreenState
 
   /// 2026-10-29 — the user-requested whole-order "İptal Et" action, next to
   /// the ready-progress summary (this screen's own "Hazır/Tamamla"
-  /// indicator). Only shown for a `dineInQr` ticket (the one channel
-  /// `advanceDineInOrderStatus` accepts `targetStatus: 'cancelled'` for —
-  /// `dineInStaff`/`takeaway`/`delivery`/`reservationPreorder` each have
-  /// their own, separate cancellation mechanism this button deliberately
-  /// does not attempt to also drive).
+  /// indicator). 2026-11-08: no longer `dineInQr`-only — every channel
+  /// with a staff cancellation callable (`KitchenOrderActionPolicy
+  /// .canCancel`), dispatched by `KitchenActionGateway.cancelOrder`.
   Future<void> _cancelWholeOrder(KitchenTicket ticket) async {
-    DineInCancellationReasonCode selected =
-        DineInCancellationReasonCode.itemUnavailable;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Siparişi İptal Et'),
-          content: RadioGroup<DineInCancellationReasonCode>(
-            groupValue: selected,
-            onChanged: (value) => setDialogState(() => selected = value!),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final code in DineInCancellationReasonCode.values)
-                  RadioListTile<DineInCancellationReasonCode>(
-                    value: code,
-                    title: Text(_cancellationReasonLabel(code)),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Vazgeç'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Siparişi İptal Et'),
-            ),
-          ],
-        ),
-      ),
+    final reason = await showKitchenOrderCancelDialog(
+      context,
+      channel: ticket.header.channel,
     );
-    if (confirmed != true) return;
+    if (reason == null || !mounted) return;
 
     try {
-      await ref.read(kitchenActionGatewayProvider).advanceOrderStatus(
-            orderId: ticket.orderId.value,
-            channel: 'dineInQr',
-            targetStatus: 'cancelled',
-            reasonCode: selected.name,
-          );
+      await AdvanceKitchenOrder(
+        gateway: ref.read(kitchenActionGatewayProvider),
+      ).cancel(
+        orderId: ticket.orderId.value,
+        channel: ticket.header.channel,
+        reasonCode: reason,
+      );
       if (!mounted) return;
       setState(() => _message = null);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -322,8 +298,9 @@ class _KitchenOrderDetailsScreenState
                                       : AppColors.textPrimary,
                                 ),
                               ),
-                              if (ticket.header.channel ==
-                                  OrderChannel.dineInQr)
+                              if (KitchenOrderActionPolicy.canCancel(
+                                  ticket.header.channel,
+                                  ticket.header.orderStatus))
                                 OutlinedButton(
                                   onPressed: () => _cancelWholeOrder(ticket),
                                   style: OutlinedButton.styleFrom(
@@ -371,23 +348,6 @@ class _KitchenOrderDetailsScreenState
                       ),
       ),
     );
-  }
-}
-
-String _cancellationReasonLabel(DineInCancellationReasonCode code) {
-  switch (code) {
-    case DineInCancellationReasonCode.itemUnavailable:
-      return 'Ürün stokta yok';
-    case DineInCancellationReasonCode.kitchenUnavailable:
-      return 'Mutfak müsait değil';
-    case DineInCancellationReasonCode.capacityUnavailable:
-      return 'Kapasite yetersiz';
-    case DineInCancellationReasonCode.guestLeft:
-      return 'Misafir masayı terk etti';
-    case DineInCancellationReasonCode.operationalIssue:
-      return 'Operasyonel sorun';
-    case DineInCancellationReasonCode.other:
-      return 'Diğer';
   }
 }
 

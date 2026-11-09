@@ -1,4 +1,5 @@
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_audit_entry_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/kitchen_ticket_repository.dart';
@@ -20,9 +21,11 @@ void main() {
     AuthorizationResult? authorization,
     String kitchenTicketIdToOpen = 'ticket-1',
     OrderChannel ticketChannel = OrderChannel.delivery,
+    OrderStatus? orderStatus,
   }) async {
     final ticketRepository = InMemoryKitchenTicketRepository();
-    await ticketRepository.save(buildTestKitchenTicket(channel: ticketChannel));
+    await ticketRepository.save(buildTestKitchenTicket(
+        channel: ticketChannel, orderStatus: orderStatus));
     final projectionRepository = InMemoryKitchenProjectionRepository();
     await projectionRepository.save(buildTestKitchenWorkItem());
 
@@ -89,21 +92,34 @@ void main() {
     expect(find.text('Detaylar yükleniyor...'), findsNothing);
   });
 
+  // 2026-11-08 — previously dineInQr-only; now every channel with a staff
+  // cancellation callable (`KitchenActionGateway.cancelOrder`), while the
+  // order is still in the kitchen window (confirmed/preparing/ready).
+  for (final channel in [
+    OrderChannel.dineInQr,
+    OrderChannel.takeaway,
+    OrderChannel.delivery,
+    OrderChannel.reservationPreorder,
+  ]) {
+    testWidgets(
+        '"Siparişi İptal Et" shows for a confirmed ${channel.name} '
+        'ticket', (tester) async {
+      await pumpScreen(tester,
+          ticketChannel: channel, orderStatus: OrderStatus.confirmed);
+
+      expect(find.text('Siparişi İptal Et'), findsOneWidget);
+    });
+  }
+
   testWidgets(
-      '2026-10-29: "Siparişi İptal Et" only shows for a dineInQr ticket — '
-      'the one channel advanceDineInOrderStatus accepts a cancel for',
-      (tester) async {
+      '"Siparişi İptal Et" is absent for dineInStaff (no lifecycle '
+      'callable) and for a ticket with no known order status', (tester) async {
+    await pumpScreen(tester,
+        ticketChannel: OrderChannel.dineInStaff,
+        orderStatus: OrderStatus.confirmed);
+    expect(find.text('Siparişi İptal Et'), findsNothing);
+
     await pumpScreen(tester, ticketChannel: OrderChannel.dineInQr);
-
-    expect(find.text('Siparişi İptal Et'), findsOneWidget);
-  });
-
-  testWidgets(
-      '2026-10-29: "Siparişi İptal Et" is absent for every other channel '
-      '(dineInStaff/takeaway/delivery/reservationPreorder each have their '
-      'own separate cancellation mechanism)', (tester) async {
-    await pumpScreen(tester, ticketChannel: OrderChannel.delivery);
-
     expect(find.text('Siparişi İptal Et'), findsNothing);
   });
 }

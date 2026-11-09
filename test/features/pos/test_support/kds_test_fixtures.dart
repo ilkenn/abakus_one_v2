@@ -1,5 +1,6 @@
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
+import 'package:abakus_one_v2/features/orders/domain/models/order_status.dart';
 import 'package:abakus_one_v2/features/pos/application/identity/kitchen_event_id_generator.dart';
 import 'package:abakus_one_v2/features/pos/application/use_cases/record_kitchen_event.dart';
 import 'package:abakus_one_v2/features/pos/data/in_memory_kitchen_event_bus.dart';
@@ -23,6 +24,7 @@ KitchenTicket buildTestKitchenTicket({
   int lineCount = 1,
   int revision = 1,
   OrderChannel channel = OrderChannel.delivery,
+  OrderStatus? orderStatus,
 }) {
   return KitchenTicket(
     id: ticketId,
@@ -37,6 +39,7 @@ KitchenTicket buildTestKitchenTicket({
       orderTypeLabel: 'dineInStaff',
       receivedAt: DateTime(2026, 1, 1, 12),
       channel: channel,
+      orderStatus: orderStatus,
     ),
     lines: [
       for (var i = 0; i < lineCount; i++)

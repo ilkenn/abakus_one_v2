@@ -63,6 +63,7 @@ abstract final class KitchenTicketMapper {
         tableLabel: order.tableId == null ? null : 'Masa ${order.tableId}',
         customerName: _customerName(order),
         channel: order.channel,
+        orderStatus: order.status,
       ),
       lines: lines,
       isCopy: isCopy,

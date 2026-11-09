@@ -79,6 +79,16 @@ class _FakeKitchenActionGateway implements KitchenActionGateway {
     lastChannel = channel;
     lastTargetStatus = targetStatus;
   }
+
+  @override
+  Future<void> cancelOrder({
+    required String orderId,
+    required String channel,
+    required DineInCancellationReasonCode reasonCode,
+    String? reasonMessage,
+  }) {
+    throw UnimplementedError('not exercised by this screen');
+  }
 }
 
 const _ctx = PosDeviceContext(
