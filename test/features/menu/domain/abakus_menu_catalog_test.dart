@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/sale_unit.dart';
+import 'package:abakus_one_v2/features/menu/domain/models/modifier_group.dart';
 import 'package:abakus_one_v2/features/menu/data/abakus_menu_catalog.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 
@@ -240,15 +241,23 @@ void main() {
           .map((g) => g.id)
           .toSet();
       final expectedIds = switch (product.categoryId) {
+        // 2026-11-09 — PDF option set, BR-BOWL-011. Bowl carries its own
+        // "Sos" group instead of the universal cross-sell one (asserted
+        // separately below).
         'cat_bowl2' => const {
             'bowl_carb',
             'bowl_salad',
+            'bowl_vegetable',
             'bowl_pickle',
-            'bowl_extras',
-            // 2026-11-03 — product owner, BR-BOWL-006–008.
             'bowl_protein_addon',
-            'bowl_sauce_choice',
+            'bowl_extra_carb',
+            'bowl_extra_salad',
+            'bowl_extra_vegetable',
+            'bowl_fruit',
+            'bowl_extra_pickle',
             'bowl_toppings',
+            'bowl_cheese',
+            'bowl_sauce',
           },
         'cat_hamburger2' || 'cat_wrap2' => const {
             'fries_preference',
@@ -261,11 +270,97 @@ void main() {
               '${product.name} (${product.categoryId}) has unexpected modifier groups');
       expect(
         product.modifierGroups.map((g) => g.id),
-        contains('cross_sell_sauce'),
-        reason:
-            '${product.name} is missing the universal cross-sell sauce group',
+        product.categoryId == 'cat_bowl2'
+            ? isNot(contains('cross_sell_sauce'))
+            : contains('cross_sell_sauce'),
+        reason: '${product.name} has the wrong cross-sell sauce wiring',
       );
     }
+  });
+
+  group('BR-BOWL-011 — PDF Bowl options (2026-11-09)', () {
+    final bowl = AbakusMenuCatalog.products
+        .firstWhere((p) => p.id == 'prod_bowl2_tatli_eksi_tavuk');
+    ModifierGroup group(String id) =>
+        bowl.modifierGroups.firstWhere((g) => g.id == id);
+
+    test('21 ready Bowls share the same 13 groups', () {
+      final bowls = AbakusMenuCatalog.products
+          .where((p) => p.categoryId == 'cat_bowl2')
+          .toList();
+      expect(bowls, hasLength(21));
+      for (final b in bowls) {
+        expect(b.modifierGroups.map((g) => g.id).toList(),
+            bowl.modifierGroups.map((g) => g.id).toList());
+      }
+    });
+
+    test(
+        'swap groups are single-select, required, max 1, default is the '
+        'standard base and costs 0 TL', () {
+      const defaults = {
+        'bowl_carb': 'carb_basmati',
+        'bowl_salad': 'salad_mevsim',
+        'bowl_vegetable': 'veg_standard',
+        'bowl_pickle': 'pickle_mor_lahana',
+      };
+      defaults.forEach((groupId, defaultId) {
+        final g = group(groupId);
+        expect(g.selectionType, ModifierSelectionType.single);
+        expect(g.isRequired, isTrue);
+        expect(g.maxSelections, 1);
+        final def = g.options.where((o) => o.isDefault).toList();
+        expect(def.map((o) => o.id), [defaultId]);
+        expect(def.single.extraPrice, 0);
+      });
+    });
+
+    test('swap prices follow the PDF "Değişim Fiyatı" column', () {
+      double price(String groupId, String optionId) =>
+          group(groupId).options.firstWhere((o) => o.id == optionId).extraPrice;
+      expect(price('bowl_carb', 'carb_kuskus'), 0);
+      expect(price('bowl_carb', 'carb_kisir'), 50);
+      expect(price('bowl_salad', 'salad_roka'), 30);
+      expect(price('bowl_salad', 'salad_coban'), 50);
+      expect(price('bowl_vegetable', 'veg_yarim_avokado'), 80);
+      expect(price('bowl_vegetable', 'veg_misir'), 0);
+      expect(price('bowl_pickle', 'pickle_kapari'), 40);
+    });
+
+    test(
+        'extra groups are optional multi-select, every option priced, '
+        'every option selectable at once', () {
+      const extraGroups = {
+        'bowl_protein_addon': 20,
+        'bowl_extra_carb': 9,
+        'bowl_extra_salad': 5,
+        'bowl_extra_vegetable': 14,
+        'bowl_fruit': 5,
+        'bowl_extra_pickle': 4,
+        'bowl_toppings': 8,
+        'bowl_cheese': 4,
+        'bowl_sauce': 18,
+      };
+      extraGroups.forEach((groupId, count) {
+        final g = group(groupId);
+        expect(g.selectionType, ModifierSelectionType.multiple);
+        expect(g.isRequired, isFalse);
+        expect(g.options, hasLength(count), reason: groupId);
+        expect(g.maxSelections, count, reason: groupId);
+        expect(g.options.every((o) => o.extraPrice > 0 && !o.isDefault), isTrue,
+            reason: '$groupId has a free or pre-selected option');
+      });
+    });
+
+    test('sauces have no included sauce — each at its own PDF price', () {
+      final sauces = group('bowl_sauce').options;
+      expect(sauces.map((o) => o.extraPrice).toSet(), {20, 30, 40});
+      expect(
+          sauces
+              .firstWhere((o) => o.id == 'bowl_sauce_sweet_chilli')
+              .extraPrice,
+          40);
+    });
   });
 
   test(

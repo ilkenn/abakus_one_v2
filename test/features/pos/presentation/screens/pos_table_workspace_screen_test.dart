@@ -1655,7 +1655,7 @@ void main() {
       // right panel's lazy `ListView` without scrolling first — later
       // groups ("Salata", "Turşu", ...) are exercised by the other tests
       // below, which scroll by selecting/confirming options inside them.
-      expect(find.text('Karbonhidrat'), findsOneWidget);
+      expect(find.text('Karbonhidrat Değişimi'), findsOneWidget);
       expect(find.textContaining('560 kcal'), findsWidgets);
       // Real catalog allergens for this exact product (BR-BOWL-009).
       expect(find.text('gluten'), findsWidgets);
@@ -1668,9 +1668,8 @@ void main() {
     });
 
     testWidgets(
-        'scrolling the right panel reveals the 2026-11-03 İlave Protein / '
-        'Sos Tercihi / Ekstra Topping groups, each with their confirmed '
-        'prices', (tester) async {
+        'scrolling the right panel reveals the 2026-11-09 PDF extra '
+        'groups (Ekstra Protein / Peynir / Sos)', (tester) async {
       await openBowlCustomizationModal(tester);
 
       final rightPanel = find
@@ -1680,20 +1679,17 @@ void main() {
           )
           .last;
 
-      await tester.scrollUntilVisible(find.text('İlave Protein'), 400,
+      await tester.scrollUntilVisible(find.text('Ekstra Protein'), 400,
           scrollable: rightPanel);
-      expect(find.text('İlave Protein'), findsOneWidget);
-      expect(find.text('İlave Dana Bonfile'), findsOneWidget);
+      expect(find.text('Ekstra Protein'), findsOneWidget);
 
-      await tester.scrollUntilVisible(find.text('Sos Tercihi'), 400,
+      await tester.scrollUntilVisible(find.text('Labne Peyniri'), 400,
           scrollable: rightPanel);
-      expect(find.text('Sos Tercihi'), findsOneWidget);
-      expect(find.text('Sweet Chilli'), findsOneWidget);
+      expect(find.text('Labne Peyniri'), findsOneWidget);
 
-      await tester.scrollUntilVisible(find.text('Ekstra Topping'), 400,
+      await tester.scrollUntilVisible(find.text('Ballı Hardal'), 400,
           scrollable: rightPanel);
-      expect(find.text('Ekstra Topping'), findsOneWidget);
-      expect(find.text('Avokado'), findsOneWidget);
+      expect(find.text('Ballı Hardal'), findsOneWidget);
     });
 
     testWidgets(
@@ -1736,12 +1732,13 @@ void main() {
       expect(items.first['productId'], 'prod_bowl2_tatli_eksi_tavuk');
       final selectedModifiers =
           items.first['selectedModifiers'] as List<dynamic>;
-      expect(selectedModifiers, hasLength(3));
+      expect(selectedModifiers, hasLength(4));
       expect(
         selectedModifiers,
         containsAll([
           {'groupId': 'bowl_carb', 'optionId': 'carb_basmati'},
           {'groupId': 'bowl_salad', 'optionId': 'salad_mevsim'},
+          {'groupId': 'bowl_vegetable', 'optionId': 'veg_standard'},
           {'groupId': 'bowl_pickle', 'optionId': 'pickle_mor_lahana'},
         ]),
       );

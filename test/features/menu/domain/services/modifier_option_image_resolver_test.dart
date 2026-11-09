@@ -20,33 +20,32 @@ void main() {
     });
 
     test(
-        'resolves a confident match for the 2026-11-03 İlave Protein/Sos '
-        'Tercihi/Ekstra Topping groups', () {
+        'resolves a confident match for the 2026-11-09 PDF Bowl groups '
+        '(protein/sebze/meyve/peynir/sos)', () {
       expect(ModifierOptionImageResolver.imageKeyFor('protein_addon_kofte'),
           'izgara_kofte');
       expect(
           ModifierOptionImageResolver.imageKeyFor('protein_addon_dana_bonfile'),
           'dana_bonfile');
-      expect(
-          ModifierOptionImageResolver.imageKeyFor('sauce_choice_sweet_chilli'),
-          'sweet_chilli');
-      expect(ModifierOptionImageResolver.imageKeyFor('topping_avokado'),
-          'avokado');
-      expect(ModifierOptionImageResolver.imageKeyFor('topping_parmesan'),
+      expect(ModifierOptionImageResolver.imageKeyFor('veg_mantar_sote'),
+          'mantar_sote');
+      expect(ModifierOptionImageResolver.imageKeyFor('fruit_nar'), 'nar');
+      expect(ModifierOptionImageResolver.imageKeyFor('cheese_parmesan'),
           'parmesan_peyniri');
+      expect(ModifierOptionImageResolver.imageKeyFor('bowl_sauce_sweet_chilli'),
+          'sweet_chilli');
     });
 
     test(
-        'returns null for a 2026-11-03 option with no confident match '
-        '(no generic "chicken"/"tahin"/"walnut" photo exists)', () {
-      expect(ModifierOptionImageResolver.imageKeyFor('protein_addon_tavuk'),
-          isNull);
+        'returns null for a 2026-11-09 option with no confident match '
+        '(no "somon"/"tahin"/"walnut"/"labne" photo exists)', () {
       expect(
           ModifierOptionImageResolver.imageKeyFor('protein_addon_izgara_somon'),
           isNull);
-      expect(ModifierOptionImageResolver.imageKeyFor('sauce_choice_tahin'),
-          isNull);
+      expect(
+          ModifierOptionImageResolver.imageKeyFor('bowl_sauce_tahin'), isNull);
       expect(ModifierOptionImageResolver.imageKeyFor('topping_ceviz'), isNull);
+      expect(ModifierOptionImageResolver.imageKeyFor('cheese_labne'), isNull);
     });
 
     test('returns null for an option with no confident match, never a guess',

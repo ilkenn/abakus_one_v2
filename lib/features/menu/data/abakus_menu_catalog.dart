@@ -2003,7 +2003,10 @@ abstract final class AbakusMenuCatalog {
           product.copyWith(
             modifierGroups: [
               ..._standardModifierGroupsFor(product.categoryId),
-              StandardModifierGroups.crossSellSauceGroup,
+              // Bowl products carry their own PDF-priced "Sos" group
+              // (BR-BOWL-011) instead of the universal cross-sell one.
+              if (product.categoryId != bowl2Category.id)
+                StandardModifierGroups.crossSellSauceGroup,
             ],
             removableIngredientsOverride: product.categoryId == bowl2Category.id
                 ? StandardModifierGroups.bowlRemovableIngredients

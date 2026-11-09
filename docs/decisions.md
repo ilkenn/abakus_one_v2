@@ -20564,3 +20564,38 @@ that its 9 groups (Extra Protein, Karbonhidrat, Salata, Sebze, Meyve, Turşu, To
 Tests: the 5 backend custom-bowl pricing tests now assert the rejection (emulator tests, written and
 tsc-clean, not executed here); the Home/Menu/navigation widget tests now assert the entry points are
 absent.
+
+## ADR-070 — Ready-bowl swap/extra options rebuilt from the menu PDF (2026-11-09)
+
+- Tarih: 2026-11-09
+- Durum: Accepted
+
+### Context
+
+Follow-up to ADR-069. The product owner fixed the rules for the ready bowls' (`cat_bowl2`, 21 products)
+options, using the floor-stand menu PDF's 9 groups and prices (BR-BOWL-011).
+
+### Decision
+
+- **Standard base** (default of every ready bowl): Basmati Pirinç Pilavı, Mevsim Salata, Mısır +
+  Susamlı Çörekotlu Salatalık, Mor Lahana Turşusu.
+- **Swap groups**: `bowl_carb`, `bowl_salad`, `bowl_vegetable` (new), `bowl_pickle`. Each is
+  single-select, required, max 1, locked to its own group. The standard item is the pre-selected default
+  at 0 TL; every other option costs the PDF's "Değişim Fiyatı". Group ids and existing option ids are
+  kept, so earlier orders and the POS/kitchen mappings stay readable.
+- **Extra groups** (optional, multi-select, `maxSelections` = option count, every option at the PDF's
+  "Ekstra Fiyatı"): `bowl_protein_addon` (20), `bowl_extra_carb` (9), `bowl_extra_salad` (5),
+  `bowl_extra_vegetable` (14), `bowl_fruit` (5), `bowl_extra_pickle` (4), `bowl_toppings` (8),
+  `bowl_cheese` (4), `bowl_sauce` (18). Fruit, cheese, toppings, protein and sauces are extra-only.
+- **Removed**: `bowl_extras` (merged into the per-family extra groups) and `bowl_sauce_choice`.
+- **Bowls drop the universal `cross_sell_sauce` group**. Their own `bowl_sauce` group replaces it, so a
+  bowl never lists the same sauce twice at different prices. Other categories are unchanged.
+
+### Consequences
+
+- Several prices change versus BR-BOWL-006/007/008 (for example Roka swap 0 → 30 TL, Çoban 40 → 50 TL,
+  Dana Bonfile add-on 450 → 400 TL, sauces 20 → 20/30/40 TL). Those rules are superseded.
+- "Sebze Değişimi" picks one PDF vegetable instead of the standard pair. Removing a single standard
+  vegetable stays possible through the removable-ingredient list.
+- Server-side validation and pricing read the groups from the catalog, so no Cloud Functions code
+  changed. Only the export JSONs were regenerated.

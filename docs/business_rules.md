@@ -510,7 +510,7 @@ own protein is baked into which product was picked, and these rules only cover *
 options layered on top of it.
 
 ### BR-BOWL-006 — İlave Protein add-on prices
-- **Status**: VERIFIED (confirmed by product owner via chat, 2026-11-03)
+- **Status**: SUPERSEDED by BR-BOWL-011 (2026-11-09) — was VERIFIED (confirmed by product owner via chat, 2026-11-03)
 - **Rule**: `StandardModifierGroups.bowlProteinAddOnGroup` — İlave Tavuk +300 TL, İlave Köfte +400 TL,
   İlave Dana Bonfile +450 TL, İlave Izgara Somon +450 TL, İlave Somon Füme +550 TL, İlave Falafel
   +250 TL. **These prices are 3–7x Bowl Builder's own, separately-VERIFIED protein prices
@@ -521,7 +521,7 @@ options layered on top of it.
 - **Related Modules**: Menu, POS
 
 ### BR-BOWL-007 — Sos Tercihi prices
-- **Status**: VERIFIED (confirmed by product owner via chat, 2026-11-03) — with one disclosed
+- **Status**: SUPERSEDED by BR-BOWL-011 (2026-11-09) — was VERIFIED (confirmed by product owner via chat, 2026-11-03) — with one disclosed
   simplification, see below
 - **Rule**: `StandardModifierGroups.bowlSauceChoiceGroup` — Ballı Hardal, Abaküs Sos, Sweet Chilli,
   Sriracha, Tahin, each +20 TL. The product owner described this as "1 dahil, ilave +20 TL" (first
@@ -536,7 +536,7 @@ options layered on top of it.
 - **Related Modules**: Menu, POS
 
 ### BR-BOWL-008 — Ekstra Topping prices
-- **Status**: VERIFIED (confirmed by product owner via chat, 2026-11-03)
+- **Status**: SUPERSEDED by BR-BOWL-011 (2026-11-09) — was VERIFIED (confirmed by product owner via chat, 2026-11-03)
 - **Rule**: `StandardModifierGroups.bowlToppingsGroup` — Avokado +80 TL, Mantar Sote +50 TL, Parmesan
   +60 TL, Ceviz +60 TL. **These prices are 3–4x the same ingredients' prices in Bowl Builder's own,
   separately-VERIFIED catalog** (Avokado +25, Sote Mantar +15, Parmesan Peyniri +20, Ceviz +15) —
@@ -564,6 +564,23 @@ options layered on top of it.
   Tava/Burger/Salata2's calories already matched the PDF exactly for all 49 products, which is what
   gave confidence in the name-based product-matching (several PDF names are English/shortened
   variants of the Turkish catalog names, e.g. "Körili Tavuk Bowl" = `prod_bowl2_kori_soslu_tavuk`).
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, POS
+
+### BR-BOWL-011 — Ready-bowl swap and extra options (floor-stand menu PDF)
+- **Status**: VERIFIED (product owner's explicit rules via chat, 2026-11-09; prices from the "Abaküs
+  Street Food - Ayaklı Menü - A3" PDF) — supersedes BR-BOWL-006, BR-BOWL-007 and BR-BOWL-008
+- **Rule**:
+  - **Standard base** of every ready bowl (`cat_bowl2`): Basmati Pirinç Pilavı, Mevsim Salata,
+    Mısır + Susamlı Çörekotlu Salatalık, Mor Lahana Turşusu.
+  - **Swaps** (Karbonhidrat, Salata, Sebze, Turşu): only within the same group, at most 1 per group,
+    priced at the PDF's "Değişim Fiyatı" (free ones 0 TL). The standard item is the default.
+  - **Extras**: multi-select at the PDF's "Ekstra Fiyatı". Karbonhidrat/Salata/Sebze/Turşu may be
+    added on top of the bowl's own. Meyve, Peynir, Toppings and Ekstra Protein are extra-only.
+  - **Sauces**: all extra, each at its own PDF price (20/30/40 TL). No sauce is included and there
+    is no sauce swap. Bowls do not show the universal "Ekstra Sos" cross-sell group.
+  - Implemented in `StandardModifierGroups.bowlModifierGroups` (13 groups, 123 options); the exact
+    prices live there and are pinned by `abakus_menu_catalog_test.dart`.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Menu, POS
 

@@ -11292,3 +11292,13 @@ passing, 0 failures.
   channel. The 64-ingredient catalog and its seed are kept. Ready bowls (`cat_bowl2`) and their options
   are unchanged; rebuilding those options from the floor-stand menu PDF is the approved next step.
 - **Visual Review Bekleniyor**.
+
+### Ready-bowl options from the floor-stand menu PDF (ADR-070, BR-BOWL-011, 2026-11-09)
+
+- All 21 ready bowls (`cat_bowl2`) now carry 13 groups built from the PDF's 9 groups: 4 single-select
+  swap groups (Karbonhidrat/Salata/Sebze/Turşu Değişimi, standard base pre-selected at 0 TL) and 9
+  multi-select extra groups (Ekstra Protein, Ekstra Karbonhidrat/Salata/Sebze/Turşu, Meyve, Toppings,
+  Peynir, Sos). Bowls no longer show the universal "Ekstra Sos" group; their own "Sos" group has no
+  included sauce. Catalog export regenerated; the 21 bowls' `modifierGroups` re-synced in the local
+  emulator.
+- **Visual Review Bekleniyor**.
