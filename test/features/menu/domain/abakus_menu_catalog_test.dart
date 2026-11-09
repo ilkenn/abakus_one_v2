@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/sale_unit.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_group.dart';
+import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/data/abakus_menu_catalog.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 
@@ -259,10 +260,15 @@ void main() {
             'bowl_cheese',
             'bowl_sauce',
           },
-        'cat_hamburger2' || 'cat_wrap2' => const {
+        // 2026-11-09 — BR-MENU-MOD-001.
+        'cat_wrap2' => const {
             'fries_preference',
-            'ketchup_mayo'
+            'bowl_extra_vegetable',
+            'bowl_sauce',
           },
+        'cat_hamburger2' => const {'fries_preference', 'bowl_sauce'},
+        'cat_makarna2' => const {'bowl_protein_addon', 'bowl_sauce'},
+        'cat_kahvalti' || 'cat_salata2' => _extrasOnlyIds,
         _ => const <String>{},
       };
       expect(nonCrossSellGroupIds, expectedIds,
@@ -270,12 +276,82 @@ void main() {
               '${product.name} (${product.categoryId}) has unexpected modifier groups');
       expect(
         product.modifierGroups.map((g) => g.id),
-        product.categoryId == 'cat_bowl2'
+        expectedIds.contains('bowl_sauce')
             ? isNot(contains('cross_sell_sauce'))
             : contains('cross_sell_sauce'),
         reason: '${product.name} has the wrong cross-sell sauce wiring',
       );
     }
+  });
+
+  group('BR-MENU-MOD-001 — category option sets (2026-11-09)', () {
+    MenuProduct product(String id) =>
+        AbakusMenuCatalog.products.firstWhere((p) => p.id == id);
+
+    test(
+        'Patates Tercihi on burgers and wraps: required single choice, '
+        'Baharatlı / Baharatsız Patates only, both 0 TL', () {
+      for (final id in ['prod_burger2_steak', 'prod_wrap2_kofte']) {
+        final fries = product(id)
+            .modifierGroups
+            .firstWhere((g) => g.id == 'fries_preference');
+        expect(fries.name, 'Patates Tercihi');
+        expect(fries.selectionType, ModifierSelectionType.single);
+        expect(fries.isRequired, isTrue);
+        expect(fries.options.map((o) => o.name),
+            ['Baharatlı Patates', 'Baharatsız Patates']);
+        expect(fries.options.every((o) => o.extraPrice == 0), isTrue);
+      }
+    });
+
+    test(
+        'Kahvaltı and Salata have no swap group — every group is an '
+        'optional multi-select extra with no free option', () {
+      for (final id in ['prod_kahvalti_clasico', 'prod_salata2_veggie']) {
+        for (final g in product(id).modifierGroups) {
+          expect(g.selectionType, ModifierSelectionType.multiple,
+              reason: '$id/${g.id}');
+          expect(g.isRequired, isFalse, reason: '$id/${g.id}');
+          expect(
+              g.options.every((o) => o.extraPrice > 0 && !o.isDefault), isTrue,
+              reason: '$id/${g.id}');
+        }
+      }
+    });
+  });
+
+  group('BR-MENU-MOD-001 — removable ingredients (2026-11-09)', () {
+    const activeCategoriesWithRecipes = {
+      'cat_bowl2',
+      'cat_tava',
+      'cat_hamburger2',
+      'cat_wrap2',
+      'cat_makarna2',
+      'cat_salata2',
+      'cat_kahvalti',
+      'cat_tartine',
+    };
+
+    test('every product in a recipe-bearing category lists its removables', () {
+      for (final p in AbakusMenuCatalog.products
+          .where((p) => activeCategoriesWithRecipes.contains(p.categoryId))) {
+        expect(p.removableIngredients, isNotEmpty,
+            reason: '${p.name} (${p.categoryId}) has no removable list');
+      }
+    });
+
+    test('PDF recipe examples, main component left out', () {
+      MenuProduct product(String id) =>
+          AbakusMenuCatalog.products.firstWhere((p) => p.id == id);
+      expect(product('prod_burger2_onion').removableIngredients,
+          ['Cheddar Peyniri', 'Abaküs Sos', 'Karamelize Soğan']);
+      expect(product('prod_makarna2_pipette_kofte').removableIngredients,
+          ['Kremalı Pesto Sos', 'Parmesan']);
+      expect(product('prod_tava_citir_tavuk').removableIngredients,
+          ['Mevsim Salata', 'Basmati Pirinç Pilavı']);
+      expect(product('prod_salata2_ananas').removableIngredients,
+          contains('Mor Lahana Turşusu'));
+    });
   });
 
   group('BR-BOWL-011 — PDF Bowl options (2026-11-09)', () {
@@ -383,3 +459,15 @@ void main() {
     }
   });
 }
+
+const _extrasOnlyIds = {
+  'bowl_protein_addon',
+  'bowl_extra_carb',
+  'bowl_extra_salad',
+  'bowl_extra_vegetable',
+  'bowl_fruit',
+  'bowl_extra_pickle',
+  'bowl_toppings',
+  'bowl_cheese',
+  'bowl_sauce',
+};

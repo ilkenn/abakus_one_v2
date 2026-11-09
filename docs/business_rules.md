@@ -584,6 +584,27 @@ options layered on top of it.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Menu, POS
 
+### BR-MENU-MOD-001 — Option sets for the other main categories, removable ingredients
+- **Status**: VERIFIED (product owner's explicit rules via chat, 2026-11-09)
+- **Rule**: every group reuses BR-BOWL-011's PDF prices.
+  - **Wrapler**:
+    - Patates Tercihi: required single choice, Baharatlı / Baharatsız Patates, 0 TL.
+    - Ekstra Sebze and Sos: multi-select.
+  - **Hamburgerler**:
+    - Patates Tercihi: same as Wrapler.
+    - Sos: multi-select.
+  - **Makarnalar**: Ekstra Protein and Sos, both multi-select.
+  - **Kahvaltı Tabakları and Salatalar**:
+    - No swap at all.
+    - Every bowl group (protein, carb, salad, vegetable, fruit, pickle, toppings, cheese, sauce) only
+      as a multi-select extra.
+  - **Removable ingredients (all categories)**:
+    - A product's standard-recipe ingredients may be removed, 0 TL.
+    - The source is the menu PDF recipes.
+    - The defining main component (gram-weighted protein, pasta base) is not offered for removal.
+- **Owner Agent**: restaurant_domain
+- **Related Modules**: Menu, POS
+
 # POS Staff Workflow Rules
 
 ### BR-POS-001 — "Çok Tercih Edilenler" (Top 20 best-sellers) category

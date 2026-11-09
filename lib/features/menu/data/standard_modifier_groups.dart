@@ -549,8 +549,8 @@ abstract final class StandardModifierGroups {
     bowlSauceGroup,
   ];
 
-  /// Burger/Wrap "PATATES TERCİHİ" — mandatory single-select, every option
-  /// free.
+  /// Burger/Wrap "PATATES TERCİHİ" — mandatory single-select, both options
+  /// free (BR-MENU-MOD-001, 2026-11-09: Baharatlı / Baharatsız only).
   static const ModifierGroup friesPreferenceGroup = ModifierGroup(
     id: 'fries_preference',
     name: 'Patates Tercihi',
@@ -560,36 +560,48 @@ abstract final class StandardModifierGroups {
     maxSelections: 1,
     options: [
       ModifierOption(
-          id: 'fries_spicy',
-          name: 'Baharatlı Patates Kızartması',
-          isDefault: true),
-      ModifierOption(id: 'fries_plain', name: 'Baharatsız Patates Kızartması'),
-      ModifierOption(id: 'fries_none', name: 'Patates İstemiyorum'),
+          id: 'fries_spicy', name: 'Baharatlı Patates', isDefault: true),
+      ModifierOption(id: 'fries_plain', name: 'Baharatsız Patates'),
     ],
   );
 
-  /// "KETÇAP & MAYONEZ TERCİHİ" — optional multi-select, both defaulted
-  /// on (per spec: "Varsayılan seçili").
-  static const ModifierGroup ketchupMayoGroup = ModifierGroup(
-    id: 'ketchup_mayo',
-    name: 'Ketçap & Mayonez',
-    selectionType: ModifierSelectionType.multiple,
-    isRequired: false,
-    minSelections: 0,
-    maxSelections: 2,
-    options: [
-      ModifierOption(
-          id: 'sauce_ketchup', name: 'Ketçap İstiyorum', isDefault: true),
-      ModifierOption(
-          id: 'sauce_mayo', name: 'Mayonez İstiyorum', isDefault: true),
-    ],
-  );
+  // ---------------------------------------------------------------------
+  // 2026-11-09 — per-category option sets reusing the PDF's ingredient
+  // pool (BR-MENU-MOD-001). Every category below carries the PDF-priced
+  // [bowlSauceGroup] instead of the universal [crossSellSauceGroup].
+  // ---------------------------------------------------------------------
 
-  /// Every Burger/Wrap product (`cat_hamburger2`/`cat_wrap2`) gets exactly
-  /// these 2 groups.
-  static const List<ModifierGroup> burgerWrapModifierGroups = [
+  /// Wrapler (`cat_wrap2`): Ekstra Sebze, Sos, Patates Seçimi.
+  static const List<ModifierGroup> wrapModifierGroups = [
     friesPreferenceGroup,
-    ketchupMayoGroup,
+    bowlExtraVegetableGroup,
+    bowlSauceGroup,
+  ];
+
+  /// Hamburgerler (`cat_hamburger2`): Patates Seçimi, Sos.
+  static const List<ModifierGroup> burgerModifierGroups = [
+    friesPreferenceGroup,
+    bowlSauceGroup,
+  ];
+
+  /// Makarnalar (`cat_makarna2`): Ekstra Protein, Sos.
+  static const List<ModifierGroup> pastaModifierGroups = [
+    bowlExtraProteinGroup,
+    bowlSauceGroup,
+  ];
+
+  /// Kahvaltı Tabakları (`cat_kahvalti`) and Salatalar (`cat_salata2`):
+  /// no swaps at all — every Bowl group, but only its EKSTRA form.
+  static const List<ModifierGroup> extrasOnlyModifierGroups = [
+    bowlExtraProteinGroup,
+    bowlExtraCarbGroup,
+    bowlExtraSaladGroup,
+    bowlExtraVegetableGroup,
+    bowlFruitGroup,
+    bowlExtraPickleGroup,
+    bowlToppingsGroup,
+    bowlCheeseGroup,
+    bowlSauceGroup,
   ];
 
   /// "EKSTRA SOS ÖNERİSİ" — shown at the bottom of every product's

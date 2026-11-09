@@ -20599,3 +20599,39 @@ options, using the floor-stand menu PDF's 9 groups and prices (BR-BOWL-011).
   vegetable stays possible through the removable-ingredient list.
 - Server-side validation and pricing read the groups from the catalog, so no Cloud Functions code
   changed. Only the export JSONs were regenerated.
+
+## ADR-071 — Option sets for Wrap/Burger/Makarna/Kahvaltı/Salata, recipe-based removable ingredients (2026-11-09)
+
+- Tarih: 2026-11-09
+- Durum: Accepted
+
+### Context
+
+After ADR-070 (ready bowls), the product owner set the option rules for the other main categories. They
+reuse the menu PDF's ingredient pool and prices (BR-MENU-MOD-001).
+
+### Decision
+
+- **Wrapler** (`cat_wrap2`): Patates Tercihi, Ekstra Sebze, Sos.
+- **Hamburgerler** (`cat_hamburger2`): Patates Tercihi, Sos.
+- **Makarnalar** (`cat_makarna2`): Ekstra Protein, Sos.
+- **Kahvaltı** (`cat_kahvalti`) and **Salatalar** (`cat_salata2`): no swaps. They get all 9 of the
+  bowl's EKSTRA groups (protein, carb, salad, vegetable, fruit, pickle, toppings, cheese, sauce).
+- **Patates Tercihi** (`fries_preference`): required single choice between "Baharatlı Patates" and
+  "Baharatsız Patates", both 0 TL. "Patates İstemiyorum" was removed.
+- **Ketçap & Mayonez group (`ketchup_mayo`) removed.** Ketçap and Mayonez are now paid options in
+  the PDF "Sos" group (20 TL each).
+- **Sauce group:** every category above uses the PDF-priced `bowl_sauce` group instead of the
+  universal `cross_sell_sauce` group. Tava, Tartine, Aperatif and drinks keep `cross_sell_sauce`.
+- **Removable ingredients** come from the PDF recipes. They are listed per product in
+  `ProductRemovableIngredients`, plus one shared Tava list (Mevsim Salata, Basmati Pirinç Pilavı).
+  - Kahvaltı and Tartine keep the list parsed from their ingredient-list descriptions.
+  - The defining main component is not removable (for example the gram-weighted protein or the pasta).
+  - Ananas Salata's recipe was taken from the previous PDF edition; the latest one shows it truncated.
+
+### Consequences
+
+- Removable ingredients are client-side catalog data. The server only checks the shape of
+  `excludedIngredients` (at most 20 entries), and the longest list here has 14.
+- The export only carries the modifier groups.
+- On the local emulator, the `modifierGroups` of the 59 affected products were re-synced.

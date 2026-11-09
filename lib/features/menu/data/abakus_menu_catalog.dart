@@ -4,6 +4,7 @@ import '../domain/models/menu_product.dart';
 import '../domain/models/modifier_group.dart';
 import '../domain/models/product_nutrition.dart';
 import '../domain/models/sale_unit.dart';
+import 'product_removable_ingredients.dart';
 import 'standard_modifier_groups.dart';
 
 /// THE REAL ABAKÜS MENU.
@@ -2001,26 +2002,45 @@ abstract final class AbakusMenuCatalog {
   static List<MenuProduct> get products => [
         for (final product in _rawProducts)
           product.copyWith(
-            modifierGroups: [
-              ..._standardModifierGroupsFor(product.categoryId),
-              // Bowl products carry their own PDF-priced "Sos" group
-              // (BR-BOWL-011) instead of the universal cross-sell one.
-              if (product.categoryId != bowl2Category.id)
-                StandardModifierGroups.crossSellSauceGroup,
-            ],
-            removableIngredientsOverride: product.categoryId == bowl2Category.id
-                ? StandardModifierGroups.bowlRemovableIngredients
-                : null,
+            modifierGroups: _standardModifierGroupsFor(product.categoryId) ??
+                const [StandardModifierGroups.crossSellSauceGroup],
+            removableIngredientsOverride:
+                _removableIngredientsOverrideFor(product),
           ),
       ];
 
-  static List<ModifierGroup> _standardModifierGroupsFor(String categoryId) {
+  /// The category's own option set (BR-BOWL-011, BR-MENU-MOD-001), each of
+  /// which carries the PDF-priced "Sos" group in place of the universal
+  /// cross-sell one; `null` for every other category, which keeps only
+  /// the universal cross-sell sauce group.
+  static List<ModifierGroup>? _standardModifierGroupsFor(String categoryId) {
     if (categoryId == bowl2Category.id) {
       return StandardModifierGroups.bowlModifierGroups;
     }
-    if (categoryId == hamburger2Category.id || categoryId == wrap2Category.id) {
-      return StandardModifierGroups.burgerWrapModifierGroups;
+    if (categoryId == wrap2Category.id) {
+      return StandardModifierGroups.wrapModifierGroups;
     }
-    return const [];
+    if (categoryId == hamburger2Category.id) {
+      return StandardModifierGroups.burgerModifierGroups;
+    }
+    if (categoryId == makarna2Category.id) {
+      return StandardModifierGroups.pastaModifierGroups;
+    }
+    if (categoryId == kahvaltiCategory.id || categoryId == salata2Category.id) {
+      return StandardModifierGroups.extrasOnlyModifierGroups;
+    }
+    return null;
+  }
+
+  /// `null` falls back to parsing the product's own ingredient-list
+  /// description (Kahvaltı, Tartine) — see `MenuProduct.removableIngredients`.
+  static List<String>? _removableIngredientsOverrideFor(MenuProduct product) {
+    if (product.categoryId == bowl2Category.id) {
+      return StandardModifierGroups.bowlRemovableIngredients;
+    }
+    if (product.categoryId == tavaCategory.id) {
+      return ProductRemovableIngredients.tava;
+    }
+    return ProductRemovableIngredients.byProductId[product.id];
   }
 }

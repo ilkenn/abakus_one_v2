@@ -11302,3 +11302,15 @@ passing, 0 failures.
   included sauce. Catalog export regenerated; the 21 bowls' `modifierGroups` re-synced in the local
   emulator.
 - **Visual Review Bekleniyor**.
+
+### Category option sets and removable ingredients (ADR-071, BR-MENU-MOD-001, 2026-11-09)
+
+- Wrap: Patates Tercihi, Ekstra Sebze, Sos.
+- Burger: Patates Tercihi, Sos.
+- Makarna: Ekstra Protein, Sos.
+- Kahvaltı and Salata: extras only, all 9 bowl EKSTRA groups.
+- Patates Tercihi is required: Baharatlı or Baharatsız Patates, 0 TL. The free Ketçap & Mayonez group
+  is gone; both are paid Sos options now.
+- Every Bowl, Tava, Burger, Wrap, Makarna, Salata, Kahvaltı and Tartine product lists its
+  recipe-based removable ingredients (0 TL).
+- **Visual Review Bekleniyor**.
