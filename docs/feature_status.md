@@ -11333,7 +11333,7 @@ passing, 0 failures.
 - Product photos keep their aspect ratio (decode no longer forced to the box's exact size).
 - **Visual Review Bekleniyor**.
 
-### Menu photos: Makarna, Atıştırmalık, Bowl, Burger, Kahvaltı, Salata & Tava (2026-11-10)
+### Menu photos: Makarna, Atıştırmalık, Bowl, Burger, Kahvaltı, Salata, Tava, Wrap & Tartine (2026-11-10)
 
 - Makarna: 8 product photos saved under the catalog-standard `fettuccine` / `pipette-*` names; the
   4 misspelled `*-fettucine.jpg` files (which never resolved) were removed.
@@ -11353,4 +11353,7 @@ passing, 0 failures.
   stem (`barbeku-soslu-tavuk`, `ton-baligi`, `anne-koftesi`, `acili-tavuk`). The unused
   `teriyaki-soslu-tavuk.png` (no Tava teriyaki product) now serves Acılı Bonfile Tava as
   `acili-bonfile.png` — owner decision; it shows chicken, a placeholder until a beef photo arrives.
+- Wrap & Tartine: supplied photos were byte-identical to existing files. Renamed to catalog stems:
+  `kahvalti-wrap`, `kofte-wrap`, `acili-bonfile-wrap` (was dana-bonfile-wrap), tartine `pollo-croccante`.
+  Removed 3 wrap photos with no active product (avokado, salmon, mexico-steak), owner-approved.
 - **Visual Review Bekleniyor**.
