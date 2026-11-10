@@ -11332,3 +11332,25 @@ passing, 0 failures.
   `cancelledAfterAcceptance` line status. KDS shows an error with retry instead of an endless spinner.
 - Product photos keep their aspect ratio (decode no longer forced to the box's exact size).
 - **Visual Review Bekleniyor**.
+
+### Menu photos: Makarna, Atıştırmalık, Bowl, Burger, Kahvaltı, Salata & Tava (2026-11-10)
+
+- Makarna: 8 product photos saved under the catalog-standard `fettuccine` / `pipette-*` names; the
+  4 misspelled `*-fettucine.jpg` files (which never resolved) were removed.
+- Atıştırmalık: 8 product photos; `trüflü-patates.jpg` replaced by ASCII `truflu-patates.jpg` so
+  Trüflü Patates resolves. Tatlı Patates photo confirmed by the owner.
+- Bowl: 21 product photos as `<name>-bowl.jpg`; the 21 old `.png` files were removed (a same-name
+  `.png` wins over `.jpg`). This also fixes 4 bowls whose old file names never matched the catalog
+  (Acı Soslu Dana Bonfile, Kremalı Pesto, Ton Balığı, Falafel).
+- Burger: the 13 supplied photos were byte-identical to the existing files. Renamed
+  `grill-chicken-burger.png` → `izgara-tavuk-burger.png` and `swissmushroom-burger.png` →
+  `swiss-mushroom-burger.png` so Izgara Tavuk / Swiss Mushroom Burger resolve. Removed 4 photos with no
+  active product (Cheese, Mexico, Mexico Steak, Swiss Mushroom Lokum), owner-approved.
+- Kahvaltı: `Steak.png` → `steak.png` (asset keys are case-sensitive, so Steak never resolved).
+- Salata: 9 product photos added under the catalog stem (e.g. `veggie.jpg`); the folder was empty, so
+  no salad had a photo before.
+- Tava: the 20 supplied photos were byte-identical to the existing files. Renamed 4 to the catalog
+  stem (`barbeku-soslu-tavuk`, `ton-baligi`, `anne-koftesi`, `acili-tavuk`). The unused
+  `teriyaki-soslu-tavuk.png` (no Tava teriyaki product) now serves Acılı Bonfile Tava as
+  `acili-bonfile.png` — owner decision; it shows chicken, a placeholder until a beef photo arrives.
+- **Visual Review Bekleniyor**.
