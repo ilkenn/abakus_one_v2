@@ -80,7 +80,6 @@ abstract final class IngredientImageResolver {
     'acili_dana_bonfile': 'Proteinler/acili_dana_bonfile.png',
     'cirpilmis_yumurta': 'Proteinler/cirpilmis_yumurta.png',
     'citir_tavuk': 'Proteinler/citir_tavuk.png',
-    'citir_tofu': 'Proteinler/citir_tofu.png',
     'dana_antrikot_fume': 'Proteinler/dana_antrikot_fume.png',
     'dana_bonfile': 'Proteinler/dana_bonfile.png',
     'falafel': 'Proteinler/falafel.png',

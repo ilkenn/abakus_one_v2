@@ -43,9 +43,9 @@ class HomeCategorySection extends ConsumerWidget {
   static const List<String> _visibleCategoryIds = [
     'cat_kahvalti',
     'cat_tartine',
+    'cat_salata2',
     'cat_bowl2',
     'cat_tava',
-    'cat_salata2',
     'cat_hamburger2',
     'cat_wrap2',
     'cat_makarna2',

@@ -228,18 +228,6 @@ const List<BowlBuilderIngredient> _ingredients = [
     carbohydrateGrams: 0,
   ),
   BowlBuilderIngredient(
-    id: 'bb_protein_tofu',
-    name: 'Tofu',
-    categoryId: kCategoryProtein,
-    price: 150,
-    imageKey: 'tofu',
-    sortOrder: 9,
-    caloriesKcal: 120,
-    proteinGrams: 12,
-    fatGrams: 7,
-    carbohydrateGrams: 3,
-  ),
-  BowlBuilderIngredient(
     id: 'bb_protein_izgara_somon',
     name: 'Izgara Somon',
     categoryId: kCategoryProtein,

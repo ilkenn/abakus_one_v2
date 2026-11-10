@@ -150,7 +150,7 @@ void main() {
       'ingredients verilince bowlBuilderProvider yerine o liste render edilir',
       (tester) async {
         const repository = LocalBowlBuilderCatalogRepository();
-        final tofu = repository.ingredientById('bb_protein_tofu')!;
+        final somon = repository.ingredientById('bb_protein_izgara_somon')!;
 
         final container = ProviderContainer();
         addTearDown(container.dispose);
@@ -160,14 +160,14 @@ void main() {
           UncontrolledProviderScope(
             container: container,
             child: MaterialApp(
-              home: Scaffold(body: BowlCanvas(ingredients: [tofu])),
+              home: Scaffold(body: BowlCanvas(ingredients: [somon])),
             ),
           ),
         );
         await tester.pumpAndSettle();
 
         expect(
-          assetImageCount(tester, 'assets/images/bowl/layers/tofu.png'),
+          assetImageCount(tester, 'assets/images/bowl/layers/izgara_somon.png'),
           1,
         );
         expect(
@@ -182,7 +182,8 @@ void main() {
       'disaridan verilen liste ilk render de animasyonsuz, tam opaklikta gorunur',
       (tester) async {
         const repository = LocalBowlBuilderCatalogRepository();
-        final ingredient = repository.ingredientById('bb_protein_tofu')!;
+        final ingredient =
+            repository.ingredientById('bb_protein_izgara_somon')!;
 
         await tester.pumpWidget(
           ProviderScope(

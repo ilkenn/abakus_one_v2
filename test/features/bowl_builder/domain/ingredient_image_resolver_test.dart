@@ -89,8 +89,9 @@ void main() {
   test(
     'henuz fotografi olmayan malzikeler icin resolve null doner (placeholder gosterilir)',
     () {
-      // "Tofu" icin sadece "citir_tofu.png" var, duz "tofu.png" yok.
+      // 2026-11-10: Tofu removed from the catalog and its photo deleted.
       expect(IngredientImageResolver.resolve('tofu'), isNull);
+      expect(IngredientImageResolver.resolve('citir_tofu'), isNull);
       // "Tavuk sote" icin hic foto yok (2026-11-10: labne/ceviz artik var).
       expect(IngredientImageResolver.resolve('tavuk_sote'), isNull);
     },
@@ -106,8 +107,9 @@ void main() {
       // 2026-11-10: 21 -> 19 after the sauce photo batch.
       // 19 -> 17 after the protein/cheese batch.
       // 17 -> 15 after the veg/pickle/topping batch.
-      // 15 -> 1 after removing 14 ingredients (owner request); only Tofu left.
-      expect(missing.length, 1, reason: missing.join(', '));
+      // 15 -> 1 after removing 14 ingredients (owner request); 1 -> 0 once
+      // Tofu was removed too — every Bowl Builder ingredient has a photo.
+      expect(missing.length, 0, reason: missing.join(', '));
     },
   );
 
@@ -125,7 +127,8 @@ void main() {
       // kurutulmus_uzum are product-modifier photos, not Bowl Builder ones.
       // 46 -> 53 — 7 protein/cheese photos used only by product modifiers.
       // 53 -> 62 — topping/pepper/kapari photos used only by product modifiers.
-      expect(orphaned.length, 62, reason: orphaned.join(', '));
+      // 62 -> 61 — citir_tofu.png deleted with Tofu.
+      expect(orphaned.length, 61, reason: orphaned.join(', '));
     },
   );
 }

@@ -30,7 +30,7 @@ import '../../../../core/config/asset_paths.dart';
 ///
 /// **Known limitation, deliberately not special-cased**: a category
 /// whose products share a common second word (e.g. `icecekler`'s
-/// `acili-ayran`/`naneli-ayran`/`eksili-ayran`/`feslegenli-ayran`, all
+/// `acili-ayran`/`naneli-ayran`/`eksili-ayran`/`yayik-ayran`, all
 /// stripping to `ayran`) could, in principle, collide on a shared
 /// stripped-stem file like `ayran.png` if one were ever added — naming
 /// such a file by its full `imageKey` instead (tried first, always)

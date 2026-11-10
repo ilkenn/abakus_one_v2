@@ -1,5 +1,5 @@
 {
-  "exportedAt": "2026-11-10T19:08:10.682181",
+  "exportedAt": "2026-11-10T20:29:17.531043",
   "categories": [
     {
       "id": "cat_bowl",
@@ -44,13 +44,6 @@
       "defaultStation": "hot"
     },
     {
-      "id": "cat_icecekler",
-      "name": "İçecekler",
-      "sortOrder": 6,
-      "isActive": true,
-      "defaultStation": "beverage"
-    },
-    {
       "id": "cat_kahvalti",
       "name": "Kahvaltı",
       "sortOrder": 7,
@@ -65,22 +58,22 @@
       "defaultStation": null
     },
     {
+      "id": "cat_salata2",
+      "name": "Salatalar",
+      "sortOrder": 9,
+      "isActive": true,
+      "defaultStation": null
+    },
+    {
       "id": "cat_bowl2",
       "name": "Bowl'lar",
-      "sortOrder": 9,
+      "sortOrder": 10,
       "isActive": true,
       "defaultStation": null
     },
     {
       "id": "cat_tava",
       "name": "Tavalar",
-      "sortOrder": 10,
-      "isActive": true,
-      "defaultStation": null
-    },
-    {
-      "id": "cat_salata2",
-      "name": "Salatalar",
       "sortOrder": 11,
       "isActive": true,
       "defaultStation": null
@@ -114,11 +107,11 @@
       "defaultStation": null
     },
     {
-      "id": "cat_gramajli",
-      "name": "Gramajlı Ürünler",
+      "id": "cat_icecekler",
+      "name": "İçecekler",
       "sortOrder": 16,
       "isActive": true,
-      "defaultStation": null
+      "defaultStation": "beverage"
     }
   ],
   "products": [
@@ -4803,10 +4796,370 @@
       "saleUnit": "piece"
     },
     {
+      "id": "prod_yayik_ayran",
+      "categoryId": "cat_icecekler",
+      "name": "Yayık Ayranı",
+      "basePriceMinorUnits": 8000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
       "id": "prod_cocacola",
       "categoryId": "cat_icecekler",
       "name": "CocaCola Şişe",
-      "basePriceMinorUnits": 8000,
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_cocacola_kutu",
+      "categoryId": "cat_icecekler",
+      "name": "Coca-Cola Kutu",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_cocacola_zero_kutu",
+      "categoryId": "cat_icecekler",
+      "name": "Coca-Cola Zero Kutu",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_cocacola_zero_sise",
+      "categoryId": "cat_icecekler",
+      "name": "Coca-Cola Zero Şişe",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_fanta",
+      "categoryId": "cat_icecekler",
+      "name": "Fanta Kutu",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_sprite",
+      "categoryId": "cat_icecekler",
+      "name": "Sprite Kutu",
+      "basePriceMinorUnits": 10000,
       "isAvailable": true,
       "isFeatured": false,
       "modifierGroups": [
@@ -4866,7 +5219,7 @@
       "id": "prod_fuse_tea_seftali",
       "categoryId": "cat_icecekler",
       "name": "Fuse Tea Şeftali / Soğuk Çay",
-      "basePriceMinorUnits": 5000,
+      "basePriceMinorUnits": 10000,
       "isAvailable": true,
       "isFeatured": false,
       "modifierGroups": [
@@ -4926,7 +5279,547 @@
       "id": "prod_fuse_tea_limon",
       "categoryId": "cat_icecekler",
       "name": "Fuse Tea Limon / Soğuk Çay",
-      "basePriceMinorUnits": 5000,
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_fuse_tea_karpuz",
+      "categoryId": "cat_icecekler",
+      "name": "Fuse Tea Karpuz / Soğuk Çay",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_fuse_tea_kavun_cilek",
+      "categoryId": "cat_icecekler",
+      "name": "Fuse Tea Kavun-Çilek / Soğuk Çay",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_cappy_karisik_meyve",
+      "categoryId": "cat_icecekler",
+      "name": "Cappy Karışık Meyve",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_cappy_kayisi",
+      "categoryId": "cat_icecekler",
+      "name": "Cappy Kayısı",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_cappy_seftali",
+      "categoryId": "cat_icecekler",
+      "name": "Cappy Şeftali",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_cappy_visne",
+      "categoryId": "cat_icecekler",
+      "name": "Cappy Vişne",
+      "basePriceMinorUnits": 10000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_avsar_tuzlu_erik",
+      "categoryId": "cat_icecekler",
+      "name": "Avşar Tuzlu Erik (Soda)",
+      "basePriceMinorUnits": 8000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_uludag_frutti_karpuz_cilek",
+      "categoryId": "cat_icecekler",
+      "name": "Uludağ Frutti Karpuz-Çilek (Soda)",
+      "basePriceMinorUnits": 8000,
+      "isAvailable": true,
+      "isFeatured": false,
+      "modifierGroups": [
+        {
+          "id": "cross_sell_sauce",
+          "name": "Ekstra Sos",
+          "selectionType": "multiple",
+          "isRequired": false,
+          "minSelections": 0,
+          "maxSelections": 6,
+          "options": [
+            {
+              "id": "sauce_abakus",
+              "name": "Abaküs Sos",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_balli_hardal",
+              "name": "Ballı Hardal",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_barbeku",
+              "name": "Barbekü",
+              "extraPriceMinorUnits": 2000,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_acili_mayonez",
+              "name": "Acılı Mayonez",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_sriracha",
+              "name": "Sriracha",
+              "extraPriceMinorUnits": 2500,
+              "isAvailable": true
+            },
+            {
+              "id": "sauce_trufflu_mayonez",
+              "name": "Trüflü Mayonez",
+              "extraPriceMinorUnits": 3000,
+              "isAvailable": true
+            }
+          ]
+        }
+      ],
+      "channelPriceOverrides": {},
+      "allergens": [],
+      "portionLabel": null,
+      "saleUnit": "piece"
+    },
+    {
+      "id": "prod_uludag_frutti_elma",
+      "categoryId": "cat_icecekler",
+      "name": "Uludağ Frutti Elma (Soda)",
+      "basePriceMinorUnits": 8000,
       "isAvailable": true,
       "isFeatured": false,
       "modifierGroups": [
@@ -4986,67 +5879,7 @@
       "id": "prod_su_330",
       "categoryId": "cat_icecekler",
       "name": "Su (330ml Cam / Pet)",
-      "basePriceMinorUnits": 2000,
-      "isAvailable": true,
-      "isFeatured": false,
-      "modifierGroups": [
-        {
-          "id": "cross_sell_sauce",
-          "name": "Ekstra Sos",
-          "selectionType": "multiple",
-          "isRequired": false,
-          "minSelections": 0,
-          "maxSelections": 6,
-          "options": [
-            {
-              "id": "sauce_abakus",
-              "name": "Abaküs Sos",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_balli_hardal",
-              "name": "Ballı Hardal",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_barbeku",
-              "name": "Barbekü",
-              "extraPriceMinorUnits": 2000,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_acili_mayonez",
-              "name": "Acılı Mayonez",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_sriracha",
-              "name": "Sriracha",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_trufflu_mayonez",
-              "name": "Trüflü Mayonez",
-              "extraPriceMinorUnits": 3000,
-              "isAvailable": true
-            }
-          ]
-        }
-      ],
-      "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null,
-      "saleUnit": "piece"
-    },
-    {
-      "id": "prod_feslegenli_ayran",
-      "categoryId": "cat_icecekler",
-      "name": "Ev Yapımı Fesleğenli Ayran",
-      "basePriceMinorUnits": 4500,
+      "basePriceMinorUnits": 4000,
       "isAvailable": true,
       "isFeatured": false,
       "modifierGroups": [
@@ -38757,186 +39590,6 @@
       "allergens": [],
       "portionLabel": "200g",
       "saleUnit": "piece"
-    },
-    {
-      "id": "prod_gramaj_dana_antrikot",
-      "categoryId": "cat_gramajli",
-      "name": "Dana Antrikot",
-      "basePriceMinorUnits": 140000,
-      "isAvailable": true,
-      "isFeatured": false,
-      "modifierGroups": [
-        {
-          "id": "cross_sell_sauce",
-          "name": "Ekstra Sos",
-          "selectionType": "multiple",
-          "isRequired": false,
-          "minSelections": 0,
-          "maxSelections": 6,
-          "options": [
-            {
-              "id": "sauce_abakus",
-              "name": "Abaküs Sos",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_balli_hardal",
-              "name": "Ballı Hardal",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_barbeku",
-              "name": "Barbekü",
-              "extraPriceMinorUnits": 2000,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_acili_mayonez",
-              "name": "Acılı Mayonez",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_sriracha",
-              "name": "Sriracha",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_trufflu_mayonez",
-              "name": "Trüflü Mayonez",
-              "extraPriceMinorUnits": 3000,
-              "isAvailable": true
-            }
-          ]
-        }
-      ],
-      "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null,
-      "saleUnit": "kilogram"
-    },
-    {
-      "id": "prod_gramaj_kuzu_pirzola",
-      "categoryId": "cat_gramajli",
-      "name": "Kuzu Pirzola",
-      "basePriceMinorUnits": 165000,
-      "isAvailable": true,
-      "isFeatured": false,
-      "modifierGroups": [
-        {
-          "id": "cross_sell_sauce",
-          "name": "Ekstra Sos",
-          "selectionType": "multiple",
-          "isRequired": false,
-          "minSelections": 0,
-          "maxSelections": 6,
-          "options": [
-            {
-              "id": "sauce_abakus",
-              "name": "Abaküs Sos",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_balli_hardal",
-              "name": "Ballı Hardal",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_barbeku",
-              "name": "Barbekü",
-              "extraPriceMinorUnits": 2000,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_acili_mayonez",
-              "name": "Acılı Mayonez",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_sriracha",
-              "name": "Sriracha",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_trufflu_mayonez",
-              "name": "Trüflü Mayonez",
-              "extraPriceMinorUnits": 3000,
-              "isAvailable": true
-            }
-          ]
-        }
-      ],
-      "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null,
-      "saleUnit": "kilogram"
-    },
-    {
-      "id": "prod_gramaj_meze_tabagi",
-      "categoryId": "cat_gramajli",
-      "name": "Meze Tabağı (Gramajlı)",
-      "basePriceMinorUnits": 45000,
-      "isAvailable": true,
-      "isFeatured": false,
-      "modifierGroups": [
-        {
-          "id": "cross_sell_sauce",
-          "name": "Ekstra Sos",
-          "selectionType": "multiple",
-          "isRequired": false,
-          "minSelections": 0,
-          "maxSelections": 6,
-          "options": [
-            {
-              "id": "sauce_abakus",
-              "name": "Abaküs Sos",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_balli_hardal",
-              "name": "Ballı Hardal",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_barbeku",
-              "name": "Barbekü",
-              "extraPriceMinorUnits": 2000,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_acili_mayonez",
-              "name": "Acılı Mayonez",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_sriracha",
-              "name": "Sriracha",
-              "extraPriceMinorUnits": 2500,
-              "isAvailable": true
-            },
-            {
-              "id": "sauce_trufflu_mayonez",
-              "name": "Trüflü Mayonez",
-              "extraPriceMinorUnits": 3000,
-              "isAvailable": true
-            }
-          ]
-        }
-      ],
-      "channelPriceOverrides": {},
-      "allergens": [],
-      "portionLabel": null,
-      "saleUnit": "kilogram"
     }
   ],
   "bowlIngredients": [
@@ -39011,14 +39664,6 @@
       "priceMinorUnits": 15000,
       "isAvailable": true,
       "sortOrder": 8
-    },
-    {
-      "id": "bb_protein_tofu",
-      "categoryId": "protein",
-      "name": "Tofu",
-      "priceMinorUnits": 15000,
-      "isAvailable": true,
-      "sortOrder": 9
     },
     {
       "id": "bb_protein_izgara_somon",

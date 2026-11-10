@@ -11412,3 +11412,30 @@ passing, 0 failures.
 - `menu_catalog_export.json` (both copies) regenerated with `tool/export_menu_catalog.dart`.
 - The canonical-catalog migration only upserts, so existing Firestore/emulator `bowlIngredients` docs for
   these 14 are not deleted automatically.
+
+### İçecekler: owner beverage list + photos (2026-11-10)
+
+- İçecekler is now exactly the 22 drinks the owner sent photos for (was 8): By Ayrancı ayran x4, Coca-Cola
+  şişe/kutu/Zero kutu/Zero şişe, Fanta, Sprite, Fuse Tea x4, Cappy x4, aromalı soda x3 (Avşar, Uludağ
+  Frutti x2), Su. Ev Yapımı Fesleğenli Ayran removed (not sold).
+- Prices (owner): ayran 80, aromalı soda 80, su 40; Fuse Tea, Cappy, Coca-Cola, Fanta, Sprite 100. This
+  raises the existing CocaCola Şişe (80 -> 100), Fuse Tea (50 -> 100) and Su (20 -> 40).
+- Photos: background removed, each drink centred on a 1024x1024 transparent square at 90% height.
+  Low-resolution sources (CocaCola Şişe/Kutu/Zero Şişe, Fanta, Fuse Tea Kavun-Çilek, Cappy Vişne, Avşar)
+  were upscaled and look soft. The Su photo is a 500 ml Rioba bottle cut off at the top while the product
+  is 330 ml.
+- Catalog export regenerated; emulator `menuProducts` synced for İçecekler only.
+- **Visual Review Bekleniyor**.
+
+### Menu cleanup + category order (2026-11-10)
+
+- Gramajlı Ürünler removed (product owner: not sold): category `cat_gramajli` and its 3 products deleted.
+  The `SaleUnit.kilogram` support (ADR-067) and the POS weight-entry dialog stay for future use.
+- Tofu removed from the Bowl Builder; its unused `citir_tofu.png` photo deleted. Every Bowl Builder
+  ingredient now has a photo.
+- Live category order: Kahvaltı, Tartineler, Salatalar, Bowl'lar, Tavalar, Burgerler, Wrap'ler, Makarnalar,
+  Aperatifler, İçecekler (Home shortcuts follow the same order).
+- Customer menu: the "Tümü" chip removed; the menu opens on the first category, and a search query spans
+  the whole menu. The featured "Çok Satanlar" strip stays on top as the "most preferred" entry point.
+- Catalog export regenerated; emulator swept (Gramajlı + Tofu docs deleted, category sortOrder updated).
+- **Visual Review Bekleniyor**.

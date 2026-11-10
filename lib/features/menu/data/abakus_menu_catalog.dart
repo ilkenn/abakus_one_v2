@@ -3,7 +3,6 @@ import '../domain/models/menu_category.dart';
 import '../domain/models/menu_product.dart';
 import '../domain/models/modifier_group.dart';
 import '../domain/models/product_nutrition.dart';
-import '../domain/models/sale_unit.dart';
 import 'product_removable_ingredients.dart';
 import 'standard_modifier_groups.dart';
 
@@ -103,7 +102,7 @@ abstract final class AbakusMenuCatalog {
   static const MenuCategory drinkCategory = MenuCategory(
     id: 'cat_icecekler',
     name: 'İçecekler',
-    sortOrder: 6,
+    sortOrder: 16,
     isActive: true,
     // KDS station-based routing (2026-09-21).
     defaultStation: KitchenStation.beverage,
@@ -130,19 +129,19 @@ abstract final class AbakusMenuCatalog {
   static const MenuCategory bowl2Category = MenuCategory(
     id: 'cat_bowl2',
     name: "Bowl'lar",
-    sortOrder: 9,
+    sortOrder: 10,
     isActive: true,
   );
   static const MenuCategory tavaCategory = MenuCategory(
     id: 'cat_tava',
     name: 'Tavalar',
-    sortOrder: 10,
+    sortOrder: 11,
     isActive: true,
   );
   static const MenuCategory salata2Category = MenuCategory(
     id: 'cat_salata2',
     name: 'Salatalar',
-    sortOrder: 11,
+    sortOrder: 9,
     isActive: true,
   );
   static const MenuCategory hamburger2Category = MenuCategory(
@@ -170,17 +169,6 @@ abstract final class AbakusMenuCatalog {
     isActive: true,
   );
 
-  /// ADR-067 (2026-11-09) — products sold by weight (`SaleUnit.kilogram`,
-  /// `basePrice` = TL per kg). POS dine-in only for now: the server
-  /// rejects them on takeaway/delivery and the customer QR menu has no
-  /// weight entry yet.
-  static const MenuCategory gramajliCategory = MenuCategory(
-    id: 'cat_gramajli',
-    name: 'Gramajlı Ürünler',
-    sortOrder: 16,
-    isActive: true,
-  );
-
   static const List<MenuCategory> categories = [
     bowlCategory,
     saladCategory,
@@ -188,17 +176,18 @@ abstract final class AbakusMenuCatalog {
     burgerCategory,
     pastaCategory,
     snackCategory,
-    drinkCategory,
+    // 2026-11-10 — live display order set by the product owner: İçecekler
+    // last, Salatalar before Bowl'lar. Gramajlı Ürünler removed (not sold).
     kahvaltiCategory,
     tartineCategory,
+    salata2Category,
     bowl2Category,
     tavaCategory,
-    salata2Category,
     hamburger2Category,
     wrap2Category,
     makarna2Category,
     atistirmalik2Category,
-    gramajliCategory,
+    drinkCategory,
   ];
 
   /// The raw, hand-authored product literals — never read directly outside
@@ -899,13 +888,15 @@ abstract final class AbakusMenuCatalog {
       imageKey: 'patates-kizartmasi',
     ),
 
-    // --- İçecekler (8) ---
+    // --- İçecekler (22) ---
+    // 2026-11-10 — product owner's beverage list: exactly the drinks they sent
+    // photos for, at the prices they gave (ayran 80, aromalı soda 80, su 40,
+    // Fuse Tea / Cappy / Coca-Cola / Fanta / Sprite 100). Fesleğenli Ayran removed.
     MenuProduct(
       id: 'prod_acili_ayran',
       categoryId: 'cat_icecekler',
       name: 'Acılı Ayran (Spice Ayran)',
-      description:
-          'Abaküs mutfağından acı severler için özel baharatlı naneli ayran.',
+      description: 'By Ayrancı acılı ayran.',
       basePrice: 80,
       imageKey: 'acili-ayran',
     ),
@@ -913,7 +904,7 @@ abstract final class AbakusMenuCatalog {
       id: 'prod_naneli_ayran',
       categoryId: 'cat_icecekler',
       name: 'Naneli Ayran (Mint Ayran)',
-      description: 'Taze nane yaprakları ile çırpılmış ferahlatıcı ayran.',
+      description: 'By Ayrancı naneli ayran.',
       basePrice: 80,
       imageKey: 'naneli-ayran',
     ),
@@ -921,26 +912,72 @@ abstract final class AbakusMenuCatalog {
       id: 'prod_eksili_ayran',
       categoryId: 'cat_icecekler',
       name: 'Ekşili Ayran (Minus Ayran)',
-      description: 'Ekşi limon esintili özel ferahlık ayranı.',
+      description: 'By Ayrancı ekşi ayran.',
       basePrice: 80,
       imageKey: 'eksili-ayran',
+    ),
+    MenuProduct(
+      id: 'prod_yayik_ayran',
+      categoryId: 'cat_icecekler',
+      name: 'Yayık Ayranı',
+      description: 'By Ayrancı yayık ayranı.',
+      basePrice: 80,
+      imageKey: 'yayik-ayran',
     ),
     MenuProduct(
       id: 'prod_cocacola',
       categoryId: 'cat_icecekler',
       name: 'CocaCola Şişe',
       description: '300 ml soğuk şişe.',
-      basePrice: 80,
+      basePrice: 100,
       imageKey: 'cocacola',
     ),
-    // 2026-10-30 — product owner's explicit cross-sell drink additions
-    // (exact name/price given directly, not sourced/derived).
+    MenuProduct(
+      id: 'prod_cocacola_kutu',
+      categoryId: 'cat_icecekler',
+      name: 'Coca-Cola Kutu',
+      description: '330 ml kutu.',
+      basePrice: 100,
+      imageKey: 'cocacola-kutu',
+    ),
+    MenuProduct(
+      id: 'prod_cocacola_zero_kutu',
+      categoryId: 'cat_icecekler',
+      name: 'Coca-Cola Zero Kutu',
+      description: '330 ml kutu, sıfır şeker.',
+      basePrice: 100,
+      imageKey: 'cocacola-zero-kutu',
+    ),
+    MenuProduct(
+      id: 'prod_cocacola_zero_sise',
+      categoryId: 'cat_icecekler',
+      name: 'Coca-Cola Zero Şişe',
+      description: 'Cam şişe, sıfır şeker.',
+      basePrice: 100,
+      imageKey: 'cocacola-zero-sise',
+    ),
+    MenuProduct(
+      id: 'prod_fanta',
+      categoryId: 'cat_icecekler',
+      name: 'Fanta Kutu',
+      description: '330 ml kutu.',
+      basePrice: 100,
+      imageKey: 'fanta',
+    ),
+    MenuProduct(
+      id: 'prod_sprite',
+      categoryId: 'cat_icecekler',
+      name: 'Sprite Kutu',
+      description: '330 ml kutu.',
+      basePrice: 100,
+      imageKey: 'sprite',
+    ),
     MenuProduct(
       id: 'prod_fuse_tea_seftali',
       categoryId: 'cat_icecekler',
       name: 'Fuse Tea Şeftali / Soğuk Çay',
       description: '',
-      basePrice: 50,
+      basePrice: 100,
       imageKey: 'fuse-tea-seftali',
     ),
     MenuProduct(
@@ -948,24 +985,88 @@ abstract final class AbakusMenuCatalog {
       categoryId: 'cat_icecekler',
       name: 'Fuse Tea Limon / Soğuk Çay',
       description: '',
-      basePrice: 50,
+      basePrice: 100,
       imageKey: 'fuse-tea-limon',
+    ),
+    MenuProduct(
+      id: 'prod_fuse_tea_karpuz',
+      categoryId: 'cat_icecekler',
+      name: 'Fuse Tea Karpuz / Soğuk Çay',
+      description: '',
+      basePrice: 100,
+      imageKey: 'fuse-tea-karpuz',
+    ),
+    MenuProduct(
+      id: 'prod_fuse_tea_kavun_cilek',
+      categoryId: 'cat_icecekler',
+      name: 'Fuse Tea Kavun-Çilek / Soğuk Çay',
+      description: '',
+      basePrice: 100,
+      imageKey: 'fuse-tea-kavun-cilek',
+    ),
+    MenuProduct(
+      id: 'prod_cappy_karisik_meyve',
+      categoryId: 'cat_icecekler',
+      name: 'Cappy Karışık Meyve',
+      description: '330 ml kutu.',
+      basePrice: 100,
+      imageKey: 'cappy-karisik-meyve',
+    ),
+    MenuProduct(
+      id: 'prod_cappy_kayisi',
+      categoryId: 'cat_icecekler',
+      name: 'Cappy Kayısı',
+      description: '330 ml kutu.',
+      basePrice: 100,
+      imageKey: 'cappy-kayisi',
+    ),
+    MenuProduct(
+      id: 'prod_cappy_seftali',
+      categoryId: 'cat_icecekler',
+      name: 'Cappy Şeftali',
+      description: '330 ml kutu.',
+      basePrice: 100,
+      imageKey: 'cappy-seftali',
+    ),
+    MenuProduct(
+      id: 'prod_cappy_visne',
+      categoryId: 'cat_icecekler',
+      name: 'Cappy Vişne',
+      description: '330 ml kutu.',
+      basePrice: 100,
+      imageKey: 'cappy-visne',
+    ),
+    MenuProduct(
+      id: 'prod_avsar_tuzlu_erik',
+      categoryId: 'cat_icecekler',
+      name: 'Avşar Tuzlu Erik (Soda)',
+      description: 'Meyve aromalı maden suyu.',
+      basePrice: 80,
+      imageKey: 'avsar-tuzlu-erik',
+    ),
+    MenuProduct(
+      id: 'prod_uludag_frutti_karpuz_cilek',
+      categoryId: 'cat_icecekler',
+      name: 'Uludağ Frutti Karpuz-Çilek (Soda)',
+      description: 'Meyve aromalı maden suyu.',
+      basePrice: 80,
+      imageKey: 'uludag-frutti-karpuz-cilek',
+    ),
+    MenuProduct(
+      id: 'prod_uludag_frutti_elma',
+      categoryId: 'cat_icecekler',
+      name: 'Uludağ Frutti Elma (Soda)',
+      description: 'Meyve aromalı maden suyu.',
+      basePrice: 80,
+      imageKey: 'uludag-frutti-elma',
     ),
     MenuProduct(
       id: 'prod_su_330',
       categoryId: 'cat_icecekler',
       name: 'Su (330ml Cam / Pet)',
       description: '',
-      basePrice: 20,
+      basePrice: 40,
       imageKey: 'su-330ml',
-    ),
-    MenuProduct(
-      id: 'prod_feslegenli_ayran',
-      categoryId: 'cat_icecekler',
-      name: 'Ev Yapımı Fesleğenli Ayran',
-      description: '',
-      basePrice: 45,
-      imageKey: 'feslegenli-ayran',
     ),
 
     // === 2026-10-28 PDF menu refresh — the real, currently-live menu ===
@@ -1962,34 +2063,6 @@ abstract final class AbakusMenuCatalog {
       imageKey: 'aperatif-general-tso',
       isFeatured: true,
       portionLabel: '200g',
-    ),
-    // --- Gramajlı Ürünler (3) — ADR-067, product-owner test set 2026-11-09 ---
-    MenuProduct(
-      id: 'prod_gramaj_dana_antrikot',
-      categoryId: 'cat_gramajli',
-      name: 'Dana Antrikot',
-      description: 'Gramajla satılır.',
-      basePrice: 1400,
-      imageKey: 'gramaj-dana-antrikot',
-      saleUnit: SaleUnit.kilogram,
-    ),
-    MenuProduct(
-      id: 'prod_gramaj_kuzu_pirzola',
-      categoryId: 'cat_gramajli',
-      name: 'Kuzu Pirzola',
-      description: 'Gramajla satılır.',
-      basePrice: 1650,
-      imageKey: 'gramaj-kuzu-pirzola',
-      saleUnit: SaleUnit.kilogram,
-    ),
-    MenuProduct(
-      id: 'prod_gramaj_meze_tabagi',
-      categoryId: 'cat_gramajli',
-      name: 'Meze Tabağı (Gramajlı)',
-      description: 'Gramajla satılır.',
-      basePrice: 450,
-      imageKey: 'gramaj-meze-tabagi',
-      saleUnit: SaleUnit.kilogram,
     ),
   ];
 

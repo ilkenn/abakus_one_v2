@@ -1121,7 +1121,7 @@ void main() {
       // The default "Tümü" filter has ~190 products across every active
       // category — CocaCola Şişe isn't necessarily within the grid's
       // initially-built range without first narrowing the filter.
-      await tester.tap(find.text('İçecekler'));
+      await _tapDrinksCategory(tester);
       await tester.pump();
       expect(find.text('CocaCola Şişe'), findsOneWidget);
       expect(find.byType(DropdownButtonFormField<MenuProduct>), findsNothing);
@@ -1136,7 +1136,7 @@ void main() {
       final fakes = await _pump(tester, initialView: emptyOpenTableView());
 
       // Filter to "İçecekler" (8 products, vs. ~190 under "Tümü").
-      await tester.tap(find.text('İçecekler'));
+      await _tapDrinksCategory(tester);
       await tester.pump();
 
       // Scoped to the grid specifically: once a line exists, the cart
@@ -1153,7 +1153,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('2'), findsOneWidget);
-      expect(find.text('160 TL'), findsOneWidget);
+      expect(find.text('200 TL'), findsOneWidget);
 
       // No account-selection step first — "Masa Geneli" is the default
       // target the compact dropdown starts on, satisfying the redesign's
@@ -1188,7 +1188,7 @@ void main() {
           find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing,
           reason: 'the whole send-cart section is hidden while empty');
 
-      await tester.tap(find.text('İçecekler'));
+      await _tapDrinksCategory(tester);
       await tester.pump();
       final cocaColaCard = find.descendant(
         of: find.byType(GridView),
@@ -1699,7 +1699,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await _pump(tester, initialView: emptyOpenTableView());
 
-      await tester.tap(find.text('İçecekler'));
+      await _tapDrinksCategory(tester);
       await tester.pump();
       final cocaColaCard = find.descendant(
         of: find.byType(GridView),
@@ -1810,7 +1810,7 @@ void main() {
       expect(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'),
           findsOneWidget);
 
-      await tester.tap(find.text('İçecekler'));
+      await _tapDrinksCategory(tester);
       await tester.pump();
       final card = find.descendant(
         of: find.byType(GridView),
@@ -1971,4 +1971,23 @@ void main() {
       expect(fakes.actionGateway.cancellationRequestCallCount, 1);
     });
   });
+}
+
+/// 2026-11-10 — İçecekler is now the last category, so it can sit outside
+/// the visible part of the (lazily built) category rail; scroll it in first.
+Future<void> _tapDrinksCategory(WidgetTester tester) async {
+  // Resolve the rail once: the anchor chip scrolls out of view (and out of
+  // the lazily built tree) while scrolling.
+  final railElement = find
+      .ancestor(
+        of: find.text('Kahvaltı').first,
+        matching: find.byType(Scrollable),
+      )
+      .evaluate()
+      .first;
+  final rail = find.byElementPredicate((e) => e == railElement);
+  await tester.scrollUntilVisible(find.text('İçecekler'), 100,
+      scrollable: rail);
+  await tester.pump();
+  await tester.tap(find.text('İçecekler'));
 }

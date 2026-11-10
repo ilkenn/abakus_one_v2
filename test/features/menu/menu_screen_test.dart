@@ -2,12 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
+import 'package:abakus_one_v2/features/menu/domain/models/menu_category.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_group.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_option.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 import 'package:abakus_one_v2/features/menu/presentation/screens/menu_screen.dart';
 import 'package:abakus_one_v2/features/menu/presentation/screens/product_detail_screen.dart';
+
+// 2026-11-10 — the menu has no "Tümü" chip any more and always shows one
+// category; tests that inject their own products also inject this category
+// so those products are the ones on screen.
+const _testCategory = MenuCategory(
+  id: 'test_cat',
+  name: 'Test Kategori',
+  sortOrder: 0,
+  isActive: true,
+);
 
 const _modifierProduct = MenuProduct(
   id: 'test_modifier_prod',
@@ -103,18 +114,13 @@ void main() {
   ) async {
     await pumpMenuScreen(tester);
 
-    // Kahvaltı/Tartineler: 2026-10-28 PDF refresh'inin ilk iki aktif
-    // kategorisi, kategori cip satirinda "Tümü"den sonra ilk gorunenler —
-    // kaydirmaya ihtiyac olmadan test edilebilir.
-    expect(find.text('Tümü'), findsOneWidget);
+    // 2026-11-10: "Tümü" cipi kaldirildi; menu ilk kategoriyle (Kahvaltı)
+    // secili acilir, hicbir sey tiklanmadan Kahvaltı urunleri gorunur.
+    expect(find.text('Tümü'), findsNothing);
     expect(find.text('Kahvaltı'), findsOneWidget);
     expect(find.text('Tartineler'), findsOneWidget);
-
-    await tester.tap(find.text('Kahvaltı'));
-    await tester.pumpAndSettle();
-
-    // Kahvaltı seciliyken gercek bir Kahvaltı urunu gorunur olmali.
     expect(find.text('Clasico'), findsOneWidget);
+    expect(find.text('Pollo Croccante'), findsNothing);
 
     await tester.tap(find.text('Tartineler'));
     await tester.pumpAndSettle();
@@ -150,6 +156,7 @@ void main() {
         container.dispose();
         container = ProviderContainer(
           overrides: [
+            menuCategoriesProvider.overrideWithValue(const [_testCategory]),
             menuProductsProvider.overrideWithValue([_plainProduct]),
           ],
         );
@@ -173,6 +180,7 @@ void main() {
         container.dispose();
         container = ProviderContainer(
           overrides: [
+            menuCategoriesProvider.overrideWithValue(const [_testCategory]),
             menuProductsProvider.overrideWithValue([_modifierProduct]),
           ],
         );
@@ -197,6 +205,7 @@ void main() {
         container.dispose();
         container = ProviderContainer(
           overrides: [
+            menuCategoriesProvider.overrideWithValue(const [_testCategory]),
             menuProductsProvider.overrideWithValue([_soldOutProduct]),
           ],
         );
@@ -220,6 +229,7 @@ void main() {
         container.dispose();
         container = ProviderContainer(
           overrides: [
+            menuCategoriesProvider.overrideWithValue(const [_testCategory]),
             menuProductsProvider.overrideWithValue([_plainProduct]),
           ],
         );
@@ -245,6 +255,7 @@ void main() {
         container.dispose();
         container = ProviderContainer(
           overrides: [
+            menuCategoriesProvider.overrideWithValue(const [_testCategory]),
             menuProductsProvider.overrideWithValue([_allergenicProduct]),
           ],
         );
@@ -260,6 +271,7 @@ void main() {
         container.dispose();
         container = ProviderContainer(
           overrides: [
+            menuCategoriesProvider.overrideWithValue(const [_testCategory]),
             menuProductsProvider.overrideWithValue([_noAllergenProduct]),
           ],
         );
@@ -283,6 +295,7 @@ void main() {
         container.dispose();
         container = ProviderContainer(
           overrides: [
+            menuCategoriesProvider.overrideWithValue(const [_testCategory]),
             menuProductsProvider.overrideWithValue(
               [_allergenicProduct, _noAllergenProduct],
             ),

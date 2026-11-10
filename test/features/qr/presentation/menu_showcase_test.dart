@@ -1,5 +1,6 @@
 import 'package:abakus_one_v2/features/cart/presentation/guards/cart_add_guard.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
+import 'package:abakus_one_v2/features/menu/domain/models/menu_category.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 import 'package:abakus_one_v2/features/menu/presentation/screens/menu_screen.dart';
@@ -12,6 +13,15 @@ import 'package:abakus_one_v2/features/qr/presentation/screens/menu_showcase_scr
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+// 2026-11-10 — the menu always shows one category (no "Tümü" chip), so the
+// test product's category is injected too.
+const _testCategory = MenuCategory(
+  id: 'test_cat',
+  name: 'Test Kategori',
+  sortOrder: 0,
+  isActive: true,
+);
 
 const _plainProduct = MenuProduct(
   id: 'test_plain_prod',
@@ -85,6 +95,7 @@ void main() {
 
     setUp(() {
       container = ProviderContainer(overrides: [
+        menuCategoriesProvider.overrideWithValue(const [_testCategory]),
         menuProductsProvider.overrideWithValue([_plainProduct]),
       ]);
     });

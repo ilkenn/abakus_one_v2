@@ -129,7 +129,6 @@ void main() {
     }
     expect(byId['bb_protein_izgara_kofte']!.price, 70);
     expect(byId['bb_protein_dana_bonfile']!.price, 150);
-    expect(byId['bb_protein_tofu']!.price, 150);
     expect(byId['bb_protein_izgara_somon']!.price, 250);
     expect(byId['bb_protein_somon_fume']!.price, 300);
     expect(byId['bb_protein_ton_baligi']!.price, 150);
@@ -154,6 +153,7 @@ void main() {
       'bb_vegetable_kirmizi_sogan',
       'bb_vegetable_mor_lahana',
       'bb_pickle_sogan_tursu',
+      'bb_protein_tofu',
     ]) {
       expect(repository.ingredientById(id), isNull, reason: id);
     }

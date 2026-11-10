@@ -27,8 +27,6 @@ import '../providers/qr_menu_ambient_provider.dart';
 import '../widgets/qr_menu_story_bar.dart';
 import 'product_detail_screen.dart';
 
-const String _allCategoriesLabel = 'Tümü';
-
 class MenuScreen extends ConsumerStatefulWidget {
   const MenuScreen({super.key});
 
@@ -67,19 +65,24 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
     // `QrMenuAmbientTint`'s own doc comment), not recomputed per rebuild.
     final ambientPalette = ref.watch(qrMenuAmbientPaletteProvider);
 
-    // A filter set from elsewhere (e.g. Home's quick-category chips) that
-    // no longer matches a real category name is treated as "no filter"
-    // rather than silently showing an empty list.
-    final selectedCategory = categories
+    // 2026-11-10 — no "Tümü" chip any more (product owner): one category is
+    // always selected. A filter that matches no real category name (the
+    // initial empty state, or a stale value set from elsewhere) falls back
+    // to the first category in display order instead of an empty list.
+    final matchingCategories = categories
         .where((category) => category.name == selectedFilter)
         .toList();
-    final isAllSelected =
-        selectedFilter == _allCategoriesLabel || selectedCategory.isEmpty;
+    final selectedCategory = matchingCategories.isNotEmpty
+        ? matchingCategories.first
+        : (categories.isEmpty ? null : categories.first);
 
     final query = _searchQuery.trim().toLowerCase();
     final filteredProducts = allProducts.where((product) {
-      final matchesCategory =
-          isAllSelected || product.categoryId == selectedCategory.first.id;
+      // A search query spans the whole menu, so products stay findable
+      // without an "all categories" chip.
+      final matchesCategory = query.isNotEmpty ||
+          selectedCategory == null ||
+          product.categoryId == selectedCategory.id;
       final matchesQuery = query.isEmpty ||
           product.name.toLowerCase().contains(query) ||
           product.description.toLowerCase().contains(query);
@@ -165,15 +168,11 @@ class _MenuScreenState extends ConsumerState<MenuScreen> {
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                itemCount: categories.length + 1,
+                itemCount: categories.length,
                 itemBuilder: (context, index) {
-                  final isAllChip = index == 0;
-                  final categoryName = isAllChip
-                      ? _allCategoriesLabel
-                      : categories[index - 1].name;
-                  final isSelected = isAllChip
-                      ? isAllSelected
-                      : !isAllSelected && categoryName == selectedFilter;
+                  final category = categories[index];
+                  final categoryName = category.name;
+                  final isSelected = category.id == selectedCategory?.id;
 
                   return Padding(
                     padding: const EdgeInsets.symmetric(

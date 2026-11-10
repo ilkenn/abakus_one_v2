@@ -527,9 +527,9 @@ void main() {
       const expectedOrder = [
         'Kahvaltı',
         'Tartineler',
+        'Salatalar',
         "Bowl'lar",
         'Tavalar',
-        'Salatalar',
         'Burgerler',
         "Wrap'ler",
         'Makarnalar',

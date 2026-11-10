@@ -13,8 +13,9 @@ void main() {
       'tamami hala AbakusMenuCatalog.categories icinde ama 6si artik '
       'isActive: false (test fixture kararliligi icin silinmedi — bkz. '
       'o kategorilerin kendi doc comment\'i)', () {
-    // 16 + 2026-11-09 "Gramajlı Ürünler" (ADR-067).
-    expect(AbakusMenuCatalog.categories.length, 17);
+    // 2026-11-09 "Gramajlı Ürünler" (ADR-067) was added, then removed again
+    // on 2026-11-10 at the product owner's request (not sold).
+    expect(AbakusMenuCatalog.categories.length, 16);
     final legacy = AbakusMenuCatalog.categories
         .where((c) => const {
               'cat_bowl',
@@ -63,8 +64,6 @@ void main() {
               'cat_makarna',
               'cat_atistirmalik',
               'cat_icecekler',
-              // 2026-11-09 — not part of the PDF refresh (ADR-067).
-              'cat_gramajli',
             }.contains(c.id))
         .toList();
     expect(refreshed.length, 9);
@@ -74,9 +73,9 @@ void main() {
       [
         'Kahvaltı',
         'Tartineler',
+        'Salatalar',
         "Bowl'lar",
         'Tavalar',
-        'Salatalar',
         'Burgerler',
         "Wrap'ler",
         'Makarnalar',
@@ -95,8 +94,8 @@ void main() {
     final activeProducts = container.read(menuProductsProvider);
     final featured = container.read(featuredMenuProductsProvider);
 
-    // 9 yeni + İçecekler + 2026-11-09 Gramajlı Ürünler (ADR-067).
-    expect(activeCategories.length, 11);
+    // 9 yeni + İçecekler.
+    expect(activeCategories.length, 10);
     expect(activeCategories.any((c) => c.id == 'cat_bowl'), isFalse);
     expect(activeProducts.any((p) => p.categoryId == 'cat_bowl'), isFalse);
     expect(activeProducts.any((p) => p.id == 'prod_cocacola'), isTrue);
@@ -120,24 +119,45 @@ void main() {
     // Tavalar 20 + Salatalar 9 + Burgerler 9 + Wrap'ler 9 + Makarnalar 8 +
     // Aperatifler 8 = 92.
     // 2026-11-09: +3 sold-by-weight test products (ADR-067).
-    expect(AbakusMenuCatalog.products.length, 79 + 92 + 4 + 3);
+    // 2026-11-10: İçecekler 8 -> 22 (owner beverage list, Fesleğenli Ayran
+    // out) and the 3 Gramajlı products removed again.
+    expect(AbakusMenuCatalog.products.length, 79 + 92 + 4 + 14);
   });
 
   test(
-      '2026-11-09 (ADR-067): Gramajlı Ürünler — exactly the 3 product-owner '
-      'test products, all sold by kg with a per-kg basePrice', () {
-    final weighed = AbakusMenuCatalog.products
-        .where((p) => p.saleUnit == SaleUnit.kilogram)
-        .toList();
+      '2026-11-10: Gramajlı Ürünler removed (product owner) — no category and '
+      'no sold-by-weight product left in the catalog; the SaleUnit.kilogram '
+      'support itself (ADR-067) stays for future use', () {
     expect(
-      {for (final p in weighed) p.name: p.basePrice},
-      {
-        'Dana Antrikot': 1400,
-        'Kuzu Pirzola': 1650,
-        'Meze Tabağı (Gramajlı)': 450,
-      },
+      AbakusMenuCatalog.categories.any((c) => c.id == 'cat_gramajli'),
+      isFalse,
     );
-    expect(weighed.every((p) => p.categoryId == 'cat_gramajli'), isTrue);
+    expect(
+      AbakusMenuCatalog.products.where((p) => p.saleUnit == SaleUnit.kilogram),
+      isEmpty,
+    );
+  });
+
+  test(
+      '2026-11-10: live menu category order set by the product owner '
+      '(İçecekler last)', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    expect(
+      container.read(menuCategoriesProvider).map((c) => c.id).toList(),
+      [
+        'cat_kahvalti',
+        'cat_tartine',
+        'cat_salata2',
+        'cat_bowl2',
+        'cat_tava',
+        'cat_hamburger2',
+        'cat_wrap2',
+        'cat_makarna2',
+        'cat_atistirmalik2',
+        'cat_icecekler',
+      ],
+    );
   });
 
   test('her urun gecerli, bilinen bir kategoriye aittir', () {
@@ -181,7 +201,7 @@ void main() {
     final cocaCola =
         AbakusMenuCatalog.products.firstWhere((p) => p.id == 'prod_cocacola');
     expect(cocaCola.name, 'CocaCola Şişe');
-    expect(cocaCola.basePrice, 80);
+    expect(cocaCola.basePrice, 100);
     expect(cocaCola.categoryId, 'cat_icecekler');
   });
 
