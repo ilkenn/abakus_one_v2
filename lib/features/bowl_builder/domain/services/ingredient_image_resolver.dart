@@ -36,11 +36,22 @@ abstract final class IngredientImageResolver {
     // Generic, unlabeled filenames from an image-generation batch — none of
     // them can be confidently tied to a specific ingredient by name, so
     // none are registered. Kept out on purpose; see `findOrphanedImageKeys`.
+    // Topping photos (2026-11-10) are named and registered normally.
+    'ceviz': 'Diğerleri/ceviz.png',
+    'chia': 'Diğerleri/chia.png',
+    'corekotu_susam': 'Diğerleri/corekotu_susam.png',
+    'kabak_cekirdegi': 'Diğerleri/kabak_cekirdegi.png',
+    'keten_tohumu': 'Diğerleri/keten_tohumu.png',
+    'siyah_zeytin': 'Diğerleri/siyah_zeytin.png',
+    'yesil_zeytin': 'Diğerleri/yesil_zeytin.png',
+    'yogurt': 'Diğerleri/yogurt.png',
 
     // ---- Karbonhidratlar ----
     'kekikli_makarna': 'Karbonhidratlar/kekikli_makarna.png',
     'kinoa': 'Karbonhidratlar/kinoa.png',
+    'kisir': 'Karbonhidratlar/kisir.png',
     'kori_makarna': 'Karbonhidratlar/kori_makarna.png',
+    'kremali_makarna': 'Karbonhidratlar/kremali_makarna.png',
     'kuskus': 'Karbonhidratlar/kuskus.png',
     'meksika_pilavi': 'Karbonhidratlar/meksika_pilavi.png',
     'pesto_makarna': 'Karbonhidratlar/pesto_makarna.png',
@@ -50,7 +61,9 @@ abstract final class IngredientImageResolver {
 
     // ---- Meyveler ----
     'ananas': 'Meyveler/ananas.png',
+    'frenk_uzumu': 'Meyveler/frenk_uzumu.png',
     'kizarmis_ananas': 'Meyveler/kizarmis_ananas.png',
+    'kurutulmus_uzum': 'Meyveler/kurutulmus_uzum.png',
     'muz': 'Meyveler/muz.png',
     'nar': 'Meyveler/nar.png',
     'yaban_mersini': 'Meyveler/yaban_mersini.png',
@@ -58,11 +71,13 @@ abstract final class IngredientImageResolver {
     // ---- Peynirler ----
     'beyaz_peynir': 'Peynirler/beyaz_peynir.png',
     'cheddar_peyniri': 'Peynirler/cheddar_peyniri.png',
+    'labne': 'Peynirler/labne.png',
     'parmesan_peyniri': 'Peynirler/parmesan_peyniri.png',
     'tulum_peyniri': 'Peynirler/tulum_peyniri.png',
 
     // ---- Proteinler ----
     'aci_tavuk': 'Proteinler/aci_tavuk.png',
+    'acili_dana_bonfile': 'Proteinler/acili_dana_bonfile.png',
     'cirpilmis_yumurta': 'Proteinler/cirpilmis_yumurta.png',
     'citir_tavuk': 'Proteinler/citir_tavuk.png',
     'citir_tofu': 'Proteinler/citir_tofu.png',
@@ -71,11 +86,18 @@ abstract final class IngredientImageResolver {
     'falafel': 'Proteinler/falafel.png',
     'haslanmis_yumurta': 'Proteinler/haslanmis_yumurta.png',
     'izgara_kofte': 'Proteinler/izgara_kofte.png',
+    'izgara_sebze_mix': 'Proteinler/izgara_sebze_mix.png',
+    'izgara_somon': 'Proteinler/izgara_somon.png',
     'izgara_tavuk': 'Proteinler/izgara_tavuk.png',
+    'izgara_tavuk_pirzola': 'Proteinler/izgara_tavuk_pirzola.png',
     'karisik_sebze': 'Proteinler/karisik_sebze.png',
     'kori_tavuk': 'Proteinler/kori_tavuk.png',
+    'kremali_kekikli_tavuk': 'Proteinler/kremali_kekikli_tavuk.png',
+    'kremali_mantarli_tavuk': 'Proteinler/kremali_mantarli_tavuk.png',
+    'pestolu_tavuk': 'Proteinler/pestolu_tavuk.png',
     'somon_fume': 'Proteinler/somon_fume.png',
     'soya_tavuk': 'Proteinler/soya_tavuk.png',
+    'tatli_aci_tavuk': 'Proteinler/tatli_aci_tavuk.png',
     'tatli_eksi_tavuk': 'Proteinler/tatli_eksi_tavuk.png',
     'teriyaki_tavuk': 'Proteinler/teriyaki_tavuk.png',
     'ton_baligi': 'Proteinler/ton_baligi.png',
@@ -83,6 +105,7 @@ abstract final class IngredientImageResolver {
     // ---- Salatalar ----
     'coban_salata': 'Salatalar/coban_salata.png',
     'mevsim_salata': 'Salatalar/mevsim_salata.png',
+    'roka_salata': 'Salatalar/roka_salata.png',
 
     // ---- Sebzeler ----
     'avokado': 'Sebzeler/avokado.png',
@@ -93,6 +116,7 @@ abstract final class IngredientImageResolver {
     'izgara_havuc': 'Sebzeler/izgara_havuc.png',
     'izgara_kabak': 'Sebzeler/izgara_kabak.png',
     'izgara_kapya_biber': 'Sebzeler/izgara_kapya_biber.png',
+    'izgara_yesil_biber': 'Sebzeler/izgara_yesil_biber.png',
     'kapya_biber': 'Sebzeler/kapya_biber.png',
     'karamelize_sogan': 'Sebzeler/karamelize_sogan.png',
     'kuru_sogan': 'Sebzeler/kuru_sogan.png',
@@ -107,26 +131,39 @@ abstract final class IngredientImageResolver {
     'salatalik': 'Sebzeler/salatalik.png',
     'susamli_corek_otlu_salatalik': 'Sebzeler/susamli_corek_otlu_salatalik.png',
     'taze_sogan': 'Sebzeler/taze_sogan.png',
+    'yesil_biber': 'Sebzeler/yesil_biber.png',
     'zeytin': 'Sebzeler/zeytin.png',
 
     // ---- Soslar ----
     'aci_sos': 'Soslar/aci_sos.png',
+    'acili_mayonez': 'Soslar/acili_mayonez.png',
+    // Abaküs Sos shares the Acılı Mayonez photo until it gets its own
+    // (owner decision, 2026-11-10) — same key-vs-filename exception as
+    // 'jalapeno' below.
+    'abakus_sos': 'Soslar/acili_mayonez.png',
     'balli_hardal': 'Soslar/balli_hardal.png',
+    'balsamic': 'Soslar/balsamic.png',
     'barbeku_sos': 'Soslar/barbeku_sos.png',
     'caesar_sos': 'Soslar/caesar_sos.png',
+    'elma_sirkesi': 'Soslar/elma_sirkesi.png',
     'hardal_sos': 'Soslar/hardal_sos.png',
     'humus': 'Soslar/humus.png',
+    'ketcap': 'Soslar/ketcap.png',
     'mayonez': 'Soslar/mayonez.png',
     'nar_eksisi': 'Soslar/nar_eksisi.png',
     'pesto_sos': 'Soslar/pesto_sos.png',
     'soya_sos': 'Soslar/soya_sos.png',
     'sriracha_sos': 'Soslar/sriracha_sos.png',
     'sweet_chilli': 'Soslar/sweet_chilli.png',
+    'sweet_sour': 'Soslar/sweet_sour.png',
+    'tahin': 'Soslar/tahin.png',
     'truflu_mayonez': 'Soslar/truflu_mayonez.png',
+    'uzum_sirkesi': 'Soslar/uzum_sirkesi.png',
     'yogurt_sos': 'Soslar/yogurt_sos.png',
     'zeytinyag_limon_sos': 'Soslar/zeytinyag_limon_sos.png',
 
     // ---- Turşular ----
+    'kapari': 'Turşular/kapari.png',
     'kornison_tursu': 'Turşular/kornison_tursu.png',
     'mor_lahana_tursusu': 'Turşular/mor_lahana_tursusu.png',
     // 'jalepeno_tursusu.png' is the confirmed photo for the "Jalapeño"

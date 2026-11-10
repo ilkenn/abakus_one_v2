@@ -11356,4 +11356,59 @@ passing, 0 failures.
 - Wrap & Tartine: supplied photos were byte-identical to existing files. Renamed to catalog stems:
   `kahvalti-wrap`, `kofte-wrap`, `acili-bonfile-wrap` (was dana-bonfile-wrap), tartine `pollo-croccante`.
   Removed 3 wrap photos with no active product (avokado, salmon, mexico-steak), owner-approved.
+- Tooling: `tool/remove_background.py` (owner-requested, local-only, not part of the app build) turns
+  modifier photos into transparent PNGs with rembg (`isnet-general-use` model). Needs Python +
+  `pip install rembg onnxruntime pillow`; see the script header for usage.
 - **Visual Review Bekleniyor**.
+
+### Modifier photos: Soslar (2026-11-10)
+
+- 17 sauce photos, backgrounds removed with `tool/remove_background.py`, saved under
+  `assets/images/products/Soslar/`; 10 replace older photos (mayonez, balli_hardal, hardal_sos, soya_sos,
+  nar_eksisi, barbeku_sos, sriracha_sos, sweet_chilli, yogurt_sos, zeytinyag_limon_sos).
+- 7 sauces get a photo for the first time (Acılı Mayonez, Balsamic, Elma Sirkesi, Ketçap, Sweet Sour,
+  Tahin, Üzüm Sirkesi): new keys in `IngredientImageResolver` and `ModifierOptionImageResolver`.
+- Abaküs Sos shares the Acılı Mayonez photo until it has its own (owner decision).
+- Every Bowl and cross-sell sauce option now resolves to an existing file (new test).
+- **Visual Review Bekleniyor**.
+
+### Modifier photos: Salata, Karbonhidrat, Meyve (2026-11-10)
+
+- 18 already-transparent photos, trimmed and resized with `tool/remove_background.py --no-removal`
+  (new flag: skip rembg, only trim/resize). 13 replace older photos (Çoban/Mevsim Salata, Marul, Roka,
+  Bulgur, Körili/Kekikli/Pestolu Makarna, Kuskus, Basmati, Kızarmış Ananas, Nar, Yaban Mersini).
+- New photos: Roka Salata, Kısır, Kremalı Makarna, Frenk Üzümü, Kurutulmuş Üzüm. Bulgur, Kısır,
+  Kremalı Makarna and both dried-fruit options get a photo for the first time; Roka Salata no longer
+  borrows the plain Roka photo.
+- Every option in the salad / carb / fruit groups now resolves to an existing file (test extended).
+- The black-and-white rice photo became Meksika Pilavı (owner decision).
+- **Visual Review Bekleniyor**.
+
+### Modifier photos: Peynir & Protein (2026-11-10)
+
+- 24 photos (4 cheese, 20 protein). rembg removed the cream bowls together with the white background,
+  so the 17 white-background bowl photos were cut with a circular mask around the bowl instead.
+- 15 replace older photos; 9 options get a photo for the first time (Labne, Tatlı Acı Tavuk, Kremalı
+  Kekikli / Mantarlı Tavuk, Pestolu Tavuk, Izgara Tavuk Pirzola, Acılı Dana Bonfile, Izgara Somon,
+  Izgara Sebze Mix).
+- Every option in the cheese and extra-protein groups now resolves to an existing file (test extended).
+- **Visual Review Bekleniyor**.
+
+### Modifier photos: Sebze, Topping, Turşu (2026-11-10)
+
+- 24 photos: 12 vegetables, 8 toppings (new, under `Diğerleri/`), 4 pickles (white-background bowls
+  cut with a circular mask). New: Izgara Yeşil Biber, Yeşil Biber, Kapari and all 8 Toppings options.
+- Every option in the vegetable, pickle and toppings groups now resolves to an existing file.
+- Still without a photo: 8 Içecekler + 3 Gramajlı products, the 3 Patates Tercihi options, and Tofu
+  (Bowl Builder).
+- **Visual Review Bekleniyor**.
+
+### Bowl Builder: 14 ingredients removed (2026-11-10)
+
+- Owner request: Beyaz / Siyah / Karışık Basmati, Meyhane Pilavı, Bulgur Pilavı, Makarna, Kıvırcık Marul,
+  Baby Ispanak, Kırmızı Soğan, Mor Lahana, Yeşil Elma, Ahududu, Böğürtlen and Soğan Turşusu deleted from
+  `LocalBowlBuilderCatalogRepository` (64 -> 50 ingredients). Karbonhidratlar now has 3 options
+  (Meksika Pilavı, Kinoa, Kuskus).
+- `menu_catalog_export.json` (both copies) regenerated with `tool/export_menu_catalog.dart`.
+- The canonical-catalog migration only upserts, so existing Firestore/emulator `bowlIngredients` docs for
+  these 14 are not deleted automatically.

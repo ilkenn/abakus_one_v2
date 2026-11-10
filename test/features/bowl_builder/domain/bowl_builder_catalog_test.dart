@@ -136,14 +136,26 @@ void main() {
   });
 
   test('daha once gercek olarak verilen diger fiyatlar korunmustur', () {
-    expect(repository.ingredientById('bb_carbs_makarna')!.price, 20);
-    expect(repository.ingredientById('bb_salad_baby_ispanak')!.price, 30);
     expect(repository.ingredientById('bb_salad_coban_salata')!.price, 30);
-    expect(repository.ingredientById('bb_pickle_sogan_tursu')!.price, 20);
     expect(repository.ingredientById('bb_pickle_jalapeno')!.price, 20);
     expect(repository.ingredientById('bb_vegetable_havuc')!.price, 20);
-    expect(repository.ingredientById('bb_vegetable_kirmizi_sogan')!.price, 30);
     expect(repository.ingredientById('bb_vegetable_kapya_biber')!.price, 40);
-    expect(repository.ingredientById('bb_vegetable_mor_lahana')!.price, 50);
+  });
+
+  // 2026-11-10 — removed from the Bowl Builder at the owner's request.
+  test('kaldirilan 14 malzeme katalogda yer almaz', () {
+    for (final id in [
+      'bb_carbs_beyaz_basmati',
+      'bb_carbs_siyah_basmati',
+      'bb_carbs_meyhane_pilavi',
+      'bb_carbs_makarna',
+      'bb_salad_kivircik_marul',
+      'bb_salad_baby_ispanak',
+      'bb_vegetable_kirmizi_sogan',
+      'bb_vegetable_mor_lahana',
+      'bb_pickle_sogan_tursu',
+    ]) {
+      expect(repository.ingredientById(id), isNull, reason: id);
+    }
   });
 }

@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:abakus_one_v2/features/bowl_builder/domain/services/ingredient_image_resolver.dart';
+import 'package:abakus_one_v2/features/menu/data/standard_modifier_groups.dart';
 import 'package:abakus_one_v2/features/menu/domain/services/modifier_option_image_resolver.dart';
 
 void main() {
@@ -36,24 +40,49 @@ void main() {
           'sweet_chilli');
     });
 
-    test(
-        'returns null for a 2026-11-09 option with no confident match '
-        '(no "somon"/"tahin"/"walnut"/"labne" photo exists)', () {
-      expect(
-          ModifierOptionImageResolver.imageKeyFor('protein_addon_izgara_somon'),
-          isNull);
-      expect(
-          ModifierOptionImageResolver.imageKeyFor('bowl_sauce_tahin'), isNull);
-      expect(ModifierOptionImageResolver.imageKeyFor('topping_ceviz'), isNull);
-      expect(ModifierOptionImageResolver.imageKeyFor('cheese_labne'), isNull);
-    });
-
     test('returns null for an option with no confident match, never a guess',
         () {
-      expect(ModifierOptionImageResolver.imageKeyFor('carb_kremali_makarna'),
-          isNull);
-      expect(ModifierOptionImageResolver.imageKeyFor('sauce_abakus'), isNull);
       expect(ModifierOptionImageResolver.imageKeyFor('fries_spicy'), isNull);
+    });
+
+    // 2026-11-10 — every option in these fully-photographed groups has a
+    // photo, and that photo really exists on disk.
+    test(
+        'every sauce / salad / carb / fruit / cheese / protein / veg / pickle / topping option resolves to an existing '
+        'asset file', () {
+      final options = [
+        ...StandardModifierGroups.bowlSauceGroup.options,
+        ...StandardModifierGroups.crossSellSauceGroup.options,
+        ...StandardModifierGroups.bowlSaladGroup.options,
+        ...StandardModifierGroups.bowlExtraSaladGroup.options,
+        ...StandardModifierGroups.bowlCarbGroup.options,
+        ...StandardModifierGroups.bowlExtraCarbGroup.options,
+        ...StandardModifierGroups.bowlFruitGroup.options,
+        ...StandardModifierGroups.bowlCheeseGroup.options,
+        ...StandardModifierGroups.bowlExtraProteinGroup.options,
+        ...StandardModifierGroups.bowlVegetableGroup.options,
+        ...StandardModifierGroups.bowlExtraVegetableGroup.options,
+        ...StandardModifierGroups.bowlPickleGroup.options,
+        ...StandardModifierGroups.bowlExtraPickleGroup.options,
+        ...StandardModifierGroups.bowlToppingsGroup.options,
+      ];
+      for (final option in options) {
+        final key = ModifierOptionImageResolver.imageKeyFor(option.id);
+        expect(key, isNotNull, reason: '${option.id} has no image key');
+        final path = IngredientImageResolver.resolve(key!);
+        expect(path, isNotNull, reason: '${option.id} -> $key has no path');
+        expect(File(path!).existsSync(), isTrue,
+            reason: '${option.id} -> $path is missing');
+      }
+    });
+
+    test('Abaküs Sos shares the Acılı Mayonez photo', () {
+      expect(
+        IngredientImageResolver.resolve(
+            ModifierOptionImageResolver.imageKeyFor('sauce_abakus')!),
+        IngredientImageResolver.resolve(
+            ModifierOptionImageResolver.imageKeyFor('sauce_acili_mayonez')!),
+      );
     });
 
     test('returns null for an unknown option id', () {

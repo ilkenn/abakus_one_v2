@@ -91,8 +91,8 @@ void main() {
     () {
       // "Tofu" icin sadece "citir_tofu.png" var, duz "tofu.png" yok.
       expect(IngredientImageResolver.resolve('tofu'), isNull);
-      // "Labne" icin hic foto yok.
-      expect(IngredientImageResolver.resolve('labne'), isNull);
+      // "Tavuk sote" icin hic foto yok (2026-11-10: labne/ceviz artik var).
+      expect(IngredientImageResolver.resolve('tavuk_sote'), isNull);
     },
   );
 
@@ -103,7 +103,11 @@ void main() {
       final missing = IngredientImageResolver.findMissingImageKeys(
         allImageKeys(),
       );
-      expect(missing.length, 21, reason: missing.join(', '));
+      // 2026-11-10: 21 -> 19 after the sauce photo batch.
+      // 19 -> 17 after the protein/cheese batch.
+      // 17 -> 15 after the veg/pickle/topping batch.
+      // 15 -> 1 after removing 14 ingredients (owner request); only Tofu left.
+      expect(missing.length, 1, reason: missing.join(', '));
     },
   );
 
@@ -114,7 +118,14 @@ void main() {
       final orphaned = IngredientImageResolver.findOrphanedImageKeys(
         allImageKeys(),
       );
-      expect(orphaned.length, 35, reason: orphaned.join(', '));
+      // 2026-11-10: 35 -> 41 — the new sauce photos (balsamic, elma_sirkesi,
+      // sweet_sour, uzum_sirkesi, acili_mayonez, abakus_sos) are used by
+      // product modifier options, not by the Bowl Builder catalog.
+      // 41 -> 46 — roka_salata, kisir, kremali_makarna, frenk_uzumu and
+      // kurutulmus_uzum are product-modifier photos, not Bowl Builder ones.
+      // 46 -> 53 — 7 protein/cheese photos used only by product modifiers.
+      // 53 -> 62 — topping/pepper/kapari photos used only by product modifiers.
+      expect(orphaned.length, 62, reason: orphaned.join(', '));
     },
   );
 }

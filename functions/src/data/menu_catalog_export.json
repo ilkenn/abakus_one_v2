@@ -1,5 +1,5 @@
 {
-  "exportedAt": "2026-11-10T14:28:36.752763",
+  "exportedAt": "2026-11-10T19:08:10.682181",
   "categories": [
     {
       "id": "cat_bowl",
@@ -39053,52 +39053,12 @@
       "sortOrder": 0
     },
     {
-      "id": "bb_carbs_beyaz_basmati",
-      "categoryId": "carbs",
-      "name": "Beyaz Basmati Pirinç",
-      "priceMinorUnits": 1500,
-      "isAvailable": true,
-      "sortOrder": 1
-    },
-    {
-      "id": "bb_carbs_siyah_basmati",
-      "categoryId": "carbs",
-      "name": "Siyah Basmati Pirinç",
-      "priceMinorUnits": 1500,
-      "isAvailable": true,
-      "sortOrder": 2
-    },
-    {
-      "id": "bb_carbs_karisik_basmati",
-      "categoryId": "carbs",
-      "name": "Beyaz + Siyah Basmati Karışımı",
-      "priceMinorUnits": 1500,
-      "isAvailable": true,
-      "sortOrder": 3
-    },
-    {
-      "id": "bb_carbs_meyhane_pilavi",
-      "categoryId": "carbs",
-      "name": "Meyhane Pilavı",
-      "priceMinorUnits": 1500,
-      "isAvailable": true,
-      "sortOrder": 4
-    },
-    {
       "id": "bb_carbs_kinoa",
       "categoryId": "carbs",
       "name": "Kinoa",
       "priceMinorUnits": 2000,
       "isAvailable": true,
       "sortOrder": 5
-    },
-    {
-      "id": "bb_carbs_bulgur_pilavi",
-      "categoryId": "carbs",
-      "name": "Bulgur Pilavı",
-      "priceMinorUnits": 1500,
-      "isAvailable": true,
-      "sortOrder": 6
     },
     {
       "id": "bb_carbs_kuskus",
@@ -39109,14 +39069,6 @@
       "sortOrder": 7
     },
     {
-      "id": "bb_carbs_makarna",
-      "categoryId": "carbs",
-      "name": "Makarna",
-      "priceMinorUnits": 2000,
-      "isAvailable": true,
-      "sortOrder": 8
-    },
-    {
       "id": "bb_salad_mevsim",
       "categoryId": "salads",
       "name": "Mevsim Salata",
@@ -39125,28 +39077,12 @@
       "sortOrder": 0
     },
     {
-      "id": "bb_salad_kivircik_marul",
-      "categoryId": "salads",
-      "name": "Kıvırcık Marul",
-      "priceMinorUnits": 1500,
-      "isAvailable": true,
-      "sortOrder": 1
-    },
-    {
       "id": "bb_salad_roka",
       "categoryId": "salads",
       "name": "Roka",
       "priceMinorUnits": 1500,
       "isAvailable": true,
       "sortOrder": 2
-    },
-    {
-      "id": "bb_salad_baby_ispanak",
-      "categoryId": "salads",
-      "name": "Baby Ispanak",
-      "priceMinorUnits": 3000,
-      "isAvailable": true,
-      "sortOrder": 3
     },
     {
       "id": "bb_salad_coban_salata",
@@ -39189,28 +39125,12 @@
       "sortOrder": 3
     },
     {
-      "id": "bb_vegetable_kirmizi_sogan",
-      "categoryId": "vegetables",
-      "name": "Kırmızı Soğan",
-      "priceMinorUnits": 3000,
-      "isAvailable": true,
-      "sortOrder": 4
-    },
-    {
       "id": "bb_vegetable_kapya_biber",
       "categoryId": "vegetables",
       "name": "Kapya Biber",
       "priceMinorUnits": 4000,
       "isAvailable": true,
       "sortOrder": 5
-    },
-    {
-      "id": "bb_vegetable_mor_lahana",
-      "categoryId": "vegetables",
-      "name": "Mor Lahana",
-      "priceMinorUnits": 5000,
-      "isAvailable": true,
-      "sortOrder": 6
     },
     {
       "id": "bb_vegetable_meksika_fasulyesi",
@@ -39229,14 +39149,6 @@
       "sortOrder": 0
     },
     {
-      "id": "bb_fruit_yesil_elma",
-      "categoryId": "fruits",
-      "name": "Yeşil Elma",
-      "priceMinorUnits": 1500,
-      "isAvailable": true,
-      "sortOrder": 1
-    },
-    {
       "id": "bb_fruit_nar",
       "categoryId": "fruits",
       "name": "Nar",
@@ -39253,22 +39165,6 @@
       "sortOrder": 3
     },
     {
-      "id": "bb_fruit_ahududu",
-      "categoryId": "fruits",
-      "name": "Ahududu",
-      "priceMinorUnits": 2000,
-      "isAvailable": true,
-      "sortOrder": 4
-    },
-    {
-      "id": "bb_fruit_bogurtlen",
-      "categoryId": "fruits",
-      "name": "Böğürtlen",
-      "priceMinorUnits": 2000,
-      "isAvailable": true,
-      "sortOrder": 5
-    },
-    {
       "id": "bb_pickle_mor_lahana",
       "categoryId": "pickles",
       "name": "Mor Lahana Turşusu",
@@ -39283,14 +39179,6 @@
       "priceMinorUnits": 1000,
       "isAvailable": true,
       "sortOrder": 1
-    },
-    {
-      "id": "bb_pickle_sogan_tursu",
-      "categoryId": "pickles",
-      "name": "Soğan Turşusu",
-      "priceMinorUnits": 2000,
-      "isAvailable": true,
-      "sortOrder": 2
     },
     {
       "id": "bb_pickle_jalapeno",

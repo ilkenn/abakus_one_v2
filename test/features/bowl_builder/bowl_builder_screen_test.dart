@@ -506,18 +506,16 @@ void main() {
       await tapCategory(tester, 'Salatalar');
 
       await tapIngredientToggle(tester, 'Mevsim Salata'); // 15
-      await tapIngredientToggle(tester, 'Kıvırcık Marul'); // 15
       await tapIngredientToggle(tester, 'Roka'); // 15
-      await tapIngredientToggle(tester, 'Baby Ispanak'); // 30
+      await tapIngredientToggle(tester, 'Çoban Salata'); // 30
 
       final container = ProviderScope.containerOf(
           tester.element(find.byType(BowlBuilderScreen)));
       final state = container.read(bowlBuilderProvider);
       expect(state.quantityFor('bb_salad_mevsim'), 1);
-      expect(state.quantityFor('bb_salad_kivircik_marul'), 1);
       expect(state.quantityFor('bb_salad_roka'), 1);
-      expect(state.quantityFor('bb_salad_baby_ispanak'), 1);
-      expect(find.text('75 TL'), findsWidgets); // 15+15+15+30
+      expect(state.quantityFor('bb_salad_coban_salata'), 1);
+      expect(find.text('60 TL'), findsWidgets); // 15+15+30
     });
   });
 
@@ -870,8 +868,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tapCategory(tester, 'Karbonhidratlar');
-      await tapIngredientAdd(tester, 'Beyaz + Siyah Basmati Karışımı');
+      await tapCategory(tester, 'Proteinler');
+      await tapIngredientAdd(tester, 'Tatlı Ekşi Tavuk');
       await tapBowluIncele(tester);
 
       expect(tester.takeException(), isNull);
@@ -1339,8 +1337,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tapCategory(tester, 'Karbonhidratlar');
-      await scrollToIngredient(tester, 'Beyaz + Siyah Basmati Karışımı');
+      await tapCategory(tester, 'Proteinler');
+      await scrollToIngredient(tester, 'Tatlı Ekşi Tavuk');
 
       expect(tester.takeException(), isNull);
     });

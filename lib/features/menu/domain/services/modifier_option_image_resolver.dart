@@ -27,6 +27,12 @@ abstract final class ModifierOptionImageResolver {
     'carb_kremali_pestolu_makarna': 'pesto_makarna',
     'carb_kremali_korili_makarna': 'kori_makarna',
     'carb_kremali_kekikli_makarna': 'kekikli_makarna',
+    'carb_bulgur': 'sehriyeli_bulgur_pilavi',
+    'carb_kremali_makarna': 'kremali_makarna',
+    'carb_kisir': 'kisir',
+    'extra_carb_bulgur': 'sehriyeli_bulgur_pilavi',
+    'extra_carb_kremali_makarna': 'kremali_makarna',
+    'extra_carb_kisir': 'kisir',
     'extra_carb_basmati': 'pirinc_pilavi',
     'extra_carb_meksika': 'meksika_pilavi',
     'extra_carb_kuskus': 'kuskus',
@@ -38,12 +44,12 @@ abstract final class ModifierOptionImageResolver {
     'salad_mevsim': 'mevsim_salata',
     'salad_marul': 'marul',
     'salad_roka': 'roka',
-    'salad_roka_salata': 'roka',
+    'salad_roka_salata': 'roka_salata',
     'salad_coban': 'coban_salata',
     'extra_salad_marul': 'marul',
     'extra_salad_mevsim': 'mevsim_salata',
     'extra_salad_roka': 'roka',
-    'extra_salad_roka_salata': 'roka',
+    'extra_salad_roka_salata': 'roka_salata',
     'extra_salad_coban': 'coban_salata',
 
     // Sebze (2026-11-09, BR-BOWL-011)
@@ -60,6 +66,10 @@ abstract final class ModifierOptionImageResolver {
     'veg_rende_havuc': 'rende_havuc',
     'veg_izgara_havuc': 'izgara_havuc',
     'veg_meksika_fasulyesi': 'meksika_fasulyesi',
+    'veg_izgara_yesil_biber': 'izgara_yesil_biber',
+    'veg_yesil_biber': 'yesil_biber',
+    'extra_veg_izgara_yesil_biber': 'izgara_yesil_biber',
+    'extra_veg_yesil_biber': 'yesil_biber',
     'extra_veg_mantar_sote': 'mantar_sote',
     'extra_veg_ceri_domates': 'ceri_domates',
     'extra_veg_misir': 'misir',
@@ -77,11 +87,24 @@ abstract final class ModifierOptionImageResolver {
     'fruit_yaban_mersini': 'yaban_mersini',
     'fruit_nar': 'nar',
     'fruit_kizarmis_ananas': 'kizarmis_ananas',
+    'fruit_frenk_uzumu': 'frenk_uzumu',
+    'fruit_kurutulmus_uzum': 'kurutulmus_uzum',
 
     // Turşu
     'pickle_mor_lahana': 'mor_lahana_tursusu',
     'pickle_kornison': 'kornison_tursu',
     'pickle_jalapeno': 'jalapeno',
+    'pickle_kapari': 'kapari',
+    'extra_pickle_kapari': 'kapari',
+    // Toppings (2026-11-10)
+    'topping_siyah_zeytin': 'siyah_zeytin',
+    'topping_yesil_zeytin': 'yesil_zeytin',
+    'topping_kabak_cekirdegi': 'kabak_cekirdegi',
+    'topping_ceviz': 'ceviz',
+    'topping_corekotu_susam': 'corekotu_susam',
+    'topping_chia': 'chia',
+    'topping_keten': 'keten_tohumu',
+    'topping_yogurt': 'yogurt',
     'extra_pickle_mor_lahana': 'mor_lahana_tursusu',
     'extra_pickle_kornison': 'kornison_tursu',
     'extra_pickle_jalapeno': 'jalapeno',
@@ -92,6 +115,8 @@ abstract final class ModifierOptionImageResolver {
     'sauce_barbeku': 'barbeku_sos',
     'sauce_sriracha': 'sriracha_sos',
     'sauce_trufflu_mayonez': 'truflu_mayonez',
+    'sauce_acili_mayonez': 'acili_mayonez',
+    'sauce_abakus': 'abakus_sos',
 
     // Bowl Sos (2026-11-09)
     'bowl_sauce_zeytinyag_limon': 'zeytinyag_limon_sos',
@@ -104,6 +129,14 @@ abstract final class ModifierOptionImageResolver {
     'bowl_sauce_barbeku': 'barbeku_sos',
     'bowl_sauce_hardal': 'hardal_sos',
     'bowl_sauce_balli_hardal': 'balli_hardal',
+    'bowl_sauce_uzum_sirkesi': 'uzum_sirkesi',
+    'bowl_sauce_sweet_sour': 'sweet_sour',
+    'bowl_sauce_tahin': 'tahin',
+    'bowl_sauce_ketcap': 'ketcap',
+    'bowl_sauce_elma_sirkesi': 'elma_sirkesi',
+    'bowl_sauce_acili_mayonez': 'acili_mayonez',
+    'bowl_sauce_balsamic': 'balsamic',
+    'bowl_sauce_abakus': 'abakus_sos',
 
     // Ekstra Protein (2026-11-09)
     'protein_addon_tatli_eksi_tavuk': 'tatli_eksi_tavuk',
@@ -118,11 +151,20 @@ abstract final class ModifierOptionImageResolver {
     'protein_addon_somon_fume': 'somon_fume',
     'protein_addon_falafel': 'falafel',
     'protein_addon_soya_soslu_tavuk': 'soya_tavuk',
+    'protein_addon_tatli_aci_tavuk': 'tatli_aci_tavuk',
+    'protein_addon_kremali_kekikli_tavuk': 'kremali_kekikli_tavuk',
+    'protein_addon_kremali_mantarli_tavuk': 'kremali_mantarli_tavuk',
+    'protein_addon_pestolu_tavuk': 'pestolu_tavuk',
+    'protein_addon_izgara_tavuk_pirzola': 'izgara_tavuk_pirzola',
+    'protein_addon_acili_dana_bonfile': 'acili_dana_bonfile',
+    'protein_addon_izgara_somon': 'izgara_somon',
+    'protein_addon_izgara_sebze_mix': 'izgara_sebze_mix',
 
     // Toppings / Peynir (2026-11-09)
     'cheese_beyaz': 'beyaz_peynir',
     'cheese_cheddar': 'cheddar_peyniri',
     'cheese_parmesan': 'parmesan_peyniri',
+    'cheese_labne': 'labne',
   };
 
   /// The Bowl Builder ingredient `imageKey` to resolve for [optionId], or
