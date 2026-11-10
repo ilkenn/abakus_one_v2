@@ -27,6 +27,48 @@ class _FakeProductImageSource implements ProductImageSource {
 }
 
 void main() {
+  // 2026-11-10 — ResizeImage with BOTH width and height decodes to exactly
+  // that size and squashes the photo (the product-detail hero bug). Only
+  // the box's longer side may bound the decode; `BoxFit.cover` does the rest.
+  testWidgets(
+    'decode boyutu yalnizca kutunun uzun kenariyla sinirlanir, en-boy orani '
+    'korunur ve BoxFit.cover kullanilir',
+    (tester) async {
+      Future<ResizeImage> pumpBox(double width, double height) async {
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              productImageSourceProvider.overrideWithValue(
+                _FakeProductImageSource((key) => MemoryImage(_tinyPngBytes)),
+              ),
+            ],
+            child: MaterialApp(
+              home: MediaQuery(
+                data: const MediaQueryData(devicePixelRatio: 2),
+                child: Scaffold(
+                  body:
+                      ProductImage(imageKey: 'k', width: width, height: height),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final image = tester.widget<Image>(find.byType(Image));
+        expect(image.fit, BoxFit.cover);
+        return image.image as ResizeImage;
+      }
+
+      final wide = await pumpBox(400, 320);
+      expect(wide.width, 800);
+      expect(wide.height, isNull);
+
+      final tall = await pumpBox(100, 160);
+      expect(tall.width, isNull);
+      expect(tall.height, 320);
+    },
+  );
+
   testWidgets(
     'kaynak null donunce placeholder gosterir, gercek Image render edilmez',
     (tester) async {

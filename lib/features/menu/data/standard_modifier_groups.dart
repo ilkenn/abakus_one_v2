@@ -16,12 +16,17 @@ abstract final class StandardModifierGroups {
   StandardModifierGroups._();
 
   /// Bowl's "ÇIKARILACAK STANDART MALZEMELER" — a universal, fixed list
-  /// for every Bowl product (`cat_bowl2`): the standard base's two
-  /// vegetables (BR-BOWL-011). The pickle lives only in
-  /// [bowlPickleGroup] ("Turşu İstemiyorum" covers removing it).
+  /// for every Bowl product (`cat_bowl2`): the whole standard base
+  /// (BR-BOWL-011), each removable at 0 TL without touching a swap group
+  /// (product owner, 2026-11-10 — supersedes the 2026-10-30 rule that kept
+  /// the pickle only in [bowlPickleGroup]). The product's main protein is
+  /// appended per product by `AbakusMenuCatalog`.
   static const List<String> bowlRemovableIngredients = [
+    'Basmati Pirinç Pilavı',
+    'Mevsim Salata',
     'Mısır',
     'Susamlı Çörekotlu Salatalık',
+    'Mor Lahana Turşusu',
   ];
 
   // ---------------------------------------------------------------------
@@ -33,7 +38,9 @@ abstract final class StandardModifierGroups {
   // * DEĞİŞİM (swap): single-select, locked to its own group (carb only
   //   swaps for carb, etc.), at most 1 per group, priced at the PDF's
   //   "Değişim Fiyatı" (free ones are 0 TL). The standard item is the
-  //   default.
+  //   default. 2026-11-10: swap groups only offer alternatives — no
+  //   "… İstemiyorum" option; removing a base item is done through the
+  //   "İçindekiler" chips ([bowlRemovableIngredients]).
   // * EKSTRA (add-on): multi-select, every option at the PDF's "Ekstra
   //   Fiyatı". Fruit, cheese, toppings, extra protein and sauces are
   //   extra-only (no swap right). Sauces have no free/included sauce.
@@ -69,7 +76,6 @@ abstract final class StandardModifierGroups {
           name: 'Kremalı Kekikli Makarna',
           extraPrice: 30),
       ModifierOption(id: 'carb_kisir', name: 'Kısır', extraPrice: 50),
-      ModifierOption(id: 'carb_none', name: 'Karbonhidrat İstemiyorum'),
     ],
   );
 
@@ -89,7 +95,6 @@ abstract final class StandardModifierGroups {
       ModifierOption(
           id: 'salad_roka_salata', name: 'Roka Salata', extraPrice: 40),
       ModifierOption(id: 'salad_coban', name: 'Çoban Salata', extraPrice: 50),
-      ModifierOption(id: 'salad_none', name: 'Salata İstemiyorum'),
     ],
   );
 
@@ -154,7 +159,6 @@ abstract final class StandardModifierGroups {
       ModifierOption(
           id: 'pickle_jalapeno', name: 'Jalapeno Turşusu', extraPrice: 30),
       ModifierOption(id: 'pickle_kapari', name: 'Kapari', extraPrice: 40),
-      ModifierOption(id: 'pickle_none', name: 'Turşu İstemiyorum'),
     ],
   );
 

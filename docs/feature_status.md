@@ -11323,3 +11323,12 @@ passing, 0 failures.
 - Customer product detail shows removable ingredients as "İçindekiler" chips: active by default,
   struck through when removed. Kitchen ticket shows "ÇIKAR: …".
 - **Visual Review Bekleniyor**.
+
+### Bowl base removables, Orders/KDS load fix, product photo aspect ratio (ADR-073, 2026-11-10)
+
+- Bowl "İçindekiler" chips: Basmati Pirinç Pilavı, Mevsim Salata, Mısır, Susamlı Çörekotlu
+  Salatalık, Mor Lahana Turşusu + main protein. Swap groups no longer offer "… İstemiyorum".
+- Admin Siparişler and KDS load again: the client now knows the server's
+  `cancelledAfterAcceptance` line status. KDS shows an error with retry instead of an endless spinner.
+- Product photos keep their aspect ratio (decode no longer forced to the box's exact size).
+- **Visual Review Bekleniyor**.

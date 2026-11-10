@@ -390,6 +390,24 @@ void main() {
     ModifierGroup group(String id) =>
         bowl.modifierGroups.firstWhere((g) => g.id == id);
 
+    test(
+        'swap groups offer alternatives only — no "İstemiyorum" option '
+        '(removal is done via the İçindekiler chips, 2026-11-10)', () {
+      for (final id in [
+        'bowl_carb',
+        'bowl_salad',
+        'bowl_vegetable',
+        'bowl_pickle',
+      ]) {
+        expect(
+          group(id).options.where(
+              (o) => o.id.endsWith('_none') || o.name.contains('İstemiyorum')),
+          isEmpty,
+          reason: id,
+        );
+      }
+    });
+
     test('21 ready Bowls share the same 13 groups', () {
       final bowls = AbakusMenuCatalog.products
           .where((p) => p.categoryId == 'cat_bowl2')
@@ -482,12 +500,16 @@ void main() {
         // 2026-10-30 correction: "Mor Lahana Turşusu" removed — it now
         // lives only in the Turşu Hakkı radio group, never as a separate
         // removable-ingredient checkbox (product owner's own fix for the
-        // duplicate it used to create). 2026-11-10: the main protein is
-        // removable too (none on the Izgara Sebze Mix bowl).
+        // duplicate it used to create). 2026-11-10: superseded — the whole
+        // standard base is removable, plus the main protein (none on the
+        // Izgara Sebze Mix bowl).
         product.removableIngredients,
         [
+          'Basmati Pirinç Pilavı',
+          'Mevsim Salata',
           'Mısır',
           'Susamlı Çörekotlu Salatalık',
+          'Mor Lahana Turşusu',
           if (protein != null) protein,
         ],
         reason:

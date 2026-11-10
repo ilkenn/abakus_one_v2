@@ -1,5 +1,5 @@
 {
-  "exportedAt": "2026-11-10T12:07:59.057375",
+  "exportedAt": "2026-11-10T14:28:36.752763",
   "categories": [
     {
       "id": "cat_bowl",
@@ -7380,12 +7380,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -7425,12 +7419,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -7565,12 +7553,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -8265,12 +8247,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -8310,12 +8286,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -8450,12 +8420,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -9151,12 +9115,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -9196,12 +9154,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -9336,12 +9288,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -10036,12 +9982,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -10081,12 +10021,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -10221,12 +10155,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -10922,12 +10850,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -10967,12 +10889,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -11107,12 +11023,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -11807,12 +11717,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -11852,12 +11756,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -11992,12 +11890,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -12693,12 +12585,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -12738,12 +12624,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -12878,12 +12758,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -13579,12 +13453,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -13624,12 +13492,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -13764,12 +13626,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -14465,12 +14321,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -14510,12 +14360,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -14650,12 +14494,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -15351,12 +15189,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -15396,12 +15228,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -15536,12 +15362,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -16237,12 +16057,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -16282,12 +16096,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -16422,12 +16230,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -17122,12 +16924,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -17167,12 +16963,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -17307,12 +17097,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -18007,12 +17791,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -18052,12 +17830,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -18192,12 +17964,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -18893,12 +18659,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -18938,12 +18698,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -19078,12 +18832,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -19779,12 +19527,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -19824,12 +19566,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -19964,12 +19700,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -20665,12 +20395,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -20710,12 +20434,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -20850,12 +20568,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -21549,12 +21261,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -21594,12 +21300,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -21734,12 +21434,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -22434,12 +22128,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -22479,12 +22167,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -22619,12 +22301,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -23319,12 +22995,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -23364,12 +23034,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -23504,12 +23168,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -24204,12 +23862,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -24249,12 +23901,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -24389,12 +24035,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -25088,12 +24728,6 @@
               "name": "Kısır",
               "extraPriceMinorUnits": 5000,
               "isAvailable": true
-            },
-            {
-              "id": "carb_none",
-              "name": "Karbonhidrat İstemiyorum",
-              "extraPriceMinorUnits": 0,
-              "isAvailable": true
             }
           ]
         },
@@ -25133,12 +24767,6 @@
               "id": "salad_coban",
               "name": "Çoban Salata",
               "extraPriceMinorUnits": 5000,
-              "isAvailable": true
-            },
-            {
-              "id": "salad_none",
-              "name": "Salata İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]
@@ -25273,12 +24901,6 @@
               "id": "pickle_kapari",
               "name": "Kapari",
               "extraPriceMinorUnits": 4000,
-              "isAvailable": true
-            },
-            {
-              "id": "pickle_none",
-              "name": "Turşu İstemiyorum",
-              "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
           ]

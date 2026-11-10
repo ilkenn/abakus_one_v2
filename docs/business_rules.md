@@ -612,6 +612,11 @@ options layered on top of it.
     stay non-removable. Izgara Sebze Mix Bowl/Tava have no protein to remove.
   - Customer UI: removable ingredients are shown under "İçindekiler" as chips, active by default;
     a tap strikes the chip through. The kitchen ticket/receipt prints "ÇIKAR: <ingredients>".
+  - Bowls (later the same day): the whole standard base is removable as chips, without touching a
+    swap group — Basmati Pirinç Pilavı, Mevsim Salata, Mısır, Susamlı Çörekotlu Salatalık, Mor Lahana
+    Turşusu — plus the bowl's main protein. Supersedes the 2026-10-30 rule that kept Mor Lahana
+    Turşusu only in the pickle group. The swap groups no longer carry "… İstemiyorum" options —
+    they only offer alternatives; removal goes through the chips.
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Menu, POS
 

@@ -20669,3 +20669,40 @@ ingredient-removal UI (BR-MENU-MOD-001, 2026-11-10 amendment).
 - Still client-side catalog data; the longest removable list is 14 (server cap: 20).
 - The catalog export only changed by the new `fries_none` option; the emulator's burger/wrap
   `modifierGroups` were re-synced.
+
+## ADR-073 — Bowl base fully removable, client mirrors `cancelledAfterAcceptance`, KDS load-error state, image aspect ratio (2026-11-10)
+
+- Tarih: 2026-11-10
+- Durum: Accepted
+
+### Context
+
+Product owner's live check after ADR-072 found three problems: bowl chips only listed Mısır, Susamlı
+Çörekotlu Salatalık and the protein; on Windows, Admin Siparişler showed "Siparişler yüklenemedi" and
+the KDS board hung on "Mutfak ekranı yükleniyor..."; the product-detail photo looked squashed.
+
+### Decision
+
+- **Bowl removables** = the whole standard base (Basmati Pirinç Pilavı, Mevsim Salata, Mısır,
+  Susamlı Çörekotlu Salatalık, Mor Lahana Turşusu) + the main protein. Supersedes the 2026-10-30
+  "pickle only in the Turşu group" rule. The swap groups' "Karbonhidrat / Salata / Turşu
+  İstemiyorum" options (`carb_none`/`salad_none`/`pickle_none`) were removed (product owner
+  approved): swap groups only offer alternatives, and the chips are the one way to drop a base item.
+- **Orders/KDS root cause** (verified with a Windows probe against the emulator; Firestore
+  connection, rules and indexes were all fine): `functions/src/checkFinancialAdjustments.ts` writes
+  the line status `cancelledAfterAcceptance` (AP-3 Wave 2), but the client `DineInLineStatus` enum
+  never had it, so `OrderFirestoreMapper.fromFirestore` threw on every order with a
+  manager-cancelled line (8 of 10 emulator orders) and broke the whole list. The enum now mirrors
+  the server value; the customer line-status notice labels it "İptal edildi". Not Windows-specific:
+  any platform reading those orders failed the same way.
+- **KDS**: a non-permission load failure before the first successful load now shows "Mutfak ekranı
+  yüklenemedi." with "Tekrar Dene", instead of an endless spinner.
+- **ProductImage**: decode sizing passed both `cacheWidth` and `cacheHeight` to `ResizeImage`,
+  which decodes to exactly that size and distorts the photo before `BoxFit.cover` runs. Only the
+  box's longer side bounds the decode now; the photo keeps its aspect ratio and is cover-cropped,
+  centred. Applies to every `ProductImage` call site.
+
+### Consequences
+
+- A genuinely unknown future line status still throws (kept deliberately strict); a more tolerant
+  per-document mapping in list views is a possible follow-up, not done here.

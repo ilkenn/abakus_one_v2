@@ -25,6 +25,13 @@ enum DineInLineStatus {
   /// A cashier proposed a substitute product/quantity — see
   /// [DineInCounterProposal] for the pending proposal's own snapshot.
   proposedChange,
+
+  /// A manager-approved cancellation of an already-accepted line — the
+  /// distinct terminal status `functions/src/checkFinancialAdjustments.ts`
+  /// writes (AP-3 Wave 2, never reusing [rejected]). 2026-11-10: missing
+  /// here until now, so any order carrying such a line failed to map and
+  /// broke every list it appeared in (Admin Siparişler, KDS).
+  cancelledAfterAcceptance,
 }
 
 DineInLineStatus dineInLineStatusFromWire(String? raw) {
@@ -35,6 +42,8 @@ DineInLineStatus dineInLineStatusFromWire(String? raw) {
       return DineInLineStatus.rejected;
     case 'proposedChange':
       return DineInLineStatus.proposedChange;
+    case 'cancelledAfterAcceptance':
+      return DineInLineStatus.cancelledAfterAcceptance;
     case 'accepted':
     case null:
       // `null` covers every line with no status field at all — see this

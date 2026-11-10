@@ -141,6 +141,11 @@ class _LineStatusNotice extends StatelessWidget {
           AppColors.error,
           Icons.cancel_outlined,
         ),
+      DineInLineStatus.cancelledAfterAcceptance => (
+          'İptal edildi',
+          AppColors.error,
+          Icons.cancel_outlined,
+        ),
       // A resolved (accepted/rejected) counter-proposal with no longer-
       // pending status still shows here briefly via the enclosing filter
       // only if `status` itself hasn't caught up to `accepted` yet — kept

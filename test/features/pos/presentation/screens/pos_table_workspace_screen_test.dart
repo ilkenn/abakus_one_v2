@@ -1749,6 +1749,10 @@ void main() {
         "modal's total and the pending cart's total", (tester) async {
       await openBowlCustomizationModal(tester);
 
+      // 2026-11-10: the Bowl's longer removable list (whole standard base)
+      // now pushes the swap groups below the modal's first screenful.
+      await tester.ensureVisible(find.text('Meksika Pilavı'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Meksika Pilavı'));
       await tester.pumpAndSettle();
       expect(find.widgetWithText(ElevatedButton, 'Kaydet (540 TL)'),

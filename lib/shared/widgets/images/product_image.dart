@@ -12,8 +12,10 @@ import 'product_image_source.dart';
 /// no real image exists for that key, instead of a broken image or a
 /// hardcoded fallback path.
 ///
-/// [width]/[height] also bound decode size via `cacheWidth`/`cacheHeight`
-/// (scaled by the device's pixel ratio) — the bundled source photos are
+/// [width]/[height] also bound decode size via `cacheWidth` OR
+/// `cacheHeight` (the box's longer side only, scaled by the device's pixel
+/// ratio, so the photo's own aspect ratio is kept) — the bundled source
+/// photos are
 /// several megabytes each at full resolution, so decoding them at their
 /// actual display size instead of native size meaningfully cuts memory and
 /// jank risk in image-heavy lists.
@@ -66,11 +68,20 @@ class ProductImage extends ConsumerWidget {
         ...source.resolveCandidates(key, categoryId: categoryId),
     ];
     final devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
-    final cacheWidth = (width != null && width!.isFinite)
-        ? (width! * devicePixelRatio).round()
-        : null;
-    final cacheHeight = (height != null && height!.isFinite)
-        ? (height! * devicePixelRatio).round()
+    final boxWidth = (width != null && width!.isFinite) ? width : null;
+    final boxHeight = (height != null && height!.isFinite) ? height : null;
+    // 2026-11-10 aspect-ratio fix: `ResizeImage` with BOTH a width and a
+    // height decodes to exactly that size, ignoring the photo's own aspect
+    // ratio — so a wide 320-high detail hero (or any non-matching box) got
+    // a squashed bitmap that `BoxFit.cover` could no longer correct. Only
+    // the box's longer side is passed now; the decoder derives the other
+    // from the photo itself, and `BoxFit.cover` crops it, centred.
+    final boundByWidth =
+        boxWidth != null && (boxHeight == null || boxWidth >= boxHeight);
+    final cacheWidth =
+        boundByWidth ? (boxWidth * devicePixelRatio).round() : null;
+    final cacheHeight = !boundByWidth && boxHeight != null
+        ? (boxHeight * devicePixelRatio).round()
         : null;
 
     final content =

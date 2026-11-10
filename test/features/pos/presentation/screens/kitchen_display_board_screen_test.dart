@@ -106,6 +106,37 @@ class _PermissionDeniedKitchenProjectionRepository
   }
 }
 
+/// 2026-11-10 — a non-permission failure, e.g. an order document the client
+/// cannot map (the real cause was a line status the client enum lacked).
+class _UnmappableOrderKitchenTicketRepository
+    implements KitchenTicketRepository {
+  @override
+  Future<void> save(KitchenTicket ticket) async {}
+
+  @override
+  Future<KitchenTicket?> findById(String ticketId) async => null;
+
+  @override
+  Future<List<KitchenTicket>> findByOrderId(OrderId orderId) async => const [];
+
+  @override
+  Future<List<KitchenTicket>> findActiveByBranch(
+    String branchId, {
+    required String organizationId,
+  }) {
+    throw StateError('Unknown dine-in line status "somethingNew"');
+  }
+
+  @override
+  Stream<List<KitchenTicket>> watchActiveByBranch(
+    String branchId, {
+    required String organizationId,
+  }) {
+    return Stream.error(
+        StateError('Unknown dine-in line status "somethingNew"'));
+  }
+}
+
 void main() {
   Future<void> pumpScreen(
     WidgetTester tester, {
@@ -265,6 +296,22 @@ void main() {
 
     expect(find.text('Bu şube için mutfak ekranı erişim yetkiniz yok.'),
         findsOneWidget);
+    expect(find.text('Mutfak ekranı yükleniyor...'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  // 2026-11-10 regression proof — a non-permission load failure before the
+  // first successful load used to leave the board on its spinner forever.
+  testWidgets(
+      'a non-permission load failure shows an error with retry, never an infinite loader',
+      (tester) async {
+    await pumpScreen(
+      tester,
+      ticketRepository: _UnmappableOrderKitchenTicketRepository(),
+    );
+
+    expect(find.text('Mutfak ekranı yüklenemedi.'), findsOneWidget);
+    expect(find.text('Tekrar Dene'), findsOneWidget);
     expect(find.text('Mutfak ekranı yükleniyor...'), findsNothing);
     expect(tester.takeException(), isNull);
   });

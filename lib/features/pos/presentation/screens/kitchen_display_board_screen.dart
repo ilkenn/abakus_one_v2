@@ -127,6 +127,11 @@ class _KitchenDisplayBoardScreenState
   /// render stale/partial data once this is true.
   bool _accessDenied = false;
 
+  /// Set when a load fails for any reason other than [_accessDenied]; while
+  /// no board data has loaded yet, this shows an error with a retry instead
+  /// of the loading spinner.
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -181,7 +186,22 @@ class _KitchenDisplayBoardScreenState
       });
       return;
     }
-    setState(() => _message = 'Mutfak ekranı yüklenirken bir sorun oluştu.');
+    // 2026-11-10: before the board's first successful load `_tickets` is
+    // still null, so a non-permission failure here (e.g. an order document
+    // the client can't map) used to leave the board on its loading spinner
+    // forever — `_message` is only rendered inside the loaded board.
+    setState(() {
+      _loadFailed = true;
+      _message = 'Mutfak ekranı yüklenirken bir sorun oluştu.';
+    });
+  }
+
+  Future<void> _retryLoad() async {
+    setState(() {
+      _loadFailed = false;
+      _message = null;
+    });
+    await _load();
   }
 
   Future<void> _load() async {
@@ -244,6 +264,7 @@ class _KitchenDisplayBoardScreenState
     if (!mounted) return;
     setState(() {
       _accessDenied = false;
+      _loadFailed = false;
       _tickets = tickets;
       _workItemsByTicketId = grouped;
       _syncState = syncState;
@@ -506,40 +527,47 @@ class _KitchenDisplayBoardScreenState
               retryLabel: 'Tekrar Dene',
               onRetry: _load,
             )
-          : tickets == null || grouped == null
-              ? const LoadingView(message: 'Mutfak ekranı yükleniyor...')
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _StationFilterBar(
-                      selected: _selectedStation,
-                      lockedStation: _lockedStation,
-                      onSelected: (station) {
-                        setState(() => _selectedStation = station);
-                        _load();
-                      },
-                      onUnlock: _clearStationLock,
+          : (tickets == null || grouped == null) && _loadFailed
+              ? ErrorView(
+                  message: 'Mutfak ekranı yüklenemedi.',
+                  retryLabel: 'Tekrar Dene',
+                  onRetry: _retryLoad,
+                )
+              : tickets == null || grouped == null
+                  ? const LoadingView(message: 'Mutfak ekranı yükleniyor...')
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _StationFilterBar(
+                          selected: _selectedStation,
+                          lockedStation: _lockedStation,
+                          onSelected: (station) {
+                            setState(() => _selectedStation = station);
+                            _load();
+                          },
+                          onUnlock: _clearStationLock,
+                        ),
+                        _StatusFilterBar(
+                          selected: _statusFilter,
+                          onSelected: (filter) =>
+                              setState(() => _statusFilter = filter),
+                        ),
+                        if (widget.deviceId != null)
+                          _SyncStatusBar(state: _syncState, onResync: _resync),
+                        if (_message != null)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.lg,
+                                vertical: AppSpacing.xs),
+                            child: Text(_message!,
+                                style: AppTypography.bodySmall
+                                    .copyWith(color: AppColors.error)),
+                          ),
+                        Expanded(
+                          child: _buildBoard(tickets, grouped, now),
+                        ),
+                      ],
                     ),
-                    _StatusFilterBar(
-                      selected: _statusFilter,
-                      onSelected: (filter) =>
-                          setState(() => _statusFilter = filter),
-                    ),
-                    if (widget.deviceId != null)
-                      _SyncStatusBar(state: _syncState, onResync: _resync),
-                    if (_message != null)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
-                        child: Text(_message!,
-                            style: AppTypography.bodySmall
-                                .copyWith(color: AppColors.error)),
-                      ),
-                    Expanded(
-                      child: _buildBoard(tickets, grouped, now),
-                    ),
-                  ],
-                ),
     );
 
     if (_isFullscreen) {
