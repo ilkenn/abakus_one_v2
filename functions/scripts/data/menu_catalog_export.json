@@ -1,5 +1,5 @@
 {
-  "exportedAt": "2026-11-09T22:22:35.220468",
+  "exportedAt": "2026-11-10T12:07:59.057375",
   "categories": [
     {
       "id": "cat_bowl",
@@ -32829,6 +32829,12 @@
               "name": "Baharatsız Patates",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
             }
           ]
         },
@@ -32985,6 +32991,12 @@
             {
               "id": "fries_plain",
               "name": "Baharatsız Patates",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
@@ -33145,6 +33157,12 @@
               "name": "Baharatsız Patates",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
             }
           ]
         },
@@ -33300,6 +33318,12 @@
             {
               "id": "fries_plain",
               "name": "Baharatsız Patates",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
@@ -33460,6 +33484,12 @@
               "name": "Baharatsız Patates",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
             }
           ]
         },
@@ -33615,6 +33645,12 @@
             {
               "id": "fries_plain",
               "name": "Baharatsız Patates",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
@@ -33774,6 +33810,12 @@
               "name": "Baharatsız Patates",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
             }
           ]
         },
@@ -33929,6 +33971,12 @@
             {
               "id": "fries_plain",
               "name": "Baharatsız Patates",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
@@ -34089,6 +34137,12 @@
               "name": "Baharatsız Patates",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
             }
           ]
         },
@@ -34245,6 +34299,12 @@
             {
               "id": "fries_plain",
               "name": "Baharatsız Patates",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
@@ -34495,6 +34555,12 @@
               "name": "Baharatsız Patates",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
             }
           ]
         },
@@ -34741,6 +34807,12 @@
             {
               "id": "fries_plain",
               "name": "Baharatsız Patates",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
@@ -34991,6 +35063,12 @@
               "name": "Baharatsız Patates",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
             }
           ]
         },
@@ -35237,6 +35315,12 @@
             {
               "id": "fries_plain",
               "name": "Baharatsız Patates",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
@@ -35487,6 +35571,12 @@
               "name": "Baharatsız Patates",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
             }
           ]
         },
@@ -35733,6 +35823,12 @@
             {
               "id": "fries_plain",
               "name": "Baharatsız Patates",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
             }
@@ -35983,6 +36079,12 @@
               "name": "Baharatsız Patates",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
             }
           ]
         },
@@ -36229,6 +36331,12 @@
             {
               "id": "fries_plain",
               "name": "Baharatsız Patates",
+              "extraPriceMinorUnits": 0,
+              "isAvailable": true
+            },
+            {
+              "id": "fries_none",
+              "name": "Patates İstemiyorum",
               "extraPriceMinorUnits": 0,
               "isAvailable": true
             }

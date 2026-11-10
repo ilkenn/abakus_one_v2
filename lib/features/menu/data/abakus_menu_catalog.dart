@@ -204,7 +204,7 @@ abstract final class AbakusMenuCatalog {
   /// The raw, hand-authored product literals — never read directly outside
   /// this class. [products] is the real public surface: it layers the
   /// 2026-10-30 product-configurator's shared modifier groups (Bowl carb/
-  /// salad/pickle/extras on `cat_bowl2`, Patates/Ketçap&Mayonez on
+  /// salad/pickle/extras on `cat_bowl2`, Patates/Sos on
   /// `cat_hamburger2`/`cat_wrap2`, the cross-sell sauce group on every
   /// product) on top, so none of the ~190 literals below need editing by
   /// hand to carry them.
@@ -2034,13 +2034,27 @@ abstract final class AbakusMenuCatalog {
 
   /// `null` falls back to parsing the product's own ingredient-list
   /// description (Kahvaltı, Tartine) — see `MenuProduct.removableIngredients`.
+  ///
+  /// Burgers/Wraps also get the free Ketçap & Mayonez; Makarna, Bowl and
+  /// Tava products also get their main protein (2026-11-10).
   static List<String>? _removableIngredientsOverrideFor(MenuProduct product) {
+    final List<String>? base;
     if (product.categoryId == bowl2Category.id) {
-      return StandardModifierGroups.bowlRemovableIngredients;
+      base = StandardModifierGroups.bowlRemovableIngredients;
+    } else if (product.categoryId == tavaCategory.id) {
+      base = ProductRemovableIngredients.tava;
+    } else {
+      base = ProductRemovableIngredients.byProductId[product.id];
     }
-    if (product.categoryId == tavaCategory.id) {
-      return ProductRemovableIngredients.tava;
-    }
-    return ProductRemovableIngredients.byProductId[product.id];
+    final protein =
+        ProductRemovableIngredients.mainProteinByProductId[product.id];
+    final hasFriesSide = product.categoryId == hamburger2Category.id ||
+        product.categoryId == wrap2Category.id;
+    if (protein == null && !hasFriesSide) return base;
+    return [
+      ...?base,
+      if (protein != null) protein,
+      if (hasFriesSide) ...ProductRemovableIngredients.friesSideSauces,
+    ];
   }
 }

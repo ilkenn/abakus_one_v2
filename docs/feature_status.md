@@ -11314,3 +11314,12 @@ passing, 0 failures.
 - Every Bowl, Tava, Burger, Wrap, Makarna, Salata, Kahvaltı and Tartine product lists its
   recipe-based removable ingredients (0 TL).
 - **Visual Review Bekleniyor**.
+
+### Patates İstemiyorum, free Ketçap & Mayonez, protein removal, ingredient chips (ADR-072, 2026-11-10)
+
+- Patates Tercihi: Baharatlı / Baharatsız / Patates İstemiyorum, all 0 TL.
+- Burgers and wraps list Ketçap and Mayonez as removable ingredients (free by default).
+- The main protein is removable on Makarna, Bowl and Tava only; burgers keep their patty.
+- Customer product detail shows removable ingredients as "İçindekiler" chips: active by default,
+  struck through when removed. Kitchen ticket shows "ÇIKAR: …".
+- **Visual Review Bekleniyor**.

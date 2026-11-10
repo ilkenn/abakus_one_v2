@@ -205,6 +205,64 @@ void main() {
     },
   );
 
+  // 2026-11-10 — removable ingredients render as chips that start active;
+  // a tap strikes the chip through and sends the ingredient as removed at
+  // 0 TL (kitchen shows it as "ÇIKAR: <name>").
+  testWidgets(
+    'Icindekiler chipleri varsayilan aktif gelir, tiklaninca ustu cizilir ve '
+    'malzeme 0 TL ile cikarilir',
+    (tester) async {
+      const product = MenuProduct(
+        id: 'test_burger',
+        categoryId: 'test_cat',
+        name: 'Test Burger',
+        description: '',
+        basePrice: 100,
+        imageKey: 'does-not-exist',
+        removableIngredientsOverride: ['Marul', 'Ketçap', 'Mayonez'],
+      );
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: MaterialApp(home: ProductDetailScreen(product: product)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('İçindekiler'), findsOneWidget);
+      expect(
+        find.text('İstemediğiniz malzemeleri üzerine tıklayarak tabağınızdan '
+            'çıkarabilirsiniz.'),
+        findsOneWidget,
+      );
+
+      TextDecoration? decorationOf(String name) =>
+          tester.widget<Text>(find.text(name)).style?.decoration;
+      for (final name in ['Marul', 'Ketçap', 'Mayonez']) {
+        expect(decorationOf(name), TextDecoration.none, reason: name);
+      }
+
+      await tester.ensureVisible(find.text('Ketçap'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ketçap'));
+      await tester.pumpAndSettle();
+      expect(decorationOf('Ketçap'), TextDecoration.lineThrough);
+      expect(decorationOf('Mayonez'), TextDecoration.none);
+
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(ProductDetailScreen)));
+      await tester.ensureVisible(
+        find.widgetWithText(ElevatedButton, 'Sepete Ekle'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Sepete Ekle'));
+      await tester.pumpAndSettle();
+
+      final item = container.read(cartProvider).single;
+      expect(item.removedIngredients, ['Ketçap']);
+      expect(item.totalRowPrice, 100);
+    },
+  );
+
   // 2026-09-29 — Client Staleness Check: this is the screen a guest actually
   // adds an item to cart from, so it needs the same table-context/staleness
   // indicator MenuScreen/CartScreen already show, not just presence in the

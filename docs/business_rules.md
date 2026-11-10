@@ -602,6 +602,16 @@ options layered on top of it.
     - A product's standard-recipe ingredients may be removed, 0 TL.
     - The source is the menu PDF recipes.
     - The defining main component (gram-weighted protein, pasta base) is not offered for removal.
+- **Amended 2026-11-10** (product owner, ADR-072):
+  - Patates Tercihi: Baharatlı Patates / Baharatsız Patates / Patates İstemiyorum — single choice,
+    all 0 TL.
+  - Ketçap and Mayonez are served free with every fries-side product (Burgerler, Wrapler). They are
+    listed as removable ingredients (0 TL), active by default. They stay orderable as paid extras
+    in the Sos group.
+  - The main protein is removable (0 TL) ONLY on Makarna, Bowl and Tava products. Burger patties
+    stay non-removable. Izgara Sebze Mix Bowl/Tava have no protein to remove.
+  - Customer UI: removable ingredients are shown under "İçindekiler" as chips, active by default;
+    a tap strikes the chip through. The kitchen ticket/receipt prints "ÇIKAR: <ingredients>".
 - **Owner Agent**: restaurant_domain
 - **Related Modules**: Menu, POS
 

@@ -20635,3 +20635,37 @@ reuse the menu PDF's ingredient pool and prices (BR-MENU-MOD-001).
   `excludedIngredients` (at most 20 entries), and the longest list here has 14.
 - The export only carries the modifier groups.
 - On the local emulator, the `modifierGroups` of the 59 affected products were re-synced.
+
+## ADR-072 — Patates İstemiyorum restored, free Ketçap & Mayonez as removables, protein removal, ingredient chips (2026-11-10)
+
+- Tarih: 2026-11-10
+- Durum: Accepted (amends ADR-071)
+
+### Context
+
+After the visual check of ADR-071, the product owner changed three rules and asked for a chip-style
+ingredient-removal UI (BR-MENU-MOD-001, 2026-11-10 amendment).
+
+### Decision
+
+- **Patates Tercihi** (`fries_preference`) gets `fries_none` "Patates İstemiyorum" (0 TL) back,
+  next to Baharatlı / Baharatsız Patates. Still a required single choice; Baharatlı is the default.
+- **Ketçap & Mayonez** are free with Burgerler and Wrapler. Instead of re-adding a modifier group,
+  they are appended to those products' removable ingredients
+  (`ProductRemovableIngredients.friesSideSauces`), so the customer can leave them off at 0 TL.
+  The paid "Ketçap"/"Mayonez" options in the Sos group stay as extra portions.
+- **Main protein** is removable only on Makarna, Bowl and Tava
+  (`ProductRemovableIngredients.mainProteinByProductId`, names from the PDF recipe lines).
+  Burger patties are never listed. The protein-less Izgara Sebze Mix Bowl/Tava have no entry.
+- **Customer product detail**: the old "İçinden Çıkar" list of "<X> İstemiyorum" cards became an
+  "İçindekiler" section of chips. Every chip starts active (check icon); a tap makes it muted and
+  struck through, and the ingredient is sent as removed (0 TL). The section text reads "İstemediğiniz
+  malzemeleri üzerine tıklayarak tabağınızdan çıkarabilirsiniz."
+- The kitchen ticket and table receipt already print "ÇIKAR: <ingredients>", so no change was needed
+  there. The POS customization dialog keeps its existing list UI.
+
+### Consequences
+
+- Still client-side catalog data; the longest removable list is 14 (server cap: 20).
+- The catalog export only changed by the new `fries_none` option; the emulator's burger/wrap
+  `modifierGroups` were re-synced.

@@ -549,8 +549,8 @@ abstract final class StandardModifierGroups {
     bowlSauceGroup,
   ];
 
-  /// Burger/Wrap "PATATES TERCİHİ" — mandatory single-select, both options
-  /// free (BR-MENU-MOD-001, 2026-11-09: Baharatlı / Baharatsız only).
+  /// Burger/Wrap "PATATES TERCİHİ" — mandatory single-select, every option
+  /// free (BR-MENU-MOD-001; 2026-11-10: "Patates İstemiyorum" restored).
   static const ModifierGroup friesPreferenceGroup = ModifierGroup(
     id: 'fries_preference',
     name: 'Patates Tercihi',
@@ -562,6 +562,7 @@ abstract final class StandardModifierGroups {
       ModifierOption(
           id: 'fries_spicy', name: 'Baharatlı Patates', isDefault: true),
       ModifierOption(id: 'fries_plain', name: 'Baharatsız Patates'),
+      ModifierOption(id: 'fries_none', name: 'Patates İstemiyorum'),
     ],
   );
 

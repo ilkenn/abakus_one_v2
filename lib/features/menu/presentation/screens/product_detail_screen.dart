@@ -311,25 +311,26 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen>
                                 .product.removableIngredients.isNotEmpty) ...[
                               const Divider(height: AppSpacing.xxl),
                               const AppSectionHeader(
-                                title: 'İçinden Çıkar',
-                                subtitle:
-                                    'İstemediğiniz malzemeleri işaretleyin.',
+                                title: 'İçindekiler',
+                                subtitle: 'İstemediğiniz malzemeleri üzerine '
+                                    'tıklayarak tabağınızdan çıkarabilirsiniz.',
                               ),
                               const SizedBox(height: AppSpacing.sm),
-                              for (final ingredient
-                                  in widget.product.removableIngredients)
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                      bottom: AppSpacing.sm),
-                                  child: OptionSelectionCard(
-                                    name: '$ingredient İstemiyorum',
-                                    extraPrice: 0,
-                                    isSelected: _excludedIngredients
-                                        .contains(ingredient),
-                                    onTap: () =>
-                                        _toggleExcludedIngredient(ingredient),
-                                  ),
-                                ),
+                              Wrap(
+                                spacing: AppSpacing.sm,
+                                runSpacing: AppSpacing.sm,
+                                children: [
+                                  for (final ingredient
+                                      in widget.product.removableIngredients)
+                                    _IngredientChip(
+                                      name: ingredient,
+                                      isIncluded: !_excludedIngredients
+                                          .contains(ingredient),
+                                      onTap: () =>
+                                          _toggleExcludedIngredient(ingredient),
+                                    ),
+                                ],
+                              ),
                             ],
                             for (final group
                                 in widget.product.modifierGroups) ...[
@@ -758,6 +759,75 @@ class _NutritionRow extends StatelessWidget {
             ),
           )
           .toList(),
+    );
+  }
+}
+
+/// One removable ingredient as a tappable chip (2026-11-10): active (in the
+/// dish) by default; tapping it removes the ingredient at 0 TL, shown as a
+/// muted, struck-through chip. The kitchen sees it as "ÇIKAR: <name>".
+class _IngredientChip extends StatelessWidget {
+  final String name;
+  final bool isIncluded;
+  final VoidCallback onTap;
+
+  const _IngredientChip({
+    required this.name,
+    required this.isIncluded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      toggled: isIncluded,
+      label: isIncluded ? '$name, tabakta' : '$name, çıkarıldı',
+      excludeSemantics: true,
+      child: Material(
+        color:
+            isIncluded ? AppColors.primaryExtraLight : AppColors.surfaceVariant,
+        shape: RoundedRectangleBorder(
+          borderRadius: AppRadius.kPill,
+          side: BorderSide(
+            color: isIncluded ? AppColors.primary : AppColors.border,
+          ),
+        ),
+        child: InkWell(
+          borderRadius: AppRadius.kPill,
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: AppSpacing.xxxl),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isIncluded ? Icons.check : Icons.close,
+                    size: AppSpacing.lg,
+                    color: isIncluded
+                        ? AppColors.primary
+                        : AppColors.textSecondary,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Text(
+                    name,
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: isIncluded
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary,
+                      decoration: isIncluded
+                          ? TextDecoration.none
+                          : TextDecoration.lineThrough,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

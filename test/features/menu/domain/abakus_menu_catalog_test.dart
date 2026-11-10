@@ -4,6 +4,7 @@ import 'package:abakus_one_v2/features/menu/domain/models/sale_unit.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/modifier_group.dart';
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/data/abakus_menu_catalog.dart';
+import 'package:abakus_one_v2/features/menu/data/product_removable_ingredients.dart';
 import 'package:abakus_one_v2/features/menu/presentation/providers/menu_catalog_provider.dart';
 
 void main() {
@@ -290,7 +291,7 @@ void main() {
 
     test(
         'Patates Tercihi on burgers and wraps: required single choice, '
-        'Baharatlı / Baharatsız Patates only, both 0 TL', () {
+        'Baharatlı / Baharatsız Patates / Patates İstemiyorum, all 0 TL', () {
       for (final id in ['prod_burger2_steak', 'prod_wrap2_kofte']) {
         final fries = product(id)
             .modifierGroups
@@ -299,7 +300,7 @@ void main() {
         expect(fries.selectionType, ModifierSelectionType.single);
         expect(fries.isRequired, isTrue);
         expect(fries.options.map((o) => o.name),
-            ['Baharatlı Patates', 'Baharatsız Patates']);
+            ['Baharatlı Patates', 'Baharatsız Patates', 'Patates İstemiyorum']);
         expect(fries.options.every((o) => o.extraPrice == 0), isTrue);
       }
     });
@@ -332,6 +333,21 @@ void main() {
       'cat_tartine',
     };
 
+    test('only Makarna, Bowl and Tava expose a main protein', () {
+      const proteinCategories = {'cat_makarna2', 'cat_bowl2', 'cat_tava'};
+      final byId = {for (final p in AbakusMenuCatalog.products) p.id: p};
+      for (final id
+          in ProductRemovableIngredients.mainProteinByProductId.keys) {
+        expect(proteinCategories, contains(byId[id]?.categoryId), reason: id);
+      }
+      for (final p in AbakusMenuCatalog.products
+          .where((p) => p.categoryId == 'cat_makarna2')) {
+        expect(
+            ProductRemovableIngredients.mainProteinByProductId[p.id], isNotNull,
+            reason: p.id);
+      }
+    });
+
     test('every product in a recipe-bearing category lists its removables', () {
       for (final p in AbakusMenuCatalog.products
           .where((p) => activeCategoriesWithRecipes.contains(p.categoryId))) {
@@ -340,15 +356,29 @@ void main() {
       }
     });
 
-    test('PDF recipe examples, main component left out', () {
+    test(
+        'PDF recipe examples: burger patty stays, Ketçap & Mayonez are '
+        'removable on burgers/wraps, main protein removable on '
+        'Makarna/Tava (2026-11-10)', () {
       MenuProduct product(String id) =>
           AbakusMenuCatalog.products.firstWhere((p) => p.id == id);
-      expect(product('prod_burger2_onion').removableIngredients,
-          ['Cheddar Peyniri', 'Abaküs Sos', 'Karamelize Soğan']);
+      expect(product('prod_burger2_onion').removableIngredients, [
+        'Cheddar Peyniri',
+        'Abaküs Sos',
+        'Karamelize Soğan',
+        'Ketçap',
+        'Mayonez',
+      ]);
+      expect(product('prod_wrap2_kofte').removableIngredients,
+          containsAllInOrder(['Abaküs Sos', 'Ketçap', 'Mayonez']));
       expect(product('prod_makarna2_pipette_kofte').removableIngredients,
-          ['Kremalı Pesto Sos', 'Parmesan']);
+          ['Kremalı Pesto Sos', 'Parmesan', 'Izgara Köfte']);
       expect(product('prod_tava_citir_tavuk').removableIngredients,
+          ['Mevsim Salata', 'Basmati Pirinç Pilavı', 'Çıtır Tavuk']);
+      expect(product('prod_tava_izgara_sebze_mix').removableIngredients,
           ['Mevsim Salata', 'Basmati Pirinç Pilavı']);
+      expect(product('prod_salata2_dana_bonfile').removableIngredients,
+          isNot(contains('Dana Bonfile')));
       expect(product('prod_salata2_ananas').removableIngredients,
           contains('Mor Lahana Turşusu'));
     });
@@ -446,13 +476,20 @@ void main() {
         AbakusMenuCatalog.products.where((p) => p.categoryId == 'cat_bowl2');
     expect(bowl2Products, isNotEmpty);
     for (final product in bowl2Products) {
+      final protein =
+          ProductRemovableIngredients.mainProteinByProductId[product.id];
       expect(
         // 2026-10-30 correction: "Mor Lahana Turşusu" removed — it now
         // lives only in the Turşu Hakkı radio group, never as a separate
         // removable-ingredient checkbox (product owner's own fix for the
-        // duplicate it used to create).
+        // duplicate it used to create). 2026-11-10: the main protein is
+        // removable too (none on the Izgara Sebze Mix bowl).
         product.removableIngredients,
-        ['Mısır', 'Susamlı Çörekotlu Salatalık'],
+        [
+          'Mısır',
+          'Susamlı Çörekotlu Salatalık',
+          if (protein != null) protein,
+        ],
         reason:
             '${product.name} is missing the Bowl removable-ingredient override',
       );

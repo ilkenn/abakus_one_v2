@@ -9,10 +9,74 @@
 /// `StandardModifierGroups.bowlRemovableIngredients`.
 ///
 /// The product's defining main component (its gram-weighted protein, pasta
-/// or falafel/egg base, e.g. "150 gr. Çıtır Tavuk") is deliberately left
-/// out: dropping it would no longer be the product that was ordered.
+/// or falafel/egg base, e.g. "150 gr. Çıtır Tavuk") is left out of
+/// [byProductId] — except that, per the 2026-11-10 rule, the main protein
+/// of Makarna, Bowl and Tava products IS removable (see
+/// [mainProteinByProductId]). Burger patties stay non-removable.
 abstract final class ProductRemovableIngredients {
   ProductRemovableIngredients._();
+
+  /// Ketçap & Mayonez are served free with every fries-side product
+  /// (Burgerler, Wrapler) and can be left off at 0 TL (2026-11-10).
+  static const List<String> friesSideSauces = ['Ketçap', 'Mayonez'];
+
+  /// Removable main protein of Makarna, Bowl and Tava products (2026-11-10),
+  /// named as in the floor-stand menu PDF's recipe line. The protein-less
+  /// "Izgara Sebze Mix" Bowl/Tava have no entry.
+  static const Map<String, String> mainProteinByProductId = {
+    // Bowl (cat_bowl2)
+    'prod_bowl2_tatli_eksi_tavuk': 'Tatlı Ekşi Tavuk',
+    'prod_bowl2_tatli_aci_tavuk': 'Tatlı Acı Tavuk',
+    'prod_bowl2_kremali_kekikli_tavuk': 'Kremalı Kekikli Tavuk',
+    'prod_bowl2_barbeku_soslu_tavuk': 'Barbekü Soslu Tavuk',
+    'prod_bowl2_aci_soslu_tavuk': 'Acı Soslu Tavuk',
+    'prod_bowl2_soya_soslu_tavuk': 'Soya Soslu Tavuk',
+    'prod_bowl2_teriyaki_soslu_tavuk': 'Teriyaki Soslu Tavuk',
+    'prod_bowl2_kori_soslu_tavuk': 'Köri Soslu Tavuk',
+    'prod_bowl2_kremali_mantarli_tavuk': 'Kremalı Mantarlı Tavuk',
+    'prod_bowl2_kremali_pesto_tavuk': 'Kremalı Pesto Soslu Tavuk',
+    'prod_bowl2_izgara_tavuk_gogsu': 'Izgara Tavuk Göğsü',
+    'prod_bowl2_izgara_tavuk_pirzola': 'Izgara Tavuk Pirzola',
+    'prod_bowl2_citir_tavuk': 'Çıtır Tavuk',
+    'prod_bowl2_aci_soslu_dana_bonfile': 'Acı Soslu Dana Bonfile',
+    'prod_bowl2_izgara_anne_koftesi': 'Izgara Anne Köftesi',
+    'prod_bowl2_izgara_bonfile': 'Izgara Bonfile',
+    'prod_bowl2_izgara_somon': 'Izgara Somon',
+    'prod_bowl2_somon_fume': 'Somon Füme',
+    'prod_bowl2_ton_baligi': 'Ton Balığı',
+    'prod_bowl2_falafel': 'Falafel',
+
+    // Tava (cat_tava)
+    'prod_tava_citir_tavuk': 'Çıtır Tavuk',
+    'prod_tava_tatli_eksi_tavuk': 'Tatlı Ekşi Tavuk',
+    'prod_tava_kremali_pestolu_tavuk': 'Kremalı Pestolu Tavuk',
+    'prod_tava_kremali_mantarli_tavuk': 'Kremalı Mantarlı Tavuk',
+    'prod_tava_izgara_tavuk_gogsu': 'Izgara Tavuk Göğsü',
+    'prod_tava_barbeku_soslu_tavuk': 'Barbekü Soslu Tavuk',
+    'prod_tava_tatli_aci_tavuk': 'Tatlı Acı Tavuk',
+    'prod_tava_izgara_tavuk_pirzola': 'Izgara Tavuk Pirzola',
+    'prod_tava_kori_soslu_tavuk': 'Köri Soslu Tavuk',
+    'prod_tava_soya_soslu_tavuk': 'Soya Soslu Tavuk',
+    'prod_tava_acili_tavuk': 'Acı Soslu Tavuk',
+    'prod_tava_kremali_kekikli_tavuk': 'Kremalı Kekikli Tavuk',
+    'prod_tava_ton_baligi': 'Ton Balığı',
+    'prod_tava_somon_fume': 'Somon Füme',
+    'prod_tava_izgara_somon': 'Izgara Somon',
+    'prod_tava_anne_koftesi': 'Anne Köftesi',
+    'prod_tava_izgara_bonfile': 'Dana Bonfile',
+    'prod_tava_acili_bonfile': 'Acılı Bonfile',
+    'prod_tava_citir_falafel': 'Çıtır Falafel',
+
+    // Makarna (cat_makarna2)
+    'prod_makarna2_citir_tavuk_fettuccine': 'Çıtır Tavuk',
+    'prod_makarna2_kofte_fettuccine': 'Köfte',
+    'prod_makarna2_dana_bonfile_fettuccine': 'Dana Bonfile',
+    'prod_makarna2_fettuccine_chicken_alfredo': 'Tavuk',
+    'prod_makarna2_pipette_kofte': 'Izgara Köfte',
+    'prod_makarna2_pipette_dana_bonfile': 'Dana Bonfile',
+    'prod_makarna2_pipette_citir_tavuk': 'Çıtır Tavuk',
+    'prod_makarna2_pipette_izgara_tavuk': 'Izgara Tavuk',
+  };
 
   /// Every Tava plate's recipe is "Mevsim salata, basmati pirinç pilavı,
   /// {protein}" — the two sides are its removable ingredients.
