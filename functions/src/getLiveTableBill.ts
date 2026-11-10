@@ -2,7 +2,11 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore } from "firebase-admin/firestore";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { isTableGuestSessionActive } from "./tableGuestSessionConfig";
-import { CHECKS_COLLECTION, CHECK_FINANCIAL_ADJUSTMENTS_COLLECTION } from "./checkAllocationConfig";
+import {
+  CHECKS_COLLECTION,
+  CHECK_FINANCIAL_ADJUSTMENTS_COLLECTION,
+  computeLineValueMinorUnits,
+} from "./checkAllocationConfig";
 
 /**
  * Adım 5 (2026-11-07) — "Canlı Adisyon Okuma Gateway'i", the callable
@@ -105,13 +109,19 @@ export const getLiveTableBill = onCall(
         productName: string;
         quantity: number;
         unitPrice?: { minorUnits: number; currencyCode?: string };
+        modifiers?: Array<{ unitExtraPrice?: { minorUnits: number }; quantity: number }>;
       }>;
       for (const line of orderLines) {
         if (line.status !== "accepted") continue;
-        const unitPriceMinorUnits = line.unitPrice?.minorUnits ?? 0;
+        // 2026-11-10 — paid modifiers included (same formula as the check
+        // allocation), so the guest's bill matches what the POS charges.
+        // `unitPriceMinorUnits` is per unit, modifiers included.
+        const lineValueMinorUnits = computeLineValueMinorUnits(line);
+        const unitPriceMinorUnits =
+          line.quantity > 0 ? Math.round(lineValueMinorUnits / line.quantity) : 0;
         if (line.unitPrice?.currencyCode) currencyCode = line.unitPrice.currencyCode;
         lines.push({ productName: line.productName, quantity: line.quantity, unitPriceMinorUnits });
-        subtotalMinorUnits += unitPriceMinorUnits * line.quantity;
+        subtotalMinorUnits += lineValueMinorUnits;
       }
     }
 

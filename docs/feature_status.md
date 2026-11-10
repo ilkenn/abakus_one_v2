@@ -11439,3 +11439,14 @@ passing, 0 failures.
   the whole menu. The featured "Çok Satanlar" strip stays on top as the "most preferred" entry point.
 - Catalog export regenerated; emulator swept (Gramajlı + Tofu docs deleted, category sortOrder updated).
 - **Visual Review Bekleniyor**.
+
+### POS / table bill: paid modifiers in every line amount (2026-11-10)
+
+- Bug: POS line amounts, the "Ödeme Al" button, the split-payment dialog and the till receipt used
+  `unitPrice × quantity` (base price only), while the server check charges (base + modifiers) × quantity —
+  e.g. 520 TL shown, 1.770 TL charged.
+- Fix: `PosOrderLineSummary.lineTotalMinorUnits` (same formula as `computeLineValueMinorUnits`) used
+  everywhere; each modifier is listed under its line as "+ Seçenek (+40 ₺)". The guest live table bill
+  (`getLiveTableBill`) had the same gap server-side and now includes modifiers too.
+- Tests: line-total/receipt unit tests, a POS widget test, a `getLiveTableBill` emulator test.
+- **Visual Review Bekleniyor**.

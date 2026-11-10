@@ -589,7 +589,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     for (final order in widget.view.orders) {
       for (final line in order.lines) {
         if (line.status == 'accepted') {
-          total += line.unitPriceMinorUnits * line.quantity;
+          total += line.lineTotalMinorUnits;
         }
       }
     }
@@ -602,7 +602,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       for (var i = 0; i < order.lines.length; i++) {
         if (order.lines[i].status == 'accepted' &&
             _isLineSelected(order.orderId, i)) {
-          total += order.lines[i].unitPriceMinorUnits * order.lines[i].quantity;
+          total += order.lines[i].lineTotalMinorUnits;
         }
       }
     }
@@ -617,6 +617,15 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       : _allAcceptedLinesTotalMinorUnits;
 
   String _formatTl(int minorUnits) => (minorUnits / 100).toStringAsFixed(0);
+
+  /// "+ Ekstra Peynir (+40 ₺)" — a free option shows no price; a modifier
+  /// chosen more than once shows its count ("2x").
+  String _modifierDetailLabel(PosOrderLineModifierSummary modifier) {
+    final count = modifier.quantity > 1 ? '${modifier.quantity}x ' : '';
+    final extra = modifier.unitExtraPriceMinorUnits * modifier.quantity;
+    final price = extra > 0 ? ' (+${_formatTl(extra)} ₺)' : '';
+    return '+ $count${modifier.optionName}$price';
+  }
 
   Future<void> _showBulkCancelDialog(BuildContext context) async {
     final selected = _selectedAcceptedLines.toList();
@@ -1921,39 +1930,64 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
                                     Padding(
                                       padding: const EdgeInsets.only(
                                           bottom: AppSpacing.xs),
-                                      child: Row(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
-                                          Checkbox(
-                                            value: _isLineSelected(
-                                                order.orderId, i),
-                                            onChanged: (_) =>
-                                                _toggleLineSelection(
+                                          Row(
+                                            children: [
+                                              Checkbox(
+                                                value: _isLineSelected(
                                                     order.orderId, i),
+                                                onChanged: (_) =>
+                                                    _toggleLineSelection(
+                                                        order.orderId, i),
+                                              ),
+                                              Expanded(
+                                                child: Text(
+                                                  '${order.lines[i].quantityLabel} ${order.lines[i].productName}',
+                                                  style:
+                                                      AppTypography.bodyMedium,
+                                                ),
+                                              ),
+                                              Text(
+                                                '${_formatTl(order.lines[i].lineTotalMinorUnits)} TL',
+                                                style: AppTypography.bodySmall,
+                                              ),
+                                              IconButton(
+                                                icon: const Icon(
+                                                    Icons.remove_circle_outline,
+                                                    size: 18,
+                                                    color: AppColors.error),
+                                                tooltip: _lineCancelConfirmLabel(
+                                                    _cancelsAcceptedLineDirectly(
+                                                        ref.watch(
+                                                            actorSessionProvider))),
+                                                onPressed: widget.busy
+                                                    ? null
+                                                    : () => _showCancelDialog(
+                                                        context,
+                                                        order.orderId,
+                                                        i),
+                                              ),
+                                            ],
                                           ),
-                                          Expanded(
-                                            child: Text(
-                                              '${order.lines[i].quantityLabel} ${order.lines[i].productName}',
-                                              style: AppTypography.bodyMedium,
+                                          // 2026-11-10 — each selected modifier
+                                          // under its line, with its own +₺, so
+                                          // the line amount above is explainable.
+                                          for (final modifier
+                                              in order.lines[i].modifiers)
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                  left: AppSpacing.xxxl),
+                                              child: Text(
+                                                _modifierDetailLabel(modifier),
+                                                style: AppTypography.bodySmall
+                                                    .copyWith(
+                                                        color: AppColors
+                                                            .textSecondary),
+                                              ),
                                             ),
-                                          ),
-                                          Text(
-                                            '${(order.lines[i].unitPriceMinorUnits * order.lines[i].quantity / 100).toStringAsFixed(0)} TL',
-                                            style: AppTypography.bodySmall,
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(
-                                                Icons.remove_circle_outline,
-                                                size: 18,
-                                                color: AppColors.error),
-                                            tooltip: _lineCancelConfirmLabel(
-                                                _cancelsAcceptedLineDirectly(
-                                                    ref.watch(
-                                                        actorSessionProvider))),
-                                            onPressed: widget.busy
-                                                ? null
-                                                : () => _showCancelDialog(
-                                                    context, order.orderId, i),
-                                          ),
                                         ],
                                       ),
                                     ),
@@ -2518,7 +2552,8 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
           lineIndex: i,
           productName: line.productName,
           quantity: line.quantity,
-          unitPriceMinorUnits: line.unitPriceMinorUnits,
+          // Per-unit price incl. paid modifiers (2026-11-10).
+          unitPriceMinorUnits: line.unitTotalMinorUnits,
           quantityLabel: line.quantityLabel,
         ));
       }

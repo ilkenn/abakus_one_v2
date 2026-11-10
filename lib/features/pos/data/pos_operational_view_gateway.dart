@@ -191,6 +191,23 @@ class PosOrderLineSummary {
   /// `null` for every per-piece line.
   final int? weightGrams;
 
+  /// Paid add-ons per unit: Σ (modifier unit extra price × modifier
+  /// quantity). [unitPriceMinorUnits] is the product's base price only.
+  int get modifiersExtraMinorUnits => modifiers.fold(
+        0,
+        (sum, m) => sum + m.unitExtraPriceMinorUnits * m.quantity,
+      );
+
+  /// Per-unit price including paid modifiers.
+  int get unitTotalMinorUnits => unitPriceMinorUnits + modifiersExtraMinorUnits;
+
+  /// 2026-11-10 — the line's full value, the same formula as the server's
+  /// `computeLineValueMinorUnits` (checkAllocationConfig.ts): (base +
+  /// modifiers) × quantity. Every POS total/line amount must use this, never
+  /// `unitPriceMinorUnits × quantity`, or paid extras silently disappear
+  /// from the screen while the server's check still charges them.
+  int get lineTotalMinorUnits => unitTotalMinorUnits * quantity;
+
   /// "2x" / "350 g" — see `orderLineQuantityLabel`.
   String get quantityLabel =>
       orderLineQuantityLabel(quantity: quantity, weightGrams: weightGrams);

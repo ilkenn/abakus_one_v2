@@ -49,8 +49,10 @@ abstract final class TableReceiptBuilder {
         lines.add(ReceiptLineItem(
           quantity: line.quantity,
           productName: line.productName,
-          unitPriceMinorUnits: line.unitPriceMinorUnits,
-          totalPriceMinorUnits: line.unitPriceMinorUnits * line.quantity,
+          // 2026-11-10 — modifiers included, so the printed lines add up to
+          // the check total the server charges.
+          unitPriceMinorUnits: line.unitTotalMinorUnits,
+          totalPriceMinorUnits: line.lineTotalMinorUnits,
           recipeSummary: recipe.isEmpty ? null : recipe,
           selectionNotes: selectionNotes,
         ));

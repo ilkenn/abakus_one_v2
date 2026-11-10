@@ -70,7 +70,13 @@ async function seedGuestSession(params: {
 
 async function seedAcceptedOrder(params: {
   tableSessionId: string;
-  lines: Array<{ productName: string; quantity: number; unitPriceMinorUnits: number; status?: string }>;
+  lines: Array<{
+    productName: string;
+    quantity: number;
+    unitPriceMinorUnits: number;
+    status?: string;
+    modifiers?: Array<{ unitExtraPriceMinorUnits: number; quantity: number }>;
+  }>;
 }): Promise<void> {
   await db().collection("orders").doc(nextId("order")).set({
     dineInSessionGroupId: params.tableSessionId,
@@ -79,6 +85,10 @@ async function seedAcceptedOrder(params: {
       productName: l.productName,
       quantity: l.quantity,
       unitPrice: { minorUnits: l.unitPriceMinorUnits, currencyCode: "TRY" },
+      modifiers: (l.modifiers ?? []).map((m) => ({
+        unitExtraPrice: { minorUnits: m.unitExtraPriceMinorUnits, currencyCode: "TRY" },
+        quantity: m.quantity,
+      })),
     })),
   });
 }
@@ -138,6 +148,41 @@ test("getLiveTableBill: sums accepted lines, subtracts active discounts, exclude
   assert.strictEqual(result.appliedDiscountsMinorUnits, 5000);
   assert.strictEqual(result.runningTotalMinorUnits, 25000);
   assert.strictEqual((result.lines as unknown[]).length, 1);
+});
+
+// 2026-11-10 — paid modifiers were left out of the guest's bill while the
+// POS check charged them (same formula as computeLineValueMinorUnits).
+test("getLiveTableBill: paid modifiers are part of the line price and the subtotal", async () => {
+  const guest = await signUpAnonymously();
+  const tableSessionId = nextId("tsess");
+  const guestSessionId = await seedGuestSession({ guestAuthUid: guest.uid, tableSessionId });
+  await seedAcceptedOrder({
+    tableSessionId,
+    lines: [
+      {
+        productName: "Acı Soslu Tavuk Bowl",
+        quantity: 2,
+        unitPriceMinorUnits: 52000,
+        modifiers: [
+          { unitExtraPriceMinorUnits: 15000, quantity: 1 },
+          { unitExtraPriceMinorUnits: 2000, quantity: 2 },
+        ],
+      },
+    ],
+  });
+
+  const { httpStatus, body } = await callCallable(
+    GET_LIVE_TABLE_BILL_URL,
+    { tableSessionId: guestSessionId },
+    guest.idToken,
+  );
+
+  assert.strictEqual(httpStatus, 200, JSON.stringify(body));
+  const result = body.result!;
+  // (520 + 150 + 2 x 20) x 2 = 1420 TL.
+  assert.strictEqual(result.subtotalMinorUnits, 142000);
+  const line = (result.lines as Array<{ unitPriceMinorUnits: number }>)[0];
+  assert.strictEqual(line.unitPriceMinorUnits, 71000, "per unit, modifiers included");
 });
 
 test("getLiveTableBill: a different guest's uid is rejected, never shown another table's bill", async () => {

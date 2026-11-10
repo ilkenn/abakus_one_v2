@@ -241,7 +241,8 @@ void main() {
         await tester.tap(find.text('Menü'));
         await tester.pumpAndSettle();
 
-        await tapMenuProductCard(tester, 'CocaCola Şişe');
+        // 2026-11-10 — the menu opens on its first category (Kahvaltı).
+        await tapMenuProductCard(tester, 'Clasico');
         expect(find.byType(ProductDetailScreen), findsOneWidget);
 
         await tester.tap(find.text('Ana Sayfa'));
@@ -265,7 +266,8 @@ void main() {
         await tester.tap(find.text('Menü'));
         await tester.pumpAndSettle();
 
-        await tapMenuProductCard(tester, 'CocaCola Şişe');
+        // 2026-11-10 — the menu opens on its first category (Kahvaltı).
+        await tapMenuProductCard(tester, 'Clasico');
         expect(find.byType(ProductDetailScreen), findsOneWidget);
 
         await tester.binding.handlePopRoute();

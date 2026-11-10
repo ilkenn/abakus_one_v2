@@ -1028,6 +1028,69 @@ void main() {
       expect(find.widgetWithText(ElevatedButton, 'Ödeme Al: 100 ₺'),
           findsOneWidget);
     });
+
+    // 2026-11-10 — paid modifiers were missing from the line amount and the
+    // "Ödeme Al" button (520 shown while the server charged the full total).
+    testWidgets(
+        'accepted line amount and Ödeme Al include paid modifiers, and each '
+        'modifier is listed under its line with its own +₺', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1280, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      const view = PosTableOperationalView(
+        tableId: 'table-1',
+        status: 'occupied',
+        tableSessionId: 'tsess-1',
+        subAccounts: [
+          {'id': 'sub-1', 'displayName': 'Ayşe'},
+        ],
+        checks: [
+          {'id': 'check-1', 'status': 'readyForPayment'},
+        ],
+        orders: [
+          PosTableOrderSummary(
+            orderId: 'order-1',
+            subAccountId: 'sub-1',
+            mode: 'guestSession',
+            linesDispositionSummary: 'resolved',
+            lines: [
+              PosOrderLineSummary(
+                productName: 'Acı Soslu Tavuk Bowl',
+                quantity: 2,
+                unitPriceMinorUnits: 52000,
+                status: 'accepted',
+                subAccountId: 'sub-1',
+                modifiers: [
+                  PosOrderLineModifierSummary(
+                    groupName: 'Ekstra Protein',
+                    optionName: 'Izgara Tavuk (Göğüs)',
+                    quantity: 1,
+                    unitExtraPriceMinorUnits: 15000,
+                  ),
+                  PosOrderLineModifierSummary(
+                    groupName: 'Salata Değişimi',
+                    optionName: 'Roka',
+                    quantity: 1,
+                    unitExtraPriceMinorUnits: 0,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      await _pump(tester, initialView: view);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // (520 + 150) × 2 = 1340 TL — never the bare 2 × 520 = 1040.
+      expect(find.text('1340 TL'), findsOneWidget);
+      expect(find.text('1040 TL'), findsNothing);
+      expect(find.text('+ Izgara Tavuk (Göğüs) (+150 ₺)'), findsOneWidget);
+      expect(find.text('+ Roka'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Ödeme Al: 1340 ₺'),
+          findsOneWidget);
+    });
   });
 
   // 2026-09-28 — KDS & POS Çift Yönlü Entegrasyon: a live, order-level
