@@ -11499,3 +11499,20 @@ passing, 0 failures.
   configured; the server prices the order anyway).
 - Tests: 1 provider test, 1 cart screen widget test.
 - **Visual Review Bekleniyor**.
+
+### POS: QR tables shown occupied + kitchen order details load (2026-11-11)
+
+- Bug 1: a table with a live QR guest session showed "Boş" on the POS. `openTableGuestSession` only sets
+  `activeTableSessionId` and deliberately leaves the stored `status` at "available" — QR resolution
+  (`qrTokenResolution.ts`) only accepts "available" tables, so storing "occupied" would lock further guests out
+  of the shared table. Fix (read model only, no stored-status change): `displayTableStatus` in
+  `posOperationalView.ts` — override wins; active session + stored "available" → "occupied"; any other stored
+  status unchanged. Used by both the branch overview and the table view.
+- Bug 2: "Detaylar yüklenemedi" on every KDS/order detail. Not a parsing problem: `kitchenWorkItems`
+  `findByOrderId`/`watchByOrderId` queried by `orderId` only, which `firestore.rules` rejects as a whole
+  (verified against the dev emulator with a real staff token: 403 vs. 200 with org/branch filters). Fix:
+  the order's `organizationId`/`branchId` are read from its `orders` doc and pinned as equality filters.
+  The details screen's catch-all now logs the real error.
+- Tests: 4 `displayTableStatus` unit tests (functions); the query shape was verified against the emulator
+  rules (no Firestore fake exists for a Flutter unit test of the repository).
+- **Visual Review Bekleniyor**.

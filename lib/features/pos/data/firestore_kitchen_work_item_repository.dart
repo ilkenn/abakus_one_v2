@@ -72,30 +72,49 @@ class FirestoreKitchenWorkItemRepository
 
   @override
   Future<List<KitchenWorkItem>> findByOrderId(OrderId orderId) async {
-    final snapshot = await _firestore
-        .collection(_collection)
-        .where('orderId', isEqualTo: orderId.value)
-        .get();
-    final items = [
-      for (final doc in snapshot.docs) _fromFirestore(doc.id, doc.data()),
-    ];
-    items.sort((a, b) => a.queuedAt.compareTo(b.queuedAt));
-    return List.unmodifiable(items);
+    final query = await _orderScopedQuery(orderId);
+    if (query == null) return const [];
+    return _sorted(await query.get());
   }
 
   @override
   Stream<List<KitchenWorkItem>> watchByOrderId(OrderId orderId) {
+    return Stream.fromFuture(_orderScopedQuery(orderId)).asyncExpand(
+      (query) => query == null
+          ? Stream.value(const <KitchenWorkItem>[])
+          : query.snapshots().map(_sorted),
+    );
+  }
+
+  /// 2026-11-11 — an `orderId`-only query was rejected as a whole
+  /// (PERMISSION_DENIED, verified against the dev emulator with a real staff
+  /// token): `kitchenWorkItems`' read rule checks each doc's
+  /// `organizationId`/`branchId`, and Firestore can only allow a query whose
+  /// filters prove every result satisfies it — the same class of gap as
+  /// [findByBranch] above. Effect: "Detaylar yüklenemedi" on every KDS/order
+  /// detail. The order's own scope is read from its `orders` doc (a single
+  /// staff-readable get) and pinned as equality filters. `null` when the
+  /// order doesn't exist (nothing to query).
+  Future<fs.Query<Map<String, dynamic>>?> _orderScopedQuery(
+    OrderId orderId,
+  ) async {
+    final orderDoc =
+        await _firestore.collection('orders').doc(orderId.value).get();
+    final order = orderDoc.data();
+    if (order == null) return null;
     return _firestore
         .collection(_collection)
         .where('orderId', isEqualTo: orderId.value)
-        .snapshots()
-        .map((snapshot) {
-      final items = [
-        for (final doc in snapshot.docs) _fromFirestore(doc.id, doc.data()),
-      ];
-      items.sort((a, b) => a.queuedAt.compareTo(b.queuedAt));
-      return List.unmodifiable(items);
-    });
+        .where('organizationId', isEqualTo: order['organizationId'] as String)
+        .where('branchId', isEqualTo: order['branchId'] as String);
+  }
+
+  List<KitchenWorkItem> _sorted(fs.QuerySnapshot<Map<String, dynamic>> s) {
+    final items = [
+      for (final doc in s.docs) _fromFirestore(doc.id, doc.data()),
+    ];
+    items.sort((a, b) => a.queuedAt.compareTo(b.queuedAt));
+    return List.unmodifiable(items);
   }
 
   @override

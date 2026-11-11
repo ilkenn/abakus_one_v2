@@ -44,6 +44,26 @@ function requireNonEmptyString(raw: unknown, field: string): string {
   return raw as string;
 }
 
+/**
+ * 2026-11-11 — the status the POS shows for a table. A QR guest session
+ * (`openTableGuestSession`) only sets `activeTableSessionId` and
+ * deliberately leaves the stored `status` at "available" — QR resolution
+ * (`qrTokenResolution.ts`) only accepts "available" tables, so storing
+ * "occupied" would lock every further guest out of the shared table. The
+ * POS therefore showed a table with a live, ordering QR session as "Boş".
+ * Rule: a manual override (e.g. "billRequested") always wins; otherwise a
+ * table with an active session whose stored status is "available" is
+ * shown as "occupied"; any other stored status (reserved/cleaning/
+ * disabled/occupied) is shown unchanged.
+ */
+export function displayTableStatus(table: FirebaseFirestore.DocumentData): string {
+  const override = table.statusOverride as string | null | undefined;
+  if (override) return override;
+  const stored = String(table.status ?? "available");
+  const hasActiveSession = Boolean(table.activeTableSessionId);
+  return hasActiveSession && stored === "available" ? "occupied" : stored;
+}
+
 export const getPosTableOperationalView = onCall(
   { enforceAppCheck: shouldEnforceAppCheck() },
   async (request: CallableRequest) => {
@@ -70,7 +90,7 @@ export const getPosTableOperationalView = onCall(
     if (!activeTableSessionId) {
       return {
         tableId,
-        status: (table.statusOverride as string | undefined) ?? String(table.status ?? "available"),
+        status: displayTableStatus(table),
         tableSession: null,
         subAccounts: [],
         checks: [],
@@ -104,7 +124,7 @@ export const getPosTableOperationalView = onCall(
 
     return {
       tableId,
-      status: (table.statusOverride as string | undefined) ?? String(table.status ?? "occupied"),
+      status: displayTableStatus(table),
       tableSession: { id: tableSessionSnap.id, ...tableSession },
       subAccounts: subAccountsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
       checks: checksSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
@@ -241,7 +261,7 @@ export const getPosBranchTableOverview = onCall(
       return {
         tableId: d.id,
         displayName: table.displayName ?? d.id,
-        status: (table.statusOverride as string | undefined) ?? String(table.status ?? "available"),
+        status: displayTableStatus(table),
         activeTableSessionId,
         pendingQrLineCount: activeTableSessionId ? (pendingCountsBySessionId.get(activeTableSessionId) ?? 0) : 0,
         kitchenReadyOrderCount: activeTableSessionId ? (kitchenReadyCountsBySessionId.get(activeTableSessionId) ?? 0) : 0,

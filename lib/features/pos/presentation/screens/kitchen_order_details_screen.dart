@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../bootstrap/firebase_ready_provider.dart';
 import '../../../../core/errors/business_rule_violation.dart';
+import '../../../../core/services/logging/log_level.dart';
+import '../../../../core/services/logging/logging_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -101,7 +103,16 @@ class _KitchenOrderDetailsScreenState
         _loadAttempted = true;
         _loadError = ticket == null ? 'Sipariş bulunamadı.' : null;
       });
-    } catch (_) {
+    } catch (error, stackTrace) {
+      // 2026-11-11 — logged: this catch used to swallow the real cause
+      // (a rules-denied kitchenWorkItems query) without a trace.
+      ref.read(loggingServiceProvider).log(
+        LogLevel.error,
+        'KitchenOrderDetailsScreen._load failed',
+        error: error,
+        stackTrace: stackTrace,
+        context: {'kitchenTicketId': widget.kitchenTicketId},
+      );
       if (!mounted) return;
       setState(() {
         _loadAttempted = true;
