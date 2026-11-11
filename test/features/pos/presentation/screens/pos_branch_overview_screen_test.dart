@@ -16,10 +16,13 @@ import 'package:abakus_one_v2/features/admin/presentation/providers/admin_depend
 import 'package:abakus_one_v2/features/admin/presentation/providers/trusted_device_session_providers.dart';
 import 'package:abakus_one_v2/features/orders/data/canonical_order_repository.dart';
 import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
+import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
+import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/pos_branch_overview_screen.dart';
+import 'package:abakus_one_v2/features/pos/presentation/screens/pos_table_workspace_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/trusted_device_status_screen.dart';
 
 import '../../../admin/test_support/fake_secure_storage_platform.dart';
@@ -201,6 +204,13 @@ class _FakePosActionGateway implements PosActionGateway {
       throw UnimplementedError();
 
   @override
+  Future<void> reopenCheck({
+    required PosDeviceContext ctx,
+    required String checkId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
   Future<String> splitByProduct({
     required PosDeviceContext ctx,
     required String checkId,
@@ -248,21 +258,29 @@ class _FakePosActionGateway implements PosActionGateway {
   }) async =>
       throw UnimplementedError();
 
+  final transfers = <(String, String)>[];
+  final merges = <(String, String)>[];
+  PosActionException? moveError;
+
   @override
   Future<void> transferTable({
     required PosDeviceContext ctx,
     required String sourceTableId,
     required String targetTableId,
-  }) async =>
-      throw UnimplementedError();
+  }) async {
+    final error = moveError;
+    if (error != null) throw error;
+    transfers.add((sourceTableId, targetTableId));
+  }
 
   @override
   Future<void> mergeTables({
     required PosDeviceContext ctx,
     required String sourceTableId,
     required String targetTableId,
-  }) async =>
-      throw UnimplementedError();
+  }) async {
+    merges.add((sourceTableId, targetTableId));
+  }
 
   @override
   Future<AcceptedLineCancellationResult> requestAcceptedLineCancellation({
@@ -392,6 +410,8 @@ void main() {
           status: 'occupied',
           activeTableSessionId: 'tsess-1',
           pendingQrLineCount: 2,
+          // 2026-11-11 — "Dolu" (red) now requires a live order portion.
+          activePortionCount: 2,
         ),
         const PosBranchTableSummary(
           tableId: 'table-3',
@@ -708,6 +728,29 @@ void main() {
       expect(find.text('Masa 2'), findsOneWidget);
     });
 
+    testWidgets(
+        '2026-11-11: "Teras" sekmesi yok — Tümü / Bahçe / Salon / Paket',
+        (tester) async {
+      final gateway = _FakePosOperationalViewGateway()
+        ..tables = [
+          const PosBranchTableSummary(
+            tableId: 'table-1',
+            displayName: 'Masa 1',
+            status: 'available',
+            activeTableSessionId: null,
+            pendingQrLineCount: 0,
+            areaName: 'Bahçe',
+          ),
+        ];
+      await pump(tester, gateway);
+
+      final chips = tester
+          .widgetList<ChoiceChip>(find.byType(ChoiceChip))
+          .map((chip) => (chip.label as Text).data)
+          .toList();
+      expect(chips, ['Tümü', 'Bahçe', 'Salon', 'Paket / Gel-Al']);
+    });
+
     testWidgets('bir bölge sekmesi sadece o bölgedeki masaları gösterir',
         (tester) async {
       final gateway = _FakePosOperationalViewGateway()
@@ -935,5 +978,251 @@ void main() {
         find.text('Şube masaları yüklenirken bir sorun oluştu.'), findsNothing);
     final cached = await cache.readSession(namespace);
     expect(cached?.sessionId, 'session-new');
+  });
+
+  // 2026-11-11 — bird's-eye cards: wire fields drive chairs and colors.
+  testWidgets(
+      'wire activePortionCount/capacity fill the chairs (capped at 4) and '
+      'set the card state', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final gateway = _FakePosOperationalViewGateway()
+      ..tables = [
+        PosBranchTableSummary.fromWire({
+          'tableId': 'salon-1',
+          'displayName': 'Salon 1',
+          'status': 'occupied',
+          'activeTableSessionId': 'tsess-1',
+          'pendingQrLineCount': 0,
+          'activePortionCount': 3,
+          'capacity': 4,
+        }),
+        PosBranchTableSummary.fromWire({
+          'tableId': 'bahce-1',
+          'displayName': 'Bahçe 1',
+          'status': 'billRequested',
+          'activeTableSessionId': 'tsess-2',
+          'pendingQrLineCount': 0,
+          'activePortionCount': 9,
+        }),
+        PosBranchTableSummary.fromWire({
+          'tableId': 'salon-2',
+          'displayName': 'Salon 2',
+          'status': 'occupied',
+          'activeTableSessionId': 'tsess-3',
+          'pendingQrLineCount': 0,
+        }),
+      ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          posOperationalViewGatewayProvider.overrideWithValue(gateway),
+          posDeviceContextProvider.overrideWithValue(
+            const PosDeviceContext(
+              organizationId: 'org-1',
+              branchId: 'branch-1',
+              deviceId: 'device-1',
+              deviceSessionId: 'session-1',
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: PosBranchOverviewScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // 3 + min(9, 4) + 0 person figures.
+    expect(find.byIcon(Icons.person), findsNWidgets(7));
+    expect(find.text('Dolu'), findsOneWidget);
+    expect(find.text('Hesap İstendi'), findsOneWidget);
+    // Active session but no live order: green "Boş", all chairs empty.
+    expect(find.text('Boş'), findsOneWidget);
+  });
+
+  // 2026-11-11 — "Taşı" in the table workspace returns here; the target
+  // table is picked on the bird's-eye grid.
+  group('masa taşıma modu (2026-11-11)', () {
+    const salon1 = PosBranchTableSummary(
+      tableId: 'table-1',
+      displayName: 'Salon 1',
+      status: 'occupied',
+      activeTableSessionId: 'tsess-1',
+      pendingQrLineCount: 0,
+      activePortionCount: 2,
+      areaName: 'Salon',
+    );
+    const salon2 = PosBranchTableSummary(
+      tableId: 'table-2',
+      displayName: 'Salon 2',
+      status: 'available',
+      activeTableSessionId: null,
+      pendingQrLineCount: 0,
+      areaName: 'Salon',
+    );
+    const bahce1 = PosBranchTableSummary(
+      tableId: 'table-3',
+      displayName: 'Bahçe 1',
+      status: 'occupied',
+      activeTableSessionId: 'tsess-3',
+      pendingQrLineCount: 0,
+      activePortionCount: 1,
+      areaName: 'Bahçe',
+    );
+    const salon1View = PosTableOperationalView(
+      tableId: 'table-1',
+      status: 'occupied',
+      tableSessionId: 'tsess-1',
+      subAccounts: [
+        {'id': 'sub-1', 'displayName': 'Ayşe'},
+      ],
+      checks: [],
+      orders: [
+        PosTableOrderSummary(
+          orderId: 'order-1',
+          subAccountId: 'sub-1',
+          mode: 'guestSession',
+          linesDispositionSummary: 'resolved',
+          lines: [
+            PosOrderLineSummary(
+              productName: 'Klasik Bowl',
+              quantity: 1,
+              unitPriceMinorUnits: 10000,
+              status: 'accepted',
+              subAccountId: 'sub-1',
+            ),
+          ],
+        ),
+      ],
+    );
+
+    /// Opens Salon 1, taps "Taşı" (nothing selected) and lands back on the
+    /// grid in move mode — the real round trip through the workspace.
+    Future<_FakePosActionGateway> startMove(WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1280, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final viewGateway = _FakePosOperationalViewGateway()
+        ..tables = [salon1, salon2, bahce1]
+        ..tableView = salon1View;
+      final actionGateway = _FakePosActionGateway();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            posOperationalViewGatewayProvider.overrideWithValue(viewGateway),
+            posActionGatewayProvider.overrideWithValue(actionGateway),
+            posDeviceContextProvider.overrideWithValue(
+              const PosDeviceContext(
+                organizationId: 'org-1',
+                branchId: 'branch-1',
+                deviceId: 'device-1',
+                deviceSessionId: 'session-1',
+              ),
+            ),
+            kitchenProjectionRepositoryProvider
+                .overrideWithValue(InMemoryKitchenProjectionRepository()),
+          ],
+          child: const MaterialApp(home: PosBranchOverviewScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text('Salon 1'));
+      await tester.pumpAndSettle();
+      expect(find.byType(PosTableWorkspaceScreen), findsOneWidget);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Taşı'));
+      await tester.pumpAndSettle();
+      expect(find.byType(PosTableWorkspaceScreen), findsNothing);
+      return actionGateway;
+    }
+
+    testWidgets(
+        'Taşı returns to the grid with a banner naming the table being moved',
+        (tester) async {
+      await startMove(tester);
+
+      expect(find.byKey(const Key('tableMoveBanner')), findsOneWidget);
+      expect(
+          find.text('Salon 1 taşınıyor — hedef masayı seçin.'), findsOneWidget);
+    });
+
+    testWidgets('a free target receives the whole adisyon (transferTable)',
+        (tester) async {
+      final actions = await startMove(tester);
+
+      await tester.tap(find.text('Salon 2'));
+      await tester.pumpAndSettle();
+
+      expect(actions.transfers, [('table-1', 'table-2')]);
+      expect(actions.merges, isEmpty);
+      expect(find.byKey(const Key('tableMoveBanner')), findsNothing);
+      expect(find.text('Salon 1, Salon 2 masasına taşındı.'), findsOneWidget);
+    });
+
+    testWidgets(
+        'an occupied target asks "Birleştirilsin mi?" and merges only after '
+        'confirmation', (tester) async {
+      final actions = await startMove(tester);
+
+      await tester.tap(find.text('Bahçe 1'));
+      await tester.pumpAndSettle();
+      expect(find.text('Birleştirilsin mi?'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(TextButton, 'Vazgeç').last);
+      await tester.pumpAndSettle();
+      expect(actions.merges, isEmpty);
+      expect(find.byKey(const Key('tableMoveBanner')), findsOneWidget,
+          reason: 'declining the merge keeps the move going');
+
+      await tester.tap(find.text('Bahçe 1'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Birleştir'));
+      await tester.pumpAndSettle();
+
+      expect(actions.merges, [('table-1', 'table-3')]);
+      expect(actions.transfers, isEmpty);
+      expect(find.text('Salon 1, Bahçe 1 ile birleştirildi.'), findsOneWidget);
+    });
+
+    testWidgets('the source table itself is never a target', (tester) async {
+      final actions = await startMove(tester);
+
+      await tester.tap(find.text('Salon 1'));
+      await tester.pump();
+
+      expect(
+          find.text('Taşınan masanın kendisi hedef olamaz.'), findsOneWidget);
+      expect(actions.transfers, isEmpty);
+      expect(find.byType(PosTableWorkspaceScreen), findsNothing);
+    });
+
+    testWidgets('Vazgeç ends move mode; tapping a table opens it again',
+        (tester) async {
+      final actions = await startMove(tester);
+
+      await tester.tap(find.widgetWithText(TextButton, 'Vazgeç'));
+      await tester.pump();
+      expect(find.byKey(const Key('tableMoveBanner')), findsNothing);
+
+      await tester.tap(find.text('Salon 2'));
+      await tester.pumpAndSettle();
+      expect(actions.transfers, isEmpty);
+      expect(find.byType(PosTableWorkspaceScreen), findsOneWidget);
+    });
+
+    testWidgets('a failed move shows a Turkish message and keeps move mode',
+        (tester) async {
+      final actions = await startMove(tester);
+      actions.moveError = const PosActionException(
+          'failed-precondition', 'The target table has a live reservation.');
+
+      await tester.tap(find.text('Salon 2'));
+      await tester.pumpAndSettle();
+
+      expect(
+          find.text('Masa taşınamadı. Lütfen tekrar deneyin.'), findsOneWidget);
+      expect(find.byKey(const Key('tableMoveBanner')), findsOneWidget);
+    });
   });
 }

@@ -11538,3 +11538,30 @@ passing, 0 failures.
   provisioned by script.
 - Tests: 4 `countActivePortions` (functions), 9 top-view/tone/seating, 1 overview end-to-end card test.
 - **Visual Review Bekleniyor**.
+
+### POS masa ekranı: tek dokunuşla Ödeme Al, Masalar'dan taşıma, Cari butonu (2026-11-11)
+
+- Primary button (product owner): a table with no live order and an empty cart shows a disabled "Siparişi
+  Onayla", enabled by the first cart line. With a live order it is always "Ödeme Al: X ₺"; one tap chains the
+  existing calls the old Hesap Aç → Ödemeye Hazırla → Ödeme Al steps made (`openCheck` if none, one
+  `splitCheckByProduct` allocation per accepted line when none exists, `finalizeCheckReadyForPayment`) and
+  opens the payment dialog. Closing the dialog with the check still `readyForPayment` calls `reopenCheck` (newly
+  wired in `PosActionGateway`; the server refuses once payment activity has started — then the check stays
+  ready for payment). A `readyForPayment` check is now picked up when the table loads.
+- "Parçalı Öde" moved to Diğer → Hesabı Böl (splits need an open check; the tile opens one when there is
+  none); after a split the same chain finalizes and opens payment. "Yazdır" opens a check when there is none
+  (the ara hesap fişi needs one).
+- Quick-action bar: 64px buttons, larger icon/label; "Garson / Cari · Yakında" replaced by "Cari", which only
+  says "Cari hesap modülü yakında devrede." — the cari (customer credit account) module is a separate design.
+- "Taşı" (and the Diğer → Masa Taşıma tile) with nothing selected returns to the Masalar grid in move mode
+  (banner + Vazgeç): a free target gets the whole session (`transferTableSession`), an occupied one is merged
+  (`mergeTableSessions`) after a "Birleştirilsin mi?" confirmation; the source table and disabled tables are
+  refused. With a line selected it says single-line moves come in the next release (no server capability yet).
+  Unsent cart lines must be confirmed or removed before moving. The old in-workspace table-picker sheet is gone.
+- Masalar: the empty "Teras" tab removed; the dev "QR Test Masası" kept.
+- Known server behavior (unchanged): a transfer leaves the source table "cleaning" (grey "Temizleniyor") and
+  stores "occupied" on the target.
+- Tests: workspace (one-tap payment chain, no duplicate allocation, reopen on close, disabled confirm on an
+  empty table, move request/single-line notice/Cari/64px), overview (no Teras tab, banner, transfer, merge
+  confirm, self-target refused, Vazgeç, failure message).
+- **Visual Review Bekleniyor**.

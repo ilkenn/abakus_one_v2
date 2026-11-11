@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemSound, SystemSoundType;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/services/logging/log_level.dart';
+import '../../../../core/services/logging/logging_provider.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -21,6 +23,7 @@ import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
+import '../widgets/pos_table_top_view.dart';
 import '../widgets/print_table_receipt_action.dart';
 import 'end_of_day_screen.dart';
 import 'pos_cash_register_screen.dart';
@@ -30,7 +33,8 @@ import 'pos_takeaway_orders_screen.dart';
 
 /// Masalar grid'inin bölge filtresi (2026-11-06) — `RestaurantTable
 /// .areaName`'in zaten taşıdığı serbest metni kullanır, yeni bir alan
-/// değil. [takeaway] gerçek bir masa/alan değil — bu ekranın bugünkü veri
+/// değil. 2026-11-11 — "Teras" sekmesi kaldırıldı (açılış düzeninde teras
+/// masası yok: Salon 1–6 / Bahçe 1–6). [takeaway] gerçek bir masa/alan değil — bu ekranın bugünkü veri
 /// modelinde paket/gel-al siparişleri için ayrı bir sorgu/kart tasarımı
 /// yok; seçildiğinde bunu açıkça gösteren bir yer tutucu render edilir,
 /// asla sessizce boş/yanlış bir masa listesi değil.
@@ -38,7 +42,6 @@ enum _AreaTab {
   all('Tümü'),
   garden('Bahçe'),
   hall('Salon'),
-  terrace('Teras'),
   takeaway('Paket / Gel-Al');
 
   const _AreaTab(this.label);
@@ -72,6 +75,11 @@ class _PosBranchOverviewScreenState
   String? _version;
   Object? _error;
   _AreaTab _selectedAreaTab = _AreaTab.all;
+
+  /// 2026-11-11 — set while staff pick the target table for a whole-table
+  /// move started from the table workspace's "Taşı" button.
+  PosTableMoveRequest? _moveRequest;
+  bool _moving = false;
 
   @override
   void initState() {
@@ -265,9 +273,181 @@ class _PosBranchOverviewScreenState
             ),
           ),
         ),
+        if (_moveRequest != null) _buildMoveBanner(tables),
         Expanded(child: _buildTableGrid(tables, ctx)),
       ],
     );
+  }
+
+  String _tableName(List<PosBranchTableSummary> tables, String tableId) {
+    for (final table in tables) {
+      if (table.tableId == tableId) return table.displayName;
+    }
+    return tableId;
+  }
+
+  Widget _buildMoveBanner(List<PosBranchTableSummary> tables) {
+    final request = _moveRequest!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.sm),
+      child: Container(
+        key: const Key('tableMoveBanner'),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+        decoration: BoxDecoration(
+          color: AppColors.warning.withValues(alpha: 0.14),
+          border: Border.all(color: AppColors.warning),
+          borderRadius: AppRadius.kMedium,
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.table_restaurant, color: AppColors.warning),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                '${_tableName(tables, request.sourceTableId)} taşınıyor — '
+                'hedef masayı seçin.',
+                style: AppTypography.titleMedium
+                    .copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            if (_moving)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                child: SizedBox.square(
+                  dimension: AppSpacing.lg,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            TextButton(
+              onPressed:
+                  _moving ? null : () => setState(() => _moveRequest = null),
+              child: const Text('Vazgeç'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openTable(PosBranchTableSummary table) async {
+    if (_moveRequest != null) {
+      await _completeMove(table);
+      return;
+    }
+    ref.read(selectedPosTableIdProvider.notifier).state = table.tableId;
+    final result = await Navigator.of(context).push<PosTableMoveRequest>(
+      MaterialPageRoute(builder: (_) => const PosTableWorkspaceScreen()),
+    );
+    if (!mounted) return;
+    if (result != null) {
+      setState(() {
+        _moveRequest = result;
+        _selectedAreaTab = _AreaTab.all;
+      });
+    }
+    await _load();
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// 2026-11-11 — a free target gets the whole session
+  /// (`transferTableSession`); an occupied one can only be merged into
+  /// (`mergeTableSessions` — the server refuses a transfer onto a table with
+  /// its own session), after an explicit confirmation.
+  Future<void> _completeMove(PosBranchTableSummary target) async {
+    final request = _moveRequest;
+    final ctx = ref.read(posDeviceContextProvider);
+    if (request == null || ctx == null || _moving) return;
+    if (target.tableId == request.sourceTableId) {
+      _showSnack('Taşınan masanın kendisi hedef olamaz.');
+      return;
+    }
+    if (target.status == 'disabled') {
+      _showSnack('Kapalı bir masaya taşınamaz.');
+      return;
+    }
+    final tables = _tables ?? const <PosBranchTableSummary>[];
+    final sourceName = _tableName(tables, request.sourceTableId);
+    final merge = target.activeTableSessionId != null;
+    if (merge) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Birleştirilsin mi?'),
+          content: Text(
+            '${target.displayName} dolu. $sourceName adisyonu '
+            '${target.displayName} adisyonuyla birleştirilecek.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Vazgeç'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Birleştir'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    setState(() => _moving = true);
+    try {
+      final gateway = ref.read(posActionGatewayProvider);
+      if (merge) {
+        await gateway.mergeTables(
+          ctx: ctx,
+          sourceTableId: request.sourceTableId,
+          targetTableId: target.tableId,
+        );
+      } else {
+        await gateway.transferTable(
+          ctx: ctx,
+          sourceTableId: request.sourceTableId,
+          targetTableId: target.tableId,
+        );
+      }
+      if (!mounted) return;
+      setState(() => _moveRequest = null);
+      _showSnack(merge
+          ? '$sourceName, ${target.displayName} ile birleştirildi.'
+          : '$sourceName, ${target.displayName} masasına taşındı.');
+      await _load();
+    } on PosActionException catch (error, stackTrace) {
+      ref.read(loggingServiceProvider).log(
+        LogLevel.warning,
+        'PosBranchOverviewScreen: table move failed',
+        error: error,
+        stackTrace: stackTrace,
+        context: {
+          'sourceTableId': request.sourceTableId,
+          'targetTableId': target.tableId,
+          'merge': merge,
+        },
+      );
+      if (!mounted) return;
+      _showSnack(_moveFailureMessage(error));
+    } finally {
+      if (mounted) setState(() => _moving = false);
+    }
+  }
+
+  static String _moveFailureMessage(PosActionException error) {
+    final detailCode = error.details?['code'];
+    if (detailCode == 'reservationConflict') {
+      return 'Hedef masada aktif bir rezervasyon var; taşıma yapılamadı.';
+    }
+    if (detailCode == 'targetSessionConflict') {
+      return 'Hedef masa bu sırada doldu. Lütfen tekrar deneyin.';
+    }
+    return 'Masa taşınamadı. Lütfen tekrar deneyin.';
   }
 
   Widget _buildTableGrid(
@@ -298,16 +478,20 @@ class _PosBranchOverviewScreenState
         AppSpacing.lg,
       ),
       child: GridView.builder(
+        // 2026-11-11 — bird's-eye cards are taller than wide (status row
+        // + top-down table + badge row).
         gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: 220,
+          maxCrossAxisExtent: 240,
           mainAxisSpacing: AppSpacing.md,
           crossAxisSpacing: AppSpacing.md,
-          childAspectRatio: 1.1,
+          childAspectRatio: 0.82,
         ),
         itemCount: filtered.length,
         itemBuilder: (context, index) => _TableTile(
           table: filtered[index],
           onResolved: () => _load(),
+          onTap: () => _openTable(filtered[index]),
+          isMoveSource: _moveRequest?.sourceTableId == filtered[index].tableId,
         ),
       ),
     );
@@ -315,9 +499,19 @@ class _PosBranchOverviewScreenState
 }
 
 class _TableTile extends ConsumerStatefulWidget {
-  const _TableTile({required this.table, required this.onResolved});
+  const _TableTile({
+    required this.table,
+    required this.onResolved,
+    required this.onTap,
+    this.isMoveSource = false,
+  });
   final PosBranchTableSummary table;
   final VoidCallback onResolved;
+  final VoidCallback onTap;
+
+  /// 2026-11-11 — the table being moved, highlighted while staff pick the
+  /// target.
+  final bool isMoveSource;
 
   @override
   ConsumerState<_TableTile> createState() => _TableTileState();
@@ -328,23 +522,11 @@ class _TableTileState extends ConsumerState<_TableTile> {
   bool _printing = false;
   bool _startingPayment = false;
 
-  Color get _statusColor => switch (widget.table.status) {
-        'available' => AppColors.primary,
-        'occupied' => AppColors.warning,
-        'billRequested' => AppColors.secondary,
-        'cleaning' => AppColors.textSecondary,
-        'disabled' => AppColors.error,
-        _ => AppColors.textSecondary,
-      };
-
-  String get _statusLabel => switch (widget.table.status) {
-        'available' => 'Boş',
-        'occupied' => 'Dolu',
-        'billRequested' => 'Hesap İstendi',
-        'cleaning' => 'Temizleniyor',
-        'disabled' => 'Kapalı',
-        _ => widget.table.status,
-      };
+  /// 2026-11-11 — bird's-eye card state (see [PosTableTone]).
+  PosTableTone get _tone => PosTableTone.resolve(
+        status: widget.table.status,
+        activePortionCount: widget.table.activePortionCount,
+      );
 
   IconData _iconFor(String type) => switch (type) {
         'callWaiter' => Icons.room_service_outlined,
@@ -459,43 +641,46 @@ class _TableTileState extends ConsumerState<_TableTile> {
     final deviceCtx = ref.watch(posDeviceContextProvider);
     final canPrint = deviceCtx != null &&
         (table.status == 'occupied' || table.status == 'billRequested');
+    final tone = _tone;
+    final seating = posTableSeating(
+      capacity: table.capacity,
+      activePortionCount: table.activePortionCount,
+    );
     return Stack(
       children: [
         InkWell(
           borderRadius: AppRadius.kMedium,
-          onTap: () {
-            ref.read(selectedPosTableIdProvider.notifier).state = table.tableId;
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                  builder: (_) => const PosTableWorkspaceScreen()),
-            );
-          },
+          onTap: widget.onTap,
           child: AppCard(
-            borderColor: _statusColor.withValues(alpha: 0.35),
-            padding: const EdgeInsets.all(AppSpacing.md),
+            borderColor: widget.isMoveSource
+                ? AppColors.warning
+                : tone.color.withValues(alpha: 0.5),
+            padding: const EdgeInsets.all(AppSpacing.sm),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.table_restaurant_rounded,
-                    color: _statusColor, size: 28),
-                const SizedBox(height: AppSpacing.sm),
-                Text(
-                  table.displayName,
-                  style: AppTypography.titleMedium
-                      .copyWith(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 4),
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: AppSpacing.sm, vertical: 2),
                   decoration: BoxDecoration(
-                    color: _statusColor.withValues(alpha: 0.12),
+                    color: tone.color.withValues(alpha: 0.12),
                     borderRadius: AppRadius.kPill,
                   ),
                   child: Text(
-                    _statusLabel,
+                    tone.label,
                     style: AppTypography.bodySmall.copyWith(
-                        color: _statusColor, fontWeight: FontWeight.bold),
+                        color: tone.color, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                // 2026-11-11 — top-down table with up to four chairs; one
+                // chair per live main portion shows a person.
+                Expanded(
+                  child: PosTableTopView(
+                    tableName: table.displayName,
+                    tone: tone,
+                    chairs: seating.chairs,
+                    seated: seating.seated,
                   ),
                 ),
                 if (table.pendingServiceRequests.isNotEmpty) ...[
@@ -536,7 +721,6 @@ class _TableTileState extends ConsumerState<_TableTile> {
                     ],
                   ),
                 ],
-                const Spacer(),
                 // Adım 5 (2026-11-07) — "Mutfakta Hazır": at least one of
                 // this table's orders has reached `status == "ready"`
                 // (every kitchen line confirmed ready) and is waiting to be

@@ -16,6 +16,7 @@ import 'package:abakus_one_v2/features/pos/domain/kds/kitchen_line_status.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
+import 'package:abakus_one_v2/features/pos/presentation/screens/pos_checkout_screen.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/pos_table_workspace_screen.dart';
 
 import '../../test_support/kds_test_fixtures.dart';
@@ -134,6 +135,22 @@ class _FakePosActionGateway implements PosActionGateway {
     required String checkId,
   }) async {
     finalizeCallCount += 1;
+    final gate = finalizeGate;
+    if (gate != null) await gate.future;
+  }
+
+  /// When set, `finalizeCheckReadyForPayment` stays in flight until this
+  /// completes — lets a test look at the "Ödeme hazırlanıyor…" overlay.
+  Completer<void>? finalizeGate;
+
+  int reopenCallCount = 0;
+
+  @override
+  Future<void> reopenCheck({
+    required PosDeviceContext ctx,
+    required String checkId,
+  }) async {
+    reopenCallCount += 1;
   }
 
   @override
@@ -401,6 +418,123 @@ PosTableOperationalView _acceptedLineViewTwoSubAccounts() {
   );
 }
 
+/// Two guests, three accepted lines (Ayşe 2, Mehmet 1).
+PosTableOperationalView _twoGuestsThreeLinesView() {
+  PosOrderLineSummary line(String name, String subAccountId) =>
+      PosOrderLineSummary(
+        productName: name,
+        quantity: 1,
+        unitPriceMinorUnits: 10000,
+        status: 'accepted',
+        subAccountId: subAccountId,
+      );
+  return PosTableOperationalView(
+    tableId: 'table-1',
+    status: 'occupied',
+    tableSessionId: 'tsess-1',
+    subAccounts: const [
+      {'id': 'sub-1', 'displayName': 'Ayşe'},
+      {'id': 'sub-2', 'displayName': 'Mehmet'},
+    ],
+    checks: const [],
+    orders: [
+      PosTableOrderSummary(
+        orderId: 'order-1',
+        subAccountId: 'sub-1',
+        mode: 'guestSession',
+        linesDispositionSummary: 'resolved',
+        lines: [
+          line('Klasik Bowl', 'sub-1'),
+          line('Tavuk Wrap', 'sub-1'),
+          line('Somon Bowl', 'sub-2'),
+        ],
+      ),
+    ],
+  );
+}
+
+/// A table with no session and no orders yet.
+PosTableOperationalView _emptyTableView() {
+  return const PosTableOperationalView(
+    tableId: 'table-1',
+    status: 'available',
+    tableSessionId: null,
+    subAccounts: [],
+    checks: [],
+    orders: [],
+  );
+}
+
+PosTableOperationalView _withOpenCheck(PosTableOperationalView view) {
+  return PosTableOperationalView(
+    tableId: view.tableId,
+    status: view.status,
+    tableSessionId: view.tableSessionId,
+    subAccounts: view.subAccounts,
+    checks: const [
+      {'id': 'check-1', 'status': 'open'},
+    ],
+    orders: view.orders,
+    allocations: view.allocations,
+  );
+}
+
+class _Launcher {
+  _Launcher(this.fakes);
+  final _Fakes fakes;
+  PosTableMoveRequest? result;
+  bool popped = false;
+}
+
+/// Pushes the workspace on top of a host route, like the Masalar grid does,
+/// and records what it pops with.
+Future<_Launcher> _pumpLauncher(
+  WidgetTester tester,
+  PosTableOperationalView initialView,
+) async {
+  final viewGateway = _FakePosOperationalViewGateway()
+    ..viewToReturn = initialView;
+  final actionGateway = _FakePosActionGateway();
+  final launcher = _Launcher(_Fakes(
+      viewGateway, actionGateway, InMemoryKitchenProjectionRepository()));
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        posOperationalViewGatewayProvider.overrideWithValue(viewGateway),
+        posActionGatewayProvider.overrideWithValue(actionGateway),
+        posDeviceContextProvider.overrideWithValue(_ctx),
+        selectedPosTableIdProvider.overrideWith((ref) => 'table-1'),
+        kitchenProjectionRepositoryProvider
+            .overrideWithValue(launcher.fakes.kitchenRepository),
+      ],
+      child: MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () async {
+                  final result =
+                      await Navigator.of(context).push<PosTableMoveRequest>(
+                    MaterialPageRoute(
+                        builder: (_) => const PosTableWorkspaceScreen()),
+                  );
+                  launcher
+                    ..popped = true
+                    ..result = result;
+                },
+                child: const Text('open-workspace'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('open-workspace'));
+  await tester.pumpAndSettle();
+  return launcher;
+}
+
 Future<_Fakes> _pump(
   WidgetTester tester, {
   required PosTableOperationalView initialView,
@@ -432,6 +566,47 @@ Future<_Fakes> _pump(
   return _Fakes(viewGateway, actionGateway, kitchenRepository);
 }
 
+final _paymentButton = find.byKey(const Key('primaryPaymentButton'));
+
+/// 2026-11-11 — on a table with no live order, "Siparişi Onayla" is always
+/// shown and only enabled once the cart has a line, so "nothing was added
+/// to the cart" is now "the button is disabled".
+bool _confirmButtonEnabled(WidgetTester tester) =>
+    tester
+        .widget<ElevatedButton>(
+            find.byKey(const Key('confirmStaffEntryOrderButton')))
+        .onPressed !=
+    null;
+
+/// Opens "... Diğer" → "Hesabı Böl" → "Parçalı Öde" (2026-11-11 location).
+Future<void> _openSplitBillDialog(WidgetTester tester) async {
+  await _openCheckThenSplitSheet(tester);
+  await tester.tap(find.byKey(const Key('splitBillPayButton')));
+  await tester.pumpAndSettle();
+}
+
+/// The accepted-line view after a split created an allocation — what the
+/// real server returns on the reload after a split, so the payment chain
+/// does not add one of its own.
+PosTableOperationalView _withActiveAllocation(PosTableOperationalView view) {
+  return PosTableOperationalView(
+    tableId: view.tableId,
+    status: view.status,
+    tableSessionId: view.tableSessionId,
+    subAccounts: view.subAccounts,
+    checks: view.checks,
+    orders: view.orders,
+    allocations: const [
+      PosCheckAllocationSummary(
+        id: 'alloc-1',
+        subAccountId: 'sub-1',
+        status: 'active',
+        allocatedAmountMinorUnits: 10000,
+      ),
+    ],
+  );
+}
+
 class _Fakes {
   _Fakes(this.viewGateway, this.actionGateway, this.kitchenRepository);
   final _FakePosOperationalViewGateway viewGateway;
@@ -439,16 +614,10 @@ class _Fakes {
   final KitchenProjectionRepository kitchenRepository;
 }
 
-/// Opens the real check (ElevatedButton 'Hesap Aç', present whenever no
-/// check is open yet) and then the "İşlemler" tools sheet — the common
-/// setup every split/discount test below needs, now that those actions
-/// live behind the "... Diğer" grid modal's "Hesabı Böl" tile instead of
-/// being always-visible (2026-11-04 redesign, replacing the old flat
-/// "İşlemler" sheet).
+/// Opens "... Diğer" → "Hesabı Böl" — the common setup every split/discount
+/// test below needs. Since 2026-11-11 there is no separate "Hesap Aç" step:
+/// the "Hesabı Böl" tile opens the check itself when there is none.
 Future<void> _openCheckThenSplitSheet(WidgetTester tester) async {
-  await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 50));
   await tester.tap(find.widgetWithText(ElevatedButton, '... Diğer'));
   await tester.pumpAndSettle();
   await tester.tap(find.text('Hesabı Böl'));
@@ -525,80 +694,94 @@ void main() {
     });
   });
 
-  group(
-      'Payment button state machine — Hesap Aç -> Ödemeye Hazırla -> Ödeme Al',
-      () {
-    testWidgets('Hesap Aç opens the check and advances the button label',
-        (tester) async {
-      final fakes = await _pump(tester, initialView: _acceptedLineView());
+  // 2026-11-11 — product owner: one "Ödeme Al" tap goes straight to the
+  // payment dialog (replacing Hesap Aç → Ödemeye Hazırla → Ödeme Al).
+  group('Ödeme Al — one tap to the payment dialog (2026-11-11)', () {
+    testWidgets(
+        'with a live order and no check, the primary button is "Ödeme Al" with '
+        'the table total', (tester) async {
+      await _pump(tester, initialView: _acceptedLineView());
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      expect(_paymentButton, findsOneWidget);
+      expect(find.text('Ödeme Al: 100 ₺'), findsOneWidget);
+      expect(find.text('Hesap Aç'), findsNothing);
+      expect(find.text('Ödemeye Hazırla'), findsNothing);
+    });
+
+    testWidgets(
+        'one tap opens the check, allocates each sub-account once, finalizes '
+        'and opens the payment dialog — with no table reload in between',
+        (tester) async {
+      final fakes =
+          await _pump(tester, initialView: _twoGuestsThreeLinesView());
+      final loadsBefore = fakes.viewGateway.callCount;
+
+      await tester.tap(_paymentButton);
+      await tester.pumpAndSettle();
 
       expect(fakes.actionGateway.openCheckCallCount, 1);
-      expect(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'),
-          findsOneWidget);
+      // finalize rejects a check without an allocation — one
+      // splitCheckByCustomer per sub-account (2), never one per line (3).
+      expect(fakes.actionGateway.splitByCustomerCallCount, 2);
+      expect(fakes.actionGateway.splitByProductCallCount, 0);
+      expect(fakes.actionGateway.finalizeCallCount, 1);
+      expect(find.byType(PosCheckoutScreen), findsOneWidget);
+      expect(fakes.viewGateway.callCount, loadsBefore,
+          reason: 'the chain must not reload the table between its calls');
     });
 
-    testWidgets('Ödemeye Hazırla calls finalizeCheckReadyForPayment',
+    testWidgets(
+        'the "Ödeme hazırlanıyor…" overlay shows from the tap until the '
+        'dialog opens, and a second tap starts nothing', (tester) async {
+      final fakes = await _pump(tester, initialView: _acceptedLineView());
+      final gate = Completer<void>();
+      fakes.actionGateway.finalizeGate = gate;
+
+      await tester.tap(_paymentButton);
+      await tester.pump();
+
+      expect(find.byKey(const Key('preparingPaymentOverlay')), findsOneWidget);
+      expect(find.text('Ödeme hazırlanıyor…'), findsOneWidget);
+      await tester.tap(_paymentButton, warnIfMissed: false);
+      await tester.pump();
+      expect(fakes.actionGateway.openCheckCallCount, 1);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('preparingPaymentOverlay')), findsNothing);
+      expect(fakes.actionGateway.finalizeCallCount, 1);
+      expect(find.byType(PosCheckoutScreen), findsOneWidget);
+    });
+
+    testWidgets('an already-active allocation is never duplicated',
         (tester) async {
-      final fakes = await _pump(tester, initialView: _acceptedLineView());
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      final fakes = await _pump(tester,
+          initialView:
+              _withOpenCheck(_withActiveAllocation(_acceptedLineView())));
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
-      // Adım 3 (2026-11-06) — "Ödemeye Hazırla" now opens a "Tek Hesap
-      // Olarak Öde" / "Parçalı Öde" choice sheet first; pumpAndSettle lets
-      // the sheet's entrance animation finish before tapping into it.
+      await tester.tap(_paymentButton);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Tek Hesap Olarak Öde'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
 
+      expect(fakes.actionGateway.openCheckCallCount, 0);
+      expect(fakes.actionGateway.splitByCustomerCallCount, 0);
       expect(fakes.actionGateway.finalizeCallCount, 1);
     });
 
     testWidgets(
-        'Ödemeye Hazırla with zero existing allocations auto-creates one '
-        'per accepted line before finalizing (backend rejects a bare '
-        'finalize otherwise)', (tester) async {
-      final fakes = await _pump(tester, initialView: _acceptedLineView());
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Tek Hesap Olarak Öde'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      // _acceptedLineView has exactly one accepted line and no
-      // allocations — one real splitByProduct call, then finalize.
-      expect(fakes.actionGateway.splitByProductCallCount, 1);
-      expect(fakes.actionGateway.finalizeCallCount, 1);
-    });
-
-    testWidgets(
-        'Ödemeye Hazırla with an already-active allocation never creates '
-        'a redundant one', (tester) async {
-      const viewWithAllocation = PosTableOperationalView(
+        'a check already ready for payment opens the dialog directly; closing '
+        'it without paying reopens the check', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1280, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      const readyView = PosTableOperationalView(
         tableId: 'table-1',
         status: 'occupied',
         tableSessionId: 'tsess-1',
         subAccounts: [
           {'id': 'sub-1', 'displayName': 'Ayşe'},
         ],
-        checks: [],
-        allocations: [
-          PosCheckAllocationSummary(
-            id: 'alloc-1',
-            subAccountId: 'sub-1',
-            status: 'active',
-            allocatedAmountMinorUnits: 10000,
-          ),
+        checks: [
+          {'id': 'check-1', 'status': 'readyForPayment'},
         ],
         orders: [
           PosTableOrderSummary(
@@ -618,34 +801,29 @@ void main() {
           ),
         ],
       );
-      final fakes = await _pump(tester, initialView: viewWithAllocation);
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      final fakes = await _pump(tester, initialView: readyView);
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
+      await tester.tap(_paymentButton);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Tek Hesap Olarak Öde'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
 
-      expect(fakes.actionGateway.splitByProductCallCount, 0);
-      expect(fakes.actionGateway.finalizeCallCount, 1);
+      expect(fakes.actionGateway.openCheckCallCount, 0);
+      expect(fakes.actionGateway.finalizeCallCount, 0);
+      expect(find.byType(PosCheckoutScreen), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Kapat'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PosCheckoutScreen), findsNothing);
+      expect(fakes.actionGateway.reopenCallCount, 1);
     });
   });
 
-  group('Parçalı Öde (Adım 3, 2026-11-06) — "Ödemeye Hazırla" seçim sayfası',
-      () {
+  group('Parçalı Öde (Adım 3; 2026-11-11: Diğer → Hesabı Böl)', () {
     testWidgets(
         'Esit Bolusum: en az 2 hesap secilmeden "Böl" butonu devre disi kalir',
         (tester) async {
       await _pump(tester, initialView: _acceptedLineViewTwoSubAccounts());
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Parçalı Öde'));
-      await tester.pumpAndSettle();
+      await _openSplitBillDialog(tester);
 
       expect(find.text('Eşit Bölüşüm'), findsWidgets);
       final confirmButton = tester.widget<ElevatedButton>(
@@ -675,16 +853,13 @@ void main() {
         'cagrilir, sonra finalize edilir', (tester) async {
       final fakes =
           await _pump(tester, initialView: _acceptedLineViewTwoSubAccounts());
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Parçalı Öde'));
-      await tester.pumpAndSettle();
+      await _openSplitBillDialog(tester);
 
       await tester.tap(find.text('Ayşe'));
       await tester.tap(find.text('Mehmet'));
       await tester.pump();
+      fakes.viewGateway.viewToReturn =
+          _withActiveAllocation(_acceptedLineViewTwoSubAccounts());
       await tester.tap(find.widgetWithText(ElevatedButton, 'Böl'));
       await tester.pumpAndSettle();
 
@@ -699,12 +874,7 @@ void main() {
         'hedef hesaba cagrilir, sonra finalize edilir', (tester) async {
       final fakes =
           await _pump(tester, initialView: _acceptedLineViewTwoSubAccounts());
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Parçalı Öde'));
-      await tester.pumpAndSettle();
+      await _openSplitBillDialog(tester);
 
       await tester.tap(find.text('Kalem Seçimi'));
       await tester.pumpAndSettle();
@@ -722,11 +892,15 @@ void main() {
         find.widgetWithText(ElevatedButton, 'Böl'),
       );
       expect(confirm.onPressed, isNotNull);
+      fakes.viewGateway.viewToReturn =
+          _withActiveAllocation(_acceptedLineViewTwoSubAccounts());
       await tester.tap(find.widgetWithText(ElevatedButton, 'Böl'));
       await tester.pumpAndSettle();
 
       expect(fakes.actionGateway.splitByProductCallCount, 1);
       expect(fakes.actionGateway.finalizeCallCount, 1);
+      expect(find.byType(PosCheckoutScreen), findsOneWidget,
+          reason: 'after the split, payment opens without another tap');
     });
   });
 
@@ -745,83 +919,80 @@ void main() {
     });
 
     testWidgets(
-        '"Taşı" quick-action button opens a status-aware table picker — '
-        'tapping a target table confirms the transfer immediately, no '
-        'manual id entry, reachable with no check open at all', (tester) async {
-      await tester.binding.setSurfaceSize(const Size(1200, 1400));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final fakes = await _pump(tester, initialView: _acceptedLineView());
-
-      // No "Hesap Aç" tap — "Taşı" must stay reachable regardless of check
-      // status (BR-POS-002), confirmed by never opening a check here.
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Taşı'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Masa 2'), findsOneWidget);
-      expect(find.text('Boş'), findsOneWidget);
-      expect(find.text('Masa 3'), findsOneWidget);
-      expect(find.text('Dolu'), findsOneWidget);
-      await tester.tap(find.text('Masa 2'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(fakes.actionGateway.transferCallCount, 1);
-      expect(fakes.actionGateway.lastTransferTarget, 'table-2');
-    });
-
-    testWidgets(
-        'the current table itself renders disabled ("Bu Masa") in the '
-        'picker — it can never be its own transfer target', (tester) async {
-      await tester.binding.setSurfaceSize(const Size(1200, 1400));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final fakes = await _pump(tester, initialView: _acceptedLineView());
-      fakes.viewGateway.branchOverviewToReturn = PosBranchOverviewPage(
-        tables: [
-          const PosBranchTableSummary(
-            tableId: 'table-1',
-            displayName: 'Masa 1',
-            status: 'occupied',
-            activeTableSessionId: 'tsess-1',
-            pendingQrLineCount: 0,
-          ),
-          ...fakes.viewGateway.branchOverviewToReturn.tables,
-        ],
-        nextCursor: null,
-        version: 'v1',
-        unchanged: false,
-      );
+        '"Taşı" with nothing selected returns to the Masalar grid with a '
+        'whole-table move request', (tester) async {
+      final launcher = await _pumpLauncher(tester, _acceptedLineView());
 
       await tester.tap(find.widgetWithText(ElevatedButton, 'Taşı'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Bu Masa'), findsOneWidget);
-      await tester.tap(find.text('Masa 1'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(fakes.actionGateway.transferCallCount, 0,
-          reason: 'tapping the disabled self-tile must not transfer');
+      expect(find.byType(PosTableWorkspaceScreen), findsNothing);
+      expect(launcher.result?.sourceTableId, 'table-1');
+      expect(launcher.fakes.actionGateway.transferCallCount, 0,
+          reason: 'the target is picked on the grid, not here');
     });
 
     testWidgets(
-        '"Masa Taşıma" grid tile opens the exact same table picker as the '
-        'quick-action "Taşı" button', (tester) async {
+        '"Taşı" with a selected line announces single-line moves as coming '
+        'next release and stays on the table', (tester) async {
+      final launcher = await _pumpLauncher(tester, _acceptedLineView());
+
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Taşı'));
+      await tester.pump();
+
+      expect(
+          find.text(
+              'Tek ürün taşıma bir sonraki güncellemede devrede olacaktır.'),
+          findsOneWidget);
+      expect(find.byType(PosTableWorkspaceScreen), findsOneWidget);
+      expect(launcher.popped, isFalse);
+    });
+
+    testWidgets('"Masa Taşıma" grid tile starts the same whole-table move',
+        (tester) async {
       await tester.binding.setSurfaceSize(const Size(1200, 1400));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      final fakes = await _pump(tester, initialView: _acceptedLineView());
+      final launcher = await _pumpLauncher(tester, _acceptedLineView());
 
       await tester.tap(find.widgetWithText(ElevatedButton, '... Diğer'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Masa Taşıma'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Masa 3'), findsOneWidget);
-      await tester.tap(find.text('Masa 3'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      expect(launcher.result?.sourceTableId, 'table-1');
+    });
 
-      expect(fakes.actionGateway.transferCallCount, 1);
-      expect(fakes.actionGateway.lastTransferTarget, 'table-3');
+    testWidgets('"Taşı" is disabled on a table with no session',
+        (tester) async {
+      await _pump(tester, initialView: _emptyTableView());
+
+      final move = tester
+          .widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'Taşı'));
+      expect(move.onPressed, isNull);
+    });
+
+    testWidgets(
+        '"Cari" replaces the "Yakında" button and says the module is coming',
+        (tester) async {
+      await _pump(tester, initialView: _acceptedLineView());
+
+      expect(find.text('Yakında'), findsNothing);
+      expect(find.text('Garson / Cari'), findsNothing);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Cari'));
+      await tester.pump();
+
+      expect(find.text('Cari hesap modülü yakında devrede.'), findsOneWidget);
+    });
+
+    testWidgets('quick-action buttons are at least 64px tall', (tester) async {
+      await _pump(tester, initialView: _acceptedLineView());
+
+      for (final label in ['... Diğer', 'Taşı', 'Cari', 'Yazdır']) {
+        final size = tester.getSize(find.widgetWithText(ElevatedButton, label));
+        expect(size.height, greaterThanOrEqualTo(64), reason: label);
+      }
     });
 
     testWidgets(
@@ -878,11 +1049,17 @@ void main() {
     testWidgets(
         'financial adjustment dialog calls requestCheckFinancialAdjustment '
         'with the default whole-check complimentary scope', (tester) async {
+      // 2026-11-11 — the "Parçalı Öde" button now heads the split sheet.
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
       final fakes = await _pump(tester, initialView: _acceptedLineView());
       await _openCheckThenSplitSheet(tester);
 
-      await tester.tap(
-          find.widgetWithText(OutlinedButton, 'Fiyat Düzeltmesi Talep Et'));
+      final adjustment =
+          find.widgetWithText(OutlinedButton, 'Fiyat Düzeltmesi Talep Et');
+      await tester.ensureVisible(adjustment);
+      await tester.pumpAndSettle();
+      await tester.tap(adjustment);
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const Key('adjustmentReasonMessageField')),
@@ -926,10 +1103,7 @@ void main() {
         'dialog handles a PaymentGateway failure gracefully', (tester) async {
       await tester.binding.setSurfaceSize(const Size(1200, 1400));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await _pump(tester, initialView: _acceptedLineView());
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await _pump(tester, initialView: _withOpenCheck(_acceptedLineView()));
 
       await tester.tap(find.widgetWithText(ElevatedButton, '... Diğer'));
       await tester.pumpAndSettle();
@@ -1019,14 +1193,9 @@ void main() {
         ],
       );
       await _pump(tester, initialView: readyView);
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
 
-      // The fake's default checkIdToReturn ('check-1') matches the check
-      // above, so widget.checkId now resolves its real status.
-      expect(find.widgetWithText(ElevatedButton, 'Ödeme Al: 100 ₺'),
-          findsOneWidget);
+      // 2026-11-11 — a `readyForPayment` check is picked up on load.
+      expect(find.text('Ödeme Al: 100 ₺'), findsOneWidget);
     });
 
     // 2026-11-10 — paid modifiers were missing from the line amount and the
@@ -1079,17 +1248,13 @@ void main() {
         ],
       );
       await _pump(tester, initialView: view);
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
 
       // (520 + 150) × 2 = 1340 TL — never the bare 2 × 520 = 1040.
       expect(find.text('1340 TL'), findsOneWidget);
       expect(find.text('1040 TL'), findsNothing);
       expect(find.text('+ Izgara Tavuk (Göğüs) (+150 ₺)'), findsOneWidget);
       expect(find.text('+ Roka'), findsOneWidget);
-      expect(find.widgetWithText(ElevatedButton, 'Ödeme Al: 1340 ₺'),
-          findsOneWidget);
+      expect(find.text('Ödeme Al: 1340 ₺'), findsOneWidget);
     });
   });
 
@@ -1241,15 +1406,15 @@ void main() {
     });
 
     testWidgets(
-        'the send-cart button only appears once the cart has at least one '
+        'the send-cart button is only enabled once the cart has at least one '
         'line', (tester) async {
       await tester.binding.setSurfaceSize(const Size(1200, 1400));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await _pump(tester, initialView: emptyOpenTableView());
 
-      expect(
-          find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing,
-          reason: 'the whole send-cart section is hidden while empty');
+      // 2026-11-11 — shown but disabled while the cart is empty.
+      expect(_confirmButtonEnabled(tester), isFalse,
+          reason: 'nothing to send while the cart is empty');
 
       await _tapDrinksCategory(tester);
       await tester.pump();
@@ -1397,8 +1562,7 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      expect(
-          find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing);
+      expect(_confirmButtonEnabled(tester), isFalse);
       expect(find.textContaining('Barkod bulunamadı'), findsOneWidget);
     });
   });
@@ -1441,8 +1605,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('Gramaj / Miktar Girin'), findsOneWidget);
-      expect(
-          find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing,
+      expect(_confirmButtonEnabled(tester), isFalse,
           reason: 'gramaj onaylanmadan sepete satir eklenmemeli');
     });
 
@@ -1470,8 +1633,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('Gramaj / Miktar Girin'), findsNothing);
-      expect(
-          find.byKey(const Key('confirmStaffEntryOrderButton')), findsNothing);
+      expect(_confirmButtonEnabled(tester), isFalse);
     });
 
     testWidgets('"Teraziden Oku" bagli terazi yoksa dürüst mesaj gosterir',
@@ -1867,11 +2029,7 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1280, 720));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final fakes = await _pump(tester, initialView: _acceptedLineView());
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Hesap Aç'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'),
-          findsOneWidget);
+      expect(_paymentButton, findsOneWidget);
 
       await _tapDrinksCategory(tester);
       await tester.pump();
@@ -1891,8 +2049,7 @@ void main() {
       await pumpWithOpenCheckAndCartItem(tester);
 
       expect(find.text('Siparişi Onayla'), findsOneWidget);
-      expect(
-          find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'), findsNothing,
+      expect(_paymentButton, findsNothing,
           reason: 'finalizing now would leave the unsent items off both '
               'the kitchen and the bill');
     });
@@ -1907,8 +2064,32 @@ void main() {
 
       expect(fakes.actionGateway.submitStaffEntryOrderCallCount, 1);
       expect(find.text('Siparişi Onayla'), findsNothing);
-      expect(find.widgetWithText(ElevatedButton, 'Ödemeye Hazırla'),
-          findsOneWidget);
+      expect(_paymentButton, findsOneWidget);
+    });
+
+    testWidgets(
+        '2026-11-11: an empty table with an empty cart shows a disabled '
+        'Siparişi Onayla; the first product enables it', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1280, 720));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pump(tester, initialView: _emptyTableView());
+
+      ElevatedButton confirm() => tester.widget<ElevatedButton>(
+          find.byKey(const Key('confirmStaffEntryOrderButton')));
+      expect(_paymentButton, findsNothing);
+      expect(confirm().onPressed, isNull);
+
+      await _tapDrinksCategory(tester);
+      await tester.pump();
+      final card = find.descendant(
+        of: find.byType(GridView),
+        matching: find.text('CocaCola Şişe'),
+      );
+      await tester.ensureVisible(card);
+      await tester.tap(card);
+      await tester.pump();
+
+      expect(confirm().onPressed, isNotNull);
     });
   });
 

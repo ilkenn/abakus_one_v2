@@ -113,6 +113,14 @@ abstract interface class PosActionGateway {
     required String checkId,
   });
 
+  /// 2026-11-11 — `reopenCheck`: `readyForPayment` → `open`, used when
+  /// the payment dialog is closed without any payment so the table can keep
+  /// ordering. The server refuses once payment activity has started.
+  Future<void> reopenCheck({
+    required PosDeviceContext ctx,
+    required String checkId,
+  });
+
   // --- Splits --------------------------------------------------------
   Future<String> splitByProduct({
     required PosDeviceContext ctx,
@@ -318,6 +326,17 @@ class FirebasePosActionGateway implements PosActionGateway {
     required String checkId,
   }) async {
     await _call('finalizeCheckReadyForPayment', {
+      ...ctx.toWire(),
+      'checkId': checkId,
+    });
+  }
+
+  @override
+  Future<void> reopenCheck({
+    required PosDeviceContext ctx,
+    required String checkId,
+  }) async {
+    await _call('reopenCheck', {
       ...ctx.toWire(),
       'checkId': checkId,
     });
@@ -547,6 +566,13 @@ class UnavailablePosActionGateway implements PosActionGateway {
 
   @override
   Future<void> finalizeCheckReadyForPayment({
+    required PosDeviceContext ctx,
+    required String checkId,
+  }) async =>
+      _unavailable();
+
+  @override
+  Future<void> reopenCheck({
     required PosDeviceContext ctx,
     required String checkId,
   }) async =>
