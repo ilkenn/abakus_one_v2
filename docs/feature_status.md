@@ -11486,3 +11486,16 @@ passing, 0 failures.
 - Tests: 4 cart notifier, 1 use case assertion, 8 identity tests; checkout tests now use distinct guest vs
   table session ids (the fake gateway resolves the cart's table session like the server).
 - **Visual Review Bekleniyor**.
+
+### QR table: shopping channel is dineInQr at the table (2026-11-11)
+
+- Bug: `shoppingChannelProvider` never had a dine-in state — it stayed `delivery` at a QR table. Once the shared
+  table cart worked (entry above), every cart line (always stamped `dineInQr`) was flagged by `CartScreen`'s
+  channel guard ("farklı bir sipariş modu için fiyatlandırılmış") and "Siparişi Tamamla" stayed locked; menu
+  prices and modifier visibility were also resolved for delivery at the table.
+- Fix: `ShoppingChannelNotifier.build` derives `dineInQr` (with the table's restaurant/branch) from
+  `activeTableContextProvider`, and falls back to `delivery` when the table session ends. Behavior change to
+  note: at a table, the menu now shows dine-in channel prices (identical today — no dine-in adjustment is
+  configured; the server prices the order anyway).
+- Tests: 1 provider test, 1 cart screen widget test.
+- **Visual Review Bekleniyor**.
