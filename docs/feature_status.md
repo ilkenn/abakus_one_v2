@@ -11450,3 +11450,18 @@ passing, 0 failures.
   (`getLiveTableBill`) had the same gap server-side and now includes modifiers too.
 - Tests: line-total/receipt unit tests, a POS widget test, a `getLiveTableBill` emulator test.
 - **Visual Review Bekleniyor**.
+
+### POS trusted device: automatic recovery from a server-rejected session (2026-11-10)
+
+- Bug: after the dev emulator data reverted to an older snapshot, the POS showed "Şube masaları yüklenirken
+  bir sorun oluştu." permanently. The locally cached device session (still valid by its cached expiry) no
+  longer existed server-side, `requireActiveDeviceSession` rejected every call, and "Tekrar Dene" resent the
+  same session id. The table documents (incl. `qr-test-1`) were not the cause.
+- Fix: `TrustedDeviceSessionController.recoverFromRejectedSession` clears only the cached session (never the
+  device key/id) and issues a fresh one with the existing key (challenge + signature, no re-approval);
+  stale/concurrent reports are no-ops; failure fails closed. `isRecoverableSessionRejection` matches only the
+  server's "No such device session." / "Device session has expired." / "Device session is not active."
+  (`permission-denied`, both REST and plugin spellings); a device/branch mismatch is excluded. The branch
+  overview (mounted and polling under every POS screen) recovers and retries once.
+- Tests: 6 controller/unit tests, 1 overview widget test.
+- **Visual Review Bekleniyor**.

@@ -442,4 +442,146 @@ void main() {
     expect(message, contains('Tekrar Dene'),
         reason: 'must point at the actual recovery action');
   });
+
+  // 2026-11-10 — the server rejected a session the local cache still
+  // considered valid (emulator data reset): recover with the same key.
+  group('recoverFromRejectedSession', () {
+    Future<TrustedDeviceSessionController> activeController() async {
+      final controller = buildController();
+      gateway.registrationResult = const RequestDeviceRegistrationResult(
+        deviceId: 'device-1',
+        status: 'active',
+        alreadyRegistered: false,
+      );
+      await controller.register(capabilities: const ['POS']);
+      gateway.challengeResult = RequestDeviceChallengeResult(
+        challengeId: 'c1',
+        nonce: 'nonce-1',
+        expiresAt: DateTime.now().add(const Duration(minutes: 2)),
+      );
+      gateway.sessionResult = IssueDeviceSessionResult(
+        sessionId: 'session-1',
+        expiresAt: DateTime.now().add(const Duration(hours: 12)),
+        deviceId: 'device-1',
+      );
+      await controller.activateOrRefresh();
+      expect(controller.state, isA<ActiveSession>());
+      return controller;
+    }
+
+    void nextSession(String sessionId) {
+      gateway.challengeResult = RequestDeviceChallengeResult(
+        challengeId: 'c-$sessionId',
+        nonce: 'nonce-$sessionId',
+        expiresAt: DateTime.now().add(const Duration(minutes: 2)),
+      );
+      gateway.sessionResult = IssueDeviceSessionResult(
+        sessionId: sessionId,
+        expiresAt: DateTime.now().add(const Duration(hours: 12)),
+        deviceId: 'device-1',
+      );
+    }
+
+    test(
+        'issues a fresh session with the existing key (purpose "issue", no '
+        're-registration) and caches it', () async {
+      final controller = await activeController();
+      nextSession('session-2');
+
+      final recovered =
+          await controller.recoverFromRejectedSession('session-1');
+
+      expect(recovered, isTrue);
+      final state = controller.state as ActiveSession;
+      expect(state.sessionId, 'session-2');
+      expect(state.deviceId, 'device-1');
+      expect(gateway.lastChallengePurpose, 'issue');
+      expect(gateway.issueSessionCallCount, 2);
+      expect(gateway.requestRegistrationCallCount, 1,
+          reason: 'the device registration itself is never redone');
+
+      // The cache now holds the new session: a restart resumes it.
+      final cached = await DeviceSessionCache(
+        storage: const FlutterSecureStorage(),
+      ).readSession('test_org-1_branch-1');
+      expect(cached?.sessionId, 'session-2');
+    });
+
+    test('a report for a session that is no longer current is a no-op',
+        () async {
+      final controller = await activeController();
+      nextSession('session-2');
+
+      final recovered =
+          await controller.recoverFromRejectedSession('some-older-session');
+
+      expect(recovered, isFalse);
+      expect((controller.state as ActiveSession).sessionId, 'session-1');
+      expect(gateway.issueSessionCallCount, 1);
+    });
+
+    test('two concurrent reports issue exactly one new session', () async {
+      final controller = await activeController();
+      nextSession('session-2');
+
+      final results = await Future.wait([
+        controller.recoverFromRejectedSession('session-1'),
+        controller.recoverFromRejectedSession('session-1'),
+      ]);
+
+      expect(results.where((r) => r).length, 1);
+      expect(gateway.issueSessionCallCount, 2,
+          reason: 'one initial activation + one recovery');
+      expect((controller.state as ActiveSession).sessionId, 'session-2');
+    });
+
+    test('fails closed when the new session cannot be issued', () async {
+      final controller = await activeController();
+      nextSession('session-2');
+      gateway.issueSessionError = const TrustedDeviceSessionException(
+        'unavailable',
+        'Sunucuya ulaşılamadı.',
+      );
+
+      final recovered =
+          await controller.recoverFromRejectedSession('session-1');
+
+      expect(recovered, isFalse);
+      expect(controller.state, isA<DeviceNetworkError>(),
+          reason: 'never keeps using the rejected session');
+      final cached = await DeviceSessionCache(
+        storage: const FlutterSecureStorage(),
+      ).readSession('test_org-1_branch-1');
+      expect(cached, isNull, reason: 'the rejected session is not cached');
+    });
+  });
+
+  group('isRecoverableSessionRejection', () {
+    bool check(String code, String message) =>
+        TrustedDeviceSessionController.isRecoverableSessionRejection(
+          code: code,
+          message: message,
+        );
+
+    test('matches the three server session rejections, both code spellings',
+        () {
+      expect(check('permission-denied', 'No such device session.'), isTrue);
+      expect(check('permission_denied', 'No such device session.'), isTrue,
+          reason: 'Windows REST bridge spelling');
+      expect(check('permission-denied', 'Device session has expired.'), isTrue);
+      expect(
+          check('permission-denied', 'Device session is not active.'), isTrue);
+    });
+
+    test('ignores every other error', () {
+      expect(
+        check('permission-denied',
+            'Device session does not match the requested device/branch.'),
+        isFalse,
+      );
+      expect(check('permission-denied', 'Missing permission.'), isFalse);
+      expect(check('not-found', 'No such device session.'), isFalse);
+      expect(check('unavailable', 'Device session has expired.'), isFalse);
+    });
+  });
 }

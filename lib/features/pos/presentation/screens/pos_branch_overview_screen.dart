@@ -12,6 +12,7 @@ import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../admin/application/use_cases/trusted_device_session_controller.dart';
 import '../../../admin/presentation/providers/admin_context_provider.dart';
 import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../../admin/presentation/providers/trusted_device_session_providers.dart';
@@ -122,7 +123,13 @@ class _PosBranchOverviewScreenState
     );
   }
 
-  Future<void> _load({bool poll = false}) async {
+  /// [afterSessionRecovery] — this load is the single retry right after a
+  /// rejected device session was replaced; never recovers a second time,
+  /// so a server that keeps rejecting cannot loop.
+  Future<void> _load({
+    bool poll = false,
+    bool afterSessionRecovery = false,
+  }) async {
     final ctx = ref.read(posDeviceContextProvider);
     if (ctx == null) return;
     if (!poll) setState(() => _error = null);
@@ -156,6 +163,30 @@ class _PosBranchOverviewScreenState
         _error = null;
       });
     } catch (e) {
+      // 2026-11-10 — the server no longer knows this device session (data
+      // reset, expired or deactivated server-side) while the local cache
+      // still says it is valid: get a fresh session with the same device
+      // key and retry once. This screen stays mounted (and keeps polling)
+      // under every POS screen pushed on top of it, so this recovers the
+      // whole POS within one poll interval.
+      if (!afterSessionRecovery &&
+          mounted &&
+          e is PosOperationalViewException &&
+          TrustedDeviceSessionController.isRecoverableSessionRejection(
+            code: e.code,
+            message: e.message,
+          )) {
+        final args = ref.read(currentTrustedDeviceSessionControllerProvider);
+        if (args != null) {
+          final recovered = await ref
+              .read(trustedDeviceSessionControllerProvider(args).notifier)
+              .recoverFromRejectedSession(ctx.deviceSessionId);
+          if (recovered && mounted) {
+            await _load(poll: poll, afterSessionRecovery: true);
+            return;
+          }
+        }
+      }
       if (!mounted || poll) {
         return; // a background poll failure never clobbers an already-shown list.
       }

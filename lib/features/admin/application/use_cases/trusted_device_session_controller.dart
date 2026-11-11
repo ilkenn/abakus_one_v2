@@ -301,6 +301,66 @@ class TrustedDeviceSessionController
     throw StateError('No active trusted-device session is available.');
   }
 
+  /// 2026-11-10 — the server's exact `requireActiveDeviceSession`
+  /// (`trustedDevice.ts`) rejections that mean "this session id is no
+  /// longer usable, but the device itself still is": the session doc is
+  /// gone (e.g. backend data reset), has expired server-side, or is no
+  /// longer active. A device mismatch ("does not match the requested
+  /// device/branch") is deliberately NOT included — that is not something
+  /// a fresh session for the same device fixes silently.
+  static const _recoverableSessionRejections = {
+    'no such device session.',
+    'device session has expired.',
+    'device session is not active.',
+  };
+
+  /// Whether a device-gated callable's error ([code], [message]) is one of
+  /// the recoverable session rejections above. The code is normalized
+  /// because the Windows REST bridge surfaces the callable protocol's
+  /// `PERMISSION_DENIED` as `permission_denied`, the plugin as
+  /// `permission-denied`.
+  static bool isRecoverableSessionRejection({
+    required String code,
+    required String message,
+  }) {
+    final normalizedCode = code.toLowerCase().replaceAll('_', '-');
+    return normalizedCode == 'permission-denied' &&
+        _recoverableSessionRejections.contains(message.trim().toLowerCase());
+  }
+
+  /// 2026-11-10 — called when the server rejected [rejectedSessionId] (see
+  /// [isRecoverableSessionRejection]) although the locally cached expiry
+  /// still says it is valid. Clears ONLY the cached session (never the
+  /// device key or device id) and issues a fresh one with the existing key
+  /// — the same challenge/sign proof-of-possession as a first activation,
+  /// so no manager re-approval and no bypass. A report for a session that
+  /// is no longer the current one (already recovered, or a concurrent
+  /// second report) is a no-op, so this never issues two sessions.
+  ///
+  /// Returns `true` once a NEW active session is in place; on failure the
+  /// state is whatever [activateOrRefresh] left (fails closed — e.g.
+  /// [DeviceNetworkError] or [NotRegistered]).
+  Future<bool> recoverFromRejectedSession(String rejectedSessionId) async {
+    final current = state;
+    final (deviceId, sessionId) = switch (current) {
+      ActiveSession(:final deviceId, :final sessionId) => (deviceId, sessionId),
+      ExpiringRefreshing(:final deviceId, :final sessionId) => (
+          deviceId,
+          sessionId
+        ),
+      _ => (null, null),
+    };
+    if (deviceId == null || sessionId != rejectedSessionId) return false;
+
+    // State first (synchronously), so a concurrent report sees no current
+    // session and returns early instead of starting a second activation.
+    state = ActivationRequired(deviceId);
+    await sessionCache.clearSession(_namespace);
+    await activateOrRefresh();
+    final after = state;
+    return after is ActiveSession && after.sessionId != rejectedSessionId;
+  }
+
   /// Operator-confirmed recovery from [KeyStorageCorrupted] or a terminal
   /// [DeviceRevoked]/[DeviceRetired] state — clears everything local and
   /// returns to [NotRegistered], ready for [register] to create a genuinely

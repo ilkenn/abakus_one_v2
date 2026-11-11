@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodCall, SystemChannels;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_secure_storage_platform_interface/flutter_secure_storage_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'package:abakus_one_v2/features/admin/application/use_cases/trusted_device_session_controller.dart';
 
 import 'package:abakus_one_v2/features/admin/data/device_key_store.dart';
 import 'package:abakus_one_v2/features/admin/data/device_session_cache.dart';
@@ -17,6 +21,76 @@ import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dar
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/pos_branch_overview_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/trusted_device_status_screen.dart';
+
+import '../../../admin/test_support/fake_secure_storage_platform.dart';
+
+/// 2026-11-10 — a server that no longer knows [rejectedSessionId] (the
+/// emulator data reset case) and serves tables for any other session.
+class _SessionRejectingGateway extends _FakePosOperationalViewGateway {
+  _SessionRejectingGateway(this.rejectedSessionId);
+  final String rejectedSessionId;
+  final sessionIdsSeen = <String>[];
+
+  @override
+  Future<PosBranchOverviewPage> getBranchOverview({
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String deviceSessionId,
+    String? cursor,
+    String? ifNoneMatchVersion,
+  }) async {
+    sessionIdsSeen.add(deviceSessionId);
+    if (deviceSessionId == rejectedSessionId) {
+      // The Windows REST bridge's spelling of PERMISSION_DENIED.
+      throw const PosOperationalViewException(
+        'permission_denied',
+        'No such device session.',
+      );
+    }
+    return super.getBranchOverview(
+      organizationId: organizationId,
+      branchId: branchId,
+      deviceId: deviceId,
+      deviceSessionId: deviceSessionId,
+      cursor: cursor,
+      ifNoneMatchVersion: ifNoneMatchVersion,
+    );
+  }
+}
+
+class _IssuingSessionGateway extends _NoopSessionGateway {
+  int issueCount = 0;
+
+  @override
+  Future<RequestDeviceChallengeResult> requestChallenge({
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String purpose,
+  }) async =>
+      RequestDeviceChallengeResult(
+        challengeId: 'c1',
+        nonce: 'nonce-1',
+        expiresAt: DateTime.now().add(const Duration(minutes: 2)),
+      );
+
+  @override
+  Future<IssueDeviceSessionResult> issueSession({
+    required String organizationId,
+    required String branchId,
+    required String deviceId,
+    required String challengeId,
+    required String signature,
+  }) async {
+    issueCount += 1;
+    return IssueDeviceSessionResult(
+      sessionId: 'session-new',
+      expiresAt: DateTime.now().add(const Duration(hours: 12)),
+      deviceId: deviceId,
+    );
+  }
+}
 
 class _FakePosOperationalViewGateway implements PosOperationalViewGateway {
   List<PosBranchTableSummary> tables = const [];
@@ -791,5 +865,75 @@ void main() {
       expect(find.text('Ödeme'), findsNothing);
       expect(find.text('Bu masada açık bir hesap yok.'), findsOneWidget);
     });
+  });
+
+  // 2026-11-10 — "Şube masaları yüklenirken bir sorun oluştu" after an
+  // emulator data reset: the cached session (still valid locally) was gone
+  // server-side and "Tekrar Dene" resent the same id forever.
+  testWidgets(
+      'a server-rejected device session is replaced with a fresh one and the '
+      'tables load, instead of a permanent error', (tester) async {
+    FlutterSecureStoragePlatform.instance = FakeSecureStoragePlatform();
+    const namespace = 'test_org-1_branch-1';
+    final cache = DeviceSessionCache(storage: const FlutterSecureStorage());
+    await cache.writeDeviceId(namespace, 'device-1');
+    await cache.writeSession(
+      namespace,
+      sessionId: 'session-stale',
+      expiresAt: DateTime.now().add(const Duration(hours: 6)),
+    );
+
+    final sessionGateway = _IssuingSessionGateway();
+    final gateway = _SessionRejectingGateway('session-stale')
+      ..tables = [
+        const PosBranchTableSummary(
+          tableId: 'table-1',
+          displayName: 'Salon 1',
+          status: 'available',
+          activeTableSessionId: null,
+          pendingQrLineCount: 0,
+        ),
+      ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          posOperationalViewGatewayProvider.overrideWithValue(gateway),
+          currentTrustedDeviceSessionControllerProvider.overrideWithValue(
+            (organizationId: 'org-1', branchId: 'branch-1'),
+          ),
+          trustedDeviceSessionControllerProvider.overrideWith(
+            (ref, args) => TrustedDeviceSessionController(
+              keyStore: _NoopKeyStore(),
+              sessionCache: cache,
+              sessionGateway: sessionGateway,
+              deviceRepository: _NoopTrustedDeviceRepository(),
+              organizationId: args.organizationId,
+              branchId: args.branchId,
+              environment: 'test',
+              devicePlatformWireValue: 'windows',
+            ),
+          ),
+          selectedPosBranchIdProvider.overrideWith((ref) => 'branch-1'),
+        ],
+        child: const MaterialApp(home: PosBranchOverviewScreen()),
+      ),
+    );
+    // The cached session is read asynchronously, so the screen's very first
+    // load finds no device context yet; the next 8 s poll is the first real
+    // call — it is rejected, recovered and retried in that same tick.
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 9));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(gateway.sessionIdsSeen, ['session-stale', 'session-new']);
+    expect(sessionGateway.issueCount, 1);
+    expect(find.text('Salon 1'), findsOneWidget);
+    expect(
+        find.text('Şube masaları yüklenirken bir sorun oluştu.'), findsNothing);
+    final cached = await cache.readSession(namespace);
+    expect(cached?.sessionId, 'session-new');
   });
 }
