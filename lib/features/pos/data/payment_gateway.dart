@@ -60,12 +60,21 @@ class PaymentAttemptSummary {
     required this.status,
     required this.amountMinorUnits,
     required this.declineReason,
+    this.paymentMethodDisplayName,
+    this.externalSlipNumber,
   });
   final String attemptId;
   final String tenderType;
   final String status;
   final int amountMinorUnits;
   final String? declineReason;
+
+  /// 2026-11-11 — the meal-card brand ("Multinet") or "Kredi/Banka Kartı"
+  /// for a payment recorded from an external terminal; `null` otherwise.
+  final String? paymentMethodDisplayName;
+
+  /// Optional slip / provision number typed from the external terminal.
+  final String? externalSlipNumber;
 
   factory PaymentAttemptSummary.fromWire(Map<String, dynamic> data) {
     return PaymentAttemptSummary(
@@ -74,7 +83,31 @@ class PaymentAttemptSummary {
       status: data['status'] as String,
       amountMinorUnits: data['amountMinorUnits'] as int,
       declineReason: data['declineReason'] as String?,
+      paymentMethodDisplayName: data['paymentMethodDisplayName'] as String?,
+      externalSlipNumber: data['externalSlipNumber'] as String?,
     );
+  }
+}
+
+/// 2026-11-11 — product owner: card and meal-card payments are taken on the
+/// bank's / the provider's own physical terminal and only recorded on the
+/// POS, where they settle immediately (`recordPaymentAttempt` with
+/// `captureMode: "externalTerminal"`). [paymentMethodId] names the meal-card
+/// brand (`pluxee`/`multinet`/`setcard`/`edenred`) and is `null` for a bank
+/// card; [slipNumber] is optional.
+class ExternalTerminalCapture {
+  const ExternalTerminalCapture({this.paymentMethodId, this.slipNumber});
+
+  final String? paymentMethodId;
+  final String? slipNumber;
+
+  Map<String, dynamic> toWire() {
+    final slip = slipNumber?.trim();
+    return {
+      'captureMode': 'externalTerminal',
+      if (paymentMethodId != null) 'paymentMethodId': paymentMethodId,
+      if (slip != null && slip.isNotEmpty) 'externalSlipNumber': slip,
+    };
   }
 }
 
@@ -214,6 +247,7 @@ abstract interface class PaymentGateway {
     int? requestedBoncukAmount,
     String? cashSessionId,
     ({String leaseId, int deviceSequence})? offlineLease,
+    ExternalTerminalCapture? externalTerminal,
   });
 
   Future<RefundRequestResult> requestPaymentRefund({
@@ -314,6 +348,7 @@ class FirebasePaymentGateway implements PaymentGateway {
     int? requestedBoncukAmount,
     String? cashSessionId,
     ({String leaseId, int deviceSequence})? offlineLease,
+    ExternalTerminalCapture? externalTerminal,
   }) async {
     final data = await _call('recordPaymentAttempt', {
       ...ctx.toWire(),
@@ -330,6 +365,7 @@ class FirebasePaymentGateway implements PaymentGateway {
           'leaseId': offlineLease.leaseId,
           'deviceSequence': offlineLease.deviceSequence,
         },
+      if (externalTerminal != null) ...externalTerminal.toWire(),
     });
     return PaymentAttemptResult(
       attemptId: data['attemptId'] as String,
@@ -402,6 +438,7 @@ class UnavailablePaymentGateway implements PaymentGateway {
     int? requestedBoncukAmount,
     String? cashSessionId,
     ({String leaseId, int deviceSequence})? offlineLease,
+    ExternalTerminalCapture? externalTerminal,
   }) async =>
       _unavailable();
 

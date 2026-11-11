@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:abakus_one_v2/features/pos/data/cash_register_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
+import 'package:abakus_one_v2/features/pos/domain/cash/meal_card_revenue_line.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/end_of_day_screen.dart';
@@ -233,6 +234,13 @@ void main() {
         cardMinorUnits: 20000,
         otherMinorUnits: 500,
         totalMinorUnits: 30500,
+        // 2026-11-11 — one row per meal-card brand.
+        mealCardBreakdown: [
+          MealCardRevenueLine(
+              paymentMethodId: 'multinet',
+              displayName: 'Multinet',
+              amountMinorUnits: 2500),
+        ],
       );
 
     await tester.pumpWidget(
@@ -259,6 +267,7 @@ void main() {
         find.byKey(const Key('actualAmountField')), '148.00');
     await tester.pump();
     expect(find.textContaining('Tahmini Fark: Eksik'), findsOneWidget);
+    expect(find.text('Multinet'), findsOneWidget);
   });
 
   testWidgets(

@@ -74,6 +74,11 @@ export const getPaymentSessionOperationalView = onCall(
       return {
         attemptId: doc.id,
         tenderType: a.tenderType,
+        // 2026-11-11 — external-terminal capture: brand ("Multinet") and slip.
+        paymentMethodId: a.paymentMethodId ?? null,
+        paymentMethodDisplayName: a.paymentMethodDisplayName ?? null,
+        externalSlipNumber: a.externalSlipNumber ?? null,
+        captureMode: a.captureMode ?? null,
         status: a.status,
         amountMinorUnits: a.amountMinorUnits,
         allocations: a.allocations,

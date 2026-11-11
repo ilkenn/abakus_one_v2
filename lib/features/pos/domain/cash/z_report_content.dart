@@ -1,3 +1,5 @@
+import 'meal_card_revenue_line.dart';
+
 /// Everything a Z-Raporu receipt needs to render — assembled by the caller
 /// from already-fetched `CashSessionView`/`DailyRevenueSummary`/
 /// `CashCountResult` data, never re-fetched here. Domain model, not a
@@ -17,6 +19,7 @@ class ZReportContent {
     required this.cashMinorUnits,
     required this.cardMinorUnits,
     required this.otherMinorUnits,
+    this.mealCardBreakdown = const [],
     required this.totalMinorUnits,
     required this.expectedAmountMinorUnits,
     required this.actualAmountMinorUnits,
@@ -35,6 +38,9 @@ class ZReportContent {
   final int cashMinorUnits;
   final int cardMinorUnits;
   final int otherMinorUnits;
+
+  /// 2026-11-11 — one line per meal-card brand, listed after "Kredi Kartı".
+  final List<MealCardRevenueLine> mealCardBreakdown;
   final int totalMinorUnits;
   final int expectedAmountMinorUnits;
   final int actualAmountMinorUnits;
@@ -76,7 +82,11 @@ class ZReportContent {
       ..writeln('Açılış Bakiyesi: ${_fmt(openingFloatMinorUnits)}')
       ..writeln('-' * 32)
       ..writeln('Nakit: ${_fmt(cashMinorUnits)}')
-      ..writeln('Kredi Kartı: ${_fmt(cardMinorUnits)}')
+      ..writeln('Kredi Kartı: ${_fmt(cardMinorUnits)}');
+    for (final line in mealCardBreakdown) {
+      buffer.writeln('${line.displayName}: ${_fmt(line.amountMinorUnits)}');
+    }
+    buffer
       ..writeln('Diğer: ${_fmt(otherMinorUnits)}')
       ..writeln('TOPLAM CİRO: ${_fmt(totalMinorUnits)}')
       ..writeln('-' * 32)

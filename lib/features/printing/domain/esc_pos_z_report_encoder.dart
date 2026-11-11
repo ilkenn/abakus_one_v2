@@ -63,6 +63,9 @@ abstract final class EscPosZReportEncoder {
     writeLine('-' * _lineWidth);
     writeTwoColumn('Nakit', _fmt(content, content.cashMinorUnits));
     writeTwoColumn('Kredi Kartı', _fmt(content, content.cardMinorUnits));
+    for (final line in content.mealCardBreakdown) {
+      writeTwoColumn(line.displayName, _fmt(content, line.amountMinorUnits));
+    }
     writeTwoColumn('Diğer', _fmt(content, content.otherMinorUnits));
     bytes.addAll(_size(0x11));
     writeTwoColumn('TOPLAM CİRO', _fmt(content, content.totalMinorUnits),

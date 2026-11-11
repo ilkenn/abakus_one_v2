@@ -1,4 +1,5 @@
 import type { Timestamp } from "firebase-admin/firestore";
+import { DELIVERY_PAYMENT_METHOD_CATALOG } from "./deliveryPaymentMethodCatalog";
 
 /**
  * AP-4 Wave A — canonical payment/tender/refund domain contracts. No
@@ -44,6 +45,65 @@ export function sanitizeTenderType(raw: unknown): TenderType {
     throw new Error(`tenderType must be one of: ${TENDER_TYPES.join(", ")}.`);
   }
   return raw as TenderType;
+}
+
+// ---------------------------------------------------------------------
+// External-terminal capture (2026-11-11, product owner decision)
+// ---------------------------------------------------------------------
+
+/**
+ * Card and meal-card payments are taken on the bank's / the meal-card
+ * provider's own physical terminal; the cashier then records the result on
+ * the POS. Such an attempt settles immediately (like cash) — there is no
+ * integrated provider round-trip. The provider-adapter path stays for any
+ * caller that does not ask for this capture mode.
+ */
+export const EXTERNAL_TERMINAL_CAPTURE_MODE = "externalTerminal";
+export type PaymentCaptureMode = typeof EXTERNAL_TERMINAL_CAPTURE_MODE;
+
+export const EXTERNAL_SLIP_NUMBER_MAX_LENGTH = 64;
+
+const CARD_DISPLAY_NAME = "Kredi/Banka Kartı";
+
+export type ExternalTerminalTender =
+  | { status: "ok"; paymentMethodId: string | null; paymentMethodDisplayName: string; externalSlipNumber: string | null }
+  | { status: "invalid"; message: string };
+
+/**
+ * Validates an external-terminal tender: only `card`/`mealCard`; a meal card
+ * must name its brand — a `mealCard` entry of the payment-method catalog
+ * (Pluxee, Multinet, Setcard, Edenred, ...) — so the Z report and the
+ * payment history can tell the brands apart; the optional slip number is
+ * trimmed and length-capped.
+ */
+export function resolveExternalTerminalTender(
+  tenderType: TenderType,
+  rawPaymentMethodId: unknown,
+  rawSlipNumber: unknown,
+): ExternalTerminalTender {
+  if (tenderType !== "card" && tenderType !== "mealCard") {
+    return { status: "invalid", message: "Only card and meal-card tenders may be recorded from an external terminal." };
+  }
+  let externalSlipNumber: string | null = null;
+  if (rawSlipNumber !== undefined && rawSlipNumber !== null) {
+    if (typeof rawSlipNumber !== "string") return { status: "invalid", message: "externalSlipNumber must be a string." };
+    const trimmed = rawSlipNumber.trim();
+    if (trimmed.length > EXTERNAL_SLIP_NUMBER_MAX_LENGTH) {
+      return { status: "invalid", message: `externalSlipNumber must be at most ${EXTERNAL_SLIP_NUMBER_MAX_LENGTH} characters.` };
+    }
+    externalSlipNumber = trimmed.length > 0 ? trimmed : null;
+  }
+  if (tenderType === "card") {
+    if (rawPaymentMethodId !== undefined && rawPaymentMethodId !== null) {
+      return { status: "invalid", message: "A card tender takes no paymentMethodId." };
+    }
+    return { status: "ok", paymentMethodId: null, paymentMethodDisplayName: CARD_DISPLAY_NAME, externalSlipNumber };
+  }
+  const method = typeof rawPaymentMethodId === "string" ? DELIVERY_PAYMENT_METHOD_CATALOG[rawPaymentMethodId] : undefined;
+  if (!method || method.reportingCategory !== "mealCard") {
+    return { status: "invalid", message: "A meal-card tender must name a meal-card brand (paymentMethodId)." };
+  }
+  return { status: "ok", paymentMethodId: method.id, paymentMethodDisplayName: method.displayName, externalSlipNumber };
 }
 
 // ---------------------------------------------------------------------
@@ -274,6 +334,18 @@ export interface PaymentAttemptDoc {
    * mandatorily enforced; see ADR-045.
    */
   cashSessionId: string | null;
+  /**
+   * 2026-11-11 — set to `"externalTerminal"` when a card/meal-card payment
+   * was taken on a physical bank / provider terminal and only recorded here
+   * (settled immediately). Absent on older attempts and other tenders.
+   */
+  captureMode?: PaymentCaptureMode | null;
+  /** Meal-card brand (`DELIVERY_PAYMENT_METHOD_CATALOG` id, e.g. "multinet"). */
+  paymentMethodId?: string | null;
+  /** Shown in the payment history and the Z report ("Multinet"). */
+  paymentMethodDisplayName?: string | null;
+  /** Optional slip / provision number from the external terminal. */
+  externalSlipNumber?: string | null;
 }
 
 // ---------------------------------------------------------------------

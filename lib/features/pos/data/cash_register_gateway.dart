@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart'
 
 import '../../../core/services/functions/rest_callable_client.dart';
 import 'pos_action_gateway.dart' show PosDeviceContext;
+import '../domain/cash/meal_card_revenue_line.dart';
 
 /// The real cash register boundary — AP-4 Wave B/Wave D wiring. Mirrors
 /// `pos_action_gateway.dart`'s exact contract shape against the real
@@ -255,6 +256,7 @@ class DailyRevenueSummary {
     required this.otherMinorUnits,
     required this.totalMinorUnits,
     this.complimentaryMinorUnits = 0,
+    this.mealCardBreakdown = const [],
   });
 
   final String sessionId;
@@ -272,6 +274,10 @@ class DailyRevenueSummary {
   /// comment for why.
   final int complimentaryMinorUnits;
 
+  /// 2026-11-11 — one line per meal-card brand (Pluxee, Multinet, Setcard,
+  /// Edenred), already excluded from [otherMinorUnits] by the server.
+  final List<MealCardRevenueLine> mealCardBreakdown;
+
   factory DailyRevenueSummary.fromWire(Map<String, dynamic> data) {
     return DailyRevenueSummary(
       sessionId: data['sessionId'] as String,
@@ -281,6 +287,10 @@ class DailyRevenueSummary {
       otherMinorUnits: data['otherMinorUnits'] as int,
       totalMinorUnits: data['totalMinorUnits'] as int,
       complimentaryMinorUnits: data['complimentaryMinorUnits'] as int? ?? 0,
+      mealCardBreakdown: [
+        for (final raw in (data['mealCardBreakdown'] as List?) ?? const [])
+          MealCardRevenueLine.fromWire(Map<String, dynamic>.from(raw as Map)),
+      ],
     );
   }
 }

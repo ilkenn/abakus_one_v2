@@ -235,6 +235,59 @@ test("cash: a full cash payment settles the session and marks the check paid", a
   assert.strictEqual(tableDoc.data()!.statusOverride, null);
 });
 
+// 2026-11-11 — card / meal card taken on an external terminal, recorded on
+// the POS and settled immediately (product owner decision).
+test("external terminal: a branded meal card settles immediately and records brand + slip", async () => {
+  const f = await setupFixture(10000);
+  const { checkId, sessionId } = await checkReadyForPayment(f);
+
+  const attempt = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "mealCard", idempotencyKey: nextId("idem"),
+    captureMode: "externalTerminal", paymentMethodId: "multinet", externalSlipNumber: " 778899 ",
+    allocations: [{ subAccountId: (await checkReadyForPaymentSubAccount(checkId)), amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(attempt.httpStatus, 200, JSON.stringify(attempt.body));
+  assert.strictEqual(attempt.body.result?.status, "succeeded");
+
+  const attemptDoc = await db().collection("paymentAttempts").doc(attempt.body.result!.attemptId as string).get();
+  assert.strictEqual(attemptDoc.data()!.paymentMethodId, "multinet");
+  assert.strictEqual(attemptDoc.data()!.paymentMethodDisplayName, "Multinet");
+  assert.strictEqual(attemptDoc.data()!.externalSlipNumber, "778899");
+  assert.strictEqual(attemptDoc.data()!.captureMode, "externalTerminal");
+  const checkDoc = await db().collection("checks").doc(checkId).get();
+  assert.strictEqual(checkDoc.data()!.status, "paid");
+});
+
+test("external terminal: a meal card without a brand is rejected, nothing recorded", async () => {
+  const f = await setupFixture(10000);
+  const { checkId, sessionId } = await checkReadyForPayment(f);
+
+  const attempt = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "mealCard", idempotencyKey: nextId("idem"),
+    captureMode: "externalTerminal",
+    allocations: [{ subAccountId: (await checkReadyForPaymentSubAccount(checkId)), amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(attempt.httpStatus, 400, JSON.stringify(attempt.body));
+  const attempts = await db().collection("paymentAttempts").where("checkId", "==", checkId).get();
+  assert.strictEqual(attempts.size, 0);
+});
+
+test("external terminal: a card payment settles without any provider round-trip", async () => {
+  const f = await setupFixture(10000);
+  const { checkId, sessionId } = await checkReadyForPayment(f);
+
+  const attempt = await callCallable(RECORD_ATTEMPT_URL, {
+    ...ctx(f), checkId, sessionId, tenderType: "card", idempotencyKey: nextId("idem"),
+    captureMode: "externalTerminal",
+    allocations: [{ subAccountId: (await checkReadyForPaymentSubAccount(checkId)), amountMinorUnits: 10000 }],
+  }, f.staff.idToken);
+  assert.strictEqual(attempt.httpStatus, 200, JSON.stringify(attempt.body));
+  assert.strictEqual(attempt.body.result?.status, "succeeded");
+  const attemptDoc = await db().collection("paymentAttempts").doc(attempt.body.result!.attemptId as string).get();
+  assert.strictEqual(attemptDoc.data()!.providerRef, null);
+  assert.strictEqual(attemptDoc.data()!.paymentMethodDisplayName, "Kredi/Banka Kartı");
+});
+
 test("Dine-in Sprint 2 — a table with TWO split checks only releases once BOTH are paid", async () => {
   const f = await setupFixture(10000);
   const first = await checkReadyForPayment(f);

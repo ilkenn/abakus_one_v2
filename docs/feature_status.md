@@ -11565,3 +11565,33 @@ passing, 0 failures.
   empty table, move request/single-line notice/Cari/64px), overview (no Teras tab, banner, transfer, merge
   confirm, self-target refused, Vazgeç, failure message).
 - **Visual Review Bekleniyor**.
+
+### POS ödeme: hızlı "Ödeme Al", harici terminal kart / yemek kartı kaydı, marka bazlı Z raporu (2026-11-11)
+
+- One-tap "Ödeme Al" (product owner: it opened too slowly): the chain no longer reloads the table after every
+  call (a 4-line table made 13 sequential round trips), and allocates each sub-account's lines in one
+  `splitCheckByCustomer` call instead of one `splitCheckByProduct` call per line — a single-guest table is now
+  open check → one allocation → finalize, then the payment dialog. A "Ödeme hazırlanıyor…" overlay shows from
+  the tap and blocks a second one; on failure the chain stops, shows the error and reloads. A single
+  server-side "prepare for payment" callable was deferred (decision: see how this performs first).
+- Payment methods (product owner decision): Nakit, Kredi/Banka Kartı, Pluxee, Multinet, Setcard, Edenred,
+  Boncuk — no single "Yemek Kartı", no "(Sandbox)", all shown in release builds. Card and meal cards are an
+  **external terminal record**: taken on the bank's / provider's own device, recorded on the POS and settled
+  immediately. `recordPaymentAttempt` gains `captureMode: "externalTerminal"` + `paymentMethodId` (required for
+  a meal card, validated against the payment-method catalog's meal-card brands) + optional
+  `externalSlipNumber` (trimmed, max 64); the attempt stores brand, display name, slip and capture mode, and the
+  payment history shows "Multinet — …" plus "Slip No". Without `captureMode` the existing provider-adapter path
+  is unchanged.
+- Z-Raporu / Gün Sonu: `getDailyRevenueSummary` returns `mealCardBreakdown` (Pluxee, Multinet, Setcard,
+  Edenred always listed, even at 0) and `mealCardMinorUnits`; branded meal cards are no longer in "Diğer"
+  (Boncuk and pre-brand meal-card payments still are). Shown on the Gün Sonu screen, the preview text and the
+  printed ESC/POS Z report.
+- Not in scope / known: refunds of an externally captured card or meal-card payment must also be done on the
+  external terminal (the refund flow still follows its existing path).
+- The non-functional "PAX Cihazı ile Oku" button (and its waiting dialog) was removed from the checkout
+  (product owner); the PAX client code itself is untouched.
+- Tests: functions — 5 pure (brand/slip validation, per-brand Z totals) + 3 emulator (meal card settles with
+  brand + slip, brand required, card settles without a provider); Flutter — payment chain (one call per
+  sub-account, no reloads, overlay), checkout methods (labels, Multinet/card/cash wire payloads, history),
+  Z report parse/preview/print, Gün Sonu row.
+- **Visual Review Bekleniyor**.

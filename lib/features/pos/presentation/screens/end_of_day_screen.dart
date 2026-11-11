@@ -197,6 +197,7 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
         cashMinorUnits: revenue?.cashMinorUnits ?? 0,
         cardMinorUnits: revenue?.cardMinorUnits ?? 0,
         otherMinorUnits: revenue?.otherMinorUnits ?? 0,
+        mealCardBreakdown: revenue?.mealCardBreakdown ?? const [],
         totalMinorUnits: revenue?.totalMinorUnits ?? 0,
         complimentaryMinorUnits: revenue?.complimentaryMinorUnits ?? 0,
         expectedAmountMinorUnits: countResult.expectedAmountMinorUnits,
@@ -437,6 +438,11 @@ class _ReadyViewState extends State<_ReadyView> {
                   _RevenueRow(
                       label: 'Kredi Kartı',
                       value: widget.currencyOf(revenue.cardMinorUnits)),
+                  // 2026-11-11 — each meal-card brand on its own line.
+                  for (final line in revenue.mealCardBreakdown)
+                    _RevenueRow(
+                        label: line.displayName,
+                        value: widget.currencyOf(line.amountMinorUnits)),
                   _RevenueRow(
                       label: 'Diğer',
                       value: widget.currencyOf(revenue.otherMinorUnits)),

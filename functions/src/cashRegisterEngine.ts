@@ -10,6 +10,7 @@ import { generateCorrelationId, sanitizeClientRequestId } from "./correlationId"
 import { createApprovalRequest } from "./remoteApproval";
 import type { ActionHandlerParams, ActionHandlerResult } from "./remoteApproval";
 import { BRANCH_PAYMENT_CONFIG_COLLECTION, PAYMENT_ATTEMPTS_COLLECTION, type BranchPaymentConfigDoc, type PaymentAttemptDoc } from "./paymentDomain";
+import { DELIVERY_PAYMENT_METHOD_CATALOG } from "./deliveryPaymentMethodCatalog";
 import { CHECK_FINANCIAL_ADJUSTMENTS_COLLECTION } from "./checkAllocationConfig";
 import {
   CASH_DRAWERS_COLLECTION,
@@ -757,6 +758,75 @@ export const closeCashSession = onCall({ enforceAppCheck: shouldEnforceAppCheck(
  * discipline elsewhere in this codebase). */
 const DAILY_REVENUE_ATTEMPT_LIMIT = 5000;
 
+/** The four meal-card brands the POS offers — always reported, even at 0. */
+export const Z_REPORT_MEAL_CARD_BRANDS = ["pluxee", "multinet", "setcard", "edenred"] as const;
+
+export interface TenderTotals {
+  cashMinorUnits: number;
+  cardMinorUnits: number;
+  /** Sum of every branded meal-card payment ([mealCardBreakdown]). */
+  mealCardMinorUnits: number;
+  /**
+   * 2026-11-11 — product owner: meal cards are reported per brand (cash-up
+   * and provider reconciliation), never folded into "Diğer". The four POS
+   * brands always appear; any other catalog brand seen is appended.
+   */
+  mealCardBreakdown: Array<{ paymentMethodId: string; displayName: string; amountMinorUnits: number }>;
+  /** Boncuk, plus meal-card payments recorded before brands existed. */
+  otherMinorUnits: number;
+  totalMinorUnits: number;
+}
+
+/** Buckets settled attempts for the Z report (single currency). */
+export function summarizeTenderTotals(attempts: PaymentAttemptDoc[], currencyCode: string): TenderTotals {
+  let cashMinorUnits = 0;
+  let cardMinorUnits = 0;
+  let otherMinorUnits = 0;
+  const byBrand = new Map<string, { paymentMethodId: string; displayName: string; amountMinorUnits: number }>();
+  for (const brand of Z_REPORT_MEAL_CARD_BRANDS) {
+    byBrand.set(brand, { paymentMethodId: brand, displayName: DELIVERY_PAYMENT_METHOD_CATALOG[brand]?.displayName ?? brand, amountMinorUnits: 0 });
+  }
+  for (const attempt of attempts) {
+    if (attempt.currencyCode !== currencyCode) continue; // single-currency summary, disclosed simplification
+    switch (attempt.tenderType) {
+      case "cash":
+        cashMinorUnits += attempt.amountMinorUnits;
+        break;
+      case "card":
+        cardMinorUnits += attempt.amountMinorUnits;
+        break;
+      case "mealCard": {
+        const brandId = attempt.paymentMethodId ?? null;
+        if (!brandId) {
+          otherMinorUnits += attempt.amountMinorUnits;
+          break;
+        }
+        const row = byBrand.get(brandId) ?? {
+          paymentMethodId: brandId,
+          displayName: attempt.paymentMethodDisplayName ?? DELIVERY_PAYMENT_METHOD_CATALOG[brandId]?.displayName ?? brandId,
+          amountMinorUnits: 0,
+        };
+        row.amountMinorUnits += attempt.amountMinorUnits;
+        byBrand.set(brandId, row);
+        break;
+      }
+      case "boncuk":
+        otherMinorUnits += attempt.amountMinorUnits;
+        break;
+    }
+  }
+  const mealCardBreakdown = [...byBrand.values()];
+  const mealCardMinorUnits = mealCardBreakdown.reduce((sum, row) => sum + row.amountMinorUnits, 0);
+  return {
+    cashMinorUnits,
+    cardMinorUnits,
+    mealCardMinorUnits,
+    mealCardBreakdown,
+    otherMinorUnits,
+    totalMinorUnits: cashMinorUnits + cardMinorUnits + mealCardMinorUnits + otherMinorUnits,
+  };
+}
+
 export const getDailyRevenueSummary = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
   const data = (request.data ?? {}) as Record<string, unknown>;
   const ctx = await authorizeCashCommand(request, data);
@@ -784,25 +854,10 @@ export const getDailyRevenueSummary = onCall({ enforceAppCheck: shouldEnforceApp
     .limit(DAILY_REVENUE_ATTEMPT_LIMIT)
     .get();
 
-  let cashMinorUnits = 0;
-  let cardMinorUnits = 0;
-  let otherMinorUnits = 0;
-  for (const doc of attemptsSnap.docs) {
-    const attempt = doc.data() as PaymentAttemptDoc;
-    if (attempt.currencyCode !== session.currencyCode) continue; // single-currency summary, disclosed simplification
-    switch (attempt.tenderType) {
-      case "cash":
-        cashMinorUnits += attempt.amountMinorUnits;
-        break;
-      case "card":
-        cardMinorUnits += attempt.amountMinorUnits;
-        break;
-      case "mealCard":
-      case "boncuk":
-        otherMinorUnits += attempt.amountMinorUnits;
-        break;
-    }
-  }
+  const totals = summarizeTenderTotals(
+    attemptsSnap.docs.map((doc) => doc.data() as PaymentAttemptDoc),
+    session.currencyCode,
+  );
 
   // Adım 3 (2026-11-06) — "İkram Toplamı" for the Z-Raporu. Summing EVERY
   // active `checkFinancialAdjustments` doc (not just `complimentary`-type
@@ -833,10 +888,7 @@ export const getDailyRevenueSummary = onCall({ enforceAppCheck: shouldEnforceApp
   return {
     sessionId,
     currencyCode: session.currencyCode,
-    cashMinorUnits,
-    cardMinorUnits,
-    otherMinorUnits,
-    totalMinorUnits: cashMinorUnits + cardMinorUnits + otherMinorUnits,
+    ...totals,
     complimentaryMinorUnits,
   };
 });

@@ -21,6 +21,8 @@ import {
   PAYMENT_ATTEMPTS_COLLECTION,
   BRANCH_PAYMENT_CONFIG_COLLECTION,
   sanitizeTenderType,
+  resolveExternalTerminalTender,
+  EXTERNAL_TERMINAL_CAPTURE_MODE,
   computeCompletedSessionStatus,
   canTransitionPaymentAttempt,
   isAttemptSettled,
@@ -253,6 +255,15 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
   // requires an active device session (i.e. connectivity) — the lease
   // proves the offline PERIOD was authorized, it never bypasses the online
   // requirement of this callable itself.
+  // 2026-11-11 — card / meal card taken on an external terminal: recorded
+  // and settled immediately, never sent to a provider adapter.
+  let externalTerminal: Extract<ReturnType<typeof resolveExternalTerminalTender>, { status: "ok" }> | null = null;
+  if (data.captureMode !== undefined && data.captureMode !== null) {
+    if (data.captureMode !== EXTERNAL_TERMINAL_CAPTURE_MODE) invalid(`captureMode must be "${EXTERNAL_TERMINAL_CAPTURE_MODE}".`);
+    const resolved = resolveExternalTerminalTender(tenderType, data.paymentMethodId, data.externalSlipNumber);
+    if (resolved.status === "invalid") invalid(resolved.message);
+    externalTerminal = resolved;
+  }
   const rawOfflineLease = data.offlineLease as Record<string, unknown> | undefined;
   const offlineLeaseInput = rawOfflineLease && typeof rawOfflineLease === "object"
     ? { leaseId: requireNonEmptyString(rawOfflineLease.leaseId, "offlineLease.leaseId"), deviceSequence: requirePositiveInt(rawOfflineLease.deviceSequence, "offlineLease.deviceSequence") }
@@ -540,6 +551,23 @@ export const recordPaymentAttempt = onCall({ enforceAppCheck: shouldEnforceAppCh
       tx.set(attemptRef, attempt);
       finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: [...existingAttempts, attempt], closureCtx });
       return { replay: false as const, attemptId, status: "succeeded" as const, tenderType, boncukUsed: calc.boncukUsed };
+    }
+
+    if (externalTerminal) {
+      const attempt: PaymentAttemptDoc = {
+        ...baseAttempt, status: "succeeded", amountMinorUnits: requestedTotal,
+        providerRef: null,
+        providerResponseSummary: `${externalTerminal.paymentMethodDisplayName} collected on an external terminal.`,
+        loyaltyLedgerEntryId: null, declineReason: null, resolvedAt: now,
+        captureMode: EXTERNAL_TERMINAL_CAPTURE_MODE,
+        paymentMethodId: externalTerminal.paymentMethodId,
+        paymentMethodDisplayName: externalTerminal.paymentMethodDisplayName,
+        externalSlipNumber: externalTerminal.externalSlipNumber,
+      };
+      if (flagPaymentActivityStarted) tx.update(checkRef, { paymentActivityStarted: true });
+      tx.set(attemptRef, attempt);
+      finalizeSessionIfComplete({ tx, sessionRef, session, checkRef, now, attempts: [...existingAttempts, attempt], closureCtx });
+      return { replay: false as const, attemptId, status: "succeeded" as const, tenderType };
     }
 
     // card | mealCard — reserve now, resolve outside this transaction.

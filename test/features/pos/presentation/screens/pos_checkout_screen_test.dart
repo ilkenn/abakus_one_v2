@@ -1,7 +1,5 @@
-import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:abakus_one_v2/features/pos/data/pax_gmp3_terminal_client.dart';
 import 'package:abakus_one_v2/features/pos/data/payment_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
@@ -30,6 +28,8 @@ class _FakePaymentGateway implements PaymentGateway {
   PaymentSessionView session;
   int refundCallCount = 0;
   int recordPaymentAttemptCallCount = 0;
+  String? lastTenderType;
+  ExternalTerminalCapture? lastExternalTerminal;
   ({
     String refundType,
     int amountMinorUnits,
@@ -66,8 +66,11 @@ class _FakePaymentGateway implements PaymentGateway {
     int? requestedBoncukAmount,
     String? cashSessionId,
     ({String leaseId, int deviceSequence})? offlineLease,
+    ExternalTerminalCapture? externalTerminal,
   }) async {
     recordPaymentAttemptCallCount += 1;
+    lastTenderType = tenderType;
+    lastExternalTerminal = externalTerminal;
     return const PaymentAttemptResult(
         attemptId: 'attempt-1', status: 'succeeded');
   }
@@ -116,20 +119,6 @@ class _FakePaymentGateway implements PaymentGateway {
       approvalRequestId: 'approval-1',
     );
   }
-}
-
-class _NeverResolvingPaxClient implements PaxGmp3TerminalClient {
-  _NeverResolvingPaxClient(this._completer);
-
-  final Completer<PaxTerminalResult> _completer;
-
-  @override
-  Future<PaxTerminalResult> collectPayment({
-    required int amountMinorUnits,
-    required String currencyCode,
-    required String idempotencyKey,
-  }) =>
-      _completer.future;
 }
 
 const _ctx = PosDeviceContext(
@@ -300,10 +289,13 @@ void main() {
     });
   });
 
-  group('PosCheckoutScreen — PAX A910SF "Kredi Kartı" collection (2026-11-06)',
-      () {
-    PaymentSessionView openSession() {
-      return const PaymentSessionView(
+  // 2026-11-11 — the "PAX Cihazı ile Oku" button was removed (product owner):
+  // a bank card is taken on the external bank terminal and only recorded
+  // here (see the payment-methods group below).
+  testWidgets('no "PAX Cihazı ile Oku" button for a bank card', (tester) async {
+    await _pumpCompletedCheckout(
+      tester,
+      session: const PaymentSessionView(
         exists: true,
         sessionId: 'session-1',
         sessionStatus: 'collecting',
@@ -318,113 +310,14 @@ void main() {
         ],
         attempts: [],
         refunds: [],
-      );
-    }
+      ),
+    );
 
-    testWidgets(
-        '"PAX Cihazı ile Oku" butonu sadece Kredi Kartı tenderi secildiginde gorunur',
-        (tester) async {
-      await _pumpCompletedCheckout(tester, session: openSession());
+    await tester.tap(find.text('Kredi/Banka Kartı'));
+    await tester.pump();
 
-      expect(find.byKey(const Key('collectViaPaxButton')), findsNothing,
-          reason: 'varsayilan tender nakit, PAX butonu henuz gorunmemeli');
-
-      await tester.tap(find.text('Kredi/Banka Kartı (Sandbox)'));
-      await tester.pump();
-
-      expect(find.byKey(const Key('collectViaPaxButton')), findsOneWidget);
-    });
-
-    testWidgets(
-        'PAX butonuna basinca "POS Cihazından Kart Bekleniyor..." modali acilir, '
-        'gercek cihaz baglantisi olmadigindan dogru/yapilandirilmadi mesaji gosterir, '
-        've gateway.recordPaymentAttempt hic cagrilmaz', (tester) async {
-      final gateway =
-          await _pumpCompletedCheckout(tester, session: openSession());
-
-      await tester.tap(find.text('Kredi/Banka Kartı (Sandbox)'));
-      await tester.pump();
-      await tester.enterText(find.widgetWithText(TextField, 'Tutar'), '40,00');
-      // The button sits below the fold of the compact modal's own
-      // scrollable tender panel — scroll it into view before tapping,
-      // exactly like a real finger would need to.
-      await tester.ensureVisible(find.byKey(const Key('collectViaPaxButton')));
-      await tester.tap(find.byKey(const Key('collectViaPaxButton')));
-      await tester.pump();
-
-      expect(find.text('POS Cihazından Kart Bekleniyor...'), findsOneWidget);
-      expect(find.textContaining('Tutar:'), findsOneWidget);
-
-      // The stubbed client resolves near-instantly with "unavailable" —
-      // no need to wait out the 30s countdown.
-      await tester.pumpAndSettle();
-
-      expect(find.text('POS Cihazından Kart Bekleniyor...'), findsNothing,
-          reason: 'modal must have closed once the client resolved');
-      expect(
-        find.textContaining('PAX A910SF / GMP-3 entegrasyonu'),
-        findsOneWidget,
-        reason: 'the honest "not configured" message must be shown, never '
-            'a fabricated approval/decline',
-      );
-      expect(gateway.recordPaymentAttemptCallCount, 0,
-          reason: 'an unavailable terminal result must never be recorded '
-              'server-side as if it were a real tender');
-    });
-
-    testWidgets('modal "İptal" ile kapatilinca hicbir mesaj gosterilmez',
-        (tester) async {
-      // A never-resolving client — the real terminal takes real seconds;
-      // this proves "İptal" closes the dialog on its own, never racing
-      // against the (otherwise near-instant) stub's own resolution.
-      final neverResolves = Completer<PaxTerminalResult>();
-      final gateway = _FakePaymentGateway(openSession());
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            paymentGatewayProvider.overrideWithValue(gateway),
-            paxGmp3TerminalClientProvider
-                .overrideWithValue(_NeverResolvingPaxClient(neverResolves)),
-          ],
-          child: MaterialApp(
-            home: Scaffold(
-              body: Builder(
-                builder: (context) => ElevatedButton(
-                  onPressed: () => showDialog<void>(
-                    context: context,
-                    builder: (_) => const PosCheckoutScreen(
-                      ctx: _ctx,
-                      checkId: 'check-1',
-                      view: _view,
-                    ),
-                  ),
-                  child: const Text('Ödemeyi Aç'),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.tap(find.text('Ödemeyi Aç'));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Kredi/Banka Kartı (Sandbox)'));
-      await tester.pump();
-      await tester.enterText(find.widgetWithText(TextField, 'Tutar'), '40,00');
-      // The button sits below the fold of the compact modal's own
-      // scrollable tender panel — scroll it into view before tapping,
-      // exactly like a real finger would need to.
-      await tester.ensureVisible(find.byKey(const Key('collectViaPaxButton')));
-      await tester.tap(find.byKey(const Key('collectViaPaxButton')));
-      await tester.pump();
-      expect(find.text('POS Cihazından Kart Bekleniyor...'), findsOneWidget);
-
-      await tester.tap(find.text('İptal'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('POS Cihazından Kart Bekleniyor...'), findsNothing);
-      expect(find.textContaining('PAX A910SF'), findsNothing);
-    });
+    expect(find.byKey(const Key('collectViaPaxButton')), findsNothing);
+    expect(find.text('PAX Cihazı ile Oku'), findsNothing);
   });
 
   group('PosCheckoutScreen — Kasa Çekmecesi (Adım 4, 2026-11-07)', () {
@@ -595,6 +488,131 @@ void main() {
       expect(gateway.recordPaymentAttemptCallCount, 1,
           reason: 'the payment itself must still be recorded as succeeded');
       expect(find.textContaining('hata'), findsNothing);
+    });
+  });
+
+  // 2026-11-11 — product owner: one button per meal-card brand, card and
+  // meal cards recorded from an external terminal, no "(Sandbox)" labels.
+  group('PosCheckoutScreen — payment methods (2026-11-11)', () {
+    PaymentSessionView openSession(
+        {List<PaymentAttemptSummary> attempts = const []}) {
+      return PaymentSessionView(
+        exists: true,
+        sessionId: 'session-1',
+        sessionStatus: 'collecting',
+        payableAmountMinorUnits: 4000,
+        settledAmountMinorUnits: 0,
+        currencyCode: 'TRY',
+        subAccountAllocations: const [
+          PaymentSubAccountAllocation(
+            subAccountId: 'sub-1',
+            payableAmountMinorUnits: 4000,
+          ),
+        ],
+        attempts: attempts,
+        refunds: const [],
+      );
+    }
+
+    Future<void> submit(WidgetTester tester, String method,
+        {String? slip}) async {
+      await tester.tap(find.text(method));
+      await tester.pump();
+      await tester.enterText(find.widgetWithText(TextField, 'Tutar'), '40,00');
+      if (slip != null) {
+        await tester.enterText(
+            find.byKey(const Key('externalSlipNumberField')), slip);
+      }
+      final submitButton = find.byKey(const Key('checkoutSubmitTenderButton'));
+      await tester.ensureVisible(submitButton);
+      await tester.tap(submitButton);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+        'seven clear methods: Nakit, Kredi/Banka Kartı, Pluxee, Multinet, '
+        'Setcard, Edenred, Boncuk — no single "Yemek Kartı", no "(Sandbox)"',
+        (tester) async {
+      await _pumpCompletedCheckout(tester, session: openSession());
+
+      final labels = tester
+          .widgetList<ChoiceChip>(find.byType(ChoiceChip))
+          .map((chip) => (chip.label as Text).data)
+          .toList();
+      expect(labels, [
+        'Nakit',
+        'Kredi/Banka Kartı',
+        'Pluxee',
+        'Multinet',
+        'Setcard',
+        'Edenred',
+        'Boncuk',
+      ]);
+      expect(find.textContaining('Sandbox'), findsNothing);
+      expect(find.text('Yemek Kartı'), findsNothing);
+    });
+
+    testWidgets(
+        'Multinet is recorded as an external-terminal meal card with its '
+        'brand and the optional slip number', (tester) async {
+      final gateway =
+          await _pumpCompletedCheckout(tester, session: openSession());
+
+      await submit(tester, 'Multinet', slip: '778899');
+
+      expect(gateway.recordPaymentAttemptCallCount, 1);
+      expect(gateway.lastTenderType, 'mealCard');
+      expect(gateway.lastExternalTerminal?.toWire(), {
+        'captureMode': 'externalTerminal',
+        'paymentMethodId': 'multinet',
+        'externalSlipNumber': '778899',
+      });
+    });
+
+    testWidgets(
+        'a bank card is an external-terminal record without a brand; the '
+        'slip number may stay empty', (tester) async {
+      final gateway =
+          await _pumpCompletedCheckout(tester, session: openSession());
+
+      await submit(tester, 'Kredi/Banka Kartı');
+
+      expect(gateway.lastTenderType, 'card');
+      expect(gateway.lastExternalTerminal?.toWire(),
+          {'captureMode': 'externalTerminal'});
+    });
+
+    testWidgets('cash is never an external-terminal record and has no slip',
+        (tester) async {
+      final gateway =
+          await _pumpCompletedCheckout(tester, session: openSession());
+
+      expect(find.byKey(const Key('externalSlipNumberField')), findsNothing);
+      await submit(tester, 'Nakit');
+
+      expect(gateway.lastTenderType, 'cash');
+      expect(gateway.lastExternalTerminal, isNull);
+    });
+
+    testWidgets('the payment history names the meal-card brand and its slip',
+        (tester) async {
+      await _pumpCompletedCheckout(
+        tester,
+        session: openSession(attempts: const [
+          PaymentAttemptSummary(
+            attemptId: 'attempt-1',
+            tenderType: 'mealCard',
+            status: 'succeeded',
+            amountMinorUnits: 2500,
+            declineReason: null,
+            paymentMethodDisplayName: 'Multinet',
+            externalSlipNumber: '778899',
+          ),
+        ]),
+      );
+
+      expect(find.textContaining('Multinet —'), findsOneWidget);
+      expect(find.text('Slip No: 778899'), findsOneWidget);
     });
   });
 }

@@ -105,6 +105,7 @@ class ScriptedFakePaymentGateway implements PaymentGateway {
     int? requestedBoncukAmount,
     String? cashSessionId,
     ({String leaseId, int deviceSequence})? offlineLease,
+    ExternalTerminalCapture? externalTerminal,
   }) async {
     final sequence = offlineLease!.deviceSequence;
     callsInOrder.add(sequence);
