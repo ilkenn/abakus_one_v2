@@ -11595,3 +11595,32 @@ passing, 0 failures.
   sub-account, no reloads, overlay), checkout methods (labels, Multinet/card/cash wire payloads, history),
   Z report parse/preview/print, Gün Sonu row.
 - **Visual Review Bekleniyor**.
+
+### POS Gel-Al / Paket Servis ekranı — Faz 1: arayüz, ortak katalog, müşteri arama (2026-11-11)
+
+- Masalar tabs carry icons (Tümü `grid_view_rounded`, Salon `table_restaurant_rounded`, Bahçe `deck_rounded`,
+  Gel-Al `shopping_bag_outlined`, Paket Servis `delivery_dining_rounded`); the old "Paket / Gel-Al" tab is split:
+  Gel-Al shows the existing takeaway order list ("Yeni Gel-Al Siparişi"), Paket Servis shows a "Yeni Paket Servis
+  Siparişi" entry above the existing courier dispatch board (`PosDeliveryOrdersTab`).
+- Shared catalog (product owner approved the move): the category rail, product-card grid, name/barcode search,
+  "Çok Tercih Edilenler" and the customization / weight dialogs moved out of `pos_table_workspace_screen.dart` into
+  `PosCatalogBrowser` (`pos/presentation/widgets/pos_catalog_browser.dart`), which hands each configured product
+  to its caller. The table workspace now uses it unchanged in behavior (its 62 tests pass as before).
+- `PosNewTakeawayOrderScreen` redesigned (flat searchable list removed): Gel-Al / Paket Servis mode switch,
+  "Müşteri Ara (İsim veya Tel)" over the organization's customer directory (selecting fills the name and the
+  previous delivery addresses from the organization's own past orders; the phone stays masked and must be typed),
+  "Yeni Müşteri", the shared catalog, the cart, and "Siparişi Onayla & Mutfağa İlet". Paket Servis mode adds the
+  address fields + previous-address chips, Kurye Notu, Kapıda Nakit / POS / Yemek Kartı, the branch's active shop
+  courier badges and a disabled "Kurye Havuzu" (Faz 3). Gel-Al submits through the existing staff-entry
+  `submitTakeawayOrder`; `TakeawayProductItem` now also sends `weightGrams` (already accepted server-side).
+- **Faz 1 boundaries (disclosed in the UI)**: a delivery order cannot be created by staff on the server yet, there
+  is no order-level kitchen note, no pre-assigned courier field and no courier slip — the delivery submit, the
+  "Kurye Fişi Yazdır" button and the Mutfak Notu field are disabled with a plain explanation. The local customer
+  book with full phone numbers / addresses for non-app customers (product owner decision 2), flexible delivery
+  fee / zone / minimum (decision 3) and those fields are Faz 2; the courier pool is Faz 3.
+- Fixed while testing: the customer search results sat in a coloured box, hiding the rows' ink (now `Material`).
+- Tests: phone-order screen 9 (Gel-Al validation / submit with merged lines / error keeps cart / delivery-only
+  fields hidden; Paket Servis fields, active couriers only, pool disabled, delivery submit + slip disabled; customer
+  search by name fills name + address, phone search, no-result → new customer), overview tab icons + Paket Servis
+  tab, Gel-Al tab labels.
+- **Visual Review Bekleniyor**.

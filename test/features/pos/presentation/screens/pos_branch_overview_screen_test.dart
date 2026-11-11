@@ -19,6 +19,7 @@ import 'package:abakus_one_v2/features/orders/presentation/providers/orders_prov
 import 'package:abakus_one_v2/features/pos/data/kitchen_projection_repository.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_operational_view_gateway.dart';
+import 'package:abakus_one_v2/features/pos/presentation/providers/courier_dispatch_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/kds_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/pos_branch_overview_screen.dart';
@@ -729,8 +730,8 @@ void main() {
     });
 
     testWidgets(
-        '2026-11-11: "Teras" sekmesi yok — Tümü / Bahçe / Salon / Paket',
-        (tester) async {
+        '2026-11-11: sekmeler ikonlu — Tümü / Salon / Bahçe / Gel-Al / Paket '
+        'Servis, "Teras" yok', (tester) async {
       final gateway = _FakePosOperationalViewGateway()
         ..tables = [
           const PosBranchTableSummary(
@@ -748,7 +749,19 @@ void main() {
           .widgetList<ChoiceChip>(find.byType(ChoiceChip))
           .map((chip) => (chip.label as Text).data)
           .toList();
-      expect(chips, ['Tümü', 'Bahçe', 'Salon', 'Paket / Gel-Al']);
+      expect(chips, ['Tümü', 'Salon', 'Bahçe', 'Gel-Al', 'Paket Servis']);
+      final icons = {
+        for (final chip
+            in tester.widgetList<ChoiceChip>(find.byType(ChoiceChip)))
+          (chip.label as Text).data: (chip.avatar as Icon).icon,
+      };
+      expect(icons, {
+        'Tümü': Icons.grid_view_rounded,
+        'Salon': Icons.table_restaurant_rounded,
+        'Bahçe': Icons.deck_rounded,
+        'Gel-Al': Icons.shopping_bag_outlined,
+        'Paket Servis': Icons.delivery_dining_rounded,
+      });
     });
 
     testWidgets('bir bölge sekmesi sadece o bölgedeki masaları gösterir',
@@ -782,8 +795,9 @@ void main() {
     });
 
     testWidgets(
-        'Adım 5 (2026-11-07): "Paket / Gel-Al" sekmesi artik gercek Paket '
-        'Siparisleri ekranini acar, masa listesini degil', (tester) async {
+        'Adım 5 (2026-11-07; 2026-11-11 Gel-Al olarak ayrildi): "Gel-Al" '
+        'sekmesi gercek Gel-Al Siparisleri ekranini acar, masa listesini '
+        'degil', (tester) async {
       final gateway = _FakePosOperationalViewGateway()
         ..tables = [
           const PosBranchTableSummary(
@@ -804,13 +818,63 @@ void main() {
         ],
       );
 
-      await tester.tap(find.text('Paket / Gel-Al'));
+      await tester.tap(find.text('Gel-Al'));
       await tester.pump();
 
       expect(find.text('Masa 1'), findsNothing);
-      expect(find.text('Paket / Gel-Al Siparişleri'), findsOneWidget);
-      expect(find.text('Yeni Paket Sipariş'), findsOneWidget);
+      expect(find.text('Gel-Al Siparişleri'), findsOneWidget);
+      expect(find.text('Yeni Gel-Al Siparişi'), findsOneWidget);
     });
+  });
+
+  // 2026-11-11 — the "Paket Servis" tab (split from "Paket / Gel-Al").
+  testWidgets(
+      '"Paket Servis" sekmesi yeni paket siparisi girisini ve kurye dagitim '
+      'listesini gosterir', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final gateway = _FakePosOperationalViewGateway()
+      ..tables = [
+        const PosBranchTableSummary(
+          tableId: 'table-1',
+          displayName: 'Masa 1',
+          status: 'available',
+          activeTableSessionId: null,
+          pendingQrLineCount: 0,
+        ),
+      ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          posOperationalViewGatewayProvider.overrideWithValue(gateway),
+          posDeviceContextProvider.overrideWithValue(
+            const PosDeviceContext(
+              organizationId: 'org-1',
+              branchId: 'branch-1',
+              deviceId: 'device-1',
+              deviceSessionId: 'session-1',
+            ),
+          ),
+          assignableDeliveryOrdersProvider
+              .overrideWith((ref, branchId) => Stream.value(const [])),
+          allCouriersForBranchProvider
+              .overrideWith((ref, branchId) => Stream.value(const [])),
+        ],
+        child: const MaterialApp(home: PosBranchOverviewScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.tap(find.text('Paket Servis'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('Masa 1'), findsNothing);
+    expect(find.text('Paket Servis Siparişleri'), findsOneWidget);
+    expect(find.byKey(const Key('newDeliveryOrderButton')), findsOneWidget);
+    expect(find.text('Şu anda dağıtım bekleyen teslimat siparişi yok.'),
+        findsOneWidget);
   });
 
   group('"Ödeme Al" hızlı aksiyonu (2026-11-06)', () {

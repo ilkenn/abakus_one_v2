@@ -29,6 +29,7 @@ import 'end_of_day_screen.dart';
 import 'pos_cash_register_screen.dart';
 import 'pos_checkout_screen.dart';
 import 'pos_table_workspace_screen.dart';
+import 'pos_delivery_orders_tab.dart';
 import 'pos_takeaway_orders_screen.dart';
 
 /// Masalar grid'inin bölge filtresi (2026-11-06) — `RestaurantTable
@@ -38,14 +39,20 @@ import 'pos_takeaway_orders_screen.dart';
 /// modelinde paket/gel-al siparişleri için ayrı bir sorgu/kart tasarımı
 /// yok; seçildiğinde bunu açıkça gösteren bir yer tutucu render edilir,
 /// asla sessizce boş/yanlış bir masa listesi değil.
+///
+/// 2026-11-11 — product owner: every tab carries an icon, and "Paket /
+/// Gel-Al" is split into "Gel-Al" (counter / pickup orders) and "Paket
+/// Servis" (delivery orders + courier dispatch).
 enum _AreaTab {
-  all('Tümü'),
-  garden('Bahçe'),
-  hall('Salon'),
-  takeaway('Paket / Gel-Al');
+  all('Tümü', Icons.grid_view_rounded),
+  hall('Salon', Icons.table_restaurant_rounded),
+  garden('Bahçe', Icons.deck_rounded),
+  takeaway('Gel-Al', Icons.shopping_bag_outlined),
+  delivery('Paket Servis', Icons.delivery_dining_rounded);
 
-  const _AreaTab(this.label);
+  const _AreaTab(this.label, this.icon);
   final String label;
+  final IconData icon;
 }
 
 /// The real POS branch/table overview — AP-3 continuation (`docs/decisions
@@ -265,6 +272,8 @@ class _PosBranchOverviewScreenState
               children: [
                 for (final tab in _AreaTab.values)
                   ChoiceChip(
+                    key: Key('areaTab-${tab.name}'),
+                    avatar: Icon(tab.icon, size: 18),
                     label: Text(tab.label),
                     selected: _selectedAreaTab == tab,
                     onSelected: (_) => setState(() => _selectedAreaTab = tab),
@@ -460,6 +469,9 @@ class _PosBranchOverviewScreenState
       // .watchByBranch` directly instead, exactly like the Admin Siparişler
       // screen already does).
       return PosTakeawayOrdersScreen(ctx: ctx);
+    }
+    if (_selectedAreaTab == _AreaTab.delivery) {
+      return PosDeliveryOrdersTab(ctx: ctx);
     }
     final filtered = _selectedAreaTab == _AreaTab.all
         ? tables

@@ -57,13 +57,13 @@ class PosTakeawayOrdersScreen extends ConsumerWidget {
           child: Row(
             children: [
               const Expanded(
-                child: Text('Paket / Gel-Al Siparişleri',
+                child: Text('Gel-Al Siparişleri',
                     style: AppTypography.titleMedium),
               ),
               ElevatedButton.icon(
                 key: const Key('newTakeawayOrderButton'),
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('Yeni Paket Sipariş'),
+                icon: const Icon(Icons.shopping_bag_outlined),
+                label: const Text('Yeni Gel-Al Siparişi'),
                 onPressed: () async {
                   final created = await Navigator.of(context).push<bool>(
                     MaterialPageRoute(
