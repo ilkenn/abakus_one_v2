@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show SystemSound, SystemSoundType;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/layout/app_breakpoints.dart';
@@ -12,15 +11,12 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
-import '../../../../shared/widgets/images/product_image.dart';
 import '../../../admin/data/tenant_customer_directory_gateway.dart';
 import '../../../admin/domain/approval/approval_request.dart';
 import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../../admin/presentation/screens/approval_inbox_screen.dart';
 import '../../../admin/presentation/screens/trusted_device_status_screen.dart';
-import '../../../menu/domain/models/menu_category.dart';
 import '../../../menu/domain/models/menu_product.dart';
-import '../../../menu/domain/models/sale_unit.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
 import '../../../menu/presentation/providers/menu_catalog_provider.dart';
 import '../../../orders/domain/models/order_id.dart';
@@ -38,10 +34,9 @@ import '../providers/actor_session_provider.dart';
 import '../providers/kds_dependencies_provider.dart';
 import '../providers/kitchen_ticket_dependencies_provider.dart';
 import '../providers/pos_workspace_providers.dart';
+import '../widgets/pos_catalog_browser.dart';
 import '../widgets/pos_operational_rail.dart';
-import '../widgets/pos_product_customization_dialog.dart';
 import '../widgets/print_table_receipt_action.dart';
-import '../widgets/weight_entry_dialog.dart';
 import 'pos_cash_register_screen.dart';
 import 'pos_checkout_screen.dart';
 
@@ -663,20 +658,8 @@ class _PosWorkbench extends ConsumerStatefulWidget {
 }
 
 class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
-  String _categoryFilter = _staffEntryTopSellersSentinel;
   final List<_StaffEntryCartLine> _cartLines = [];
   bool _sendingCart = false;
-
-  /// Live product-grid search (2026-11-03) — filters by name as the staff
-  /// types, independent of and combined with [_categoryFilter].
-  final _productSearchController = TextEditingController();
-  String _productSearchQuery = '';
-
-  /// Adım 4 (2026-11-07) — set when a USB barkod okuyucu (HID keyboard
-  /// emulator) submits a code via [_buildProductSearchField]'s
-  /// `onSubmitted` that matches no [MenuProduct.barcode] in the catalog.
-  /// Cleared on the next keystroke or successful match.
-  String? _barcodeNotFoundMessage;
 
   String _accountSelection = _staffEntryTableGeneralSentinel;
   final _walkInNameController = TextEditingController();
@@ -790,7 +773,6 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
   void dispose() {
     _walkInNameController.dispose();
     _customerSearchController.dispose();
-    _productSearchController.dispose();
     super.dispose();
   }
 
@@ -816,46 +798,24 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     }
   }
 
-  /// `AbakusMenuCatalog.products` appends the optional, catalog-wide
-  /// "Ekstra Sos" cross-sell group to *every* product (see
-  /// `abakus_menu_catalog.dart`'s `products` getter) — so checking
-  /// `modifierGroups.isEmpty` would open the customization modal for
-  /// every single drink too. The actual "is there something worth
-  /// configuring" signal is a *required* group (Bowl's carb/salad/pickle,
-  /// Burger/Wrap's fries) or a removable-ingredients list; a product with
-  /// only the optional sauce cross-sell keeps today's single-tap-add.
-  bool _needsCustomization(MenuProduct product) =>
-      product.modifierGroups.any((group) => group.isRequired) ||
-      product.removableIngredients.isNotEmpty;
-
-  /// A product with nothing worth configuring (drinks, simple sides) is
-  /// added directly, one tap, exactly like before. A Bowl/Burger/Wrap-style
-  /// product (see [_needsCustomization]) opens
-  /// [PosProductCustomizationDialog] first — dismissing it (back button,
-  /// tap outside) adds nothing.
-  Future<void> _onProductTap(MenuProduct product) async {
-    if (product.saleUnit == SaleUnit.kilogram) {
-      // ADR-067 — a sold-by-weight product becomes one line carrying its
-      // grams (never merged with another weight); the server prices it.
-      final grams = await WeightEntryDialog.show(context, product);
-      if (grams == null || !mounted) return;
-      setState(() => _cartLines
-          .add(_StaffEntryCartLine(product: product, weightGrams: grams)));
+  /// 2026-11-11 — a product chosen in the shared [PosCatalogBrowser]
+  /// (already configured through its customization / weight dialog).
+  void _addSelection(PosCatalogSelection selection) {
+    final weightGrams = selection.weightGrams;
+    if (weightGrams != null) {
+      // ADR-067 — a sold-by-weight product is one line carrying its grams
+      // (never merged with another weight); the server prices it.
+      setState(() => _cartLines.add(_StaffEntryCartLine(
+          product: selection.product, weightGrams: weightGrams)));
       return;
     }
-    if (!_needsCustomization(product)) {
-      _mergeOrAddLine(_StaffEntryCartLine(product: product));
-      return;
-    }
-    final result = await PosProductCustomizationDialog.show(context, product);
-    if (result == null || !mounted) return;
     _mergeOrAddLine(
       _StaffEntryCartLine(
-        product: product,
-        selectedModifiers: result.selectedModifiers,
-        excludedIngredients: result.excludedIngredients,
-        note: result.note,
-      )..quantity = result.quantity,
+        product: selection.product,
+        selectedModifiers: selection.selectedModifiers,
+        excludedIngredients: selection.excludedIngredients,
+        note: selection.note,
+      )..quantity = selection.quantity,
     );
   }
 
@@ -941,167 +901,6 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       _sendingCart = false;
       _cartLines.clear();
     });
-  }
-
-  List<MenuProduct> _productsIn(String categoryId, List<MenuProduct> products) {
-    return [
-      for (final product in products)
-        if (product.categoryId == categoryId) product,
-    ];
-  }
-
-  Widget _buildCategoryRail(List<MenuCategory> categories,
-      List<MenuProduct> allProducts, bool scrollHorizontally) {
-    if (scrollHorizontally) {
-      final chips = [
-        ChoiceChip(
-          label: const Text('Çok Tercih Edilenler'),
-          selected: _categoryFilter == _staffEntryTopSellersSentinel,
-          onSelected: (_) =>
-              setState(() => _categoryFilter = _staffEntryTopSellersSentinel),
-        ),
-        for (final category in categories)
-          ChoiceChip(
-            label: Text(category.name),
-            selected: _categoryFilter == category.id,
-            onSelected: (_) => setState(() => _categoryFilter = category.id),
-          ),
-      ];
-      return SizedBox(
-        height: 48,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-          itemCount: chips.length,
-          separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
-          itemBuilder: (_, index) => chips[index],
-        ),
-      );
-    }
-    return SizedBox(
-      width: 112,
-      child: ListView(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-        children: [
-          _CategoryCard(
-            label: 'Çok Tercih Edilenler',
-            icon: Icons.star_rounded,
-            selected: _categoryFilter == _staffEntryTopSellersSentinel,
-            onTap: () =>
-                setState(() => _categoryFilter = _staffEntryTopSellersSentinel),
-          ),
-          for (final category in categories)
-            _CategoryCard(
-              label: category.name,
-              selected: _categoryFilter == category.id,
-              onTap: () => setState(() => _categoryFilter = category.id),
-              categoryId: category.id,
-              previewImageKeys: [
-                for (final product in _productsIn(category.id, allProducts))
-                  product.imageKey,
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-
-  /// Adım 4 (2026-11-07) — a USB barkod okuyucu (HID keyboard emulator)
-  /// types the barcode's digits straight into whatever text field has
-  /// focus, then sends Enter. Reusing this existing search field's
-  /// `onSubmitted` (rather than a new, separate global keyboard listener)
-  /// means the exact same field staff already use to find a product by
-  /// name also accepts a scanned barcode — an exact match against
-  /// [MenuProduct.barcode] adds 1 to the cart (through [_onProductTap], so
-  /// a required-modifier product still opens its customization dialog
-  /// first); no match clears nothing and surfaces an inline error plus an
-  /// alert sound, so staff immediately see the scan didn't register.
-  void _handleBarcodeSubmit(String rawValue, List<MenuProduct> allProducts) {
-    final value = rawValue.trim();
-    if (value.isEmpty) return;
-    MenuProduct? match;
-    for (final product in allProducts) {
-      if (product.barcode == value) {
-        match = product;
-        break;
-      }
-    }
-    if (match == null) {
-      SystemSound.play(SystemSoundType.alert);
-      setState(() => _barcodeNotFoundMessage = 'Barkod bulunamadı: $value');
-      return;
-    }
-    SystemSound.play(SystemSoundType.click);
-    setState(() {
-      _barcodeNotFoundMessage = null;
-      _productSearchController.clear();
-      _productSearchQuery = '';
-    });
-    _onProductTap(match);
-  }
-
-  Widget _buildProductSearchField(List<MenuProduct> allProducts) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
-      child: TextField(
-        key: const Key('productSearchField'),
-        controller: _productSearchController,
-        onChanged: (value) => setState(() {
-          _productSearchQuery = value;
-          _barcodeNotFoundMessage = null;
-        }),
-        onSubmitted: (value) => _handleBarcodeSubmit(value, allProducts),
-        decoration: InputDecoration(
-          isDense: true,
-          hintText: 'Ürün ara veya barkod okut...',
-          prefixIcon: const Icon(Icons.search_rounded, size: 20),
-          errorText: _barcodeNotFoundMessage,
-          suffixIcon: _productSearchQuery.isEmpty
-              ? null
-              : IconButton(
-                  icon: const Icon(Icons.clear_rounded, size: 18),
-                  onPressed: () => setState(() {
-                    _productSearchController.clear();
-                    _productSearchQuery = '';
-                    _barcodeNotFoundMessage = null;
-                  }),
-                ),
-          contentPadding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-          border: const OutlineInputBorder(
-            borderRadius: AppRadius.kPill,
-            borderSide: BorderSide(color: AppColors.border),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProductGrid(List<MenuProduct> products,
-      {String emptyMessage = 'Bu kategoride ürün yok.'}) {
-    if (products.isEmpty) {
-      return Center(
-        child: Text(emptyMessage, style: AppTypography.bodyMedium),
-      );
-    }
-    return GridView.builder(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 180,
-        mainAxisSpacing: AppSpacing.sm,
-        crossAxisSpacing: AppSpacing.sm,
-        childAspectRatio: 0.8,
-      ),
-      itemCount: products.length,
-      itemBuilder: (context, index) {
-        final product = products[index];
-        return _StaffEntryProductCard(
-          product: product,
-          onTap: () => _onProductTap(product),
-        );
-      },
-    );
   }
 
   int get _pendingApprovalLineCount => [
@@ -2255,133 +2054,22 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
     );
   }
 
-  /// Fixed "Çok Tercih Edilenler" showcase (2026-11-03, product owner
-  /// decision) — one curated id per catalog group, used only when the real
-  /// sales aggregation errors or genuinely has no history yet. Every id was
-  /// matched against `abakus_menu_catalog.dart` by hand; none are guessed.
-  static const List<String> _topSellersFallbackProductIds = [
-    // Bowl
-    'prod_bowl2_tatli_eksi_tavuk',
-    'prod_bowl2_citir_tavuk',
-    'prod_bowl2_somon_fume',
-    'prod_bowl2_izgara_anne_koftesi',
-    // Burger
-    'prod_burger2_double_chicken',
-    'prod_burger2_tripoli',
-    'prod_burger2_steak',
-    // Tava
-    'prod_tava_citir_tavuk',
-    'prod_tava_kremali_pestolu_tavuk',
-    'prod_tava_tatli_eksi_tavuk',
-    // Kahvaltı & Ekmek
-    'prod_kahvalti_clasico',
-    'prod_kahvalti_steak',
-    'prod_kahvalti_salmon',
-    // Wrap
-    'prod_wrap2_citir_tavuk',
-    'prod_wrap2_asian_chicken',
-    'prod_wrap2_kofte',
-    // Salata & Makarna
-    'prod_salata2_crispy_caesar',
-    'prod_makarna2_fettuccine_chicken_alfredo',
-    'prod_makarna2_citir_tavuk_fettuccine',
-  ];
-
-  List<MenuProduct> _resolveTopSellersFallback(List<MenuProduct> allProducts) {
-    final productById = {for (final p in allProducts) p.id: p};
-    return [
-      for (final id in _topSellersFallbackProductIds)
-        if (productById[id] != null) productById[id]!,
-    ];
-  }
-
   @override
   Widget build(BuildContext context) {
-    final categories = ref.watch(menuCategoriesProvider);
-    final allProducts =
-        ref.watch(menuProductsProvider).where((p) => p.isAvailable).toList();
-
-    // "Çok Tercih Edilenler" (2026-11-03, BR-POS-001) resolves asynchronously
-    // (a real backend aggregation) — every other category is already an
-    // in-memory list, wrapped in `AsyncValue.data` so both paths share one
-    // explicit loading/error/data handling below instead of two.
-    //
-    // No-sales-data / service-error fallback (2026-11-03, product owner
-    // decision): this tab must never show a dead error screen or an empty
-    // grid on day one — if the real aggregation errors, or legitimately
-    // returns nothing yet (no 30-day sales history), fall back to a fixed
-    // 19-product showcase (one of the 20 named items, "Emerald Green", does
-    // not exist in the catalog — product owner chose Somon Kahvaltı in its
-    // place) covering every category, so staff always have an immediate,
-    // populated starting tab.
-    final categoryFilteredAsync = _categoryFilter ==
-            _staffEntryTopSellersSentinel
-        ? ref.watch(topSellingProductsProvider(widget.ctx)).when(
-              loading: () => const AsyncValue<List<MenuProduct>>.loading(),
-              error: (error, stackTrace) => AsyncValue.data(
-                _resolveTopSellersFallback(allProducts),
-              ),
-              data: (topSellers) {
-                final productById = {for (final p in allProducts) p.id: p};
-                final resolved = [
-                  for (final entry in topSellers)
-                    if (productById[entry.productId] != null)
-                      productById[entry.productId]!,
-                ];
-                return AsyncValue.data(
-                  resolved.isNotEmpty
-                      ? resolved
-                      : _resolveTopSellersFallback(allProducts),
-                );
-              },
-            )
-        : AsyncValue.data(
-            allProducts.where((p) => p.categoryId == _categoryFilter).toList(),
-          );
-    final searchQuery = _productSearchQuery.trim().toLowerCase();
-    // A non-empty search deliberately searches every product regardless of
-    // the selected category/Top-20 filter — finding a specific product by
-    // name shouldn't require first guessing which tab it's under, and it
-    // never needs to wait on the Top-20 network call either.
-    final visibleProductsAsync = searchQuery.isNotEmpty
-        ? AsyncValue.data(
-            allProducts
-                .where((p) => p.name.toLowerCase().contains(searchQuery))
-                .toList(),
-          )
-        : categoryFilteredAsync;
-
     return LayoutBuilder(builder: (context, constraints) {
       final isWide = constraints.maxWidth >= AppBreakpoints.tablet;
-      final grid = Column(
-        children: [
-          _buildProductSearchField(allProducts),
-          Expanded(
-            child: visibleProductsAsync.when(
-              loading: () => const LoadingView(
-                  message: 'Çok tercih edilenler yükleniyor...'),
-              error: (error, stackTrace) => ErrorView(
-                message: 'Çok tercih edilenler yüklenemedi.',
-                retryLabel: 'Yeniden Dene',
-                onRetry: () =>
-                    ref.invalidate(topSellingProductsProvider(widget.ctx)),
-              ),
-              data: (products) => _buildProductGrid(
-                products,
-                emptyMessage: _categoryFilter == _staffEntryTopSellersSentinel
-                    ? 'Henüz yeterli satış verisi yok.'
-                    : 'Bu kategoride ürün yok.',
-              ),
-            ),
-          ),
-        ],
+      // 2026-11-11 — the category rail + product grid is the shared
+      // [PosCatalogBrowser] (also used by the takeaway / delivery screen).
+      final catalog = PosCatalogBrowser(
+        ctx: widget.ctx,
+        wide: isWide,
+        onAdd: _addSelection,
       );
       final adisyon = _buildAdisyonPanel(context);
       if (!isWide) {
         return Column(
           children: [
-            _buildCategoryRail(categories, allProducts, true),
-            Expanded(child: grid),
+            Expanded(child: catalog),
             Container(height: 1, color: AppColors.border),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 360),
@@ -2392,9 +2080,7 @@ class _PosWorkbenchState extends ConsumerState<_PosWorkbench> {
       }
       return Row(
         children: [
-          _buildCategoryRail(categories, allProducts, false),
-          Container(width: 1, color: AppColors.border),
-          Expanded(flex: 3, child: grid),
+          Expanded(flex: 3, child: catalog),
           Container(width: 1, color: AppColors.border),
           SizedBox(width: 340, child: adisyon),
         ],
@@ -2960,13 +2646,6 @@ const _staffEntryTableGeneralSentinel = '__table_general__';
 const _staffEntryWalkInSentinel = '__named_walk_in__';
 const _staffEntryExistingCustomerSentinel = '__existing_customer__';
 
-/// 2026-11-03 — product owner, BR-POS-001: replaces the old "Tümü" (show
-/// every category) default with "Çok Tercih Edilenler" (Top 20
-/// best-sellers). The identifier keeps its old name's shape deliberately
-/// unrenamed in call sites that were already using it as "the default
-/// selection," but its *meaning* changed — see `topSellingProductsProvider`.
-const _staffEntryTopSellersSentinel = '__top_sellers__';
-
 /// The quick note-edit popup for a pending cart line. A dedicated
 /// `StatefulWidget` (rather than a `TextEditingController` created and
 /// disposed inline around `showDialog`) so the controller's lifetime is
@@ -3214,153 +2893,6 @@ class _GridToolTile extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Vertical category-rail card (2026-11-02 touch-POS redesign) — a small
-/// rounded preview image on top, the category name below, with a
-/// highlighted border/background when selected. Deliberately has no
-/// dedicated category-icon asset convention: the preview is the
-/// category's own products' real photos via [ProductImage], tried in
-/// order via [previewImageKeys] (so a product with no working photo
-/// falls through to the next product's, rather than dropping straight to
-/// the generic placeholder) — empty only for the synthetic "Tümü" entry
-/// or a category with no products, in which case [icon] is shown
-/// instead.
-class _CategoryCard extends StatelessWidget {
-  const _CategoryCard({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.categoryId,
-    this.previewImageKeys = const [],
-    this.icon = Icons.restaurant_menu_rounded,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final String? categoryId;
-  final List<String> previewImageKeys;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.medium),
-        child: Container(
-          padding: const EdgeInsets.all(AppSpacing.sm),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.primaryExtraLight : AppColors.surface,
-            borderRadius: BorderRadius.circular(AppRadius.medium),
-            border: Border.all(
-              color: selected ? AppColors.primary : AppColors.border,
-              width: selected ? 2 : 1,
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadius.small),
-                child: SizedBox(
-                  width: 56,
-                  height: 56,
-                  child: previewImageKeys.isEmpty
-                      ? Icon(icon, size: 28, color: AppColors.textSecondary)
-                      : ProductImage(
-                          imageKey: previewImageKeys.first,
-                          additionalImageKeys:
-                              previewImageKeys.skip(1).toList(),
-                          categoryId: categoryId,
-                          width: 56,
-                          height: 56,
-                        ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                label,
-                style: AppTypography.caption.copyWith(
-                  color: selected ? AppColors.primary : AppColors.textPrimary,
-                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A single tappable product tile in the staff order-entry grid — a real
-/// photo via [ProductImage] (resolved from [MenuProduct.imageKey], with
-/// its own built-in placeholder for a product that has none), name, and
-/// price. Deliberately no quantity control on the card itself — tapping
-/// adds one unit to the cart; the cart panel is where quantity is
-/// adjusted, matching the "tap to add, adjust in the cart" convention a
-/// touch POS grid is expected to have.
-class _StaffEntryProductCard extends StatelessWidget {
-  const _StaffEntryProductCard({required this.product, required this.onTap});
-  final MenuProduct product;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      padding: EdgeInsets.zero,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.sm),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                // `LayoutBuilder` resolves the tile's real, finite
-                // on-screen size — `double.infinity` here previously
-                // skipped `ProductImage`'s `cacheWidth`/`cacheHeight`
-                // decode-size optimization entirely for every tile in this
-                // scrolling staff order-entry grid.
-                child: LayoutBuilder(
-                  builder: (context, constraints) => ProductImage(
-                    imageKey: product.imageKey,
-                    categoryId: product.categoryId,
-                    width: constraints.maxWidth,
-                    height: constraints.maxHeight,
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                product.name,
-                style: AppTypography.bodyMedium,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              Text(
-                '${product.basePrice.toStringAsFixed(0)} TL',
-                style: AppTypography.bodySmall.copyWith(
-                    color: AppColors.primary, fontWeight: FontWeight.bold),
-              ),
-              PosNutritionAllergenBadge(
-                nutrition: product.nutrition,
-                allergens: product.allergens,
-                dense: true,
-              ),
-            ],
-          ),
         ),
       ),
     );
