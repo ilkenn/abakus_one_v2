@@ -8,7 +8,8 @@
 // complete shape, mirrored below). This script is the first real,
 // deliberately-written provisioning path for either collection, run once
 // (and safely re-runnable) against a real Firebase project rather than the
-// emulator, for the 14 physical tables Abaküs is launching with.
+// emulator, for the physical tables Abaküs is launching with (12 since
+// 2026-11-11).
 //
 // WHY a direct Admin-SDK script, not a new callable: every other seed
 // script in this directory that provisions real tenant data for a real
@@ -65,19 +66,33 @@ const RESTAURANT_ID = "restaurant-1";
 const BRANCH_ID = "branch-1";
 const BRANCH_DISPLAY_NAME = "Merkez Şube";
 
+// 2026-11-11 — product owner: the launch floor is 12 tables, Salon 1–6 and
+// Bahçe 1–6, area names matching the POS Masalar tabs ("Salon"/"Bahçe";
+// the old "İç Mekan" area matched no tab). Replaces the earlier 14-table
+// list (İç Masa 1–7 / Bahçe Masa 1–7).
 const TABLES = [
-  ...Array.from({ length: 7 }, (_, i) => ({
-    tableId: `ic-${i + 1}`,
-    displayName: `İç Masa ${i + 1}`,
-    areaName: "İç Mekan",
+  ...Array.from({ length: 6 }, (_, i) => ({
+    tableId: `salon-${i + 1}`,
+    displayName: `Salon ${i + 1}`,
+    areaName: "Salon",
     sortOrder: i,
   })),
-  ...Array.from({ length: 7 }, (_, i) => ({
+  ...Array.from({ length: 6 }, (_, i) => ({
     tableId: `bahce-${i + 1}`,
-    displayName: `Bahçe Masa ${i + 1}`,
+    displayName: `Bahçe ${i + 1}`,
     areaName: "Bahçe",
-    sortOrder: 7 + i,
+    sortOrder: 6 + i,
   })),
+];
+
+// Tables of the earlier 14-table list that are no longer part of the floor.
+// If this script already ran with that list, they still exist: they are
+// deactivated (`isActive: false` — hidden from the POS, their QR codes stop
+// resolving), never deleted, and never while a table session is open on
+// them. Printed QR stickers for these tables must be replaced.
+const LEGACY_TABLE_IDS = [
+  ...Array.from({ length: 7 }, (_, i) => `ic-${i + 1}`),
+  "bahce-7",
 ];
 
 const app = admin.initializeApp({ projectId: PROJECT_ID });
@@ -132,6 +147,26 @@ async function provisionTable(db, table) {
   }
 }
 
+async function deactivateLegacyTable(db, tableId) {
+  const ref = db.collection("restaurantTables").doc(tableId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const table = snap.data();
+  if (table.isActive === false) {
+    console.log(`[provision_launch_tables] restaurantTables/${tableId}: legacy table already inactive.`);
+    return;
+  }
+  if (table.activeTableSessionId) {
+    console.warn(
+      `[provision_launch_tables] restaurantTables/${tableId}: legacy table has an open table session ` +
+        `(${table.activeTableSessionId}) — NOT deactivated; close the session and re-run.`,
+    );
+    return;
+  }
+  await ref.set({ isActive: false, updatedAt: new Date() }, { merge: true });
+  console.log(`[provision_launch_tables] restaurantTables/${tableId}: legacy table deactivated (not deleted).`);
+}
+
 async function ensureActiveQrCode(db, tableId) {
   const existing = await db
     .collection("tableQrCodes")
@@ -181,6 +216,10 @@ async function main() {
       areaName: table.areaName,
       opaqueToken: token,
     });
+  }
+
+  for (const tableId of LEGACY_TABLE_IDS) {
+    await deactivateLegacyTable(db, tableId);
   }
 
   const __dirname = dirname(fileURLToPath(import.meta.url));

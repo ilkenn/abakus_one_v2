@@ -11516,3 +11516,25 @@ passing, 0 failures.
 - Tests: 4 `displayTableStatus` unit tests (functions); the query shape was verified against the emulator
   rules (no Firestore fake exists for a Flutter unit test of the repository).
 - **Visual Review Bekleniyor**.
+
+### POS Masalar: bird's-eye table cards + 12-table launch floor (2026-11-11)
+
+- Product owner's rules: each card draws the table top (name in the middle) with up to 4 chairs (top/bottom/
+  left/right); one chair per live main portion shows a person figure (no manual headcount), max 4. Colors via
+  existing tokens: no live order → green "Boş" (also while a QR guest is only browsing), live order → red
+  "Dolu", bill requested → orange; cleaning/reserved/disabled → grey (disabled was red before and would have
+  clashed with "Dolu").
+- Server (`getPosBranchTableOverview`): new `activePortionCount` (`countActivePortions` — live orders/lines
+  only, beverages excluded by catalog product id since order lines carry no category; modifiers are never
+  lines) and `capacity`; both part of the change-detection version. Deactivated tables (`isActive: false`) are
+  no longer listed.
+- Client: `PosTableTopView` + `PosTableTone` + `posTableSeating` (`pos/presentation/widgets/
+  pos_table_top_view.dart`); chairs = capacity 1–4 (4 when unset); fill order top, bottom, left, right.
+- Floor: `provision_launch_tables.mjs` now provisions Salon 1–6 (area "Salon") and Bahçe 1–6 (area "Bahçe"),
+  replacing the 14-table list; legacy `ic-1…7`/`bahce-7` are deactivated (never deleted, never with an open
+  session). Printed QR stickers for the old İç Masa tables must be replaced. Dev emulator updated the same way;
+  Teras 1 deactivated; the dev-only "QR Test Masası" kept for QR testing.
+- Not in scope: a real admin table editor — the admin table screens are still in-memory only, tables are
+  provisioned by script.
+- Tests: 4 `countActivePortions` (functions), 9 top-view/tone/seating, 1 overview end-to-end card test.
+- **Visual Review Bekleniyor**.

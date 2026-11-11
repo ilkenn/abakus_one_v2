@@ -56,6 +56,40 @@ function requireNonEmptyString(raw: unknown, field: string): string {
  * shown as "occupied"; any other stored status (reserved/cleaning/
  * disabled/occupied) is shown unchanged.
  */
+/** Category whose lines never count as a seated guest's portion. */
+export const BEVERAGES_CATEGORY_ID = "cat_icecekler";
+const INACTIVE_ORDER_STATUSES = new Set(["cancelled", "rejected"]);
+const INACTIVE_LINE_STATUSES = new Set(["cancelled", "rejected"]);
+
+/**
+ * 2026-11-11 — the POS bird's-eye table card fills one chair per main
+ * portion at the table (product owner's rule: no manual headcount). Sum of
+ * line quantities across the session's live orders, skipping cancelled/
+ * rejected orders and lines and every beverage line (a water or cola must
+ * not seat an extra guest). Order lines carry no category, only
+ * `productId` — [beverageProductIds] is the set of catalog products in
+ * [BEVERAGES_CATEGORY_ID]. Modifiers are never separate lines, so they
+ * never count. Uncapped here — the client caps it to the chairs it draws.
+ */
+export function countActivePortions(
+  orders: Array<{ status?: unknown; lines?: unknown }>,
+  beverageProductIds: ReadonlySet<string>,
+): number {
+  let portions = 0;
+  for (const order of orders) {
+    if (INACTIVE_ORDER_STATUSES.has(String(order.status))) continue;
+    const lines = Array.isArray(order.lines) ? order.lines : [];
+    for (const raw of lines) {
+      const line = raw as { status?: unknown; productId?: unknown; quantity?: unknown };
+      if (INACTIVE_LINE_STATUSES.has(String(line.status))) continue;
+      if (typeof line.productId === "string" && beverageProductIds.has(line.productId)) continue;
+      const quantity = typeof line.quantity === "number" && line.quantity > 0 ? Math.ceil(line.quantity) : 0;
+      portions += quantity;
+    }
+  }
+  return portions;
+}
+
 export function displayTableStatus(table: FirebaseFirestore.DocumentData): string {
   const override = table.statusOverride as string | null | undefined;
   if (override) return override;
@@ -220,6 +254,18 @@ export const getPosBranchTableOverview = onCall(
     // the SAME `orders` snapshot already fetched for pendingQrLineCount
     // above rather than a second query.
     const kitchenReadyCountsBySessionId = new Map<string, number>();
+    // 2026-11-11 — bird's-eye chairs, from the SAME orders snapshot. The
+    // beverage product ids come from one small catalog query (only when a
+    // table actually has a live session).
+    const activePortionCountsBySessionId = new Map<string, number>();
+    const beverageProductIds = new Set<string>();
+    if (activeTableSessionIds.length > 0) {
+      const beveragesSnap = await db.collection("menuProducts")
+        .where("organizationId", "==", organizationId)
+        .where("categoryId", "==", BEVERAGES_CATEGORY_ID)
+        .get();
+      for (const doc of beveragesSnap.docs) beverageProductIds.add(doc.id);
+    }
     await Promise.all(
       activeTableSessionIds.map(async (tableSessionId) => {
         const ordersSnap = await db.collection("orders").where("dineInSessionGroupId", "==", tableSessionId).get();
@@ -233,6 +279,10 @@ export const getPosBranchTableOverview = onCall(
         }
         pendingCountsBySessionId.set(tableSessionId, pendingCount);
         kitchenReadyCountsBySessionId.set(tableSessionId, readyCount);
+        activePortionCountsBySessionId.set(
+          tableSessionId,
+          countActivePortions(ordersSnap.docs.map((orderDoc) => orderDoc.data()), beverageProductIds),
+        );
       }),
     );
 
@@ -255,7 +305,9 @@ export const getPosBranchTableOverview = onCall(
       pendingServiceRequestsByTableId.set(tableId, list);
     }
 
-    const tables = tablesSnap.docs.map((d) => {
+    // 2026-11-11 — a deactivated table (`isActive: false`) is no longer
+    // shown; it is kept, never deleted, so its history stays intact.
+    const tables = tablesSnap.docs.filter((d) => d.data().isActive !== false).map((d) => {
       const table = d.data();
       const activeTableSessionId = (table.activeTableSessionId as string | null | undefined) ?? null;
       return {
@@ -265,6 +317,8 @@ export const getPosBranchTableOverview = onCall(
         activeTableSessionId,
         pendingQrLineCount: activeTableSessionId ? (pendingCountsBySessionId.get(activeTableSessionId) ?? 0) : 0,
         kitchenReadyOrderCount: activeTableSessionId ? (kitchenReadyCountsBySessionId.get(activeTableSessionId) ?? 0) : 0,
+        activePortionCount: activeTableSessionId ? (activePortionCountsBySessionId.get(activeTableSessionId) ?? 0) : 0,
+        capacity: typeof table.capacity === "number" ? table.capacity : null,
         pendingServiceRequests: pendingServiceRequestsByTableId.get(d.id) ?? [],
         // 2026-11-06 — "Masalar 5-sekme düzeni": the Flutter grid's own
         // area/zone filter tabs, reusing `RestaurantTable.areaName` (free
@@ -275,7 +329,7 @@ export const getPosBranchTableOverview = onCall(
     });
 
     const versionSource = tables
-      .map((t) => `${t.tableId}:${t.status}:${t.activeTableSessionId ?? ""}:${t.pendingQrLineCount}:${t.kitchenReadyOrderCount}:${t.pendingServiceRequests.map((r) => r.requestId).sort().join(",")}`)
+      .map((t) => `${t.tableId}:${t.status}:${t.activeTableSessionId ?? ""}:${t.pendingQrLineCount}:${t.kitchenReadyOrderCount}:${t.activePortionCount}:${t.capacity ?? ""}:${t.pendingServiceRequests.map((r) => r.requestId).sort().join(",")}`)
       .join("|");
     const version = createHash("sha256").update(versionSource).digest("hex").slice(0, 24);
 

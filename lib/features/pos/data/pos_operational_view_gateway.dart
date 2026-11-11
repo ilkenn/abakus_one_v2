@@ -74,6 +74,8 @@ class PosBranchTableSummary {
     this.kitchenReadyOrderCount = 0,
     this.pendingServiceRequests = const [],
     this.areaName = '',
+    this.activePortionCount = 0,
+    this.capacity,
   });
 
   final String tableId;
@@ -94,6 +96,15 @@ class PosBranchTableSummary {
   /// (2026-11-06). Empty when the table has none set.
   final String areaName;
 
+  /// 2026-11-11 — main portions ordered at this table right now (server:
+  /// `countActivePortions` — live orders/lines only, beverages excluded).
+  /// Drives the bird's-eye card: one filled chair per portion, capped to
+  /// the chairs drawn. 0 = no live order.
+  final int activePortionCount;
+
+  /// `RestaurantTable.capacity`, `null` when unset.
+  final int? capacity;
+
   factory PosBranchTableSummary.fromWire(Map<String, dynamic> data) {
     return PosBranchTableSummary(
       tableId: data['tableId'] as String,
@@ -103,6 +114,8 @@ class PosBranchTableSummary {
       activeTableSessionId: data['activeTableSessionId'] as String?,
       pendingQrLineCount: data['pendingQrLineCount'] as int,
       kitchenReadyOrderCount: data['kitchenReadyOrderCount'] as int? ?? 0,
+      activePortionCount: data['activePortionCount'] as int? ?? 0,
+      capacity: data['capacity'] as int?,
       pendingServiceRequests: [
         for (final raw in (data['pendingServiceRequests'] as List? ?? const []))
           PosPendingServiceRequest.fromWire(
