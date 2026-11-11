@@ -41,18 +41,76 @@ class FirebaseTechnicalIdentityProvider implements TechnicalIdentityProvider {
   String? get currentUid => fb.FirebaseAuth.instance.currentUser?.uid;
 
   @override
-  Future<String> ensureSignedIn() async {
-    final current = fb.FirebaseAuth.instance.currentUser;
-    if (current != null) return current.uid;
-
-    final credential = await fb.FirebaseAuth.instance.signInAnonymously();
-    final uid = credential.user?.uid;
-    if (uid == null) {
-      throw StateError(
-        'Anonymous sign-in succeeded but returned no user — this should '
-        'be impossible per the firebase_auth contract.',
-      );
-    }
-    return uid;
+  Future<String> ensureSignedIn() {
+    final auth = fb.FirebaseAuth.instance;
+    return ensureValidTechnicalIdentity(
+      currentUser: () {
+        final user = auth.currentUser;
+        return user == null
+            ? null
+            : (uid: user.uid, isAnonymous: user.isAnonymous);
+      },
+      reloadCurrentUser: () async => auth.currentUser?.reload(),
+      signOut: auth.signOut,
+      signInAnonymously: () async {
+        final credential = await auth.signInAnonymously();
+        return credential.user?.uid;
+      },
+    );
   }
+}
+
+/// 2026-11-11 — the firebase_auth codes meaning "the cached anonymous
+/// user no longer exists / its credential can't be refreshed" (e.g. the
+/// backend's user was deleted). `user-disabled` is deliberately NOT here:
+/// a guest disabled on purpose must not get a fresh identity automatically.
+const _staleIdentityCodes = {
+  'user-not-found',
+  'user-token-expired',
+  'invalid-user-token',
+};
+
+/// Whether [error] means the cached anonymous identity is unusable and may
+/// be replaced (see [_staleIdentityCodes]).
+bool isStaleTechnicalIdentityError(Object error) =>
+    error is fb.FirebaseAuthException &&
+    _staleIdentityCodes.contains(error.code);
+
+/// [TechnicalIdentityProvider.ensureSignedIn]'s logic with the Firebase
+/// Auth calls injected, so it is testable without a real Firebase app.
+///
+/// - Nobody signed in → anonymous sign-in.
+/// - A real (non-anonymous) customer → reused as-is, never touched.
+/// - A cached ANONYMOUS guest → checked against the backend first
+///   ([reloadCurrentUser]). If the backend no longer knows it (2026-11-11:
+///   the browser kept a guest the auth backend had lost, so every table
+///   entry failed before reaching the server with "Masa açılırken bir
+///   sorun oluştu"), it is signed out and replaced by a fresh anonymous
+///   guest. Any other failure (network, disabled user) is rethrown.
+Future<String> ensureValidTechnicalIdentity({
+  required ({String uid, bool isAnonymous})? Function() currentUser,
+  required Future<void> Function() reloadCurrentUser,
+  required Future<void> Function() signOut,
+  required Future<String?> Function() signInAnonymously,
+}) async {
+  final current = currentUser();
+  if (current != null) {
+    if (!current.isAnonymous) return current.uid;
+    try {
+      await reloadCurrentUser();
+      return current.uid;
+    } catch (error) {
+      if (!isStaleTechnicalIdentityError(error)) rethrow;
+      await signOut();
+    }
+  }
+
+  final uid = await signInAnonymously();
+  if (uid == null) {
+    throw StateError(
+      'Anonymous sign-in succeeded but returned no user — this should '
+      'be impossible per the firebase_auth contract.',
+    );
+  }
+  return uid;
 }

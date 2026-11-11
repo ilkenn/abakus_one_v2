@@ -96,6 +96,7 @@ class OpenTableGuestSessionFromQrScan {
       session: session,
       guestSession: guestSession,
       reservationContextId: opened.reservationContextId,
+      sharedCartTableSessionId: opened.tableSessionId,
     );
   }
 }

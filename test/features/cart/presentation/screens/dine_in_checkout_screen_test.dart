@@ -120,6 +120,7 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     required this.cartItemsSnapshot,
     required this.resolveCustomerId,
     this.cartFirestoreClient,
+    this.resolveSharedCartTableSessionId,
   });
 
   final CanonicalOrderRepository repository;
@@ -132,6 +133,11 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
   /// `submittedCartLineIds` so tests can verify the shared cart actually
   /// empties after a successful submission, exactly like production.
   final FakeTableSessionCartFirestoreClient? cartFirestoreClient;
+
+  /// 2026-11-11 — `submitDineInOrder` is called with the GUEST session id
+  /// but deletes cart lines under the real table session it resolves
+  /// server-side; this mirrors that resolution.
+  final String? Function()? resolveSharedCartTableSessionId;
 
   final Map<String, dynamic> _orderIdByKey = {};
   int callCount = 0;
@@ -263,8 +269,10 @@ class _FakeSubmitDineInOrderGateway implements SubmitDineInOrderGateway {
     // deletion of exactly the consumed shared-cart lines.
     final client = cartFirestoreClient;
     if (client != null) {
+      final cartTableSessionId =
+          resolveSharedCartTableSessionId?.call() ?? tableSessionId;
       for (final lineId in submittedCartLineIds) {
-        client.removeLineById(tableSessionId, lineId);
+        client.removeLineById(cartTableSessionId, lineId);
       }
     }
 
@@ -390,6 +398,7 @@ Campaign _testCampaign({
 
 ActiveTableContext _context({
   String sessionId = 'tgs-1',
+  String sharedCartTableSessionId = 'tsess-1',
   String branchId = 'branch-1',
   String restaurantId = 'restaurant-1',
   String? reservationContextId,
@@ -402,6 +411,7 @@ ActiveTableContext _context({
     tableId: 'dev-table-12',
     tableName: 'Masa 12',
     reservationContextId: reservationContextId,
+    sharedCartTableSessionId: sharedCartTableSessionId,
     session: TableSession(
       id: sessionId,
       restaurantId: restaurantId,
@@ -481,6 +491,8 @@ void main() {
       cartItemsSnapshot: () => container.read(cartProvider),
       resolveCustomerId: () => signedInCustomer?.uid,
       cartFirestoreClient: fakeCartClient,
+      resolveSharedCartTableSessionId: () =>
+          container.read(activeTableContextProvider)?.sharedCartTableSessionId,
     );
 
     container = ProviderContainer(
@@ -531,7 +543,10 @@ void main() {
     if (tableContext != null) {
       container.read(activeTableContextProvider.notifier).set(tableContext);
       if (otherGuestLines.isNotEmpty) {
-        fakeCartClient.seed(tableContext.session.id, otherGuestLines);
+        fakeCartClient.seed(
+          tableContext.sharedCartTableSessionId!,
+          otherGuestLines,
+        );
       }
     }
     container.read(cartProvider.notifier).addToCart(
@@ -630,7 +645,7 @@ void main() {
       price: 50.0,
       quantity: 1,
       customizationsKey: 'p2',
-      addedBySubAccountId: 'subaccount-tgs-1-other-guest-uid',
+      addedBySubAccountId: 'subaccount-tsess-1-other-guest-uid',
     );
 
     testWidgets('tek misafirlik sepette hibrit secim karti hic gorunmez',
@@ -704,7 +719,7 @@ void main() {
       // Rule couldn't delete it anyway, but the point is this mode never
       // even tries.
       expect(
-        pumped.cartClient.linesFor('tgs-1').map((item) => item.id),
+        pumped.cartClient.linesFor('tsess-1').map((item) => item.id),
         contains('p2'),
       );
     });

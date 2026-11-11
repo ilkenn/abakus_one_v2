@@ -61,6 +61,7 @@ void main() {
     tableDisplayName: 'Masa 12',
     branchDisplayName: 'Abaküs Ortaköy',
     expiresAt: now.add(const Duration(hours: 6)),
+    tableSessionId: 'tsess-real-1',
   );
 
   test(
@@ -90,6 +91,9 @@ void main() {
     // Client Staleness Check (2026-09-29): previously discarded, now
     // threaded through so a browsing guest can be warned before checkout.
     expect(context.session.expiresAt, opened.expiresAt);
+    // 2026-11-11 — the real table session id is carried separately; the
+    // shared cart is keyed by it, never by the guest session id above.
+    expect(context.sharedCartTableSessionId, 'tsess-real-1');
   });
 
   test(

@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:abakus_one_v2/core/services/logging/log_level.dart';
+import 'package:abakus_one_v2/core/services/logging/logging_provider.dart';
+import 'package:abakus_one_v2/core/services/logging/logging_service.dart';
 import 'package:abakus_one_v2/features/cart/data/table_session_cart_firestore_client.dart';
 import 'package:abakus_one_v2/features/cart/domain/models/cart_item.dart';
 import 'package:abakus_one_v2/features/cart/presentation/providers/cart_provider.dart';
@@ -27,6 +30,10 @@ class _FakeTableSessionCartFirestoreClient
     implements TableSessionCartFirestoreClient {
   final List<_RecordedCall> calls = [];
   final Map<String, StreamController<List<CartItem>>> _controllers = {};
+  final List<String> watchedTableSessionIds = [];
+
+  /// When set, [upsertLine] fails with it (e.g. a rules denial).
+  Object? upsertError;
 
   StreamController<List<CartItem>> controllerFor(String tableSessionId) {
     return _controllers.putIfAbsent(
@@ -37,6 +44,7 @@ class _FakeTableSessionCartFirestoreClient
 
   @override
   Stream<List<CartItem>> watchLines(String tableSessionId) {
+    watchedTableSessionIds.add(tableSessionId);
     return controllerFor(tableSessionId).stream;
   }
 
@@ -49,6 +57,8 @@ class _FakeTableSessionCartFirestoreClient
       'tableSessionId': tableSessionId,
       'item': item,
     }));
+    final error = upsertError;
+    if (error != null) throw error;
   }
 
   @override
@@ -106,18 +116,43 @@ class _FakeTechnicalIdentityProvider implements TechnicalIdentityProvider {
   Future<String> ensureSignedIn() async => uid ?? 'fake-uid';
 }
 
+class _RecordingLoggingService implements LoggingService {
+  final List<String> messages = [];
+  final List<Object?> errors = [];
+
+  @override
+  void log(
+    LogLevel level,
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    Map<String, Object?>? context,
+  }) {
+    messages.add(message);
+    errors.add(error);
+  }
+}
+
+/// 2026-11-11 — [session]'s id is the caller's tableGuestSessions id and
+/// deliberately DIFFERENT from [tableSessionId] (the real table session the
+/// shared cart is keyed by), exactly like a real `openTableGuestSession`
+/// response — so every test below also proves the cart never uses
+/// `session.id`. [withSharedCartId] false = a context with no real table
+/// session id at all.
 ActiveTableContext _buildTableContext({
   required String tableSessionId,
   required DateTime now,
+  bool withSharedCartId = true,
 }) {
   return ActiveTableContext(
+    sharedCartTableSessionId: withSharedCartId ? tableSessionId : null,
     restaurantId: 'restaurant-1',
     branchId: 'branch-1',
     branchName: 'Abaküs Ortaköy',
     tableId: 'table-1',
     tableName: 'Masa 12',
     session: TableSession(
-      id: tableSessionId,
+      id: 'tgs-guest-of-$tableSessionId',
       restaurantId: 'restaurant-1',
       branchId: 'branch-1',
       tableId: 'table-1',
@@ -143,14 +178,17 @@ ActiveTableContext _buildTableContext({
 void main() {
   late ProviderContainer container;
   late _FakeTableSessionCartFirestoreClient fakeClient;
+  late _RecordingLoggingService logger;
   const uid = 'guest-uid-1';
   const tableSessionId = 'ts-1';
   const expectedSubAccountId = 'subaccount-$tableSessionId-$uid';
 
   setUp(() {
     fakeClient = _FakeTableSessionCartFirestoreClient();
+    logger = _RecordingLoggingService();
     container = ProviderContainer(
       overrides: [
+        loggingServiceProvider.overrideWithValue(logger),
         tableSessionCartFirestoreClientProvider.overrideWithValue(fakeClient),
         technicalIdentityProviderProvider
             .overrideWithValue(_FakeTechnicalIdentityProvider(uid)),
@@ -364,6 +402,103 @@ void main() {
       expect(container.read(cartProvider), hasLength(1));
       expect(container.read(cartProvider).first.addedBySubAccountId, isNull);
       expect(fakeClient.calls, isEmpty);
+    });
+  });
+
+  // 2026-11-11 — the shared cart was keyed by the guest session id, so
+  // firestore.rules denied it and the listener's error went uncaught.
+  group('ortak sepet: gercek masa oturumu kimligi ve hata yakalama', () {
+    test(
+        'sepet session.id (misafir oturumu) ile degil, '
+        'sharedCartTableSessionId ile dinlenir', () {
+      container.read(activeTableContextProvider.notifier).set(
+            _buildTableContext(
+              tableSessionId: tableSessionId,
+              now: DateTime(2026, 11, 11),
+            ),
+          );
+      container.read(cartProvider);
+
+      expect(fakeClient.watchedTableSessionIds, [tableSessionId]);
+    });
+
+    test(
+        'gercek masa oturumu kimligi yoksa ortak sepet devre disi kalir: '
+        'hic dinlenmez, hic yazilmaz, sepet yerelde calisir', () {
+      container.read(activeTableContextProvider.notifier).set(
+            _buildTableContext(
+              tableSessionId: tableSessionId,
+              now: DateTime(2026, 11, 11),
+              withSharedCartId: false,
+            ),
+          );
+      container.read(cartProvider);
+
+      container.read(cartProvider.notifier).addToCart(
+            id: 'prod-1',
+            name: 'Test Ürün',
+            desc: '',
+            price: 50,
+          );
+
+      expect(fakeClient.watchedTableSessionIds, isEmpty);
+      expect(fakeClient.calls, isEmpty);
+      expect(container.read(cartProvider), hasLength(1));
+    });
+
+    test(
+        'dinleyici hatasi (orn. kural reddi) yakalanir ve loglanir; '
+        'son bilinen satirlar korunur', () async {
+      container.read(activeTableContextProvider.notifier).set(
+            _buildTableContext(
+              tableSessionId: tableSessionId,
+              now: DateTime(2026, 11, 11),
+            ),
+          );
+      container.read(cartProvider);
+      const line = CartItem(
+        id: 'prod-1',
+        name: 'Test Ürün',
+        desc: '',
+        price: 50,
+        quantity: 1,
+        addedBySubAccountId: expectedSubAccountId,
+        customizationsKey: 'prod-1',
+      );
+      fakeClient.controllerFor(tableSessionId).add([line]);
+      await Future<void>.delayed(Duration.zero);
+
+      // An uncaught stream error would fail this test (zone error).
+      fakeClient
+          .controllerFor(tableSessionId)
+          .addError(StateError('permission-denied'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(container.read(cartProvider), [line]);
+      expect(logger.messages,
+          contains('DineInTableCartNotifier.watchLines failed'));
+    });
+
+    test('reddedilen bir yazma yakalanir ve loglanir', () async {
+      container.read(activeTableContextProvider.notifier).set(
+            _buildTableContext(
+              tableSessionId: tableSessionId,
+              now: DateTime(2026, 11, 11),
+            ),
+          );
+      container.read(cartProvider);
+      fakeClient.upsertError = StateError('permission-denied');
+
+      container.read(cartProvider.notifier).addToCart(
+            id: 'prod-1',
+            name: 'Test Ürün',
+            desc: '',
+            price: 50,
+          );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(logger.messages,
+          contains('DineInTableCartNotifier.upsertLine failed'));
     });
   });
 }

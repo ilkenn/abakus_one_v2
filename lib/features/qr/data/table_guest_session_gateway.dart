@@ -74,6 +74,14 @@ class OpenedTableGuestSession {
   /// identity flows (an order it places, in particular).
   final String? reservationContextId;
 
+  /// 2026-11-11 — the real `tableSessions` doc id the server bound this
+  /// guest session to (the response's `tableSessionId`), distinct from
+  /// [sessionId] (the `tableGuestSessions` id). Keys the shared table cart
+  /// — see `ActiveTableContext.sharedCartTableSessionId`. Nullable only so
+  /// an older/partial response fails closed (no shared cart) instead of
+  /// crashing the whole table entry.
+  final String? tableSessionId;
+
   const OpenedTableGuestSession({
     required this.sessionId,
     required this.organizationId,
@@ -84,6 +92,7 @@ class OpenedTableGuestSession {
     required this.branchDisplayName,
     required this.expiresAt,
     this.reservationContextId,
+    this.tableSessionId,
   });
 }
 
@@ -169,6 +178,7 @@ class FirebaseTableGuestSessionGateway implements TableGuestSessionGateway {
         branchDisplayName: data['branchDisplayName'] as String,
         expiresAt: DateTime.parse(data['expiresAt'] as String),
         reservationContextId: data['reservationContextId'] as String?,
+        tableSessionId: data['tableSessionId'] as String?,
       );
     } on functions.FirebaseFunctionsException catch (error) {
       throw TableGuestSessionException(

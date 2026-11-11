@@ -38,6 +38,17 @@ class ActiveTableContext {
   /// at open time even if the table's reservation context later changes.
   final String? reservationContextId;
 
+  /// 2026-11-11 — the server's real `tableSessions` doc id
+  /// (`OpenedTableGuestSession.tableSessionId`). NOT the same as
+  /// [session]'s `id`, which is the caller's own `tableGuestSessions` id
+  /// (what order submission, the live bill and service requests take).
+  /// The shared table cart (`tableSessionCarts/{tableSessionId}/lines`) and
+  /// its deterministic sub-account id are keyed by THIS id — using the
+  /// guest session id there was denied by `firestore.rules`. `null` (e.g. a
+  /// context built without a server response) disables the shared cart
+  /// rather than guessing an id.
+  final String? sharedCartTableSessionId;
+
   const ActiveTableContext({
     required this.restaurantId,
     required this.branchId,
@@ -47,6 +58,7 @@ class ActiveTableContext {
     required this.session,
     required this.guestSession,
     this.reservationContextId,
+    this.sharedCartTableSessionId,
   });
 
   ActiveTableContext copyWith({
@@ -58,6 +70,7 @@ class ActiveTableContext {
     TableSession? session,
     GuestSession? guestSession,
     String? reservationContextId,
+    String? sharedCartTableSessionId,
   }) {
     return ActiveTableContext(
       restaurantId: restaurantId ?? this.restaurantId,
@@ -68,6 +81,8 @@ class ActiveTableContext {
       session: session ?? this.session,
       guestSession: guestSession ?? this.guestSession,
       reservationContextId: reservationContextId ?? this.reservationContextId,
+      sharedCartTableSessionId:
+          sharedCartTableSessionId ?? this.sharedCartTableSessionId,
     );
   }
 }

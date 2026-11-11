@@ -198,11 +198,15 @@ class _DineInCheckoutScreenState extends ConsumerState<DineInCheckoutScreen> {
   /// ._currentSubAccountId`'s identical reasoning/guard.
   String? get _myOwnSubAccountId {
     final tableContext = ref.read(activeTableContextProvider);
-    if (tableContext == null) return null;
+    // 2026-11-11 — the REAL table session id (what the cart lines'
+    // `addedBySubAccountId` was derived from), never `session.id` (the
+    // guest session id), or "my own lines" never matched anything.
+    final tableSessionId = tableContext?.sharedCartTableSessionId;
+    if (tableSessionId == null) return null;
     final uid = ref.read(technicalIdentityProviderProvider).currentUid;
     if (uid == null) return null;
     return deterministicIdentitySubAccountId(
-      tableSessionId: tableContext.session.id,
+      tableSessionId: tableSessionId,
       uid: uid,
     );
   }

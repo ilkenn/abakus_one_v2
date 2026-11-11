@@ -11465,3 +11465,24 @@ passing, 0 failures.
   overview (mounted and polling under every POS screen) recovers and retries once.
 - Tests: 6 controller/unit tests, 1 overview widget test.
 - **Visual Review Bekleniyor**.
+
+### QR table: shared cart keyed by the real table session + stale guest identity recovery (2026-11-11)
+
+- Bug 1: the shared table cart (`tableSessionCarts/{id}/lines`) and its sub-account id were keyed by
+  `ActiveTableContext.session.id` — the caller's `tableGuestSessions` id — instead of the real `tableSessions`
+  id. `firestore.rules` denied the listener (`permission-denied`) and the error went uncaught; cart writes
+  would have been denied the same way. Fix: `OpenedTableGuestSession.tableSessionId` (from the
+  `openTableGuestSession` response) → `ActiveTableContext.sharedCartTableSessionId`; the cart uses only that
+  (null = shared cart off, local cart). Order submit / live bill / service requests keep the guest session id
+  (correct — the server resolves the table session itself). Listener `onError` and every fire-and-forget
+  write now log instead of throwing uncaught. `DineInCheckoutScreen._myOwnSubAccountId` had the same mix-up
+  ("Sadece Kendi Ürünlerimi Gönder" could never match the guest's own lines) and now uses the same id.
+- Bug 2: a browser-cached anonymous guest the auth backend no longer knew made every QR table entry fail
+  before reaching the server. `ensureValidTechnicalIdentity` now reloads a cached ANONYMOUS user; on
+  `user-not-found`/`user-token-expired`/`invalid-user-token` it signs out and signs in anonymously again.
+  `user-disabled`, network errors and real customers are never replaced.
+- Dev note: the 5600 web server runs in profile mode — the debug web-server only starts `main` in the first
+  connected tab (later tabs stayed white).
+- Tests: 4 cart notifier, 1 use case assertion, 8 identity tests; checkout tests now use distinct guest vs
+  table session ids (the fake gateway resolves the cart's table session like the server).
+- **Visual Review Bekleniyor**.

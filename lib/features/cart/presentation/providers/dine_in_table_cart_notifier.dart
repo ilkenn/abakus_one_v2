@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../../../../core/services/logging/log_level.dart';
+import '../../../../core/services/logging/logging_provider.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
 import '../../../orders/domain/models/order_channel.dart';
 import '../../../qr/domain/identity/dine_in_sub_account_id.dart';
@@ -41,7 +43,10 @@ class DineInTableCartNotifier extends CartNotifier {
     ref.onDispose(() => _subscription?.cancel());
     ref.listen<ActiveTableContext?>(
       activeTableContextProvider,
-      (previous, next) => _syncTableSession(next?.session.id),
+      // 2026-11-11 — the REAL table session id, never `session.id` (the
+      // caller's tableGuestSessions id): firestore.rules keys this
+      // collection and its sub-account check by the table session.
+      (previous, next) => _syncTableSession(next?.sharedCartTableSessionId),
       fireImmediately: true,
     );
     return super.build();
@@ -63,7 +68,35 @@ class DineInTableCartNotifier extends CartNotifier {
     _subscription = ref
         .read(tableSessionCartFirestoreClientProvider)
         .watchLines(tableSessionId)
-        .listen((lines) => state = lines);
+        .listen(
+          (lines) => state = lines,
+          // 2026-11-11 — a denied/failed snapshot listener used to surface
+          // as an uncaught exception. Logged; the last known lines stay.
+          onError: (Object error, StackTrace stackTrace) => _logFailure(
+            'watchLines',
+            error,
+            stackTrace,
+          ),
+        );
+  }
+
+  /// 2026-11-11 — every shared-cart write is fire-and-forget (the live
+  /// listener is the source of truth for [state]); a rejected write is
+  /// logged instead of becoming an uncaught async error.
+  void _write(String operation, Future<void> write) {
+    unawaited(write.catchError((Object error, StackTrace stackTrace) {
+      _logFailure(operation, error, stackTrace);
+    }));
+  }
+
+  void _logFailure(String operation, Object error, StackTrace stackTrace) {
+    ref.read(loggingServiceProvider).log(
+      LogLevel.error,
+      'DineInTableCartNotifier.$operation failed',
+      error: error,
+      stackTrace: stackTrace,
+      context: {'tableSessionId': _activeTableSessionId},
+    );
   }
 
   /// `null` whenever there's no active table session, or (should not
@@ -147,7 +180,8 @@ class DineInTableCartNotifier extends CartNotifier {
       customizationsKey: customizationsKey,
     );
 
-    unawaited(
+    _write(
+      'upsertLine',
       ref.read(tableSessionCartFirestoreClientProvider).upsertLine(
             tableSessionId: tableSessionId,
             item: CartItem(
@@ -180,7 +214,8 @@ class DineInTableCartNotifier extends CartNotifier {
       return;
     }
     if (!_ownsLine(targetKey, subAccountId)) return;
-    unawaited(
+    _write(
+      'adjustLineQuantity',
       ref.read(tableSessionCartFirestoreClientProvider).adjustLineQuantity(
             tableSessionId: tableSessionId,
             addedBySubAccountId: subAccountId,
@@ -202,19 +237,23 @@ class DineInTableCartNotifier extends CartNotifier {
     if (myLine == null) return;
     final client = ref.read(tableSessionCartFirestoreClientProvider);
     if (myLine.quantity <= 1) {
-      unawaited(client.removeLine(
-        tableSessionId: tableSessionId,
-        addedBySubAccountId: subAccountId,
-        customizationsKey: targetKey,
-      ));
+      _write(
+          'removeLine',
+          client.removeLine(
+            tableSessionId: tableSessionId,
+            addedBySubAccountId: subAccountId,
+            customizationsKey: targetKey,
+          ));
       return;
     }
-    unawaited(client.adjustLineQuantity(
-      tableSessionId: tableSessionId,
-      addedBySubAccountId: subAccountId,
-      customizationsKey: targetKey,
-      delta: -1,
-    ));
+    _write(
+        'adjustLineQuantity',
+        client.adjustLineQuantity(
+          tableSessionId: tableSessionId,
+          addedBySubAccountId: subAccountId,
+          customizationsKey: targetKey,
+          delta: -1,
+        ));
   }
 
   @override
@@ -239,19 +278,23 @@ class DineInTableCartNotifier extends CartNotifier {
     if (myLine == null) return;
     final client = ref.read(tableSessionCartFirestoreClientProvider);
     if (newQuantity <= 0) {
-      unawaited(client.removeLine(
-        tableSessionId: tableSessionId,
-        addedBySubAccountId: subAccountId,
-        customizationsKey: myLine.customizationsKey,
-      ));
+      _write(
+          'removeLine',
+          client.removeLine(
+            tableSessionId: tableSessionId,
+            addedBySubAccountId: subAccountId,
+            customizationsKey: myLine.customizationsKey,
+          ));
       return;
     }
-    unawaited(client.setLineQuantity(
-      tableSessionId: tableSessionId,
-      addedBySubAccountId: subAccountId,
-      customizationsKey: myLine.customizationsKey,
-      quantity: newQuantity,
-    ));
+    _write(
+        'setLineQuantity',
+        client.setLineQuantity(
+          tableSessionId: tableSessionId,
+          addedBySubAccountId: subAccountId,
+          customizationsKey: myLine.customizationsKey,
+          quantity: newQuantity,
+        ));
   }
 
   @override
@@ -275,11 +318,13 @@ class DineInTableCartNotifier extends CartNotifier {
     final client = ref.read(tableSessionCartFirestoreClientProvider);
     if (customizationsKey != null && customizationsKey.isNotEmpty) {
       if (!_ownsLine(customizationsKey, subAccountId)) return;
-      unawaited(client.removeLine(
-        tableSessionId: tableSessionId,
-        addedBySubAccountId: subAccountId,
-        customizationsKey: customizationsKey,
-      ));
+      _write(
+          'removeLine',
+          client.removeLine(
+            tableSessionId: tableSessionId,
+            addedBySubAccountId: subAccountId,
+            customizationsKey: customizationsKey,
+          ));
       return;
     }
     if (id == null) return;
@@ -296,11 +341,13 @@ class DineInTableCartNotifier extends CartNotifier {
       }
     }
     if (ownedLine == null) return;
-    unawaited(client.removeLine(
-      tableSessionId: tableSessionId,
-      addedBySubAccountId: subAccountId,
-      customizationsKey: ownedLine.customizationsKey,
-    ));
+    _write(
+        'removeLine',
+        client.removeLine(
+          tableSessionId: tableSessionId,
+          addedBySubAccountId: subAccountId,
+          customizationsKey: ownedLine.customizationsKey,
+        ));
   }
 
   @override
@@ -320,11 +367,13 @@ class DineInTableCartNotifier extends CartNotifier {
     final client = ref.read(tableSessionCartFirestoreClientProvider);
     for (final line in state) {
       if (line.addedBySubAccountId == subAccountId) {
-        unawaited(client.removeLine(
-          tableSessionId: tableSessionId,
-          addedBySubAccountId: subAccountId,
-          customizationsKey: line.customizationsKey,
-        ));
+        _write(
+            'removeLine',
+            client.removeLine(
+              tableSessionId: tableSessionId,
+              addedBySubAccountId: subAccountId,
+              customizationsKey: line.customizationsKey,
+            ));
       }
     }
   }
