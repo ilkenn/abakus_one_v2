@@ -5956,3 +5956,66 @@ test('dispatch board: orders and couriers list queries pinned by organizationId 
     where('organizationId', '==', 'org-1'), where('branchId', '==', 'branch-1'))));
   await assertFails(getDocs(query(collection(staff, 'couriers'), where('branchId', '==', 'branch-1'))));
 });
+
+// 2026-11-12 (Faz 4, ADR-080/081/082) — the new server-only data stays
+// server-only: neither a front-line role nor a manager reads or writes the
+// local customer book, its erasure records, the settlement records the
+// courier report is built from, or the neighborhood rules directly — every
+// path goes through the audited callables.
+test('Faz 4: posCustomers, posCustomerErasures, deliveryCollections, courierSettlements and deliveryServiceAreas are callable-only, even for a manager', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'posCustomers/org-1_hash'), { organizationId: 'org-1', phoneNumber: '+905321112233' });
+    await setDoc(doc(db, 'posCustomerErasures/erasure-1'), { organizationId: 'org-1', anonymizedOrderCount: 3 });
+    await setDoc(doc(db, 'deliveryCollections/col-1'), { organizationId: 'org-1', branchId: 'branch-1', amountMinorUnits: 45000 });
+    await setDoc(doc(db, 'courierSettlements/set-1'), { organizationId: 'org-1', branchId: 'branch-1', differenceMinorUnits: -500 });
+    await setDoc(doc(db, 'deliveryServiceAreas/zone_branch-1_kadikoy_caferaga'), {
+      organizationId: 'org-1', branchId: 'branch-1', districtId: 'kadikoy', neighborhoodId: 'caferaga',
+      enabled: true, minimumOrderMinorUnits: 25000, estimatedDeliveryMinutes: 35,
+    });
+  });
+  const claims = (role) => ({
+    organizationAccess: ['org-1'], roles: { 'org-1': [role] }, branchAccess: { 'org-1': ['branch-1'] },
+  });
+  for (const role of ['cashier', 'manager']) {
+    const db = testEnv.authenticatedContext(`faz4-${role}`, claims(role)).firestore();
+    for (const path of [
+      'posCustomers/org-1_hash',
+      'posCustomerErasures/erasure-1',
+      'deliveryCollections/col-1',
+      'courierSettlements/set-1',
+      'deliveryServiceAreas/zone_branch-1_kadikoy_caferaga',
+    ]) {
+      await assertFails(getDoc(doc(db, path)), `${role} read ${path}`);
+    }
+    await assertFails(getDocs(query(collection(db, 'deliveryCollections'),
+      where('organizationId', '==', 'org-1'), where('branchId', '==', 'branch-1'))));
+    await assertFails(deleteDoc(doc(db, 'posCustomers/org-1_hash')));
+    await assertFails(setDoc(doc(db, 'posCustomerErasures/forged'), { organizationId: 'org-1' }));
+    await assertFails(setDoc(doc(db, 'deliveryServiceAreas/zone_branch-1_kadikoy_caferaga'), {
+      organizationId: 'org-1', branchId: 'branch-1', districtId: 'kadikoy', neighborhoodId: 'caferaga',
+      enabled: true, minimumOrderMinorUnits: 0,
+    }));
+  }
+});
+
+// A staff client may not stamp its own minimum-order override or delivery
+// estimate onto an order — those fields are written by
+// `submitStaffDeliveryOrder` only.
+test('Faz 4: a client cannot write belowMinimumOverride / estimatedDeliveryMinutes / personalDataErasure onto an existing order', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/faz4-o1'), {
+      organizationId: 'org-1', branchId: 'branch-1', channel: 'delivery', status: 'confirmed', version: 1,
+    });
+  });
+  const manager = testEnv.authenticatedContext('faz4-manager-2', {
+    organizationAccess: ['org-1'], roles: { 'org-1': ['manager'] }, branchAccess: { 'org-1': ['branch-1'] },
+  }).firestore();
+  for (const field of [
+    { belowMinimumOverride: { approvedByUid: 'faz4-manager-2' } },
+    { estimatedDeliveryMinutes: 5 },
+    { personalDataErasure: { erasureId: 'forged' } },
+    { contactPhone: null },
+  ]) {
+    await assertFails(updateDoc(doc(manager, 'orders/faz4-o1'), field), JSON.stringify(field));
+  }
+});

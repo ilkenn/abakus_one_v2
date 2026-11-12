@@ -272,6 +272,24 @@
         { "fieldPath": "branchId", "order": "ASCENDING" },
         { "fieldPath": "registeredAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "deliveryCollections",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "branchId", "order": "ASCENDING" },
+        { "fieldPath": "collectedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "courierSettlements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "branchId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

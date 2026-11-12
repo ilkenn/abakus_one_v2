@@ -129,6 +129,11 @@ export {
 export { getBranchPoolSettings, setBranchDefaultDeliveryDistrict } from "./branchDeliveryPoolSettings";
 // 2026-11-12 (Faz 3c) — FCM to approving staff (new pool request) and couriers (assignment / request outcome).
 export { onCourierPoolRequestWrittenNotify, onCourierAssignedOrderWrittenNotify } from "./courierNotifications";
+// 2026-11-12 (Faz 4) — courier & package report (ADR-080), neighborhood delivery rules (ADR-081),
+// KVKK erasure of a local customer-book record (ADR-082).
+export { getCourierDeliveryReport } from "./courierDeliveryReport";
+export { listBranchDeliveryZones, upsertBranchDeliveryZone } from "./deliveryZones";
+export { erasePosCustomer } from "./erasePosCustomer";
 export { advanceDeliveryOrderStatus } from "./advanceDeliveryOrderStatus";
 export { cancelDeliveryOrder } from "./cancelDeliveryOrder";
 export { cancelDeliveryOrderForStaff } from "./cancelDeliveryOrderForStaff";

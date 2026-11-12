@@ -21,7 +21,7 @@ import {
  * grants any read or write (`firestore.rules`' catch-all deny); the POS
  * reads it through [searchPosCustomers] and every staff delivery order
  * upserts it ([preparePosCustomerUpsert]). Deleting a record on request
- * (KVKK) is deferred by product-owner decision.
+ * (KVKK) is `erasePosCustomer` (2026-11-12, Faz 4, ADR-082).
  */
 export const POS_CUSTOMERS_COLLECTION = "posCustomers";
 

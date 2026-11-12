@@ -21,6 +21,8 @@ import {
   preparePosCustomerUpsert,
   type PosCustomerAddress,
 } from "./posCustomerBook";
+import { checkMinimumOrder, loadBranchDeliveryZones, resolveBranchZone } from "./deliveryZones";
+import { slugifyAddressComponent } from "./deliveryServiceAreas";
 
 /**
  * 2026-11-11 — Faz 2: staff open a Paket Servis (delivery) order from the
@@ -32,8 +34,16 @@ import {
  * - Pricing: every line is priced server-side on the delivery channel
  *   (`buildProductLine`, ×1.35 / nearest 5 TL policy); no campaign, Boncuk
  *   or reward (same as every staff entry).
- * - Product-owner decision 3 (flexible): no minimum-order or service-area
- *   gate; an optional manual delivery fee (default 0) carries 20% VAT.
+ * - Product-owner decision 3 (flexible): no service-area gate; an optional
+ *   manual delivery fee (default 0) carries 20% VAT.
+ * - 2026-11-12 (Faz 4, ADR-081): when the typed neighborhood has a rule of
+ *   the branch (`deliveryZones.ts`), a basket (products, fee excluded) below
+ *   its "Minimum Sepet Tutarı" is refused (`staffDelivery/below-minimum`)
+ *   unless the caller re-sends with `belowMinimumApproved: true` AND holds
+ *   `overrideDeliveryMinimumOrder` (manager and above) — the override is
+ *   audited. The rule's "Tahmini Teslimat Süresi" is stamped on the order
+ *   (`estimatedDeliveryMinutes`) for the courier slip. A neighborhood
+ *   without a rule stays ungated.
  * - The staff entry IS the confirmation: the order is written `confirmed`
  *   and goes to the kitchen in the same transaction (kitchen work items,
  *   stock consumption, print job — `respondToDeliveryOrder`'s confirm path).
@@ -174,6 +184,7 @@ export const submitStaffDeliveryOrder = onCall(
     const paymentMethodId = parseStaffDeliveryPaymentMethod(data.paymentMethodId);
     const deliveryFeeMinorUnits = parseDeliveryFee(data.deliveryFeeMinorUnits);
     const plannedCourierId = boundedString(data.plannedCourierId, "plannedCourierId", 128) || null;
+    const belowMinimumApproved = data.belowMinimumApproved === true;
 
     await requireStaffPermission(request, organizationId, "manageDeliveryOrders");
     await requireBranchAccess(request, organizationId, branchId);
@@ -185,6 +196,20 @@ export const submitStaffDeliveryOrder = onCall(
       throw new HttpsError("not-found", "Branch not found.");
     }
     const restaurantId = branchDoc.data()!.restaurantId as string;
+    const zone = resolveBranchZone(
+      await loadBranchDeliveryZones(db, organizationId, branchId),
+      address.neighborhoodName,
+      (branchDoc.data()!.defaultDeliveryDistrictId as string | undefined) ?? null,
+    );
+    let mayOverrideMinimum = false;
+    if (belowMinimumApproved) {
+      try {
+        await requireStaffPermission(request, organizationId, "overrideDeliveryMinimumOrder");
+        mayOverrideMinimum = true;
+      } catch {
+        mayOverrideMinimum = false;
+      }
+    }
 
     const orderId = `delivery-${sha256Hex(`${staffUid}|staff|${submissionKey}`)}`;
     const orderNumber = `DL-${orderId.slice(orderId.length - 8).toUpperCase()}`;
@@ -207,6 +232,32 @@ export const submitStaffDeliveryOrder = onCall(
         });
       }
       const pricing = priceWithDeliveryFee(lines, deliveryFeeMinorUnits);
+      const minimumCheck = checkMinimumOrder(zone, pricing.grossSubtotalMinorUnits);
+      if (minimumCheck.status === "below") {
+        const details = {
+          minimumOrderMinorUnits: minimumCheck.minimumOrderMinorUnits,
+          basketMinorUnits: pricing.grossSubtotalMinorUnits,
+          shortfallMinorUnits: minimumCheck.shortfallMinorUnits,
+        };
+        if (!belowMinimumApproved) {
+          throw new HttpsError("failed-precondition", "The basket is below the neighborhood's minimum order amount.", {
+            code: "staffDelivery/below-minimum", ...details,
+          });
+        }
+        if (!mayOverrideMinimum) {
+          throw new HttpsError("permission-denied", "Only a manager can open an order below the minimum order amount.", {
+            code: "staffDelivery/below-minimum-not-authorized", ...details,
+          });
+        }
+      }
+      const belowMinimumOverride = minimumCheck.status === "below"
+        ? {
+          approvedByUid: staffUid,
+          minimumOrderMinorUnits: minimumCheck.minimumOrderMinorUnits,
+          basketMinorUnits: pricing.grossSubtotalMinorUnits,
+        }
+        : null;
+      const estimatedDeliveryMinutes = zone?.estimatedDeliveryMinutes ?? null;
       const fingerprint = computeRequestFingerprint({
         path: "staffDelivery",
         organizationId,
@@ -221,6 +272,7 @@ export const submitStaffDeliveryOrder = onCall(
         paymentMethodId,
         deliveryFeeMinorUnits,
         plannedCourierId,
+        belowMinimumApproved,
       });
 
       const existing = await tx.get(orderRef);
@@ -379,9 +431,9 @@ export const submitStaffDeliveryOrder = onCall(
           label: address.label,
           provinceId: "",
           provinceName: "",
-          districtId: "",
+          districtId: zone?.districtId ?? "",
           districtName: "",
-          neighborhoodId: null,
+          neighborhoodId: zone?.neighborhoodId ?? (slugifyAddressComponent(address.neighborhoodName) || null),
           neighborhoodName: address.neighborhoodName,
           streetId: null,
           streetName: address.streetName,
@@ -415,6 +467,17 @@ export const submitStaffDeliveryOrder = onCall(
         plannedCourierId,
         plannedCourierName,
         posCustomerId: customerPlan.ref.id,
+        deliveryZone: zone
+          ? {
+            zoneId: zone.id,
+            districtId: zone.districtId,
+            neighborhoodId: zone.neighborhoodId,
+            minimumOrderMinorUnits: zone.minimumOrderMinorUnits,
+            estimatedDeliveryMinutes: zone.estimatedDeliveryMinutes,
+          }
+          : null,
+        estimatedDeliveryMinutes,
+        belowMinimumOverride,
         staffEntry: { createdByStaffUid: staffUid, deviceId },
         deliverySubmissionFingerprint: fingerprint,
       });
@@ -435,12 +498,32 @@ export const submitStaffDeliveryOrder = onCall(
           deliveryFeeMinorUnits,
           paymentMethodId,
           plannedCourierId,
+          deliveryZoneId: zone?.id ?? null,
+          estimatedDeliveryMinutes,
         },
         actorType: "staff",
         actorUid: staffUid,
         correlationId: generateCorrelationId(),
         now,
       });
+      if (belowMinimumOverride) {
+        const roles = (request.auth!.token.roles as Record<string, unknown> | undefined)?.[organizationId];
+        writeAuditEvent({
+          tx,
+          db,
+          eventId: `staffDeliveryOrder-${orderId}-belowMinimum`,
+          organizationId,
+          branchId,
+          type: "order.deliveryMinimumOverridden",
+          targetRef: orderRef.path,
+          newValue: { ...belowMinimumOverride, deliveryZoneId: zone?.id ?? null },
+          actorType: "staff",
+          actorUid: staffUid,
+          actorRoles: Array.isArray(roles) ? (roles as string[]) : null,
+          correlationId: generateCorrelationId(),
+          now,
+        });
+      }
 
       return {
         orderId,
@@ -448,6 +531,7 @@ export const submitStaffDeliveryOrder = onCall(
         duplicate: false,
         grandTotalMinorUnits: pricing.grandTotalMinorUnits,
         posCustomerId: customerPlan.ref.id,
+        estimatedDeliveryMinutes,
       };
     });
   },

@@ -142,7 +142,18 @@ export type StaffPermission =
   // Granted to the two new front-line dispatch roles (`cashier`,
   // `packingLead`) and to manager/admin/tenantOwner — never to plain
   // `staff` or `courier` (a courier can never approve its own request).
-  | "approveCourierPoolRequests";
+  | "approveCourierPoolRequests"
+  // 2026-11-12 (Faz 4, ADR-080) — the "Kurye & Paket Raporu" (per-courier
+  // package counts, timings, tender mix, cash differences). Manager-tier and
+  // above: cash differences are reconciliation data.
+  | "viewDeliveryReports"
+  // 2026-11-12 (Faz 4, ADR-081) — opening a staff Paket Servis order whose
+  // basket is below the neighborhood's minimum. Manager-tier and above.
+  | "overrideDeliveryMinimumOrder"
+  // 2026-11-12 (Faz 4, ADR-082) — KVKK erasure of a local customer-book
+  // record and anonymization of that customer's shop-entered orders.
+  // Irreversible, so manager-tier and above only.
+  | "erasePosCustomerData";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -348,6 +359,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveStockCountAdjustment",
     "manageCourierDispatch",
     "approveCourierPoolRequests",
+    "viewDeliveryReports",
+    "overrideDeliveryMinimumOrder",
+    "erasePosCustomerData",
   ],
   admin: [
     "manageReservations",
@@ -386,6 +400,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveStockCountAdjustment",
     "manageCourierDispatch",
     "approveCourierPoolRequests",
+    "viewDeliveryReports",
+    "overrideDeliveryMinimumOrder",
+    "erasePosCustomerData",
   ],
   tenantOwner: [
     "manageReservations",
@@ -424,6 +441,9 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approveStockCountAdjustment",
     "manageCourierDispatch",
     "approveCourierPoolRequests",
+    "viewDeliveryReports",
+    "overrideDeliveryMinimumOrder",
+    "erasePosCustomerData",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must
