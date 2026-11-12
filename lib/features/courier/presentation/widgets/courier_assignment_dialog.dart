@@ -73,12 +73,15 @@ class _CourierAssignmentDialogState
 
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
+  // 2026-11-12 (Faz 3a) — an external (pool) courier's service districts.
+  final _districtsController = TextEditingController();
   CourierType _quickAddType = CourierType.internal;
 
   @override
   void dispose() {
     _nameController.dispose();
     _phoneController.dispose();
+    _districtsController.dispose();
     super.dispose();
   }
 
@@ -114,6 +117,16 @@ class _CourierAssignmentDialogState
     final name = _nameController.text.trim();
     final phone = _phoneController.text.trim();
     if (name.isEmpty || phone.isEmpty) return;
+    final districts = _districtsController.text
+        .split(',')
+        .map((d) => d.trim())
+        .where((d) => d.isNotEmpty)
+        .toList();
+    if (_quickAddType == CourierType.pool && districts.isEmpty) {
+      setState(() => _error =
+          'Dış kurye için en az bir hizmet ilçesi girin (ör. Kadıköy).');
+      return;
+    }
     setState(() {
       _isSubmitting = true;
       _error = null;
@@ -125,14 +138,21 @@ class _CourierAssignmentDialogState
             displayName: name,
             phoneNumber: phone,
             type: _quickAddType,
+            serviceDistrictIds:
+                _quickAddType == CourierType.pool ? districts : const [],
           );
       if (!mounted) return;
       _nameController.clear();
       _phoneController.clear();
+      _districtsController.clear();
       setState(() => _showQuickAdd = false);
     } on CourierDispatchException catch (error) {
       if (!mounted) return;
-      setState(() => _error = error.message);
+      final denied = error.code == 'permission-denied' ||
+          error.code == 'permission_denied';
+      setState(() => _error = denied && _quickAddType == CourierType.pool
+          ? 'Dış kurye kaydını yalnızca müdür ve üstü yapabilir.'
+          : error.message);
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -200,6 +220,7 @@ class _CourierAssignmentDialogState
                 _QuickAddForm(
                   nameController: _nameController,
                   phoneController: _phoneController,
+                  districtsController: _districtsController,
                   type: _quickAddType,
                   onTypeChanged: (type) => setState(() => _quickAddType = type),
                   isSubmitting: _isSubmitting,
@@ -331,6 +352,7 @@ class _QuickAddForm extends StatelessWidget {
   const _QuickAddForm({
     required this.nameController,
     required this.phoneController,
+    required this.districtsController,
     required this.type,
     required this.onTypeChanged,
     required this.isSubmitting,
@@ -340,6 +362,7 @@ class _QuickAddForm extends StatelessWidget {
 
   final TextEditingController nameController;
   final TextEditingController phoneController;
+  final TextEditingController districtsController;
   final CourierType type;
   final ValueChanged<CourierType> onTypeChanged;
   final bool isSubmitting;
@@ -366,17 +389,30 @@ class _QuickAddForm extends StatelessWidget {
           spacing: AppSpacing.sm,
           children: [
             ChoiceChip(
-              label: const Text('Şirket İçi'),
+              label: const Text('Dükkan Kuryesi'),
               selected: type == CourierType.internal,
               onSelected: (_) => onTypeChanged(CourierType.internal),
             ),
             ChoiceChip(
-              label: const Text('Havuz'),
+              key: const Key('quickAddPoolType'),
+              label: const Text('Dış Kurye (Havuz)'),
               selected: type == CourierType.pool,
               onSelected: (_) => onTypeChanged(CourierType.pool),
             ),
           ],
         ),
+        if (type == CourierType.pool) ...[
+          const SizedBox(height: AppSpacing.sm),
+          TextField(
+            key: const Key('quickAddDistricts'),
+            controller: districtsController,
+            decoration: const InputDecoration(
+              labelText: 'Hizmet İlçeleri (virgülle ayırın)',
+              helperText: 'Dış kurye yalnızca bu ilçelerdeki havuz '
+                  'paketlerini görür. Kaydı müdür ve üstü yapar.',
+            ),
+          ),
+        ],
         const SizedBox(height: AppSpacing.sm),
         Row(
           mainAxisAlignment: MainAxisAlignment.end,

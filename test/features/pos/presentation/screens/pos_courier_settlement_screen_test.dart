@@ -269,6 +269,34 @@ void main() {
     expect(fakes.settlement.lastReceived, 0);
   });
 
+  testWidgets(
+      'Faz 3a: the method the courier reported is preselected and labelled; '
+      'the cashier can still change it', (tester) async {
+    final fakes = await _pump(tester, orders: const [
+      CourierSettlementOrder(
+        orderId: 'd',
+        orderNumber: 'DL-d',
+        status: 'outForDelivery',
+        customerName: 'Ayşe Demir',
+        addressSummary: 'Caferağa',
+        amountDueMinorUnits: 20000,
+        plannedPaymentMethodId: 'cash',
+        courierReportedPaymentMethodId: 'multinet',
+        courierReportedDelivered: true,
+      ),
+    ]);
+
+    expect(_text(tester, 'courierReported-d'), 'Kurye bildirdi: Multinet');
+    expect(_text(tester, 'expectedCash'), '0 TL');
+
+    await tester.tap(find.byKey(const Key('method-d-cash')));
+    await tester.pumpAndSettle();
+    expect(_text(tester, 'courierReported-d'),
+        'Kurye bildirdi: Multinet — kasiyer değiştirdi');
+    await _settle(tester);
+    expect(fakes.settlement.lastDeliveries!.single.paymentMethodId, 'cash');
+  });
+
   test('Z report: Paket Servis Tahsilatı and Kurye Farkı lines', () {
     final summary = DailyRevenueSummary.fromWire({
       'sessionId': 's',

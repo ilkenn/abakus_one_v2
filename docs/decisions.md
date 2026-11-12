@@ -20795,3 +20795,106 @@ cash is the sum of `cashMovements`, which had no courier type. Couriers were rel
 - The in-memory `pos/domain/courier_settlement/*` model is NOT removed yet: the courier app's in-memory
   delivery completion (`CompleteDelivery` → `DeclareCourierCashCollectionForDelivery`) still uses it.
 - A difference is reported per cash session; per-courier debt tracking is not part of this phase.
+
+## ADR-076 — External-courier delivery pool, Kasiyer / Mutfak Paket Yetkilisi roles, courier-reported delivery (2026-11-12)
+
+- Tarih: 2026-11-12
+- Durum: Accepted (Faz 3a — server + POS; courier app in Faz 3b, FCM in Faz 3c)
+
+### Context
+
+Product owner Faz 3 decisions:
+
+- **Courier types.** Restaurant couriers (`internal`) only get direct assignment. External couriers
+  (`pool`) see a package only after staff "Havuza Gönder"; the pool hides the customer phone.
+- **Requests.** External couriers only "Talep Oluştur"; several may request one package. Approving one
+  rejects the others, with no capacity limit (3-B).
+- **Who approves.** İşletme Sahibi, Müdür, Kasiyer and Mutfak Paket Yetkilisi, through two new roles
+  (1-A).
+- **Courier marks.** Assignment still sets `outForDelivery`; "Yola Çıktım" only records the departure
+  (2-A). "Teslim Ettim" carries the paid method, and the order waits for settlement ("Teslim Edildi —
+  Mutabakat Bekliyor").
+- **Phone.** The courier sees the customer phone only until delivery (KVKK).
+- **Registration and visibility.** External couriers are registered by a manager or above. They see
+  pool packages by region, not by branch (4-A).
+- **Settlement.** The reported method is preselected at settlement, editable, and audited (5-A).
+- **Alerts.** The POS gets a live badge and sound (6-A).
+
+### Decision
+
+**Roles**
+- `cashier` and `packingLead` hold every `staff` permission plus `manageCourierDispatch` and the new
+  `approveCourierPoolRequests`. They have no manager-tier permission: a settlement cash difference
+  still needs a manager.
+- `approveCourierPoolRequests` is also held by manager, **admin** and tenantOwner. Granting it to
+  admin is an implementation call that keeps the existing manager ⊂ admin ⊂ owner tiering.
+- Dart: `StaffRole.cashier` / `packingLead`, plus `PosAuthorizedAction.approveCourierPoolRequest`,
+  through a `_courierDispatchTier`.
+
+**Region**
+- A listing carries a district slug, resolved in this order:
+  1. the address `districtId`;
+  2. the branch's enabled service area matching the address neighborhood;
+  3. the new optional branch field `defaultDeliveryDistrictId`.
+- If none is found, publishing fails (`courierPool/district-unresolved`).
+- An external courier's `serviceDistrictIds` are slugs too.
+
+**Data**
+- Order fields (server-written): `poolStatus`, `poolDistrictId`, `poolReservedCourierId`,
+  `departedAt`, `courierReportedDeliveredAt`, `courierReportedPaymentMethodId`.
+- Courier fields: `serviceDistrictIds` and `authUid`. `courierAccounts/{uid}` mirrors the auth link for
+  rules and callables.
+- New server-only collections:
+  - `deliveryPoolListings/{orderId}`: never phone or name;
+  - `courierPoolRequests/{orderId}_{courierId}`;
+  - `courierAssignedOrders/{orderId}`: the courier's own copy, the only place it sees the phone.
+
+**Callables** (`courierPool.ts`)
+- `publishOrderToPool` and `withdrawOrderFromPool` (`manageCourierDispatch`). Publishing is allowed
+  while the order is confirmed, preparing or ready; withdrawing rejects the pending requests.
+- `requestPoolOrder`: an active external courier, its own region only, idempotent.
+- `respondToCourierPoolRequest` (`approveCourierPoolRequests`). Approving a ready order assigns it
+  through the shared `applyCourierAssignment` (→ `outForDelivery`). Approving an order still in the
+  kitchen *reserves* it (`poolReservedCourierId` + the planned courier), and the existing one-tap
+  "<kurye> Ata" assigns it once ready. Either way, the other pending requests are rejected in the same
+  transaction.
+- `courierMarkDeparted` (`departedAt` only) and `courierReportDelivered`. The order stays
+  `outForDelivery`, so no new order status was added. The phone is removed from the courier copy, and
+  the report is audited with actor `courier`.
+
+**Projection**
+- The trigger `onDeliveryOrderCourierProjection` keeps `courierAssignedOrders` in step with the order
+  through assign, reassign, batch assign, reserve, departure, delivery, completion and cancellation.
+- It also closes a still-open listing and rejects pending requests when the package got a courier some
+  other way or closed.
+
+**Assignment changes**
+- A `pool` courier serves every branch of its organization (`courierCanServeOrder`).
+- A reassignment now removes the order from the previous courier's `activeOrderIds`. Before, the order
+  stayed there.
+
+**Settlement**
+- For an external courier, each branch closes only its own orders. Packages of other branches stay on
+  the courier.
+- The preview returns the courier-reported method.
+
+**`setCourier`**
+- Creating or editing an external courier needs `manageBranch` (manager and above) and at least one
+  district.
+- It takes an optional `authUid` link.
+
+**Rules**
+- Pool listings are readable by branch staff, or by an active external courier only when the listing is
+  open and in its districts. The courier's query must pin `organizationId`, `districtId` (==) and
+  `status`.
+- Requests are readable by branch staff and by their courier.
+- `courierAssignedOrders` and `courierAccounts` are readable only by their own courier account.
+
+### Consequences
+
+- The dispatch board now also lists confirmed and preparing delivery orders, so they can be pooled
+  early. Assignment still needs a ready order, enforced by the server.
+- `batchAssignCourierToOrders` still binds to the courier's own branch, so external couriers are not
+  batch-assignable.
+- The courier app (Faz 3b) and FCM (Faz 3c) are not done. Until then, an external courier cannot act
+  from a device; only the server callables exist, and they are tested.

@@ -61,6 +61,10 @@ class Order {
     this.assignedCourierId,
     this.plannedCourierId,
     this.plannedCourierName,
+    this.poolStatus,
+    this.courierDeparted = false,
+    this.courierReportedDelivered = false,
+    this.courierReportedPaymentMethodId,
     this.courierType,
     this.trackingToken,
     this.merchantId,
@@ -233,6 +237,25 @@ class Order {
 
   /// The planned courier's name at order time (for the courier slip).
   final String? plannedCourierName;
+
+  /// 2026-11-12 (Faz 3a) — the external-courier pool state, server-written
+  /// only (`courierPool.ts`): `published` ("Havuzda"), `assigned` (an
+  /// external courier's request was approved), `closed`, or `null` (never
+  /// published / withdrawn).
+  final String? poolStatus;
+
+  /// Faz 3a — the courier marked "Yola Çıktım" (`departedAt` on the order).
+  final bool courierDeparted;
+
+  /// Faz 3a — the courier marked "Teslim Ettim": the order stays
+  /// `outForDelivery` ("Teslim Edildi — Mutabakat Bekliyor") until the POS
+  /// courier settlement closes it.
+  final bool courierReportedDelivered;
+
+  /// Faz 3a — the method the courier reported the customer paid with.
+  final String? courierReportedPaymentMethodId;
+
+  bool get isInDeliveryPool => poolStatus == 'published';
 
   /// AP-6 Sprint 2 — who is delivering this order. Set alongside
   /// [assignedCourierId] for an internal/pool assignment; **may also be set
@@ -469,6 +492,10 @@ class Order {
     String? assignedCourierId,
     String? plannedCourierId,
     String? plannedCourierName,
+    String? poolStatus,
+    bool? courierDeparted,
+    bool? courierReportedDelivered,
+    String? courierReportedPaymentMethodId,
     CourierType? courierType,
     String? trackingToken,
     String? merchantId,
@@ -518,6 +545,12 @@ class Order {
       assignedCourierId: assignedCourierId ?? this.assignedCourierId,
       plannedCourierId: plannedCourierId ?? this.plannedCourierId,
       plannedCourierName: plannedCourierName ?? this.plannedCourierName,
+      poolStatus: poolStatus ?? this.poolStatus,
+      courierDeparted: courierDeparted ?? this.courierDeparted,
+      courierReportedDelivered:
+          courierReportedDelivered ?? this.courierReportedDelivered,
+      courierReportedPaymentMethodId:
+          courierReportedPaymentMethodId ?? this.courierReportedPaymentMethodId,
       courierType: courierType ?? this.courierType,
       trackingToken: trackingToken ?? this.trackingToken,
       merchantId: merchantId ?? this.merchantId,

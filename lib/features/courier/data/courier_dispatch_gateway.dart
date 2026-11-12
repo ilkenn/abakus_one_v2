@@ -64,6 +64,7 @@ abstract interface class CourierDispatchGateway {
     required String phoneNumber,
     CourierType type = CourierType.internal,
     String? courierId,
+    List<String> serviceDistrictIds = const [],
   });
 
   Future<CourierAssignmentResult> assignCourierToOrder({
@@ -152,6 +153,7 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
     required String phoneNumber,
     CourierType type = CourierType.internal,
     String? courierId,
+    List<String> serviceDistrictIds = const [],
   }) async {
     try {
       final result = await _call('setCourier', {
@@ -161,6 +163,9 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
         'phoneNumber': phoneNumber,
         'type': type.name,
         if (courierId != null) 'courierId': courierId,
+        // 2026-11-12 (Faz 3a) — an external (`pool`) courier's districts.
+        if (serviceDistrictIds.isNotEmpty)
+          'serviceDistrictIds': serviceDistrictIds,
       });
       return result['courierId'] as String;
     } on functions.FirebaseFunctionsException catch (error) {
@@ -286,6 +291,7 @@ class UnavailableCourierDispatchGateway implements CourierDispatchGateway {
     required String phoneNumber,
     CourierType type = CourierType.internal,
     String? courierId,
+    List<String> serviceDistrictIds = const [],
   }) async =>
       _unavailable();
 

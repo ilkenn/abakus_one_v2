@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemSound, SystemSoundType;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
@@ -10,6 +11,8 @@ import '../../../courier/data/courier_dispatch_gateway.dart';
 import '../../../courier/domain/identity/courier.dart';
 import '../../../courier/presentation/widgets/courier_assignment_dialog.dart';
 import '../../../orders/domain/models/order.dart';
+import '../../../orders/domain/models/order_status.dart';
+import '../../data/courier_pool_gateway.dart';
 import '../../domain/delivery_neighborhood_clusterer.dart';
 import '../providers/courier_dispatch_dependencies_provider.dart';
 import '../widgets/print_courier_slip_action.dart';
@@ -56,10 +59,37 @@ class _DeliveryOrderDispatchScreenState
     final ctx = ref.read(posDeviceContextProvider);
     if (ctx == null) return;
     final candidates = couriers
-        .where((c) => c.type == CourierType.internal)
-        .toList()
-      ..sort(
-          (a, b) => b.activeOrderIds.length.compareTo(a.activeOrderIds.length));
+        .where(
+            (c) => c.type == CourierType.internal || c.type == CourierType.pool)
+        .map((c) => (c.id, c.displayName, c.activeOrderIds.length))
+        .toList();
+    // Faz 3a — an external courier is region-based and may be registered
+    // at another branch: offer every courier carrying one of this branch's
+    // packages too (name from the order's planned courier).
+    final orders = ref
+            .read(assignableDeliveryOrdersProvider(widget.branchId))
+            .valueOrNull ??
+        const <Order>[];
+    final known = {for (final c in candidates) c.$1};
+    final carried = <String, (String, int)>{};
+    for (final order in orders) {
+      final id = order.assignedCourierId;
+      if (id == null ||
+          known.contains(id) ||
+          order.status != OrderStatus.outForDelivery) {
+        continue;
+      }
+      final previous = carried[id];
+      carried[id] = (
+        order.plannedCourierName ?? previous?.$1 ?? 'Dış Kurye',
+        (previous?.$2 ?? 0) + 1,
+      );
+    }
+    candidates
+      ..addAll([
+        for (final e in carried.entries) (e.key, e.value.$1, e.value.$2),
+      ])
+      ..sort((a, b) => b.$3.compareTo(a.$3));
     final courierId = await showDialog<String>(
       context: context,
       builder: (dialogContext) => SimpleDialog(
@@ -68,16 +98,13 @@ class _DeliveryOrderDispatchScreenState
           if (candidates.isEmpty)
             const Padding(
               padding: EdgeInsets.all(AppSpacing.md),
-              child: Text('Bu şubede kayıtlı dükkan kuryesi yok.'),
+              child: Text('Bu şubede kayıtlı kurye yok.'),
             ),
           for (final courier in candidates)
             SimpleDialogOption(
-              key: Key('settleCourier-${courier.id}'),
-              onPressed: () => Navigator.of(dialogContext).pop(courier.id),
-              child: Text(
-                '${courier.displayName} · ${courier.activeOrderIds.length} '
-                'açık sipariş',
-              ),
+              key: Key('settleCourier-${courier.$1}'),
+              onPressed: () => Navigator.of(dialogContext).pop(courier.$1),
+              child: Text('${courier.$2} · ${courier.$3} açık sipariş'),
             ),
         ],
       ),
@@ -126,6 +153,62 @@ class _DeliveryOrderDispatchScreenState
     }
   }
 
+  String? _poolBusyOrderId;
+
+  /// 2026-11-12 (Faz 3a) — "Havuza Gönder" / "Havuzdan Geri Al".
+  Future<void> _togglePool(Order order) async {
+    if (_poolBusyOrderId != null) return;
+    final publish = !order.isInDeliveryPool;
+    setState(() => _poolBusyOrderId = order.id.value);
+    try {
+      final gateway = ref.read(courierPoolGatewayProvider);
+      if (publish) {
+        await gateway.publish(orderId: order.id.value);
+      } else {
+        await gateway.withdraw(orderId: order.id.value);
+      }
+      if (mounted) {
+        _snack(publish
+            ? '${order.orderNumber.value} dış kurye havuzuna gönderildi.'
+            : '${order.orderNumber.value} havuzdan geri alındı.');
+      }
+    } on CourierPoolException catch (error) {
+      if (!mounted) return;
+      _snack(error.isPermissionDenied
+          ? 'Havuz işlemi için yetkiniz yok.'
+          : error.message.contains('district')
+              ? 'Siparişin teslimat bölgesi (ilçe) belirlenemedi; şube '
+                  'hizmet bölgelerini kontrol edin.'
+              : 'Havuz işlemi yapılamadı. Lütfen tekrar deneyin.');
+    } finally {
+      if (mounted) setState(() => _poolBusyOrderId = null);
+    }
+  }
+
+  /// Rings once per newly arrived pool request (the QR-bell alert sound).
+  final Set<String> _seenRequestIds = {};
+  bool _requestsPrimed = false;
+
+  void _onRequests(List<CourierPoolRequest> requests) {
+    final ids = {for (final r in requests) r.requestId};
+    final fresh = ids.difference(_seenRequestIds);
+    _seenRequestIds
+      ..clear()
+      ..addAll(ids);
+    if (_requestsPrimed && fresh.isNotEmpty) {
+      SystemSound.play(SystemSoundType.alert);
+    }
+    _requestsPrimed = true;
+  }
+
+  Future<void> _openRequests() => showDialog<void>(
+        context: context,
+        builder: (_) => CourierPoolRequestsDialog(
+          organizationId: widget.organizationId,
+          branchId: widget.branchId,
+        ),
+      );
+
   void _toggleSelection(String orderId, bool selected) {
     setState(() {
       if (selected) {
@@ -142,12 +225,38 @@ class _DeliveryOrderDispatchScreenState
         ref.watch(assignableDeliveryOrdersProvider(widget.branchId));
     final couriersAsync =
         ref.watch(allCouriersForBranchProvider(widget.branchId));
+    final requestScope =
+        (organizationId: widget.organizationId, branchId: widget.branchId);
+    ref.listen(pendingCourierPoolRequestsProvider(requestScope), (_, next) {
+      final requests = next.valueOrNull;
+      if (requests != null) _onRequests(requests);
+    });
+    final pendingRequests = ref
+            .watch(pendingCourierPoolRequestsProvider(requestScope))
+            .valueOrNull ??
+        const <CourierPoolRequest>[];
+    final requestCountByOrder = <String, int>{};
+    for (final r in pendingRequests) {
+      requestCountByOrder[r.orderId] =
+          (requestCountByOrder[r.orderId] ?? 0) + 1;
+    }
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Kurye Dağıtımı'),
         actions: [
+          // 2026-11-12 (Faz 3a) — external couriers' pool requests, live.
+          TextButton.icon(
+            key: const Key('openPoolRequestsButton'),
+            icon: Badge(
+              isLabelVisible: pendingRequests.isNotEmpty,
+              label: Text('${pendingRequests.length}'),
+              child: const Icon(Icons.notifications_active_outlined),
+            ),
+            label: const Text('Havuz Talepleri'),
+            onPressed: _openRequests,
+          ),
           // 2026-11-11 (Faz 2b) — closing a returning courier's account
           // needs the till's trusted device (and its cash session), so it
           // is offered on the POS only, not in the Admin panel.
@@ -225,6 +334,10 @@ class _DeliveryOrderDispatchScreenState
                         onSelectionChanged: _toggleSelection,
                         assigningOrderId: _assigningOrderId,
                         onAssignPlanned: _assignPlannedCourier,
+                        poolBusyOrderId: _poolBusyOrderId,
+                        onTogglePool: _togglePool,
+                        requestCountOf: (order) =>
+                            requestCountByOrder[order.id.value] ?? 0,
                         onPrintSlip: (order) => printCourierSlip(
                           context: context,
                           ref: ref,
@@ -333,11 +446,17 @@ class _ClusterCard extends StatelessWidget {
     required this.onAssignPlanned,
     required this.onPrintSlip,
     required this.assigningOrderId,
+    required this.poolBusyOrderId,
+    required this.onTogglePool,
+    required this.requestCountOf,
   });
 
   final void Function(Order order) onAssignPlanned;
   final void Function(Order order) onPrintSlip;
   final String? assigningOrderId;
+  final String? poolBusyOrderId;
+  final void Function(Order order) onTogglePool;
+  final int Function(Order order) requestCountOf;
 
   final NeighborhoodCluster cluster;
   final Courier? Function(Order order) assignedCourierOf;
@@ -378,6 +497,9 @@ class _ClusterCard extends StatelessWidget {
                   onAssignPlanned: () => onAssignPlanned(order),
                   onPrintSlip: () => onPrintSlip(order),
                   isAssigning: assigningOrderId == order.id.value,
+                  isPoolBusy: poolBusyOrderId == order.id.value,
+                  onTogglePool: () => onTogglePool(order),
+                  poolRequestCount: requestCountOf(order),
                 ),
               ),
           ],
@@ -398,11 +520,17 @@ class _DeliveryOrderRow extends StatelessWidget {
     required this.onAssignPlanned,
     required this.onPrintSlip,
     required this.isAssigning,
+    required this.isPoolBusy,
+    required this.onTogglePool,
+    required this.poolRequestCount,
   });
 
   final VoidCallback onAssignPlanned;
   final VoidCallback onPrintSlip;
   final bool isAssigning;
+  final bool isPoolBusy;
+  final VoidCallback onTogglePool;
+  final int poolRequestCount;
 
   final Order order;
   final Courier? assignedCourier;
@@ -414,6 +542,11 @@ class _DeliveryOrderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isMarketplace = order.courierType == CourierType.marketplace;
+    // Faz 3a — a package without any courier (assigned or reserved) can be
+    // sent to / taken back from the external-courier pool.
+    final canUsePool = !isMarketplace &&
+        order.assignedCourierId == null &&
+        (order.plannedCourierId == null || order.isInDeliveryPool);
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
@@ -447,6 +580,8 @@ class _DeliveryOrderRow extends StatelessWidget {
                   isMarketplace: isMarketplace,
                   assignedCourier: assignedCourier,
                 ),
+                _DeliveryProgressLabel(
+                    order: order, poolRequestCount: poolRequestCount),
                 // 2026-11-11 (Faz 2) — the courier note and the planned
                 // courier of a staff-opened Paket Servis order.
                 if (order.customerNote.trim().isNotEmpty)
@@ -486,8 +621,25 @@ class _DeliveryOrderRow extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                if (canUsePool)
+                  OutlinedButton.icon(
+                    key: Key('togglePool-${order.id.value}'),
+                    icon: isPoolBusy
+                        ? const SizedBox.square(
+                            dimension: AppSpacing.md,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(order.isInDeliveryPool
+                            ? Icons.undo_rounded
+                            : Icons.groups_rounded),
+                    label: Text(order.isInDeliveryPool
+                        ? 'Havuzdan Geri Al'
+                        : 'Havuza Gönder'),
+                    onPressed: isPoolBusy ? null : onTogglePool,
+                  ),
                 if (order.plannedCourierId != null &&
-                    order.assignedCourierId == null)
+                    order.assignedCourierId == null &&
+                    !order.isInDeliveryPool)
                   ElevatedButton.icon(
                     key: Key('assignPlanned-${order.id.value}'),
                     icon: isAssigning
@@ -529,6 +681,194 @@ class _PickupLocationIndicator extends StatelessWidget {
         Text(
           merchantName ?? 'Kendi Dükkanımız',
           style: AppTypography.caption.copyWith(color: AppColors.textSecondary),
+        ),
+      ],
+    );
+  }
+}
+
+/// 2026-11-12 (Faz 3a) — where the package is: still in the kitchen, in
+/// the external-courier pool (with its request count), on the road, or
+/// "Teslim Edildi — Mutabakat Bekliyor" after the courier's "Teslim Ettim".
+class _DeliveryProgressLabel extends StatelessWidget {
+  const _DeliveryProgressLabel(
+      {required this.order, required this.poolRequestCount});
+
+  final Order order;
+  final int poolRequestCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final (String?, Color) label;
+    if (order.courierReportedDelivered) {
+      label = ('Teslim Edildi — Mutabakat Bekliyor', AppColors.warning);
+    } else if (order.courierDeparted &&
+        order.status == OrderStatus.outForDelivery) {
+      label = ('Kurye yolda', AppColors.success);
+    } else if (order.isInDeliveryPool) {
+      label = (
+        poolRequestCount > 0
+            ? 'Havuzda · $poolRequestCount kurye talebi'
+            : 'Havuzda · talep bekleniyor',
+        AppColors.info,
+      );
+    } else if (order.status == OrderStatus.confirmed ||
+        order.status == OrderStatus.preparing) {
+      label = ('Mutfakta hazırlanıyor', AppColors.textSecondary);
+    } else {
+      label = (null, AppColors.textSecondary);
+    }
+    final text = label.$1;
+    if (text == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.xs),
+      child: Text(
+        text,
+        key: Key('deliveryProgress-${order.id.value}'),
+        style: AppTypography.caption
+            .copyWith(color: label.$2, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+}
+
+/// 2026-11-12 (Faz 3a) — the branch's pending external-courier requests;
+/// approving one assigns (or, still in the kitchen, reserves) the package
+/// for that courier and the server rejects the other requests for it.
+class CourierPoolRequestsDialog extends ConsumerStatefulWidget {
+  const CourierPoolRequestsDialog({
+    super.key,
+    required this.organizationId,
+    required this.branchId,
+  });
+
+  final String organizationId;
+  final String branchId;
+
+  @override
+  ConsumerState<CourierPoolRequestsDialog> createState() =>
+      _CourierPoolRequestsDialogState();
+}
+
+class _CourierPoolRequestsDialogState
+    extends ConsumerState<CourierPoolRequestsDialog> {
+  String? _busyRequestId;
+  String? _error;
+
+  static String _tl(int minorUnits) {
+    final whole = minorUnits ~/ 100;
+    final cents = minorUnits % 100;
+    return cents == 0
+        ? '$whole TL'
+        : '$whole,${cents.toString().padLeft(2, '0')} TL';
+  }
+
+  Future<void> _respond(CourierPoolRequest request, bool approve) async {
+    setState(() {
+      _busyRequestId = request.requestId;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(courierPoolGatewayProvider)
+          .respond(requestId: request.requestId, approve: approve);
+    } on CourierPoolException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.isPermissionDenied
+          ? 'Kurye taleplerini onaylama yetkiniz yok.'
+          : 'Talep yanıtlanamadı (paket başka kuryeye verilmiş ya da '
+              'havuzdan alınmış olabilir).');
+    } finally {
+      if (mounted) setState(() => _busyRequestId = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final requestsAsync = ref.watch(pendingCourierPoolRequestsProvider(
+        (organizationId: widget.organizationId, branchId: widget.branchId)));
+    return AlertDialog(
+      title: const Text('Dış Kurye Talepleri'),
+      content: SizedBox(
+        width: 460,
+        child: requestsAsync.when(
+          loading: () => const SizedBox(
+            height: 120,
+            child: Center(child: CircularProgressIndicator()),
+          ),
+          error: (_, __) => const Text('Talepler yüklenemedi.'),
+          data: (requests) => SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (requests.isEmpty)
+                  const Text('Bekleyen kurye talebi yok.',
+                      key: Key('noPoolRequests')),
+                for (final request in requests)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                    child: Container(
+                      key: Key('poolRequest-${request.requestId}'),
+                      padding: const EdgeInsets.all(AppSpacing.sm),
+                      decoration: BoxDecoration(
+                        borderRadius: AppRadius.kMedium,
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${request.courierName} → '
+                                  '${request.orderNumber}',
+                                  style: AppTypography.labelLarge,
+                                ),
+                                Text(
+                                  '${request.neighborhoodName} · '
+                                  '${_tl(request.amountDueMinorUnits)}',
+                                  style: AppTypography.bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                          TextButton(
+                            key: Key('rejectPoolRequest-${request.requestId}'),
+                            onPressed: _busyRequestId == null
+                                ? () => _respond(request, false)
+                                : null,
+                            child: const Text('Reddet'),
+                          ),
+                          const SizedBox(width: AppSpacing.xs),
+                          FilledButton(
+                            key: Key('approvePoolRequest-${request.requestId}'),
+                            onPressed: _busyRequestId == null
+                                ? () => _respond(request, true)
+                                : null,
+                            child: Text(_busyRequestId == request.requestId
+                                ? '...'
+                                : 'Onayla'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (_error != null)
+                  Text(_error!,
+                      key: const Key('poolRequestError'),
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.error)),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Kapat'),
         ),
       ],
     );

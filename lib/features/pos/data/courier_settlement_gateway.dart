@@ -43,6 +43,8 @@ class CourierSettlementOrder {
     required this.addressSummary,
     required this.amountDueMinorUnits,
     required this.plannedPaymentMethodId,
+    this.courierReportedPaymentMethodId,
+    this.courierReportedDelivered = false,
   });
 
   final String orderId;
@@ -52,6 +54,11 @@ class CourierSettlementOrder {
   final String addressSummary;
   final int amountDueMinorUnits;
   final String? plannedPaymentMethodId;
+
+  /// 2026-11-12 (Faz 3a) — the method the courier reported at "Teslim
+  /// Ettim" (preselected on the settlement screen, still editable).
+  final String? courierReportedPaymentMethodId;
+  final bool courierReportedDelivered;
 
   bool get isOpen => status == 'outForDelivery';
 
@@ -64,6 +71,10 @@ class CourierSettlementOrder {
         addressSummary: data['addressSummary'] as String? ?? '',
         amountDueMinorUnits: (data['amountDueMinorUnits'] as num).toInt(),
         plannedPaymentMethodId: data['plannedPaymentMethodId'] as String?,
+        courierReportedPaymentMethodId:
+            data['courierReportedPaymentMethodId'] as String?,
+        courierReportedDelivered:
+            data['courierReportedDelivered'] as bool? ?? false,
       );
 }
 

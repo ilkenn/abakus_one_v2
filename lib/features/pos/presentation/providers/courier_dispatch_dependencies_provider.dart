@@ -5,6 +5,7 @@ import '../../../courier/data/courier_dispatch_gateway.dart';
 import '../../../courier/data/firestore_courier_repository.dart';
 import '../../../courier/domain/dispatch/courier_return_fifo.dart';
 import '../../../courier/domain/identity/courier.dart';
+import '../../data/courier_pool_gateway.dart';
 import '../../data/delivery_dispatch_order_repository.dart';
 
 /// AP-6 Sprint 2 — the cashier/admin delivery-dispatch surface's own
@@ -63,4 +64,27 @@ final assignableDeliveryOrdersProvider = StreamProvider.family(
         .watch(deliveryDispatchOrderRepositoryProvider)
         .watchAssignableDeliveryOrders(branchId);
   },
+);
+
+/// 2026-11-12 (Faz 3a) — "Havuza Gönder" / "Havuzdan Geri Al" and the
+/// approve/reject of an external courier's pool request.
+final courierPoolGatewayProvider = Provider<CourierPoolGateway>((ref) {
+  if (!ref.watch(firebaseReadyProvider)) {
+    return const UnavailableCourierPoolGateway();
+  }
+  return FirebaseCourierPoolGateway();
+});
+
+final courierPoolRequestRepositoryProvider =
+    Provider<CourierPoolRequestRepository>((ref) {
+  return FirestoreCourierPoolRequestRepository();
+});
+
+/// The branch's pending external-courier requests, live.
+final pendingCourierPoolRequestsProvider = StreamProvider.family<
+    List<CourierPoolRequest>, ({String organizationId, String branchId})>(
+  (ref, scope) => ref.watch(courierPoolRequestRepositoryProvider).watchPending(
+        organizationId: scope.organizationId,
+        branchId: scope.branchId,
+      ),
 );

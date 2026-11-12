@@ -182,6 +182,12 @@ abstract final class OrderFirestoreMapper {
       assignedCourierId: data['assignedCourierId'] as String?,
       plannedCourierId: data['plannedCourierId'] as String?,
       plannedCourierName: data['plannedCourierName'] as String?,
+      // 2026-11-12 (Faz 3a) — server-written only (never in toFirestore).
+      poolStatus: data['poolStatus'] as String?,
+      courierDeparted: data['departedAt'] != null,
+      courierReportedDelivered: data['courierReportedDeliveredAt'] != null,
+      courierReportedPaymentMethodId:
+          data['courierReportedPaymentMethodId'] as String?,
       courierType: _courierTypeFromName(data['courierType'] as String?),
       trackingToken: data['trackingToken'] as String?,
       // AP-6 Sprint 3 — same additive/nullable backward-compatibility

@@ -117,9 +117,13 @@ class _PosCourierSettlementScreenState
         for (final order in preview.orders) {
           _methodByOrderId.putIfAbsent(
               order.orderId,
-              () => _isKnownMethod(order.plannedPaymentMethodId)
-                  ? order.plannedPaymentMethodId!
-                  : 'cash');
+              // Faz 3a — what the courier reported at "Teslim Ettim" comes
+              // first (still editable; a change is audited server-side).
+              () => _isKnownMethod(order.courierReportedPaymentMethodId)
+                  ? order.courierReportedPaymentMethodId!
+                  : _isKnownMethod(order.plannedPaymentMethodId)
+                      ? order.plannedPaymentMethodId!
+                      : 'cash');
           _slipByOrderId.putIfAbsent(
               order.orderId, () => TextEditingController());
         }
@@ -336,6 +340,9 @@ class _PosCourierSettlementScreenState
     );
   }
 
+  static String _methodLabel(String id) =>
+      posCollectionMethods.where((m) => m.id == id).firstOrNull?.label ?? id;
+
   Widget _buildOrderCard(CourierSettlementOrder order) {
     final method = _methodByOrderId[order.orderId] ?? 'cash';
     return Padding(
@@ -388,6 +395,20 @@ class _PosCourierSettlementScreenState
                   ),
               ],
             ),
+            if (order.courierReportedPaymentMethodId != null)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.xs),
+                child: Text(
+                  order.courierReportedPaymentMethodId == method
+                      ? 'Kurye bildirdi: ${_methodLabel(method)}'
+                      : 'Kurye bildirdi: '
+                          '${_methodLabel(order.courierReportedPaymentMethodId!)}'
+                          ' — kasiyer değiştirdi',
+                  key: Key('courierReported-${order.orderId}'),
+                  style:
+                      AppTypography.bodySmall.copyWith(color: AppColors.info),
+                ),
+              ),
             if (order.plannedPaymentMethodId != null &&
                 order.plannedPaymentMethodId != method)
               Padding(

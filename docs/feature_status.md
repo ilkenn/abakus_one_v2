@@ -11680,3 +11680,39 @@ passing, 0 failures.
   idempotency / inactive cash session) and the Z report via `getDailyRevenueSummary`; Flutter — settlement
   screen 6 + Z report lines.
 - **Visual Review Bekleniyor**.
+
+### POS Paket Servis — Faz 3a: dış kurye havuzu, Kasiyer / Mutfak Paket Yetkilisi rolleri (2026-11-12)
+
+- Roles (ADR-076): `cashier`, `packingLead` = staff + courier dispatch + pool-request approval (server
+  and Dart). `approveCourierPoolRequests` is also held by manager, admin and tenantOwner.
+- Server (`courierPool.ts`): "Havuza Gönder" / "Havuzdan Geri Al"; region (district) resolved from the
+  address, then the branch service area, then the branch default.
+- External couriers: "Talep Oluştur" in their own districts only; approve one and the others are
+  rejected; a package still in the kitchen is reserved, a ready one is assigned.
+- Courier marks: "Yola Çıktım" records `departedAt`; "Teslim Ettim" records the paid method, and the
+  order waits for settlement.
+- Courier copy (`courierAssignedOrders`): kept by a trigger; the phone is removed at delivery.
+- Settlement: closed per branch for external couriers; the preview carries the reported method.
+- Fixes and limits:
+  - reassigning a courier now clears the previous courier;
+  - `setCourier` for external couriers needs a manager or above, plus districts and an optional auth
+    link;
+  - new rules for the 4 collections.
+- POS dispatch board:
+  - lists confirmed and preparing orders too;
+  - row actions "Havuza Gönder" / "Havuzdan Geri Al";
+  - progress labels (Mutfakta hazırlanıyor / Havuzda · N kurye talebi / Kurye yolda / Teslim Edildi —
+    Mutabakat Bekliyor);
+  - "Havuz Talepleri" with a live badge, an alert sound on each new request, and approve / reject;
+  - "Kurye Hesap Kapat" also offers external couriers carrying this branch's packages.
+- Courier quick-add: "Dış Kurye (Havuz)" with service districts.
+- Settlement screen: preselects the courier-reported method ("Kurye bildirdi: …"), still editable.
+- Tests:
+  - functions: 7 pool emulator tests, plus 1 settlement test (per-branch, reported method), 4 pure,
+    staff authorization 54;
+  - rules: 3 new (429 total);
+  - Flutter: dispatch pool 5, settlement preselect 1, roles 1.
+- Not done: courier app on the server (Faz 3b); FCM to staff and courier (Faz 3c); external couriers in
+  batch assign; staff UI for linking a courier's auth account; branch `defaultDeliveryDistrictId`
+  editing UI.
+- **Visual Review Bekleniyor**.

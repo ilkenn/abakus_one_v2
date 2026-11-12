@@ -30,7 +30,13 @@ class FirestoreDeliveryDispatchOrderRepository
   fs.FirebaseFirestore get _firestore =>
       _providedFirestore ?? fs.FirebaseFirestore.instance;
 
+  // 2026-11-12 (Faz 3a) — `confirmed`/`preparing` added: a package can be
+  // sent to the external-courier pool ("Havuza Gönder") while the kitchen
+  // is still working on it, so external couriers have time to request it.
+  // Assignment itself still needs a ready order (server-enforced).
   static const _assignableStatuses = {
+    OrderStatus.confirmed,
+    OrderStatus.preparing,
     OrderStatus.ready,
     OrderStatus.readyForPickup,
     OrderStatus.outForDelivery,
