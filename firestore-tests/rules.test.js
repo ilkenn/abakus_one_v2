@@ -5934,3 +5934,25 @@ test('pool (Faz 3b): the courier app queries — own orders and own requests pin
   await assertFails(getDocs(query(collection(other, 'courierPoolRequests'),
     where('organizationId', '==', 'org-1'), where('courierAuthUid', '==', 'pool-uid'))));
 });
+
+// 2026-11-12 — regression: the POS/Admin dispatch board's live queries must
+// pin organizationId (the `orders`/`couriers` read rules need it provable);
+// the original branchId-only shape was denied ("Teslimat siparişleri
+// yüklenemedi").
+test('dispatch board: orders and couriers list queries pinned by organizationId succeed, branch-only ones are denied', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'orders/dispatch-o1'), { organizationId: 'org-1', branchId: 'branch-1', channel: 'delivery', status: 'ready' });
+    await setDoc(doc(db, 'couriers/dispatch-c1'), { organizationId: 'org-1', branchId: 'branch-1', displayName: 'Mehmet' });
+  });
+  const staff = testEnv.authenticatedContext('dispatch-staff', {
+    organizationAccess: ['org-1'], roles: { 'org-1': ['cashier'] }, branchAccess: { 'org-1': ['branch-1'] },
+  }).firestore();
+
+  await assertSucceeds(getDocs(query(collection(staff, 'orders'),
+    where('organizationId', '==', 'org-1'), where('branchId', '==', 'branch-1'), where('channel', '==', 'delivery'))));
+  await assertFails(getDocs(query(collection(staff, 'orders'),
+    where('branchId', '==', 'branch-1'), where('channel', '==', 'delivery'))));
+  await assertSucceeds(getDocs(query(collection(staff, 'couriers'),
+    where('organizationId', '==', 'org-1'), where('branchId', '==', 'branch-1'))));
+  await assertFails(getDocs(query(collection(staff, 'couriers'), where('branchId', '==', 'branch-1'))));
+});

@@ -65,11 +65,15 @@ export const setCourier = onCall(
       "vehicleType",
       "motorcycle",
     );
+    // 2026-11-12 — a NEW courier starts "available": staff add a courier
+    // because it is at the shop, and "Kurye Ata" lists available couriers
+    // only (it started "offline" and never appeared there). An edit keeps
+    // the current value unless one is sent (see `keep` below).
     const dispatchStatus = optionalEnum(
       data.dispatchStatus,
       VALID_DISPATCH_STATUSES,
       "dispatchStatus",
-      "offline",
+      "available",
     );
     const status = optionalEnum(data.status, VALID_REGISTRY_STATUSES, "status", "active");
     const vehicleIdentifier =

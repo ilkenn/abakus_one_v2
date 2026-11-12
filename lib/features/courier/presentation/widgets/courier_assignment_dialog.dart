@@ -164,8 +164,8 @@ class _CourierAssignmentDialogState
       return const _MarketplaceLockedDialog();
     }
 
-    final couriersAsync =
-        ref.watch(availableCouriersForBranchProvider(widget.branchId));
+    final couriersAsync = ref.watch(availableCouriersForBranchProvider(
+        (organizationId: widget.organizationId, branchId: widget.branchId)));
 
     return AlertDialog(
       title: Text(

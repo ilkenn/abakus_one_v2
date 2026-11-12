@@ -195,7 +195,9 @@ test("setCourier: manager can upsert a new courier, and a second call with the s
 
   const doc = await courierDoc(courierId);
   assert.strictEqual(doc?.phoneNumber, "+905551112244");
-  assert.strictEqual(doc?.dispatchStatus, "offline");
+  // 2026-11-12 — a new courier starts "available" (it is added because it
+  // is at the shop), and the edit above (no dispatchStatus sent) keeps it.
+  assert.strictEqual(doc?.dispatchStatus, "available");
 });
 
 test("setCourier: staff-tier alone is rejected (manager-tier-and-above only)", async () => {

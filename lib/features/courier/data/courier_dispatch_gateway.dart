@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart'
 import '../../../core/services/functions/rest_callable_client.dart';
 
 import '../../../shared/models/courier_type.dart';
+import '../domain/identity/courier_status.dart';
 
 /// AP-6 Sprint 2 — the real backend boundary for courier dispatch actions
 /// (`setCourier`/`assignCourierToOrder`/`markCourierReturned` callables),
@@ -66,6 +67,7 @@ abstract interface class CourierDispatchGateway {
     String? courierId,
     List<String> serviceDistrictIds = const [],
     String? authEmail,
+    CourierStatus? dispatchStatus,
   });
 
   Future<CourierAssignmentResult> assignCourierToOrder({
@@ -156,6 +158,7 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
     String? courierId,
     List<String> serviceDistrictIds = const [],
     String? authEmail,
+    CourierStatus? dispatchStatus,
   }) async {
     try {
       final result = await _call('setCourier', {
@@ -171,6 +174,9 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
         // Faz 3b — the courier's sign-in, by e-mail ("" unlinks; null
         // leaves the current link untouched).
         if (authEmail != null) 'authEmail': authEmail,
+        // 2026-11-12 — Müsait / Çevrimdışı from "Kurye Ayarları"; null
+        // keeps the courier's current dispatch status.
+        if (dispatchStatus != null) 'dispatchStatus': dispatchStatus.name,
       });
       return result['courierId'] as String;
     } on functions.FirebaseFunctionsException catch (error) {
@@ -298,6 +304,7 @@ class UnavailableCourierDispatchGateway implements CourierDispatchGateway {
     String? courierId,
     List<String> serviceDistrictIds = const [],
     String? authEmail,
+    CourierStatus? dispatchStatus,
   }) async =>
       _unavailable();
 

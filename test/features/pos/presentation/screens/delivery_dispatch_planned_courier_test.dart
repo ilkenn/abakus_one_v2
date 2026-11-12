@@ -80,9 +80,11 @@ Future<_FakeDispatchGateway> _pump(WidgetTester tester, Order order) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        assignableDeliveryOrdersProvider(_branchId)
+        assignableDeliveryOrdersProvider(
+                (organizationId: 'org-1', branchId: _branchId))
             .overrideWith((ref) => Stream.value([order])),
-        allCouriersForBranchProvider(_branchId)
+        allCouriersForBranchProvider(
+                (organizationId: 'org-1', branchId: _branchId))
             .overrideWith((ref) => Stream.value(const [])),
         courierDispatchGatewayProvider.overrideWithValue(gateway),
       ],

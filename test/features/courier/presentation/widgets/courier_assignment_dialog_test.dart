@@ -73,7 +73,8 @@ void main() {
       await _pumpDialog(
         tester,
         overrides: [
-          availableCouriersForBranchProvider(_branchId)
+          availableCouriersForBranchProvider(
+                  (organizationId: 'org-1', branchId: _branchId))
               .overrideWith((ref) => Stream.value(couriers)),
         ],
       );
@@ -89,7 +90,8 @@ void main() {
       await _pumpDialog(
         tester,
         overrides: [
-          availableCouriersForBranchProvider(_branchId)
+          availableCouriersForBranchProvider(
+                  (organizationId: 'org-1', branchId: _branchId))
               .overrideWith((ref) => Stream.value(const <Courier>[])),
         ],
       );

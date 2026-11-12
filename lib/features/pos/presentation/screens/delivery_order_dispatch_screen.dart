@@ -54,6 +54,9 @@ class _DeliveryOrderDispatchScreenState
 
   String? _assigningOrderId;
 
+  DispatchScope get _scope =>
+      (organizationId: widget.organizationId, branchId: widget.branchId);
+
   /// 2026-11-11 (Faz 2b) — pick the returning courier, then close their
   /// account on [PosCourierSettlementScreen].
   Future<void> _openSettlement(List<Courier> couriers) async {
@@ -67,10 +70,9 @@ class _DeliveryOrderDispatchScreenState
     // Faz 3a — an external courier is region-based and may be registered
     // at another branch: offer every courier carrying one of this branch's
     // packages too (name from the order's planned courier).
-    final orders = ref
-            .read(assignableDeliveryOrdersProvider(widget.branchId))
-            .valueOrNull ??
-        const <Order>[];
+    final orders =
+        ref.read(assignableDeliveryOrdersProvider(_scope)).valueOrNull ??
+            const <Order>[];
     final known = {for (final c in candidates) c.$1};
     final carried = <String, (String, int)>{};
     for (final order in orders) {
@@ -222,10 +224,8 @@ class _DeliveryOrderDispatchScreenState
 
   @override
   Widget build(BuildContext context) {
-    final ordersAsync =
-        ref.watch(assignableDeliveryOrdersProvider(widget.branchId));
-    final couriersAsync =
-        ref.watch(allCouriersForBranchProvider(widget.branchId));
+    final ordersAsync = ref.watch(assignableDeliveryOrdersProvider(_scope));
+    final couriersAsync = ref.watch(allCouriersForBranchProvider(_scope));
     final requestScope =
         (organizationId: widget.organizationId, branchId: widget.branchId);
     ref.listen(pendingCourierPoolRequestsProvider(requestScope), (_, next) {

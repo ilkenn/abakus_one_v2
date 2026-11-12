@@ -18,7 +18,10 @@ import '../../orders/domain/models/order_status.dart';
 /// from the small per-branch result set — avoids a 3-field composite index
 /// for a list that's never large for one branch.
 abstract interface class DeliveryDispatchOrderRepository {
-  Stream<List<Order>> watchAssignableDeliveryOrders(String branchId);
+  Stream<List<Order>> watchAssignableDeliveryOrders({
+    required String organizationId,
+    required String branchId,
+  });
 }
 
 class FirestoreDeliveryDispatchOrderRepository
@@ -43,9 +46,17 @@ class FirestoreDeliveryDispatchOrderRepository
   };
 
   @override
-  Stream<List<Order>> watchAssignableDeliveryOrders(String branchId) {
+  Stream<List<Order>> watchAssignableDeliveryOrders({
+    required String organizationId,
+    required String branchId,
+  }) {
+    // 2026-11-12 — `organizationId` pinned: the `orders` read rule needs
+    // `isOrgMember(resource.data.organizationId)` provable from the query;
+    // without it the whole list query was denied (equality-only filters,
+    // no composite index needed).
     return _firestore
         .collection('orders')
+        .where('organizationId', isEqualTo: organizationId)
         .where('branchId', isEqualTo: branchId)
         .where('channel', isEqualTo: 'delivery')
         .snapshots()

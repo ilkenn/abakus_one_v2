@@ -790,7 +790,10 @@ class _PosNewTakeawayOrderScreenState
 
   Widget _buildDeliverySection() {
     final couriers = ref
-            .watch(allCouriersForBranchProvider(widget.ctx.branchId))
+            .watch(allCouriersForBranchProvider((
+              organizationId: widget.ctx.organizationId,
+              branchId: widget.ctx.branchId,
+            )))
             .valueOrNull
             ?.where((c) =>
                 c.type == CourierType.internal &&

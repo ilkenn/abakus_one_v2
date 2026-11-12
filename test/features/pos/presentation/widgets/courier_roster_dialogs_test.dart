@@ -1,5 +1,6 @@
 import 'package:abakus_one_v2/features/courier/data/courier_dispatch_gateway.dart';
 import 'package:abakus_one_v2/features/courier/domain/identity/courier.dart';
+import 'package:abakus_one_v2/features/courier/domain/identity/courier_status.dart';
 import 'package:abakus_one_v2/features/pos/data/courier_pool_gateway.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/courier_dispatch_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/widgets/courier_roster_dialogs.dart';
@@ -24,6 +25,7 @@ class _FakeDispatchGateway implements CourierDispatchGateway {
     String? courierId,
     List<String> serviceDistrictIds = const [],
     String? authEmail,
+    CourierStatus? dispatchStatus,
   }) async {
     final e = error;
     if (e != null) throw e;
@@ -34,6 +36,7 @@ class _FakeDispatchGateway implements CourierDispatchGateway {
       'type': type,
       'districts': serviceDistrictIds,
       'authEmail': authEmail,
+      'dispatchStatus': dispatchStatus,
     };
     return courierId ?? 'new';
   }
@@ -114,7 +117,8 @@ void main() {
       tester,
       const CourierRosterDialog(organizationId: 'org-1', branchId: 'branch-1'),
       overrides: [
-        allCouriersForBranchProvider('branch-1')
+        allCouriersForBranchProvider(
+                (organizationId: 'org-1', branchId: 'branch-1'))
             .overrideWith((ref) => Stream.value([_courier])),
         courierDispatchGatewayProvider.overrideWithValue(gateway),
       ],
@@ -207,5 +211,48 @@ void main() {
     await tester.pumpAndSettle();
     expect(pool.savedDistrict, 'uskudar');
     expect(find.byType(AlertDialog), findsNothing);
+  });
+
+  testWidgets(
+      'Müsait / Çevrimdışı switch: an offline courier is made available, a '
+      'delivering one shows its packages and has no switch', (tester) async {
+    final gateway = _FakeDispatchGateway();
+    final offline = Courier(
+      id: 'c2',
+      primaryBranchId: 'branch-1',
+      displayName: 'Mehmet',
+      phoneNumber: '+905550000002',
+      registeredAt: DateTime(2026, 11, 1),
+      dispatchStatus: CourierStatus.offline,
+    );
+    final delivering = Courier(
+      id: 'c3',
+      primaryBranchId: 'branch-1',
+      displayName: 'Ayşe',
+      phoneNumber: '+905550000003',
+      registeredAt: DateTime(2026, 11, 1),
+      dispatchStatus: CourierStatus.delivering,
+      activeOrderIds: const ['o1', 'o2'],
+    );
+    await _pumpDialog(
+      tester,
+      const CourierRosterDialog(organizationId: 'org-1', branchId: 'branch-1'),
+      overrides: [
+        allCouriersForBranchProvider(
+                (organizationId: 'org-1', branchId: 'branch-1'))
+            .overrideWith((ref) => Stream.value([offline, delivering])),
+        courierDispatchGatewayProvider.overrideWithValue(gateway),
+      ],
+    );
+
+    expect(find.textContaining('Durum: Çevrimdışı'), findsOneWidget);
+    expect(find.textContaining('Durum: Dağıtımda (2 paket)'), findsOneWidget);
+    expect(find.byKey(const Key('courierAvailable-c3')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('courierAvailable-c2')));
+    await tester.pumpAndSettle();
+    expect(gateway.last!['courierId'], 'c2');
+    expect(gateway.last!['dispatchStatus'], CourierStatus.available);
+    expect(gateway.last!['branchId'], 'branch-1');
   });
 }

@@ -53,9 +53,15 @@ class FirestoreCourierRepository implements CourierRepository {
   /// path (`CourierReturnFifo.sortAvailableByReturnTime` sorts the result
   /// client-side; no server-side FIFO index needed for a single branch's
   /// small roster).
-  Stream<List<Courier>> watchByBranchId(String branchId) {
+  Stream<List<Courier>> watchByBranchId({
+    required String organizationId,
+    required String branchId,
+  }) {
+    // 2026-11-12 — `organizationId` pinned: the `couriers` rule needs it
+    // provable from the query (see `DispatchScope`).
     return _firestore
         .collection('couriers')
+        .where('organizationId', isEqualTo: organizationId)
         .where('branchId', isEqualTo: branchId)
         .snapshots()
         .map((snap) =>

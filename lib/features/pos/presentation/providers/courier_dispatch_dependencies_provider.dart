@@ -5,6 +5,7 @@ import '../../../courier/data/courier_dispatch_gateway.dart';
 import '../../../courier/data/firestore_courier_repository.dart';
 import '../../../courier/domain/dispatch/courier_return_fifo.dart';
 import '../../../courier/domain/identity/courier.dart';
+import '../../../orders/domain/models/order.dart';
 import '../../data/courier_pool_gateway.dart';
 import '../../data/delivery_dispatch_order_repository.dart';
 
@@ -34,13 +35,22 @@ final deliveryDispatchOrderRepositoryProvider =
   return FirestoreDeliveryDispatchOrderRepository();
 });
 
+/// 2026-11-12 — every dispatch read is keyed by organization AND branch:
+/// `firestore.rules` only admits an `orders`/`couriers` list query that
+/// pins `organizationId` (`isOrgMember(resource.data.organizationId)` must
+/// be provable from the query), so a `branchId`-only query was rejected
+/// outright on the real backend ("Teslimat siparişleri yüklenemedi").
+typedef DispatchScope = ({String organizationId, String branchId});
+
 /// Live, FIFO-sorted (`CourierReturnFifo.sortAvailableByReturnTime`)
-/// available-courier list for [branchId] — the dispatch dialog's own read.
-final availableCouriersForBranchProvider = StreamProvider.family(
-  (ref, String branchId) {
+/// available-courier list for the branch — the dispatch dialog's own read.
+final availableCouriersForBranchProvider =
+    StreamProvider.family<List<Courier>, DispatchScope>(
+  (ref, scope) {
     return ref
         .watch(firestoreCourierRepositoryProvider)
-        .watchByBranchId(branchId)
+        .watchByBranchId(
+            organizationId: scope.organizationId, branchId: scope.branchId)
         .map(CourierReturnFifo.sortAvailableByReturnTime);
   },
 );
@@ -50,19 +60,20 @@ final availableCouriersForBranchProvider = StreamProvider.family(
 /// `assignedCourierId` needs a display name even for a courier who is no
 /// longer `available`).
 final allCouriersForBranchProvider =
-    StreamProvider.family<List<Courier>, String>(
-  (ref, branchId) {
-    return ref
-        .watch(firestoreCourierRepositoryProvider)
-        .watchByBranchId(branchId);
+    StreamProvider.family<List<Courier>, DispatchScope>(
+  (ref, scope) {
+    return ref.watch(firestoreCourierRepositoryProvider).watchByBranchId(
+        organizationId: scope.organizationId, branchId: scope.branchId);
   },
 );
 
-final assignableDeliveryOrdersProvider = StreamProvider.family(
-  (ref, String branchId) {
+final assignableDeliveryOrdersProvider =
+    StreamProvider.family<List<Order>, DispatchScope>(
+  (ref, scope) {
     return ref
         .watch(deliveryDispatchOrderRepositoryProvider)
-        .watchAssignableDeliveryOrders(branchId);
+        .watchAssignableDeliveryOrders(
+            organizationId: scope.organizationId, branchId: scope.branchId);
   },
 );
 

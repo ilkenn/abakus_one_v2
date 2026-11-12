@@ -8,6 +8,7 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/models/courier_type.dart';
 import '../../../courier/data/courier_dispatch_gateway.dart';
 import '../../../courier/domain/identity/courier.dart';
+import '../../../courier/domain/identity/courier_status.dart';
 import '../../data/courier_pool_gateway.dart';
 import '../providers/courier_dispatch_dependencies_provider.dart';
 
@@ -38,7 +39,7 @@ String _errorText(String code, String message, {required String denied}) {
   return 'Kaydedilemedi. Lütfen tekrar deneyin.';
 }
 
-class CourierRosterDialog extends ConsumerWidget {
+class CourierRosterDialog extends ConsumerStatefulWidget {
   const CourierRosterDialog({
     super.key,
     required this.organizationId,
@@ -49,12 +50,61 @@ class CourierRosterDialog extends ConsumerWidget {
   final String branchId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final couriersAsync = ref.watch(allCouriersForBranchProvider(branchId));
+  ConsumerState<CourierRosterDialog> createState() =>
+      _CourierRosterDialogState();
+}
+
+class _CourierRosterDialogState extends ConsumerState<CourierRosterDialog> {
+  String? _busyCourierId;
+  String? _error;
+
+  /// 2026-11-12 — Müsait / Çevrimdışı. Only "available" couriers are offered
+  /// in "Kurye Ata"; a courier out on deliveries ("Dağıtımda") is not
+  /// toggled here (it becomes available at "Kurye Hesap Kapat").
+  Future<void> _setAvailable(Courier courier, bool available) async {
+    setState(() {
+      _busyCourierId = courier.id;
+      _error = null;
+    });
+    try {
+      await ref.read(courierDispatchGatewayProvider).setCourier(
+            organizationId: widget.organizationId,
+            branchId: courier.primaryBranchId,
+            courierId: courier.id,
+            displayName: courier.displayName,
+            phoneNumber: courier.phoneNumber,
+            type: courier.type == CourierType.pool
+                ? CourierType.pool
+                : CourierType.internal,
+            serviceDistrictIds: courier.serviceDistrictIds,
+            dispatchStatus:
+                available ? CourierStatus.available : CourierStatus.offline,
+          );
+    } on CourierDispatchException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _errorText(error.code, error.message,
+          denied: 'Kurye durumunu değiştirme yetkiniz yok.'));
+    } finally {
+      if (mounted) setState(() => _busyCourierId = null);
+    }
+  }
+
+  static String _statusLabel(Courier courier) =>
+      switch (courier.dispatchStatus) {
+        CourierStatus.available => 'Müsait',
+        CourierStatus.delivering =>
+          'Dağıtımda (${courier.activeOrderIds.length} paket)',
+        _ => 'Çevrimdışı',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final couriersAsync = ref.watch(allCouriersForBranchProvider(
+        (organizationId: widget.organizationId, branchId: widget.branchId)));
     return AlertDialog(
       title: const Text('Kuryeler'),
       content: SizedBox(
-        width: 480,
+        width: 520,
         child: couriersAsync.when(
           loading: () => const SizedBox(
               height: 120, child: Center(child: CircularProgressIndicator())),
@@ -64,6 +114,7 @@ class CourierRosterDialog extends ConsumerWidget {
               : SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       for (final courier in couriers)
                         ListTile(
@@ -76,16 +127,55 @@ class CourierRosterDialog extends ConsumerWidget {
                             courier.authEmail == null
                                 ? 'Giriş hesabı bağlı değil'
                                 : 'Giriş: ${courier.authEmail}',
+                            'Durum: ${_statusLabel(courier)}',
                           ].join('\n')),
                           isThreeLine: true,
-                          trailing: const Icon(Icons.edit_outlined),
                           onTap: () => showDialog<void>(
                             context: context,
                             builder: (_) => CourierEditDialog(
-                              organizationId: organizationId,
+                              organizationId: widget.organizationId,
                               courier: courier,
                             ),
                           ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (courier.dispatchStatus !=
+                                  CourierStatus.delivering)
+                                Tooltip(
+                                  message: 'Müsait / Çevrimdışı',
+                                  child: Switch(
+                                    key: Key('courierAvailable-${courier.id}'),
+                                    value: courier.dispatchStatus ==
+                                        CourierStatus.available,
+                                    onChanged: _busyCourierId == null
+                                        ? (value) =>
+                                            _setAvailable(courier, value)
+                                        : null,
+                                  ),
+                                ),
+                              IconButton(
+                                key: Key('editCourier-${courier.id}'),
+                                tooltip: 'Düzenle',
+                                icon: const Icon(Icons.edit_outlined),
+                                onPressed: () => showDialog<void>(
+                                  context: context,
+                                  builder: (_) => CourierEditDialog(
+                                    organizationId: widget.organizationId,
+                                    courier: courier,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (_error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: AppSpacing.sm),
+                          child: Text(_error!,
+                              key: const Key('rosterError'),
+                              style: AppTypography.bodySmall
+                                  .copyWith(color: AppColors.error)),
                         ),
                     ],
                   ),

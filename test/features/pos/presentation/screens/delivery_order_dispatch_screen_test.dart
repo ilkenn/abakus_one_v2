@@ -78,9 +78,11 @@ Future<void> _pumpScreen(WidgetTester tester, List<Order> orders) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        assignableDeliveryOrdersProvider(_branchId)
+        assignableDeliveryOrdersProvider(
+                (organizationId: 'org-1', branchId: _branchId))
             .overrideWith((ref) => Stream.value(orders)),
-        allCouriersForBranchProvider(_branchId)
+        allCouriersForBranchProvider(
+                (organizationId: 'org-1', branchId: _branchId))
             .overrideWith((ref) => Stream.value(const [])),
       ],
       child: const MaterialApp(
