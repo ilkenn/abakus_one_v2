@@ -8,6 +8,7 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../courier/presentation/screens/courier_dispatch_dashboard_screen.dart';
+import '../../../courier/presentation/screens/courier_work_screen.dart';
 import '../../../pos/presentation/screens/delivery_order_dispatch_screen.dart';
 import '../../../crm/presentation/screens/customer_notification_campaigns_admin_screen.dart';
 import '../../../crm/presentation/screens/customer_segmentation_admin_screen.dart';
@@ -710,6 +711,17 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
         onSignInAgain: () => Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const StaffSignInScreen()),
         ),
+      );
+    }
+
+    // 2026-11-12 (Faz 3b) — a courier works from "Kurye Ekranım", the
+    // server-backed courier app. It needs no branch context (an external
+    // courier is region-based and holds no branch access), so it opens
+    // before the context gate.
+    if (session.activeRole == StaffRole.courier) {
+      return CourierWorkScreen(
+        uid: session.actorId,
+        onSignOut: () => ref.read(staffSessionControllerProvider).signOut(),
       );
     }
 
