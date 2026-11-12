@@ -107,6 +107,9 @@ export { cancelTakeawayOrder } from "./cancelTakeawayOrder";
 export { cancelTakeawayOrderForStaff } from "./cancelTakeawayOrderForStaff";
 export { refundTakeawayOrder } from "./refundTakeawayOrder";
 export { respondToDeliveryOrder } from "./respondToDeliveryOrder";
+// 2026-11-11 — Faz 2: staff-opened Paket Servis orders and the local customer book.
+export { submitStaffDeliveryOrder } from "./submitStaffDeliveryOrder";
+export { searchPosCustomers } from "./posCustomerBook";
 export { advanceDeliveryOrderStatus } from "./advanceDeliveryOrderStatus";
 export { cancelDeliveryOrder } from "./cancelDeliveryOrder";
 export { cancelDeliveryOrderForStaff } from "./cancelDeliveryOrderForStaff";

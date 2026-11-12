@@ -149,6 +149,30 @@ test("submitTakeawayOrder staffEntry: a permitted, device-bound staff member cre
   assert.strictEqual(orderSnap.data()!.statusHistory[0].actor, "staff");
 });
 
+// 2026-11-11 — the staff entry is the confirmation: the order reaches the
+// KDS immediately, and its order-level kitchen note is stored.
+test("submitTakeawayOrder staffEntry: the order goes to the kitchen with its kitchen note", async () => {
+  const { organizationId, branchId, staff, deviceId, deviceSessionId, productId } = await setupFixture();
+
+  const { httpStatus, body } = await callCallable(SUBMIT_URL, {
+    mode: "staffEntry",
+    submissionKey: nextId("submission"),
+    organizationId, branchId, deviceId, deviceSessionId,
+    contactFirstName: "Ahmet", contactLastName: "Yılmaz", contactPhone: "+905551112233",
+    kitchenNote: "  Et orta-iyi pişsin  ",
+    items: [{ kind: "product", productId, quantity: 2 }],
+  }, staff.idToken);
+
+  assert.strictEqual(httpStatus, 200, JSON.stringify(body));
+  const orderId = body.result!.orderId as string;
+  const orderSnap = await db().collection("orders").doc(orderId).get();
+  assert.strictEqual(orderSnap.data()!.kitchenNote, "Et orta-iyi pişsin");
+  const workItems = await db().collection("kitchenWorkItems").where("orderId", "==", orderId).get();
+  assert.strictEqual(workItems.size, 1, "one kitchen work item per order line");
+  assert.strictEqual(workItems.docs[0].data().status, "queued");
+  assert.strictEqual(workItems.docs[0].data().quantity, 2);
+});
+
 test("submitTakeawayOrder staffEntry: a caller with no staff role at all is rejected", async () => {
   const { organizationId, branchId, deviceId, deviceSessionId, productId } = await setupFixture();
   const customer = await signUpAnonymously();

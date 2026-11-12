@@ -10,6 +10,7 @@ import {
 } from "./takeawayCatalog";
 import {
   resolveProductUnitPriceMinorUnits,
+  resolveModifierExtraPriceMinorUnits,
   resolveBowlUnitAdjustmentMinorUnits,
   buildOrderLine,
   computeOrderPriceBreakdown,
@@ -19,6 +20,8 @@ import {
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { requireStaffPermission, requireBranchAccess } from "./staffAuthorization";
 import { requireActiveDeviceSession } from "./trustedDevice";
+import { prepareKitchenWorkAndStockConsumption, applyKitchenWorkAndStockConsumption } from "./acceptOrderLine";
+import { preparePrintJobForAcceptance, applyPrintJobPlan } from "./printJobEngine";
 import { ORDER_PRICING_AUTHORITY_SERVER_V1 } from "./orderPricingAuthority";
 import {
   LOYALTY_ACCOUNTS_COLLECTION,
@@ -240,6 +243,19 @@ export function parseItems(raw: unknown): RawItem[] {
   });
 }
 
+/** 2026-11-11 — an order-level free-text note (kitchen / courier). */
+export const MAX_ORDER_NOTE_LENGTH = 500;
+
+export function sanitizeOrderNote(raw: unknown, field: string): string {
+  if (raw === undefined || raw === null) return "";
+  if (typeof raw !== "string") invalid(`${field} must be a string.`);
+  const trimmed = (raw as string).trim();
+  if (trimmed.length > MAX_ORDER_NOTE_LENGTH) {
+    invalid(`${field} must be at most ${MAX_ORDER_NOTE_LENGTH} characters.`);
+  }
+  return trimmed;
+}
+
 export function requireValidQuantity(raw: unknown, context: string): number {
   if (typeof raw !== "number" || !Number.isInteger(raw)) {
     invalid(`${context}: quantity must be an integer.`);
@@ -337,6 +353,9 @@ export function sanitizeExcludedIngredients(raw: unknown, context: string): stri
 export async function resolveProductModifiers(
   product: CanonicalMenuProduct,
   raw: unknown,
+  // 2026-11-11 — when given, each paid option is channel-priced
+  // (`resolveModifierExtraPriceMinorUnits`); omitted = catalog price.
+  pricing?: { channel: string; policy: import("./takeawayCatalog").CanonicalChannelPricingPolicy },
 ): Promise<OrderLineModifierInput[]> {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) invalid(`product "${product.id}": selectedModifiers must be an array.`);
@@ -366,7 +385,13 @@ export async function resolveProductModifiers(
       groupName: group!.name,
       optionId: option!.id,
       optionName: option!.name,
-      unitExtraPriceMinorUnits: option!.extraPriceMinorUnits,
+      unitExtraPriceMinorUnits: pricing
+        ? resolveModifierExtraPriceMinorUnits({
+            extraPriceMinorUnits: option!.extraPriceMinorUnits,
+            channel: pricing.channel,
+            policy: pricing.policy,
+          })
+        : option!.extraPriceMinorUnits,
       quantity: 1,
     });
   }
@@ -424,7 +449,7 @@ export async function buildProductLine(
   }
   if (!product!.isAvailable) invalid(`product "${productId}" is not available.`);
 
-  const modifiers = await resolveProductModifiers(product!, item.selectedModifiers);
+  const modifiers = await resolveProductModifiers(product!, item.selectedModifiers, { channel, policy });
   requireModifierGroupsSatisfied(product!, modifiers);
   // `unitPriceMinorUnits` is already channel-resolved here (includes
   // takeaway's own product-level surcharge, if any) — a catalog reward's
@@ -605,6 +630,7 @@ export const submitTakeawayOrder = onCall(
         staffUid: uid,
         submissionKey,
         rawItems,
+        kitchenNote: sanitizeOrderNote(data.kitchenNote, "kitchenNote"),
         contactFirstName,
         contactLastName,
         contactPhone,
@@ -888,6 +914,8 @@ async function submitStaffEntryOrder(
     staffUid: string;
     submissionKey: string;
     rawItems: RawItem[];
+    /** 2026-11-11 — order-level kitchen note (KDS + kitchen ticket). */
+    kitchenNote: string;
     contactFirstName: string;
     contactLastName: string;
     contactPhone: string;
@@ -967,6 +995,7 @@ async function submitStaffEntryOrder(
       path: "staffEntry",
       organizationId,
       branchId,
+      kitchenNote: params.kitchenNote,
       items: normalizedItems,
       contactFirstName,
       contactLastName,
@@ -987,6 +1016,38 @@ async function submitStaffEntryOrder(
     }
 
     const now = new Date();
+    const nowTimestamp = Timestamp.fromDate(now);
+
+    // 2026-11-11 — the staff entry IS the confirmation, so the order goes
+    // to the kitchen now, exactly like a confirmed customer order
+    // (`respondToTakeawayOrder`'s confirm path): kitchen work items, stock
+    // consumption and the kitchen print job, in this same transaction.
+    // Before this, a staff-entered Gel-Al order was written `confirmed`
+    // but never reached the KDS. Read phase — before the first write.
+    const stockPlan = await prepareKitchenWorkAndStockConsumption({
+      tx,
+      db,
+      organizationId,
+      branchId,
+      orderId,
+      channel: "takeaway",
+      acceptedLines: lines.map((line, index) => ({
+        orderLineId: `kt-${orderId}-line-${index}`,
+        productId: line.productId,
+        quantity: line.quantity,
+      })),
+      performedByUid: staffUid,
+      now: nowTimestamp,
+    });
+    const printPlan = await preparePrintJobForAcceptance({
+      tx,
+      db,
+      organizationId,
+      branchId,
+      orderId,
+      stationId: "shared",
+      now: nowTimestamp,
+    });
 
     tx.set(
       orderRef,
@@ -1018,8 +1079,11 @@ async function submitStaffEntryOrder(
         campaign: null,
         discountMinorUnits: 0,
         actor: "staff",
+        kitchenNote: params.kitchenNote,
       }),
     );
+    applyKitchenWorkAndStockConsumption(tx, db, stockPlan);
+    applyPrintJobPlan(tx, db, printPlan);
 
     return { orderId, orderNumber, duplicate: false };
   });
@@ -2017,6 +2081,8 @@ function buildOrderDocument(params: {
    * `statusHistory[0].actor`; `"customer"` preserves every pre-existing
    * caller's exact previous behavior unchanged. */
   actor: "customer" | "staff";
+  /** 2026-11-11 — order-level kitchen note; staff entry only. */
+  kitchenNote?: string;
 }) {
   const currencyCode = "TRY";
   const moneyField = (minorUnits: number) => ({ minorUnits, currencyCode });
@@ -2138,7 +2204,7 @@ function buildOrderDocument(params: {
       cancelled: null,
     },
     customerNote: "",
-    kitchenNote: "",
+    kitchenNote: params.kitchenNote ?? "",
     takeawaySubmissionFingerprint: params.fingerprint,
   };
 }

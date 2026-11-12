@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "posCustomers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "displayNameNormalized", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "customerDirectoryEntries",
       "queryScope": "COLLECTION",
       "fields": [
