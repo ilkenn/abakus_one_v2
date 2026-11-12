@@ -11658,3 +11658,25 @@ passing, 0 failures.
   catalog drink price; Flutter — phone-order screen 12, courier slip / kitchen notes / mapping 6, dispatch
   board 4, delivery / takeaway pricing.
 - **Visual Review Bekleniyor**.
+
+### POS Paket Servis — Faz 2b: kurye hesap kapatma, kapıda tahsilat → kasa ve Z raporu (2026-11-11)
+
+- Server (ADR-075): `getCourierSettlementPreview` + `settleCourierReturn` — all open orders on a returning
+  courier close in one transaction: one `deliveryCollections` record per delivered order (actual method,
+  audited when it differs from the planned one; optional slip), orders completed, cancelled ones dropped,
+  courier available, received cash booked as a `courierCashIn` movement in the till's active cash session,
+  `courierSettlements` record. A cash difference only with `approveCashReconciliation` (manager) and a
+  reason ("Kurye Farkı"). Idempotent.
+- Z report / Gün Sonu: collections join Nakit / Kredi Kartı / meal-card brand lines; "Paket Servis
+  Tahsilatı" and "Kurye Farkı" lines (screen, preview text, printed report). Cash register screen labels
+  the movement "Kurye Tahsilatı".
+- POS: dispatch board → "Kurye Hesap Kapat" (POS only) → courier picker → `PosCourierSettlementScreen`:
+  orders with amount and method chips (Nakit / POS / Pluxee / Multinet / Setcard / Edenred, default the
+  planned one), slip for non-cash, "Teslim Edilemedi" through the existing staff cancellation, expected
+  vs. received cash, difference notice + mandatory reason, no-cash-session notice. REST on Windows.
+- Not done: removing the in-memory `pos/domain/courier_settlement/*` model — the courier app's delivery
+  completion still uses it (see ADR-075).
+- Tests: functions — 4 pure + 4 emulator (mixed tenders, manager-only difference, all-at-once / cancelled,
+  idempotency / inactive cash session) and the Z report via `getDailyRevenueSummary`; Flutter — settlement
+  screen 6 + Z report lines.
+- **Visual Review Bekleniyor**.

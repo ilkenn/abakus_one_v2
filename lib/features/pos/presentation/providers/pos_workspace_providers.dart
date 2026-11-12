@@ -16,6 +16,7 @@ import '../../application/use_cases/print_kitchen_ticket.dart';
 import '../../application/use_cases/print_table_receipt.dart';
 import '../../application/use_cases/sync_offline_payment_outbox.dart';
 import '../../data/cash_register_gateway.dart';
+import '../../data/courier_settlement_gateway.dart';
 import '../../data/fiscal_offline_gateway.dart';
 import '../../data/offline_lease_store.dart';
 import '../../data/offline_payment_outbox_repository.dart';
@@ -50,6 +51,14 @@ final posPhoneOrderGatewayProvider = Provider<PosPhoneOrderGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
   if (isFirebaseReady) return FirebasePosPhoneOrderGateway();
   return const UnavailablePosPhoneOrderGateway();
+});
+
+/// 2026-11-11 (Faz 2b) — courier return settlement ("Kurye Hesap Kapat").
+final courierSettlementGatewayProvider =
+    Provider<CourierSettlementGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) return FirebaseCourierSettlementGateway();
+  return const UnavailableCourierSettlementGateway();
 });
 
 /// "Çok Tercih Edilenler" (Top 20), 2026-11-03 — product owner-approved

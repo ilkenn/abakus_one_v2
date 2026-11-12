@@ -13,6 +13,8 @@ import '../../../orders/domain/models/order.dart';
 import '../../domain/delivery_neighborhood_clusterer.dart';
 import '../providers/courier_dispatch_dependencies_provider.dart';
 import '../widgets/print_courier_slip_action.dart';
+import '../providers/pos_workspace_providers.dart';
+import 'pos_courier_settlement_screen.dart';
 
 /// AP-6 Sprint 2/3 — the branch's active delivery orders (`ready`/
 /// `readyForPickup`/`outForDelivery`), grouped into neighborhood cluster
@@ -47,6 +49,45 @@ class _DeliveryOrderDispatchScreenState
       order.courierType != CourierType.marketplace;
 
   String? _assigningOrderId;
+
+  /// 2026-11-11 (Faz 2b) — pick the returning courier, then close their
+  /// account on [PosCourierSettlementScreen].
+  Future<void> _openSettlement(List<Courier> couriers) async {
+    final ctx = ref.read(posDeviceContextProvider);
+    if (ctx == null) return;
+    final candidates = couriers
+        .where((c) => c.type == CourierType.internal)
+        .toList()
+      ..sort(
+          (a, b) => b.activeOrderIds.length.compareTo(a.activeOrderIds.length));
+    final courierId = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Hangi kurye döndü?'),
+        children: [
+          if (candidates.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(AppSpacing.md),
+              child: Text('Bu şubede kayıtlı dükkan kuryesi yok.'),
+            ),
+          for (final courier in candidates)
+            SimpleDialogOption(
+              key: Key('settleCourier-${courier.id}'),
+              onPressed: () => Navigator.of(dialogContext).pop(courier.id),
+              child: Text(
+                '${courier.displayName} · ${courier.activeOrderIds.length} '
+                'açık sipariş',
+              ),
+            ),
+        ],
+      ),
+    );
+    if (courierId == null || !mounted) return;
+    await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (_) =>
+          PosCourierSettlementScreen(ctx: ctx, courierId: courierId),
+    ));
+  }
 
   void _snack(String message) => ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
@@ -107,6 +148,17 @@ class _DeliveryOrderDispatchScreenState
       appBar: AppBar(
         title: const Text('Kurye Dağıtımı'),
         actions: [
+          // 2026-11-11 (Faz 2b) — closing a returning courier's account
+          // needs the till's trusted device (and its cash session), so it
+          // is offered on the POS only, not in the Admin panel.
+          if (ref.watch(posDeviceContextProvider) != null)
+            TextButton.icon(
+              key: const Key('openCourierSettlementButton'),
+              icon: const Icon(Icons.point_of_sale_rounded),
+              label: const Text('Kurye Hesap Kapat'),
+              onPressed: () => _openSettlement(
+                  couriersAsync.valueOrNull ?? const <Courier>[]),
+            ),
           IconButton(
             icon: const Icon(Icons.storefront_outlined),
             tooltip: 'Dış Restoran Siparişi Kaydet',
