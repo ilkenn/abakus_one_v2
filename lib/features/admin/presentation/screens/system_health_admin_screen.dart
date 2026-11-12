@@ -182,10 +182,14 @@ class _SystemHealthAdminScreenState
                       contentPadding: EdgeInsets.zero,
                       title: Text(entry.value),
                       trailing: Icon(
-                        flagsService.isEnabled(entry.key)
+                        flagsService.isEnabled(entry.key,
+                                defaultValue:
+                                    FeatureFlagsDefaults.valueFor(entry.key))
                             ? Icons.check_circle_outline
                             : Icons.radio_button_unchecked,
-                        color: flagsService.isEnabled(entry.key)
+                        color: flagsService.isEnabled(entry.key,
+                                defaultValue:
+                                    FeatureFlagsDefaults.valueFor(entry.key))
                             ? AppColors.success
                             : AppColors.textSecondary,
                       ),

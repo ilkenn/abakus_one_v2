@@ -1,5 +1,7 @@
 import 'package:abakus_one_v2/core/errors/business_rule_violation.dart';
 import 'package:abakus_one_v2/core/services/feature_flags/feature_flags_keys.dart';
+import 'package:abakus_one_v2/core/services/feature_flags/remote_config_feature_flags_service.dart';
+import 'package:abakus_one_v2/core/services/remote_config/noop_remote_config_service.dart';
 import 'package:abakus_one_v2/features/entitlements/application/use_cases/check_module_access.dart';
 import 'package:abakus_one_v2/features/entitlements/application/use_cases/grant_module_entitlement.dart';
 import 'package:abakus_one_v2/features/entitlements/application/use_cases/set_entitlement_status.dart';
@@ -189,6 +191,43 @@ void main() {
       expect(result.denialReason, ModuleAccessDenialReason.notEntitled);
     });
 
+    // 2026-11-12 — regression: the gate must use each flag's documented
+    // default (`FeatureFlagsDefaults`, all `true` since ADR-079), not the
+    // service's bare `false`. With Remote Config not live (the real app
+    // today), "Teslimat Dağıtımı" stayed "Bu özellik henüz
+    // etkinleştirilmedi" although the default had been switched on.
+    test(
+        'an entitled module opens on the flag default when Remote Config has '
+        'no value (not live)', () async {
+      final useCase = CheckModuleAccess(
+        entitlementRepository: InMemoryEntitlementGrantRepository(seed: [
+          EntitlementGrant(
+            id: 'g-courier',
+            module: EntitlementModule.courier,
+            scopeType: EntitlementScopeType.branch,
+            scopeId: 'branch-1',
+            status: EntitlementStatus.active,
+            grantedByStaffId: 'admin-1',
+            grantedAt: DateTime(2026, 1, 1),
+            revision: 1,
+          ),
+        ]),
+        featureFlagsService:
+            RemoteConfigFeatureFlagsService(const NoOpRemoteConfigService()),
+        authorizationPolicy: const AllowAllEntitlementPolicy(),
+      );
+
+      final result = await useCase(
+        module: EntitlementModule.courier,
+        scopeType: EntitlementScopeType.branch,
+        scopeId: 'branch-1',
+        actorStaffId: 'manager-1',
+      );
+
+      expect(result.denialReason, isNull);
+      expect(result.isGranted, isTrue);
+    });
+
     test('denies featureDisabled when entitled but flag is off', () async {
       final entitlementRepository = InMemoryEntitlementGrantRepository(seed: [
         EntitlementGrant(
@@ -204,7 +243,10 @@ void main() {
       ]);
       final useCase = CheckModuleAccess(
         entitlementRepository: entitlementRepository,
-        featureFlagsService: FakeFeatureFlagsService(),
+        // Switched off remotely — the default is `true` now (ADR-079).
+        featureFlagsService: FakeFeatureFlagsService(
+          disabledKeys: {FeatureFlagsKeys.inventoryEnabled},
+        ),
         authorizationPolicy: const AllowAllEntitlementPolicy(),
       );
 

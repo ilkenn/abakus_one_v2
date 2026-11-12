@@ -127,7 +127,13 @@ class CheckModuleAccess {
     }
 
     final flagKey = _featureFlagKeyByModule[module]!;
-    if (!_featureFlagsService.isEnabled(flagKey)) {
+    // 2026-11-12 (ADR-079) — the flag's documented default, not the
+    // service's bare `false`: with Remote Config not live, every entitled
+    // module was reported "Bu özellik henüz etkinleştirilmedi".
+    if (!_featureFlagsService.isEnabled(
+      flagKey,
+      defaultValue: FeatureFlagsDefaults.valueFor(flagKey),
+    )) {
       return const ModuleAccessResult.denied(
         ModuleAccessDenialReason.featureDisabled,
       );

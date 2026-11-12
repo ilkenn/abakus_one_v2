@@ -197,6 +197,12 @@ void main() {
         branchAccess: {'branch-1'},
       ),
       extraOverrides: [
+        // 2026-11-12 (ADR-079) — flags default ON now; this test switches
+        // the flag off explicitly (as Remote Config would).
+        featureFlagsServiceProvider.overrideWithValue(
+          FakeFeatureFlagsService(
+              disabledKeys: {FeatureFlagsKeys.reservationsEnabled}),
+        ),
         adminReservationGatewayProvider
             .overrideWithValue(FakeAdminReservationGateway()),
         adminReservationRepositoryProvider
@@ -608,6 +614,13 @@ void main() {
         activeRole: StaffRole.manager,
         branchAccess: {'branch-1'},
       ),
+      // ADR-079 — flags default ON; switched off explicitly here.
+      extraOverrides: [
+        featureFlagsServiceProvider.overrideWithValue(
+          FakeFeatureFlagsService(
+              disabledKeys: {FeatureFlagsKeys.menuImportEnabled}),
+        ),
+      ],
     );
 
     await tester.dragUntilVisible(

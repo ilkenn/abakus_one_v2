@@ -66,10 +66,16 @@ abstract final class FeatureFlagsKeys {
 /// whenever the flag is unknown, initialization hasn't completed, or
 /// Remote Config fetch/initialization failed.
 ///
-/// Per Sprint 2's explicit rule ("critical functionality must not become
-/// enabled merely because Remote Config initialization fails"), every flag
-/// gating a feature not yet built or activated defaults to `false`
-/// (fail-closed). [otpLoginEnabled] is the one exception: it gates the
+/// 2026-11-12 — product owner decision: every phase and module is now
+/// built and launched, so EVERY flag defaults to `true` (no "Bu özellik
+/// henüz etkinleştirilmedi" gate left from development). A module can
+/// still be turned off remotely once Remote Config is live, and
+/// [ModuleEntitlementGate] still requires an active entitlement grant and
+/// the actor's role permission.
+///
+/// Historical rule (superseded): per Sprint 2 ("critical functionality must
+/// not become enabled merely because Remote Config initialization fails"),
+/// flags gating features not yet built defaulted to `false` (fail-closed). [otpLoginEnabled] is the one exception: it gates the
 /// app's *only* existing authentication flow, already shipped and in use
 /// — defaulting it to `false` on a Remote Config outage would make the
 /// entire app unusable rather than fail safely, so it defaults to `true`
@@ -78,35 +84,68 @@ abstract final class FeatureFlagsDefaults {
   FeatureFlagsDefaults._();
 
   static const bool otpLoginEnabled = true;
-  static const bool bowlBuilderEnabled = false;
-  static const bool fortuneWheelEnabled = false;
-  static const bool reservationsEnabled = false;
-  static const bool qrScannerEnabled = false;
+  static const bool bowlBuilderEnabled = true;
+  static const bool fortuneWheelEnabled = true;
+  static const bool reservationsEnabled = true;
+  static const bool qrScannerEnabled = true;
 
   // Phase 7 — all fail-closed by default, matching every other
   // not-yet-launched flag above ("critical functionality must not become
   // enabled merely because Remote Config initialization fails" doesn't
   // apply here — none of these are critical, shipped functionality yet).
-  static const bool smartRestaurantSetupEnabled = false;
-  static const bool menuImportEnabled = false;
-  static const bool inventoryEnabled = false;
-  static const bool recipesEnabled = false;
-  static const bool nutritionEnabled = false;
-  static const bool allergensEnabled = false;
-  static const bool purchasingEnabled = false;
-  static const bool suppliersEnabled = false;
-  static const bool costingEnabled = false;
-  static const bool profitabilityEnabled = false;
-  static const bool advancedReportingEnabled = false;
+  static const bool smartRestaurantSetupEnabled = true;
+  static const bool menuImportEnabled = true;
+  static const bool inventoryEnabled = true;
+  static const bool recipesEnabled = true;
+  static const bool nutritionEnabled = true;
+  static const bool allergensEnabled = true;
+  static const bool purchasingEnabled = true;
+  static const bool suppliersEnabled = true;
+  static const bool costingEnabled = true;
+  static const bool profitabilityEnabled = true;
+  static const bool advancedReportingEnabled = true;
 
   // Phase 8 — same fail-closed default as every other not-yet-launched
   // flag above.
-  static const bool crmEnabled = false;
-  static const bool loyaltyEnabled = false;
-  static const bool posModuleEnabled = false;
-  static const bool kdsModuleEnabled = false;
-  static const bool courierModuleEnabled = false;
-  static const bool marketplaceEnabled = false;
-  static const bool paymentsEnabled = false;
-  static const bool aiEnabled = false;
+  static const bool crmEnabled = true;
+  static const bool loyaltyEnabled = true;
+  static const bool posModuleEnabled = true;
+  static const bool kdsModuleEnabled = true;
+  static const bool courierModuleEnabled = true;
+  static const bool marketplaceEnabled = true;
+  static const bool paymentsEnabled = true;
+  static const bool aiEnabled = true;
+
+  /// 2026-11-12 (ADR-079) — the documented default of [key], so every
+  /// caller (notably `CheckModuleAccess`) reads the SAME default instead of
+  /// `FeatureFlagsService.isEnabled`'s bare `false`. Unknown keys stay
+  /// fail-closed.
+  static bool valueFor(String key) => switch (key) {
+        FeatureFlagsKeys.otpLoginEnabled => otpLoginEnabled,
+        FeatureFlagsKeys.bowlBuilderEnabled => bowlBuilderEnabled,
+        FeatureFlagsKeys.fortuneWheelEnabled => fortuneWheelEnabled,
+        FeatureFlagsKeys.reservationsEnabled => reservationsEnabled,
+        FeatureFlagsKeys.qrScannerEnabled => qrScannerEnabled,
+        FeatureFlagsKeys.smartRestaurantSetupEnabled =>
+          smartRestaurantSetupEnabled,
+        FeatureFlagsKeys.menuImportEnabled => menuImportEnabled,
+        FeatureFlagsKeys.inventoryEnabled => inventoryEnabled,
+        FeatureFlagsKeys.recipesEnabled => recipesEnabled,
+        FeatureFlagsKeys.nutritionEnabled => nutritionEnabled,
+        FeatureFlagsKeys.allergensEnabled => allergensEnabled,
+        FeatureFlagsKeys.purchasingEnabled => purchasingEnabled,
+        FeatureFlagsKeys.suppliersEnabled => suppliersEnabled,
+        FeatureFlagsKeys.costingEnabled => costingEnabled,
+        FeatureFlagsKeys.profitabilityEnabled => profitabilityEnabled,
+        FeatureFlagsKeys.advancedReportingEnabled => advancedReportingEnabled,
+        FeatureFlagsKeys.crmEnabled => crmEnabled,
+        FeatureFlagsKeys.loyaltyEnabled => loyaltyEnabled,
+        FeatureFlagsKeys.posModuleEnabled => posModuleEnabled,
+        FeatureFlagsKeys.kdsModuleEnabled => kdsModuleEnabled,
+        FeatureFlagsKeys.courierModuleEnabled => courierModuleEnabled,
+        FeatureFlagsKeys.marketplaceEnabled => marketplaceEnabled,
+        FeatureFlagsKeys.paymentsEnabled => paymentsEnabled,
+        FeatureFlagsKeys.aiEnabled => aiEnabled,
+        _ => false,
+      };
 }

@@ -31,11 +31,16 @@ class DenyAllEntitlementPolicy implements PosAuthorizationPolicy {
 }
 
 /// A configurable [FeatureFlagsService] fixture — [enabledKeys] are
-/// `isEnabled` `true`, everything else falls back to [defaultValue].
+/// `isEnabled` `true`, [disabledKeys] are `false` (a flag switched off
+/// remotely), everything else falls back to [defaultValue].
 class FakeFeatureFlagsService implements FeatureFlagsService {
-  FakeFeatureFlagsService({this.enabledKeys = const {}});
+  FakeFeatureFlagsService({
+    this.enabledKeys = const {},
+    this.disabledKeys = const {},
+  });
 
   final Set<String> enabledKeys;
+  final Set<String> disabledKeys;
   bool _isInitialized = false;
 
   @override
@@ -46,7 +51,11 @@ class FakeFeatureFlagsService implements FeatureFlagsService {
 
   @override
   bool isEnabled(String key, {bool defaultValue = false}) =>
-      enabledKeys.contains(key) ? true : defaultValue;
+      disabledKeys.contains(key)
+          ? false
+          : enabledKeys.contains(key)
+              ? true
+              : defaultValue;
 
   @override
   String getString(String key, {String defaultValue = ''}) => defaultValue;
