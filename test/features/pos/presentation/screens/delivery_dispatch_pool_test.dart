@@ -47,6 +47,29 @@ class _FakePoolGateway implements CourierPoolGateway {
   @override
   Future<void> respond({required String requestId, required bool approve}) =>
       _record('${approve ? 'approve' : 'reject'}:$requestId');
+
+  BranchPoolSettings settings = const BranchPoolSettings(
+      defaultDeliveryDistrictId: null, serviceDistrictIds: ['kadikoy']);
+
+  @override
+  Future<BranchPoolSettings> branchSettings({
+    required String organizationId,
+    required String branchId,
+  }) async =>
+      settings;
+
+  @override
+  Future<BranchPoolSettings> setDefaultDistrict({
+    required String organizationId,
+    required String branchId,
+    required String districtId,
+  }) async {
+    await _record('default:$districtId');
+    settings = BranchPoolSettings(
+        defaultDeliveryDistrictId: districtId.isEmpty ? null : districtId,
+        serviceDistrictIds: settings.serviceDistrictIds);
+    return settings;
+  }
 }
 
 class _FakeRequestRepository implements CourierPoolRequestRepository {

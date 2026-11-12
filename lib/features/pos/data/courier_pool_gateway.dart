@@ -13,6 +13,39 @@ abstract interface class CourierPoolGateway {
   Future<void> publish({required String orderId});
   Future<void> withdraw({required String orderId});
   Future<void> respond({required String requestId, required bool approve});
+
+  /// 2026-11-12 (Faz 3b) — the branch's pool region: its default district
+  /// and the districts its service areas cover.
+  Future<BranchPoolSettings> branchSettings({
+    required String organizationId,
+    required String branchId,
+  });
+
+  /// Manager-and-above. An empty [districtId] clears the default.
+  Future<BranchPoolSettings> setDefaultDistrict({
+    required String organizationId,
+    required String branchId,
+    required String districtId,
+  });
+}
+
+class BranchPoolSettings {
+  const BranchPoolSettings({
+    required this.defaultDeliveryDistrictId,
+    required this.serviceDistrictIds,
+  });
+
+  final String? defaultDeliveryDistrictId;
+  final List<String> serviceDistrictIds;
+
+  factory BranchPoolSettings.fromWire(Map<String, dynamic> data) =>
+      BranchPoolSettings(
+        defaultDeliveryDistrictId: data['defaultDeliveryDistrictId'] as String?,
+        serviceDistrictIds: [
+          for (final d in (data['serviceDistrictIds'] as List?) ?? const [])
+            if (d is String) d,
+        ],
+      );
 }
 
 class CourierPoolException implements Exception {
@@ -36,19 +69,20 @@ class FirebaseCourierPoolGateway implements CourierPoolGateway {
   bool get _useRest =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
-  Future<void> _call(String name, Map<String, dynamic> data) async {
+  Future<Map<String, dynamic>> _call(
+      String name, Map<String, dynamic> data) async {
     if (_useRest) {
       try {
-        await _restClient.call(name, data);
-        return;
+        return await _restClient.call(name, data);
       } on RestCallableException catch (error) {
         throw CourierPoolException(error.code, error.message);
       }
     }
     try {
-      await functions.FirebaseFunctions.instance
+      final result = await functions.FirebaseFunctions.instance
           .httpsCallable(name)
           .call<Map<String, dynamic>>(data);
+      return Map<String, dynamic>.from(result.data);
     } on functions.FirebaseFunctionsException catch (error) {
       throw CourierPoolException(
           error.code, error.message ?? 'İşlem gerçekleştirilemedi.');
@@ -69,6 +103,28 @@ class FirebaseCourierPoolGateway implements CourierPoolGateway {
         'requestId': requestId,
         'decision': approve ? 'approve' : 'reject',
       });
+
+  @override
+  Future<BranchPoolSettings> branchSettings({
+    required String organizationId,
+    required String branchId,
+  }) async =>
+      BranchPoolSettings.fromWire(await _call('getBranchPoolSettings',
+          {'organizationId': organizationId, 'branchId': branchId}));
+
+  @override
+  Future<BranchPoolSettings> setDefaultDistrict({
+    required String organizationId,
+    required String branchId,
+    required String districtId,
+  }) async {
+    await _call('setBranchDefaultDeliveryDistrict', {
+      'organizationId': organizationId,
+      'branchId': branchId,
+      'districtId': districtId,
+    });
+    return branchSettings(organizationId: organizationId, branchId: branchId);
+  }
 }
 
 class UnavailableCourierPoolGateway implements CourierPoolGateway {
@@ -86,6 +142,21 @@ class UnavailableCourierPoolGateway implements CourierPoolGateway {
   @override
   Future<void> respond(
           {required String requestId, required bool approve}) async =>
+      throw _error;
+
+  @override
+  Future<BranchPoolSettings> branchSettings({
+    required String organizationId,
+    required String branchId,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<BranchPoolSettings> setDefaultDistrict({
+    required String organizationId,
+    required String branchId,
+    required String districtId,
+  }) async =>
       throw _error;
 }
 

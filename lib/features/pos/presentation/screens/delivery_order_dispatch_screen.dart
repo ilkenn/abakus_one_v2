@@ -15,6 +15,7 @@ import '../../../orders/domain/models/order_status.dart';
 import '../../data/courier_pool_gateway.dart';
 import '../../domain/delivery_neighborhood_clusterer.dart';
 import '../providers/courier_dispatch_dependencies_provider.dart';
+import '../widgets/courier_roster_dialogs.dart';
 import '../widgets/print_courier_slip_action.dart';
 import '../providers/pos_workspace_providers.dart';
 import 'pos_courier_settlement_screen.dart';
@@ -278,6 +279,37 @@ class _DeliveryOrderDispatchScreenState
                 branchId: widget.branchId,
               ),
             ),
+          ),
+          // 2026-11-12 (Faz 3b) — courier roster (type, districts, linked
+          // sign-in) and the branch's default pool district.
+          PopupMenuButton<String>(
+            key: const Key('courierSetupMenu'),
+            tooltip: 'Kurye Ayarları',
+            icon: const Icon(Icons.manage_accounts_outlined),
+            onSelected: (value) => showDialog<void>(
+              context: context,
+              builder: (_) => value == 'roster'
+                  ? CourierRosterDialog(
+                      organizationId: widget.organizationId,
+                      branchId: widget.branchId,
+                    )
+                  : BranchPoolSettingsDialog(
+                      organizationId: widget.organizationId,
+                      branchId: widget.branchId,
+                    ),
+            ),
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                key: Key('courierSetupRoster'),
+                value: 'roster',
+                child: Text('Kuryeler'),
+              ),
+              PopupMenuItem(
+                key: Key('courierSetupRegion'),
+                value: 'region',
+                child: Text('Havuz Bölge Ayarları'),
+              ),
+            ],
           ),
         ],
       ),

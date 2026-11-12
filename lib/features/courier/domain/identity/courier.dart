@@ -40,6 +40,8 @@ class Courier {
     this.dispatchStatus = CourierStatus.offline,
     this.returnedAt,
     this.activeOrderIds = const [],
+    this.serviceDistrictIds = const [],
+    this.authEmail,
   });
 
   final String id;
@@ -85,6 +87,14 @@ class Courier {
   /// before `markCourierReturned.ts` will accept a return.
   final List<String> activeOrderIds;
 
+  /// 2026-11-12 (Faz 3a/3b) — an external (`pool`) courier's districts
+  /// (slugs) whose pool packages it sees.
+  final List<String> serviceDistrictIds;
+
+  /// Faz 3b — the e-mail of the staff sign-in linked to this courier
+  /// (`setCourier`'s `authEmail`), `null` when none is linked.
+  final String? authEmail;
+
   bool eligibleForBranch(String branchId) =>
       branchId == primaryBranchId || eligibleBranchIds.contains(branchId);
 
@@ -100,6 +110,8 @@ class Courier {
     CourierStatus? dispatchStatus,
     DateTime? returnedAt,
     List<String>? activeOrderIds,
+    List<String>? serviceDistrictIds,
+    String? authEmail,
   }) {
     return Courier(
       id: id,
@@ -116,6 +128,8 @@ class Courier {
       dispatchStatus: dispatchStatus ?? this.dispatchStatus,
       returnedAt: returnedAt ?? this.returnedAt,
       activeOrderIds: activeOrderIds ?? this.activeOrderIds,
+      serviceDistrictIds: serviceDistrictIds ?? this.serviceDistrictIds,
+      authEmail: authEmail ?? this.authEmail,
     );
   }
 }

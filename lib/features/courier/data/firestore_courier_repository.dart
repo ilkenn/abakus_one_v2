@@ -85,6 +85,10 @@ class FirestoreCourierRepository implements CourierRepository {
       activeOrderIds:
           (data['activeOrderIds'] as List?)?.map((e) => e as String).toList() ??
               const [],
+      serviceDistrictIds:
+          (data['serviceDistrictIds'] as List?)?.whereType<String>().toList() ??
+              const [],
+      authEmail: data['authEmail'] as String?,
     );
   }
 }
