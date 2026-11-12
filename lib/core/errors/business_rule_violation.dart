@@ -722,60 +722,6 @@ final class UnknownCourierSettlementEntityViolation
   String get description => 'Unknown $entityName: "$id"';
 }
 
-/// `OpenCourierSettlementSession` was called for a courier that already
-/// has a non-closed `CourierSettlementSession` — only one active
-/// settlement session per courier is ever permitted.
-final class CourierSettlementSessionAlreadyActiveViolation
-    extends BusinessRuleViolation {
-  const CourierSettlementSessionAlreadyActiveViolation({
-    required this.courierId,
-  });
-
-  final String courierId;
-
-  @override
-  String get description =>
-      'Courier "$courierId" already has an active settlement session';
-}
-
-/// A `CourierCashCollection`/`CourierCashDeclaration` was attempted
-/// against a `CourierSettlementSession` that isn't in a status permitting
-/// it.
-final class CourierSettlementSessionNotActiveViolation
-    extends BusinessRuleViolation {
-  const CourierSettlementSessionNotActiveViolation({
-    required this.sessionId,
-    required this.statusName,
-  });
-
-  final String sessionId;
-  final String statusName;
-
-  @override
-  String get description =>
-      'Courier settlement session "$sessionId" is not active '
-      '(status: $statusName)';
-}
-
-/// A `CourierSettlementSession` transition that
-/// `CourierSettlementSessionStatusTransitions.canTransition` does not
-/// permit was attempted.
-final class InvalidCourierSettlementSessionTransitionViolation
-    extends BusinessRuleViolation {
-  const InvalidCourierSettlementSessionTransitionViolation({
-    required this.fromStatusName,
-    required this.toStatusName,
-  });
-
-  final String fromStatusName;
-  final String toStatusName;
-
-  @override
-  String get description =>
-      'Invalid courier settlement session transition: $fromStatusName -> '
-      '$toStatusName';
-}
-
 /// A caller referenced a `KitchenWorkItem`/`KitchenEvent`/
 /// `KitchenDisplayDevice`/`KitchenDisplaySession`/`KitchenRoutingRule` id
 /// that does not exist in the relevant repository (Phase 4).
