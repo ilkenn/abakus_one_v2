@@ -11736,7 +11736,8 @@ passing, 0 failures.
   - **Kuryeler:** roster plus edit (type, districts, sign-in e-mail);
   - **Havuz Bölge Ayarları:** default district.
 - Cleanup: the old in-memory courier settlement model, `CourierHomeScreen` / `ActiveDeliveryScreen` /
-  `OperationsHubScreen` and their tests are removed (see ADR-077 for what is kept and why).
+  `OperationsHubScreen` and their tests are removed (see ADR-077 for what is kept and why); follow-up: `CourierDeliveryHistoryScreen`, `CourierEarningsScreen` and the three unused
+  `CourierSettlementSession*Violation` classes removed too.
 - Tests:
   - functions: 2 new emulator tests (e-mail link and edit keeps state; default district), 35 total on
     the courier suites;
@@ -11746,3 +11747,36 @@ passing, 0 failures.
   - Faz 3c: FCM to staff and courier, real-device test;
   - native Firebase Auth session for the Firestore listeners, unverified on a device.
 - **Visual Review Bekleniyor**.
+
+### Kurye havuzu — Faz 3c: FCM bildirimleri + gerçek cihaz testi hazırlığı (2026-11-12)
+
+- Server (ADR-078): FCM to the branch's approving staff on a new pool request, and to the courier on
+  assignment / reservation and on a lost or rejected request. Each push is sent once, recorded, and
+  invalid tokens are revoked.
+- App:
+  - a staff or courier sign-in registers the phone for push (not on the Windows POS);
+  - foreground pushes are shown as system notifications (`flutter_local_notifications`, `courier_alerts`
+    channel);
+  - a tap opens the dispatch board (staff) or Kurye Ekranım (courier); `/admin?nav=` is supported.
+- Platform: Android desugaring; iOS notification delegate and remote-notification background mode.
+- Device test: `docs/courier_pool_device_test.md` (prerequisites, deploy, data, a 10-step scenario) and
+  `functions/scripts/seed_courier_pool_device_test.mjs` (dev only).
+- Tests:
+  - functions: 2 emulator tests (recipients and content end to end; once-only and token revocation)
+    and 1 pure test (copy);
+  - Flutter: push tap router 4.
+- Not done:
+  - deploy to `abakus-one-dev` (awaiting approval);
+  - iOS Push capability and APNs key (product owner);
+  - the real-device run itself.
+- **Visual Review Bekleniyor** / **Cihaz testi bekleniyor**.
+
+### Düzeltme — Paket Servis panosu yüklenmiyordu; tüm özellik bayrakları açık (2026-11-12)
+
+- POS → Paket Servis "Teslimat siparişleri yüklenemedi.": the dispatch queries now pin `organizationId`,
+  which the `orders`/`couriers` read rules require. The bug dated from AP-6. Rules regression test
+  added (ADR-079).
+- Admin → Teslimat Dağıtımı "Bu özellik henüz etkinleştirilmedi": every `FeatureFlagsDefaults` value
+  is now `true` (product owner); the entitlement and role checks stay.
+- Verified: Flutter tests, analyzer, rules tests; Windows POS restarted on the new code.
+  **Visual Review Bekleniyor**.

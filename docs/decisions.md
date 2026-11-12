@@ -20980,3 +20980,135 @@ Product owner decisions (2026-11-12):
   - three now-unused `CourierSettlementSession*Violation` classes in `business_rule_violation.dart`.
 - On a real device, the Firestore listeners need the native Firebase Auth session from the staff
   sign-in. This is not verified yet; it is part of Faz 3c with FCM.
+- Follow-up cleanup (2026-11-12, product owner): `CourierDeliveryHistoryScreen`, `CourierEarningsScreen`
+  and the three `CourierSettlementSession*Violation` classes were removed as well. The in-memory
+  shift/location infrastructure stays.
+
+## ADR-078 — FCM push for the courier pool: approving staff and couriers (2026-11-12)
+
+- Tarih: 2026-11-12
+- Durum: Accepted (Faz 3c; real-device verification pending, see `docs/courier_pool_device_test.md`)
+
+### Context
+
+Faz 3 needs instant notifications. Staff who can approve should learn about a new external-courier
+request; a courier should learn when a package lands on it. Product owner decisions:
+
+- **Courier events:** assignment, reservation and approval, plus information pushes (given to another
+  courier / withdrawn / closed / rejected).
+- **Foreground display:** a real system notification. This adds the new dependency
+  `flutter_local_notifications`, pinned to `^22.3.3`. The latest version (23.x) requires Android `compileSdk` 37 and AGP 9.1.1, while the app builds with compileSdk 36 and AGP 9.0.1, and that Gradle upgrade is out of scope here. 22.x has the same API.
+- **Deployment:** to `abakus-one-dev`, run by Claude only with explicit approval.
+- **Devices:** Android and iOS.
+
+Until now, device tokens were registered only for real customers.
+
+### Decision
+
+**Server** (`courierNotifications.ts`)
+
+| Trigger | Recipients | Content |
+|---|---|---|
+| `onCourierPoolRequestWrittenNotify`: a request becomes pending | Every active member with `approveCourierPoolRequests` and access to the package's branch | "Yeni kurye talebi — <kurye> · <sipariş> (<mahalle>) · <tutar>". No customer phone or name. |
+| Same trigger: a pending request becomes rejected | The requesting courier | The reason. |
+| `onCourierAssignedOrderWrittenNotify`: the courier's own order copy gets a new courier, or goes reserved → assigned | That courier | "Yeni teslimat" / "Paket size ayrıldı", with neighborhood and pickup branch. |
+
+- Recipients are resolved server-side only (memberships, the courier's linked `authUid`).
+- `courierNotificationDeliveries/{key}` is created first, so a notification is sent at most once and
+  each delivery is recorded.
+- Invalid tokens are revoked, as for reservation notifications.
+- The Android payload targets the high-importance `courier_alerts` channel; APNs uses the default
+  sound.
+- In the emulator nothing is sent to Google; recipients and content are still recorded.
+
+**Client**
+- `AbakusApp` registers the device of a signed-in staff or courier session (once per uid, through the
+  existing `registerDeviceToken`). Windows is skipped: no FCM there, and the POS keeps its live badge
+  and sound.
+- `LocalStaffPushNotifications` creates the channel and shows a courier-pool push that arrives in the
+  foreground.
+- Taps from the foreground, background and terminated states go through `CourierPushTapRouter`:
+  - staff → `/admin?nav=delivery-dispatch`. The admin route now honours `?nav=`.
+  - courier → `/admin` (Kurye Ekranım).
+
+**Platform setup**
+- Android: core library desugaring (`desugar_jdk_libs` 2.1.4, as the plugin's README requires).
+- iOS: the `UNUserNotificationCenter` delegate in `AppDelegate`, and the `remote-notification`
+  background mode.
+- The iOS **Push Notifications capability** (the `aps-environment` entitlement) and the **APNs key**
+  must be added by the product owner (Xcode signing team, Apple Developer account). Without them, iOS
+  gets no push. The repo had neither, so customer pushes on iOS were not working either.
+
+### Consequences
+
+- `registerDeviceToken` still stamps tokens with `organizationId: "org-1"`. Recipients are looked up by
+  uid, so the courier pushes do not depend on it, but it remains a single-tenant assumption.
+- Real delivery (device tokens, channel, iOS presentation) is verified only by the device checklist.
+  The emulator tests cover recipients, content, one-time delivery and token revocation.
+- Test data for the dev project: `functions/scripts/seed_courier_pool_device_test.mjs` writes service
+  areas and four test sign-ins; it refuses production.
+
+## ADR-079 — All feature flags default on; dispatch queries pin organizationId (2026-11-12)
+
+- Tarih: 2026-11-12
+- Durum: Accepted
+
+### Context
+
+Product owner end-to-end test on the Windows POS found two problems:
+
+1. **POS → Paket Servis board:** it showed "Teslimat siparişleri yüklenemedi."
+2. **Admin → Teslimat Dağıtımı:** it showed "Bu özellik henüz etkinleştirilmedi."
+
+### Root causes (verified)
+
+1. **Paket Servis board.** The board's live queries (`orders` by `branchId + channel`, `couriers` by
+   `branchId`) did not pin `organizationId`. The read rules require
+   `isOrgMember(resource.data.organizationId)` to be provable from the query, so the whole list query
+   was denied.
+   - Reproduced with a rules probe: the branch-only query fails, the pinned one succeeds.
+   - The mapper was ruled out by running the real emulator document through it.
+   - This dated from AP-6, not Faz 3a: Faz 3a only widened the client-side status filter, and no
+     composite index was involved.
+2. **Teslimat Dağıtımı.** `ModuleEntitlementGate` found an active entitlement grant, then denied
+   because `FeatureFlagsDefaults.courierModuleEnabled` was `false`. Remote Config is not live, so the
+   compile-time default wins. This was app-wide, not a per-branch setting.
+
+### Decision
+
+- **Dispatch queries:** they are keyed by `DispatchScope (organizationId, branchId)` and pin
+  `organizationId`. This covers `watchAssignableDeliveryOrders`, `FirestoreCourierRepository
+  .watchByBranchId`, and the `assignableDeliveryOrdersProvider` / `allCouriersForBranchProvider` /
+  `availableCouriersForBranchProvider` families. The filters are equality-only, so no composite index
+  is needed. A rules regression test pins the contract.
+- **Feature flags** (product owner: "every phase and module is complete; no development-era closed
+  flag may remain"):
+  - every `FeatureFlagsDefaults` value is now `true`;
+  - a module can still be switched off remotely once Remote Config is live;
+  - `ModuleEntitlementGate` still requires an active entitlement grant and the actor's role
+    permission.
+
+### Consequences
+
+- The flags only feed `ModuleEntitlementGate` (Admin module screens) and the System Health display. No
+  customer-app screen is switched by them.
+- Every Admin module screen is now reachable for the roles allowed to use it. Some of those modules
+  still run on in-memory demo data rather than the server (for example the Admin "Şubeler" screen):
+  "reachable" does not mean "server-backed". That is tracked per module, not hidden behind a flag.
+
+#### ADR-079 follow-up (2026-11-12) — the flag default was never read; new couriers start available
+
+- **Correction:** flipping `FeatureFlagsDefaults` alone did not open "Teslimat Dağıtımı". `CheckModuleAccess`
+  (and the System Health screen) called `isEnabled(flagKey)` without a default, so the service's bare
+  `false` won and `FeatureFlagsDefaults` was never consulted. Fixed:
+  - the new `FeatureFlagsDefaults.valueFor(key)` is passed as `defaultValue` at both call sites;
+  - a regression test covers the real wiring (`RemoteConfigFeatureFlagsService` +
+    `NoOpRemoteConfigService` → an entitled courier module opens);
+  - the two "flag off" Admin shell tests now switch their flag off explicitly
+    (`FakeFeatureFlagsService.disabledKeys`).
+- **Couriers:** `setCourier` created new couriers `offline`, while "Kurye Ata" lists `available`
+  couriers only, so a just-added courier never appeared. Fixed:
+  - a new courier now starts `available`; an edit still keeps the current value unless one is sent;
+  - POS → Kurye Ayarları → Kuryeler shows each courier's status, with a Müsait / Çevrimdışı switch
+    (`setCourier.dispatchStatus`). A courier out on deliveries shows "Dağıtımda (N paket)" and is not
+    switched there.
