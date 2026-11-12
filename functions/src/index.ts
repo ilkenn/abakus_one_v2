@@ -127,6 +127,8 @@ export {
 } from "./courierPool";
 // 2026-11-12 (Faz 3b) — the branch's pool region settings (default district).
 export { getBranchPoolSettings, setBranchDefaultDeliveryDistrict } from "./branchDeliveryPoolSettings";
+// 2026-11-12 (Faz 3c) — FCM to approving staff (new pool request) and couriers (assignment / request outcome).
+export { onCourierPoolRequestWrittenNotify, onCourierAssignedOrderWrittenNotify } from "./courierNotifications";
 export { advanceDeliveryOrderStatus } from "./advanceDeliveryOrderStatus";
 export { cancelDeliveryOrder } from "./cancelDeliveryOrder";
 export { cancelDeliveryOrderForStaff } from "./cancelDeliveryOrderForStaff";

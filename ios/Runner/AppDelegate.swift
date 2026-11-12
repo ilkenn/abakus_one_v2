@@ -19,6 +19,9 @@ import UIKit
     {
       GMSServices.provideAPIKey(mapsApiKey)
     }
+    // 2026-11-12 (Faz 3c) — lets flutter_local_notifications / FCM present
+    // courier-pool notifications while the app is in the foreground.
+    UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

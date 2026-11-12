@@ -56,3 +56,16 @@ test("Kasiyer and Mutfak Paket Yetkilisi: staff work + courier dispatch + pool a
   for (const role of ["manager", "admin", "tenantOwner"]) assert.ok(roleHasPermission(role, "approveCourierPoolRequests"), role);
   for (const role of ["staff", "courier"]) assert.ok(!roleHasPermission(role, "approveCourierPoolRequests"), role);
 });
+
+test("FCM copy: staff request, courier assignment/reservation and rejection reasons", async () => {
+  const { poolRequestMessage, assignmentMessage, requestRejectedMessage } = await import("../courierNotifications");
+  const req = poolRequestMessage("r1", { courierName: "Ali", orderNumber: "DL-1", neighborhoodName: "Caferağa", amountDueMinorUnits: 45050, orderId: "o1", branchId: "b1" });
+  assert.strictEqual(req.body, "Ali · DL-1 (Caferağa) · 450,50 TL");
+  assert.deepStrictEqual(req.data, { type: "courierPoolRequest", requestId: "r1", orderId: "o1", branchId: "b1" });
+  const reserved = assignmentMessage("o1", { status: "reserved", orderNumber: "DL-1", neighborhoodName: "Caferağa", branchName: "Moda" });
+  assert.strictEqual(reserved.title, "Paket size ayrıldı");
+  assert.strictEqual(reserved.data.type, "courierReserved");
+  assert.strictEqual(assignmentMessage("o1", { status: "assigned", orderNumber: "DL-1" }).body, "DL-1");
+  assert.match(requestRejectedMessage("r1", { rejection: "withdrawn", orderNumber: "DL-1", neighborhoodName: "X" }).body, /havuzdan geri alındı/);
+  assert.match(requestRejectedMessage("r1", { rejection: "rejected", orderNumber: "DL-1", neighborhoodName: "X" }).body, /talebiniz reddedildi/);
+});

@@ -71,6 +71,9 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // 2026-11-12 (Faz 3c) — required by flutter_local_notifications 10+
+        // (core library desugaring), see its README "Gradle setup".
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -143,4 +146,10 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // Faz 3c — flutter_local_notifications' desugaring requirement (version
+    // from the plugin's README).
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

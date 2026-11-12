@@ -243,7 +243,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.admin,
         pageBuilder: (context, state) {
-          return _fadeTransitionPage(const AdminShellScreen());
+          // 2026-11-12 (Faz 3c) — `?nav=<item id>` opens a destination
+          // directly (a tapped courier-pool push → "delivery-dispatch").
+          // An unknown or role-hidden id is simply ignored by the shell.
+          return _fadeTransitionPage(AdminShellScreen(
+            initialNavItemId: state.uri.queryParameters['nav'],
+          ));
         },
       ),
       // AP-2 final wiring — bypassed by `redirect` above (see

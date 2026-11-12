@@ -473,3 +473,80 @@ test("branch default district: manager sets it, the pool then resolves an uncove
   assert.strictEqual(publish.httpStatus, 200, JSON.stringify(publish.body));
   assert.strictEqual(publish.body.result!.districtId, "kadikoy");
 });
+
+// ---------------------------------------------------------------------------
+// 2026-11-12 (Faz 3c) — FCM recipients/content (the emulator never calls
+// Google; the trigger records each delivery in courierNotificationDeliveries,
+// and handle* is also called directly with a fake sender).
+
+async function seedToken(uid: string, token: string) {
+  await db().collection("deviceTokens").doc(nextId("token")).set({
+    uid, organizationId: "org-1", token, platform: "android", registeredAt: new Date().toISOString(), revokedAt: null,
+  });
+}
+
+async function deliveriesOfType(type: string, match: (d: FirebaseFirestore.DocumentData) => boolean) {
+  const snap = await db().collection("courierNotificationDeliveries").where("type", "==", type).get();
+  return snap.docs.map((d) => d.data()).filter(match);
+}
+
+test("FCM: a new pool request notifies the branch's approvers only; approval notifies the courier and the losing courier gets the outcome", async () => {
+  const s = await setup();
+  const otherBranchCashier = await member(s.t.organizationId, ["cashier"], [s.t.otherBranchId]);
+  const ali = await externalCourier(s.t, s.manager, ["kadikoy"], "Ali");
+  const veli = await externalCourier(s.t, s.manager, ["kadikoy"], "Veli");
+  const orderId = await seedOrder(s.t);
+  await callCallable(PUBLISH_URL, { orderId }, s.cashier.idToken);
+  const a = await callCallable(REQUEST_URL, { orderId }, ali.idToken);
+  const v = await callCallable(REQUEST_URL, { orderId }, veli.idToken);
+
+  const staffDelivery = await waitFor(
+    () => deliveriesOfType("courierPoolRequest", (d) => d.data.requestId === a.body.result!.requestId),
+    (list) => list.length === 1, "staff notification",
+  );
+  const recipients = new Set(staffDelivery[0].recipientUids as string[]);
+  assert.ok(recipients.has(s.cashier.uid) && recipients.has(s.packingLead.uid) && recipients.has(s.manager.uid));
+  assert.ok(!recipients.has(s.staff.uid), "plain staff cannot approve, so no push");
+  assert.ok(!recipients.has(otherBranchCashier.uid), "another branch's cashier is not notified");
+  assert.strictEqual(staffDelivery[0].title, "Yeni kurye talebi");
+  assert.match(staffDelivery[0].body as string, /Ali · DL-.* \(Caferağa\) · 450 TL/);
+  assert.ok(!(staffDelivery[0].body as string).includes("5321112233"));
+
+  await callCallable(RESPOND_URL, { requestId: v.body.result!.requestId, decision: "approve" }, s.cashier.idToken);
+  const assigned = await waitFor(
+    () => deliveriesOfType("courierAssigned", (d) => d.data.orderId === orderId),
+    (list) => list.length === 1, "courier assignment notification",
+  );
+  assert.deepStrictEqual(assigned[0].recipientUids, [veli.uid]);
+  assert.match(assigned[0].body as string, /Caferağa · Alış: Moda Şube/);
+  const lost = await waitFor(
+    () => deliveriesOfType("courierRequestRejected", (d) => d.data.requestId === a.body.result!.requestId),
+    (list) => list.length === 1, "losing courier notification",
+  );
+  assert.deepStrictEqual(lost[0].recipientUids, [ali.uid]);
+  assert.match(lost[0].body as string, /başka bir kuryeye verildi/);
+});
+
+test("FCM: each notification is sent once to active tokens; invalid tokens are revoked", async () => {
+  const { deliverCourierNotification } = await import("../courierNotifications");
+  const uid = nextId("uid");
+  await seedToken(uid, "tok-good");
+  await seedToken(uid, "tok-dead");
+  const sent: string[][] = [];
+  const sender = async (tokens: string[]) => {
+    sent.push(tokens);
+    return { successCount: 1, invalidTokens: ["tok-dead"] };
+  };
+  const key = nextId("key");
+  const message = { title: "t", body: "b", data: { type: "courierAssigned", orderId: "o" } };
+  const first = await deliverCourierNotification(db(), key, [uid, uid], message, sender);
+  assert.strictEqual(first.status, "sent");
+  assert.deepStrictEqual(sent[0].sort(), ["tok-dead", "tok-good"]);
+  const again = await deliverCourierNotification(db(), key, [uid], message, sender);
+  assert.strictEqual(again.status, "duplicate");
+  assert.strictEqual(sent.length, 1);
+  const dead = await db().collection("deviceTokens").where("token", "==", "tok-dead").get();
+  assert.ok(dead.docs[0].data().revokedAt, "invalid token revoked");
+  const none = await deliverCourierNotification(db(), nextId("key"), [nextId("uid")], message, sender);
+  assert.strictEqual(none.status, "no-tokens");
+});
