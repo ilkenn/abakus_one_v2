@@ -94,8 +94,10 @@ class DeliveryAddressSnapshot {
   /// Optional free-text delivery instructions (e.g. "kapıcıya bırakın").
   final String? addressDescription;
 
-  final double latitude;
-  final double longitude;
+  /// `null` for a staff-typed address (`providerSource: "staffManual"`,
+  /// 2026-11-11) — no geocoding, so no point on the live map.
+  final double? latitude;
+  final double? longitude;
 
   /// Identifies which address-verification provider (P.2, not yet
   /// implemented) produced this snapshot — e.g. `'manual'` today has no
@@ -111,7 +113,8 @@ class DeliveryAddressSnapshot {
   /// address — the one field that makes this snapshot's existence
   /// meaningful as delivery-authorization evidence. Required, never
   /// nullable: see this class's own doc comment.
-  final DateTime serverVerifiedAt;
+  /// `null` for a staff-typed address — never provider-verified.
+  final DateTime? serverVerifiedAt;
 
   @override
   bool operator ==(Object other) {

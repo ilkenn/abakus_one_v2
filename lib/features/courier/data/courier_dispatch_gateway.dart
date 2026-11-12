@@ -1,4 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+
+import '../../../core/services/functions/rest_callable_client.dart';
 
 import '../../../shared/models/courier_type.dart';
 
@@ -104,7 +108,16 @@ abstract interface class CourierDispatchGateway {
 }
 
 class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
-  const FirebaseCourierDispatchGateway();
+  FirebaseCourierDispatchGateway({RestCallableClient? restClient})
+      : _restClient = restClient ?? RestCallableClient();
+
+  final RestCallableClient _restClient;
+
+  /// 2026-11-11 — `cloud_functions` has no Windows implementation; the
+  /// Windows POS calls these through [RestCallableClient], like every other
+  /// POS gateway.
+  bool get _useRest =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
     throw CourierDispatchException(
@@ -116,8 +129,20 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
     );
   }
 
-  functions.HttpsCallable _fn(String name) =>
-      functions.FirebaseFunctions.instance.httpsCallable(name);
+  Future<Map<String, dynamic>> _call(
+      String name, Map<String, dynamic> data) async {
+    if (_useRest) {
+      try {
+        return await _restClient.call(name, data);
+      } on RestCallableException catch (error) {
+        throw CourierDispatchException(error.code, error.message);
+      }
+    }
+    final result = await functions.FirebaseFunctions.instance
+        .httpsCallable(name)
+        .call<Map<String, dynamic>>(data);
+    return Map<String, dynamic>.from(result.data);
+  }
 
   @override
   Future<String> setCourier({
@@ -129,7 +154,7 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
     String? courierId,
   }) async {
     try {
-      final result = await _fn('setCourier').call<Map<String, dynamic>>({
+      final result = await _call('setCourier', {
         'organizationId': organizationId,
         'branchId': branchId,
         'displayName': displayName,
@@ -137,7 +162,7 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
         'type': type.name,
         if (courierId != null) 'courierId': courierId,
       });
-      return result.data['courierId'] as String;
+      return result['courierId'] as String;
     } on functions.FirebaseFunctionsException catch (error) {
       _rethrow(error);
     }
@@ -149,12 +174,11 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
     required String courierId,
   }) async {
     try {
-      final result =
-          await _fn('assignCourierToOrder').call<Map<String, dynamic>>({
+      final result = await _call('assignCourierToOrder', {
         'orderId': orderId,
         'courierId': courierId,
       });
-      final data = result.data;
+      final data = result;
       return CourierAssignmentResult(
         orderId: data['orderId'] as String,
         courierId: data['courierId'] as String,
@@ -169,8 +193,7 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
   @override
   Future<void> markCourierReturned({required String courierId}) async {
     try {
-      await _fn('markCourierReturned')
-          .call<Map<String, dynamic>>({'courierId': courierId});
+      await _call('markCourierReturned', {'courierId': courierId});
     } on functions.FirebaseFunctionsException catch (error) {
       _rethrow(error);
     }
@@ -193,8 +216,7 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
     String? dropoffDistrictName,
   }) async {
     try {
-      final result =
-          await _fn('registerConsortiumOrder').call<Map<String, dynamic>>({
+      final result = await _call('registerConsortiumOrder', {
         'organizationId': organizationId,
         'branchId': branchId,
         'merchantId': merchantId,
@@ -212,7 +234,7 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
         if (dropoffDistrictName != null)
           'dropoffDistrictName': dropoffDistrictName,
       });
-      final data = result.data;
+      final data = result;
       return ConsortiumOrderRegistrationResult(
         orderId: data['orderId'] as String,
         orderNumber: data['orderNumber'] as String,
@@ -228,12 +250,11 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
     required String courierId,
   }) async {
     try {
-      final result =
-          await _fn('batchAssignCourierToOrders').call<Map<String, dynamic>>({
+      final result = await _call('batchAssignCourierToOrders', {
         'orderIds': orderIds,
         'courierId': courierId,
       });
-      final results = result.data['results'] as List<dynamic>;
+      final results = result['results'] as List<dynamic>;
       return [
         for (final raw in results)
           CourierAssignmentResult(

@@ -11624,3 +11624,37 @@ passing, 0 failures.
   search by name fills name + address, phone search, no-result → new customer), overview tab icons + Paket Servis
   tab, Gel-Al tab labels.
 - **Visual Review Bekleniyor**.
+
+### POS Gel-Al / Paket Servis — Faz 2: personel paket siparişi, müşteri defteri, notlar, planlanan kurye, kurye fişi, kanal fiyatları (2026-11-11)
+
+- Server: `submitStaffDeliveryOrder` (confirmed + kitchen work + print job in one transaction; flexible — no
+  minimum / zone gate; optional manual fee with 20% VAT; typed address without coordinates; courier note,
+  kitchen note, pay-on-delivery cash / POS / meal-card brand, planned courier validated, idempotent) and the
+  local customer book `posCustomers` + `searchPosCustomers` (full phone, last 5 addresses, per
+  organization, server-only). Gel-Al staff entry gains an order-level kitchen note and now reaches the KDS
+  (it was written `confirmed` without kitchen work items).
+- Pricing (ADR-074): Gel-Al +20 TL on every product (drinks included), modifiers +0; Paket Servis ×1.35,
+  each price rounded to the nearest 5 TL, whole channel. `channelPriceMultipliers` policy field (server +
+  Dart), catalog export regenerated, dev emulator policy updated. The app's delivery checkout estimate now
+  includes channel-priced modifiers. The POS catalog, customization dialog and cart show the mode's prices
+  and re-price when the mode switches.
+- Client: `PosPhoneOrderGateway` (REST on Windows) for Gel-Al / Paket Servis / customer search; the order
+  screen sends the delivery order, shows meal-card brands, the fee and the planned courier, prints the
+  courier slip automatically on confirmation and offers a reprint; weighed products are refused with an
+  explanation (ADR-067: dine-in only — the Faz 1 note claiming they could be sent was wrong).
+- Courier slip: `CourierSlip.fromOrder` + `EscPosCourierSlipEncoder` (customer, full phone, address, framed
+  courier note, items, fee, total, pay-on-delivery method, planned courier).
+- Kitchen: the order-level kitchen note on the KDS card and the kitchen ticket; the line note staff type
+  (stored as the line's `customerNote`) now reaches the kitchen too.
+- Dispatch board: courier note, planned courier, one-tap "Mehmet Ata" (never automatic; a not-ready order
+  gets a Turkish message), courier-slip reprint. The courier "Aktif Teslimat" screen shows the courier note.
+  `FirebaseCourierDispatchGateway` uses `RestCallableClient` on Windows.
+- Order model: `plannedCourierId` / `plannedCourierName`; `DeliveryAddressSnapshot.latitude` / `longitude`
+  / `serverVerifiedAt` nullable.
+- Not in scope: cash collected at the door into the drawer / Z report (Faz 2b), courier pool (Faz 3),
+  customer-book deletion (deferred).
+- Tests: functions — 6 pricing, 4 staff-delivery pure, 7 emulator (delivery order, idempotency, validation,
+  courier eligibility, auth, customer book search, tenant isolation), takeaway kitchen note / KDS, real
+  catalog drink price; Flutter — phone-order screen 12, courier slip / kitchen notes / mapping 6, dispatch
+  board 4, delivery / takeaway pricing.
+- **Visual Review Bekleniyor**.

@@ -15,6 +15,7 @@ class KitchenTicketHeader {
     this.customerName,
     this.channel = OrderChannel.delivery,
     this.orderStatus,
+    this.orderNote = '',
   });
 
   /// 2026-11-08 — the canonical order's own current [OrderStatus], additive
@@ -26,6 +27,11 @@ class KitchenTicketHeader {
   /// separately). `null` for a ticket not derived from a real order
   /// (in-memory/test tickets) — the card then shows no order-level actions.
   final OrderStatus? orderStatus;
+
+  /// 2026-11-11 — the order-level kitchen note ("Et orta-iyi pişsin"),
+  /// shown on the KDS card and printed on the kitchen ticket. Empty when
+  /// the order has none.
+  final String orderNote;
 
   final String restaurantName;
   final String branchName;

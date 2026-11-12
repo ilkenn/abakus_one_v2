@@ -112,6 +112,8 @@ abstract final class OrderFirestoreMapper {
       // "mapper's own write path stays complete" reasoning as scheduledFor
       // above.
       'assignedCourierId': order.assignedCourierId,
+      'plannedCourierId': order.plannedCourierId,
+      'plannedCourierName': order.plannedCourierName,
       'courierType': order.courierType?.name,
       'trackingToken': order.trackingToken,
       // AP-6 Sprint 3 — no real client write path sets these today either
@@ -178,6 +180,8 @@ abstract final class OrderFirestoreMapper {
       // AP-6 Sprint 2 — same additive/nullable backward-compatibility
       // contract as scheduledFor/estimatedReadyAt above.
       assignedCourierId: data['assignedCourierId'] as String?,
+      plannedCourierId: data['plannedCourierId'] as String?,
+      plannedCourierName: data['plannedCourierName'] as String?,
       courierType: _courierTypeFromName(data['courierType'] as String?),
       trackingToken: data['trackingToken'] as String?,
       // AP-6 Sprint 3 — same additive/nullable backward-compatibility
@@ -603,7 +607,7 @@ abstract final class OrderFirestoreMapper {
       'longitude': snapshot.longitude,
       'providerSource': snapshot.providerSource,
       'providerPlaceId': snapshot.providerPlaceId,
-      'serverVerifiedAt': snapshot.serverVerifiedAt.toIso8601String(),
+      'serverVerifiedAt': snapshot.serverVerifiedAt?.toIso8601String(),
     };
   }
 
@@ -625,11 +629,15 @@ abstract final class OrderFirestoreMapper {
       apartmentNo: data['apartmentNo'] as String,
       floor: data['floor'] as String?,
       addressDescription: data['addressDescription'] as String?,
-      latitude: (data['latitude'] as num).toDouble(),
-      longitude: (data['longitude'] as num).toDouble(),
+      // 2026-11-11 — a staff-typed address (`providerSource:
+      // "staffManual"`) has no coordinates and no provider verification.
+      latitude: (data['latitude'] as num?)?.toDouble(),
+      longitude: (data['longitude'] as num?)?.toDouble(),
       providerSource: data['providerSource'] as String,
       providerPlaceId: data['providerPlaceId'] as String?,
-      serverVerifiedAt: DateTime.parse(data['serverVerifiedAt'] as String),
+      serverVerifiedAt: data['serverVerifiedAt'] == null
+          ? null
+          : DateTime.parse(data['serverVerifiedAt'] as String),
     );
   }
 

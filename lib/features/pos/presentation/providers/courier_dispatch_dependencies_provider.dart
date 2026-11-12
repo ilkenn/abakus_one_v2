@@ -20,7 +20,7 @@ final courierDispatchGatewayProvider = Provider<CourierDispatchGateway>((ref) {
   if (!isFirebaseReady) {
     return const UnavailableCourierDispatchGateway();
   }
-  return const FirebaseCourierDispatchGateway();
+  return FirebaseCourierDispatchGateway();
 });
 
 final firestoreCourierRepositoryProvider =

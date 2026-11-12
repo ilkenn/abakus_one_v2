@@ -59,6 +59,8 @@ class Order {
     this.scheduledFor,
     this.estimatedReadyAt,
     this.assignedCourierId,
+    this.plannedCourierId,
+    this.plannedCourierName,
     this.courierType,
     this.trackingToken,
     this.merchantId,
@@ -222,6 +224,15 @@ class Order {
   /// [courierVisibility] — assignment and customer-visibility are separate
   /// concerns (see [courierVisibility]'s own doc comment).
   final String? assignedCourierId;
+
+  /// 2026-11-11 (Faz 2) — the shop courier staff picked when opening a
+  /// Paket Servis order from the POS. Only a plan: the order is assigned
+  /// to them later, with one tap on the dispatch board, never
+  /// automatically (product-owner decision). `null` otherwise.
+  final String? plannedCourierId;
+
+  /// The planned courier's name at order time (for the courier slip).
+  final String? plannedCourierName;
 
   /// AP-6 Sprint 2 — who is delivering this order. Set alongside
   /// [assignedCourierId] for an internal/pool assignment; **may also be set
@@ -456,6 +467,8 @@ class Order {
     DateTime? scheduledFor,
     DateTime? estimatedReadyAt,
     String? assignedCourierId,
+    String? plannedCourierId,
+    String? plannedCourierName,
     CourierType? courierType,
     String? trackingToken,
     String? merchantId,
@@ -503,6 +516,8 @@ class Order {
       scheduledFor: scheduledFor ?? this.scheduledFor,
       estimatedReadyAt: estimatedReadyAt ?? this.estimatedReadyAt,
       assignedCourierId: assignedCourierId ?? this.assignedCourierId,
+      plannedCourierId: plannedCourierId ?? this.plannedCourierId,
+      plannedCourierName: plannedCourierName ?? this.plannedCourierName,
       courierType: courierType ?? this.courierType,
       trackingToken: trackingToken ?? this.trackingToken,
       merchantId: merchantId ?? this.merchantId,

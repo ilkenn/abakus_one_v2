@@ -20706,3 +20706,53 @@ the KDS board hung on "Mutfak ekranı yükleniyor..."; the product-detail photo 
 
 - A genuinely unknown future line status still throws (kept deliberately strict); a more tolerant
   per-document mapping in list views is a possible follow-up, not done here.
+
+## ADR-074 — Channel pricing ×1.35 for Paket Servis, Gel-Al +20 TL on every product; staff-opened delivery orders and the local customer book (2026-11-11)
+
+- Tarih: 2026-11-11
+- Durum: Accepted
+
+### Context
+
+Faz 2 of the POS Gel-Al / Paket Servis screen (product owner): staff must open Paket Servis orders
+from the POS (until now only a phone-verified app customer could), remember phone customers, send an
+order-level kitchen note and a courier note, plan a courier and print a courier slip. In the same
+round the product owner set new channel prices. While implementing, the live server policy turned out
+to have no delivery rule at all (the app's delivery checkout showed +140 TL, the server charged the
+Masa price), and staff-entered Gel-Al orders were written `confirmed` without kitchen work items (they
+never reached the KDS).
+
+### Decision
+
+- **Pricing (supersedes BR-PRICE-004's drinks exemption and BR-DELIVERY-002):** Gel-Al = every product
+  +20 TL (drinks included), modifiers and sauces +0. Paket Servis = Masa price ×1.35, each product price
+  and each paid modifier rounded separately, half up, to the nearest 5 TL (450 → 610, 430 → 580, +40 →
+  +55), for the whole channel (app and POS). New policy field `channelPriceMultipliers`
+  (`{ delivery: { multiplierBasisPoints: 13500, roundToMinorUnits: 500 } }`), integer-only maths, mirrored
+  in Dart (`ChannelPriceMultiplier`) and TypeScript (`applyChannelPriceMultiplier`); explicit per-product
+  prices are never scaled. The app's delivery checkout estimate now also includes channel-priced modifiers.
+- **`submitStaffDeliveryOrder`** (new callable): `manageDeliveryOrders` + branch access + active device
+  session; delivery-channel server pricing, no campaign/Boncuk; no minimum-order / zone gate (decision 3);
+  optional manual delivery fee (default 0) with 20% VAT added to the total; written `confirmed` with
+  kitchen work, stock consumption and print job in the same transaction; typed address with no
+  coordinates (`providerSource: "staffManual"`, `latitude`/`longitude`/`serverVerifiedAt` now nullable in
+  `DeliveryAddressSnapshot`); courier note → `customerNote`, kitchen note → `kitchenNote`; pay-on-delivery
+  `cash` / `credit_card` / meal-card brand; `plannedCourierId` validated as an active shop courier of the
+  branch — assignment stays a one-tap staff action on the dispatch board (never automatic); `customerId`
+  stays `null` (no loyalty implied). Idempotent per (staff, submissionKey).
+- **Local customer book `posCustomers`** (decision 2): per organization, keyed by the HMAC of the E.164
+  phone; name, full phone, last 5 addresses, order count; upserted in the order transaction; read only by
+  `searchPosCustomers` (staff with `manageDeliveryOrders`; app-directory results added, masked, when the
+  caller may view that directory). No client rule grants access. Deletion on request (KVKK) is deferred
+  (decision 5).
+- Gel-Al staff entry: order-level `kitchenNote`, and the order now goes to the kitchen at creation.
+- Kitchen tickets / KDS show the order note and the staff-typed line note (stored as the line's
+  `customerNote`, previously never shown to the kitchen).
+- POS phone-order, customer-book and courier-dispatch calls go through `RestCallableClient` on Windows
+  (`cloud_functions` has no Windows implementation).
+
+### Consequences
+
+- Customer-facing prices change on the app for Gel-Al drinks and every Paket Servis item.
+- Cash collected at the door does not reach the cash drawer / Z report yet — Faz 2b (courier settlement).
+- The courier pool ("ilk kabul eden alır") is Faz 3. A staff-typed address has no point on the live map.

@@ -65,6 +65,11 @@ abstract final class EscPosKitchenTicketEncoder {
     if (ticket.header.priority.isNotEmpty) {
       writeLine(ticket.header.priority, bold: true, center: true);
     }
+    // 2026-11-11 — the order-level kitchen note, before the lines.
+    if (ticket.header.orderNote.isNotEmpty) {
+      writeLine('-' * _lineWidth);
+      writeLine('MUTFAK NOTU: ${ticket.header.orderNote}', bold: true);
+    }
     writeLine('-' * _lineWidth);
 
     // Lines — Ürün Adı/Adet, Siparişi Veren Kişi Adı, Reçete İçeriği,

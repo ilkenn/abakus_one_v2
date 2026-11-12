@@ -7,30 +7,38 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/models/courier_type.dart';
+import '../../../../shared/models/money.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
-import '../../../admin/data/tenant_customer_directory_gateway.dart';
-import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../../courier/domain/identity/courier.dart';
 import '../../../courier/domain/identity/courier_registry_status.dart';
 import '../../../menu/domain/models/menu_product.dart';
-import '../../../menu/domain/models/selected_modifier.dart';
-import '../../../takeaway/data/submit_takeaway_order_gateway.dart';
-import '../../../takeaway/presentation/providers/takeaway_dependencies_provider.dart';
+import '../../../menu/domain/pricing/channel_price_resolver.dart';
+import '../../../menu/domain/pricing/channel_pricing_policy.dart';
+import '../../../menu/presentation/providers/channel_price_display_provider.dart';
+import '../../../menu/presentation/providers/menu_catalog_provider.dart';
+import '../../../orders/domain/models/order_channel.dart';
 import '../../data/pos_action_gateway.dart' show PosDeviceContext;
+import '../../data/pos_phone_order_gateway.dart';
 import '../providers/courier_dispatch_dependencies_provider.dart';
+import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_catalog_browser.dart';
+import '../widgets/print_courier_slip_action.dart';
 
 /// The two modes of the phone / counter order screen (2026-11-11).
 enum PosPhoneOrderMode {
-  takeaway('Gel-Al', Icons.shopping_bag_outlined),
-  delivery('Paket Servis', Icons.delivery_dining_rounded);
+  takeaway('Gel-Al', Icons.shopping_bag_outlined, OrderChannel.takeaway),
+  delivery(
+      'Paket Servis', Icons.delivery_dining_rounded, OrderChannel.delivery);
 
-  const PosPhoneOrderMode(this.label, this.icon);
+  const PosPhoneOrderMode(this.label, this.icon, this.channel);
   final String label;
   final IconData icon;
+
+  /// The sales channel whose prices the catalog and cart show.
+  final OrderChannel channel;
 }
 
-/// Pay-on-delivery choices for a delivery order (Faz 2 sends them).
+/// Pay-on-delivery choices for a delivery order.
 enum PosPayOnDeliveryMethod {
   cash('Kapıda Nakit', Icons.payments_outlined),
   card('Kapıda POS', Icons.credit_card_rounded),
@@ -41,25 +49,37 @@ enum PosPayOnDeliveryMethod {
   final IconData icon;
 }
 
-/// "Yeni Gel-Al / Paket Servis Siparişi" — 2026-11-11 redesign (product
-/// owner, Faz 1), replacing the flat searchable product list:
+/// The meal-card brands offered for "Kapıda Yemek Kartı" — payment-method
+/// catalog ids (server: `STAFF_DELIVERY_PAYMENT_METHOD_IDS`).
+const _mealCardBrands = [
+  (id: 'pluxee', label: 'Pluxee'),
+  (id: 'multinet', label: 'Multinet'),
+  (id: 'setcard', label: 'Setcard'),
+  (id: 'edenred', label: 'Edenred'),
+];
+
+/// "Yeni Gel-Al / Paket Servis Siparişi" — 2026-11-11 redesign.
 ///
-/// - top: a Gel-Al / Paket Servis mode switch and a "Müşteri Ara (İsim veya
-///   Tel)" search over the organization's customer directory (no Caller ID);
-/// - left/centre: the shared touch catalog ([PosCatalogBrowser] — category
-///   rail, photo product cards, customization dialog), the same one the
-///   table workspace uses;
-/// - right: customer details, the cart, the kitchen note and the actions.
-///   Paket Servis adds the address, the courier note, pay-on-delivery
-///   choices and the shop's courier badges.
+/// Faz 1: Gel-Al / Paket Servis mode switch, "Müşteri Ara (İsim veya Tel)",
+/// the shared touch catalog ([PosCatalogBrowser]), customer / cart / actions.
 ///
-/// **Faz 1 scope (disclosed)**: Gel-Al orders are sent with the existing
-/// `submitTakeawayOrder` staff-entry call. A delivery order cannot be
-/// created by staff on the server yet, and there is no order-level kitchen
-/// note or pre-assigned courier field — those (and the courier slip and the
-/// local customer book with full phone numbers) are Faz 2, so their controls
-/// are shown disabled with a plain explanation instead of pretending to
-/// send. The courier pool is Faz 3.
+/// Faz 2 (product owner decisions):
+/// - the search covers the organization's local customer book (full phone,
+///   remembered addresses) and its app-customer directory (masked phone) —
+///   `searchPosCustomers`;
+/// - Gel-Al sends its order-level kitchen note; Paket Servis is sent with
+///   `submitStaffDeliveryOrder` — typed address, courier note, kitchen note,
+///   pay-on-delivery method (meal cards by brand), an optional manual
+///   delivery fee (default 0, 20% VAT server-side) and the planned courier
+///   (assigned later from the dispatch board, never automatically);
+/// - prices are the channel's own (Gel-Al +20 TL; Paket Servis ×1.35,
+///   nearest 5 TL) in the catalog, the cart and the courier slip — display
+///   only, the server prices every order itself;
+/// - the courier slip prints automatically once the delivery order is
+///   confirmed, and can be printed again from the confirmation dialog;
+/// - products sold by weight stay dine-in only (ADR-067).
+///
+/// The courier pool is Faz 3.
 class PosNewTakeawayOrderScreen extends ConsumerStatefulWidget {
   const PosNewTakeawayOrderScreen({
     super.key,
@@ -78,50 +98,63 @@ class PosNewTakeawayOrderScreen extends ConsumerStatefulWidget {
 class _PhoneOrderCartLine {
   _PhoneOrderCartLine(this.selection) : quantity = selection.quantity;
 
+  /// As chosen in the catalog (its product carries that moment's channel
+  /// prices; the cart re-prices from the catalog for the current mode).
   final PosCatalogSelection selection;
   int quantity;
 
-  MenuProduct get product => selection.product;
-  List<SelectedModifier> get selectedModifiers => selection.selectedModifiers;
+  String get productId => selection.product.id;
+  String get productName => selection.product.name;
 
-  /// Same product + same configuration = one line (quantity merges); a
-  /// weighed line never merges.
-  String get mergeKey => selection.weightGrams != null
-      ? '${identityHashCode(this)}'
-      : [
-          product.id,
-          for (final m in selectedModifiers) '${m.groupId}:${m.optionId}',
-          ...selection.excludedIngredients,
-          selection.note,
-        ].join('|');
+  /// Same product + same configuration = one line (quantity merges).
+  String get mergeKey => [
+        productId,
+        for (final m in selection.selectedModifiers)
+          '${m.groupId}:${m.optionId}',
+        ...selection.excludedIngredients,
+        selection.note,
+      ].join('|');
 
-  double get unitPrice =>
-      product.basePrice +
-      selectedModifiers.fold(0.0, (sum, m) => sum + m.extraPrice);
-
-  /// A weighed product is priced by the server from its per-kg price.
-  double? get totalRowPrice =>
-      selection.weightGrams != null ? null : unitPrice * quantity;
+  Map<String, dynamic> toWire() => {
+        'kind': 'product',
+        'productId': productId,
+        'quantity': quantity,
+        'selectedModifiers': [
+          for (final m in selection.selectedModifiers)
+            {'groupId': m.groupId, 'optionId': m.optionId},
+        ],
+        'note': selection.note,
+        'excludedIngredients': selection.excludedIngredients,
+      };
 }
 
-/// 2026-11-11 — notices for the parts that need the Faz 2 server work.
-const _deliverySubmitNotice =
-    'Paket servis siparişinin kaydı bir sonraki güncellemede (Faz 2) '
-    'açılacak. Şimdilik Gel-Al siparişi gönderilebilir.';
-const _kitchenNoteNotice =
-    'Sipariş geneli mutfak notu bir sonraki güncellemede iletilecek; '
-    'şimdilik ürün notlarını kullanın.';
+/// A Turkish phone number in E.164, or `null` — mirrors the server's
+/// `normalizeTurkishPhone` so obvious typos are caught before sending.
+String? normalizeTurkishPhoneForPos(String raw) {
+  final digits = raw.replaceAll(RegExp(r'\D'), '');
+  String national;
+  if (digits.length == 12 && digits.startsWith('90')) {
+    national = digits.substring(2);
+  } else if (digits.length == 11 && digits.startsWith('0')) {
+    national = digits.substring(1);
+  } else if (digits.length == 10) {
+    national = digits;
+  } else {
+    return null;
+  }
+  return RegExp(r'^[2-5]\d{9}$').hasMatch(national) ? '+90$national' : null;
+}
 
 class _PosNewTakeawayOrderScreenState
     extends ConsumerState<PosNewTakeawayOrderScreen> {
   late PosPhoneOrderMode _mode = widget.initialMode;
 
   final _customerSearchController = TextEditingController();
-  List<TenantCustomerSearchResult>? _customerResults;
+  List<PosCustomerBookEntry>? _customerResults;
   bool _searchingCustomers = false;
   String? _customerSearchError;
-  TenantCustomerSearchResult? _selectedCustomer;
-  List<Map<String, dynamic>> _previousAddresses = const [];
+  PosCustomerBookEntry? _selectedCustomer;
+  List<PosDeliveryAddressInput> _previousAddresses = const [];
 
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
@@ -130,34 +163,45 @@ class _PosNewTakeawayOrderScreenState
   final _streetController = TextEditingController();
   final _buildingNoController = TextEditingController();
   final _apartmentNoController = TextEditingController();
+  final _floorController = TextEditingController();
   final _addressDescriptionController = TextEditingController();
   final _courierNoteController = TextEditingController();
   final _kitchenNoteController = TextEditingController();
+  final _deliveryFeeController = TextEditingController();
   final _firstNameFocus = FocusNode();
 
   PosPayOnDeliveryMethod _payOnDelivery = PosPayOnDeliveryMethod.cash;
+  String _mealCardBrandId = _mealCardBrands.first.id;
   String? _selectedCourierId;
 
   final List<_PhoneOrderCartLine> _cartLines = [];
   bool _submitting = false;
   String? _error;
 
-  static final _phoneLikeQuery = RegExp(r'^[+\d][\d\s]*$');
+  /// Kept across retries of the same order so a resend after a dropped
+  /// response can never create a second order (server idempotency).
+  String? _pendingSubmissionKey;
+
+  List<TextEditingController> get _customerControllers => [
+        _firstNameController,
+        _lastNameController,
+        _phoneController,
+        _neighborhoodController,
+        _streetController,
+        _buildingNoController,
+        _apartmentNoController,
+        _floorController,
+        _addressDescriptionController,
+      ];
 
   @override
   void dispose() {
     for (final controller in [
+      ..._customerControllers,
       _customerSearchController,
-      _firstNameController,
-      _lastNameController,
-      _phoneController,
-      _neighborhoodController,
-      _streetController,
-      _buildingNoController,
-      _apartmentNoController,
-      _addressDescriptionController,
       _courierNoteController,
       _kitchenNoteController,
+      _deliveryFeeController,
     ]) {
       controller.dispose();
     }
@@ -167,25 +211,24 @@ class _PosNewTakeawayOrderScreenState
 
   bool get _isDelivery => _mode == PosPhoneOrderMode.delivery;
 
+  void _orderChanged() => _pendingSubmissionKey = null;
+
   // --- customer search ------------------------------------------------------
 
   Future<void> _searchCustomers() async {
     final query = _customerSearchController.text.trim();
-    if (query.isEmpty) return;
-    final isPhoneLike = _phoneLikeQuery.hasMatch(query);
+    if (query.length < 2) return;
     setState(() {
       _searchingCustomers = true;
       _customerSearchError = null;
     });
     try {
-      final results =
-          await ref.read(tenantCustomerDirectoryGatewayProvider).search(
-                organizationId: widget.ctx.organizationId,
-                phoneNumber: isPhoneLike ? query.replaceAll(' ', '') : null,
-                namePrefix: isPhoneLike ? null : query,
-              );
+      final results = await ref
+          .read(posPhoneOrderGatewayProvider)
+          .searchCustomers(
+              organizationId: widget.ctx.organizationId, query: query);
       if (mounted) setState(() => _customerResults = results);
-    } on TenantCustomerDirectoryException {
+    } on PosPhoneOrderException {
       if (mounted) {
         setState(() {
           _customerResults = null;
@@ -197,34 +240,22 @@ class _PosNewTakeawayOrderScreenState
     }
   }
 
-  /// Fills the name and loads this customer's previous delivery addresses
-  /// (the organization's own past orders only — the directory never exposes
-  /// the customer's private address book). The phone stays masked: the full
-  /// number of an app customer is not shared with the POS.
-  Future<void> _selectCustomer(TenantCustomerSearchResult customer) async {
-    final parts = customer.displayName.trim().split(RegExp(r'\s+'));
+  /// A book record fills the name, the FULL phone and its remembered
+  /// addresses; an app customer fills the name only (its phone stays
+  /// masked and must be typed).
+  void _selectCustomer(PosCustomerBookEntry customer) {
     setState(() {
       _selectedCustomer = customer;
       _customerResults = null;
-      _firstNameController.text = parts.isEmpty ? '' : parts.first;
-      _lastNameController.text =
-          parts.length > 1 ? parts.skip(1).join(' ') : '';
-      _previousAddresses = const [];
-    });
-    try {
-      final detail =
-          await ref.read(tenantCustomerDirectoryGatewayProvider).getDetail(
-                organizationId: widget.ctx.organizationId,
-                customerId: customer.id,
-              );
-      if (!mounted || _selectedCustomer?.id != customer.id) return;
-      setState(() => _previousAddresses = detail.orderAddressSnapshots);
-      if (detail.orderAddressSnapshots.isNotEmpty) {
-        _applyAddress(detail.orderAddressSnapshots.first);
+      _firstNameController.text = customer.firstName;
+      _lastNameController.text = customer.lastName;
+      _phoneController.text = customer.phoneNumber ?? '';
+      _previousAddresses = customer.addresses;
+      if (customer.addresses.isNotEmpty) {
+        _applyAddress(customer.addresses.first);
       }
-    } on TenantCustomerDirectoryException {
-      // The name is already filled; addresses are typed by hand.
-    }
+      _orderChanged();
+    });
   }
 
   /// "Yeni Müşteri" — clears any selection and starts typing a new one.
@@ -233,51 +264,29 @@ class _PosNewTakeawayOrderScreenState
       _selectedCustomer = null;
       _customerResults = null;
       _previousAddresses = const [];
-      for (final controller in [
-        _firstNameController,
-        _lastNameController,
-        _phoneController,
-        _neighborhoodController,
-        _streetController,
-        _buildingNoController,
-        _apartmentNoController,
-        _addressDescriptionController,
-      ]) {
+      for (final controller in _customerControllers) {
         controller.clear();
       }
+      _orderChanged();
     });
     _firstNameFocus.requestFocus();
   }
 
-  void _applyAddress(Map<String, dynamic> snapshot) {
-    String text(String key) => (snapshot[key] as String?) ?? '';
-    setState(() {
-      _neighborhoodController.text = text('neighborhoodName');
-      _streetController.text = text('streetName');
-      _buildingNoController.text = text('buildingNo');
-      _apartmentNoController.text = text('apartmentNo');
-      _addressDescriptionController.text = text('addressDescription');
-    });
+  void _applyAddress(PosDeliveryAddressInput address) {
+    _neighborhoodController.text = address.neighborhoodName;
+    _streetController.text = address.streetName;
+    _buildingNoController.text = address.buildingNo;
+    _apartmentNoController.text = address.apartmentNo;
+    _floorController.text = address.floor;
+    _addressDescriptionController.text = address.addressDescription;
   }
 
-  static String _addressSummary(Map<String, dynamic> snapshot) {
-    final parts = [
-      snapshot['neighborhoodName'],
-      snapshot['streetName'],
-      if (snapshot['buildingNo'] != null) 'No ${snapshot['buildingNo']}',
-      if ((snapshot['apartmentNo'] as String?)?.isNotEmpty ?? false)
-        'D ${snapshot['apartmentNo']}',
-    ].whereType<String>().where((p) => p.isNotEmpty);
-    final label = snapshot['label'] as String?;
-    final summary = parts.join(', ');
-    return label == null || label.isEmpty ? summary : '$label — $summary';
-  }
-
-  // --- cart -----------------------------------------------------------------
+  // --- cart & prices --------------------------------------------------------
 
   void _addSelection(PosCatalogSelection selection) {
     final line = _PhoneOrderCartLine(selection);
     setState(() {
+      _orderChanged();
       for (final existing in _cartLines) {
         if (existing.mergeKey == line.mergeKey) {
           existing.quantity += line.quantity;
@@ -290,70 +299,194 @@ class _PosNewTakeawayOrderScreenState
 
   void _changeQuantity(_PhoneOrderCartLine line, int delta) {
     setState(() {
+      _orderChanged();
       line.quantity += delta;
       if (line.quantity <= 0) _cartLines.remove(line);
     });
   }
 
-  double get _total =>
-      _cartLines.fold(0.0, (sum, line) => sum + (line.totalRowPrice ?? 0.0));
+  /// [line]'s unit price on the current mode's channel, re-priced from the
+  /// catalog (the line remembers only what was chosen).
+  Money _unitPrice(
+    _PhoneOrderCartLine line,
+    Map<String, MenuProduct> catalog,
+    ChannelPricingPolicy policy,
+  ) {
+    final channel = _mode.channel;
+    final product = catalog[line.productId] ?? line.selection.product;
+    var total = ChannelPriceResolver.resolveProductUnitPrice(
+      product: product,
+      categoryId: product.categoryId,
+      channel: channel,
+      policy: policy,
+    );
+    for (final selected in line.selection.selectedModifiers) {
+      final option = product.modifierGroups
+          .where((g) => g.id == selected.groupId)
+          .expand((g) => g.options)
+          .where((o) => o.id == selected.optionId)
+          .firstOrNull;
+      total += ChannelPriceResolver.resolveModifierExtraPrice(
+        extraPrice: Money.fromLegacyDoubleTry(
+            option?.extraPrice ?? selected.extraPrice),
+        channel: channel,
+        policy: policy,
+      );
+    }
+    return total;
+  }
 
-  bool get _hasWeighedLine =>
-      _cartLines.any((line) => line.selection.weightGrams != null);
+  /// The manual delivery fee in minor units (whole TL, default 0).
+  int get _deliveryFeeMinorUnits {
+    final whole = int.tryParse(_deliveryFeeController.text.trim());
+    return whole == null || whole < 0 ? 0 : whole * 100;
+  }
+
+  String get _paymentMethodId => switch (_payOnDelivery) {
+        PosPayOnDeliveryMethod.cash => 'cash',
+        PosPayOnDeliveryMethod.card => 'credit_card',
+        PosPayOnDeliveryMethod.mealCard => _mealCardBrandId,
+      };
 
   // --- submit ---------------------------------------------------------------
 
+  String? _validate() {
+    if (_firstNameController.text.trim().isEmpty ||
+        _lastNameController.text.trim().isEmpty ||
+        _phoneController.text.trim().isEmpty) {
+      return 'Ad, soyad ve telefon alanları zorunludur.';
+    }
+    if (normalizeTurkishPhoneForPos(_phoneController.text) == null) {
+      return 'Telefon numarası geçerli değil (ör. 0532 111 22 33).';
+    }
+    if (_isDelivery &&
+        (_neighborhoodController.text.trim().isEmpty ||
+            _streetController.text.trim().isEmpty)) {
+      return 'Paket servis için mahalle ve cadde / sokak zorunludur.';
+    }
+    if (_isDelivery &&
+        _deliveryFeeController.text.trim().isNotEmpty &&
+        int.tryParse(_deliveryFeeController.text.trim()) == null) {
+      return 'Teslimat ücretini tam TL olarak girin.';
+    }
+    if (_cartLines.isEmpty) return 'Sepete en az bir ürün eklemelisiniz.';
+    return null;
+  }
+
   Future<void> _submit() async {
-    if (_isDelivery) return; // Faz 2 — see [_deliverySubmitNotice].
-    final firstName = _firstNameController.text.trim();
-    final lastName = _lastNameController.text.trim();
-    final phone = _phoneController.text.trim();
-    if (firstName.isEmpty || lastName.isEmpty || phone.isEmpty) {
-      setState(() => _error = 'Ad, soyad ve telefon alanları zorunludur.');
+    final problem = _validate();
+    if (problem != null) {
+      setState(() => _error = problem);
       return;
     }
-    if (_cartLines.isEmpty) {
-      setState(() => _error = 'Sepete en az bir ürün eklemelisiniz.');
-      return;
-    }
+    final submissionKey = _pendingSubmissionKey ??=
+        DateTime.now().microsecondsSinceEpoch.toString();
+    final contact = PosPhoneOrderContact(
+      firstName: _firstNameController.text.trim(),
+      lastName: _lastNameController.text.trim(),
+      phone: normalizeTurkishPhoneForPos(_phoneController.text)!,
+      linkedCustomerId: _selectedCustomer?.linkedCustomerId,
+    );
+    final items = [for (final line in _cartLines) line.toWire()];
     setState(() {
       _submitting = true;
       _error = null;
     });
+    final gateway = ref.read(posPhoneOrderGatewayProvider);
     try {
-      await ref.read(submitTakeawayOrderGatewayProvider).submitStaffEntryOrder(
-        submissionKey: DateTime.now().microsecondsSinceEpoch.toString(),
-        organizationId: widget.ctx.organizationId,
-        branchId: widget.ctx.branchId,
-        deviceId: widget.ctx.deviceId,
-        deviceSessionId: widget.ctx.deviceSessionId,
-        contactFirstName: firstName,
-        contactLastName: lastName,
-        contactPhone: phone,
-        items: [
-          for (final line in _cartLines)
-            TakeawayProductItem(
-              productId: line.product.id,
-              quantity: line.selection.weightGrams != null ? 1 : line.quantity,
-              selectedModifiers: [
-                for (final modifier in line.selectedModifiers)
-                  (groupId: modifier.groupId, optionId: modifier.optionId),
-              ],
-              note: line.selection.note,
-              excludedIngredients: line.selection.excludedIngredients,
-              weightGrams: line.selection.weightGrams,
-            ),
-        ],
+      if (!_isDelivery) {
+        await gateway.submitTakeaway(
+          ctx: widget.ctx,
+          submissionKey: submissionKey,
+          contact: contact,
+          items: items,
+          kitchenNote: _kitchenNoteController.text.trim(),
+        );
+        if (!mounted) return;
+        Navigator.of(context).pop(true);
+        return;
+      }
+      final result = await gateway.submitDelivery(
+        ctx: widget.ctx,
+        submissionKey: submissionKey,
+        contact: contact,
+        address: PosDeliveryAddressInput(
+          neighborhoodName: _neighborhoodController.text.trim(),
+          streetName: _streetController.text.trim(),
+          buildingNo: _buildingNoController.text.trim(),
+          apartmentNo: _apartmentNoController.text.trim(),
+          floor: _floorController.text.trim(),
+          addressDescription: _addressDescriptionController.text.trim(),
+        ),
+        items: items,
+        courierNote: _courierNoteController.text.trim(),
+        kitchenNote: _kitchenNoteController.text.trim(),
+        paymentMethodId: _paymentMethodId,
+        deliveryFeeMinorUnits: _deliveryFeeMinorUnits,
+        plannedCourierId: _selectedCourierId,
       );
       if (!mounted) return;
+      // Product-owner decision: the courier slip prints the moment the
+      // order is confirmed; a printer problem never undoes the order.
+      await printCourierSlip(
+          context: context,
+          ref: ref,
+          branchId: widget.ctx.branchId,
+          orderId: result.orderId);
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      await _showDeliveryConfirmed(result);
+      if (!mounted) return;
       Navigator.of(context).pop(true);
-    } on SubmitTakeawayOrderException catch (e) {
+    } on PosPhoneOrderException catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.message;
+        _error = _messageFor(e);
         _submitting = false;
       });
     }
+  }
+
+  static String _messageFor(PosPhoneOrderException e) => switch (e.code) {
+        'permission-denied' ||
+        'permission_denied' =>
+          'Bu işlem için yetkiniz yok.',
+        'invalid-argument' ||
+        'invalid_argument' =>
+          'Sipariş bilgileri geçersiz; alanları kontrol edip tekrar deneyin.',
+        'failed-precondition' ||
+        'failed_precondition' =>
+          'Sipariş şu anda kaydedilemedi (seçilen kurye uygun olmayabilir). '
+              'Bilgileri kontrol edin.',
+        _ => 'Sipariş gönderilemedi. Lütfen tekrar deneyin.',
+      };
+
+  Future<void> _showDeliveryConfirmed(PosPhoneOrderResult result) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Paket Siparişi Onaylandı'),
+        content: Text('${result.orderNumber} mutfağa iletildi.'),
+        actions: [
+          OutlinedButton.icon(
+            key: const Key('reprintCourierSlipButton'),
+            icon: const Icon(Icons.print_rounded),
+            label: const Text('Kurye Fişini Tekrar Yazdır'),
+            onPressed: () => printCourierSlip(
+              context: dialogContext,
+              ref: ref,
+              branchId: widget.ctx.branchId,
+              orderId: result.orderId,
+              isCopy: true,
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Tamam'),
+          ),
+        ],
+      ),
+    );
   }
 
   // --- build ----------------------------------------------------------------
@@ -379,9 +512,12 @@ class _PosNewTakeawayOrderScreenState
               child: LayoutBuilder(builder: (context, constraints) {
                 final isWide = constraints.maxWidth >= AppBreakpoints.tablet;
                 final catalog = PosCatalogBrowser(
+                  key: ValueKey(_mode),
                   ctx: widget.ctx,
                   wide: isWide,
                   onAdd: _addSelection,
+                  priceChannel: _mode.channel,
+                  allowWeighedProducts: false,
                 );
                 final panel = _buildOrderPanel();
                 if (!isWide) {
@@ -433,8 +569,10 @@ class _PosNewTakeawayOrderScreenState
             ],
             selected: {_mode},
             showSelectedIcon: false,
-            onSelectionChanged: (selection) =>
-                setState(() => _mode = selection.first),
+            onSelectionChanged: (selection) => setState(() {
+              _mode = selection.first;
+              _orderChanged();
+            }),
           ),
           SizedBox(
             width: 360,
@@ -485,7 +623,7 @@ class _PosNewTakeawayOrderScreenState
       key: const Key('customerSearchResults'),
       color: AppColors.surface,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 220),
+        constraints: const BoxConstraints(maxHeight: 240),
         child: _customerSearchError != null
             ? Padding(
                 padding: const EdgeInsets.all(AppSpacing.md),
@@ -515,9 +653,20 @@ class _PosNewTakeawayOrderScreenState
                     children: [
                       for (final customer in results)
                         ListTile(
-                          leading: const Icon(Icons.person_rounded),
+                          leading: Icon(customer.isFromBook
+                              ? Icons.menu_book_rounded
+                              : Icons.phone_iphone_rounded),
                           title: Text(customer.displayName),
-                          subtitle: Text(customer.phoneMasked),
+                          subtitle: Text([
+                            customer.phoneNumber ?? customer.phoneMasked,
+                            if (customer.addresses.isNotEmpty)
+                              customer.addresses.first.summary,
+                          ].join(' · ')),
+                          trailing: Text(
+                            customer.isFromBook ? 'Defter' : 'Uygulama',
+                            style: AppTypography.bodySmall
+                                .copyWith(color: AppColors.textSecondary),
+                          ),
                           onTap: () => _selectCustomer(customer),
                         ),
                     ],
@@ -536,9 +685,12 @@ class _PosNewTakeawayOrderScreenState
             children: [
               Icon(icon, size: 20, color: AppColors.primary),
               const SizedBox(width: AppSpacing.sm),
-              Text(title,
-                  style: AppTypography.titleMedium
-                      .copyWith(fontWeight: FontWeight.bold)),
+              Expanded(
+                child: Text(title,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTypography.titleMedium
+                        .copyWith(fontWeight: FontWeight.bold)),
+              ),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -562,6 +714,7 @@ class _PosNewTakeawayOrderScreenState
         focusNode: focusNode,
         keyboardType: keyboardType,
         maxLines: maxLines,
+        onChanged: (_) => setState(_orderChanged),
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
@@ -602,12 +755,13 @@ class _PosNewTakeawayOrderScreenState
   Widget _buildCustomerSection() {
     final selected = _selectedCustomer;
     return _section('Müşteri', Icons.person_rounded, [
-      if (selected != null)
+      if (selected != null && !selected.isFromBook)
         Padding(
           padding: const EdgeInsets.only(bottom: AppSpacing.sm),
           child: Text(
-            'Kayıtlı müşteri: ${selected.displayName} · ${selected.phoneMasked}\n'
-            'Telefon gizlilik gereği maskeli — teyit için numarayı girin.',
+            'Uygulama müşterisi: ${selected.displayName} · '
+            '${selected.phoneMasked}\nTelefon gizlilik gereği maskeli — '
+            'numarayı girin; ilk siparişten sonra deftere kaydedilir.',
             key: const Key('selectedCustomerNotice'),
             style: AppTypography.bodySmall
                 .copyWith(color: AppColors.textSecondary),
@@ -629,7 +783,8 @@ class _PosNewTakeawayOrderScreenState
       ),
       _field(_phoneController, 'Telefon',
           key: const Key('takeawayPhoneField'),
-          keyboardType: TextInputType.phone),
+          keyboardType: TextInputType.phone,
+          hint: '0532 111 22 33'),
     ]);
   }
 
@@ -653,9 +808,16 @@ class _PosNewTakeawayOrderScreenState
             for (final address in _previousAddresses)
               ActionChip(
                 avatar: const Icon(Icons.history_rounded, size: 18),
-                label: Text(_addressSummary(address),
-                    overflow: TextOverflow.ellipsis),
-                onPressed: () => _applyAddress(address),
+                label: Text(
+                  address.label.isEmpty
+                      ? address.summary
+                      : '${address.label} — ${address.summary}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onPressed: () => setState(() {
+                  _applyAddress(address);
+                  _orderChanged();
+                }),
               ),
           ],
         ),
@@ -670,6 +832,8 @@ class _PosNewTakeawayOrderScreenState
           Expanded(child: _field(_buildingNoController, 'Bina No')),
           const SizedBox(width: AppSpacing.sm),
           Expanded(child: _field(_apartmentNoController, 'Daire')),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(child: _field(_floorController, 'Kat')),
         ],
       ),
       _field(_addressDescriptionController, 'Adres Tarifi', maxLines: 2),
@@ -688,11 +852,37 @@ class _PosNewTakeawayOrderScreenState
               avatar: Icon(method.icon, size: 18),
               label: Text(method.label),
               selected: _payOnDelivery == method,
-              onSelected: (_) => setState(() => _payOnDelivery = method),
+              onSelected: (_) => setState(() {
+                _payOnDelivery = method;
+                _orderChanged();
+              }),
             ),
         ],
       ),
+      if (_payOnDelivery == PosPayOnDeliveryMethod.mealCard) ...[
+        const SizedBox(height: AppSpacing.xs),
+        Wrap(
+          key: const Key('mealCardBrands'),
+          spacing: AppSpacing.xs,
+          runSpacing: AppSpacing.xs,
+          children: [
+            for (final brand in _mealCardBrands)
+              ChoiceChip(
+                label: Text(brand.label),
+                selected: _mealCardBrandId == brand.id,
+                onSelected: (_) => setState(() {
+                  _mealCardBrandId = brand.id;
+                  _orderChanged();
+                }),
+              ),
+          ],
+        ),
+      ],
       const SizedBox(height: AppSpacing.md),
+      _field(_deliveryFeeController, 'Teslimat Ücreti (TL)',
+          key: const Key('deliveryFeeField'),
+          keyboardType: TextInputType.number,
+          hint: '0'),
       const Text('Kurye', style: AppTypography.labelLarge),
       const SizedBox(height: AppSpacing.xs),
       Wrap(
@@ -705,8 +895,10 @@ class _PosNewTakeawayOrderScreenState
               avatar: const Icon(Icons.two_wheeler_rounded, size: 18),
               label: Text(courier.displayName),
               selected: _selectedCourierId == courier.id,
-              onSelected: (selected) => setState(
-                  () => _selectedCourierId = selected ? courier.id : null),
+              onSelected: (selected) => setState(() {
+                _selectedCourierId = selected ? courier.id : null;
+                _orderChanged();
+              }),
             ),
           const Tooltip(
             message: 'Kurye havuzu bir sonraki aşamada (Faz 3) açılacak.',
@@ -719,80 +911,100 @@ class _PosNewTakeawayOrderScreenState
           ),
         ],
       ),
-      if (couriers.isEmpty)
-        Padding(
-          padding: const EdgeInsets.only(top: AppSpacing.xs),
-          child: Text('Bu şubede kayıtlı aktif dükkan kuryesi yok.',
-              style: AppTypography.bodySmall
-                  .copyWith(color: AppColors.textSecondary)),
+      Padding(
+        padding: const EdgeInsets.only(top: AppSpacing.xs),
+        child: Text(
+          couriers.isEmpty
+              ? 'Bu şubede kayıtlı aktif dükkan kuryesi yok.'
+              : 'Seçilen kurye siparişe planlanır; atama sipariş hazır '
+                  'olunca dağıtım listesinden tek dokunuşla yapılır.',
+          style:
+              AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
         ),
+      ),
     ]);
   }
 
   Widget _buildCartSection() {
-    return _section('Sipariş', Icons.receipt_long_rounded, [
+    final catalog = {
+      for (final product in ref.watch(menuProductsProvider)) product.id: product
+    };
+    final policy =
+        ref.watch(channelPricingPolicySnapshotProvider).valueOrNull ??
+            const ChannelPricingPolicy();
+    var total = Money.fromLegacyDoubleTry(0);
+    final rows = <Widget>[];
+    for (final line in _cartLines) {
+      final unit = _unitPrice(line, catalog, policy);
+      total += unit * line.quantity;
+      rows.add(Padding(
+        padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(line.productName, style: AppTypography.bodyMedium),
+                  if (line.selection.selectedModifiers.isNotEmpty ||
+                      line.selection.note.isNotEmpty)
+                    Text(
+                      [
+                        for (final m in line.selection.selectedModifiers)
+                          m.optionName,
+                        if (line.selection.note.isNotEmpty)
+                          'Not: ${line.selection.note}',
+                      ].join(', '),
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.textSecondary),
+                    ),
+                  Text(_tl(unit * line.quantity),
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.primary)),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.remove_rounded, size: 18),
+              tooltip: 'Azalt',
+              onPressed: () => _changeQuantity(line, -1),
+            ),
+            Text('${line.quantity}', style: AppTypography.bodyMedium),
+            IconButton(
+              icon: const Icon(Icons.add_rounded, size: 18),
+              tooltip: 'Artır',
+              onPressed: () => _changeQuantity(line, 1),
+            ),
+          ],
+        ),
+      ));
+    }
+    final fee = _isDelivery ? _deliveryFeeMinorUnits : 0;
+    return _section(
+        'Sipariş · ${_mode.label} fiyatları', Icons.receipt_long_rounded, [
       if (_cartLines.isEmpty)
         Text('Soldaki menüden ürün ekleyin.',
             style: AppTypography.bodyMedium
                 .copyWith(color: AppColors.textSecondary))
       else
-        for (final line in _cartLines)
-          Padding(
-            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(line.product.name, style: AppTypography.bodyMedium),
-                      if (line.selectedModifiers.isNotEmpty ||
-                          line.selection.note.isNotEmpty)
-                        Text(
-                          [
-                            for (final m in line.selectedModifiers)
-                              m.optionName,
-                            if (line.selection.note.isNotEmpty)
-                              'Not: ${line.selection.note}',
-                          ].join(', '),
-                          style: AppTypography.bodySmall
-                              .copyWith(color: AppColors.textSecondary),
-                        ),
-                    ],
-                  ),
-                ),
-                if (line.selection.weightGrams != null)
-                  Text('${line.selection.weightGrams} g',
-                      style: AppTypography.bodyMedium)
-                else ...[
-                  IconButton(
-                    icon: const Icon(Icons.remove_rounded, size: 18),
-                    tooltip: 'Azalt',
-                    onPressed: () => _changeQuantity(line, -1),
-                  ),
-                  Text('${line.quantity}', style: AppTypography.bodyMedium),
-                  IconButton(
-                    icon: const Icon(Icons.add_rounded, size: 18),
-                    tooltip: 'Artır',
-                    onPressed: () => _changeQuantity(line, 1),
-                  ),
-                ],
-                if (line.selection.weightGrams != null)
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                    tooltip: 'Satırı Kaldır',
-                    onPressed: () => _changeQuantity(line, -line.quantity),
-                  ),
-              ],
-            ),
-          ),
+        ...rows,
       const Divider(),
+      if (fee > 0)
+        Row(
+          children: [
+            const Expanded(
+                child:
+                    Text('Teslimat Ücreti', style: AppTypography.bodyMedium)),
+            Text(_tl(Money(fee, total.currency)),
+                style: AppTypography.bodyMedium),
+          ],
+        ),
       Row(
         children: [
           const Expanded(
               child: Text('Toplam', style: AppTypography.titleMedium)),
           Text(
-            '${_total.toStringAsFixed(0)} TL${_hasWeighedLine ? ' + tartı' : ''}',
+            _tl(total + Money(fee, total.currency)),
             key: const Key('phoneOrderTotal'),
             style: AppTypography.titleMedium.copyWith(
                 fontWeight: FontWeight.bold, color: AppColors.primary),
@@ -803,19 +1015,23 @@ class _PosNewTakeawayOrderScreenState
       TextField(
         key: const Key('kitchenNoteField'),
         controller: _kitchenNoteController,
-        enabled: false,
         maxLines: 2,
+        maxLength: 500,
+        onChanged: (_) => _orderChanged(),
         decoration: const InputDecoration(
           labelText: 'Mutfak Notu',
           hintText: 'Et orta-iyi pişsin, sosu bol olsun…',
-          helperText: _kitchenNoteNotice,
-          helperMaxLines: 2,
+          helperText: 'KDS ekranında ve mutfak fişinde görünür.',
           isDense: true,
+          counterText: '',
           border: OutlineInputBorder(borderRadius: AppRadius.kSmall),
         ),
       ),
     ]);
   }
+
+  static String _tl(Money money) =>
+      '${(money.minorUnits / 100).toStringAsFixed(0)} TL';
 
   Widget _buildActions() {
     return Padding(
@@ -827,30 +1043,30 @@ class _PosNewTakeawayOrderScreenState
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.sm),
               child: Text(_error!,
+                  key: const Key('phoneOrderError'),
                   style:
                       AppTypography.bodySmall.copyWith(color: AppColors.error)),
             ),
           if (_isDelivery) ...[
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-              child: Text(_deliverySubmitNotice,
-                  key: const Key('deliverySubmitNotice'),
-                  style: AppTypography.bodySmall
-                      .copyWith(color: AppColors.warning)),
-            ),
-            OutlinedButton.icon(
-              key: const Key('printCourierSlipButton'),
-              icon: const Icon(Icons.print_rounded),
-              label: const Text('Kurye Fişi Yazdır'),
-              style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(56)),
-              onPressed: null,
+            Tooltip(
+              message: 'Kurye fişi sipariş onaylanınca otomatik basılır; '
+                  'onay penceresinden tekrar yazdırılabilir.',
+              child: OutlinedButton.icon(
+                key: const Key('printCourierSlipButton'),
+                icon: const Icon(Icons.print_rounded),
+                label: const Text('Kurye Fişi Yazdır'),
+                style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(56)),
+                // No order exists before confirmation — the slip prints
+                // automatically on confirmation.
+                onPressed: null,
+              ),
             ),
             const SizedBox(height: AppSpacing.sm),
           ],
           ElevatedButton.icon(
             key: const Key('submitNewTakeawayOrderButton'),
-            onPressed: _submitting || _isDelivery ? null : _submit,
+            onPressed: _submitting ? null : _submit,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: AppColors.onPrimary,

@@ -1078,6 +1078,24 @@ class _KitchenOrderCardState extends State<KitchenOrderCard>
                 ],
               ),
             ),
+            // 2026-11-11 — the order-level kitchen note.
+            if (ticket.header.orderNote.isNotEmpty)
+              Container(
+                key: const Key('kdsOrderNote'),
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: AppSpacing.xs),
+                padding: const EdgeInsets.all(AppSpacing.xs),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.14),
+                  borderRadius: AppRadius.kSmall,
+                ),
+                child: Text(
+                  'Mutfak Notu: ${ticket.header.orderNote}',
+                  style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.bold),
+                ),
+              ),
             Expanded(
               child: ListView(
                 children: [

@@ -14,7 +14,12 @@ import '../../../menu/domain/models/menu_category.dart';
 import '../../../menu/domain/models/menu_product.dart';
 import '../../../menu/domain/models/sale_unit.dart';
 import '../../../menu/domain/models/selected_modifier.dart';
+import '../../../menu/domain/pricing/channel_price_resolver.dart';
+import '../../../menu/domain/pricing/channel_pricing_policy.dart';
+import '../../../menu/presentation/providers/channel_price_display_provider.dart';
 import '../../../menu/presentation/providers/menu_catalog_provider.dart';
+import '../../../orders/domain/models/order_channel.dart';
+import '../../../../shared/models/money.dart';
 import '../../data/pos_action_gateway.dart' show PosDeviceContext;
 import '../providers/pos_workspace_providers.dart';
 import 'pos_product_customization_dialog.dart';
@@ -59,11 +64,24 @@ class PosCatalogBrowser extends ConsumerStatefulWidget {
     required this.ctx,
     required this.onAdd,
     required this.wide,
+    this.priceChannel,
+    this.allowWeighedProducts = true,
   });
 
   final PosDeviceContext ctx;
   final ValueChanged<PosCatalogSelection> onAdd;
   final bool wide;
+
+  /// 2026-11-11 — when set, cards, the customization dialog and every
+  /// selection carry that channel's prices (Gel-Al +20 TL; Paket Servis
+  /// ×1.35, nearest 5 TL — product and each paid modifier); `null` = the
+  /// Masa (dine-in) price. Display only: the server prices every order
+  /// itself.
+  final OrderChannel? priceChannel;
+
+  /// ADR-067 — products sold by weight are dine-in only for now; `false`
+  /// refuses them with an explanation instead of opening the weight dialog.
+  final bool allowWeighedProducts;
 
   @override
   ConsumerState<PosCatalogBrowser> createState() => _PosCatalogBrowserState();
@@ -137,6 +155,15 @@ class _PosCatalogBrowserState extends ConsumerState<PosCatalogBrowser> {
   /// [PosProductCustomizationDialog] first, a sold-by-weight product the
   /// weight dialog — dismissing either adds nothing.
   Future<void> _onProductTap(MenuProduct product) async {
+    if (product.saleUnit == SaleUnit.kilogram && !widget.allowWeighedProducts) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(
+          content:
+              Text('Tartılı ürünler şimdilik yalnızca masada satılabilir.'),
+        ));
+      return;
+    }
     if (product.saleUnit == SaleUnit.kilogram) {
       final grams = await WeightEntryDialog.show(context, product);
       if (grams == null || !mounted) return;
@@ -321,11 +348,51 @@ class _PosCatalogBrowserState extends ConsumerState<PosCatalogBrowser> {
     );
   }
 
+  /// [product] with [channel]'s prices for itself and each paid option.
+  static MenuProduct _pricedFor(
+    MenuProduct product,
+    OrderChannel channel,
+    ChannelPricingPolicy policy,
+  ) {
+    double whole(Money money) => money.minorUnits / 100;
+    return product.copyWith(
+      basePrice: whole(ChannelPriceResolver.resolveProductUnitPrice(
+        product: product,
+        categoryId: product.categoryId,
+        channel: channel,
+        policy: policy,
+      )),
+      modifierGroups: [
+        for (final group in product.modifierGroups)
+          group.copyWith(options: [
+            for (final option in group.options)
+              option.copyWith(
+                extraPrice:
+                    whole(ChannelPriceResolver.resolveModifierExtraPrice(
+                  extraPrice: Money.fromLegacyDoubleTry(option.extraPrice),
+                  channel: channel,
+                  policy: policy,
+                )),
+              ),
+          ]),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final categories = ref.watch(menuCategoriesProvider);
-    final allProducts =
-        ref.watch(menuProductsProvider).where((p) => p.isAvailable).toList();
+    final channel = widget.priceChannel;
+    final policy = channel == null
+        ? null
+        : ref.watch(channelPricingPolicySnapshotProvider).valueOrNull;
+    final allProducts = [
+      for (final product in ref.watch(menuProductsProvider))
+        if (product.isAvailable)
+          channel == null || policy == null
+              ? product
+              : _pricedFor(product, channel, policy),
+    ];
 
     // "Çok Tercih Edilenler" (BR-POS-001) resolves asynchronously (a real
     // backend aggregation); every other category is an in-memory list,

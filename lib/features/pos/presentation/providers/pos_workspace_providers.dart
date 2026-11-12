@@ -20,6 +20,7 @@ import '../../data/fiscal_offline_gateway.dart';
 import '../../data/offline_lease_store.dart';
 import '../../data/offline_payment_outbox_repository.dart';
 import '../../data/payment_gateway.dart';
+import '../../data/pos_phone_order_gateway.dart';
 import '../../data/pos_action_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../../data/scale_reader_port.dart';
@@ -41,6 +42,14 @@ final posActionGatewayProvider = Provider<PosActionGateway>((ref) {
   final isFirebaseReady = ref.watch(firebaseReadyProvider);
   if (isFirebaseReady) return FirebasePosActionGateway();
   return const UnavailablePosActionGateway();
+});
+
+/// 2026-11-11 (Faz 2) — staff Gel-Al / Paket Servis orders and the local
+/// customer book search.
+final posPhoneOrderGatewayProvider = Provider<PosPhoneOrderGateway>((ref) {
+  final isFirebaseReady = ref.watch(firebaseReadyProvider);
+  if (isFirebaseReady) return FirebasePosPhoneOrderGateway();
+  return const UnavailablePosPhoneOrderGateway();
 });
 
 /// "Çok Tercih Edilenler" (Top 20), 2026-11-03 — product owner-approved

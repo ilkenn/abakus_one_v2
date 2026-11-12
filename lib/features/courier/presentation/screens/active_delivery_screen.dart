@@ -13,6 +13,7 @@ import '../../../crm/presentation/providers/crm_dependencies_provider.dart';
 import '../../../orders/data/package_preparation_repository.dart';
 import '../../../orders/domain/fulfillment/package_preparation_status.dart';
 import '../../../orders/domain/models/order_id.dart';
+import '../../../orders/presentation/providers/orders_provider.dart';
 import '../../../pos/application/use_cases/advance_package_preparation.dart';
 import '../../../pos/data/pos_order_repository.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
@@ -68,6 +69,10 @@ class _ActiveDeliveryScreenState extends ConsumerState<ActiveDeliveryScreen> {
   bool _loading = true;
   String? _message;
 
+  /// 2026-11-11 (Faz 2) — the order's courier note ("Zile basmayın…"),
+  /// read from the order itself; empty when it has none or can't be read.
+  String _courierNote = '';
+
   @override
   void initState() {
     super.initState();
@@ -84,10 +89,22 @@ class _ActiveDeliveryScreenState extends ConsumerState<ActiveDeliveryScreen> {
           .read(deliveryAssignmentRepositoryProvider)
           .findById(assignmentId);
     }
+    var courierNote = '';
+    if (delivery != null) {
+      try {
+        final order = await ref
+            .read(canonicalOrderRepositoryProvider)
+            .findById(delivery.orderId);
+        courierNote = order?.customerNote.trim() ?? '';
+      } catch (_) {
+        // The delivery flow never depends on the note being readable.
+      }
+    }
     if (!mounted) return;
     setState(() {
       _delivery = delivery;
       _assignment = assignment;
+      _courierNote = courierNote;
       _loading = false;
     });
   }
@@ -375,6 +392,16 @@ class _ActiveDeliveryScreenState extends ConsumerState<ActiveDeliveryScreen> {
                           Text('Durum: ${delivery.status.name}',
                               style: AppTypography.bodyMedium
                                   .copyWith(color: AppColors.textSecondary)),
+                          if (_courierNote.isNotEmpty) ...[
+                            const SizedBox(height: AppSpacing.sm),
+                            Text(
+                              'Kurye Notu: $_courierNote',
+                              key: const Key('activeDeliveryCourierNote'),
+                              style: AppTypography.bodyLarge.copyWith(
+                                  color: AppColors.warning,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ],
                         ],
                       ),
                     ),

@@ -42,7 +42,12 @@ abstract final class KitchenTicketMapper {
         productName: orderLine.productName,
         quantity: orderLine.quantity,
         ingredientSummary: _ingredientSummaryFor(orderLine),
-        note: orderLine.kitchenNote,
+        // 2026-11-11 — the note staff type on a line is stored server-side
+        // as the line's `customerNote` (`buildProductLine`), which the
+        // kitchen never saw; both notes now reach the ticket and the KDS.
+        note: [orderLine.kitchenNote, orderLine.customerNote]
+            .where((note) => note.trim().isNotEmpty)
+            .join(' · '),
         orderedByName: approvalState?.orderedByName,
         weightGrams: orderLine.weightGrams,
       ));
@@ -65,6 +70,7 @@ abstract final class KitchenTicketMapper {
         customerName: _customerName(order),
         channel: order.channel,
         orderStatus: order.status,
+        orderNote: order.kitchenNote.trim(),
       ),
       lines: lines,
       isCopy: isCopy,

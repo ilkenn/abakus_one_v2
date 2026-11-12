@@ -98,17 +98,12 @@ class TakeawayProductItem extends TakeawayOrderItem {
   final String note;
   final List<String> excludedIngredients;
 
-  /// ADR-067 — grams for a product sold by weight (`submitTakeawayOrder`
-  /// already validates and prices it); `null` for a piece product.
-  final int? weightGrams;
-
   const TakeawayProductItem({
     required this.productId,
     required this.quantity,
     this.selectedModifiers = const [],
     this.note = '',
     this.excludedIngredients = const [],
-    this.weightGrams,
   });
 
   @override
@@ -122,7 +117,6 @@ class TakeawayProductItem extends TakeawayOrderItem {
         ],
         'note': note,
         'excludedIngredients': excludedIngredients,
-        if (weightGrams != null) 'weightGrams': weightGrams,
       };
 }
 

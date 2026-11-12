@@ -12,6 +12,7 @@ import '../../../courier/presentation/widgets/courier_assignment_dialog.dart';
 import '../../../orders/domain/models/order.dart';
 import '../../domain/delivery_neighborhood_clusterer.dart';
 import '../providers/courier_dispatch_dependencies_provider.dart';
+import '../widgets/print_courier_slip_action.dart';
 
 /// AP-6 Sprint 2/3 — the branch's active delivery orders (`ready`/
 /// `readyForPickup`/`outForDelivery`), grouped into neighborhood cluster
@@ -44,6 +45,45 @@ class _DeliveryOrderDispatchScreenState
 
   bool _isOrderSelectable(Order order) =>
       order.courierType != CourierType.marketplace;
+
+  String? _assigningOrderId;
+
+  void _snack(String message) => ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(message)));
+
+  /// 2026-11-11 (Faz 2) — one tap assigns the order to the courier staff
+  /// planned when opening it (product owner: never automatically — the
+  /// courier may not be at the shop). Same `assignCourierToOrder` call as
+  /// the "Kurye Ata" dialog; the server only accepts a ready order.
+  Future<void> _assignPlannedCourier(Order order) async {
+    final courierId = order.plannedCourierId;
+    if (courierId == null || _assigningOrderId != null) return;
+    setState(() => _assigningOrderId = order.id.value);
+    try {
+      await ref
+          .read(courierDispatchGatewayProvider)
+          .assignCourierToOrder(orderId: order.id.value, courierId: courierId);
+      if (mounted) {
+        _snack('${order.orderNumber.value} '
+            '${order.plannedCourierName ?? 'kuryeye'} atandı.');
+      }
+    } on CourierDispatchException catch (error) {
+      if (!mounted) return;
+      _snack(switch (error.code) {
+        'failed-precondition' ||
+        'failed_precondition' =>
+          'Sipariş henüz hazır değil ya da kurye müsait değil; mutfak '
+              'hazır dediğinde tekrar deneyin.',
+        'permission-denied' ||
+        'permission_denied' =>
+          'Kurye atama yetkiniz yok.',
+        _ => 'Kurye atanamadı. Lütfen tekrar deneyin.',
+      });
+    } finally {
+      if (mounted) setState(() => _assigningOrderId = null);
+    }
+  }
 
   void _toggleSelection(String orderId, bool selected) {
     setState(() {
@@ -131,6 +171,15 @@ class _DeliveryOrderDispatchScreenState
                         selectedOrderIds: _selectedOrderIds,
                         isOrderSelectable: _isOrderSelectable,
                         onSelectionChanged: _toggleSelection,
+                        assigningOrderId: _assigningOrderId,
+                        onAssignPlanned: _assignPlannedCourier,
+                        onPrintSlip: (order) => printCourierSlip(
+                          context: context,
+                          ref: ref,
+                          branchId: widget.branchId,
+                          orderId: order.id.value,
+                          isCopy: true,
+                        ),
                         onAssign: (order) => showDialog<void>(
                           context: context,
                           builder: (_) => CourierAssignmentDialog(
@@ -229,7 +278,14 @@ class _ClusterCard extends StatelessWidget {
     required this.isOrderSelectable,
     required this.onSelectionChanged,
     required this.onAssign,
+    required this.onAssignPlanned,
+    required this.onPrintSlip,
+    required this.assigningOrderId,
   });
+
+  final void Function(Order order) onAssignPlanned;
+  final void Function(Order order) onPrintSlip;
+  final String? assigningOrderId;
 
   final NeighborhoodCluster cluster;
   final Courier? Function(Order order) assignedCourierOf;
@@ -267,6 +323,9 @@ class _ClusterCard extends StatelessWidget {
                   onSelectionChanged: (selected) =>
                       onSelectionChanged(order.id.value, selected),
                   onAssign: () => onAssign(order),
+                  onAssignPlanned: () => onAssignPlanned(order),
+                  onPrintSlip: () => onPrintSlip(order),
+                  isAssigning: assigningOrderId == order.id.value,
                 ),
               ),
           ],
@@ -284,7 +343,14 @@ class _DeliveryOrderRow extends StatelessWidget {
     required this.isSelected,
     required this.onSelectionChanged,
     required this.onAssign,
+    required this.onAssignPlanned,
+    required this.onPrintSlip,
+    required this.isAssigning,
   });
+
+  final VoidCallback onAssignPlanned;
+  final VoidCallback onPrintSlip;
+  final bool isAssigning;
 
   final Order order;
   final Courier? assignedCourier;
@@ -329,13 +395,61 @@ class _DeliveryOrderRow extends StatelessWidget {
                   isMarketplace: isMarketplace,
                   assignedCourier: assignedCourier,
                 ),
+                // 2026-11-11 (Faz 2) — the courier note and the planned
+                // courier of a staff-opened Paket Servis order.
+                if (order.customerNote.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.xs),
+                    child: Text(
+                      'Kurye Notu: ${order.customerNote.trim()}',
+                      key: Key('courierNote-${order.id.value}'),
+                      style: AppTypography.bodySmall.copyWith(
+                          color: AppColors.warning,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                if (order.plannedCourierName != null &&
+                    order.assignedCourierId == null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.xs),
+                    child: Text(
+                      'Planlanan kurye: ${order.plannedCourierName}',
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.textSecondary),
+                    ),
+                  ),
               ],
             ),
+          ),
+          IconButton(
+            key: Key('reprintSlip-${order.id.value}'),
+            icon: const Icon(Icons.print_rounded),
+            tooltip: 'Kurye Fişini Tekrar Yazdır',
+            onPressed: onPrintSlip,
           ),
           if (isMarketplace)
             const SizedBox.shrink()
           else
-            TextButton(onPressed: onAssign, child: const Text('Kurye Ata')),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (order.plannedCourierId != null &&
+                    order.assignedCourierId == null)
+                  ElevatedButton.icon(
+                    key: Key('assignPlanned-${order.id.value}'),
+                    icon: isAssigning
+                        ? const SizedBox.square(
+                            dimension: AppSpacing.md,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.two_wheeler_rounded),
+                    label: Text('${order.plannedCourierName ?? 'Kurye'} Ata'),
+                    onPressed: isAssigning ? null : onAssignPlanned,
+                  ),
+                TextButton(onPressed: onAssign, child: const Text('Kurye Ata')),
+              ],
+            ),
         ],
       ),
     );
