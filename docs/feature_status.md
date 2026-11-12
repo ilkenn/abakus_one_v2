@@ -540,7 +540,7 @@ for the full analysis, architecture, and every deviation.
 | Failed delivery and customer-risk signals (5K) | DONE (classification + signal flag) — explicitly not a fraud/risk engine | `RecordDeliveryFailure` — predefined reasons only, responsibility derived and frozen via `DeliveryFailureResponsibilityMapper`, `mayEmitCustomerRiskSignal` true only for customer-attributable failures, 280-char note limit. |
 | Customer contact and privacy foundation (5L) | DONE | `RecordCustomerContactAction` — restricted to the active (non-terminal) delivery window, `CustomerContactAction` structurally cannot hold raw contact data. |
 | Courier performance foundation (5M) | DONE | `RecordCourierFeedback` (predefined tags required), `CourierPerformanceBuilder` (pure) + `BuildCourierPerformanceSnapshot` (I/O shell) — computed on demand, never persisted, no score/rank/punishment field at all. |
-| Courier application UI (5N) | DONE (consolidated) | `CourierHomeScreen` (shift status/request/start/end, availability toggle, active-delivery entry — folds login/identity, shift-request, connection/sync-status, and location-permission-state), `ActiveDeliveryScreen` (one delivery at a time, one primary action per state: offer accept/reject through completion/failure), `CourierDeliveryHistoryScreen` (history + 30-day performance snapshot). |
+| Courier application UI (5N) | SUPERSEDED 2026-11-12 (Faz 3b, ADR-077: replaced by the server-backed "Kurye Ekranım"; `CourierHomeScreen`/`ActiveDeliveryScreen` removed) | `CourierHomeScreen` (shift status/request/start/end, availability toggle, active-delivery entry — folds login/identity, shift-request, connection/sync-status, and location-permission-state), `ActiveDeliveryScreen` (one delivery at a time, one primary action per state: offer accept/reject through completion/failure), `CourierDeliveryHistoryScreen` (history + 30-day performance snapshot). |
 | Manager and dispatch UI foundation (5O) | DONE (consolidated, list-based) | `CourierDispatchBoardScreen` (shift approval queue, courier roster, active-deliveries dispatch board with manual-assign picker), `CourierPerformanceScreen` (performance metrics + failed-delivery review grouped by responsibility). No advanced map visualization, per the brief's own explicit allowance. |
 | Authorization and audit (5P) | DONE | 21 new `PosAuthorizedAction` values (additive), reused directly across every Phase 5 use case. Every state-changing use case records a `CourierOperationalAuditEntry` (actor/courier/device/branch/order/delivery/assignment/shift/previous-new-state/reason/correlation-id — no `tenantId` field, no raw location/contact data). |
 | Tests (5Q) | DONE | 1283 tests total (up from Phase 4's 1188), all passing — 97 new tests: 31 domain (status transitions, `DispatchScorer`, `GeofenceEvaluator`, failure-responsibility mapping, performance builder), 56 application (identity/shift/availability, delivery lifecycle, dispatch/assignment, failure/contact/feedback, offline commands, sync service/connection monitor), 5 data (`CourierEventRepository` sequence/duplicate rejection), 1 full end-to-end integration test (PackagePreparation → dispatch → accept → pickup → delivery → cash collection). `flutter analyze`: no issues (whole app). `dart format`: clean (whole app). |
@@ -11715,4 +11715,34 @@ passing, 0 failures.
 - Not done: courier app on the server (Faz 3b); FCM to staff and courier (Faz 3c); external couriers in
   batch assign; staff UI for linking a courier's auth account; branch `defaultDeliveryDistrictId`
   editing UI.
+- **Visual Review Bekleniyor**.
+
+### Kurye uygulaması — Faz 3b: "Kurye Ekranım" sunucuya bağlı, hesap bağlama, varsayılan ilçe (2026-11-12)
+
+- Courier app (ADR-077): a courier signs in with the staff sign-in and lands on "Kurye Ekranım"
+  (server-backed). It has three tabs:
+  - **Görevlerim:** live orders with pickup branch, address, note and amount; "Ara" until delivery;
+    "Yola Çıktım"; "Teslim Ettim" with the paid method; "Teslim Edildi — Mutabakat Bekliyor".
+  - **Havuz** (external couriers only): open packages of their districts, "Talep Oluştur".
+  - **Taleplerim:** own requests and their status.
+  - Empty, loading and error states are handled, plus a "hesap bağlı değil" state.
+- Server:
+  - `setCourier.authEmail` links the sign-in by e-mail (an active courier account in the
+    organization; manager and above);
+  - an edit no longer resets `dispatchStatus`;
+  - `getBranchPoolSettings` / `setBranchDefaultDeliveryDistrict` (manager and above, audited);
+  - `branchName` on the courier copy.
+- POS dispatch board — "Kurye Ayarları":
+  - **Kuryeler:** roster plus edit (type, districts, sign-in e-mail);
+  - **Havuz Bölge Ayarları:** default district.
+- Cleanup: the old in-memory courier settlement model, `CourierHomeScreen` / `ActiveDeliveryScreen` /
+  `OperationsHubScreen` and their tests are removed (see ADR-077 for what is kept and why).
+- Tests:
+  - functions: 2 new emulator tests (e-mail link and edit keeps state; default district), 35 total on
+    the courier suites;
+  - rules: 1 new (430 total);
+  - Flutter: courier screen 6, roster / region dialogs 4.
+- Not done:
+  - Faz 3c: FCM to staff and courier, real-device test;
+  - native Firebase Auth session for the Firestore listeners, unverified on a device.
 - **Visual Review Bekleniyor**.

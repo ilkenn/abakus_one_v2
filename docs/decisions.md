@@ -20898,3 +20898,85 @@ Product owner Faz 3 decisions:
   batch-assignable.
 - The courier app (Faz 3b) and FCM (Faz 3c) are not done. Until then, an external courier cannot act
   from a device; only the server callables exist, and they are tested.
+
+## ADR-077 — Server-backed courier app ("Kurye Ekranım"), courier sign-in linking, branch default pool district (2026-11-12)
+
+- Tarih: 2026-11-12
+- Durum: Accepted (Faz 3b; FCM and the real-device test in Faz 3c)
+
+### Context
+
+After Faz 3a (ADR-076), the courier side existed only as server callables:
+
+- **No way in.** The courier app (`CourierHomeScreen` / `ActiveDeliveryScreen`) was entirely in-memory
+  and reachable only from the orphaned `OperationsHubScreen`. A courier signing in with the staff
+  sign-in saw only "Genel Bakış".
+- **Manual setup.** Linking a courier record to a sign-in, and a branch's default pool district, needed
+  manual database edits.
+
+Product owner decisions (2026-11-12):
+
+- couriers use the existing staff sign-in (e-mail + password);
+- the sign-in is linked to the courier record by e-mail on the POS;
+- the cleanup covers the old settlement model **and** the old courier screens.
+
+### Decision
+
+**"Kurye Ekranım"** (`features/courier/presentation/screens/courier_work_screen.dart`)
+- `AdminShellScreen` opens it whenever the signed-in session's active role is `courier`, before the
+  branch-context gate: an external courier is region-based and holds no branch access.
+- **Görevlerim** — a live `courierAssignedOrders` list:
+  - pickup branch, customer, address, note, amount and method;
+  - "Ara", only while the phone is still on the copy (KVKK);
+  - "Yola Çıktım" (`courierMarkDeparted`) and "Teslim Ettim" (`courierReportDelivered`), with a
+    method sheet (Nakit / POS / Pluxee / Multinet / Setcard / Edenred);
+  - "Teslim Edildi — Mutabakat Bekliyor" after delivery.
+- **Havuz** (external couriers only) — one listener per service district (the rules need `==`), and
+  "Talep Oluştur" (`requestPoolOrder`). A package with a pending request shows "Talep gönderildi".
+- **Taleplerim** — the courier's own requests: pending, approved or rejected, with the reason.
+- New read model: `CourierWorkRepository` + `CourierWorkGateway` (REST on Windows). Every query pins
+  `organizationId` and the courier's uid.
+
+**Sign-in linking** (`setCourier.authEmail`)
+- The server resolves the e-mail to an auth account (`getUserByEmail`). The account must hold an active
+  `courier` membership in the organization.
+- Changing the link is manager-and-above (`manageBranch`). An empty e-mail unlinks.
+- `couriers.authEmail` is stored for display. `courierAccounts/{uid}` now also carries `displayName`.
+
+**`setCourier` edits**
+- An edit keeps the operational fields the caller did not send (`dispatchStatus`, `status`,
+  `vehicleType`, `vehicleIdentifier`, `capacity`).
+- Before, every edit silently reset `dispatchStatus` to `offline`.
+
+**Branch pool settings**
+- `getBranchPoolSettings` (`manageCourierDispatch`): the default district plus the districts the
+  enabled service areas cover.
+- `setBranchDefaultDeliveryDistrict` (`manageBranch`): slugged, audited.
+- The Admin "Şubeler" screen is in-memory, so the setting lives on the POS dispatch board.
+
+**POS dispatch board** — "Kurye Ayarları" menu:
+- **Kuryeler:** the roster with type, districts and linked sign-in. Its edit dialog covers name, phone,
+  type, districts and sign-in e-mail, and keeps the courier's own branch.
+- **Havuz Bölge Ayarları:** the default district, chosen from the service districts or typed.
+
+**Projection**
+- `courierAssignedOrders` now carries `branchName`: an external courier serves several branches.
+
+**Cleanup** (product owner approved)
+- Removed:
+  - `pos/domain/courier_settlement/*`;
+  - `OpenCourierSettlementSession` / `RecordCourierCashCollection` and their id generators;
+  - the three in-memory settlement repositories;
+  - `DeclareCourierCashCollectionForDelivery`;
+  - `CourierHomeScreen`, `ActiveDeliveryScreen`, `OperationsHubScreen`;
+  - their tests, and the settlement step of `courier_delivery_flow_test`.
+
+### Consequences
+
+- Kept, because other code or tests still use them:
+  - the in-memory courier delivery/shift/location domain, used by the Admin mock dispatch dashboards
+    and their use-case tests;
+  - `CourierDeliveryHistoryScreen` / `CourierEarningsScreen`, now unreferenced but not deleted;
+  - three now-unused `CourierSettlementSession*Violation` classes in `business_rule_violation.dart`.
+- On a real device, the Firestore listeners need the native Firebase Auth session from the staff
+  sign-in. This is not verified yet; it is part of Faz 3c with FCM.

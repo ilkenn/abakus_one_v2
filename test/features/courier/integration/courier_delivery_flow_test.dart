@@ -5,7 +5,6 @@ import 'package:abakus_one_v2/features/courier/application/identity/delivery_pro
 import 'package:abakus_one_v2/features/courier/application/use_cases/complete_delivery.dart';
 import 'package:abakus_one_v2/features/courier/application/use_cases/confirm_package_pickup.dart';
 import 'package:abakus_one_v2/features/courier/application/use_cases/create_delivery.dart';
-import 'package:abakus_one_v2/features/courier/application/use_cases/declare_courier_cash_collection_for_delivery.dart';
 import 'package:abakus_one_v2/features/courier/application/use_cases/mark_delivery_ready_for_assignment.dart';
 import 'package:abakus_one_v2/features/courier/application/use_cases/offer_delivery_assignment.dart';
 import 'package:abakus_one_v2/features/courier/application/use_cases/respond_to_delivery_assignment.dart';
@@ -23,22 +22,8 @@ import 'package:abakus_one_v2/features/orders/data/package_preparation_repositor
 import 'package:abakus_one_v2/features/orders/domain/fulfillment/package_preparation.dart';
 import 'package:abakus_one_v2/features/orders/domain/fulfillment/package_preparation_status.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_id.dart';
-import 'package:abakus_one_v2/features/pos/application/identity/courier_cash_collection_id_generator.dart';
-import 'package:abakus_one_v2/features/pos/application/identity/courier_settlement_session_id_generator.dart';
 import 'package:abakus_one_v2/features/pos/application/use_cases/advance_package_preparation.dart';
-import 'package:abakus_one_v2/features/pos/application/use_cases/open_courier_settlement_session.dart';
-import 'package:abakus_one_v2/features/pos/application/use_cases/record_courier_cash_collection.dart'
-    as pos;
-import 'package:abakus_one_v2/features/pos/data/courier_cash_collection_repository.dart';
-import 'package:abakus_one_v2/features/pos/data/courier_settlement_audit_entry_repository.dart';
-import 'package:abakus_one_v2/features/pos/data/courier_settlement_session_repository.dart';
-import 'package:abakus_one_v2/features/pos/data/payment_session_repository.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/authorization_result.dart';
-import 'package:abakus_one_v2/features/pos/domain/courier_settlement/courier_collection_type.dart';
-import 'package:abakus_one_v2/features/pos/domain/models/payment_session.dart';
-import 'package:abakus_one_v2/features/pos/domain/models/payment_session_status.dart';
-import 'package:abakus_one_v2/shared/models/currency.dart';
-import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../pos/test_support/fake_clock.dart';
@@ -271,50 +256,9 @@ void main() {
     final proofs = await proofRepository.findByDeliveryId(created.id);
     expect(proofs, hasLength(1));
 
-    // --- Sprint 3F: cash-on-delivery collection — declared by the
-    // courier, never duplicating a PaymentSession. ---
-    final settlementSessionRepository =
-        InMemoryCourierSettlementSessionRepository();
-    final paymentSessionRepository = InMemoryPaymentSessionRepository();
-    final collectionRepository = InMemoryCourierCashCollectionRepository();
-    final settlementAuditRepository =
-        InMemoryCourierSettlementAuditEntryRepository();
-
-    final session = await OpenCourierSettlementSession(
-      clock: clock,
-      idGenerator: SequentialCourierSettlementSessionIdGenerator(),
-      sessionRepository: settlementSessionRepository,
-    )(courierId: courierId, branchId: branchId);
-
-    await paymentSessionRepository.save(PaymentSession(
-      id: 'payment-session-1',
-      orderId: OrderId(orderId),
-      totalAmount: Money.fromWhole(150, Currency.tryLira),
-      status: PaymentSessionStatus.completed,
-      createdAt: clock.now(),
-      revision: 1,
-    ));
-
-    final declareCollection = DeclareCourierCashCollectionForDelivery(
-      recordCourierCashCollection: pos.RecordCourierCashCollection(
-        clock: clock,
-        idGenerator: SequentialCourierCashCollectionIdGenerator(),
-        sessionRepository: settlementSessionRepository,
-        paymentSessionRepository: paymentSessionRepository,
-        collectionRepository: collectionRepository,
-        auditRepository: settlementAuditRepository,
-      ),
-      deliveryRepository: deliveryRepository,
-    );
-    final collection = await declareCollection(
-      deliveryId: created.id,
-      settlementSessionId: session.id,
-      paymentSessionId: 'payment-session-1',
-      collectedAmount: Money.fromWhole(150, Currency.tryLira),
-      collectionType: CourierCollectionType.full,
-    );
-    expect(collection.orderId, OrderId(orderId));
-    expect(collection.settlementSessionId, session.id);
+    // 2026-11-12 (Faz 3b) — the in-memory cash-on-delivery collection
+    // step (Sprint 3F) was removed with its model: pay-on-delivery cash is
+    // now settled server-side by `settleCourierReturn` (ADR-075/077).
 
     // --- Final assertions: every layer's own state is consistent, and no
     // layer duplicated another's data. ---
