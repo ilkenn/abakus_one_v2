@@ -5849,3 +5849,73 @@ test('kitchenWorkItems: a different branch\'s staff cannot create, and no client
   await assertFails(updateDoc(doc(branchStaff, 'kitchenWorkItems/kwi-2'), { status: 'acknowledged', revision: 2 }));
   await assertFails(deleteDoc(doc(branchStaff, 'kitchenWorkItems/kwi-2')));
 });
+
+// 2026-11-12 (Faz 3a) — external-courier delivery pool. Listings never hold
+// the customer phone; an external courier sees only open listings of its own
+// districts; the courier's own order copy is readable by that courier only.
+async function seedPoolFixture(db) {
+  await setDoc(doc(db, 'courierAccounts/pool-uid'), {
+    organizationId: 'org-1', courierId: 'courier-pool', type: 'pool',
+    serviceDistrictIds: ['kadikoy'], status: 'active',
+  });
+  await setDoc(doc(db, 'courierAccounts/internal-uid'), {
+    organizationId: 'org-1', courierId: 'courier-internal', type: 'internal',
+    serviceDistrictIds: [], status: 'active',
+  });
+  await setDoc(doc(db, 'deliveryPoolListings/order-kadikoy'), {
+    organizationId: 'org-1', branchId: 'branch-1', districtId: 'kadikoy', status: 'open',
+  });
+  await setDoc(doc(db, 'deliveryPoolListings/order-besiktas'), {
+    organizationId: 'org-1', branchId: 'branch-1', districtId: 'besiktas', status: 'open',
+  });
+  await setDoc(doc(db, 'deliveryPoolListings/order-assigned'), {
+    organizationId: 'org-1', branchId: 'branch-1', districtId: 'kadikoy', status: 'assigned',
+  });
+  await setDoc(doc(db, 'courierPoolRequests/order-kadikoy_courier-pool'), {
+    organizationId: 'org-1', branchId: 'branch-1', courierAuthUid: 'pool-uid', status: 'pending',
+  });
+  await setDoc(doc(db, 'courierAssignedOrders/order-kadikoy'), {
+    organizationId: 'org-1', branchId: 'branch-1', courierAuthUid: 'pool-uid', customerPhone: '+905321112233',
+  });
+}
+
+test('pool: an external courier reads open listings of its own districts only, by a pinned query', async () => {
+  await seed(seedPoolFixture);
+  const pool = testEnv.authenticatedContext('pool-uid', { organizationAccess: ['org-1'] }).firestore();
+
+  await assertSucceeds(getDoc(doc(pool, 'deliveryPoolListings/order-kadikoy')));
+  await assertFails(getDoc(doc(pool, 'deliveryPoolListings/order-besiktas')));
+  await assertFails(getDoc(doc(pool, 'deliveryPoolListings/order-assigned')));
+  await assertSucceeds(getDocs(query(collection(pool, 'deliveryPoolListings'),
+    where('organizationId', '==', 'org-1'), where('districtId', '==', 'kadikoy'), where('status', '==', 'open'))));
+  await assertFails(getDocs(query(collection(pool, 'deliveryPoolListings'),
+    where('organizationId', '==', 'org-1'), where('status', '==', 'open'))));
+  await assertFails(setDoc(doc(pool, 'deliveryPoolListings/order-x'), { organizationId: 'org-1', districtId: 'kadikoy', status: 'open' }));
+});
+
+test('pool: a restaurant (internal) courier never sees the pool; branch staff do', async () => {
+  await seed(seedPoolFixture);
+  const internal = testEnv.authenticatedContext('internal-uid', { organizationAccess: ['org-1'] }).firestore();
+  const staff = testEnv.authenticatedContext('staff-uid', {
+    organizationAccess: ['org-1'], roles: { 'org-1': ['cashier'] }, branchAccess: { 'org-1': ['branch-1'] },
+  }).firestore();
+
+  await assertFails(getDoc(doc(internal, 'deliveryPoolListings/order-kadikoy')));
+  await assertSucceeds(getDoc(doc(staff, 'deliveryPoolListings/order-besiktas')));
+  await assertSucceeds(getDocs(query(collection(staff, 'courierPoolRequests'),
+    where('organizationId', '==', 'org-1'), where('branchId', '==', 'branch-1'), where('status', '==', 'pending'))));
+});
+
+test('pool: requests and the courier order copy are private to their courier', async () => {
+  await seed(seedPoolFixture);
+  const pool = testEnv.authenticatedContext('pool-uid', { organizationAccess: ['org-1'] }).firestore();
+  const other = testEnv.authenticatedContext('other-uid', { organizationAccess: ['org-1'] }).firestore();
+
+  await assertSucceeds(getDoc(doc(pool, 'courierPoolRequests/order-kadikoy_courier-pool')));
+  await assertFails(getDoc(doc(other, 'courierPoolRequests/order-kadikoy_courier-pool')));
+  await assertSucceeds(getDoc(doc(pool, 'courierAssignedOrders/order-kadikoy')));
+  await assertFails(getDoc(doc(other, 'courierAssignedOrders/order-kadikoy')));
+  await assertFails(updateDoc(doc(pool, 'courierAssignedOrders/order-kadikoy'), { customerPhone: null }));
+  await assertSucceeds(getDoc(doc(pool, 'courierAccounts/pool-uid')));
+  await assertFails(getDoc(doc(other, 'courierAccounts/pool-uid')));
+});

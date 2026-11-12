@@ -302,3 +302,41 @@ test("settleCourierReturn: the same settlementKey is idempotent; an inactive cas
   const closed = await callCallable(SETTLE_URL, settleRequest(s2, [{ orderId: order2, paymentMethodId: "cash" }], 10000), s2.f.staff.idToken);
   assert.strictEqual(closed.httpStatus, 400);
 });
+
+test("Faz 3a: an external courier is closed per branch; the courier-reported method comes with the preview", async () => {
+  const s = await setup();
+  const poolCourierId = nextId("courier");
+  await db().collection("couriers").doc(poolCourierId).set({
+    organizationId: s.f.organizationId, branchId: nextId("branch"), displayName: "Dış Kurye", type: "pool",
+    serviceDistrictIds: ["kadikoy"], status: "active", dispatchStatus: "delivering", activeOrderIds: [], revision: 1,
+  });
+  const here = await outForDeliveryOrder(s.f, poolCourierId, "cash");
+  await db().collection("orders").doc(here).update({
+    courierType: "pool", courierReportedPaymentMethodId: "multinet",
+    courierReportedDeliveredAt: admin.firestore.Timestamp.now(),
+  });
+  const elsewhere = nextId("order");
+  await db().collection("orders").doc(elsewhere).set({
+    organizationId: s.f.organizationId, branchId: nextId("branch"), channel: "delivery", status: "outForDelivery",
+    assignedCourierId: poolCourierId, pricing: { grandTotal: { minorUnits: 5000, currencyCode: "TRY" } },
+  });
+  await db().collection("couriers").doc(poolCourierId).update({ activeOrderIds: admin.firestore.FieldValue.arrayUnion(elsewhere) });
+
+  const preview = await callCallable(PREVIEW_URL, {
+    organizationId: s.f.organizationId, branchId: s.f.branchId, deviceId: s.f.deviceId, deviceSessionId: s.f.deviceSessionId, courierId: poolCourierId,
+  }, s.f.staff.idToken);
+  assert.strictEqual(preview.httpStatus, 200, JSON.stringify(preview.body));
+  const orders = preview.body.result!.orders as Array<Record<string, unknown>>;
+  assert.deepStrictEqual(orders.map((o) => o.orderId), [here], "only this branch's order");
+  assert.strictEqual(orders[0].courierReportedPaymentMethodId, "multinet");
+  assert.strictEqual(orders[0].courierReportedDelivered, true);
+
+  const settle = await callCallable(SETTLE_URL, {
+    ...settleRequest(s, [{ orderId: here, paymentMethodId: "multinet" }], 0), courierId: poolCourierId,
+  }, s.f.staff.idToken);
+  assert.strictEqual(settle.httpStatus, 200, JSON.stringify(settle.body));
+  const courier = (await db().collection("couriers").doc(poolCourierId).get()).data()!;
+  assert.deepStrictEqual(courier.activeOrderIds, [elsewhere], "the other branch's package stays on the courier");
+  assert.strictEqual(courier.dispatchStatus, "delivering");
+  assert.strictEqual((await db().collection("orders").doc(elsewhere).get()).data()!.status, "outForDelivery");
+});

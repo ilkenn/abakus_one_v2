@@ -1571,6 +1571,52 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // 2026-11-12 (Faz 3a) — external-courier delivery pool
+    // (functions/src/courierPool.ts). Every write is server-only.
+    //
+    // courierAccounts/{uid}: the signed-in courier's own link to its
+    // `couriers` doc (type + service districts). Readable by that account
+    // only — it is also what the pool rule below checks.
+    function courierAccount() {
+      return get(/databases/$(database)/documents/courierAccounts/$(request.auth.uid)).data;
+    }
+    function isActiveExternalCourierFor(organizationId) {
+      return isOrgMember(organizationId) &&
+        exists(/databases/$(database)/documents/courierAccounts/$(request.auth.uid)) &&
+        courierAccount().organizationId == organizationId &&
+        courierAccount().type == 'pool' &&
+        courierAccount().status == 'active';
+    }
+    match /courierAccounts/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+    // Pool listings never hold the customer's phone or name. Staff of the
+    // branch see them (dispatch board); an active external courier sees
+    // only OPEN listings of its organization inside its own districts —
+    // its query must pin organizationId, districtId (==) and status.
+    match /deliveryPoolListings/{orderId} {
+      allow read: if hasBranchAccess(resource.data.organizationId, resource.data.branchId) ||
+        (isActiveExternalCourierFor(resource.data.organizationId) &&
+         resource.data.status == 'open' &&
+         resource.data.districtId in courierAccount().serviceDistrictIds);
+      allow write: if false;
+    }
+    // Requests: the branch's staff (live POS request panel) and the
+    // requesting courier itself.
+    match /courierPoolRequests/{requestId} {
+      allow read: if hasBranchAccess(resource.data.organizationId, resource.data.branchId) ||
+        (isSignedIn() && resource.data.courierAuthUid == request.auth.uid);
+      allow write: if false;
+    }
+    // The courier's own copy of an order assigned/reserved to it — the only
+    // place a courier sees the customer phone, removed at "Teslim Ettim".
+    match /courierAssignedOrders/{orderId} {
+      allow read: if isSignedIn() && resource.data.courierAuthUid == request.auth.uid &&
+        isOrgMember(resource.data.organizationId);
+      allow write: if false;
+    }
+
     // AP-6 Sprint 3 â€” one doc per consortium-order completion, same
     // branch-scoped shape as `couriers` above. Auto-created by
     // `advanceDeliveryOrderStatus.ts`'s completion hook only â€” no client

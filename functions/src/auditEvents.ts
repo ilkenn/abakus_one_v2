@@ -9,7 +9,7 @@ import type { Firestore, Timestamp, Transaction } from "firebase-admin/firestore
  * callers) — this is the shared shape every *new* AP-2 command writes
  * through, so `auditEvents` never grows a second, divergent document shape.
  */
-export type AuditActorType = "system" | "staff" | "platform" | "customer" | "device";
+export type AuditActorType = "system" | "staff" | "platform" | "customer" | "device" | "courier"; // "courier": Faz 3a courier-reported delivery
 
 export interface WriteAuditEventParams {
   tx: Transaction;

@@ -148,7 +148,11 @@ async function authorize(request: CallableRequest, data: Record<string, unknown>
   return { organizationId, branchId, uid: request.auth.uid };
 }
 
-function courierServesBranch(courier: DocumentData, branchId: string): boolean {
+function courierServesBranch(courier: DocumentData, organizationId: string, branchId: string): boolean {
+  // 2026-11-12 (Faz 3a) — an external (`pool`) courier is region-based and
+  // may carry packages of every branch of its organization; each branch
+  // closes only its own orders (see `settleCourierReturn`).
+  if (courier.type === "pool") return courier.organizationId === organizationId;
   const eligible = Array.isArray(courier.eligibleBranchIds) ? (courier.eligibleBranchIds as string[]) : [];
   return courier.branchId === branchId || courier.primaryBranchId === branchId || eligible.includes(branchId);
 }
@@ -164,7 +168,7 @@ export const getCourierSettlementPreview = onCall({ enforceAppCheck: shouldEnfor
   const courierId = requireString(data.courierId, "courierId");
   const db = getFirestore();
   const courierSnap = await db.collection("couriers").doc(courierId).get();
-  if (!courierSnap.exists || !courierServesBranch(courierSnap.data()!, branchId)) {
+  if (!courierSnap.exists || !courierServesBranch(courierSnap.data()!, organizationId, branchId)) {
     throw new HttpsError("not-found", "Courier not found for this branch.");
   }
   const courier = courierSnap.data()!;
@@ -175,6 +179,7 @@ export const getCourierSettlementPreview = onCall({ enforceAppCheck: shouldEnfor
     if (!snap.exists) continue;
     const order = snap.data()!;
     if (order.organizationId !== organizationId || order.branchId !== branchId) continue;
+    if (order.assignedCourierId && order.assignedCourierId !== courierId) continue;
     orders.push({
       orderId,
       orderNumber: order.orderNumber as string,
@@ -184,6 +189,10 @@ export const getCourierSettlementPreview = onCall({ enforceAppCheck: shouldEnfor
         .filter((p) => typeof p === "string" && p.length > 0).join(", "),
       amountDueMinorUnits: orderAmountDueMinorUnits(order),
       plannedPaymentMethodId: (order.paymentMethodSnapshot?.paymentMethodId as string | undefined) ?? null,
+      // Faz 3a — what the courier reported at "Teslim Ettim" (preselected
+      // on the POS, still editable; a change is audited at settlement).
+      courierReportedPaymentMethodId: (order.courierReportedPaymentMethodId as string | undefined) ?? null,
+      courierReportedDelivered: Boolean(order.courierReportedDeliveredAt),
     });
   }
   return { courierId, courierName: (courier.displayName as string | undefined) ?? courierId, orders };
@@ -228,7 +237,7 @@ export const settleCourierReturn = onCall({ enforceAppCheck: shouldEnforceAppChe
     }
     const courierRef = db.collection("couriers").doc(courierId);
     const courierSnap = await tx.get(courierRef);
-    if (!courierSnap.exists || !courierServesBranch(courierSnap.data()!, branchId)) {
+    if (!courierSnap.exists || !courierServesBranch(courierSnap.data()!, organizationId, branchId)) {
       throw new HttpsError("not-found", "Courier not found for this branch.");
     }
     const courier = courierSnap.data()!;
@@ -255,12 +264,21 @@ export const settleCourierReturn = onCall({ enforceAppCheck: shouldEnforceAppChe
     const deliveryByOrderId = new Map(deliveries.map((d) => [d.orderId, d]));
     const open: Array<{ ref: FirebaseFirestore.DocumentReference; id: string; order: DocumentData }> = [];
     const cancelledOrderIds: string[] = [];
+    // Faz 3a — orders an external courier carries for another branch stay
+    // on the courier (that branch closes them); an order meanwhile handed
+    // to a different courier is dropped from this one.
+    const keptOrderIds: string[] = [];
     orderSnaps.forEach((snap, i) => {
       if (!snap.exists) {
         cancelledOrderIds.push(activeOrderIds[i]);
         return;
       }
       const order = snap.data()!;
+      if (order.assignedCourierId && order.assignedCourierId !== courierId) return;
+      if (order.branchId !== branchId && courier.type === "pool") {
+        if (order.status === "outForDelivery") keptOrderIds.push(activeOrderIds[i]);
+        return;
+      }
       if (order.status === "cancelled" || order.status === "completed" || order.status === "rejected") {
         cancelledOrderIds.push(activeOrderIds[i]);
         return;
@@ -363,8 +381,8 @@ export const settleCourierReturn = onCall({ enforceAppCheck: shouldEnforceAppChe
     }
 
     tx.set(courierRef, {
-      activeOrderIds: [],
-      dispatchStatus: "available",
+      activeOrderIds: keptOrderIds,
+      dispatchStatus: keptOrderIds.length === 0 ? "available" : "delivering",
       returnedAt: now,
       updatedAt: now,
       revision: (Number(courier.revision) || 1) + 1,

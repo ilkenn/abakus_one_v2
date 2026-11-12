@@ -1,10 +1,9 @@
-import { randomUUID } from "crypto";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { requireStaffPermission, requireBranchAccess } from "./staffAuthorization";
 import { canTransition, type OrderStatus } from "./orderStatus";
-import { applyOrderLifecycleTransition, writeOrderStatusChangeAuditEvent } from "./orderLifecycle";
+import { applyCourierAssignment, courierCanServeOrder } from "./courierAssignmentCore";
 
 /**
  * AP-6 Sprint 2 — manually dispatches a `delivery`-channel order to an
@@ -112,7 +111,11 @@ export const assignCourierToOrder = onCall(
         throw new HttpsError("not-found", "Courier not found.");
       }
       const courier = courierSnap.data()!;
-      if (courier.branchId !== branchId) {
+      // 2026-11-12 (Faz 3a) — a `pool` (external) courier serves every
+      // branch of its organization (region-based, not branch-based), e.g.
+      // after a pool request was approved while the order was still being
+      // prepared; every other courier must be registered at this branch.
+      if (!courierCanServeOrder(courier, organizationId, branchId)) {
         throw new HttpsError(
           "failed-precondition",
           "This courier is not registered at the order's branch.",
@@ -125,74 +128,33 @@ export const assignCourierToOrder = onCall(
         );
       }
 
-      const now = Timestamp.now();
-      const trackingToken = randomUUID();
-      const activeOrderIds: string[] = Array.isArray(courier.activeOrderIds)
-        ? courier.activeOrderIds
-        : [];
-
-      tx.set(
-        orderRef,
-        {
-          assignedCourierId: courierId,
-          courierType: courier.type ?? "internal",
-          trackingToken,
-        },
-        { merge: true },
-      );
-
-      tx.set(
-        courierRef,
-        {
-          activeOrderIds: activeOrderIds.includes(orderId)
-            ? activeOrderIds
-            : [...activeOrderIds, orderId],
-          dispatchStatus: "delivering",
-          updatedAt: now,
-          revision: (Number(courier.revision) || 1) + 1,
-        },
-        { merge: true },
-      );
-
-      if (!alreadyOutForDelivery) {
-        const actorUid = request.auth!.uid;
-        const token = request.auth!.token as Record<string, unknown>;
-        const rolesByOrg = token.roles as Record<string, unknown> | undefined;
-        const actorRoles = Array.isArray(rolesByOrg?.[organizationId])
-          ? (rolesByOrg![organizationId] as string[])
-          : null;
-
-        applyOrderLifecycleTransition({
-          tx,
-          orderRef,
-          orderId,
-          order,
-          fromStatus: currentStatus,
-          toStatus: "outForDelivery",
-          actorType: "staff",
-          now,
-        });
-        writeOrderStatusChangeAuditEvent({
-          tx,
-          db,
-          orderId,
-          organizationId,
-          branchId,
-          fromStatus: currentStatus,
-          toStatus: "outForDelivery",
-          actorType: "staff",
-          actorUid,
-          actorRoles,
-          now,
-        });
+      // Faz 3a fix — a reassignment removes the order from the previous
+      // courier (read here, before any write).
+      const previousCourierId = order.assignedCourierId as string | undefined;
+      let previousCourier: { ref: FirebaseFirestore.DocumentReference; data: FirebaseFirestore.DocumentData } | null = null;
+      if (previousCourierId && previousCourierId !== courierId) {
+        const previousRef = db.collection("couriers").doc(previousCourierId);
+        const previousSnap = await tx.get(previousRef);
+        if (previousSnap.exists) previousCourier = { ref: previousRef, data: previousSnap.data()! };
       }
 
-      return {
+      const { trackingToken, status } = applyCourierAssignment({
+        tx,
+        db,
+        request,
+        orderRef,
         orderId,
+        order,
+        organizationId,
+        branchId,
+        courierRef,
         courierId,
-        trackingToken,
-        status: alreadyOutForDelivery ? currentStatus : "outForDelivery",
-      };
+        courier,
+        previousCourier,
+        now: Timestamp.now(),
+      });
+
+      return { orderId, courierId, trackingToken, status };
     });
   },
 );

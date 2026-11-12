@@ -1,6 +1,8 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { requireStaffPermission } from "./staffAuthorization";
+import { slugifyAddressComponent } from "./deliveryServiceAreas";
+import { COURIER_ACCOUNTS_COLLECTION } from "./courierPool";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 
 /**
@@ -78,6 +80,37 @@ export const setCourier = onCall(
 
     await requireStaffPermission(request, organizationId, "manageCourierDispatch");
 
+    // 2026-11-12 (Faz 3a) — external (`pool`) couriers: registered by a
+    // manager or above only (`manageBranch`, manager/admin/tenantOwner),
+    // with the districts (`serviceDistrictIds`, slugs) whose pool packages
+    // they see, and optionally the auth account they sign in with
+    // (`authUid`, mirrored to `courierAccounts/{uid}`). `authUid`: absent =
+    // keep the current link, "" or null = unlink.
+    if (type === "pool") {
+      await requireStaffPermission(request, organizationId, "manageBranch");
+    }
+    const rawDistricts = Array.isArray(data.serviceDistrictIds) ? data.serviceDistrictIds : [];
+    if (rawDistricts.length > 30) {
+      throw new HttpsError("invalid-argument", "serviceDistrictIds may hold at most 30 districts.");
+    }
+    const serviceDistrictIds = [
+      ...new Set(
+        rawDistricts
+          .filter((d): d is string => typeof d === "string")
+          .map((d) => slugifyAddressComponent(d))
+          .filter((d) => d.length > 0),
+      ),
+    ];
+    if (type === "pool" && serviceDistrictIds.length === 0) {
+      throw new HttpsError("invalid-argument", "An external courier needs at least one service district.");
+    }
+    const authUidInput =
+      data.authUid === undefined
+        ? undefined
+        : typeof data.authUid === "string" && data.authUid.trim().length > 0
+          ? data.authUid.trim()
+          : null;
+
     const db = getFirestore();
     const branchDoc = await db.collection("branches").doc(branchId).get();
     if (!branchDoc.exists) {
@@ -93,8 +126,25 @@ export const setCourier = onCall(
       ? db.collection("couriers").doc(courierId)
       : db.collection("couriers").doc();
 
+    // Faz 3a — editing an existing external courier (e.g. turning it back
+    // into a restaurant courier) is manager-and-above too.
+    if (type !== "pool" && courierId) {
+      const current = await courierRef.get();
+      if (current.exists && current.data()!.type === "pool") {
+        await requireStaffPermission(request, organizationId, "manageBranch");
+      }
+    }
+
     return db.runTransaction(async (tx) => {
       const existing = await tx.get(courierRef);
+      const previousAuthUid = existing.exists ? ((existing.data()!.authUid as string | undefined) ?? null) : null;
+      const authUid = authUidInput === undefined ? previousAuthUid : authUidInput;
+      if (authUid) {
+        const accountSnap = await tx.get(db.collection(COURIER_ACCOUNTS_COLLECTION).doc(authUid));
+        if (accountSnap.exists && accountSnap.data()!.courierId !== courierRef.id) {
+          throw new HttpsError("already-exists", "This account is already linked to another courier.");
+        }
+      }
       const now = Timestamp.now();
       const revision = existing.exists ? (Number(existing.data()!.revision ?? 1) + 1) : 1;
 
@@ -112,9 +162,24 @@ export const setCourier = onCall(
         returnedAt: existing.exists ? (existing.data()!.returnedAt ?? null) : null,
         activeOrderIds: existing.exists ? (existing.data()!.activeOrderIds ?? []) : [],
         registeredAt: existing.exists ? existing.data()!.registeredAt : now,
+        serviceDistrictIds: type === "pool" ? serviceDistrictIds : [],
+        authUid,
         updatedAt: now,
         revision,
       });
+      if (previousAuthUid && previousAuthUid !== authUid) {
+        tx.delete(db.collection(COURIER_ACCOUNTS_COLLECTION).doc(previousAuthUid));
+      }
+      if (authUid) {
+        tx.set(db.collection(COURIER_ACCOUNTS_COLLECTION).doc(authUid), {
+          organizationId,
+          courierId: courierRef.id,
+          type,
+          serviceDistrictIds: type === "pool" ? serviceDistrictIds : [],
+          status,
+          updatedAt: now,
+        });
+      }
 
       return { courierId: courierRef.id, revision };
     });
