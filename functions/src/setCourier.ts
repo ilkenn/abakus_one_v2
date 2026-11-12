@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
 import { requireStaffPermission } from "./staffAuthorization";
 import { slugifyAddressComponent } from "./deliveryServiceAreas";
 import { COURIER_ACCOUNTS_COLLECTION } from "./courierPool";
@@ -104,12 +105,50 @@ export const setCourier = onCall(
     if (type === "pool" && serviceDistrictIds.length === 0) {
       throw new HttpsError("invalid-argument", "An external courier needs at least one service district.");
     }
-    const authUidInput =
+    let authUidInput =
       data.authUid === undefined
         ? undefined
         : typeof data.authUid === "string" && data.authUid.trim().length > 0
           ? data.authUid.trim()
           : null;
+    // 2026-11-12 (Faz 3b) — linking the courier's sign-in by the e-mail of
+    // its staff account ("" or null = unlink). The account must hold an
+    // active `courier` membership in this organization. Changing the link
+    // at all is manager-and-above (`manageBranch`).
+    let authEmail: string | null | undefined = undefined;
+    if (data.authEmail !== undefined) {
+      const raw = typeof data.authEmail === "string" ? data.authEmail.trim().toLowerCase() : "";
+      if (raw.length === 0) {
+        authUidInput = null;
+        authEmail = null;
+      } else {
+        let uid: string;
+        try {
+          uid = (await getAuth().getUserByEmail(raw)).uid;
+        } catch {
+          throw new HttpsError("not-found", "No sign-in account exists for this e-mail.", {
+            code: "courier/account-not-found",
+          });
+        }
+        const membership = await getFirestore().collection("memberships").doc(`${organizationId}_${uid}`).get();
+        const roles: unknown = membership.data()?.roles;
+        if (
+          !membership.exists ||
+          membership.data()!.status !== "active" ||
+          !Array.isArray(roles) ||
+          !roles.includes("courier")
+        ) {
+          throw new HttpsError("failed-precondition", "This account is not an active courier of this organization.", {
+            code: "courier/account-not-courier",
+          });
+        }
+        authUidInput = uid;
+        authEmail = raw;
+      }
+    }
+    if (authUidInput !== undefined) {
+      await requireStaffPermission(request, organizationId, "manageBranch");
+    }
 
     const db = getFirestore();
     const branchDoc = await db.collection("branches").doc(branchId).get();
@@ -139,6 +178,13 @@ export const setCourier = onCall(
       const existing = await tx.get(courierRef);
       const previousAuthUid = existing.exists ? ((existing.data()!.authUid as string | undefined) ?? null) : null;
       const authUid = authUidInput === undefined ? previousAuthUid : authUidInput;
+      const previousAuthEmail = existing.exists ? ((existing.data()!.authEmail as string | undefined) ?? null) : null;
+      const storedAuthEmail = authEmail !== undefined ? authEmail : authUid === previousAuthUid ? previousAuthEmail : null;
+      // Faz 3b — an edit keeps the operational fields the caller did not
+      // send (before, an edit silently reset dispatchStatus to "offline").
+      const prior = existing.exists ? existing.data()! : {};
+      const keep = <T>(field: string, sent: unknown, value: T): T =>
+        sent === undefined && existing.exists && prior[field] !== undefined ? (prior[field] as T) : value;
       if (authUid) {
         const accountSnap = await tx.get(db.collection(COURIER_ACCOUNTS_COLLECTION).doc(authUid));
         if (accountSnap.exists && accountSnap.data()!.courierId !== courierRef.id) {
@@ -154,16 +200,17 @@ export const setCourier = onCall(
         displayName,
         phoneNumber,
         type,
-        vehicleType,
-        vehicleIdentifier,
-        capacity,
-        status,
-        dispatchStatus,
+        vehicleType: keep("vehicleType", data.vehicleType, vehicleType),
+        vehicleIdentifier: keep("vehicleIdentifier", data.vehicleIdentifier, vehicleIdentifier),
+        capacity: keep("capacity", data.capacity, capacity),
+        status: keep("status", data.status, status),
+        dispatchStatus: keep("dispatchStatus", data.dispatchStatus, dispatchStatus),
         returnedAt: existing.exists ? (existing.data()!.returnedAt ?? null) : null,
         activeOrderIds: existing.exists ? (existing.data()!.activeOrderIds ?? []) : [],
         registeredAt: existing.exists ? existing.data()!.registeredAt : now,
         serviceDistrictIds: type === "pool" ? serviceDistrictIds : [],
         authUid,
+        authEmail: storedAuthEmail,
         updatedAt: now,
         revision,
       });
@@ -174,9 +221,10 @@ export const setCourier = onCall(
         tx.set(db.collection(COURIER_ACCOUNTS_COLLECTION).doc(authUid), {
           organizationId,
           courierId: courierRef.id,
+          displayName,
           type,
           serviceDistrictIds: type === "pool" ? serviceDistrictIds : [],
-          status,
+          status: keep("status", data.status, status),
           updatedAt: now,
         });
       }

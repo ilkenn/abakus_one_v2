@@ -390,3 +390,86 @@ test("a reassignment removes the order from the previous courier", async () => {
   const second = (await db().collection("couriers").doc(ids[1]).get()).data()!;
   assert.deepStrictEqual(second.activeOrderIds, [orderId]);
 });
+
+// ---------------------------------------------------------------------------
+// 2026-11-12 (Faz 3b) — linking a courier's sign-in by e-mail, and the
+// branch's default delivery district.
+
+async function emailAccount(organizationId: string, roles: string[]) {
+  const email = `${nextId("kurye")}@example.com`.toLowerCase();
+  const response = await fetch(`${AUTH_HOST}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "secret123", returnSecureToken: true }),
+  });
+  const body = (await response.json()) as { idToken: string; refreshToken: string; localId: string };
+  await db().collection("memberships").doc(`${organizationId}_${body.localId}`).set({
+    organizationId, uid: body.localId, roles, branchAccess: [], restaurantAccess: [], status: "active",
+    createdAt: new Date(), updatedAt: new Date(),
+  });
+  await callCallable(SYNC_CLAIMS_URL, {}, body.idToken);
+  return { email, uid: body.localId };
+}
+
+test("setCourier links the sign-in by e-mail (courier accounts only, manager+), and an edit keeps dispatch state", async () => {
+  const s = await setup();
+  const account = await emailAccount(s.t.organizationId, ["courier"]);
+  const notCourier = await emailAccount(s.t.organizationId, ["staff"]);
+  const base = {
+    organizationId: s.t.organizationId, branchId: s.t.branchId, displayName: "Mehmet", phoneNumber: "+905550000003",
+    type: "internal",
+  };
+  const created = await callCallable(SET_COURIER_URL, base, s.cashier.idToken);
+  assert.strictEqual(created.httpStatus, 200, JSON.stringify(created.body));
+  const courierId = created.body.result!.courierId as string;
+  await db().collection("couriers").doc(courierId).update({ dispatchStatus: "delivering" });
+
+  const byCashier = await callCallable(SET_COURIER_URL, { ...base, courierId, authEmail: account.email }, s.cashier.idToken);
+  assert.strictEqual(byCashier.body.error?.status, "PERMISSION_DENIED", "linking a sign-in is manager+");
+  const missing = await callCallable(SET_COURIER_URL, { ...base, courierId, authEmail: "yok@example.com" }, s.manager.idToken);
+  assert.strictEqual(missing.body.error?.details?.code, "courier/account-not-found");
+  const wrongRole = await callCallable(SET_COURIER_URL, { ...base, courierId, authEmail: notCourier.email }, s.manager.idToken);
+  assert.strictEqual(wrongRole.body.error?.details?.code, "courier/account-not-courier");
+
+  const linked = await callCallable(SET_COURIER_URL, { ...base, courierId, authEmail: account.email.toUpperCase() }, s.manager.idToken);
+  assert.strictEqual(linked.httpStatus, 200, JSON.stringify(linked.body));
+  let courier = (await db().collection("couriers").doc(courierId).get()).data()!;
+  assert.strictEqual(courier.authUid, account.uid);
+  assert.strictEqual(courier.authEmail, account.email);
+  assert.strictEqual(courier.dispatchStatus, "delivering", "an edit no longer resets dispatchStatus");
+  const accountDoc = (await db().collection("courierAccounts").doc(account.uid).get()).data()!;
+  assert.strictEqual(accountDoc.courierId, courierId);
+  assert.strictEqual(accountDoc.displayName, "Mehmet");
+
+  // A plain edit by the cashier (no link change) keeps the link.
+  const rename = await callCallable(SET_COURIER_URL, { ...base, courierId, displayName: "Mehmet Y." }, s.cashier.idToken);
+  assert.strictEqual(rename.httpStatus, 200, JSON.stringify(rename.body));
+  courier = (await db().collection("couriers").doc(courierId).get()).data()!;
+  assert.strictEqual(courier.authUid, account.uid);
+  assert.strictEqual(courier.authEmail, account.email);
+
+  const unlink = await callCallable(SET_COURIER_URL, { ...base, courierId, authEmail: "" }, s.manager.idToken);
+  assert.strictEqual(unlink.httpStatus, 200, JSON.stringify(unlink.body));
+  assert.strictEqual((await db().collection("couriers").doc(courierId).get()).data()!.authUid, null);
+  assert.strictEqual((await db().collection("courierAccounts").doc(account.uid).get()).exists, false);
+});
+
+test("branch default district: manager sets it, the pool then resolves an uncovered neighborhood with it", async () => {
+  const s = await setup();
+  const GET_URL = fn("getBranchPoolSettings");
+  const SET_URL = fn("setBranchDefaultDeliveryDistrict");
+  const settings = await callCallable(GET_URL, { organizationId: s.t.organizationId, branchId: s.t.branchId }, s.cashier.idToken);
+  assert.strictEqual(settings.httpStatus, 200, JSON.stringify(settings.body));
+  assert.deepStrictEqual(settings.body.result!.serviceDistrictIds, ["kadikoy"]);
+  assert.strictEqual(settings.body.result!.defaultDeliveryDistrictId, null);
+
+  const denied = await callCallable(SET_URL, { organizationId: s.t.organizationId, branchId: s.t.branchId, districtId: "Kadıköy" }, s.cashier.idToken);
+  assert.strictEqual(denied.body.error?.status, "PERMISSION_DENIED");
+  const set = await callCallable(SET_URL, { organizationId: s.t.organizationId, branchId: s.t.branchId, districtId: "Kadıköy" }, s.manager.idToken);
+  assert.strictEqual(set.httpStatus, 200, JSON.stringify(set.body));
+  assert.strictEqual(set.body.result!.defaultDeliveryDistrictId, "kadikoy");
+
+  const orderId = await seedOrder(s.t, { deliveryAddressSnapshot: { districtId: "", neighborhoodName: "Bilinmeyen", streetName: "X" } });
+  const publish = await callCallable(PUBLISH_URL, { orderId }, s.cashier.idToken);
+  assert.strictEqual(publish.httpStatus, 200, JSON.stringify(publish.body));
+  assert.strictEqual(publish.body.result!.districtId, "kadikoy");
+});

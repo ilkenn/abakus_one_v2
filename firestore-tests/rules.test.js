@@ -5919,3 +5919,18 @@ test('pool: requests and the courier order copy are private to their courier', a
   await assertSucceeds(getDoc(doc(pool, 'courierAccounts/pool-uid')));
   await assertFails(getDoc(doc(other, 'courierAccounts/pool-uid')));
 });
+
+test('pool (Faz 3b): the courier app queries — own orders and own requests pinned by organization and uid', async () => {
+  await seed(seedPoolFixture);
+  const pool = testEnv.authenticatedContext('pool-uid', { organizationAccess: ['org-1'] }).firestore();
+  const other = testEnv.authenticatedContext('other-uid', { organizationAccess: ['org-1'] }).firestore();
+
+  await assertSucceeds(getDocs(query(collection(pool, 'courierAssignedOrders'),
+    where('organizationId', '==', 'org-1'), where('courierAuthUid', '==', 'pool-uid'))));
+  await assertSucceeds(getDocs(query(collection(pool, 'courierPoolRequests'),
+    where('organizationId', '==', 'org-1'), where('courierAuthUid', '==', 'pool-uid'))));
+  await assertFails(getDocs(query(collection(other, 'courierAssignedOrders'),
+    where('organizationId', '==', 'org-1'))));
+  await assertFails(getDocs(query(collection(other, 'courierPoolRequests'),
+    where('organizationId', '==', 'org-1'), where('courierAuthUid', '==', 'pool-uid'))));
+});

@@ -559,6 +559,7 @@ export function buildCourierAssignedOrderProjection(
   orderId: string,
   order: DocumentData,
   courierAuthUid: string | null,
+  branchName = "",
 ): Record<string, unknown> | null {
   if (order.channel !== "delivery" || CLOSED_STATUSES.has(order.status as string)) return null;
   const assigned = order.assignedCourierId as string | undefined;
@@ -577,6 +578,9 @@ export function buildCourierAssignedOrderProjection(
   return {
     organizationId: order.organizationId,
     branchId: order.branchId,
+    // Faz 3b — where to pick the package up (an external courier serves
+    // several branches).
+    branchName,
     orderId,
     orderNumber: String(order.orderNumber ?? orderId),
     courierId,
@@ -625,7 +629,12 @@ export async function syncCourierProjectionForOrder(
     const courierSnap = await db.collection("couriers").doc(courierId).get();
     authUid = courierSnap.exists ? ((courierSnap.data()!.authUid as string | undefined) ?? null) : null;
   }
-  const projection = buildCourierAssignedOrderProjection(orderId, order, authUid);
+  let branchName = "";
+  if (courierId && typeof order.branchId === "string") {
+    const branchSnap = await db.collection("branches").doc(order.branchId).get();
+    branchName = (branchSnap.data()?.name as string | undefined) ?? "";
+  }
+  const projection = buildCourierAssignedOrderProjection(orderId, order, authUid, branchName);
   if (projection) {
     await projectionRef.set({ ...projection, updatedAt: Timestamp.now() });
   } else {
