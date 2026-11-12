@@ -696,6 +696,9 @@ options layered on top of it.
 - **Related Modules**: Menu, Orders
 
 ### BR-PRICE-004 — Gel Al (takeaway) channel pricing differential
+- **Amended 2026-11-11 (product owner, ADR-074)**: the İçecekler exemption is withdrawn — every
+  product, drinks included, is `basePrice + 20 TL` on Gel-Al; modifiers and sauces stay +0. The text
+  below describes the rule as originally decided.
 - **Status**: DECIDED — supersedes BR-PRICE-001 for the takeaway channel specifically
 - **Rule**: Takeaway (Gel Al) is no longer priced identically to dine-in. Every non-drink product
   defaults to `basePrice + 20 TL` on the takeaway channel; every product in the İçecekler
@@ -3159,6 +3162,10 @@ the other, and exposed as two separately labeled `ProfileScreen` entries. See BR
 - **Business Rule IDs**: see `docs/decisions.md` Faz P.1
 
 ### BR-DELIVERY-002 — Delivery channel pricing differential (Faz P.1, 2026-08-13)
+- **SUPERSEDED 2026-11-11 (product owner, ADR-074)**: Paket Servis is now the Masa price ×1.35, every
+  product price and every paid modifier rounded separately (half up) to the nearest 5 TL (450 → 610,
+  430 → 580), for the whole delivery channel (app and POS), via the policy's `channelPriceMultipliers`.
+  The +140 TL / drinks +20 TL rule below no longer applies; it is kept as history.
 - **Status**: DECIDED — **live** (corrected, customer-side closure audit, 2026-08-26; this status line
   was never revisited after 2026-08-13). Faz P.3 (`BR-DELIVERY-007`/`BR-DELIVERY-009`, 2026-08-16)
   shipped the real `submitDeliveryOrder` callable and `DeliveryCheckoutScreen`, which use exactly the

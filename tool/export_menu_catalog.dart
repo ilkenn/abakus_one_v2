@@ -142,6 +142,14 @@ Future<void> main() async {
     'channelPricingPolicy': {
       'channelDefaultAdjustments': channelDefaultAdjustments,
       'categoryOverrides': categoryOverrides,
+      // 2026-11-11 — Paket Servis ×1.35, nearest 5 TL.
+      'channelPriceMultipliers': {
+        for (final entry in policy.channelPriceMultipliers.entries)
+          entry.key.name: {
+            'multiplierBasisPoints': entry.value.multiplierBasisPoints,
+            'roundToMinorUnits': entry.value.roundToMinorUnits,
+          },
+      },
     },
   };
 

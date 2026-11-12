@@ -128,7 +128,7 @@ const CONTACT = { contactFirstName: "Ada", contactLastName: "Yılmaz", contactPh
 /**
  * The ONE shared org -> restaurant -> branch chain for this whole file,
  * with the REAL catalog migrated into it once. The real Faz A channel
- * pricing policy (+20 default, +0 İçecekler) is written by
+ * pricing policy (+20 TL on every product since 2026-11-11) is written by
  * `migrateCanonicalCatalog` itself (Faz D.3.1.1 — sourced from the export,
  * not hand-typed here a second time; see `catalogMigration.test.ts`'s own
  * dedicated coverage of that write). Idempotent (`.set()`-based,
@@ -226,7 +226,9 @@ test("real catalog: an authenticated phone customer orders a real bowl product (
   assert.strictEqual(order.lines[0].productName, "Mexifit Bowl");
 });
 
-test("real catalog: a real İçecekler (beverage) product prices at basePrice unchanged (+0, real Faz A category override)", async () => {
+// 2026-11-11 — product owner: the drinks exemption is withdrawn; drinks are
+// +20 TL on Gel-Al like every other product.
+test("real catalog: a real İçecekler (beverage) product is +20 TL on takeaway like every product", async () => {
   const chain = sharedChain;
   const { idToken } = await createRealPhoneUser();
   const drink = exportData.products.find((p) => p.categoryId === "cat_icecekler")!;
@@ -247,7 +249,7 @@ test("real catalog: a real İçecekler (beverage) product prices at basePrice un
 
   assert.strictEqual(httpStatus, 200);
   const order = (await admin.firestore().collection("orders").doc(body.result!.orderId as string).get()).data()!;
-  assert.strictEqual(order.pricing.grandTotal.minorUnits, drink.basePriceMinorUnits);
+  assert.strictEqual(order.pricing.grandTotal.minorUnits, drink.basePriceMinorUnits + 2000);
 });
 
 test("real catalog: a custom bowl item built from a real, migrated ingredient is rejected (ADR-069: Bowl Builder withdrawn)", async () => {

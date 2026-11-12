@@ -199,11 +199,24 @@ class _DeliveryCheckoutScreenState
       // real product/price regardless.
       return Money.fromLegacyDoubleTry(item.price);
     }
-    return ChannelPriceResolver.resolveProductUnitPrice(
+    final productPrice = ChannelPriceResolver.resolveProductUnitPrice(
       product: product,
       categoryId: product.categoryId,
       channel: OrderChannel.delivery,
       policy: DeliveryChannelPricingPolicy.value,
+    );
+    // 2026-11-11 — paid modifiers are part of the unit price server-side,
+    // each one channel-priced (×1.35, nearest 5 TL); the estimate used to
+    // leave them out entirely.
+    return item.selectedModifiers.fold(
+      productPrice,
+      (sum, modifier) =>
+          sum +
+          ChannelPriceResolver.resolveModifierExtraPrice(
+            extraPrice: Money.fromLegacyDoubleTry(modifier.extraPrice),
+            channel: OrderChannel.delivery,
+            policy: DeliveryChannelPricingPolicy.value,
+          ),
     );
   }
 

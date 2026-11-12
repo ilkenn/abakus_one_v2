@@ -65,6 +65,8 @@ export interface CatalogExportIngredient {
 export interface CatalogExportChannelPricingPolicy {
   channelDefaultAdjustments: Record<string, number>;
   categoryOverrides: Record<string, Record<string, number>>;
+  /** 2026-11-11 — e.g. `{ delivery: { multiplierBasisPoints: 13500, roundToMinorUnits: 500 } }`. */
+  channelPriceMultipliers?: Record<string, { multiplierBasisPoints: number; roundToMinorUnits: number }>;
 }
 
 export interface CatalogExport {
@@ -182,6 +184,7 @@ export async function migrateCanonicalCatalog(
     .set({
       channelDefaultAdjustments: exportData.channelPricingPolicy.channelDefaultAdjustments,
       categoryOverrides: exportData.channelPricingPolicy.categoryOverrides,
+      channelPriceMultipliers: exportData.channelPricingPolicy.channelPriceMultipliers ?? {},
     });
 
   return { categoriesWritten, productsWritten, ingredientsWritten, channelPricingPolicyWritten: true };

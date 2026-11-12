@@ -15,7 +15,10 @@ void main() {
       );
     });
 
-    test('İçecekler (cat_icecekler) is overridden to +0 on takeaway', () async {
+    // 2026-11-11 — product owner: the BR-PRICE-004 drinks exemption is
+    // withdrawn; every product, drinks included, is +20 TL on Gel-Al.
+    test('İçecekler (cat_icecekler) is +20 on takeaway like every product',
+        () async {
       final repository = InMemoryChannelPricingPolicyRepository();
       final policy = await repository.current();
       expect(
@@ -24,7 +27,22 @@ void main() {
           'cat_icecekler',
           Currency.tryLira,
         ),
-        Money.zero(Currency.tryLira),
+        Money.fromWhole(20, Currency.tryLira),
+      );
+    });
+
+    test('delivery is priced ×1.35, nearest 5 TL (2026-11-11)', () async {
+      final policy = await InMemoryChannelPricingPolicyRepository().current();
+      expect(
+        policy.applyMultiplier(
+            OrderChannel.delivery, Money.fromWhole(450, Currency.tryLira)),
+        Money.fromWhole(610, Currency.tryLira),
+      );
+      expect(
+        policy.applyMultiplier(
+            OrderChannel.takeaway, Money.fromWhole(450, Currency.tryLira)),
+        Money.fromWhole(450, Currency.tryLira),
+        reason: 'takeaway has no multiplier',
       );
     });
 
@@ -76,14 +94,14 @@ void main() {
             OrderChannel.takeaway, 'cat_soups', Currency.tryLira),
         Money.fromWhole(10, Currency.tryLira),
       );
-      // the seeded İçecekler override must still be intact
+      // categories without an override keep the channel default
       expect(
         policy.adjustmentFor(
           OrderChannel.takeaway,
           'cat_icecekler',
           Currency.tryLira,
         ),
-        Money.zero(Currency.tryLira),
+        Money.fromWhole(20, Currency.tryLira),
       );
     });
 

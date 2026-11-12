@@ -1,5 +1,5 @@
 {
-  "exportedAt": "2026-11-10T20:29:17.531043",
+  "exportedAt": "2026-11-11T21:07:27.889652",
   "categories": [
     {
       "id": "cat_bowl",
@@ -39990,9 +39990,11 @@
     "channelDefaultAdjustments": {
       "takeaway": 2000
     },
-    "categoryOverrides": {
-      "takeaway": {
-        "cat_icecekler": 0
+    "categoryOverrides": {},
+    "channelPriceMultipliers": {
+      "delivery": {
+        "multiplierBasisPoints": 13500,
+        "roundToMinorUnits": 500
       }
     }
   }

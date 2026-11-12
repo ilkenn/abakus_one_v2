@@ -35,6 +35,41 @@ export function channelDefaultAdjustmentFor(
 }
 
 /**
+ * 2026-11-11 — [minorUnits] × the channel's multiplier, rounded half up to
+ * the nearest `roundToMinorUnits` (Paket Servis: ×1.35, nearest 5 TL —
+ * 450 TL → 607.50 → 610 TL; 430 TL → 580.50 → 580 TL). Integer-only maths,
+ * never floating point. A channel without a multiplier rule returns
+ * [minorUnits] unchanged.
+ */
+export function applyChannelPriceMultiplier(
+  policy: CanonicalChannelPricingPolicy,
+  channel: string,
+  minorUnits: number,
+): number {
+  const rule = policy.channelPriceMultipliers?.[channel];
+  if (!rule) return minorUnits;
+  const step = rule.roundToMinorUnits;
+  const scaled = minorUnits * rule.multiplierBasisPoints; // minor units × 10000
+  const steps = Math.floor((2 * scaled + 10000 * step) / (2 * 10000 * step));
+  return steps * step;
+}
+
+/**
+ * 2026-11-11 — a paid modifier's channel price: additive surcharges never
+ * apply to modifiers (Gel-Al's +20 TL is product-level only); a multiplier
+ * channel scales each modifier separately (Ekstra Peynir +40 → +54 → +55 TL
+ * on Paket Servis). Free options stay free.
+ */
+export function resolveModifierExtraPriceMinorUnits(params: {
+  extraPriceMinorUnits: number;
+  channel: string;
+  policy: CanonicalChannelPricingPolicy;
+}): number {
+  if (params.extraPriceMinorUnits <= 0) return params.extraPriceMinorUnits;
+  return applyChannelPriceMultiplier(params.policy, params.channel, params.extraPriceMinorUnits);
+}
+
+/**
  * Mirrors `ChannelPriceResolver.resolveProductUnitPrice`'s exact
  * precedence: the product's own `channelPriceOverrides[channel]` wins
  * outright (`explicitPrice` replaces the price entirely, `fixedAdjustment`
@@ -56,8 +91,11 @@ export function resolveProductUnitPriceMinorUnits(params: {
   } else if (override?.type === "fixedAdjustment") {
     resolved = product.basePriceMinorUnits + override.adjustmentMinorUnits;
   } else {
-    resolved =
-      product.basePriceMinorUnits + categoryAdjustmentFor(policy, channel, product.categoryId);
+    resolved = applyChannelPriceMultiplier(
+      policy,
+      channel,
+      product.basePriceMinorUnits + categoryAdjustmentFor(policy, channel, product.categoryId),
+    );
   }
 
   if (resolved < 0) {

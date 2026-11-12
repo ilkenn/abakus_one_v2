@@ -74,9 +74,43 @@ export interface CanonicalBowlIngredient {
   isAvailable: boolean;
 }
 
+/**
+ * 2026-11-11 — product owner: a channel priced as a percentage of the dine-in
+ * (Masa) price, each resulting price rounded to the nearest
+ * [roundToMinorUnits] (half up). Paket Servis = ×1.35, nearest 5 TL. Applied
+ * to the product price AND to every paid modifier separately.
+ */
+export interface ChannelPriceMultiplierRule {
+  multiplierBasisPoints: number;
+  roundToMinorUnits: number;
+}
+
 export interface CanonicalChannelPricingPolicy {
   channelDefaultAdjustments: Record<string, number>;
   categoryOverrides: Record<string, Record<string, number>>;
+  /** Optional; a channel without an entry keeps the additive rules only. */
+  channelPriceMultipliers?: Record<string, ChannelPriceMultiplierRule>;
+}
+
+function parseChannelPriceMultipliers(raw: unknown): Record<string, ChannelPriceMultiplierRule> {
+  if (typeof raw !== "object" || raw === null) return {};
+  const result: Record<string, ChannelPriceMultiplierRule> = {};
+  for (const [channel, value] of Object.entries(raw as Record<string, unknown>)) {
+    const rule = value as Record<string, unknown> | null;
+    if (
+      rule &&
+      typeof rule.multiplierBasisPoints === "number" &&
+      rule.multiplierBasisPoints > 0 &&
+      typeof rule.roundToMinorUnits === "number" &&
+      rule.roundToMinorUnits > 0
+    ) {
+      result[channel] = {
+        multiplierBasisPoints: rule.multiplierBasisPoints,
+        roundToMinorUnits: rule.roundToMinorUnits,
+      };
+    }
+  }
+  return result;
 }
 
 function parseChannelPriceOverrides(
@@ -198,7 +232,7 @@ export async function loadCanonicalChannelPricingPolicy(
   const ref = db.collection("channelPricingPolicies").doc(restaurantId);
   const doc = tx ? await tx.get(ref) : await ref.get();
   if (!doc.exists) {
-    return { channelDefaultAdjustments: {}, categoryOverrides: {} };
+    return { channelDefaultAdjustments: {}, categoryOverrides: {}, channelPriceMultipliers: {} };
   }
   const data = doc.data()!;
   return {
@@ -210,5 +244,6 @@ export async function loadCanonicalChannelPricingPolicy(
       typeof data.categoryOverrides === "object" && data.categoryOverrides !== null
         ? (data.categoryOverrides as Record<string, Record<string, number>>)
         : {},
+    channelPriceMultipliers: parseChannelPriceMultipliers(data.channelPriceMultipliers),
   };
 }

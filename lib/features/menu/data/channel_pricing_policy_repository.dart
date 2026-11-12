@@ -2,6 +2,7 @@ import '../../../shared/models/currency.dart';
 import '../../../shared/models/money.dart';
 import '../../orders/domain/models/order_channel.dart';
 import '../domain/pricing/channel_pricing_policy.dart';
+import '../domain/pricing/delivery_channel_pricing_policy.dart';
 
 /// Admin-editable storage for the channel/category price-adjustment rules
 /// `ChannelPriceResolver` reads — the future "yönetim panelinden kategori
@@ -64,14 +65,13 @@ abstract interface class ChannelPricingPolicyRepository {
 class InMemoryChannelPricingPolicyRepository
     implements ChannelPricingPolicyRepository {
   InMemoryChannelPricingPolicyRepository()
+      // 2026-11-11 — product owner: Gel-Al = every product (drinks
+      // included) +20 TL, modifiers/sauces +0; the drinks exemption of
+      // BR-PRICE-004 is withdrawn. Paket Servis = ×1.35, nearest 5 TL.
       : _channelDefaults = {
           OrderChannel.takeaway: Money.fromWhole(20, Currency.tryLira),
         },
-        _categoryOverrides = {
-          OrderChannel.takeaway: {
-            'cat_icecekler': Money.zero(Currency.tryLira),
-          },
-        };
+        _categoryOverrides = {};
 
   final Map<OrderChannel, Money> _channelDefaults;
   final Map<OrderChannel, Map<String, Money>> _categoryOverrides;
@@ -79,6 +79,9 @@ class InMemoryChannelPricingPolicyRepository
   @override
   Future<ChannelPricingPolicy> current() async {
     return ChannelPricingPolicy(
+      channelPriceMultipliers: const {
+        OrderChannel.delivery: DeliveryChannelPricingPolicy.deliveryMultiplier,
+      },
       channelDefaultAdjustments: Map.unmodifiable(_channelDefaults),
       categoryOverrides: {
         for (final entry in _categoryOverrides.entries)

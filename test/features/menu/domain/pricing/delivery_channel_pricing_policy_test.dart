@@ -1,24 +1,15 @@
 import 'package:abakus_one_v2/features/menu/domain/models/menu_product.dart';
 import 'package:abakus_one_v2/features/menu/domain/pricing/channel_price_resolver.dart';
 import 'package:abakus_one_v2/features/menu/domain/pricing/delivery_channel_pricing_policy.dart';
-import 'package:abakus_one_v2/features/orders/domain/mappers/cart_line_mapper.dart';
-import 'package:abakus_one_v2/features/orders/domain/pricing/tax_policy.dart';
-import 'package:abakus_one_v2/features/cart/domain/models/cart_item.dart';
 import 'package:abakus_one_v2/features/orders/domain/models/order_channel.dart';
 import 'package:abakus_one_v2/shared/models/currency.dart';
 import 'package:abakus_one_v2/shared/models/money.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Proves the LOCKED Faz P.1 delivery pricing rule (`docs/business_rules.md`)
-/// against the same, unmodified `ChannelPriceResolver` every other channel
-/// uses — via the isolated `DeliveryChannelPricingPolicy.value` constant,
-/// **not** the live `InMemoryChannelPricingPolicyRepository`/
-/// `channelPricingPolicySnapshotProvider` chain (see that repository's own
-/// doc comment for why: seeding delivery there would have live-changed
-/// Bowl Builder's real customer-facing price today, since
-/// [OrderChannel.delivery] is this app's default shopping channel and
-/// `bowl_builder_screen.dart` resolves a price for it with no
-/// takeaway-only gate).
+/// 2026-11-11 — product owner: Paket Servis is the Masa (dine-in) price
+/// ×1.35, every product and every paid modifier rounded separately (half up)
+/// to the nearest 5 TL, for the whole delivery channel. Replaces the earlier
+/// BR-DELIVERY-002 rule (+140 TL, drinks +20 TL).
 
 MenuProduct _product({
   double basePrice = 500,
@@ -34,96 +25,52 @@ MenuProduct _product({
   );
 }
 
+Money _tl(int whole) => Money.fromWhole(whole, Currency.tryLira);
+
 void main() {
-  final policy = DeliveryChannelPricingPolicy.value;
+  const policy = DeliveryChannelPricingPolicy.value;
 
-  group('Delivery pricing — LOCKED rule (Faz P.1 req 5)', () {
-    test('a standard product gets +140 TL on delivery (req 5)', () {
-      final result = ChannelPriceResolver.resolveProductUnitPrice(
-        product: _product(basePrice: 500, categoryId: 'cat_bowl'),
-        categoryId: 'cat_bowl',
-        channel: OrderChannel.delivery,
-        policy: policy,
-      );
-      expect(result, Money.fromWhole(640, Currency.tryLira));
-    });
-
-    test(
-        'a beverage (cat_icecekler) gets +20 TL on delivery, not +140 '
-        '(req 5)', () {
-      final result = ChannelPriceResolver.resolveProductUnitPrice(
-        product: _product(basePrice: 100, categoryId: 'cat_icecekler'),
-        categoryId: 'cat_icecekler',
-        channel: OrderChannel.delivery,
-        policy: policy,
-      );
-      expect(result, Money.fromWhole(120, Currency.tryLira));
-    });
-
-    test(
-        'a Build Your Own Bowl unit gets +140 TL exactly once, applied to '
-        'the ingredient sum (req 5)', () {
-      final ingredientTotal = Money.fromWhole(180, Currency.tryLira);
-      final result = ChannelPriceResolver.resolveBowlUnitPrice(
-        ingredientTotal: ingredientTotal,
-        channel: OrderChannel.delivery,
-        policy: policy,
-      );
-      expect(result, Money.fromWhole(320, Currency.tryLira));
-    });
-
-    test(
-        'the +140 TL bowl surcharge does not scale with ingredient count — '
-        'it is a flat once-per-bowl amount, never per-ingredient (req 5)', () {
-      // Three different ingredient counts, summed to three different
-      // totals — the delivery adjustment added on top is always exactly
-      // +140 TL, never +140 multiplied by an ingredient count.
-      for (final ingredientTotal in [
-        Money.fromWhole(60, Currency.tryLira), // e.g. 2 ingredients
-        Money.fromWhole(150, Currency.tryLira), // e.g. 5 ingredients
-        Money.fromWhole(300, Currency.tryLira), // e.g. 10 ingredients
-      ]) {
-        final result = ChannelPriceResolver.resolveBowlUnitPrice(
-          ingredientTotal: ingredientTotal,
-          channel: OrderChannel.delivery,
-          policy: policy,
-        );
-        expect(
-          result,
-          ingredientTotal + Money.fromWhole(140, Currency.tryLira),
-          reason: 'ingredientTotal=$ingredientTotal',
-        );
-      }
-    });
-
-    test(
-        'the bowl surcharge still multiplies by order quantity via the '
-        'existing OrderLine mechanism, unrelated to ingredient count '
-        '(req 5)', () {
-      final ingredientTotal = Money.fromWhole(100, Currency.tryLira);
-      final unitPrice = ChannelPriceResolver.resolveBowlUnitPrice(
-        ingredientTotal: ingredientTotal,
+  Money delivery(double basePrice, {String categoryId = 'cat_bowl'}) =>
+      ChannelPriceResolver.resolveProductUnitPrice(
+        product: _product(basePrice: basePrice, categoryId: categoryId),
+        categoryId: categoryId,
         channel: OrderChannel.delivery,
         policy: policy,
       );
 
-      final cartItem = CartItem(
-        id: 'custom_bowl_1',
-        name: 'Kendi Bowlun',
-        desc: '',
-        price: unitPrice.minorUnits / unitPrice.currency.minorUnitsPerWhole,
-        quantity: 2,
-      );
-      final line = CartLineMapper.mapLine(cartItem, TaxPolicy.defaultRate);
-
-      // (100 + 140) * 2 = 480
-      expect(line.lineSubtotal, Money.fromWhole(480, Currency.tryLira));
+  group('Paket Servis pricing — ×1.35, nearest 5 TL', () {
+    test("the product owner's examples: 450 → 610, 430 → 580", () {
+      expect(delivery(450), _tl(610)); // 607.50 → 610
+      expect(delivery(430), _tl(580)); // 580.50 → 580
     });
 
-    test(
-        'delivery pricing does not affect takeaway/dine-in/reservation '
-        'pricing — the isolated constant only ever configures '
-        'OrderChannel.delivery (req 9, 10, 11)', () {
+    test('rounds half up to the nearest 5 TL', () {
+      expect(delivery(100), _tl(135)); // 135.00
+      expect(delivery(110), _tl(150)); // 148.50 → 150
+      expect(delivery(10), _tl(15)); // 13.50 → 15
+      expect(delivery(14), _tl(20)); // 18.90 → 20
+      expect(delivery(13), _tl(20)); // 17.55 → 20
+      expect(delivery(12), _tl(15)); // 16.20 → 15
+    });
+
+    test('drinks are scaled like every other product (no exemption)', () {
+      expect(delivery(100, categoryId: 'cat_icecekler'), _tl(135));
+    });
+
+    test('each paid modifier is scaled and rounded on its own; free stays free',
+        () {
+      Money modifier(int whole) =>
+          ChannelPriceResolver.resolveModifierExtraPrice(
+            extraPrice: _tl(whole),
+            channel: OrderChannel.delivery,
+            policy: policy,
+          );
+      expect(modifier(40), _tl(55)); // 54 → 55
+      expect(modifier(20), _tl(25)); // 27 → 25
+      expect(modifier(0), _tl(0));
+    });
+
+    test('no other channel is affected by the delivery policy', () {
       for (final channel in [
         OrderChannel.takeaway,
         OrderChannel.dineInQr,
@@ -131,13 +78,21 @@ void main() {
         OrderChannel.reservationPreorder,
       ]) {
         final result = ChannelPriceResolver.resolveProductUnitPrice(
-          product: _product(basePrice: 500, categoryId: 'cat_bowl'),
+          product: _product(basePrice: 450),
           categoryId: 'cat_bowl',
           channel: channel,
           policy: policy,
         );
-        expect(result, Money.fromWhole(500, Currency.tryLira),
-            reason: '$channel');
+        expect(result, _tl(450), reason: '$channel');
+        expect(
+          ChannelPriceResolver.resolveModifierExtraPrice(
+            extraPrice: _tl(40),
+            channel: channel,
+            policy: policy,
+          ),
+          _tl(40),
+          reason: '$channel modifier',
+        );
       }
     });
   });

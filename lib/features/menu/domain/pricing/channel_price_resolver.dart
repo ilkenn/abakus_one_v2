@@ -52,9 +52,11 @@ abstract final class ChannelPriceResolver {
     final resolved = switch (override) {
       ChannelExplicitPrice(:final price) => price,
       ChannelFixedAdjustment(:final adjustment) => baseline + adjustment,
-      UseChannelDefault() ||
-      null =>
-        baseline + policy.adjustmentFor(channel, categoryId, baseline.currency),
+      UseChannelDefault() || null => policy.applyMultiplier(
+          channel,
+          baseline +
+              policy.adjustmentFor(channel, categoryId, baseline.currency),
+        ),
     };
 
     _requireNonNegative(resolved, context: 'ChannelPriceResolver.product');
@@ -78,13 +80,31 @@ abstract final class ChannelPriceResolver {
   ///
   /// Throws [NegativeAmountViolation] under the same rule as
   /// [resolveProductUnitPrice].
+  /// 2026-11-11 — a paid modifier's channel price. Additive surcharges
+  /// never apply to modifiers (Gel-Al's +20 TL is product-level only); a
+  /// multiplier channel scales each one separately (Ekstra Peynir +40 TL →
+  /// +55 TL on Paket Servis). Mirrors `resolveModifierExtraPriceMinorUnits`.
+  static Money resolveModifierExtraPrice({
+    required Money extraPrice,
+    required OrderChannel channel,
+    required ChannelPricingPolicy policy,
+  }) {
+    if (!extraPrice.isPositive) return extraPrice;
+    return policy.applyMultiplier(channel, extraPrice);
+  }
+
   static Money resolveBowlUnitPrice({
     required Money ingredientTotal,
     required OrderChannel channel,
     required ChannelPricingPolicy policy,
   }) {
-    final resolved = ingredientTotal +
-        policy.defaultAdjustmentFor(channel, ingredientTotal.currency);
+    // 2026-11-11 — a multiplier channel (Paket Servis ×1.35) scales the
+    // whole bowl once, like any other product price.
+    final resolved = policy.applyMultiplier(
+      channel,
+      ingredientTotal +
+          policy.defaultAdjustmentFor(channel, ingredientTotal.currency),
+    );
     _requireNonNegative(resolved, context: 'ChannelPriceResolver.bowl');
     return resolved;
   }

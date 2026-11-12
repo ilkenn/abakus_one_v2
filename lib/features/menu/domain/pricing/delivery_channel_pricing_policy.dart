@@ -1,5 +1,3 @@
-import '../../../../shared/models/currency.dart';
-import '../../../../shared/models/money.dart';
 import '../../../orders/domain/models/order_channel.dart';
 import 'channel_pricing_policy.dart';
 
@@ -28,14 +26,16 @@ import 'channel_pricing_policy.dart';
 abstract final class DeliveryChannelPricingPolicy {
   DeliveryChannelPricingPolicy._();
 
-  static final ChannelPricingPolicy value = ChannelPricingPolicy(
-    channelDefaultAdjustments: {
-      OrderChannel.delivery: Money.fromWhole(140, Currency.tryLira),
-    },
-    categoryOverrides: {
-      OrderChannel.delivery: {
-        'cat_icecekler': Money.fromWhole(20, Currency.tryLira),
-      },
-    },
+  /// 2026-11-11 — product owner: Paket Servis = Masa price ×1.35, every
+  /// product and paid modifier rounded to the nearest 5 TL, for the whole
+  /// channel (app and POS). Replaces the earlier +140 TL / drinks +20 TL.
+  static const ChannelPricingPolicy value = ChannelPricingPolicy(
+    channelPriceMultipliers: {OrderChannel.delivery: deliveryMultiplier},
+  );
+
+  static const ChannelPriceMultiplier deliveryMultiplier =
+      ChannelPriceMultiplier(
+    multiplierBasisPoints: 13500,
+    roundToMinorUnits: 500,
   );
 }
