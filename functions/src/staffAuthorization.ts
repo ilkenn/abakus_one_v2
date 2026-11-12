@@ -136,7 +136,13 @@ export type StaffPermission =
   // the same class of manager-supervised dispatch decision, and splitting
   // them would not map to any distinct real-world approval boundary the
   // way e.g. `manageDeliveryOrders` vs. `manageDeliveryOrderRefunds` does.
-  | "manageCourierDispatch";
+  | "manageCourierDispatch"
+  // 2026-11-12 (Faz 3a) — approving/rejecting an external (`pool`) courier's
+  // "Talep Oluştur" request for a package published to the delivery pool.
+  // Granted to the two new front-line dispatch roles (`cashier`,
+  // `packingLead`) and to manager/admin/tenantOwner — never to plain
+  // `staff` or `courier` (a courier can never approve its own request).
+  | "approveCourierPoolRequests";
 
 /**
  * The default role -> permission set — Faz R.3A extends this beyond the
@@ -267,6 +273,37 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     // approving a resulting adjustment stays manager-tier below).
     "recordStockCount",
   ],
+  // 2026-11-12 (Faz 3a) — Kasiyer and Mutfak Paket Yetkilisi: everything
+  // `staff` can do, plus courier dispatch (direct assignment, pool
+  // publishing) and approving pool requests. Deliberately NOT given any
+  // manager-tier cancellation/refund/reconciliation permission — a cash
+  // difference at courier settlement still needs a manager.
+  cashier: [
+    "manageTakeawayOrders",
+    "manageDeliveryOrders",
+    "manageDineInOrders",
+    "requestDeviceRegistration",
+    "viewTenantCustomerDirectory",
+    "processPayments",
+    "manageCashSessions",
+    "manageKitchenOperations",
+    "recordStockCount",
+    "manageCourierDispatch",
+    "approveCourierPoolRequests",
+  ],
+  packingLead: [
+    "manageTakeawayOrders",
+    "manageDeliveryOrders",
+    "manageDineInOrders",
+    "requestDeviceRegistration",
+    "viewTenantCustomerDirectory",
+    "processPayments",
+    "manageCashSessions",
+    "manageKitchenOperations",
+    "recordStockCount",
+    "manageCourierDispatch",
+    "approveCourierPoolRequests",
+  ],
   manager: [
     "manageReservations",
     "manageBranch",
@@ -310,6 +347,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "recordStockCount",
     "approveStockCountAdjustment",
     "manageCourierDispatch",
+    "approveCourierPoolRequests",
   ],
   admin: [
     "manageReservations",
@@ -347,6 +385,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "recordStockCount",
     "approveStockCountAdjustment",
     "manageCourierDispatch",
+    "approveCourierPoolRequests",
   ],
   tenantOwner: [
     "manageReservations",
@@ -384,6 +423,7 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "recordStockCount",
     "approveStockCountAdjustment",
     "manageCourierDispatch",
+    "approveCourierPoolRequests",
   ],
   // `courier` deliberately has no entry at all — zero permissions, exactly
   // like every role not listed here. Explicit instruction: courier must

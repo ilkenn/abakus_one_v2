@@ -44,7 +44,14 @@ import { shouldEnforceAppCheck } from "./appCheckConfig";
  * organizationId/role/permission.
  */
 
-export type MembershipRole = "staff" | "manager" | "admin" | "tenantOwner" | "courier";
+export type MembershipRole =
+  | "staff"
+  | "cashier"
+  | "packingLead"
+  | "manager"
+  | "admin"
+  | "tenantOwner"
+  | "courier";
 export type MembershipStatus = "active" | "suspended" | "archived";
 
 interface MembershipDoc {
@@ -66,7 +73,15 @@ interface MembershipDoc {
   version: number;
 }
 
-const VALID_ROLES: readonly MembershipRole[] = ["staff", "manager", "admin", "tenantOwner", "courier"];
+const VALID_ROLES: readonly MembershipRole[] = [
+  "staff",
+  "cashier",
+  "packingLead",
+  "manager",
+  "admin",
+  "tenantOwner",
+  "courier",
+];
 const VALID_STATUSES: readonly MembershipStatus[] = ["active", "suspended", "archived"];
 
 function membershipId(organizationId: string, uid: string): string {

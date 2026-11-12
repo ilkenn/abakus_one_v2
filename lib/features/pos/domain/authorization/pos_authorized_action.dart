@@ -202,4 +202,9 @@ enum PosAuthorizedAction {
   /// `requireStaffPermission`/`requireBranchAccess` check on every
   /// callable — never the sole authorization boundary.
   viewFinancialOperations,
+
+  /// 2026-11-12 (Faz 3a) — approve or reject an external courier's request
+  /// for a package published to the delivery pool. Mirrors the server's
+  /// `approveCourierPoolRequests` permission.
+  approveCourierPoolRequest,
 }

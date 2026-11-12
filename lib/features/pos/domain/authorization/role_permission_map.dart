@@ -199,6 +199,17 @@ abstract final class RolePermissionMap {
   /// A courier's own delivery-lifecycle actions — never automatically
   /// available to any other tier, and this tier never automatically gains
   /// any other tier's actions either (lateral, not hierarchical).
+  /// 2026-11-12 (Faz 3a) — what [StaffRole.cashier] and
+  /// [StaffRole.packingLead] add on top of [_staffTier]: assigning couriers
+  /// and approving pool requests (server: `manageCourierDispatch` +
+  /// `approveCourierPoolRequests`).
+  static const Set<PosAuthorizedAction> _courierDispatchTier = {
+    PosAuthorizedAction.manuallyAssignDelivery,
+    PosAuthorizedAction.reassignDelivery,
+    PosAuthorizedAction.cancelDeliveryAssignment,
+    PosAuthorizedAction.approveCourierPoolRequest,
+  };
+
   static const Set<PosAuthorizedAction> _courierTier = {
     PosAuthorizedAction.startCourierShift,
     PosAuthorizedAction.endCourierShift,
@@ -226,13 +237,22 @@ abstract final class RolePermissionMap {
         return _courierTier;
       case StaffRole.staff:
         return _staffTier;
+      case StaffRole.cashier:
+      case StaffRole.packingLead:
+        return {..._staffTier, ..._courierDispatchTier};
       case StaffRole.manager:
-        return {..._staffTier, ..._managerTier};
+        return {..._staffTier, ..._courierDispatchTier, ..._managerTier};
       case StaffRole.admin:
-        return {..._staffTier, ..._managerTier, ..._adminOnly};
+        return {
+          ..._staffTier,
+          ..._courierDispatchTier,
+          ..._managerTier,
+          ..._adminOnly,
+        };
       case StaffRole.tenantOwner:
         return {
           ..._staffTier,
+          ..._courierDispatchTier,
           ..._managerTier,
           ..._adminOnly,
           ..._tenantOwnerOnly,

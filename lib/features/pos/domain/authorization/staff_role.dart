@@ -18,4 +18,17 @@
 /// across tenants. Cross-tenant platform actions are a wholly separate
 /// stack (`features/platform/domain/authorization/platform_role.dart`)
 /// — see that file's own doc comment for why the two are never merged.
-enum StaffRole { courier, staff, manager, admin, tenantOwner }
+///
+/// 2026-11-12 (Faz 3a) — [cashier] (Kasiyer) and [packingLead] (Mutfak
+/// Paket Yetkilisi) are lateral front-line roles: everything [staff] can
+/// do plus courier dispatch and approving external couriers' pool
+/// requests, but none of [manager]'s supervisory actions.
+enum StaffRole {
+  courier,
+  staff,
+  cashier,
+  packingLead,
+  manager,
+  admin,
+  tenantOwner,
+}

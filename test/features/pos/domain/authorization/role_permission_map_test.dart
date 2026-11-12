@@ -281,4 +281,33 @@ void main() {
       );
     });
   });
+
+  group('Faz 3a — Kasiyer and Mutfak Paket Yetkilisi', () {
+    test('staff work plus courier dispatch and pool approval, no manager tier',
+        () {
+      final staff = RolePermissionMap.permissionsFor(StaffRole.staff);
+      for (final role in [StaffRole.cashier, StaffRole.packingLead]) {
+        final actions = RolePermissionMap.permissionsFor(role);
+        expect(actions.containsAll(staff), isTrue, reason: role.name);
+        expect(actions, contains(PosAuthorizedAction.manuallyAssignDelivery));
+        expect(
+            actions, contains(PosAuthorizedAction.approveCourierPoolRequest));
+        expect(actions,
+            isNot(contains(PosAuthorizedAction.reviewCashReconciliation)));
+        expect(actions, isNot(contains(PosAuthorizedAction.manageStaffRoles)));
+      }
+      for (final role in [
+        StaffRole.manager,
+        StaffRole.admin,
+        StaffRole.tenantOwner,
+      ]) {
+        expect(RolePermissionMap.permissionsFor(role),
+            contains(PosAuthorizedAction.approveCourierPoolRequest));
+      }
+      for (final role in [StaffRole.staff, StaffRole.courier]) {
+        expect(RolePermissionMap.permissionsFor(role),
+            isNot(contains(PosAuthorizedAction.approveCourierPoolRequest)));
+      }
+    });
+  });
 }
