@@ -77,6 +77,13 @@ abstract final class EscPosZReportEncoder {
     // a cancelled-line value total isn't included.
     writeTwoColumn(
         'İkram Toplamı', _fmt(content, content.complimentaryMinorUnits));
+    // 2026-11-11 (Faz 2b) — informational: already inside the tender lines.
+    writeTwoColumn('Paket Servis Tahsilatı',
+        _fmt(content, content.deliveryCollectionMinorUnits));
+    if (content.courierDifferenceMinorUnits != 0) {
+      writeTwoColumn(
+          'Kurye Farkı', _fmt(content, content.courierDifferenceMinorUnits));
+    }
     writeLine('-' * _lineWidth);
     writeTwoColumn(
         'Beklenen Nakit', _fmt(content, content.expectedAmountMinorUnits));

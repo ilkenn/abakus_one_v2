@@ -200,6 +200,9 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
         mealCardBreakdown: revenue?.mealCardBreakdown ?? const [],
         totalMinorUnits: revenue?.totalMinorUnits ?? 0,
         complimentaryMinorUnits: revenue?.complimentaryMinorUnits ?? 0,
+        deliveryCollectionMinorUnits:
+            revenue?.deliveryCollectionMinorUnits ?? 0,
+        courierDifferenceMinorUnits: revenue?.courierDifferenceMinorUnits ?? 0,
         expectedAmountMinorUnits: countResult.expectedAmountMinorUnits,
         actualAmountMinorUnits: actualAmountMinorUnits,
         varianceType: countResult.varianceType,
@@ -460,6 +463,21 @@ class _ReadyViewState extends State<_ReadyView> {
                       color: AppColors.warning,
                     ),
                   ],
+                  // 2026-11-11 (Faz 2b) — pay-on-delivery collections
+                  // (already in the lines above) and courier differences.
+                  const Divider(),
+                  _RevenueRow(
+                    label: 'Paket Servis Tahsilatı',
+                    value:
+                        widget.currencyOf(revenue.deliveryCollectionMinorUnits),
+                  ),
+                  if (revenue.courierDifferenceMinorUnits != 0)
+                    _RevenueRow(
+                      label: 'Kurye Farkı',
+                      value: widget
+                          .currencyOf(revenue.courierDifferenceMinorUnits),
+                      color: AppColors.error,
+                    ),
                 ],
               ),
             ),

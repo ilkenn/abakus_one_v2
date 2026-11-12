@@ -257,7 +257,16 @@ class DailyRevenueSummary {
     required this.totalMinorUnits,
     this.complimentaryMinorUnits = 0,
     this.mealCardBreakdown = const [],
+    this.deliveryCollectionMinorUnits = 0,
+    this.courierDifferenceMinorUnits = 0,
   });
+
+  /// 2026-11-11 (Faz 2b) — pay-on-delivery collections settled into this
+  /// session (already included in the tender lines above).
+  final int deliveryCollectionMinorUnits;
+
+  /// Sum of the session's courier cash differences (negative = short).
+  final int courierDifferenceMinorUnits;
 
   final String sessionId;
   final String currencyCode;
@@ -287,6 +296,10 @@ class DailyRevenueSummary {
       otherMinorUnits: data['otherMinorUnits'] as int,
       totalMinorUnits: data['totalMinorUnits'] as int,
       complimentaryMinorUnits: data['complimentaryMinorUnits'] as int? ?? 0,
+      deliveryCollectionMinorUnits:
+          data['deliveryCollectionMinorUnits'] as int? ?? 0,
+      courierDifferenceMinorUnits:
+          data['courierDifferenceMinorUnits'] as int? ?? 0,
       mealCardBreakdown: [
         for (final raw in (data['mealCardBreakdown'] as List?) ?? const [])
           MealCardRevenueLine.fromWire(Map<String, dynamic>.from(raw as Map)),

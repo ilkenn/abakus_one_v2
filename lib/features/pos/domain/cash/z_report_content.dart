@@ -20,6 +20,8 @@ class ZReportContent {
     required this.cardMinorUnits,
     required this.otherMinorUnits,
     this.mealCardBreakdown = const [],
+    this.deliveryCollectionMinorUnits = 0,
+    this.courierDifferenceMinorUnits = 0,
     required this.totalMinorUnits,
     required this.expectedAmountMinorUnits,
     required this.actualAmountMinorUnits,
@@ -41,6 +43,13 @@ class ZReportContent {
 
   /// 2026-11-11 — one line per meal-card brand, listed after "Kredi Kartı".
   final List<MealCardRevenueLine> mealCardBreakdown;
+
+  /// 2026-11-11 (Faz 2b) — "Paket Servis Tahsilatı": pay-on-delivery
+  /// collections (already inside the tender lines); informational.
+  final int deliveryCollectionMinorUnits;
+
+  /// "Kurye Farkı": couriers' cash differences (negative = short).
+  final int courierDifferenceMinorUnits;
   final int totalMinorUnits;
   final int expectedAmountMinorUnits;
   final int actualAmountMinorUnits;
@@ -91,6 +100,12 @@ class ZReportContent {
       ..writeln('TOPLAM CİRO: ${_fmt(totalMinorUnits)}')
       ..writeln('-' * 32)
       ..writeln('İkram Toplamı: ${_fmt(complimentaryMinorUnits)}')
+      ..writeln(
+          'Paket Servis Tahsilatı: ${_fmt(deliveryCollectionMinorUnits)}');
+    if (courierDifferenceMinorUnits != 0) {
+      buffer.writeln('Kurye Farkı: ${_fmt(courierDifferenceMinorUnits)}');
+    }
+    buffer
       ..writeln('-' * 32)
       ..writeln('Beklenen Nakit: ${_fmt(expectedAmountMinorUnits)}')
       ..writeln('Sayılan Nakit: ${_fmt(actualAmountMinorUnits)}')

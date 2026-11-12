@@ -495,6 +495,8 @@ const _movementTypeLabels = {
   'safeDeposit': 'Kasa Teslim',
   'pettyCash': 'Küçük Kasa',
   'expense': 'Gider',
+  // 2026-11-11 (Faz 2b) — cash a returning courier handed over.
+  'courierCashIn': 'Kurye Tahsilatı',
 };
 
 class _SessionDetailPanel extends StatelessWidget {
