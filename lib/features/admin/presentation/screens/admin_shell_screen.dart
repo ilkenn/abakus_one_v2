@@ -9,6 +9,7 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../courier/presentation/screens/courier_dispatch_dashboard_screen.dart';
 import '../../../courier/presentation/screens/courier_work_screen.dart';
+import '../../../pos/presentation/screens/courier_delivery_report_screen.dart';
 import '../../../pos/presentation/screens/delivery_order_dispatch_screen.dart';
 import '../../../crm/presentation/screens/customer_notification_campaigns_admin_screen.dart';
 import '../../../crm/presentation/screens/customer_segmentation_admin_screen.dart';
@@ -233,6 +234,28 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
               child: DeliveryOrderDispatchScreen(
                 organizationId: 'org-1',
                 branchId: branchId,
+              ),
+            ),
+          ),
+          // 2026-11-12 (Faz 4, ADR-080) — per-courier packages, timings,
+          // tender mix and cash differences; same courier-module gate as the
+          // dispatch board, manager-tier action.
+          _AdminNavItem(
+            id: 'courier-report',
+            label: 'Kurye & Paket Raporu',
+            icon: Icons.analytics_outlined,
+            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            builder: (context, ref) => ModuleEntitlementGate(
+              module: EntitlementModule.courier,
+              scopeType: EntitlementScopeType.branch,
+              scopeId: branchId,
+              actorStaffId: actorId,
+              child: RoleGate.forAction(
+                PosAuthorizedAction.viewDeliveryReport,
+                child: CourierDeliveryReportScreen(
+                  organizationId: 'org-1',
+                  branchId: branchId,
+                ),
               ),
             ),
           ),

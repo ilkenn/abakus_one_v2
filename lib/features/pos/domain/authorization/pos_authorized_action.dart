@@ -207,4 +207,16 @@ enum PosAuthorizedAction {
   /// for a package published to the delivery pool. Mirrors the server's
   /// `approveCourierPoolRequests` permission.
   approveCourierPoolRequest,
+
+  /// 2026-11-12 (Faz 4, ADR-080) — the "Kurye & Paket Raporu". Mirrors the
+  /// server's `viewDeliveryReports` (manager and above).
+  viewDeliveryReport,
+
+  /// 2026-11-12 (Faz 4, ADR-081) — open a Paket Servis order whose basket is
+  /// below the neighborhood's minimum. Mirrors `overrideDeliveryMinimumOrder`.
+  overrideDeliveryMinimumOrder,
+
+  /// 2026-11-12 (Faz 4, ADR-082) — KVKK erasure of a local customer-book
+  /// record. Mirrors `erasePosCustomerData` (manager and above).
+  erasePosCustomerData,
 }

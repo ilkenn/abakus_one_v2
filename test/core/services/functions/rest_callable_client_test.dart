@@ -198,4 +198,28 @@ void main() {
     );
     expect(captured!.url.path, '/syncOwnStaffClaims');
   });
+  test('an error response carries the server details map (Faz 4)', () async {
+    final mockClient = MockClient((request) async {
+      return http.Response(
+        '{"error":{"status":"FAILED_PRECONDITION","message":"below",'
+        '"details":{"code":"staffDelivery/below-minimum",'
+        '"minimumOrderMinorUnits":25000}}}',
+        400,
+      );
+    });
+    final client = RestCallableClient(
+      httpClient: mockClient,
+      idTokenProvider: () async => 'fake-id-token',
+    );
+
+    await expectLater(
+      client.call('submitStaffDeliveryOrder', const {}),
+      throwsA(isA<RestCallableException>()
+          .having((e) => e.code, 'code', 'failed_precondition')
+          .having((e) => e.details?['code'], 'details.code',
+              'staffDelivery/below-minimum')
+          .having(
+              (e) => e.details?['minimumOrderMinorUnits'], 'minimum', 25000)),
+    );
+  });
 }

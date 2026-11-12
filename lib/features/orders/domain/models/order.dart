@@ -62,6 +62,7 @@ class Order {
     this.plannedCourierId,
     this.plannedCourierName,
     this.poolStatus,
+    this.estimatedDeliveryMinutes,
     this.courierDeparted = false,
     this.courierReportedDelivered = false,
     this.courierReportedPaymentMethodId,
@@ -243,6 +244,12 @@ class Order {
   /// external courier's request was approved), `closed`, or `null` (never
   /// published / withdrawn).
   final String? poolStatus;
+
+  /// 2026-11-12 (Faz 4, ADR-081) — the neighborhood rule's "Tahmini
+  /// Teslimat Süresi" stamped on a staff Paket Servis order at creation
+  /// (`submitStaffDeliveryOrder`), printed on the courier slip. Server-
+  /// written only; `null` when the neighborhood has no rule.
+  final int? estimatedDeliveryMinutes;
 
   /// Faz 3a — the courier marked "Yola Çıktım" (`departedAt` on the order).
   final bool courierDeparted;
@@ -493,6 +500,7 @@ class Order {
     String? plannedCourierId,
     String? plannedCourierName,
     String? poolStatus,
+    int? estimatedDeliveryMinutes,
     bool? courierDeparted,
     bool? courierReportedDelivered,
     String? courierReportedPaymentMethodId,
@@ -546,6 +554,8 @@ class Order {
       plannedCourierId: plannedCourierId ?? this.plannedCourierId,
       plannedCourierName: plannedCourierName ?? this.plannedCourierName,
       poolStatus: poolStatus ?? this.poolStatus,
+      estimatedDeliveryMinutes:
+          estimatedDeliveryMinutes ?? this.estimatedDeliveryMinutes,
       courierDeparted: courierDeparted ?? this.courierDeparted,
       courierReportedDelivered:
           courierReportedDelivered ?? this.courierReportedDelivered,

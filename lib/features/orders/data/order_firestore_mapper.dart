@@ -184,6 +184,9 @@ abstract final class OrderFirestoreMapper {
       plannedCourierName: data['plannedCourierName'] as String?,
       // 2026-11-12 (Faz 3a) — server-written only (never in toFirestore).
       poolStatus: data['poolStatus'] as String?,
+      // 2026-11-12 (Faz 4) — server-written only (never in toFirestore).
+      estimatedDeliveryMinutes:
+          (data['estimatedDeliveryMinutes'] as num?)?.toInt(),
       courierDeparted: data['departedAt'] != null,
       courierReportedDelivered: data['courierReportedDeliveredAt'] != null,
       courierReportedPaymentMethodId:

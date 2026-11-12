@@ -63,6 +63,8 @@ abstract final class EscPosCourierSlipEncoder {
     writeLine('${slip.restaurantName} - ${slip.branchName}', center: true);
     writeLine('Sipariş No: ${slip.orderNumber}', bold: true, center: true);
     writeLine(_formatDateTime(slip.createdAt), center: true);
+    final eta = slip.estimatedDeliveryLine;
+    if (eta != null) writeLine(eta, bold: true, center: true);
     writeLine(rule);
 
     writeLine('Müşteri: ${slip.customerName}', bold: true);

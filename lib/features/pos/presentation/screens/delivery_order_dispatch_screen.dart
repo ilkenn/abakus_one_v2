@@ -16,6 +16,7 @@ import '../../data/courier_pool_gateway.dart';
 import '../../domain/delivery_neighborhood_clusterer.dart';
 import '../providers/courier_dispatch_dependencies_provider.dart';
 import '../widgets/courier_roster_dialogs.dart';
+import '../widgets/delivery_zones_dialog.dart';
 import '../widgets/print_courier_slip_action.dart';
 import '../providers/pos_workspace_providers.dart';
 import 'pos_courier_settlement_screen.dart';
@@ -288,15 +289,22 @@ class _DeliveryOrderDispatchScreenState
             icon: const Icon(Icons.manage_accounts_outlined),
             onSelected: (value) => showDialog<void>(
               context: context,
-              builder: (_) => value == 'roster'
-                  ? CourierRosterDialog(
-                      organizationId: widget.organizationId,
-                      branchId: widget.branchId,
-                    )
-                  : BranchPoolSettingsDialog(
-                      organizationId: widget.organizationId,
-                      branchId: widget.branchId,
-                    ),
+              builder: (_) => switch (value) {
+                'roster' => CourierRosterDialog(
+                    organizationId: widget.organizationId,
+                    branchId: widget.branchId,
+                  ),
+                // 2026-11-12 (Faz 4, ADR-081) — neighborhood minimum basket
+                // and estimated delivery time.
+                'zones' => DeliveryZonesDialog(
+                    organizationId: widget.organizationId,
+                    branchId: widget.branchId,
+                  ),
+                _ => BranchPoolSettingsDialog(
+                    organizationId: widget.organizationId,
+                    branchId: widget.branchId,
+                  ),
+              },
             ),
             itemBuilder: (_) => const [
               PopupMenuItem(
@@ -308,6 +316,11 @@ class _DeliveryOrderDispatchScreenState
                 key: Key('courierSetupRegion'),
                 value: 'region',
                 child: Text('Havuz Bölge Ayarları'),
+              ),
+              PopupMenuItem(
+                key: Key('courierSetupZones'),
+                value: 'zones',
+                child: Text('Teslimat Bölgeleri'),
               ),
             ],
           ),

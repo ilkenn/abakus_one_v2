@@ -170,6 +170,12 @@ abstract final class RolePermissionMap {
     // as the existing `reviewCashReconciliation`/`viewAuditCenter`
     // read-oversight actions above.
     PosAuthorizedAction.viewFinancialOperations,
+    // 2026-11-12 (Faz 4, ADR-080/081/082) — mirrors the server's
+    // `viewDeliveryReports` / `overrideDeliveryMinimumOrder` /
+    // `erasePosCustomerData`, all manager-tier and above.
+    PosAuthorizedAction.viewDeliveryReport,
+    PosAuthorizedAction.overrideDeliveryMinimumOrder,
+    PosAuthorizedAction.erasePosCustomerData,
   };
 
   /// Front-line, day-to-day execution actions.

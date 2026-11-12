@@ -39,6 +39,7 @@ class CourierSlip {
     required this.totalMinorUnits,
     required this.paymentLabel,
     required this.plannedCourierName,
+    this.estimatedDeliveryMinutes,
     this.isCopy = false,
   });
 
@@ -57,7 +58,20 @@ class CourierSlip {
   /// "Kapıda Nakit", "Kapıda POS", "Kapıda Yemek Kartı (Multinet)".
   final String paymentLabel;
   final String? plannedCourierName;
+
+  /// 2026-11-12 (Faz 4) — the neighborhood rule's estimated delivery time.
+  final int? estimatedDeliveryMinutes;
   final bool isCopy;
+
+  /// "Tahmini Teslimat: 35 dk (~14:35)", or `null` without a rule. The
+  /// clock time is the order time plus the estimate.
+  String? get estimatedDeliveryLine {
+    final minutes = estimatedDeliveryMinutes;
+    if (minutes == null || minutes <= 0) return null;
+    final eta = createdAt.add(Duration(minutes: minutes));
+    String two(int n) => n.toString().padLeft(2, '0');
+    return 'Tahmini Teslimat: $minutes dk (~${two(eta.hour)}:${two(eta.minute)})';
+  }
 
   /// Pay-on-delivery label for a `paymentMethodSnapshot.paymentMethodId`.
   static String paymentLabelFor(String? paymentMethodId, String? displayName) {
@@ -120,6 +134,7 @@ class CourierSlip {
         order.paymentMethodSnapshot?.displayName,
       ),
       plannedCourierName: order.plannedCourierName,
+      estimatedDeliveryMinutes: order.estimatedDeliveryMinutes,
       isCopy: isCopy,
     );
   }

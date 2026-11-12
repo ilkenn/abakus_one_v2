@@ -159,6 +159,40 @@ void main() {
         expect(text, contains(expected), reason: expected);
       }
     });
+
+    test(
+        'Faz 4 — the neighborhood rule estimated delivery time is printed '
+        'with the expected clock time; none without a rule', () {
+      final order = _deliveryOrder().copyWith(estimatedDeliveryMinutes: 35);
+      final slip = CourierSlip.fromOrder(
+        order: order,
+        restaurantName: 'Abaküs',
+        branchName: 'Merkez Şube',
+      );
+      expect(slip.estimatedDeliveryLine, 'Tahmini Teslimat: 35 dk (~20:05)');
+      expect(_ascii(EscPosCourierSlipEncoder.encode(slip)),
+          contains('Tahmini Teslimat: 35 dk (~20:05)'));
+
+      final noRule = CourierSlip.fromOrder(
+        order: _deliveryOrder(),
+        restaurantName: 'Abaküs',
+        branchName: 'Merkez Şube',
+      );
+      expect(noRule.estimatedDeliveryLine, isNull);
+      expect(_ascii(EscPosCourierSlipEncoder.encode(noRule)),
+          isNot(contains('Tahmini Teslimat')));
+    });
+
+    test('Faz 4 — the mapper reads the server-stamped estimate', () {
+      final data = OrderFirestoreMapper.toFirestore(_deliveryOrder(),
+          organizationId: 'org-1');
+      data['estimatedDeliveryMinutes'] = 40;
+      final parsed = OrderFirestoreMapper.fromFirestore(data);
+      expect(parsed.estimatedDeliveryMinutes, 40);
+      data.remove('estimatedDeliveryMinutes');
+      expect(OrderFirestoreMapper.fromFirestore(data).estimatedDeliveryMinutes,
+          isNull);
+    });
   });
 
   group('kitchen notes', () {

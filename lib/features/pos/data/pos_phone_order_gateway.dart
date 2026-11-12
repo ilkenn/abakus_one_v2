@@ -32,18 +32,40 @@ abstract interface class PosPhoneOrderGateway {
     required String paymentMethodId,
     required int deliveryFeeMinorUnits,
     String? plannedCourierId,
+    bool belowMinimumApproved = false,
   });
 
   Future<List<PosCustomerBookEntry>> searchCustomers({
     required String organizationId,
     required String query,
   });
+
+  /// 2026-11-12 (Faz 4, ADR-082) — KVKK: permanently deletes the local
+  /// customer-book record [posCustomerId] and anonymizes that customer's
+  /// shop-entered orders (`erasePosCustomer`, manager and above).
+  Future<PosCustomerErasureResult> eraseCustomer({
+    required String organizationId,
+    required String posCustomerId,
+    String? requestReference,
+  });
 }
 
 class PosPhoneOrderException implements Exception {
-  const PosPhoneOrderException(this.code, this.message);
+  const PosPhoneOrderException(this.code, this.message, {this.details});
   final String code;
   final String message;
+
+  /// The callable error's `details` (e.g. the minimum-order figures).
+  final Map<String, dynamic>? details;
+
+  /// `details.code`, e.g. `staffDelivery/below-minimum`.
+  String? get detailCode => details?['code'] as String?;
+
+  int? _int(String key) => (details?[key] as num?)?.toInt();
+  int? get minimumOrderMinorUnits => _int('minimumOrderMinorUnits');
+  int? get basketMinorUnits => _int('basketMinorUnits');
+  int? get activeOrderCount => _int('activeOrderCount');
+
   @override
   String toString() => 'PosPhoneOrderException($code): $message';
 }
@@ -121,18 +143,34 @@ class PosPhoneOrderResult {
     required this.orderId,
     required this.orderNumber,
     required this.duplicate,
+    this.estimatedDeliveryMinutes,
   });
 
   final String orderId;
   final String orderNumber;
   final bool duplicate;
 
+  /// Faz 4 — the neighborhood rule's "Tahmini Teslimat Süresi", if any.
+  final int? estimatedDeliveryMinutes;
+
   factory PosPhoneOrderResult.fromWire(Map<String, dynamic> data) =>
       PosPhoneOrderResult(
         orderId: data['orderId'] as String,
         orderNumber: data['orderNumber'] as String,
         duplicate: data['duplicate'] as bool? ?? false,
+        estimatedDeliveryMinutes:
+            (data['estimatedDeliveryMinutes'] as num?)?.toInt(),
       );
+}
+
+class PosCustomerErasureResult {
+  const PosCustomerErasureResult({
+    required this.erasureId,
+    required this.anonymizedOrderCount,
+  });
+
+  final String erasureId;
+  final int anonymizedOrderCount;
 }
 
 /// One `searchPosCustomers` row: a local-book record (full phone, remembered
@@ -197,7 +235,8 @@ class FirebasePosPhoneOrderGateway implements PosPhoneOrderGateway {
       try {
         return await _restClient.call(name, data);
       } on RestCallableException catch (error) {
-        throw PosPhoneOrderException(error.code, error.message);
+        throw PosPhoneOrderException(error.code, error.message,
+            details: error.details);
       }
     }
     try {
@@ -206,8 +245,10 @@ class FirebasePosPhoneOrderGateway implements PosPhoneOrderGateway {
           .call<Map<String, dynamic>>(data);
       return Map<String, dynamic>.from(result.data);
     } on functions.FirebaseFunctionsException catch (error) {
+      final details = error.details;
       throw PosPhoneOrderException(
-          error.code, error.message ?? 'İşlem gerçekleştirilemedi.');
+          error.code, error.message ?? 'İşlem gerçekleştirilemedi.',
+          details: details is Map ? Map<String, dynamic>.from(details) : null);
     }
   }
 
@@ -251,6 +292,7 @@ class FirebasePosPhoneOrderGateway implements PosPhoneOrderGateway {
     required String paymentMethodId,
     required int deliveryFeeMinorUnits,
     String? plannedCourierId,
+    bool belowMinimumApproved = false,
   }) async {
     final data = await _call('submitStaffDeliveryOrder', {
       ..._device(ctx),
@@ -269,6 +311,7 @@ class FirebasePosPhoneOrderGateway implements PosPhoneOrderGateway {
       'paymentMethodId': paymentMethodId,
       'deliveryFeeMinorUnits': deliveryFeeMinorUnits,
       if (plannedCourierId != null) 'plannedCourierId': plannedCourierId,
+      if (belowMinimumApproved) 'belowMinimumApproved': true,
     });
     return PosPhoneOrderResult.fromWire(data);
   }
@@ -286,6 +329,25 @@ class FirebasePosPhoneOrderGateway implements PosPhoneOrderGateway {
       for (final raw in (data['customers'] as List?) ?? const [])
         PosCustomerBookEntry.fromWire(Map<String, dynamic>.from(raw as Map)),
     ];
+  }
+
+  @override
+  Future<PosCustomerErasureResult> eraseCustomer({
+    required String organizationId,
+    required String posCustomerId,
+    String? requestReference,
+  }) async {
+    final data = await _call('erasePosCustomer', {
+      'organizationId': organizationId,
+      'posCustomerId': posCustomerId,
+      if (requestReference != null && requestReference.trim().isNotEmpty)
+        'requestReference': requestReference.trim(),
+    });
+    return PosCustomerErasureResult(
+      erasureId: data['erasureId'] as String? ?? '',
+      anonymizedOrderCount:
+          (data['anonymizedOrderCount'] as num?)?.toInt() ?? 0,
+    );
   }
 }
 
@@ -317,6 +379,7 @@ class UnavailablePosPhoneOrderGateway implements PosPhoneOrderGateway {
     required String paymentMethodId,
     required int deliveryFeeMinorUnits,
     String? plannedCourierId,
+    bool belowMinimumApproved = false,
   }) async =>
       throw _error;
 
@@ -324,6 +387,14 @@ class UnavailablePosPhoneOrderGateway implements PosPhoneOrderGateway {
   Future<List<PosCustomerBookEntry>> searchCustomers({
     required String organizationId,
     required String query,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<PosCustomerErasureResult> eraseCustomer({
+    required String organizationId,
+    required String posCustomerId,
+    String? requestReference,
   }) async =>
       throw _error;
 }

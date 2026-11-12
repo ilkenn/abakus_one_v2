@@ -8,6 +8,9 @@ import '../../../courier/domain/identity/courier.dart';
 import '../../../orders/domain/models/order.dart';
 import '../../data/courier_pool_gateway.dart';
 import '../../data/delivery_dispatch_order_repository.dart';
+import '../../data/delivery_operations_gateway.dart';
+import '../../domain/delivery/courier_delivery_report.dart';
+import '../../domain/delivery/delivery_zone.dart';
 
 /// AP-6 Sprint 2 — the cashier/admin delivery-dispatch surface's own
 /// dependency graph. Deliberately its OWN file/providers, never importing
@@ -97,5 +100,44 @@ final pendingCourierPoolRequestsProvider = StreamProvider.family<
   (ref, scope) => ref.watch(courierPoolRequestRepositoryProvider).watchPending(
         organizationId: scope.organizationId,
         branchId: scope.branchId,
+      ),
+);
+
+/// 2026-11-12 (Faz 4) — neighborhood delivery rules and the courier &
+/// package report (ADR-080 / ADR-081).
+final deliveryOperationsGatewayProvider =
+    Provider<DeliveryOperationsGateway>((ref) {
+  if (!ref.watch(firebaseReadyProvider)) {
+    return const UnavailableDeliveryOperationsGateway();
+  }
+  return FirebaseDeliveryOperationsGateway();
+});
+
+/// The branch's "Teslimat Bölgeleri" (minimum basket / ETA per
+/// neighborhood). Invalidate after an edit.
+final branchDeliveryZonesProvider =
+    FutureProvider.family<BranchDeliveryZones, DispatchScope>(
+  (ref, scope) => ref.watch(deliveryOperationsGatewayProvider).listZones(
+        organizationId: scope.organizationId,
+        branchId: scope.branchId,
+      ),
+);
+
+/// The report's request: branch + `[from, to)`.
+typedef CourierReportQuery = ({
+  String organizationId,
+  String branchId,
+  DateTime from,
+  DateTime to,
+});
+
+/// "Kurye & Paket Raporu" for a branch and range (server-computed).
+final courierDeliveryReportProvider = FutureProvider.autoDispose
+    .family<CourierDeliveryReport, CourierReportQuery>(
+  (ref, query) => ref.watch(deliveryOperationsGatewayProvider).courierReport(
+        organizationId: query.organizationId,
+        branchId: query.branchId,
+        from: query.from,
+        to: query.to,
       ),
 );

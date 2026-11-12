@@ -19,8 +19,12 @@ import '../../../menu/presentation/providers/menu_catalog_provider.dart';
 import '../../../orders/domain/models/order_channel.dart';
 import '../../data/pos_action_gateway.dart' show PosDeviceContext;
 import '../../data/pos_phone_order_gateway.dart';
+import '../../domain/authorization/pos_authorized_action.dart';
+import '../../domain/authorization/role_permission_map.dart';
+import '../providers/actor_session_provider.dart';
 import '../providers/courier_dispatch_dependencies_provider.dart';
 import '../providers/pos_workspace_providers.dart';
+import '../widgets/delivery_order_dialogs.dart';
 import '../widgets/pos_catalog_browser.dart';
 import '../widgets/print_courier_slip_action.dart';
 
@@ -406,25 +410,47 @@ class _PosNewTakeawayOrderScreenState
         Navigator.of(context).pop(true);
         return;
       }
-      final result = await gateway.submitDelivery(
-        ctx: widget.ctx,
-        submissionKey: submissionKey,
-        contact: contact,
-        address: PosDeliveryAddressInput(
+      Future<PosPhoneOrderResult> send({required bool belowMinimumApproved}) =>
+          gateway.submitDelivery(
+            ctx: widget.ctx,
+            submissionKey: submissionKey,
+            contact: contact,
+            address: PosDeliveryAddressInput(
+              neighborhoodName: _neighborhoodController.text.trim(),
+              streetName: _streetController.text.trim(),
+              buildingNo: _buildingNoController.text.trim(),
+              apartmentNo: _apartmentNoController.text.trim(),
+              floor: _floorController.text.trim(),
+              addressDescription: _addressDescriptionController.text.trim(),
+            ),
+            items: items,
+            courierNote: _courierNoteController.text.trim(),
+            kitchenNote: _kitchenNoteController.text.trim(),
+            paymentMethodId: _paymentMethodId,
+            deliveryFeeMinorUnits: _deliveryFeeMinorUnits,
+            plannedCourierId: _selectedCourierId,
+            belowMinimumApproved: belowMinimumApproved,
+          );
+      PosPhoneOrderResult result;
+      try {
+        result = await send(belowMinimumApproved: false);
+      } on PosPhoneOrderException catch (e) {
+        if (e.detailCode != 'staffDelivery/below-minimum') rethrow;
+        // Faz 4 (ADR-081) — below the neighborhood's minimum basket: warn,
+        // and let a manager-tier user approve and continue.
+        if (!mounted) return;
+        setState(() => _submitting = false);
+        final approved = await confirmBelowMinimumOrder(
+          context: context,
           neighborhoodName: _neighborhoodController.text.trim(),
-          streetName: _streetController.text.trim(),
-          buildingNo: _buildingNoController.text.trim(),
-          apartmentNo: _apartmentNoController.text.trim(),
-          floor: _floorController.text.trim(),
-          addressDescription: _addressDescriptionController.text.trim(),
-        ),
-        items: items,
-        courierNote: _courierNoteController.text.trim(),
-        kitchenNote: _kitchenNoteController.text.trim(),
-        paymentMethodId: _paymentMethodId,
-        deliveryFeeMinorUnits: _deliveryFeeMinorUnits,
-        plannedCourierId: _selectedCourierId,
-      );
+          minimumOrderMinorUnits: e.minimumOrderMinorUnits ?? 0,
+          basketMinorUnits: e.basketMinorUnits ?? 0,
+          canOverride: _canOverrideMinimum,
+        );
+        if (!approved || !mounted) return;
+        setState(() => _submitting = true);
+        result = await send(belowMinimumApproved: true);
+      }
       if (!mounted) return;
       // Product-owner decision: the courier slip prints the moment the
       // order is confirmed; a printer problem never undoes the order.
@@ -447,7 +473,53 @@ class _PosNewTakeawayOrderScreenState
     }
   }
 
-  static String _messageFor(PosPhoneOrderException e) => switch (e.code) {
+  bool get _canOverrideMinimum {
+    final session = ref.read(actorSessionProvider);
+    return session != null &&
+        RolePermissionMap.allows(
+            session.roles, PosAuthorizedAction.overrideDeliveryMinimumOrder);
+  }
+
+  bool get _canEraseCustomers {
+    final session = ref.watch(actorSessionProvider);
+    return session != null &&
+        RolePermissionMap.allows(
+            session.roles, PosAuthorizedAction.erasePosCustomerData);
+  }
+
+  /// 2026-11-12 (Faz 4, ADR-082) — KVKK erasure from the customer search.
+  Future<void> _eraseCustomer(PosCustomerBookEntry customer) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await showDialog<PosCustomerErasureResult>(
+      context: context,
+      builder: (_) => PosCustomerErasureDialog(
+        organizationId: widget.ctx.organizationId,
+        customer: customer,
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _customerResults =
+          _customerResults?.where((c) => c.id != customer.id).toList();
+      if (_selectedCustomer?.id == customer.id) {
+        _selectedCustomer = null;
+        _previousAddresses = const [];
+      }
+    });
+    messenger.showSnackBar(SnackBar(
+      content: Text('Müşteri kaydı silindi; ${result.anonymizedOrderCount} '
+          'geçmiş sipariş anonimleştirildi.'),
+    ));
+  }
+
+  static String _messageFor(PosPhoneOrderException e) => switch (e.detailCode) {
+        'staffDelivery/below-minimum-not-authorized' =>
+          'Minimum sepet tutarının altındaki sipariş için Müdür onayı '
+              'gerekir.',
+        _ => _messageForCode(e),
+      };
+
+  static String _messageForCode(PosPhoneOrderException e) => switch (e.code) {
         'permission-denied' ||
         'permission_denied' =>
           'Bu işlem için yetkiniz yok.',
@@ -662,10 +734,27 @@ class _PosNewTakeawayOrderScreenState
                             if (customer.addresses.isNotEmpty)
                               customer.addresses.first.summary,
                           ].join(' · ')),
-                          trailing: Text(
-                            customer.isFromBook ? 'Defter' : 'Uygulama',
-                            style: AppTypography.bodySmall
-                                .copyWith(color: AppColors.textSecondary),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                customer.isFromBook ? 'Defter' : 'Uygulama',
+                                style: AppTypography.bodySmall
+                                    .copyWith(color: AppColors.textSecondary),
+                              ),
+                              // Faz 4 (ADR-082) — KVKK erasure is for the
+                              // shop's own book; an app customer's data is
+                              // erased by their account deletion.
+                              if (customer.isFromBook && _canEraseCustomers)
+                                IconButton(
+                                  key: Key('eraseCustomer-${customer.id}'),
+                                  tooltip: 'KVKK — Kaydı Sil',
+                                  icon: const Icon(
+                                      Icons.delete_forever_outlined,
+                                      color: AppColors.error),
+                                  onPressed: () => _eraseCustomer(customer),
+                                ),
+                            ],
                           ),
                           onTap: () => _selectCustomer(customer),
                         ),
@@ -828,6 +917,7 @@ class _PosNewTakeawayOrderScreenState
       ],
       _field(_neighborhoodController, 'Mahalle',
           key: const Key('deliveryNeighborhoodField')),
+      _buildZoneHint(),
       _field(_streetController, 'Cadde / Sokak',
           key: const Key('deliveryStreetField')),
       Row(
@@ -926,6 +1016,67 @@ class _PosNewTakeawayOrderScreenState
         ),
       ),
     ]);
+  }
+
+  /// The client-side basket total (products only, delivery prices) — for
+  /// the early minimum-basket hint only; the server re-prices and decides.
+  int _basketMinorUnits() {
+    final catalog = {
+      for (final product in ref.watch(menuProductsProvider)) product.id: product
+    };
+    final policy =
+        ref.watch(channelPricingPolicySnapshotProvider).valueOrNull ??
+            const ChannelPricingPolicy();
+    var total = 0;
+    for (final line in _cartLines) {
+      total += (_unitPrice(line, catalog, policy) * line.quantity).minorUnits;
+    }
+    return total;
+  }
+
+  /// Faz 4 (ADR-081) — the typed neighborhood's rule: minimum basket and
+  /// estimated delivery time, highlighted when the basket is below it.
+  Widget _buildZoneHint() {
+    final zones = ref
+        .watch(branchDeliveryZonesProvider((
+          organizationId: widget.ctx.organizationId,
+          branchId: widget.ctx.branchId,
+        )))
+        .valueOrNull;
+    final zone = zones?.zoneFor(_neighborhoodController.text);
+    if (zone == null) return const SizedBox.shrink();
+    final minimum = zone.minimumOrderMinorUnits;
+    final basket = _basketMinorUnits();
+    final below = minimum > 0 && basket < minimum;
+    final parts = [
+      if (minimum > 0) 'Minimum sepet ${formatTlMinor(minimum)}',
+      if (zone.estimatedDeliveryMinutes != null)
+        'Tahmini teslimat ~${zone.estimatedDeliveryMinutes} dk',
+    ];
+    if (parts.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      key: const Key('deliveryZoneHint'),
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: Row(
+        children: [
+          Icon(below ? Icons.warning_amber_rounded : Icons.info_outline,
+              size: 18,
+              color: below ? AppColors.warning : AppColors.textSecondary),
+          const SizedBox(width: AppSpacing.xs),
+          Expanded(
+            child: Text(
+              [
+                parts.join(' · '),
+                if (below) 'Sepet ${formatTlMinor(minimum - basket)} eksik',
+              ].join(' — '),
+              style: AppTypography.bodySmall.copyWith(
+                  color: below ? AppColors.warning : AppColors.textSecondary,
+                  fontWeight: below ? FontWeight.bold : FontWeight.normal),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildCartSection() {

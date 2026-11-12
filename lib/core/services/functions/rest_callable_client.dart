@@ -19,10 +19,15 @@ import '../auth/windows_rest_auth_session.dart';
 /// expects, so a caller can normalize this into its own gateway-specific
 /// exception type without inventing a second vocabulary.
 class RestCallableException implements Exception {
-  const RestCallableException(this.code, this.message);
+  const RestCallableException(this.code, this.message, {this.details});
 
   final String code;
   final String message;
+
+  /// 2026-11-12 (Faz 4) — the callable error's `details` map, when the
+  /// function sent one (e.g. `{code: "staffDelivery/below-minimum",
+  /// minimumOrderMinorUnits: ...}`); `null` otherwise.
+  final Map<String, dynamic>? details;
 
   @override
   String toString() => 'RestCallableException($code): $message';
@@ -188,9 +193,11 @@ class RestCallableClient {
       final error = decoded['error'];
       final code = error is Map ? error['status'] as String? : null;
       final message = error is Map ? error['message'] as String? : null;
+      final details = error is Map ? error['details'] : null;
       throw RestCallableException(
         (code ?? 'unknown').toString().toLowerCase(),
         message ?? 'Call to "$name" failed (HTTP ${response.statusCode}).',
+        details: details is Map ? Map<String, dynamic>.from(details) : null,
       );
     } on RestCallableException {
       rethrow;

@@ -11,6 +11,10 @@ import 'package:abakus_one_v2/features/orders/data/canonical_order_repository.da
 import 'package:abakus_one_v2/features/orders/presentation/providers/orders_provider.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_action_gateway.dart';
 import 'package:abakus_one_v2/features/pos/data/pos_phone_order_gateway.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
+import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
+import 'package:abakus_one_v2/features/pos/domain/delivery/delivery_zone.dart';
+import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/courier_dispatch_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/pos_workspace_providers.dart';
 import 'package:abakus_one_v2/features/pos/presentation/screens/pos_new_takeaway_order_screen.dart';
@@ -29,6 +33,15 @@ class _FakePhoneOrderGateway implements PosPhoneOrderGateway {
   PosPhoneOrderException? error;
   List<PosCustomerBookEntry> searchResults = const [];
   String? lastQuery;
+
+  /// Faz 4 — the server's answers to the next delivery submissions, in
+  /// order (`null` = success).
+  final List<PosPhoneOrderException?> deliveryErrors = [];
+  final List<bool> belowMinimumApprovedFlags = [];
+  int eraseCalls = 0;
+  String? lastErasedId;
+  String? lastErasureReference;
+  PosPhoneOrderException? eraseError;
 
   @override
   Future<PosPhoneOrderResult> submitTakeaway({
@@ -60,9 +73,15 @@ class _FakePhoneOrderGateway implements PosPhoneOrderGateway {
     required String paymentMethodId,
     required int deliveryFeeMinorUnits,
     String? plannedCourierId,
+    bool belowMinimumApproved = false,
   }) async {
     final e = error;
     if (e != null) throw e;
+    belowMinimumApprovedFlags.add(belowMinimumApproved);
+    if (deliveryErrors.isNotEmpty) {
+      final next = deliveryErrors.removeAt(0);
+      if (next != null) throw next;
+    }
     deliveryCalls += 1;
     lastContact = contact;
     lastAddress = address;
@@ -84,7 +103,54 @@ class _FakePhoneOrderGateway implements PosPhoneOrderGateway {
     lastQuery = query;
     return searchResults;
   }
+
+  @override
+  Future<PosCustomerErasureResult> eraseCustomer({
+    required String organizationId,
+    required String posCustomerId,
+    String? requestReference,
+  }) async {
+    final e = eraseError;
+    if (e != null) throw e;
+    eraseCalls += 1;
+    lastErasedId = posCustomerId;
+    lastErasureReference = requestReference;
+    return const PosCustomerErasureResult(
+        erasureId: 'erasure-1', anonymizedOrderCount: 4);
+  }
 }
+
+ActorSession _session(StaffRole role) => ActorSession(
+      actorId: 'actor-1',
+      roles: {role},
+      activeRole: role,
+    );
+
+const _belowMinimum = PosPhoneOrderException(
+  'failed_precondition',
+  'below',
+  details: {
+    'code': 'staffDelivery/below-minimum',
+    'minimumOrderMinorUnits': 100000,
+    'basketMinorUnits': 61000,
+    'shortfallMinorUnits': 39000,
+  },
+);
+
+const _caferagaZones = BranchDeliveryZones(
+  defaultDeliveryDistrictId: 'kadikoy',
+  zones: [
+    DeliveryZone(
+      id: 'zone-1',
+      districtId: 'kadikoy',
+      neighborhoodId: 'caferaga',
+      neighborhoodName: 'Caferağa',
+      minimumOrderMinorUnits: 100000,
+      estimatedDeliveryMinutes: 35,
+      enabled: true,
+    ),
+  ],
+);
 
 const _ctx = PosDeviceContext(
   organizationId: 'org-1',
@@ -140,6 +206,8 @@ final _couriers = [
 Future<_FakePhoneOrderGateway> _pump(
   WidgetTester tester, {
   PosPhoneOrderMode mode = PosPhoneOrderMode.takeaway,
+  ActorSession? session,
+  BranchDeliveryZones? zones,
 }) async {
   await tester.binding.setSurfaceSize(const Size(1400, 2200));
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -154,6 +222,10 @@ Future<_FakePhoneOrderGateway> _pump(
             .overrideWith((ref, branchId) => Stream.value(_couriers)),
         canonicalOrderRepositoryProvider
             .overrideWithValue(InMemoryCanonicalOrderRepository()),
+        if (session != null)
+          actorSessionProvider.overrideWith((ref) => session),
+        if (zones != null)
+          branchDeliveryZonesProvider.overrideWith((ref, scope) async => zones),
       ],
       child: MaterialApp(
         home: PosNewTakeawayOrderScreen(ctx: _ctx, initialMode: mode),
@@ -444,6 +516,160 @@ void main() {
       await tester.tap(find.text('Yeni Müşteri Gir'));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('customerSearchResults')), findsNothing);
+    });
+  });
+  group('Faz 4 — teslimat bolgesi minimum sepet', () {
+    testWidgets('mahalle kurali yazilirken gosterilir; minimum altinda uyari',
+        (tester) async {
+      await _pump(tester,
+          mode: PosPhoneOrderMode.delivery, zones: _caferagaZones);
+      await _addProduct(tester);
+      await _fillAddress(tester);
+      await tester.pumpAndSettle();
+
+      final hint = find.byKey(const Key('deliveryZoneHint'));
+      expect(hint, findsOneWidget);
+      final text = find.descendant(of: hint, matching: find.byType(Text));
+      final value = tester.widget<Text>(text).data!;
+      expect(value, contains('Minimum sepet 1.000,00 TL'));
+      expect(value, contains('Tahmini teslimat ~35 dk'));
+      expect(value, contains('eksik'));
+
+      await tester.enterText(
+          find.byKey(const Key('deliveryNeighborhoodField')), 'Fenerbahçe');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('deliveryZoneHint')), findsNothing);
+    });
+
+    testWidgets(
+        'mudur minimumun altindaki siparisi onaylayip acar (ikinci gonderim '
+        'onay bayragiyla)', (tester) async {
+      final gateway = await _pump(tester,
+          mode: PosPhoneOrderMode.delivery,
+          session: _session(StaffRole.manager));
+      gateway.deliveryErrors.add(_belowMinimum);
+      await _fillContact(tester);
+      await _fillAddress(tester);
+      await _addProduct(tester);
+      await _submit(tester);
+
+      expect(find.byKey(const Key('belowMinimumDialog')), findsOneWidget);
+      expect(find.textContaining('minimum sepet 1.000,00 TL'), findsOneWidget);
+      expect(find.textContaining('390,00 TL eksik'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('approveBelowMinimumButton')));
+      await tester.pumpAndSettle();
+
+      expect(gateway.belowMinimumApprovedFlags, [false, true]);
+      expect(gateway.deliveryCalls, 1);
+      expect(find.text('Paket Siparişi Onaylandı'), findsOneWidget);
+    });
+
+    testWidgets('personel minimumun altinda onay veremez; siparis acilmaz',
+        (tester) async {
+      final gateway = await _pump(tester,
+          mode: PosPhoneOrderMode.delivery, session: _session(StaffRole.staff));
+      gateway.deliveryErrors.add(_belowMinimum);
+      await _fillContact(tester);
+      await _fillAddress(tester);
+      await _addProduct(tester);
+      await _submit(tester);
+
+      expect(find.byKey(const Key('belowMinimumDialog')), findsOneWidget);
+      expect(find.byKey(const Key('approveBelowMinimumButton')), findsNothing);
+      expect(find.textContaining('Müdür onayı gerekir'), findsOneWidget);
+      await tester.tap(find.text('Tamam'));
+      await tester.pumpAndSettle();
+      expect(gateway.belowMinimumApprovedFlags, [false]);
+      expect(gateway.deliveryCalls, 0);
+    });
+  });
+
+  group('Faz 4 — KVKK kayit silme', () {
+    const bookEntry = PosCustomerBookEntry(
+      isFromBook: true,
+      id: 'org-1_hash',
+      displayName: 'Ayşe Demir',
+      firstName: 'Ayşe',
+      lastName: 'Demir',
+      phoneNumber: '+905321112233',
+      phoneMasked: '***********33',
+      addresses: [],
+      linkedCustomerId: null,
+    );
+    const appEntry = PosCustomerBookEntry(
+      isFromBook: false,
+      id: 'cust-1',
+      displayName: 'Ali Kaya',
+      firstName: 'Ali',
+      lastName: 'Kaya',
+      phoneNumber: null,
+      phoneMasked: '***********44',
+      addresses: [],
+      linkedCustomerId: 'cust-1',
+    );
+
+    testWidgets('silme dugmesi yalniz mudur ve defter kaydi icin gorunur',
+        (tester) async {
+      final staffGateway =
+          await _pump(tester, session: _session(StaffRole.staff));
+      staffGateway.searchResults = const [bookEntry];
+      await _search(tester, 'ayşe');
+      expect(find.byKey(const Key('eraseCustomer-org-1_hash')), findsNothing);
+    });
+
+    testWidgets(
+        'mudur SIL yazip onaylar; kayit listeden duser ve sonuc bildirilir',
+        (tester) async {
+      final gateway = await _pump(tester, session: _session(StaffRole.manager));
+      gateway.searchResults = const [bookEntry, appEntry];
+      await _search(tester, 'ay');
+      expect(find.byKey(const Key('eraseCustomer-cust-1')), findsNothing,
+          reason: 'an app customer is erased by account deletion');
+
+      await tester.tap(find.byKey(const Key('eraseCustomer-org-1_hash')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('posCustomerErasureDialog')), findsOneWidget);
+      final confirm = find.byKey(const Key('confirmErasureButton'));
+      expect(tester.widget<ElevatedButton>(confirm).onPressed, isNull);
+
+      await tester.enterText(
+          find.byKey(const Key('erasureReferenceField')), 'Dilekçe 41');
+      await tester.enterText(
+          find.byKey(const Key('erasureConfirmField')), 'SİL');
+      await tester.pumpAndSettle();
+      await tester.tap(confirm);
+      await tester.pumpAndSettle();
+
+      expect(gateway.eraseCalls, 1);
+      expect(gateway.lastErasedId, 'org-1_hash');
+      expect(gateway.lastErasureReference, 'Dilekçe 41');
+      expect(find.byKey(const Key('posCustomerErasureDialog')), findsNothing);
+      expect(find.text('Ayşe Demir'), findsNothing);
+      expect(find.textContaining('4 geçmiş sipariş anonimleştirildi'),
+          findsOneWidget);
+    });
+
+    testWidgets('devam eden siparis varken silme reddedilir ve aciklanir',
+        (tester) async {
+      final gateway = await _pump(tester, session: _session(StaffRole.manager));
+      gateway.searchResults = const [bookEntry];
+      gateway.eraseError = const PosPhoneOrderException(
+        'failed_precondition',
+        'active',
+        details: {'code': 'posCustomer/active-orders', 'activeOrderCount': 1},
+      );
+      await _search(tester, 'ayşe');
+      await tester.tap(find.byKey(const Key('eraseCustomer-org-1_hash')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const Key('erasureConfirmField')), 'SİL');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('confirmErasureButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('erasureError')), findsOneWidget);
+      expect(find.textContaining('devam eden 1 siparişi var'), findsOneWidget);
+      expect(find.byKey(const Key('posCustomerErasureDialog')), findsOneWidget);
     });
   });
 }
