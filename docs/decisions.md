@@ -21112,3 +21112,236 @@ Product owner end-to-end test on the Windows POS found two problems:
   - POS → Kurye Ayarları → Kuryeler shows each courier's status, with a Müsait / Çevrimdışı switch
     (`setCourier.dispatchStatus`). A courier out on deliveries shows "Dağıtımda (N paket)" and is not
     switched there.
+
+## ADR-080 — "Kurye & Paket Raporu": a server-computed report from the settlement records (2026-11-12)
+
+- Tarih: 2026-11-12
+- Durum: Accepted (product owner delegated the technical decisions for Faz 4 — "soru sormadan,
+  mevcut standartlara en uygun kararı ver, ADR olarak işle")
+
+### Context
+
+The product owner asked for a courier and delivery report: per date range, for shop couriers and for
+registered external couriers:
+- package count;
+- average preparation and delivery time;
+- the tender mix (Nakit / POS / each meal-card brand);
+- cash-difference totals;
+- the list of pool orders completed by external couriers.
+
+It should sit under Finansal İşlemler or Teslimat Dağıtımı.
+
+### Decision
+
+- **Source of truth: the settlement records, not the order list.**
+  - A package counts once it is closed at "Kurye Hesap Kapat". `deliveryCollections` has one record
+    per order, carrying the method the customer *actually* paid with.
+  - Cash differences come from `courierSettlements`.
+  - Only `settleCourierReturn` writes either collection, so the report never double-counts and never
+    includes a package still on the road.
+  - The range filters on the settlement time (`collectedAt` / `createdAt`).
+- **One read-only callable, `getCourierDeliveryReport`.**
+  - It loads the records and its pure aggregator (`buildCourierDeliveryReport`, unit-tested) builds
+    the report.
+  - It returns totals, a breakdown per courier kind (`internal` / `pool`), one row per courier and
+    the pool-order list.
+  - Limits: a range of at most 92 days and 5,000 packages; beyond the cap the report is marked
+    `truncated` and the screen says so.
+  - Two composite indexes back it: `deliveryCollections` and `courierSettlements`, each on
+    `organizationId` + `branchId` + time.
+- **Timing definitions.** These are documented on the screen too.
+  - **Preparation** = `timestamps.ready` − `timestamps.created`.
+  - **Delivery** = arrival − departure.
+    - Arrival: the courier's "Teslim Ettim" (`courierReportedDeliveredAt`), else the settlement time.
+    - Departure: the courier's "Yola Çıktım" (`departedAt`), else the `outForDelivery` status-history
+      entry, else `ready`.
+  - For a shop courier without the app, the delivery time therefore includes the return trip. This
+    is stated honestly rather than hidden.
+  - Averages cover only the orders that have the data.
+- **Authorization: a new server permission, `viewDeliveryReports`.**
+  - Granted to manager, admin and tenantOwner, because cash differences are reconciliation data.
+  - It is mirrored on the client as `PosAuthorizedAction.viewDeliveryReport` (manager tier).
+  - Branch access is required.
+- **Placement: Admin → Operasyonlar → "Kurye & Paket Raporu"**, directly under "Teslimat Dağıtımı".
+  - It uses the same `ModuleEntitlementGate` (courier module) plus `RoleGate.forAction`.
+  - It sits under Teslimat Dağıtımı rather than Finansal İşlemler because the report is per courier
+    and per courier kind, an operations view. Its money figures repeat what the Z report already
+    shows per tender.
+  - Ranges: Bugün / Dün / Son 7 Gün / Bu Ay / a custom date range.
+
+### Consequences
+
+- Orders that were delivered but whose courier account is not yet closed are not in the report until
+  they are closed. This is consistent with the till.
+- The Admin nav item uses the same hard-coded `organizationId: 'org-1'` as the existing "Teslimat
+  Dağıtımı" item. That is a pre-existing simplification, not new debt.
+
+## ADR-081 — Neighborhood delivery rules: minimum basket and estimated delivery time (2026-11-12)
+
+- Tarih: 2026-11-12
+- Durum: Accepted (delegated, see ADR-080)
+
+### Context
+
+The product owner asked for each neighborhood or zone to carry a "Minimum Sepet Tutarı (TL)" and a
+"Tahmini Teslimat Süresi (dk)". When a POS Paket Servis order falls below the minimum:
+- the cashier is warned;
+- an authorized user may approve and continue;
+- the estimated time is printed on the courier slip.
+
+Until now `deliveryServiceAreas` (P.3) already carried `minimumOrderMinorUnits`, but only for the
+customer app, and was seeded by scripts. Staff orders were deliberately ungated (Faz 2, decision 3).
+
+### Decision
+
+- **Extend the existing records rather than add a parallel collection.**
+  - Each `deliveryServiceAreas` record (one per district + neighborhood per branch) gains
+    `estimatedDeliveryMinutes` and a display `neighborhoodName`.
+  - It is the same coverage key the customer app (`resolveDeliveryServiceArea`) and the pool's region
+    lookup already use.
+- **Branch-side editor.**
+  - `listBranchDeliveryZones` is readable with `manageDeliveryOrders`, i.e. every role that opens a
+    Paket Servis order.
+  - `upsertBranchDeliveryZone` requires `manageBranch` (manager and above) and is audited as
+    `deliveryZone.created` / `deliveryZone.updated`. Limits: a minimum of 0–10,000 TL and an ETA of
+    5–240 minutes.
+  - The district is the one typed, else the branch's default district (Faz 3b).
+  - A pair already enabled for **another** branch is refused (`deliveryZone/covered-by-other-branch`).
+    The customer app fails closed on two enabled matches, so a branch edit must never break it.
+  - On the POS this is Kurye Ayarları → **Teslimat Bölgeleri**.
+- **Matching a hand-typed POS address.**
+  - It matches on the neighborhood slug within the branch.
+  - If two of the branch's districts share a neighborhood name, the branch's default district wins;
+    otherwise there is no rule.
+  - A neighborhood without a rule stays ungated, which keeps Faz 2's flexibility outside configured
+    neighborhoods.
+- **The gate is server-authoritative** (`submitStaffDeliveryOrder`).
+  - The basket is the product total, excluding the delivery fee.
+  - Below the minimum, the order is refused with `failed-precondition`, code
+    `staffDelivery/below-minimum`, and details giving the minimum, the basket and the shortfall.
+  - Re-sending with `belowMinimumApproved: true` succeeds only for a caller holding the new
+    `overrideDeliveryMinimumOrder` permission (manager, admin, tenantOwner). Anyone else gets
+    `permission-denied`, code `staffDelivery/below-minimum-not-authorized`.
+  - An override is stored on the order (`belowMinimumOverride`) and audited
+    (`order.deliveryMinimumOverridden`).
+- **"Authorized user may approve" = a manager-tier signed-in user.**
+  - The POS shows the warning with the figures. A manager gets "Onayla ve Devam Et"; anyone else is
+    told a manager is needed.
+  - There is no on-the-spot manager PIN step-up. The trusted-device / remote-approval engine is not
+    wired for this action, and adding it would be a new authorization pattern. That is recorded as a
+    possible follow-up, not built silently.
+- **Early hint (advisory only).** While the cashier types the neighborhood, the POS shows the rule
+  ("Minimum sepet 250,00 TL · Tahmini teslimat ~35 dk") and highlights a shortfall. This uses a
+  hand-kept Dart mirror of the slug (`neighborhoodKey`); the server still decides.
+- **ETA on the slip.**
+  - The rule's minutes are stamped on the order (`estimatedDeliveryMinutes`, server-written only,
+    mapped by `OrderFirestoreMapper`).
+  - The courier slip prints "Tahmini Teslimat: 35 dk (~20:05)", where the clock time is the order
+    time plus the estimate.
+  - The order's address snapshot now also carries the matched `districtId` / `neighborhoodId`.
+
+### Consequences
+
+- `RestCallableException` / `PosPhoneOrderException` now carry the callable's `details` map. This is
+  additive and does not change existing call sites.
+- The customer app's own minimum-order behavior is unchanged. It still reads `minimumOrderMinorUnits`
+  from the same records, so a rule set on the POS applies there too. The ETA is not shown in the
+  customer app yet.
+
+## ADR-082 — KVKK erasure of a local customer-book record (2026-11-12)
+
+- Tarih: 2026-11-12
+- Durum: Accepted (delegated, see ADR-080; supersedes the Faz 2 note "KVKK silme ertelendi")
+
+### Context
+
+The product owner asked for this KVKK request flow: on the customer's request, a customer recorded in
+the branch customer book (`posCustomers`) must be:
+- permanently deleted;
+- anonymized in past orders (name, phone, open address).
+
+It needs a secure, audited server function and an authorized (manager and above) delete flow in the
+POS customer search.
+
+### Decision
+
+- **`erasePosCustomer` callable**, with a new permission `erasePosCustomerData` (manager, admin,
+  tenantOwner), mirrored on the client.
+- **Which orders count as the customer's:**
+  - orders pointing at the record (`posCustomerId`);
+  - same-organization orders with the same `contactPhone` and `customerId == null`, i.e. POS phone or
+    counter orders.
+  - An app customer's own orders belong to their app account and are erased by the account-deletion
+    flow, never here. Likewise the POS erase button appears only on book records.
+- **What is anonymized:**
+  - name → "Silinmiş Müşteri";
+  - phone → `null`;
+  - courier note and line customer notes → "";
+  - the open address: label, street, building / apartment / floor, directions, coordinates, place id
+    and saved-address link → blank.
+  - A pool listing of such an order loses its address line.
+- **What is kept:**
+  - the neighborhood name, which is an area, not a person, and is what the reports and pool history
+    group by;
+  - amounts, items, timings and audit trails, which are financial and tax records.
+- **Refused while an order is in progress** (`posCustomer/active-orders`): erasing the address of a
+  package on the road would strand the courier. Courier projections exist only for active orders, so
+  nothing personal remains in them afterwards.
+- **Order of writes:** the orders are anonymized in batches first; the book record is deleted last, in
+  a transaction. A partial failure can simply be re-run; a second run after success returns
+  `not-found`.
+- **Audit without personal data.**
+  - The `posCustomer.erased` event and a `posCustomerErasures` record carry only the erasure id, the
+    anonymized-order count and an optional request reference (e.g. the petition number, at most 64
+    characters).
+  - The audit target is the erasure record, not the phone-derived book id.
+- **POS flow (Yeni Sipariş → Müşteri Ara):**
+  - a manager sees a delete icon on a book result;
+  - the dialog explains what is erased and what is kept;
+  - the user types "SİL" to confirm and may add the request reference;
+  - errors are explained in Turkish (active orders, already deleted, not authorized).
+- Rules: `posCustomers` and `posCustomerErasures` stay client-denied (default deny). A rules
+  regression test pins it.
+
+### Consequences
+
+- The phone number stays in the organization's app-customer directory if the same person also has an
+  app account. That is outside the local book and is handled by account deletion.
+- A customer who orders again after erasure is recorded again by the normal order flow. That is a new
+  record, created with the new order.
+
+## ADR-083 — Dev deploy: committed Functions parameter file; default Storage bucket is a prerequisite (2026-11-12)
+
+- Tarih: 2026-11-12
+- Durum: Accepted
+
+### Context
+
+The approved `firebase deploy --project abakus-one-dev --only functions` failed three ways.
+
+1. Missing secrets. The product owner then set them.
+2. `ENFORCE_APP_CHECK` had no value. Non-interactive deploys cannot prompt even when the code declares
+   a default.
+3. "Can't find the storage bucket region". The `finalizeCustomerPhotoUpload` Storage trigger needs the
+   project's default Cloud Storage bucket, and `abakus-one-dev` has none. The CLI analyzes the whole
+   codebase, so even a deploy of selected functions fails.
+
+The earlier rules deploy had also enabled the Firestore API and created the `(default)` database in
+`nam5`.
+
+### Decision
+
+- **Parameter file.** Add `functions/.env.abakus-one-dev` with `ENFORCE_APP_CHECK=false`. It follows
+  the existing staging file exactly: a committed, project-level parameter file that equals the coded
+  default and changes no runtime behavior.
+- **Storage bucket.** Do **not** create the bucket from the agent. Creating it means choosing its
+  location, which is irreversible, and it was outside the approved commands. The product owner starts
+  Storage once in the Firebase console (Storage → Get started; a European location, or `nam5` to
+  match the database), then the same approved deploy is re-run.
+
+### Consequences
+
+- Until the bucket exists, no function is deployed to `abakus-one-dev`. The real-device test (Faz 3c)
+  waits on it.
+- The Firestore database is in `nam5`. That is fine for dev, since the functions run in `us-central1`.
+  For staging and production, choose the region deliberately before the first deploy.

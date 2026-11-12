@@ -11780,3 +11780,65 @@ passing, 0 failures.
   is now `true` (product owner); the entitlement and role checks stay.
 - Verified: Flutter tests, analyzer, rules tests; Windows POS restarted on the new code.
   **Visual Review Bekleniyor**.
+
+### Paket Servis & Kurye Operasyonları — Faz 4 (2026-11-12)
+
+The product owner delegated the technical decisions ("soru sormadan"); each one is recorded in ADR-080
+to ADR-083.
+
+- **A — Kurye & Paket Raporu** (ADR-080):
+  - Server: `getCourierDeliveryReport` reads the "Kurye Hesap Kapat" records (`deliveryCollections`,
+    `courierSettlements`) for a branch and range (at most 92 days; capped at 5,000 packages). It
+    reports, per courier and per kind (Restoran Kuryeleri / Kayıtlı Dış Kuryeler):
+    - package count;
+    - average preparation and delivery time;
+    - the tender mix (Nakit / POS / each meal-card brand);
+    - the cash-difference total.
+    It also lists the pool orders external couriers completed.
+  - Permission: `viewDeliveryReports` (manager and above); two composite indexes.
+  - Admin → Operasyonlar → **Kurye & Paket Raporu** (under Teslimat Dağıtımı): quick ranges or a custom
+    range, with loading / empty / error states.
+- **B — Mahalle kuralları** (ADR-081):
+  - Each `deliveryServiceAreas` record now carries a minimum basket and an estimated delivery time.
+  - Edited from POS → Kurye Ayarları → **Teslimat Bölgeleri** (`upsertBranchDeliveryZone`, manager and
+    above, audited; a neighborhood another branch serves is refused).
+  - A Paket Servis order below the minimum:
+    - is refused by the server, with the figures;
+    - the cashier sees a warning;
+    - a manager may "Onayla ve Devam Et" (`overrideDeliveryMinimumOrder`, audited); anyone else is told
+      a manager is needed.
+  - The rule is shown while the neighborhood is typed. The courier slip prints "Tahmini Teslimat:
+    35 dk (~20:05)".
+- **C — KVKK silme** (ADR-082):
+  - `erasePosCustomer` (`erasePosCustomerData`, manager and above) deletes the book record and
+    anonymizes that customer's shop orders: name, phone, notes and open address. The neighborhood,
+    amounts and items are kept.
+  - It is refused while an order is in progress.
+  - It is audited without personal data (`posCustomerErasures` + `posCustomer.erased`).
+  - POS → Yeni Sipariş → Müşteri Ara: a manager sees a delete icon on book records; the user confirms
+    by typing "SİL" and may add a request reference.
+- **Dev deploy** (ADR-083):
+  - Done: rules and indexes are deployed. That deploy enabled the Firestore API and created `(default)`
+    in `nam5`.
+  - Not done: Functions are **not deployed**. The project has no default Storage bucket, which the
+    photo upload trigger needs; this needs a console action by the product owner.
+  - `functions/.env.abakus-one-dev` added (`ENFORCE_APP_CHECK=false`, same as staging).
+- Tests:
+  - functions:
+    - 9 new pure tests and 6 new emulator tests;
+    - the courier and delivery suites: 54/54;
+    - the full suite: 2182/2187. The 5 failures also fail on the pre-Faz-4 commit `3328dac` (verified
+      in a separate worktree):
+      - `appCheckConfig` module-load count;
+      - `catalogMigration` (2): counts vs the current export;
+      - `checkFinancialAdjustments` admin1 branch authorization;
+      - `dineInGuestKitchenIntegration` provenance.
+  - rules: 2 new, 433/433;
+  - Flutter: 23 new, 4176 passed (12 skipped, unchanged); analyzer shows only the known
+    `app_constants.dart:21` info.
+- Not done / follow-up:
+  - Functions deploy to dev, waiting on the Storage bucket;
+  - a manager PIN step-up for the below-minimum override (today a manager-tier sign-in is required);
+  - showing the ETA in the customer app;
+  - the 5 failing functions tests (see above).
+- **Visual Review Bekleniyor**.
