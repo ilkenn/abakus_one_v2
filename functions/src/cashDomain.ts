@@ -128,6 +128,9 @@ export const CASH_MOVEMENT_TYPES = [
   "expense",
   "correction",
   "closingDifference",
+  // 2026-11-11 (Faz 2b) — cash a returning courier hands over for the
+  // pay-on-delivery orders they collected (`settleCourierReturn`).
+  "courierCashIn",
 ] as const;
 export type CashMovementType = (typeof CASH_MOVEMENT_TYPES)[number];
 
@@ -137,6 +140,7 @@ export function cashMovementIsInflow(type: CashMovementType): boolean | null {
     case "openingFloat":
     case "cashSale":
     case "manualIn":
+    case "courierCashIn":
       return true;
     case "cashRefund":
     case "manualOut":

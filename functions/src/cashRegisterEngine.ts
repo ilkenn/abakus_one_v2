@@ -10,6 +10,7 @@ import { generateCorrelationId, sanitizeClientRequestId } from "./correlationId"
 import { createApprovalRequest } from "./remoteApproval";
 import type { ActionHandlerParams, ActionHandlerResult } from "./remoteApproval";
 import { BRANCH_PAYMENT_CONFIG_COLLECTION, PAYMENT_ATTEMPTS_COLLECTION, type BranchPaymentConfigDoc, type PaymentAttemptDoc } from "./paymentDomain";
+import { COURIER_SETTLEMENTS_COLLECTION, DELIVERY_COLLECTIONS_COLLECTION, type CourierSettlementDoc, type DeliveryCollectionDoc } from "./courierSettlement";
 import { DELIVERY_PAYMENT_METHOD_CATALOG } from "./deliveryPaymentMethodCatalog";
 import { CHECK_FINANCIAL_ADJUSTMENTS_COLLECTION } from "./checkAllocationConfig";
 import {
@@ -777,6 +778,36 @@ export interface TenderTotals {
   totalMinorUnits: number;
 }
 
+/**
+ * 2026-11-11 (Faz 2b) — the Z report with pay-on-delivery collections: each
+ * `deliveryCollections` record of the session joins its tender line (cash,
+ * card, the meal-card brand), plus the "Paket Servis Tahsilatı" total and
+ * the "Kurye Farkı" (sum of the session's courier settlements' cash
+ * differences; negative = the couriers brought less). Pure.
+ */
+export function summarizeDailyRevenue(params: {
+  attempts: PaymentAttemptDoc[];
+  deliveryCollections: Array<Pick<DeliveryCollectionDoc, "reportingCategory" | "paymentMethodId" | "paymentMethodDisplayName" | "amountMinorUnits" | "currencyCode">>;
+  courierSettlements: Array<Pick<CourierSettlementDoc, "differenceMinorUnits" | "currencyCode">>;
+  currencyCode: string;
+}): TenderTotals & { deliveryCollectionMinorUnits: number; courierDifferenceMinorUnits: number } {
+  const collectionsAsTenders = params.deliveryCollections.map((c) => ({
+    tenderType: c.reportingCategory,
+    amountMinorUnits: c.amountMinorUnits,
+    currencyCode: c.currencyCode,
+    paymentMethodId: c.reportingCategory === "mealCard" ? c.paymentMethodId : null,
+    paymentMethodDisplayName: c.paymentMethodDisplayName,
+  }) as unknown as PaymentAttemptDoc);
+  const totals = summarizeTenderTotals([...params.attempts, ...collectionsAsTenders], params.currencyCode);
+  const sameCurrency = <T extends { currencyCode: string }>(items: T[]) =>
+    items.filter((item) => item.currencyCode === params.currencyCode);
+  return {
+    ...totals,
+    deliveryCollectionMinorUnits: sameCurrency(params.deliveryCollections).reduce((sum, c) => sum + c.amountMinorUnits, 0),
+    courierDifferenceMinorUnits: sameCurrency(params.courierSettlements).reduce((sum, c) => sum + c.differenceMinorUnits, 0),
+  };
+}
+
 /** Buckets settled attempts for the Z report (single currency). */
 export function summarizeTenderTotals(attempts: PaymentAttemptDoc[], currencyCode: string): TenderTotals {
   let cashMinorUnits = 0;
@@ -854,10 +885,26 @@ export const getDailyRevenueSummary = onCall({ enforceAppCheck: shouldEnforceApp
     .limit(DAILY_REVENUE_ATTEMPT_LIMIT)
     .get();
 
-  const totals = summarizeTenderTotals(
-    attemptsSnap.docs.map((doc) => doc.data() as PaymentAttemptDoc),
-    session.currencyCode,
-  );
+  // 2026-11-11 (Faz 2b) — pay-on-delivery collections settled into this
+  // cash session, and its courier settlements' cash differences.
+  const [collectionsSnap, settlementsSnap] = await Promise.all([
+    db.collection(DELIVERY_COLLECTIONS_COLLECTION)
+      .where("branchId", "==", ctx.branchId)
+      .where("cashSessionId", "==", sessionId)
+      .limit(DAILY_REVENUE_ATTEMPT_LIMIT)
+      .get(),
+    db.collection(COURIER_SETTLEMENTS_COLLECTION)
+      .where("branchId", "==", ctx.branchId)
+      .where("cashSessionId", "==", sessionId)
+      .limit(DAILY_REVENUE_ATTEMPT_LIMIT)
+      .get(),
+  ]);
+  const totals = summarizeDailyRevenue({
+    attempts: attemptsSnap.docs.map((doc) => doc.data() as PaymentAttemptDoc),
+    deliveryCollections: collectionsSnap.docs.map((doc) => doc.data() as DeliveryCollectionDoc),
+    courierSettlements: settlementsSnap.docs.map((doc) => doc.data() as CourierSettlementDoc),
+    currencyCode: session.currencyCode,
+  });
 
   // Adım 3 (2026-11-06) — "İkram Toplamı" for the Z-Raporu. Summing EVERY
   // active `checkFinancialAdjustments` doc (not just `complimentary`-type

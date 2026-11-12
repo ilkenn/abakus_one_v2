@@ -110,6 +110,8 @@ export { respondToDeliveryOrder } from "./respondToDeliveryOrder";
 // 2026-11-11 — Faz 2: staff-opened Paket Servis orders and the local customer book.
 export { submitStaffDeliveryOrder } from "./submitStaffDeliveryOrder";
 export { searchPosCustomers } from "./posCustomerBook";
+// 2026-11-11 — Faz 2b: courier return settlement (kapıda tahsilat → kasa / Z raporu).
+export { getCourierSettlementPreview, settleCourierReturn } from "./courierSettlement";
 export { advanceDeliveryOrderStatus } from "./advanceDeliveryOrderStatus";
 export { cancelDeliveryOrder } from "./cancelDeliveryOrder";
 export { cancelDeliveryOrderForStaff } from "./cancelDeliveryOrderForStaff";

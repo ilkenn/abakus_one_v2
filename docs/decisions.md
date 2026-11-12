@@ -20756,3 +20756,42 @@ never reached the KDS).
 - Customer-facing prices change on the app for Gel-Al drinks and every Paket Servis item.
 - Cash collected at the door does not reach the cash drawer / Z report yet — Faz 2b (courier settlement).
 - The courier pool ("ilk kabul eden alır") is Faz 3. A staff-typed address has no point on the live map.
+
+## ADR-075 — Courier return settlement: pay-on-delivery collections into the cash session and the Z report (2026-11-11)
+
+- Tarih: 2026-11-11
+- Durum: Accepted
+
+### Context
+
+Faz 2b. Money collected at the door (cash, POS, meal cards) never reached the cash drawer or the Z
+report: the Z report sums `paymentAttempts`, which hang off table checks, and the drawer's expected
+cash is the sum of `cashMovements`, which had no courier type. Couriers were released with
+`markCourierReturned`, separately from completing their orders. The client's courier-settlement model
+(`pos/domain/courier_settlement/*`) is in-memory only.
+
+### Decision
+
+- **`settleCourierReturn`** (one transaction; `manageDeliveryOrders` + `manageCashSessions`, branch
+  access, active device session; idempotent per (staff, settlementKey)): every open order on the
+  courier must be settled at once (product owner decision 4); each delivered order gets a
+  `deliveryCollections/{orderId}` record with the method actually paid (cash / `credit_card` / meal-card
+  brand) — a change from the planned method is audited with the old and new value (decision 2); the
+  amount is the order total, or what remains after Boncuk (tips out of scope, decision 6); orders go
+  `outForDelivery → completed`; cancelled orders are dropped from the courier; the courier becomes
+  available; the received cash is booked as a new `courierCashIn` cash movement into the till's active
+  cash session; a `courierSettlements` record keeps expected / received / difference.
+- **Cash difference** (decision 1): allowed only for a caller holding `approveCashReconciliation`
+  (manager tier) and only with a reason; stored as "Kurye Farkı".
+- **Undelivered orders** (decision 3): the existing `cancelDeliveryOrderForStaff` (reason required;
+  cancelling an `outForDelivery` order is manager-tier, unchanged) — never collected.
+- **`getCourierSettlementPreview`**: the courier's orders with server-computed amounts and planned methods.
+- **Z report** (decision 5): collections settled into the session join their tender lines (Nakit, Kredi
+  Kartı, meal-card brands); "Paket Servis Tahsilatı" and "Kurye Farkı" are shown below.
+- New collections are server-only (catch-all deny in `firestore.rules`).
+
+### Consequences
+
+- The in-memory `pos/domain/courier_settlement/*` model is NOT removed yet: the courier app's in-memory
+  delivery completion (`CompleteDelivery` → `DeclareCourierCashCollectionForDelivery`) still uses it.
+- A difference is reported per cash session; per-courier debt tracking is not part of this phase.
