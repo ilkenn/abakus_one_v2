@@ -85,6 +85,7 @@ class StaffSessionController {
 
   Future<void> signOut() async {
     await _authRepository.signOut();
+    _ref.read(staffRolePreviewProvider.notifier).state = null;
     _ref.read(actorSessionProvider.notifier).state = null;
   }
 

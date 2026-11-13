@@ -41,6 +41,7 @@ import '../../../pos/presentation/screens/pos_branch_overview_screen.dart';
 import 'admin_menu_screen.dart';
 import 'admin_orders_screen.dart';
 import '../widgets/admin_coming_soon_view.dart';
+import '../widgets/staff_identity_header.dart';
 import '../widgets/staff_screen_capture_guard.dart';
 import '../widgets/admin_context_gate.dart';
 import '../widgets/module_readiness_gate.dart';
@@ -792,13 +793,19 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
     // server-backed courier app. It needs no branch context (an external
     // courier is region-based and holds no branch access), so it opens
     // before the context gate.
+    // ADR-085 stage 3 — what to show follows the admin/owner's role
+    // preview, if any; validity above always follows the real session.
+    final visible = ref.watch(visibleActorSessionProvider) ?? session;
+
     // ADR-085 stage 2 (KVKK) — every signed-in staff surface below (staff
     // panel, POS, courier) stays out of screenshots and recordings.
-    if (session.activeRole == StaffRole.courier) {
+    if (visible.activeRole == StaffRole.courier) {
       return StaffScreenCaptureGuard(
-        child: CourierWorkScreen(
-          uid: session.actorId,
-          onSignOut: () => ref.read(staffSessionControllerProvider).signOut(),
+        child: StaffRolePreviewBanner(
+          child: CourierWorkScreen(
+            uid: session.actorId,
+            onSignOut: () => ref.read(staffSessionControllerProvider).signOut(),
+          ),
         ),
       );
     }
@@ -809,18 +816,22 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
     // operate against) and BEFORE any destination content ever renders —
     // see `AdminContextGate`'s own doc comment for the full revoked-
     // access/auto-select/explicit-picker behavior.
-    return StaffScreenCaptureGuard(child: AdminContextGate(
+    return StaffScreenCaptureGuard(
+        child: StaffRolePreviewBanner(
+            child: AdminContextGate(
+      // A new preview starts again from that role's landing screen.
+      key: ValueKey(ref.watch(staffRolePreviewProvider)),
       child: Builder(
         builder: (context) {
           final branchId = ref.watch(currentBranchIdProvider);
           final initialNavItemId = widget.initialNavItemId ??
-              AdminShellScreen.roleLandingNavItemId(session.activeRole);
+              AdminShellScreen.roleLandingNavItemId(visible.activeRole);
           final groups = _groups(branchId, session.actorId)
               .map((g) => _AdminNavGroup(
                     label: g.label,
                     icon: g.icon,
                     items: g.items
-                        .where((item) => _isVisibleTo(item, session.roles))
+                        .where((item) => _isVisibleTo(item, visible.roles))
                         .toList(),
                   ))
               .where((g) => g.items.isNotEmpty)
@@ -855,7 +866,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
           );
         },
       ),
-    ));
+    )));
   }
 }
 
@@ -883,6 +894,8 @@ class _TopBar extends ConsumerWidget implements PreferredSizeWidget {
     // real, functional context switcher wins the space; the placeholders
     // are hidden entirely rather than truncated illegibly.
     final isNarrow = MediaQuery.sizeOf(context).width < 600;
+    // ADR-085 stage 3 — the person's name, never the raw account id.
+    final ownName = ref.watch(ownStaffNameProvider).valueOrNull;
 
     return AppBar(
       leading: leading,
@@ -973,9 +986,9 @@ class _TopBar extends ConsumerWidget implements PreferredSizeWidget {
                 child:
                     Icon(Icons.person_outline, size: 16, color: Colors.white),
               ),
-              if (!isNarrow) ...[
+              if (!isNarrow && ownName != null) ...[
                 const SizedBox(width: AppSpacing.xs),
-                Text(actorId, style: AppTypography.bodySmall),
+                Text(ownName, style: AppTypography.bodySmall),
               ],
             ],
           ),
@@ -1084,6 +1097,8 @@ class _DesktopShellState extends State<_DesktopShell> {
               color: AppColors.surface,
               child: ListView(
                 children: [
+                  StaffIdentityHeader(session: widget.session),
+                  const Divider(height: 1),
                   for (final group in widget.groups)
                     ExpansionTile(
                       leading: Icon(group.icon),
@@ -1188,6 +1203,8 @@ class _TabletShellState extends State<_TabletShell> {
               width: 220,
               child: ListView(
                 children: [
+                  StaffIdentityHeader(session: widget.session),
+                  const Divider(height: 1),
                   for (final item in activeGroup.items)
                     ListTile(
                       leading: Icon(item.icon, size: 20),
@@ -1266,6 +1283,8 @@ class _MobileShellState extends State<_MobileShell> {
         child: SafeArea(
           child: ListView(
             children: [
+              StaffIdentityHeader(session: widget.session),
+              const Divider(height: 1),
               for (final group in widget.groups)
                 ExpansionTile(
                   leading: Icon(group.icon),

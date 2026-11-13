@@ -117,6 +117,9 @@ void main() {
       ),
     );
 
+    // ADR-085 stage 3 — the sidebar now starts with the name/role header.
+    await tester.ensureVisible(find.text('Segmentasyon'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Segmentasyon'));
     await tester.pumpAndSettle();
 

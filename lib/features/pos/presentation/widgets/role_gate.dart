@@ -70,7 +70,8 @@ class RoleGate extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(actorSessionProvider);
+    // ADR-085 stage 3 — a role preview narrows what the gate lets through.
+    final session = ref.watch(visibleActorSessionProvider);
     if (session == null || !isAllowed(session)) {
       return Scaffold(
         backgroundColor: AppColors.background,

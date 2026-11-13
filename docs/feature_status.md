@@ -12006,7 +12006,7 @@ Step 5 details (dev project `abakus-one-dev`):
 | 0 | Packing lead menu (KDS + Teslimat Dağıtımı); old role/status callables bound to the panel rule | Done (2026-11-13) |
 | 1 | Managers cannot deactivate staff; manager-added staff wait for admin/owner approval (Onay Kutusu) | Done (2026-11-13), Visual Review Bekleniyor |
 | 2 | KVKK: customer data removed from the courier projection at "Teslim Ettim"; screenshot block on staff/courier/POS screens (owner and customer app exempt) | Done (2026-11-13), Visual Review Bekleniyor (iOS untested) |
-| 3 | Panel top bar: no DEMO badge, name + role, admin/owner role preview | Not started |
+| 3 | Panel top bar: no DEMO badge, name + role, admin/owner role preview | Done (2026-11-13), Visual Review Bekleniyor |
 | 4 | Courier: "Konuma Git", smart call (own orders: customer; Trendyol/Getir: configurable switchboard + DTMF order code) | Not started |
 | 5 | Courier pay rates (per courier, effective-dated), earnings view, manager-approved shifts — data model draft first | Not started |
 
@@ -12056,3 +12056,23 @@ Stage 2 details:
     is recorded or mirrored (`AppDelegate.swift`). Not compiled here (no macOS).
 - Tests: pure and emulator courier tests assert all four fields are gone; the courier widget test feeds a
   stale copy; a new `screen_capture_protection_test.dart` covers counting, exemption and the guard.
+
+Stage 3 details:
+
+- The `DEMO` badge is gone from `ModuleReadinessGate`. Visual only: release builds still block modules
+  that are not production-ready.
+- Sidebar and drawer header (`StaffIdentityHeader`): avatar, name and surname, and role.
+  - The name comes from the person's own membership (first/last name), falling back to the account's
+    display name (`OwnStaffNameRepository`).
+  - The top bar shows that name instead of the raw account id.
+- "Rol Değiştir" preview, admin/owner only: Müdür, Kasiyer, Kurye, Paketleme.
+  - `visibleActorSessionProvider` applies the preview to the menu, the landing screen, the courier switch
+    and every `RoleGate`; the real session is unchanged and the server still judges every call by the
+    real account.
+  - An orange strip names the previewed role, with "Kendi Rolüme Dön" (also above the courier screen).
+  - Sign-out clears the preview.
+  - A Kurye preview of an account that is not linked to a courier shows the courier screen's own "not
+    linked" message.
+- Tests: `staff_identity_header_test.dart` (name/role, manager has no preview menu, owner previews
+  Kasiyer and returns, preview never applies to a non-admin); `module_readiness_gate_test.dart` now
+  expects no badge.

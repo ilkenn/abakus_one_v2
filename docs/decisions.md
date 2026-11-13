@@ -21572,3 +21572,16 @@ three points; supersedes decisions 2 and 5 above and the invite update):**
 
   The customer app and the sign-in screens are not protected. A signed-in Platform Owner is exempt;
   a platform administrator is not.
+
+**Update 2026-11-13 — staff package, stage 3 (product owner approved):**
+
+- **No DEMO badge.** The badge is removed in debug/profile builds; the release gate on non-production
+  modules is unchanged.
+- **Who is signed in.** The panel names the person (membership first/last name, else the account's
+  display name) and their highest role, at the top of the sidebar/drawer and in the top bar instead of the
+  raw account id.
+- **Role preview ("Rol Değiştir").** Admin/owner only: Müdür, Kasiyer, Kurye or Paketleme.
+  - It is a visibility lens (`visibleActorSessionProvider`), never an identity: no token, claim or server
+    call changes, so a preview can only narrow what is shown, never grant anything.
+  - Screens that decide what to show by role follow it: the menu, the landing screen and `RoleGate`.
+  - An always-visible strip returns to the real role in one tap.

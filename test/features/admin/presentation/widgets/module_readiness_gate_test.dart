@@ -260,11 +260,11 @@ void main() {
       );
 
       // kReleaseMode is always false under `flutter test` — this exercises
-      // the debug-mode branch (visible DEMO badge, module still reachable),
-      // never the release fail-closed branch, which is a compile-time
-      // (kReleaseMode) constant this test harness cannot flip.
+      // the debug-mode branch, never the release fail-closed branch, which
+      // is a compile-time (kReleaseMode) constant this test harness cannot
+      // flip. ADR-085 stage 3: no DEMO badge any more.
       expect(find.text('pos screen content'), findsOneWidget);
-      expect(find.text('DEMO'), findsOneWidget);
+      expect(find.text('DEMO'), findsNothing);
     });
 
     testWidgets(
@@ -280,7 +280,7 @@ void main() {
       );
 
       expect(find.text('new screen content'), findsOneWidget);
-      expect(find.text('DEMO'), findsOneWidget);
+      expect(find.text('DEMO'), findsNothing);
     });
   });
 }

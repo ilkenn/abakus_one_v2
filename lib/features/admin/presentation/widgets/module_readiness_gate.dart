@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 
@@ -374,34 +373,9 @@ class ModuleReadinessGate extends StatelessWidget {
         ),
       );
     }
-    if (readiness.isMatureEnoughForDevBuild) {
-      return child;
-    }
-    return Stack(
-      children: [
-        child,
-        Positioned(
-          top: AppSpacing.sm,
-          right: AppSpacing.sm,
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm,
-              vertical: AppSpacing.xs,
-            ),
-            decoration: BoxDecoration(
-              color: AppColors.warning,
-              borderRadius: BorderRadius.circular(AppRadius.small),
-            ),
-            child: Text(
-              'DEMO',
-              style: AppTypography.labelMedium.copyWith(
-                color: AppColors.surface,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
+    // ADR-085 stage 3 (product owner) — the debug/profile `DEMO` badge is
+    // gone; every module renders as is outside release. The release gate
+    // above is unchanged.
+    return child;
   }
 }

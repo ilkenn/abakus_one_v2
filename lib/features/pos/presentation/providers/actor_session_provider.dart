@@ -4,6 +4,7 @@ import '../../../admin/presentation/providers/admin_dependencies_provider.dart';
 import '../../domain/authorization/actor_session.dart';
 import '../../domain/authorization/pos_authorization_policy.dart';
 import '../../domain/authorization/real_pos_authorization_policy.dart';
+import '../../domain/authorization/staff_role.dart';
 
 /// The currently active [ActorSession] — Sprint 5E. **Defaults to `null`
 /// (no active actor)**, the same honest-by-default pattern every other
@@ -22,6 +23,26 @@ import '../../domain/authorization/real_pos_authorization_policy.dart';
 /// until that's done explicitly — never implicitly, never on screen
 /// visibility alone.
 final actorSessionProvider = StateProvider<ActorSession?>((ref) => null);
+
+/// ADR-085 stage 3 — the role an admin/owner is previewing ("Rol
+/// Değiştir"), or `null`. Cleared at sign-out.
+final staffRolePreviewProvider = StateProvider<StaffRole?>((ref) => null);
+
+/// Only an admin/owner may preview other roles.
+bool canPreviewRoles(ActorSession session) =>
+    effectiveVisibilityRoles(session.roles).contains(StaffRole.admin);
+
+/// The session screens use to decide what to SHOW: the real session, or
+/// its [ActorSession.previewAs] while an admin/owner previews a role. Never
+/// used for authorization decisions sent to the server.
+final visibleActorSessionProvider = Provider<ActorSession?>((ref) {
+  final session = ref.watch(actorSessionProvider);
+  final preview = ref.watch(staffRolePreviewProvider);
+  if (session == null || preview == null || !canPreviewRoles(session)) {
+    return session;
+  }
+  return session.previewAs(preview);
+});
 
 /// The app's real [PosAuthorizationPolicy] — the first production-capable
 /// implementation this codebase has had (`RealPosAuthorizationPolicy`).

@@ -194,6 +194,24 @@ class ActorSession {
     return _copyWith(activeBranchId: branchId);
   }
 
+  /// ADR-085 stage 3 — an admin/owner's "Rol Değiştir" preview: the same
+  /// person seen as holding only [role]. Visibility only — it is never sent
+  /// to the server, which keeps judging every action by the real account.
+  ActorSession previewAs(StaffRole role) {
+    return ActorSession(
+      actorId: actorId,
+      roles: {role},
+      activeRole: role,
+      branchAccess: branchAccess,
+      restaurantAccess: restaurantAccess,
+      organizationAccess: organizationAccess,
+      activeBranchId: activeBranchId,
+      issuedAt: issuedAt,
+      expiresAt: expiresAt,
+      revoked: revoked,
+    );
+  }
+
   ActorSession _copyWith({StaffRole? activeRole, String? activeBranchId}) {
     return ActorSession(
       actorId: actorId,
