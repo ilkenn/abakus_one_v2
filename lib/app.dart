@@ -13,6 +13,7 @@ import 'core/notifications/reservation_notification_tap_router.dart';
 import 'core/notifications/staff_push_notifications_provider.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
+import 'features/admin/presentation/providers/staff_session_controller.dart';
 import 'features/auth/presentation/providers/auth_provider.dart';
 import 'features/branding/presentation/providers/resolved_app_theme_provider.dart';
 import 'features/pos/domain/authorization/actor_session.dart';
@@ -37,6 +38,10 @@ class _AbakusAppState extends ConsumerState<AbakusApp> {
   StreamSubscription<RemoteMessage>? _foregroundMessageSubscription;
   String? _registeredStaffUid;
 
+  // ADR-085 — the uid whose staff role was last looked up, so one sign-in
+  // triggers one background lookup.
+  String? _staffDiscoveryUid;
+
   @override
   void initState() {
     super.initState();
@@ -50,8 +55,10 @@ class _AbakusAppState extends ConsumerState<AbakusApp> {
     _authSubscription =
         ref.listenManual<AuthState>(authProvider, (previous, next) {
       _maybeRegisterDeviceToken(next);
+      _syncStaffSessionWithCustomerSignIn(previous, next);
     });
     _maybeRegisterDeviceToken(ref.read(authProvider));
+    _syncStaffSessionWithCustomerSignIn(null, ref.read(authProvider));
 
     // The official `firebase_messaging` plugin ships no native Windows
     // desktop implementation (confirmed: absent from `windows/flutter/
@@ -94,6 +101,30 @@ class _AbakusAppState extends ConsumerState<AbakusApp> {
     final uid = authState.session!.uid;
     _registeredThisSession = true;
     ref.read(fcmRegistrationServiceProvider).registerForUid(uid: uid);
+  }
+
+  /// ADR-085 — one sign-in for everyone. When a real customer (phone + SMS)
+  /// is signed in, ask in the background whether that account is staff; if
+  /// so the profile offers "Yönetim Paneline Geç". When that customer signs
+  /// out, the staff session they discovered ends with it. A staff session
+  /// that did not come from the customer sign-in (the Windows POS) is never
+  /// touched: the clear only runs on a real-customer → signed-out change.
+  void _syncStaffSessionWithCustomerSignIn(
+    AuthState? previous,
+    AuthState next,
+  ) {
+    final controller = ref.read(staffSessionControllerProvider);
+    if (isRealCustomer(next)) {
+      final uid = next.session!.uid;
+      if (_staffDiscoveryUid == uid) return;
+      _staffDiscoveryUid = uid;
+      controller.discoverForSignedInUser(uid);
+      return;
+    }
+    if (previous != null && isRealCustomer(previous)) {
+      _staffDiscoveryUid = null;
+      controller.clearDiscoveredSession();
+    }
   }
 
   void _maybeRegisterStaffDevice(ActorSession? session) {

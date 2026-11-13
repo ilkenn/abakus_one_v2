@@ -7,7 +7,9 @@ import '../../../../core/theme/app_shadows.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 
-/// "İşletme Moduna Geç" — P.3 (2026-08-19). A mode switch, not another
+/// "Yönetim Paneline Geç" (ADR-085, 2026-11-13; was "İşletme Moduna Geç",
+/// P.3, 2026-08-19). The panel opens on the screen of the user's role
+/// (`AdminShellScreen.roleLandingNavItemId`). A mode switch, not another
 /// customer settings row: solid `AppColors.primary` background (rather
 /// than this screen's cream/sage cards) so it reads as leaving customer
 /// Profile entirely, while staying within the app's own palette.
@@ -28,7 +30,7 @@ class ProfileBusinessModeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: 'İşletme Moduna Geç, personel ve yönetim araçlarına geç',
+      label: 'Yönetim Paneline Geç, rolünüzün ekranlarına geç',
       child: GestureDetector(
         onTap: () => context.push(AppRoutes.admin),
         child: Container(
@@ -61,7 +63,7 @@ class ProfileBusinessModeCard extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'İşletme Moduna Geç',
+                      'Yönetim Paneline Geç',
                       style: AppTypography.bodyLarge.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -71,7 +73,7 @@ class ProfileBusinessModeCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Personel ve yönetim araçlarına geç',
+                      'Rolünüzün ekranlarına geçin',
                       style: AppTypography.bodySmall.copyWith(
                         color: Colors.white.withValues(alpha: 0.85),
                       ),

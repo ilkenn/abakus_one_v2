@@ -31,14 +31,14 @@ void main() {
     );
   }
 
-  testWidgets('"İşletme Moduna Geç" karti dogru metinlerle gorunur', (
+  testWidgets('"Yönetim Paneline Geç" karti dogru metinlerle gorunur', (
     tester,
   ) async {
     await pumpCard(tester);
 
     expect(find.byKey(const Key('profileBusinessModeCard')), findsOneWidget);
-    expect(find.text('İşletme Moduna Geç'), findsOneWidget);
-    expect(find.text('Personel ve yönetim araçlarına geç'), findsOneWidget);
+    expect(find.text('Yönetim Paneline Geç'), findsOneWidget);
+    expect(find.text('Rolünüzün ekranlarına geçin'), findsOneWidget);
   });
 
   testWidgets('dokununca /admin rotasina gider ve AdminShellScreen acilir', (

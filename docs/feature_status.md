@@ -11876,7 +11876,7 @@ to ADR-083.
 | Phase | Scope | Status |
 |---|---|---|
 | A | Server: staff invited by phone number; invite binds on first SMS sign-in | Done (2026-11-13) — emulator-tested, not yet deployed to dev |
-| B | App: background staff discovery after SMS sign-in, "Yönetim Paneline Geç", role landing | Not started |
+| B | App: background staff discovery after SMS sign-in, "Yönetim Paneline Geç", role landing | Done (2026-11-13) — Visual Review Bekleniyor |
 | C | Role isolation audit + per-role menu tests | Not started |
 | D | Remove e-mail/password staff sign-in; QR pairing for the Windows POS | Not started |
 | E | Device approval only at POS/KDS terminal setup | Not started |
@@ -11896,3 +11896,20 @@ Phase A details:
   Self-invites are refused.
 - Tests: `functions/src/test/staffInvites.test.ts`, 9 emulator tests. Together with
   `staffMembership.test.ts`, 36 of 36 pass.
+
+Phase B details:
+
+- `StaffAuthRepository.discoverSessionForSignedInUser(uid)`: the Firebase implementation runs the same
+  claims sync as the phone sign-in, with no second credential. That sync also binds pending invites.
+- `StaffSessionController.discoverForSignedInUser` / `clearDiscoveredSession`. A failed lookup never
+  disturbs the customer app.
+- `lib/app.dart`: when a real customer is signed in, one background lookup runs per uid. When that
+  customer signs out, the discovered staff session is cleared. The Windows POS staff session is never
+  touched.
+- The profile card now reads "Yönetim Paneline Geç" (it used to read "İşletme Moduna Geç").
+- `AdminShellScreen.roleLandingNavItemId`: staff, cashier and packingLead open on POS; managers and owners
+  open on the overview; couriers keep `CourierWorkScreen`.
+- Known gap for phase C: the `pos` nav item is not visible to `cashier`, so a cashier currently falls back
+  to the first visible item.
+- Tests: `test/features/admin/presentation/providers/staff_session_discovery_test.dart`, 7 tests. The full
+  suite passes: 4187 passed, 12 skipped.

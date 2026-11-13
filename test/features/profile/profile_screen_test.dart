@@ -195,7 +195,7 @@ void main() {
         // `AppRoutes.admin` go_router route (`context.push`), so every test
         // using this shared helper needs a real `GoRouter` in the tree,
         // mirroring `app_router_test.dart`'s own pattern — a plain
-        // `MaterialApp` no longer suffices for the "İşletme Moduna Geç"
+        // `MaterialApp` no longer suffices for the "Yönetim Paneline Geç"
         // scenario, and this router is a harmless superset for every other
         // test that never taps that card.
         child: MaterialApp.router(
@@ -319,13 +319,13 @@ void main() {
 
   testWidgets(
     'yetkisiz kullanicida (oturum yok) ne "Yönetici Paneli" ne de '
-    '"İşletme Moduna Geç" gorunur (P.3 — eski Sprint 6B testinin yerini '
+    '"Yönetim Paneline Geç" gorunur (P.3 — eski Sprint 6B testinin yerini '
     'alir, StaffSignInScreen artik Profile\'dan hic erisilmiyor)',
     (WidgetTester tester) async {
       await pumpProfileScreen(tester);
 
       expect(find.text('Yönetici Paneli'), findsNothing);
-      expect(find.text('İşletme Moduna Geç'), findsNothing);
+      expect(find.text('Yönetim Paneline Geç'), findsNothing);
       expect(
         find.byKey(const Key('profileBusinessModeCard')),
         findsNothing,
@@ -334,7 +334,7 @@ void main() {
   );
 
   testWidgets(
-    'personel rolu olan yetkili actor icin "İşletme Moduna Geç" karti '
+    'personel rolu olan yetkili actor icin "Yönetim Paneline Geç" karti '
     'gorunur ve AdminShellScreen acar (P.3 — eski Phase 6A testinin '
     'yerini alir)',
     (WidgetTester tester) async {
@@ -348,9 +348,9 @@ void main() {
       );
 
       expect(find.text('Yönetici Paneli'), findsNothing);
-      expect(find.text('İşletme Moduna Geç'), findsOneWidget);
+      expect(find.text('Yönetim Paneline Geç'), findsOneWidget);
 
-      await tester.ensureVisible(find.text('İşletme Moduna Geç'));
+      await tester.ensureVisible(find.text('Yönetim Paneline Geç'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('profileBusinessModeCard')));
       await tester.pumpAndSettle();

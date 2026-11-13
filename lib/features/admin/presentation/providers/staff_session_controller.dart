@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../pos/domain/authorization/actor_session.dart';
 import '../../../pos/domain/authorization/staff_role.dart';
 import '../../../pos/presentation/providers/actor_session_provider.dart';
 import '../../data/staff_auth_repository.dart';
@@ -48,6 +49,38 @@ class StaffSessionController {
     );
     _ref.read(actorSessionProvider.notifier).state = session;
     return session != null;
+  }
+
+  /// ADR-085 — after the customer app's phone + SMS sign-in, quietly checks
+  /// whether that same account is staff. On success the staff session is
+  /// written to [actorSessionProvider] (the profile then shows "Yönetim
+  /// Paneline Geç"); an ordinary customer, or a sync that cannot complete,
+  /// leaves it untouched — this runs in the background and must never
+  /// disturb the customer app. An existing session for the same account is
+  /// kept as is. Returns whether a staff session exists afterwards.
+  Future<bool> discoverForSignedInUser(String uid) async {
+    final current = _ref.read(actorSessionProvider);
+    if (current != null && current.isValid && current.actorId == uid) {
+      return true;
+    }
+    final ActorSession? session;
+    try {
+      session = await _authRepository.discoverSessionForSignedInUser(uid);
+    } on Exception {
+      // Timeout, no connection, a failed sync: the customer app carries on;
+      // the next sign-in or app start tries again.
+      return false;
+    }
+    if (session == null) return false;
+    _ref.read(actorSessionProvider.notifier).state = session;
+    return true;
+  }
+
+  /// ADR-085 — the customer signed out of the shared phone account, so its
+  /// staff session ends too. Only clears local state: the Firebase sign-out
+  /// already happened through the customer app.
+  void clearDiscoveredSession() {
+    _ref.read(actorSessionProvider.notifier).state = null;
   }
 
   Future<void> signOut() async {

@@ -55,6 +55,10 @@ class _ScriptedStaffAuthRepository implements StaffAuthRepository {
   }
 
   @override
+  Future<ActorSession?> discoverSessionForSignedInUser(String uid) async =>
+      null;
+
+  @override
   Future<String> startPhoneSignIn(String phoneNumber) {
     callOrder.add('startPhoneSignIn');
     lastPhoneNumber = phoneNumber;

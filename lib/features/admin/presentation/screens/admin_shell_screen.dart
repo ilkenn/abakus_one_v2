@@ -114,6 +114,17 @@ class AdminShellScreen extends ConsumerStatefulWidget {
   /// directly on the POS branch overview, never the general dashboard.
   final String? initialNavItemId;
 
+  /// ADR-085 — the screen a role opens on when the panel is entered without
+  /// an explicit `?nav=` destination ("Yönetim Paneline Geç"): counter roles
+  /// open the POS; managers and owners open the overview (the first visible
+  /// item). Couriers never reach this: they get [CourierWorkScreen] above.
+  /// A landing the role cannot see falls back to the first visible item.
+  static String? roleLandingNavItemId(StaffRole activeRole) =>
+      switch (activeRole) {
+        StaffRole.staff || StaffRole.cashier || StaffRole.packingLead => 'pos',
+        _ => null,
+      };
+
   @override
   ConsumerState<AdminShellScreen> createState() => _AdminShellScreenState();
 }
@@ -758,6 +769,8 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
       child: Builder(
         builder: (context) {
           final branchId = ref.watch(currentBranchIdProvider);
+          final initialNavItemId = widget.initialNavItemId ??
+              AdminShellScreen.roleLandingNavItemId(session.activeRole);
           final groups = _groups(branchId, session.actorId)
               .map((g) => _AdminNavGroup(
                     label: g.label,
@@ -778,7 +791,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
                   groups: groups,
                   session: session,
                   ref: ref,
-                  initialNavItemId: widget.initialNavItemId,
+                  initialNavItemId: initialNavItemId,
                 );
               }
               if (width >= 600) {
@@ -786,14 +799,14 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
                   groups: groups,
                   session: session,
                   ref: ref,
-                  initialNavItemId: widget.initialNavItemId,
+                  initialNavItemId: initialNavItemId,
                 );
               }
               return _MobileShell(
                 groups: groups,
                 session: session,
                 ref: ref,
-                initialNavItemId: widget.initialNavItemId,
+                initialNavItemId: initialNavItemId,
               );
             },
           );

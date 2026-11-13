@@ -139,6 +139,15 @@ abstract interface class StaffAuthRepository {
     required String smsCode,
   });
 
+  /// ADR-085 — builds a staff session for the account that is ALREADY
+  /// signed in (the customer app's phone + SMS sign-in, uid [uid]), with no
+  /// second credential: runs the same claims sync [completePhoneSignIn]
+  /// runs (which also binds any pending phone invite server-side) and
+  /// returns `null` when the account holds no staff role — an ordinary
+  /// customer. Throws [StaffAuthUnavailableException] only when the sync
+  /// itself cannot complete (timeout).
+  Future<ActorSession?> discoverSessionForSignedInUser(String uid);
+
   /// Re-derives [current]'s authorization fresh and rebuilds it, or returns
   /// `null` if it's no longer valid — "removed role takes effect
   /// immediately after session refresh." For [FirebaseStaffAuthRepository],
@@ -176,6 +185,10 @@ class ProductionUnavailableStaffAuthRepository implements StaffAuthRepository {
     required String verificationId,
     required String smsCode,
   }) async =>
+      null;
+
+  @override
+  Future<ActorSession?> discoverSessionForSignedInUser(String uid) async =>
       null;
 
   @override
@@ -245,6 +258,12 @@ class DevelopmentStaffAuthRepository implements StaffAuthRepository {
       'FirebaseStaffAuthRepository.',
     );
   }
+
+  /// No real Firebase account exists behind this fixture, so there is
+  /// never a signed-in user to discover a session for.
+  @override
+  Future<ActorSession?> discoverSessionForSignedInUser(String uid) async =>
+      null;
 
   @override
   Future<ActorSession?> refreshSession(ActorSession current) async {
@@ -495,6 +514,13 @@ class FirebaseStaffAuthRepository implements StaffAuthRepository {
     // real targets (Android/iOS/web) are unaffected.
     return _syncClaimsAndBuildSession(uid: result.uid);
   }
+
+  /// ADR-085 — the customer app's SMS sign-in already established the
+  /// Firebase credential; only the claims sync and session build remain.
+  /// Like [completePhoneSignIn], no `remintToken` (no stored credential).
+  @override
+  Future<ActorSession?> discoverSessionForSignedInUser(String uid) =>
+      _syncClaimsAndBuildSession(uid: uid);
 
   /// The shared tail of [signIn]/[completePhoneSignIn]: once a real
   /// Firebase credential is established (whichever way), sync and parse
