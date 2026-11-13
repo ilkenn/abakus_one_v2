@@ -304,13 +304,12 @@ void main() {
       ],
     );
 
-    // Rezervasyonlar is now tenantOwner's earliest-visible destination
-    // across every group (Genel Bakış and Mutfak/KDS both still exclude
-    // tenantOwner), so the desktop shell auto-selects it on first build —
-    // the sidebar item's own label and the already-open screen's headline
-    // both render "Rezervasyonlar" simultaneously, hence findsWidgets
-    // rather than findsOneWidget here.
-    expect(find.text('Rezervasyonlar'), findsWidgets);
+    // ADR-085 phase C — an owner now sees every admin screen (owner counts
+    // as admin for visibility) and opens on the overview, so Rezervasyonlar
+    // is opened explicitly.
+    expect(find.text('Rezervasyonlar'), findsOneWidget);
+    await tester.tap(find.text('Rezervasyonlar'));
+    await tester.pumpAndSettle();
     expect(find.byType(ReservationOperationsScreen), findsOneWidget);
   });
 
@@ -800,6 +799,15 @@ void main() {
     // "Entegrasyonlar" is no longer this role's *only* visible
     // destination and the desktop shell's first-visible-item auto-select
     // no longer reliably lands here. Navigate explicitly instead.
+    // ADR-085 phase C — the owner's menu now holds every admin screen too,
+    // so Entegrasyonlar sits further down the sidebar.
+    await tester.dragUntilVisible(
+      find.text('Entegrasyonlar'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
+    await tester.ensureVisible(find.text('Entegrasyonlar').first);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Entegrasyonlar'));
     await tester.pumpAndSettle();
 

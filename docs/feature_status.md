@@ -11924,7 +11924,7 @@ The phase A invite code is removed. Revised order:
 | 1 | Server: `createStaffAccount`, `setStaffPassword`, `updateStaffMember` (scoped, audited) | Done (2026-11-13), emulator-tested |
 | 2 | App: "Şifre ile giriş" on the sign-in screen, phone + password on Windows, own password change in the profile | Done (2026-11-13), Visual Review Bekleniyor |
 | 3 | Staff screen: "Personel Ekle" form, change password/role/status from the list | Done (2026-11-13), Visual Review Bekleniyor |
-| 4 | Phase C: role isolation (cashier sees POS, courier only Kurye Ekranım) + per-role tests | Not started |
+| 4 | Phase C: role isolation (cashier sees POS, courier only Kurye Ekranım) + per-role tests | Done (2026-11-13), Visual Review Bekleniyor |
 | 5 | Deploy to dev, move test accounts to phone + password, new APK | Not started |
 
 Step 1 tests: `functions/src/test/staffAccounts.test.ts` adds 8 tests. Together with the membership and
@@ -11959,3 +11959,28 @@ Step 3 details:
 - Known overlap: `StaffDetailScreen` still changes roles and status through the older, unscoped callables
   (`assignStaffRole` etc.; see the ADR-085 revision's "known gap").
 - Tests: `staff_management_screen_test.dart` is rewritten with 7 tests.
+
+Step 4 (phase C) details:
+
+- Gaps found:
+  - `cashier` and `packingLead` saw no panel screen at all;
+  - `tenantOwner` saw only "Entegrasyonlar" (plus Rezervasyonlar), because screen role lists name `admin`
+    and never `tenantOwner`;
+  - "Genel Bakış" listed `courier`.
+- Fixes:
+  - `pos` is visible to and gated for `cashier` and `packingLead`;
+  - `courier` is removed from the overview (couriers only ever get `CourierWorkScreen`);
+  - new `effectiveVisibilityRoles` (owner counts as admin, matching `RolePermissionMap`), used by the panel
+    menu and by `RoleGate.forRoles`.
+- Resulting menus:
+  - cashier and packing lead: POS only;
+  - courier: no panel menu (Kurye Ekranım);
+  - staff: overview, kitchen, orders, POS and customer view;
+  - manager: management, POS, KDS, courier and report screens;
+  - admin: manager screens plus admin screens;
+  - owner: admin screens plus owner screens.
+- `RoleGate` has no access-request path, so an out-of-role screen offers nothing to request.
+- `packingLead` was given the same POS-only menu as `cashier`: both are defined as lateral counter
+  roles. This is not specified by the product owner and needs confirmation.
+- Tests: new `admin_shell_role_menu_test.dart` (10 tests pin the menu per role). Three existing tests that
+  relied on the old owner gap were updated. The full suite passes: 4205 passed, 12 skipped.

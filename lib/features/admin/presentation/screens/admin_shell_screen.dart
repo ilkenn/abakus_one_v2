@@ -125,9 +125,22 @@ class AdminShellScreen extends ConsumerStatefulWidget {
         _ => null,
       };
 
+  /// ADR-085 phase C — the nav item ids a person holding [roles] sees, in
+  /// menu order. The panel shows a role only its own screens; a courier
+  /// never reaches this menu (they get `CourierWorkScreen`).
+  @visibleForTesting
+  static List<String> visibleNavItemIds(Set<StaffRole> roles) => [
+        for (final group in _AdminShellScreenState._groups('branch', 'actor'))
+          for (final item in group.items)
+            if (_isVisibleTo(item, roles)) item.id,
+      ];
+
   @override
   ConsumerState<AdminShellScreen> createState() => _AdminShellScreenState();
 }
+
+bool _isVisibleTo(_AdminNavItem item, Set<StaffRole> roles) =>
+    effectiveVisibilityRoles(roles).any(item.visibleToRoles.contains);
 
 class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
   /// Faz R.3A.1 — the reservation module's sidebar visibility must follow
@@ -145,7 +158,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
         role,
   };
 
-  List<_AdminNavGroup> _groups(String branchId, String actorId) {
+  static List<_AdminNavGroup> _groups(String branchId, String actorId) {
     return [
       _AdminNavGroup(
         label: 'Genel Bakış',
@@ -159,14 +172,12 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
               StaffRole.staff,
               StaffRole.manager,
               StaffRole.admin,
-              StaffRole.courier,
             },
             builder: (context, ref) => RoleGate.forRoles(
               const {
                 StaffRole.staff,
                 StaffRole.manager,
                 StaffRole.admin,
-                StaffRole.courier,
               },
               child: AdminOverviewScreen(branchId: branchId),
             ),
@@ -288,13 +299,22 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'pos',
             label: 'POS',
             icon: Icons.point_of_sale_outlined,
+            // ADR-085 phase C — the counter roles work in the POS.
             visibleToRoles: const {
               StaffRole.staff,
+              StaffRole.cashier,
+              StaffRole.packingLead,
               StaffRole.manager,
               StaffRole.admin
             },
             builder: (context, ref) => RoleGate.forRoles(
-              const {StaffRole.staff, StaffRole.manager, StaffRole.admin},
+              const {
+                StaffRole.staff,
+                StaffRole.cashier,
+                StaffRole.packingLead,
+                StaffRole.manager,
+                StaffRole.admin,
+              },
               child: const PosBranchOverviewScreen(),
             ),
           ),
@@ -776,8 +796,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
                     label: g.label,
                     icon: g.icon,
                     items: g.items
-                        .where((item) =>
-                            session.roles.any(item.visibleToRoles.contains))
+                        .where((item) => _isVisibleTo(item, session.roles))
                         .toList(),
                   ))
               .where((g) => g.items.isNotEmpty)

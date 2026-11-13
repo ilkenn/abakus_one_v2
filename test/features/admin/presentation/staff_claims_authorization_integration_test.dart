@@ -124,7 +124,11 @@ void main() {
     await signInAndPump(tester,
         role: 'tenantOwner', child: const AdminShellScreen());
 
-    expect(find.text('Rezervasyonlar'), findsWidgets);
+    // ADR-085 phase C — an owner now sees every admin screen and opens on
+    // the overview, so Rezervasyonlar is opened explicitly, like a manager.
+    expect(find.text('Rezervasyonlar'), findsOneWidget);
+    await tester.tap(find.text('Rezervasyonlar'));
+    await tester.pumpAndSettle();
     expect(find.byType(ReservationOperationsScreen), findsOneWidget);
   });
 

@@ -58,7 +58,9 @@ class RoleGate extends ConsumerWidget {
   }) {
     return RoleGate(
       key: key,
-      isAllowed: (session) => session.roles.any(roles.contains),
+      // ADR-085 phase C — an owner passes wherever an admin does.
+      isAllowed: (session) =>
+          effectiveVisibilityRoles(session.roles).any(roles.contains),
       child: child,
     );
   }

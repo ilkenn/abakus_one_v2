@@ -32,3 +32,12 @@ enum StaffRole {
   admin,
   tenantOwner,
 }
+
+/// ADR-085 phase C — the roles a person effectively holds for screen
+/// visibility: [StaffRole.tenantOwner] also counts as [StaffRole.admin],
+/// mirroring [RolePermissionMap]'s "admin ⊂ tenantOwner" inheritance. Role
+/// lists on screens name `admin`, never `tenantOwner`, so without this an
+/// owner would see almost nothing. Visibility only — the server still
+/// decides every action.
+Set<StaffRole> effectiveVisibilityRoles(Set<StaffRole> roles) =>
+    roles.contains(StaffRole.tenantOwner) ? {...roles, StaffRole.admin} : roles;
