@@ -11858,3 +11858,15 @@ to ADR-083.
   - Kadıköy neighborhood rules (Faz 4).
 - The development APK (`app-development-debug.apk`) is built with that flag.
 - **Visual Review Bekleniyor**.
+- 2026-11-13 seeded on `abakus-one-dev`:
+  - `org-1` / `restaurant-1` / `branch-1`;
+  - the full menu (16 categories, 189 products, 49 Bowl ingredients, plus 2 starter products from the
+    baseline);
+  - 12 tables (Salon/Bahçe);
+  - entitlements `pos` / `kds` / `qrMenu` / `courier`;
+  - Kadıköy rules: Caferağa 250 TL / 35 dk, Moda 300 TL / 40 dk, Fenerbahçe no minimum / 30 dk;
+  - six test sign-ins: `sahip.test@` (Platform Owner), `mudur.test@`, `kasiyer.test@`,
+    `kurye.dukkan@`, `kurye.dis1@`, `kurye.dis2@`.
+
+  Manager and courier sign-in plus claim sync were verified against the real project. 32 callables
+  needed the public invoker binding (ADR-083 follow-up).

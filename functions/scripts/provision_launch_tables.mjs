@@ -226,7 +226,13 @@ async function main() {
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const outDir = join(__dirname, "data");
   mkdirSync(outDir, { recursive: true });
-  const outPath = join(outDir, "launch_table_qr_manifest.json");
+  // The committed `launch_table_qr_manifest.json` is the one the printed QR
+  // images come from (staging/production). A dev-project run must never
+  // overwrite it, so it gets its own file, ignored by git.
+  const outPath = join(
+    outDir,
+    PROJECT_ID === "abakus-one-dev" ? "launch_table_qr_manifest.abakus-one-dev.json" : "launch_table_qr_manifest.json",
+  );
   writeFileSync(outPath, JSON.stringify({ projectId: PROJECT_ID, tables: manifest }, null, 2));
   console.log(`[provision_launch_tables] wrote manifest: ${outPath}`);
   console.log(`[provision_launch_tables] done — ${manifest.length} tables provisioned in "${PROJECT_ID}".`);

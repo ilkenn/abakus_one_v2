@@ -81,7 +81,16 @@ async function callCallable(name, data, idToken) {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
     body: JSON.stringify({ data }),
   });
-  const body = await response.json();
+  // Read as text first: a non-JSON reply (e.g. an HTML error page from the
+  // hosting layer) must say what came back, not just fail to parse.
+  const text = await response.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    const snippet = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+    throw new Error(`${name} returned HTTP ${response.status} (not JSON): ${snippet}`);
+  }
   if (body.error) {
     throw new Error(`${name} failed: ${body.error.status} — ${body.error.message}`);
   }

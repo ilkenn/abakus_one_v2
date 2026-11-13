@@ -97,3 +97,6 @@ ios/Flutter/ApiKeys.xcconfig
 # Playwright MCP's own screenshot/session output (AP-3 visual driving) —
 # regenerated on every browser automation run, never source.
 .playwright-mcp/
+
+# Dev-project QR manifest (provision_launch_tables.mjs --project abakus-one-dev)
+functions/scripts/data/launch_table_qr_manifest.abakus-one-dev.json

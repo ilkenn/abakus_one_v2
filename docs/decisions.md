@@ -21358,6 +21358,18 @@ The earlier rules deploy had also enabled the Firestore API and created the `(de
     nodejs22), including the four Faz 4 callables.
   - For staging and production, expect the same first-deploy behavior: budget a re-run, and use
     `--force` only after checking which deployed functions it would delete.
+- **Follow-up 2026-11-13: 32 callables were not publicly invocable.**
+  - Every callable whose first create had failed came back from the re-run without the
+    `allUsers → roles/run.invoker` binding. The CLI adds that binding only when it creates a
+    service. Cloud Run then answered with an HTML 401/403 before the function ran.
+  - Among them were `syncOwnStaffClaims`, `resolveActorContext` and `provisionOrganization`, so
+    staff sign-in and seeding could not work.
+  - The product owner added the binding in Cloud Shell (`gcloud run services
+    add-iam-policy-binding … --member=allUsers --role=roles/run.invoker`). The seed service account
+    rightly has no IAM rights. The binding took about two minutes to apply to all 32 services.
+  - **Post-deploy check for every first deploy:** POST `{"data":{}}` without a token to every HTTPS
+    function. A public callable answers with its own JSON error; an HTML page means the binding is
+    missing.
 - The Firestore database is in `nam5`. That is fine for dev, since the functions run in `us-central1`.
   For staging and production, choose the region deliberately before the first deploy.
 
