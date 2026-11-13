@@ -24,7 +24,8 @@
 
 import admin from "firebase-admin";
 
-const ALLOWED_PROJECT_IDS = new Set(["abakus-one-staging", "abakusone"]);
+// 2026-11-13: + "abakus-one-dev" for the real-device test (docs/courier_pool_device_test.md).
+const ALLOWED_PROJECT_IDS = new Set(["abakus-one-dev", "abakus-one-staging", "abakusone"]);
 
 const projectArgIndex = process.argv.indexOf("--project");
 const PROJECT_ID = projectArgIndex !== -1 ? process.argv[projectArgIndex + 1] : null;
@@ -50,7 +51,11 @@ const ORGANIZATION_ID = "org-1";
 // (trustedDevice.ts's device-registration capability check); qrMenu is the
 // dine-in QR ordering surface itself — granted alongside since it is the
 // other half of the same Saturday launch flow.
-const MODULES = ["pos", "kds", "qrMenu"];
+// The dev project also gets "courier" so the Paket Servis / Kurye screens
+// (Faz 3-4) can be device-tested; staging and production keep the launch set.
+const MODULES = PROJECT_ID === "abakus-one-dev"
+  ? ["pos", "kds", "qrMenu", "courier"]
+  : ["pos", "kds", "qrMenu"];
 
 function entitlementId(organizationId, scopeType, scopeId, module) {
   return `${organizationId}_${scopeType}_${scopeId}_${module}`;

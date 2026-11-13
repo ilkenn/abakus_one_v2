@@ -11845,3 +11845,16 @@ to ADR-083.
   - showing the ETA in the customer app;
   - the 5 failing functions tests (see above).
 - **Visual Review Bekleniyor**.
+
+### Gerçek cihaz testi hazırlığı — dev projesi (2026-11-13)
+
+- `FIREBASE_USE_EMULATOR=false` (ADR-084): a development build can now reach the deployed
+  `abakus-one-dev` project instead of the local emulator. The default is unchanged; staging and
+  production are unaffected. Tests: `test/bootstrap/firebase_emulator_switch_test.dart`.
+- Dev seed sequence (`docs/courier_pool_device_test.md` §2):
+  - a Platform Owner test account (`create_dev_test_owner_account.mjs`);
+  - the baseline, the full menu, 12 tables and the entitlements (with `courier` on dev);
+  - test accounts Müdür / Kasiyer / Dükkan Kuryesi / Dış Kurye 1–2;
+  - Kadıköy neighborhood rules (Faz 4).
+- The development APK (`app-development-debug.apk`) is built with that flag.
+- **Visual Review Bekleniyor**.

@@ -27,19 +27,43 @@ Eventarc/Pub/Sub service agents for the Firestore triggers.
 
 ## 2. Data
 
-1. If `abakus-one-dev` has no tenant, menu or tables yet, seed them first. The platform owner must
-   already be bootstrapped (`bootstrap_platform_owner.mjs`). Then run:
-   `GCLOUD_PROJECT=abakus-one-dev GOOGLE_APPLICATION_CREDENTIALS=... WEB_API_KEY=... node scripts/seed_staging_baseline.mjs <platformOwnerUid>`
-2. Seed the courier-pool test data (service areas Kadıköy: Caferağa / Moda / Fenerbahçe, plus four
-   test sign-ins; new passwords are printed once):
-   `GCLOUD_PROJECT=abakus-one-dev GOOGLE_APPLICATION_CREDENTIALS=... node scripts/seed_courier_pool_device_test.mjs <organizationId> <branchId> <restaurantId>`
+Prerequisite (product owner, once): Firebase console → abakus-one-dev → Authentication → Get started
+→ enable **Email/Password**. Staff sign in with e-mail and password; without it every sign-in fails.
+
+Run from `functions/`, with `GCLOUD_PROJECT=abakus-one-dev` and
+`GOOGLE_APPLICATION_CREDENTIALS=<service-account.json>` set for every step (2026-11-13: the
+provisioning scripts now allow `abakus-one-dev`). Every step is idempotent except step 2, which runs
+once per project.
+
+1. `node scripts/create_dev_test_owner_account.mjs` — creates `sahip.test@abakus.dev` and prints its
+   uid (and its password, once).
+2. `node scripts/bootstrap_platform_owner.mjs <uid>` — makes that account the Platform Owner.
+3. `WEB_API_KEY=<web apiKey from lib/firebase_options_development.dart> node scripts/seed_staging_baseline.mjs <uid>`
+   — organization `org-1`, restaurant `restaurant-1`, branch `branch-1`, a starter menu and tables.
+4. `npm run build && node scripts/migrate_canonical_catalog_to_project.mjs --project abakus-one-dev`
+   — the full menu (run `dart run tool/export_menu_catalog.dart` first if the Dart catalog changed).
+5. `node scripts/provision_launch_tables.mjs --project abakus-one-dev` — the 12 launch tables.
+6. `node scripts/provision_launch_entitlements.mjs --project abakus-one-dev` — `pos`, `kds`, `qrMenu`
+   and, on dev only, `courier`.
+7. `node scripts/seed_courier_pool_device_test.mjs org-1 branch-1 restaurant-1` — service areas
+   Kadıköy: Caferağa (min. 250 TL, ~35 dk), Moda (min. 300 TL, ~40 dk), Fenerbahçe (no minimum,
+   ~30 dk); the branch's default district `kadikoy`; and five sign-ins:
+   `mudur.test@`, `kasiyer.test@`, `kurye.dukkan@`, `kurye.dis1@`, `kurye.dis2@` (all `@abakus.dev`).
+   New passwords are printed once.
 
 ## 3. Devices
 
-- **POS:** Windows, `flutter run -d windows --dart-define=ENVIRONMENT=development`. Sign in with a
-  manager account and register the device (approval flow).
-- **Courier phones** (Android, and iOS if prerequisites 0.4–0.5 are done):
-  `flutter run --flavor development --dart-define=ENVIRONMENT=development`.
+A `development` build uses the local emulator unless it is built with
+`--dart-define=FIREBASE_USE_EMULATOR=false` (ADR-084). Every device in this test needs that flag.
+
+- **POS:** Windows,
+  `flutter run -d windows --dart-define=ENVIRONMENT=development --dart-define=FIREBASE_USE_EMULATOR=false`.
+  Sign in with `mudur.test@` and register the device (approval flow; the approver is a second
+  manager-tier account, e.g. `sahip.test@`).
+- **Phones** (Android; iOS only if prerequisites 0.4–0.5 are done): install the development APK,
+  built with
+  `flutter build apk --debug --flavor development --dart-define=ENVIRONMENT=development --dart-define=FIREBASE_USE_EMULATOR=false`
+  (output: `build/app/outputs/flutter-apk/app-development-debug.apk`).
   Sign in at Personel Girişi with `kurye.dukkan@` / `kurye.dis1@` / `kurye.dis2@` and allow
   notifications when asked.
 - **Cashier phone** (to see the staff push): sign in with `kasiyer.test@`.

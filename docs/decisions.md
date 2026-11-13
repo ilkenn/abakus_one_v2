@@ -21360,3 +21360,43 @@ The earlier rules deploy had also enabled the Firestore API and created the `(de
     `--force` only after checking which deployed functions it would delete.
 - The Firestore database is in `nam5`. That is fine for dev, since the functions run in `us-central1`.
   For staging and production, choose the region deliberately before the first deploy.
+
+## ADR-084 — A development build can target the real dev project: `FIREBASE_USE_EMULATOR` (2026-11-13)
+
+- Tarih: 2026-11-13
+- Durum: Accepted (product owner approved the flag explicitly)
+
+### Context
+
+The real-device test needs a phone build that reaches the deployed `abakus-one-dev` project (ADR-083).
+Every `development` build connected Auth, Firestore, Functions and Storage to the local emulator at
+`127.0.0.1`, with no way to opt out (`Firebase*EmulatorConfig.shouldUseEmulator` returned
+`environment == development`). On a phone without USB `adb reverse`, nothing would load. The runbook
+command (`flutter run --flavor development`) had the same problem.
+
+### Decision
+
+- A compile-time define, `FIREBASE_USE_EMULATOR`, defaults to `true`. A development build with
+  `--dart-define=FIREBASE_USE_EMULATOR=false` uses the real development project.
+- One switch, `lib/bootstrap/firebase_emulator_switch.dart` (`FirebaseEmulatorSwitch`). All four
+  `Firebase*EmulatorConfig.shouldUseEmulator` delegate to it, so a build is either fully local or
+  fully real, never mixed. The Windows REST clients already read those configs.
+- Staging and production never use the emulator, whatever the flag says. The flag can only turn the
+  emulator off, and only for development.
+- The default is unchanged, so every existing emulator workflow and test is unaffected.
+- `dev_login_config.dart` already hides the emulator-only quick test login when
+  `FirebaseAuthEmulatorConfig.shouldUseEmulator` is false, so a real-dev build shows only the real
+  sign-in.
+
+### Consequences
+
+- The provisioning scripts (`migrate_canonical_catalog_to_project`, `provision_launch_tables`,
+  `provision_launch_entitlements`) now allow `abakus-one-dev`. On dev only, the entitlements script
+  also grants `courier`.
+- New dev-only script `create_dev_test_owner_account.mjs` creates the `sahip.test@abakus.dev` sign-in
+  (no role) that `bootstrap_platform_owner.mjs` then makes the dev Platform Owner.
+- `seed_courier_pool_device_test.mjs` now also seeds:
+  - a `mudur.test@` manager;
+  - Faz 4 test rules on the three Kadıköy neighborhoods;
+  - the branch default district.
+- `docs/courier_pool_device_test.md` §2–3 describe the whole sequence.

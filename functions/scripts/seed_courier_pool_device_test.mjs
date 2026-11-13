@@ -6,8 +6,8 @@
 //   - deliveryServiceAreas for the branch: Kadıköy → Caferağa / Moda /
 //     Fenerbahçe (so a POS phone order in those neighborhoods resolves the
 //     pool district "kadikoy");
-//   - four e-mail/password sign-ins with active memberships in the
-//     organization: a Kasiyer (branch access), and three couriers
+//   - five e-mail/password sign-ins with active memberships in the
+//     organization: a Müdür and a Kasiyer (branch access), and three couriers
 //     (no branch access — external couriers are region-based). Generated
 //     passwords are printed ONCE for new accounts.
 //
@@ -51,13 +51,18 @@ const app = admin.initializeApp({ projectId });
 const db = admin.firestore();
 const auth = admin.auth();
 
+// 2026-11-13 (Faz 4, ADR-081): each area also carries a test minimum basket
+// and delivery estimate, so the below-minimum warning and the slip ETA can be
+// checked on the device. Caferağa and Moda have a minimum; Fenerbahçe has
+// none (ungated) but still an ETA.
 const AREAS = [
-  { districtId: "kadikoy", neighborhoodId: "caferaga" },
-  { districtId: "kadikoy", neighborhoodId: "moda" },
-  { districtId: "kadikoy", neighborhoodId: "fenerbahce" },
+  { districtId: "kadikoy", neighborhoodId: "caferaga", neighborhoodName: "Caferağa", minimumOrderMinorUnits: 25000, estimatedDeliveryMinutes: 35 },
+  { districtId: "kadikoy", neighborhoodId: "moda", neighborhoodName: "Moda", minimumOrderMinorUnits: 30000, estimatedDeliveryMinutes: 40 },
+  { districtId: "kadikoy", neighborhoodId: "fenerbahce", neighborhoodName: "Fenerbahçe", minimumOrderMinorUnits: 0, estimatedDeliveryMinutes: 30 },
 ];
 
 const ACCOUNTS = [
+  { key: "mudur", email: "mudur.test@abakus.dev", roles: ["manager"], branchAccess: [branchId], name: "Test Müdür" },
   { key: "kasiyer", email: "kasiyer.test@abakus.dev", roles: ["cashier"], branchAccess: [branchId], name: "Test Kasiyer" },
   { key: "dukkan-kurye", email: "kurye.dukkan@abakus.dev", roles: ["courier"], branchAccess: [], name: "Dükkan Kuryesi" },
   { key: "dis-kurye-1", email: "kurye.dis1@abakus.dev", roles: ["courier"], branchAccess: [], name: "Dış Kurye 1" },
@@ -72,10 +77,18 @@ async function main() {
 
   for (const area of AREAS) {
     const id = `${branchId}_${area.districtId}_${area.neighborhoodId}`;
+    // merge: a rule later edited on the POS (Teslimat Bölgeleri) keeps its
+    // own audit fields; a re-run resets only the test values below.
     await db.collection("deliveryServiceAreas").doc(id).set({
-      organizationId, restaurantId, branchId, ...area, enabled: true, minimumOrderMinorUnits: 0,
-    });
+      organizationId, restaurantId, branchId, ...area, enabled: true,
+    }, { merge: true });
     console.log(`${TAG} deliveryServiceAreas/${id}`);
+  }
+
+  // The POS zone editor needs a default district when none is typed (ADR-081).
+  if (!branch.data().defaultDeliveryDistrictId) {
+    await branch.ref.update({ defaultDeliveryDistrictId: "kadikoy" });
+    console.log(`${TAG} branches/${branchId}.defaultDeliveryDistrictId = kadikoy`);
   }
 
   const created = [];

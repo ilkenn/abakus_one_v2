@@ -39,7 +39,8 @@ import { writeFileSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
-const ALLOWED_PROJECT_IDS = new Set(["abakus-one-staging", "abakusone"]);
+// 2026-11-13: + "abakus-one-dev" for the real-device test (docs/courier_pool_device_test.md).
+const ALLOWED_PROJECT_IDS = new Set(["abakus-one-dev", "abakus-one-staging", "abakusone"]);
 
 const projectArgIndex = process.argv.indexOf("--project");
 const PROJECT_ID = projectArgIndex !== -1 ? process.argv[projectArgIndex + 1] : null;
