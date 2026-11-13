@@ -47,9 +47,24 @@ once per project.
    and, on dev only, `courier`.
 7. `node scripts/seed_courier_pool_device_test.mjs org-1 branch-1 restaurant-1` — service areas
    Kadıköy: Caferağa (min. 250 TL, ~35 dk), Moda (min. 300 TL, ~40 dk), Fenerbahçe (no minimum,
-   ~30 dk); the branch's default district `kadikoy`; and five sign-ins:
-   `mudur.test@`, `kasiyer.test@`, `kurye.dukkan@`, `kurye.dis1@`, `kurye.dis2@` (all `@abakus.dev`).
-   New passwords are printed once.
+   ~30 dk); the branch's default district `kadikoy`; and the staff sign-ins.
+   - Since ADR-085, staff sign in with **phone number + password**, on the phone through "Şifre ile giriş"
+     and on the Windows POS.
+   - Test numbers (dev only, no SMS):
+
+     | Number | Account |
+     |---|---|
+     | 555 000 00 01 | Yönetici |
+     | 555 000 00 02 | Müdür |
+     | 555 000 00 03 | Kasiyer |
+     | 555 000 00 04 | Dükkan Kuryesi |
+     | 555 000 00 05 | Dış Kurye 1 |
+     | 555 000 00 06 | Dış Kurye 2 |
+
+   - Accounts created earlier with an `@abakus.dev` e-mail are moved to their number in place: same
+     account, same password.
+   - `sahip.test@abakus.dev` keeps its e-mail sign-in for the Platform Konsolu.
+   - New passwords are printed once.
 
 ## 3. Devices
 

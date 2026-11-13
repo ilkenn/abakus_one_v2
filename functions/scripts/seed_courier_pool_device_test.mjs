@@ -6,10 +6,15 @@
 //   - deliveryServiceAreas for the branch: Kadıköy → Caferağa / Moda /
 //     Fenerbahçe (so a POS phone order in those neighborhoods resolves the
 //     pool district "kadikoy");
-//   - five e-mail/password sign-ins with active memberships in the
-//     organization: a Müdür and a Kasiyer (branch access), and three couriers
-//     (no branch access — external couriers are region-based). Generated
-//     passwords are printed ONCE for new accounts.
+//   - staff sign-ins with active memberships in the organization: a Yönetici,
+//     a Müdür and a Kasiyer (branch access), and three couriers (no branch
+//     access — external couriers are region-based). Since ADR-085 (revision,
+//     2026-11-13) staff sign in with PHONE NUMBER + PASSWORD: each account
+//     carries a fixed test phone number and the hidden sign-in e-mail derived
+//     from it. An account created earlier with a plain e-mail is moved to its
+//     phone number in place (same uid, same password). Generated passwords
+//     are printed ONCE for new accounts. The dev Platform Owner keeps its
+//     e-mail sign-in, which the Platform Konsolu uses.
 //
 // What it deliberately does NOT do: create `couriers` records or link a
 // sign-in to one — the test does that on the POS ("Kurye Ayarları"), which
@@ -61,13 +66,71 @@ const AREAS = [
   { districtId: "kadikoy", neighborhoodId: "fenerbahce", neighborhoodName: "Fenerbahçe", minimumOrderMinorUnits: 0, estimatedDeliveryMinutes: 30 },
 ];
 
+// Must match staffLoginEmailForPhone in src/staffAccounts.ts (ADR-085).
+function staffLoginEmailForPhone(phoneNumber) {
+  return `${phoneNumber.replace(/^\+/, "")}@staff-login.abakus.invalid`;
+}
+
+// Test phone numbers (+90 555 000 00 0x) exist only in the dev project. They
+// sign in with a password, never by SMS. `legacyEmail` is the plain e-mail
+// an account was created with before ADR-085; such an account is moved to
+// its phone number in place.
 const ACCOUNTS = [
-  { key: "mudur", email: "mudur.test@abakus.dev", roles: ["manager"], branchAccess: [branchId], name: "Test Müdür" },
-  { key: "kasiyer", email: "kasiyer.test@abakus.dev", roles: ["cashier"], branchAccess: [branchId], name: "Test Kasiyer" },
-  { key: "dukkan-kurye", email: "kurye.dukkan@abakus.dev", roles: ["courier"], branchAccess: [], name: "Dükkan Kuryesi" },
-  { key: "dis-kurye-1", email: "kurye.dis1@abakus.dev", roles: ["courier"], branchAccess: [], name: "Dış Kurye 1" },
-  { key: "dis-kurye-2", email: "kurye.dis2@abakus.dev", roles: ["courier"], branchAccess: [], name: "Dış Kurye 2" },
+  // The dev Platform Owner (create_dev_test_owner_account.mjs) keeps its
+  // e-mail sign-in (the Platform Konsolu uses it) and is also an org admin.
+  { key: "sahip", email: "sahip.test@abakus.dev", roles: ["admin"], branchAccess: [branchId], firstName: "Test", lastName: "Platform Sahibi" },
+  // A POS device registered by the Müdür needs a second manager-tier account
+  // to approve it (no self-approval): the Yönetici.
+  { key: "yonetici", phone: "+905550000001", roles: ["admin"], branchAccess: [branchId], firstName: "Test", lastName: "Yönetici" },
+  { key: "mudur", phone: "+905550000002", legacyEmail: "mudur.test@abakus.dev", roles: ["manager"], branchAccess: [branchId], firstName: "Test", lastName: "Müdür" },
+  { key: "kasiyer", phone: "+905550000003", legacyEmail: "kasiyer.test@abakus.dev", roles: ["cashier"], branchAccess: [branchId], firstName: "Test", lastName: "Kasiyer" },
+  { key: "dukkan-kurye", phone: "+905550000004", legacyEmail: "kurye.dukkan@abakus.dev", roles: ["courier"], branchAccess: [], firstName: "Dükkan", lastName: "Kuryesi" },
+  { key: "dis-kurye-1", phone: "+905550000005", legacyEmail: "kurye.dis1@abakus.dev", roles: ["courier"], branchAccess: [], firstName: "Dış", lastName: "Kurye 1" },
+  { key: "dis-kurye-2", phone: "+905550000006", legacyEmail: "kurye.dis2@abakus.dev", roles: ["courier"], branchAccess: [], firstName: "Dış", lastName: "Kurye 2" },
 ];
+
+async function findUser(lookup) {
+  try {
+    return await lookup();
+  } catch (error) {
+    if (error.code === "auth/user-not-found") return null;
+    throw error;
+  }
+}
+
+/** Returns [user, generatedPassword | null]. */
+async function ensureAccount(account) {
+  const displayName = `${account.firstName} ${account.lastName}`;
+  if (!account.phone) {
+    const existing = await findUser(() => auth.getUserByEmail(account.email));
+    if (existing) {
+      console.log(`${TAG} ${account.email}: already exists (uid=${existing.uid}), password unchanged.`);
+      return [existing, null];
+    }
+    const password = randomBytes(9).toString("base64url");
+    const user = await auth.createUser({ email: account.email, password, displayName });
+    console.log(`${TAG} ${account.email}: created (uid=${user.uid}).`);
+    return [user, password];
+  }
+
+  const loginEmail = staffLoginEmailForPhone(account.phone);
+  const byPhone = await findUser(() => auth.getUserByPhoneNumber(account.phone));
+  if (byPhone) {
+    if (byPhone.email !== loginEmail) await auth.updateUser(byPhone.uid, { email: loginEmail });
+    console.log(`${TAG} ${account.phone}: already exists (uid=${byPhone.uid}), password unchanged.`);
+    return [byPhone, null];
+  }
+  const legacy = account.legacyEmail ? await findUser(() => auth.getUserByEmail(account.legacyEmail)) : null;
+  if (legacy) {
+    const user = await auth.updateUser(legacy.uid, { phoneNumber: account.phone, email: loginEmail, displayName });
+    console.log(`${TAG} ${account.legacyEmail} -> ${account.phone}: moved to phone sign-in (uid=${user.uid}), password unchanged.`);
+    return [user, null];
+  }
+  const password = randomBytes(9).toString("base64url");
+  const user = await auth.createUser({ phoneNumber: account.phone, email: loginEmail, password, displayName });
+  console.log(`${TAG} ${account.phone}: created (uid=${user.uid}).`);
+  return [user, password];
+}
 
 async function main() {
   const branch = await db.collection("branches").doc(branchId).get();
@@ -93,16 +156,8 @@ async function main() {
 
   const created = [];
   for (const account of ACCOUNTS) {
-    let user;
-    try {
-      user = await auth.getUserByEmail(account.email);
-      console.log(`${TAG} ${account.email}: already exists (uid=${user.uid}), password unchanged.`);
-    } catch {
-      const password = randomBytes(9).toString("base64url");
-      user = await auth.createUser({ email: account.email, password, displayName: account.name });
-      created.push({ email: account.email, password });
-      console.log(`${TAG} ${account.email}: created (uid=${user.uid}).`);
-    }
+    const [user, password] = await ensureAccount(account);
+    if (password) created.push({ login: account.phone ?? account.email, password });
     await db.collection("memberships").doc(`${organizationId}_${user.uid}`).set({
       organizationId,
       uid: user.uid,
@@ -111,12 +166,15 @@ async function main() {
       restaurantAccess: [],
       status: "active",
       version: 1,
+      firstName: account.firstName,
+      lastName: account.lastName,
+      ...(account.phone ? { phoneNumber: account.phone } : {}),
     }, { merge: true });
   }
 
   if (created.length > 0) {
     console.log(`\n${TAG} NEW sign-ins (shown once — keep them safe):`);
-    for (const c of created) console.log(`  ${c.email}  ${c.password}`);
+    for (const c of created) console.log(`  ${c.login}  ${c.password}`);
   }
   console.log(`\n${TAG} done. Each account's claims sync on its first sign-in in the app.`);
   await app.delete();
