@@ -21585,3 +21585,16 @@ three points; supersedes decisions 2 and 5 above and the invite update):**
     call changes, so a preview can only narrow what is shown, never grant anything.
   - Screens that decide what to show by role follow it: the menu, the landing screen and `RoleGate`.
   - An always-visible strip returns to the real role in one tap.
+
+**Update 2026-11-13 — staff package, stage 4 (product owner approved):**
+
+- **"Konuma Git".** The courier copy carries the address pin, which counts as personal data and is
+  removed at delivery. The app opens Google, Apple or Yandex maps, to the pin or else to the written
+  address.
+- **Smart call.** The caller is decided client-side from server-written fields:
+  - own channels and Yemeksepeti: the customer;
+  - Trendyol and Getir: the organization's switchboard (default `0212 365 34 03`) followed by
+    `,,<order code>#`, with `#` URL-encoded.
+- **Dormant until marketplace orders exist.** The marketplace fields are read from the order
+  (`marketplaceProvider`, `marketplaceOrderCode`). A future marketplace integration must write them there.
+  `OrderChannel` itself was not extended.

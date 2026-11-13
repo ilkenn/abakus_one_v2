@@ -120,8 +120,8 @@ Future<_Fakes> _pump(WidgetTester tester, _FakeRepository repository) async {
     overrides: [
       courierWorkRepositoryProvider.overrideWithValue(repository),
       courierWorkGatewayProvider.overrideWithValue(gateway),
-      courierPhoneDialerProvider.overrideWithValue((phone) async {
-        dialed.add(phone);
+      courierUriLauncherProvider.overrideWithValue((uri) async {
+        dialed.add(uri.toString());
       }),
     ],
     child: const MaterialApp(home: CourierWorkScreen(uid: 'uid-1')),
@@ -154,7 +154,16 @@ void main() {
 
     await tester.tap(find.byKey(const Key('callCustomer-o1')));
     await tester.pumpAndSettle();
-    expect(fakes.dialed, ['+905321112233']);
+    expect(fakes.dialed, ['tel:+905321112233']);
+    expect(find.text('Müşteriyi Ara'), findsOneWidget);
+
+    // ADR-085 stage 4 — "Konuma Git" by the written address (no pin).
+    await tester.tap(find.byKey(const Key('navigate-o1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('navigateWith-Yandex Haritalar')));
+    await tester.pumpAndSettle();
+    expect(
+        fakes.dialed.last, startsWith('https://yandex.com.tr/harita/?text='));
 
     await tester.tap(find.byKey(const Key('departed-o1')));
     await tester.pumpAndSettle();

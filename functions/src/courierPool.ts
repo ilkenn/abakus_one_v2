@@ -558,7 +558,33 @@ export type CourierProjectionStatus = "reserved" | "assigned" | "departed" | "de
  * neighborhood, amount, payment method, times) identifies no one, so the
  * courier's history never shows personal data.
  */
-export const COURIER_PII_FIELDS = ["customerName", "customerPhone", "addressLine", "courierNote"] as const;
+export const COURIER_PII_FIELDS = [
+  "customerName", "customerPhone", "addressLine", "courierNote", "destinationLatitude", "destinationLongitude",
+] as const;
+
+/**
+ * ADR-085 stage 4 — where a marketplace order came from. Trendyol and Getir
+ * hide the customer's number: the courier calls the restaurant line of that
+ * platform and keys the order code (DTMF). Yemeksepeti and our own channels
+ * give the customer's number. Dormant until a marketplace integration writes
+ * `marketplaceProvider` / `marketplaceOrderCode` on the order.
+ */
+export const MARKETPLACE_PROVIDERS = ["yemeksepeti", "trendyol", "getir"] as const;
+export type MarketplaceProvider = (typeof MARKETPLACE_PROVIDERS)[number];
+export const SWITCHBOARD_PROVIDERS: ReadonlySet<string> = new Set(["trendyol", "getir"]);
+/** Default switchboard; an organization overrides it in `courierCallSettings`. */
+export const DEFAULT_MARKETPLACE_SWITCHBOARD_PHONE = "02123653403";
+
+function marketplaceProviderOf(order: DocumentData): MarketplaceProvider | null {
+  const value = order.marketplaceProvider;
+  return typeof value === "string" && (MARKETPLACE_PROVIDERS as readonly string[]).includes(value)
+    ? (value as MarketplaceProvider)
+    : null;
+}
+
+function coordinate(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 /**
  * The courier's own copy of an order — `null` when no courier holds it any
@@ -570,6 +596,7 @@ export function buildCourierAssignedOrderProjection(
   order: DocumentData,
   courierAuthUid: string | null,
   branchName = "",
+  switchboardPhone = DEFAULT_MARKETPLACE_SWITCHBOARD_PHONE,
 ): Record<string, unknown> | null {
   if (order.channel !== "delivery" || CLOSED_STATUSES.has(order.status as string)) return null;
   const assigned = order.assignedCourierId as string | undefined;
@@ -585,6 +612,9 @@ export function buildCourierAssignedOrderProjection(
         ? "departed"
         : "assigned";
   const address = order.deliveryAddressSnapshot as DocumentData | undefined;
+  const marketplaceProvider = marketplaceProviderOf(order);
+  const latitude = coordinate(address?.latitude);
+  const longitude = coordinate(address?.longitude);
   return {
     organizationId: order.organizationId,
     branchId: order.branchId,
@@ -602,7 +632,14 @@ export function buildCourierAssignedOrderProjection(
         customerPhone: (order.contactPhone as string | undefined) ?? null,
         addressLine: poolAddressLine(address),
         courierNote: (order.customerNote as string | undefined) ?? "",
+        // ADR-085 stage 4 — "Konuma Git" uses the pin when the address has one.
+        ...(latitude !== null && longitude !== null
+          ? { destinationLatitude: latitude, destinationLongitude: longitude }
+          : {}),
       }),
+    marketplaceProvider,
+    marketplaceOrderCode: marketplaceProvider ? ((order.marketplaceOrderCode as string | undefined) ?? null) : null,
+    switchboardPhone: marketplaceProvider && SWITCHBOARD_PROVIDERS.has(marketplaceProvider) ? switchboardPhone : null,
     neighborhoodName: (address?.neighborhoodName as string | undefined) ?? "",
     amountDueMinorUnits: orderAmountDueMinorUnits(order),
     plannedPaymentMethodId: (order.paymentMethodSnapshot?.paymentMethodId as string | undefined) ?? null,
@@ -617,6 +654,7 @@ const PROJECTION_INPUT_FIELDS = [
   "status", "assignedCourierId", "poolReservedCourierId", "poolStatus", "departedAt",
   "courierReportedDeliveredAt", "courierReportedPaymentMethodId", "contactPhone",
   "contactFirstName", "contactLastName", "deliveryAddressSnapshot", "customerNote",
+  "marketplaceProvider", "marketplaceOrderCode",
 ] as const;
 
 function projectionInputsChanged(before: DocumentData, after: DocumentData): boolean {
@@ -648,7 +686,14 @@ export async function syncCourierProjectionForOrder(
     const branchSnap = await db.collection("branches").doc(order.branchId).get();
     branchName = (branchSnap.data()?.name as string | undefined) ?? "";
   }
-  const projection = buildCourierAssignedOrderProjection(orderId, order, authUid, branchName);
+  let switchboardPhone = DEFAULT_MARKETPLACE_SWITCHBOARD_PHONE;
+  const provider = marketplaceProviderOf(order);
+  if (courierId && provider && SWITCHBOARD_PROVIDERS.has(provider) && typeof order.organizationId === "string") {
+    const orgSnap = await db.collection("organizations").doc(order.organizationId).get();
+    const configured = orgSnap.data()?.courierCallSettings?.marketplaceSwitchboardPhone;
+    if (typeof configured === "string" && configured.trim()) switchboardPhone = configured.trim();
+  }
+  const projection = buildCourierAssignedOrderProjection(orderId, order, authUid, branchName, switchboardPhone);
   if (projection) {
     await projectionRef.set({ ...projection, updatedAt: Timestamp.now() });
   } else {

@@ -1,3 +1,5 @@
+import 'courier_contact_plan.dart';
+
 /// 2026-11-12 (Faz 3b) — the courier app's server-backed read models
 /// (`functions/src/courierPool.ts`). Plain value types; timestamps arrive
 /// either as Firestore `Timestamp`s (anything with `toDate()`) or ISO
@@ -97,6 +99,11 @@ class CourierWorkOrder {
     required this.plannedPaymentMethodId,
     required this.reportedPaymentMethodId,
     required this.status,
+    this.destinationLatitude,
+    this.destinationLongitude,
+    this.source = CourierOrderSource.own,
+    this.marketplaceOrderCode,
+    this.switchboardPhone,
   });
 
   final String orderId;
@@ -114,6 +121,20 @@ class CourierWorkOrder {
   final String? plannedPaymentMethodId;
   final String? reportedPaymentMethodId;
   final CourierWorkOrderStatus status;
+
+  /// ADR-085 stage 4 — the address pin, when the address has one; removed
+  /// at delivery with the rest of the personal data.
+  final double? destinationLatitude;
+  final double? destinationLongitude;
+
+  /// Where the order came from — decides whom "Ara" calls.
+  final CourierOrderSource source;
+
+  /// Trendyol/Getir: the order code keyed after the switchboard answers.
+  final String? marketplaceOrderCode;
+
+  /// Trendyol/Getir: the restaurant line to call (organization setting).
+  final String? switchboardPhone;
 
   /// Open work first: on the road, assigned, reserved, then delivered.
   int get statusRank => switch (status) {
@@ -138,6 +159,13 @@ class CourierWorkOrder {
         plannedPaymentMethodId: data['plannedPaymentMethodId'] as String?,
         reportedPaymentMethodId: data['reportedPaymentMethodId'] as String?,
         status: CourierWorkOrderStatus.parse(data['status'] as String?),
+        destinationLatitude: (data['destinationLatitude'] as num?)?.toDouble(),
+        destinationLongitude:
+            (data['destinationLongitude'] as num?)?.toDouble(),
+        source:
+            CourierOrderSource.parse(data['marketplaceProvider'] as String?),
+        marketplaceOrderCode: data['marketplaceOrderCode'] as String?,
+        switchboardPhone: data['switchboardPhone'] as String?,
       );
 }
 

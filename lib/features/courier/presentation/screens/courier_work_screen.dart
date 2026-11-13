@@ -9,6 +9,7 @@ import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../data/courier_work_repository.dart';
+import '../../domain/work/courier_contact_plan.dart';
 import '../../domain/work/courier_work_models.dart';
 import '../providers/courier_work_providers.dart';
 
@@ -215,7 +216,7 @@ class _MyOrdersTabState extends ConsumerState<_MyOrdersTab> {
               '${orders[i].orderNumber}: yola çıktınız.',
             ),
             onDelivered: () => _reportDelivered(orders[i]),
-            onCall: (phone) => ref.read(courierPhoneDialerProvider)(phone),
+            onOpen: (uri) => ref.read(courierUriLauncherProvider)(uri),
           ),
         );
       },
@@ -229,14 +230,39 @@ class _OrderCard extends StatelessWidget {
     required this.busy,
     required this.onDeparted,
     required this.onDelivered,
-    required this.onCall,
+    required this.onOpen,
   });
 
   final CourierWorkOrder order;
   final bool busy;
   final VoidCallback onDeparted;
   final VoidCallback onDelivered;
-  final void Function(String phone) onCall;
+  final Future<void> Function(Uri uri) onOpen;
+
+  /// ADR-085 stage 4 — "Konuma Git": pick Google, Apple or Yandex.
+  Future<void> _chooseNavigation(
+    BuildContext context,
+    List<CourierNavigationOption> options,
+  ) async {
+    final chosen = await showModalBottomSheet<CourierNavigationOption>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final option in options)
+              ListTile(
+                key: Key('navigateWith-${option.label}'),
+                leading: const Icon(Icons.map_outlined),
+                title: Text(option.label),
+                onTap: () => Navigator.of(sheetContext).pop(option),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null) await onOpen(chosen.uri);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -257,7 +283,8 @@ class _OrderCard extends StatelessWidget {
     // delivered order either, even from a stale cached copy.
     final delivered =
         order.status == CourierWorkOrderStatus.deliveredAwaitingSettlement;
-    final phone = delivered ? null : order.customerPhone;
+    final callPlan = courierCallPlan(order);
+    final navigation = courierNavigationOptions(order);
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: AppCard(
@@ -316,12 +343,19 @@ class _OrderCard extends StatelessWidget {
               spacing: AppSpacing.sm,
               runSpacing: AppSpacing.sm,
               children: [
-                if (phone != null && phone.isNotEmpty)
+                if (navigation.isNotEmpty)
+                  OutlinedButton.icon(
+                    key: Key('navigate-${order.orderId}'),
+                    icon: const Icon(Icons.near_me_rounded),
+                    label: const Text('Konuma Git'),
+                    onPressed: () => _chooseNavigation(context, navigation),
+                  ),
+                if (callPlan != null)
                   OutlinedButton.icon(
                     key: Key('callCustomer-${order.orderId}'),
                     icon: const Icon(Icons.phone_rounded),
-                    label: const Text('Ara'),
-                    onPressed: () => onCall(phone),
+                    label: Text(callPlan.label),
+                    onPressed: () => onOpen(callPlan.uri),
                   ),
                 if (order.status == CourierWorkOrderStatus.assigned)
                   FilledButton.icon(

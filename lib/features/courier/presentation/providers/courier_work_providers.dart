@@ -21,10 +21,12 @@ final courierWorkGatewayProvider = Provider<CourierWorkGateway>((ref) {
 
 /// Opens the phone dialer for [phone] — a provider so widget tests can
 /// observe the call instead of launching anything.
-final courierPhoneDialerProvider =
-    Provider<Future<void> Function(String phone)>((ref) {
-  return (phone) async {
-    await launchUrl(Uri(scheme: 'tel', path: phone));
+/// Opens a `tel:` call or a navigation app (ADR-085 stage 4). Replaced in
+/// tests to record what would have been opened.
+final courierUriLauncherProvider =
+    Provider<Future<void> Function(Uri uri)>((ref) {
+  return (uri) async {
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   };
 });
 

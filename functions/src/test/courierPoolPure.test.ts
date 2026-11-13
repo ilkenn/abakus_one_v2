@@ -31,6 +31,37 @@ test("the courier copy carries the phone until the courier reports delivery", ()
   assert.strictEqual(buildCourierAssignedOrderProjection("o1", order({ departedAt: 1 }), null)!.status, "departed");
 });
 
+test("ADR-085 stage 4: the pin travels with the order until delivery", () => {
+  const pinned = order({
+    deliveryAddressSnapshot: { neighborhoodName: "Caferağa", streetName: "Moda Caddesi", latitude: 40.98, longitude: 29.03 },
+  });
+  const assigned = buildCourierAssignedOrderProjection("o1", pinned, "uid-1")!;
+  assert.strictEqual(assigned.destinationLatitude, 40.98);
+  assert.strictEqual(assigned.destinationLongitude, 29.03);
+  const delivered = buildCourierAssignedOrderProjection("o1", { ...pinned, courierReportedDeliveredAt: 1 }, "uid-1")!;
+  assert.ok(!("destinationLatitude" in delivered));
+  assert.ok(!("destinationLatitude" in buildCourierAssignedOrderProjection("o1", order(), "uid-1")!), "no pin, no field");
+});
+
+test("ADR-085 stage 4: Trendyol/Getir orders carry the switchboard and the order code; own orders none", () => {
+  const own = buildCourierAssignedOrderProjection("o1", order(), "uid-1")!;
+  assert.strictEqual(own.marketplaceProvider, null);
+  assert.strictEqual(own.switchboardPhone, null);
+
+  const trendyol = buildCourierAssignedOrderProjection(
+    "o1", order({ marketplaceProvider: "trendyol", marketplaceOrderCode: "123456" }), "uid-1", "", "02120000000")!;
+  assert.strictEqual(trendyol.marketplaceProvider, "trendyol");
+  assert.strictEqual(trendyol.marketplaceOrderCode, "123456");
+  assert.strictEqual(trendyol.switchboardPhone, "02120000000");
+
+  const yemeksepeti = buildCourierAssignedOrderProjection(
+    "o1", order({ marketplaceProvider: "yemeksepeti", marketplaceOrderCode: "YS-9" }), "uid-1")!;
+  assert.strictEqual(yemeksepeti.switchboardPhone, null, "Yemeksepeti gives the customer's number");
+
+  const unknown = buildCourierAssignedOrderProjection("o1", order({ marketplaceProvider: "other" }), "uid-1")!;
+  assert.strictEqual(unknown.marketplaceProvider, null);
+});
+
 test("reserved, closed and unassigned orders", () => {
   const reserved = buildCourierAssignedOrderProjection("o1", order({ status: "preparing", assignedCourierId: undefined, poolReservedCourierId: "c2" }), null)!;
   assert.strictEqual(reserved.status, "reserved");

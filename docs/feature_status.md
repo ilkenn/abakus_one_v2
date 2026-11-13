@@ -12007,7 +12007,7 @@ Step 5 details (dev project `abakus-one-dev`):
 | 1 | Managers cannot deactivate staff; manager-added staff wait for admin/owner approval (Onay Kutusu) | Done (2026-11-13), Visual Review Bekleniyor |
 | 2 | KVKK: customer data removed from the courier projection at "Teslim Ettim"; screenshot block on staff/courier/POS screens (owner and customer app exempt) | Done (2026-11-13), Visual Review Bekleniyor (iOS untested) |
 | 3 | Panel top bar: no DEMO badge, name + role, admin/owner role preview | Done (2026-11-13), Visual Review Bekleniyor |
-| 4 | Courier: "Konuma Git", smart call (own orders: customer; Trendyol/Getir: configurable switchboard + DTMF order code) | Not started |
+| 4 | Courier: "Konuma Git", smart call (own orders: customer; Trendyol/Getir: configurable switchboard + DTMF order code) | Done (2026-11-13), Visual Review Bekleniyor; marketplace part dormant |
 | 5 | Courier pay rates (per courier, effective-dated), earnings view, manager-approved shifts — data model draft first | Not started |
 
 Stage 0 details:
@@ -12076,3 +12076,25 @@ Stage 3 details:
 - Tests: `staff_identity_header_test.dart` (name/role, manager has no preview menu, owner previews
   Kasiyer and returns, preview never applies to a non-admin); `module_readiness_gate_test.dart` now
   expects no badge.
+
+Stage 4 details:
+
+- Server (`courierPool.ts`): the courier's copy carries `destinationLatitude/Longitude` when the address
+  has a pin. Both are added to `COURIER_PII_FIELDS`, so they go at delivery.
+  - Marketplace fields: `marketplaceProvider` and `marketplaceOrderCode`, copied from the order, and for
+    Trendyol/Getir `switchboardPhone`.
+  - The switchboard is `organizations/{org}.courierCallSettings.marketplaceSwitchboardPhone`, default
+    `02123653403`.
+- App (`courier_contact_plan.dart`, pure):
+  - "Konuma Git" offers Google, Apple and Yandex maps, to the pin if there is one, else to the written
+    address;
+  - "Ara" calls the customer for own and Yemeksepeti orders, and for Trendyol/Getir dials
+    `tel:<switchboard>,,<code>%23`;
+  - nothing is offered after delivery.
+- Dormant: no order carries `marketplaceProvider` yet (no marketplace integration writes orders), so today
+  every call goes to the customer. Staff-entered addresses have no pin, so they navigate by address.
+- Configurable, but no screen yet: the switchboard can be set only on the organization document; there is
+  no panel field for it.
+- Tests: `courier_contact_plan_test.dart` (call plans incl. DTMF encoding, navigation by pin/address, KVKK
+  after delivery, parsing); pure server tests for the pin and the marketplace fields; the courier widget
+  test opens Yandex by address.
