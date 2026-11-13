@@ -41,6 +41,7 @@ import '../../../pos/presentation/screens/pos_branch_overview_screen.dart';
 import 'admin_menu_screen.dart';
 import 'admin_orders_screen.dart';
 import '../widgets/admin_coming_soon_view.dart';
+import '../widgets/staff_screen_capture_guard.dart';
 import '../widgets/admin_context_gate.dart';
 import '../widgets/module_readiness_gate.dart';
 import '../providers/admin_dependencies_provider.dart';
@@ -791,10 +792,14 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
     // server-backed courier app. It needs no branch context (an external
     // courier is region-based and holds no branch access), so it opens
     // before the context gate.
+    // ADR-085 stage 2 (KVKK) — every signed-in staff surface below (staff
+    // panel, POS, courier) stays out of screenshots and recordings.
     if (session.activeRole == StaffRole.courier) {
-      return CourierWorkScreen(
-        uid: session.actorId,
-        onSignOut: () => ref.read(staffSessionControllerProvider).signOut(),
+      return StaffScreenCaptureGuard(
+        child: CourierWorkScreen(
+          uid: session.actorId,
+          onSignOut: () => ref.read(staffSessionControllerProvider).signOut(),
+        ),
       );
     }
 
@@ -804,7 +809,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
     // operate against) and BEFORE any destination content ever renders —
     // see `AdminContextGate`'s own doc comment for the full revoked-
     // access/auto-select/explicit-picker behavior.
-    return AdminContextGate(
+    return StaffScreenCaptureGuard(child: AdminContextGate(
       child: Builder(
         builder: (context) {
           final branchId = ref.watch(currentBranchIdProvider);
@@ -850,7 +855,7 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
           );
         },
       ),
-    );
+    ));
   }
 }
 

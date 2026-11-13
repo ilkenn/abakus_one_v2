@@ -12,11 +12,15 @@ import 'core/notifications/fcm_registration_provider.dart';
 import 'core/notifications/reservation_notification_tap_router.dart';
 import 'core/notifications/staff_push_notifications_provider.dart';
 import 'core/router/app_router.dart';
+import 'core/services/screen_capture/screen_capture_protection.dart';
 import 'core/theme/app_theme.dart';
 import 'features/admin/presentation/providers/staff_session_controller.dart';
 import 'features/auth/presentation/providers/auth_provider.dart';
 import 'features/branding/presentation/providers/resolved_app_theme_provider.dart';
 import 'features/pos/domain/authorization/actor_session.dart';
+import 'features/platform/domain/authorization/platform_actor_session.dart';
+import 'features/platform/domain/authorization/platform_role.dart';
+import 'features/platform/presentation/providers/platform_actor_session_provider.dart';
 import 'features/pos/presentation/providers/actor_session_provider.dart';
 
 class AbakusApp extends ConsumerStatefulWidget {
@@ -42,9 +46,18 @@ class _AbakusAppState extends ConsumerState<AbakusApp> {
   // triggers one background lookup.
   String? _staffDiscoveryUid;
 
+  // ADR-085 stage 2 — the Platform Owner is exempt from the staff screens'
+  // screenshot block.
+  ProviderSubscription<PlatformActorSession?>? _platformSessionSubscription;
+
   @override
   void initState() {
     super.initState();
+    _platformSessionSubscription = ref.listenManual<PlatformActorSession?>(
+        platformActorSessionProvider, (previous, next) {
+      ref.read(screenCaptureProtectionProvider).exempt =
+          next?.roles.contains(PlatformRole.platformOwner) ?? false;
+    }, fireImmediately: true);
     // Faz R.3C — deliberately not part of `bootstrapApp()`'s pre-`runApp`
     // sequence (`lib/bootstrap/app_bootstrap.dart`): device-token
     // registration needs a resolved customer [AuthState] and is not
@@ -152,6 +165,7 @@ class _AbakusAppState extends ConsumerState<AbakusApp> {
     _notificationTapSubscription?.cancel();
     _foregroundMessageSubscription?.cancel();
     _staffSessionSubscription?.close();
+    _platformSessionSubscription?.close();
     _authSubscription?.close();
     super.dispose();
   }

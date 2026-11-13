@@ -21557,3 +21557,18 @@ three points; supersedes decisions 2 and 5 above and the invite update):**
 - **Platform Owner.** A Platform Owner answers these requests only through an org admin/owner membership.
   The approval engine does not let the separate platform identity answer tenant requests (existing
   documented limitation, ADR-031). The dev Platform Owner holds an org admin role, so it can.
+
+**Update 2026-11-13 — staff package, stage 2 (product owner approved):**
+
+- **KVKK at "Teslim Ettim".** The courier's copy of an order drops the customer's name, phone, open address
+  and courier note when the courier reports delivery, server-side. Only identifying-free fields remain
+  (order number, neighborhood, amount, payment method, times). The neighborhood is kept deliberately: it
+  identifies no one and lets the courier tell deliveries apart.
+- **Screenshot block on staff surfaces.** Every signed-in surface of the admin shell (staff panel, POS,
+  courier) asks the OS to keep the window out of captures, through a native channel and no new package:
+  - Android: `FLAG_SECURE`;
+  - Windows: `WDA_EXCLUDEFROMCAPTURE`;
+  - iOS: a black cover while recording or mirroring, because iOS cannot block a single screenshot.
+
+  The customer app and the sign-in screens are not protected. A signed-in Platform Owner is exempt;
+  a platform administrator is not.

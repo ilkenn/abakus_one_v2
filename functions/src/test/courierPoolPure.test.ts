@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { buildCourierAssignedOrderProjection, poolAddressLine } from "../courierPool";
+import { buildCourierAssignedOrderProjection, COURIER_PII_FIELDS, poolAddressLine } from "../courierPool";
 import { roleHasPermission } from "../staffAuthorization";
 
 /** 2026-11-12 (Faz 3a) — pure parts of the delivery pool and the new roles. */
@@ -20,7 +20,13 @@ test("the courier copy carries the phone until the courier reports delivery", ()
   assert.strictEqual(assigned.status, "assigned");
   assert.strictEqual(assigned.courierAuthUid, "uid-1");
   const delivered = buildCourierAssignedOrderProjection("o1", order({ courierReportedDeliveredAt: 1, departedAt: 1 }), "uid-1")!;
-  assert.ok(!("customerPhone" in delivered));
+  assert.strictEqual(assigned.customerName, "Ayşe Demir");
+  assert.strictEqual(assigned.courierNote, "Zile basmayın");
+  assert.ok(String(assigned.addressLine).includes("Moda Caddesi"));
+  // ADR-085 stage 2 (KVKK) — name, phone, open address and note all go.
+  for (const field of COURIER_PII_FIELDS) assert.ok(!(field in delivered), field);
+  assert.strictEqual(delivered.neighborhoodName, "Caferağa");
+  assert.strictEqual(delivered.orderNumber, "DL-1");
   assert.strictEqual(delivered.status, "deliveredAwaitingSettlement");
   assert.strictEqual(buildCourierAssignedOrderProjection("o1", order({ departedAt: 1 }), null)!.status, "departed");
 });

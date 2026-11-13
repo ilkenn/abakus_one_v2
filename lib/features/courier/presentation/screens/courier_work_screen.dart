@@ -252,7 +252,12 @@ class _OrderCard extends StatelessWidget {
           AppColors.warning
         ),
     };
-    final phone = order.customerPhone;
+    // ADR-085 stage 2 (KVKK) — the server already strips name, phone, open
+    // address and note at "Teslim Ettim"; the card never shows them for a
+    // delivered order either, even from a stale cached copy.
+    final delivered =
+        order.status == CourierWorkOrderStatus.deliveredAwaitingSettlement;
+    final phone = delivered ? null : order.customerPhone;
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: AppCard(
@@ -280,15 +285,22 @@ class _OrderCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.xs),
             if (order.branchName.isNotEmpty)
               Text('Alış: ${order.branchName}', style: AppTypography.bodySmall),
-            if (order.customerName.isNotEmpty)
+            if (!delivered && order.customerName.isNotEmpty)
               Text(order.customerName, style: AppTypography.bodyMedium),
             Text(
-              [order.neighborhoodName, order.addressLine]
+              [order.neighborhoodName, if (!delivered) order.addressLine]
                   .where((p) => p.isNotEmpty)
                   .join(' · '),
               style: AppTypography.bodyMedium,
             ),
-            if (order.courierNote.trim().isNotEmpty)
+            if (delivered)
+              Text(
+                'Müşteri bilgileri teslimattan sonra kaldırıldı (KVKK).',
+                key: Key('courierPiiRemoved-${order.orderId}'),
+                style: AppTypography.bodySmall
+                    .copyWith(color: AppColors.textSecondary),
+              ),
+            if (!delivered && order.courierNote.trim().isNotEmpty)
               Text('Not: ${order.courierNote.trim()}',
                   style: AppTypography.bodySmall.copyWith(
                       color: AppColors.warning, fontWeight: FontWeight.bold)),

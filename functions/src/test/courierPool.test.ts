@@ -329,7 +329,11 @@ test("Yola Çıktım records departedAt only; Teslim Ettim keeps the order open 
     async () => (await db().collection("courierAssignedOrders").doc(orderId).get()).data(),
     (p) => p?.status === "deliveredAwaitingSettlement", "delivered projection",
   );
-  assert.strictEqual(projection!.customerPhone, undefined, "KVKK: phone gone after delivery");
+  // ADR-085 stage 2 (KVKK) — no name, phone, open address or note after delivery.
+  for (const field of ["customerName", "customerPhone", "addressLine", "courierNote"]) {
+    assert.strictEqual(projection![field], undefined, `KVKK: ${field} gone after delivery`);
+  }
+  assert.ok(projection!.neighborhoodName, "the neighborhood stays for the courier's history");
   assert.strictEqual(projection!.reportedPaymentMethodId, "multinet");
 
   // Settlement completes the order — the courier's copy disappears.

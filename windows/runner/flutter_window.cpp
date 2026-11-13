@@ -1,8 +1,15 @@
 #include "flutter_window.h"
 
+#include <flutter/standard_method_codec.h>
+
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
+
+// Windows 10 2004+; older SDK headers may not define it.
+#ifndef WDA_EXCLUDEFROMCAPTURE
+#define WDA_EXCLUDEFROMCAPTURE 0x00000011
+#endif
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -25,6 +32,34 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+
+  // ADR-085 stage 2 (KVKK) — the staff panel, POS and courier screens ask
+  // to be left out of screenshots and recordings (they capture as black).
+  // Older Windows without WDA_EXCLUDEFROMCAPTURE falls back to WDA_MONITOR.
+  screen_capture_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "abakus/screen_capture",
+          &flutter::StandardMethodCodec::GetInstance());
+  screen_capture_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() != "setProtected") {
+          result->NotImplemented();
+          return;
+        }
+        const auto* value = call.arguments();
+        const bool* flag =
+            value == nullptr ? nullptr : std::get_if<bool>(value);
+        const bool protect = flag != nullptr && *flag;
+        HWND hwnd = GetHandle();
+        if (!SetWindowDisplayAffinity(
+                hwnd, protect ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE) &&
+            protect) {
+          SetWindowDisplayAffinity(hwnd, WDA_MONITOR);
+        }
+        result->Success();
+      });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -40,6 +75,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  screen_capture_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

@@ -173,12 +173,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(fakes.gateway.calls, ['departed:o1', 'delivered:o1:multinet']);
 
-    repository.emitOrders(
-        [_order(CourierWorkOrderStatus.deliveredAwaitingSettlement)]);
+    // A stale copy that still carries personal data — the card must not
+    // show any of it once delivered (ADR-085 stage 2, KVKK).
+    repository.emitOrders([
+      _order(CourierWorkOrderStatus.deliveredAwaitingSettlement,
+          phone: '+905321112233')
+    ]);
     await tester.pumpAndSettle();
     expect(find.text('Teslim Edildi — Mutabakat Bekliyor'), findsOneWidget);
     expect(find.byKey(const Key('callCustomer-o1')), findsNothing,
         reason: 'KVKK: no phone after delivery');
+    expect(find.text('Ayşe Demir'), findsNothing);
+    expect(find.textContaining('Moda Caddesi'), findsNothing);
+    expect(find.textContaining('Zile basmayın'), findsNothing);
+    expect(find.text('Caferağa'), findsOneWidget);
+    expect(find.byKey(const Key('courierPiiRemoved-o1')), findsOneWidget);
     expect(find.text('Tahsilat: Multinet'), findsOneWidget);
   });
 

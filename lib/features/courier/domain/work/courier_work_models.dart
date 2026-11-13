@@ -104,7 +104,8 @@ class CourierWorkOrder {
   final String branchName;
   final String customerName;
 
-  /// `null` once delivered (KVKK) — the server removes it.
+  /// `null` once delivered (KVKK) — the server removes it, together with
+  /// [customerName], [addressLine] and [courierNote] (ADR-085 stage 2).
   final String? customerPhone;
   final String neighborhoodName;
   final String addressLine;

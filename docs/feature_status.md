@@ -12005,7 +12005,7 @@ Step 5 details (dev project `abakus-one-dev`):
 |---|---|---|
 | 0 | Packing lead menu (KDS + Teslimat Dağıtımı); old role/status callables bound to the panel rule | Done (2026-11-13) |
 | 1 | Managers cannot deactivate staff; manager-added staff wait for admin/owner approval (Onay Kutusu) | Done (2026-11-13), Visual Review Bekleniyor |
-| 2 | KVKK: customer data removed from the courier projection at "Teslim Ettim"; screenshot block on staff/courier/POS screens (owner and customer app exempt) | Not started |
+| 2 | KVKK: customer data removed from the courier projection at "Teslim Ettim"; screenshot block on staff/courier/POS screens (owner and customer app exempt) | Done (2026-11-13), Visual Review Bekleniyor (iOS untested) |
 | 3 | Panel top bar: no DEMO badge, name + role, admin/owner role preview | Not started |
 | 4 | Courier: "Konuma Git", smart call (own orders: customer; Trendyol/Getir: configurable switchboard + DTMF order code) | Not started |
 | 5 | Courier pay rates (per courier, effective-dated), earnings view, manager-approved shifts — data model draft first | Not started |
@@ -12033,3 +12033,26 @@ Stage 1 details:
   - emulator: approval activates (claims appear after sync), the requester cannot approve, rejection
     removes the account and allows a re-add, and a manager cannot change status;
   - widget: a manager-added account shows as pending and the manager has no status action.
+- Known gap: an unanswered `staffActivation` request escalates after 24 h and expires 24 h later. The
+  membership then stays "Yönetici Onayı Bekliyor"; an admin/owner can still activate it from the staff list,
+  but there is no way to delete it yet, so a manager cannot re-add that number.
+
+Stage 2 details:
+
+- Server (`courierPool.ts`): at "Teslim Ettim" the courier's copy (`courierAssignedOrders`) loses
+  `customerName`, `customerPhone`, `addressLine` and `courierNote` (`COURIER_PII_FIELDS`). Only the order
+  number, neighborhood, amount, payment method and times remain. Pool requests never held personal data.
+- App: a delivered card never shows those fields, even from a stale copy, and says
+  "Müşteri bilgileri teslimattan sonra kaldırıldı (KVKK)."
+- Screenshot block:
+  - `core/services/screen_capture` counts the open protected screens;
+  - `StaffScreenCaptureGuard` wraps every signed-in surface of `AdminShellScreen` (staff panel, POS,
+    courier); sign-in screens and the customer app are not wrapped;
+  - a signed-in Platform Owner (`platformOwner` role) is exempt (`app.dart`).
+- Native, channel `abakus/screen_capture`:
+  - Android: `FLAG_SECURE` (`MainActivity.kt`), build verified;
+  - Windows: `WDA_EXCLUDEFROMCAPTURE`, falling back to `WDA_MONITOR` (`flutter_window.cpp`), build verified;
+  - iOS: best effort; a single screenshot cannot be blocked, and a black cover is shown while the screen
+    is recorded or mirrored (`AppDelegate.swift`). Not compiled here (no macOS).
+- Tests: pure and emulator courier tests assert all four fields are gone; the courier widget test feeds a
+  stale copy; a new `screen_capture_protection_test.dart` covers counting, exemption and the guard.

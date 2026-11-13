@@ -506,7 +506,8 @@ export const courierMarkDeparted = onCall({ enforceAppCheck: shouldEnforceAppChe
 /**
  * "Teslim Ettim" with the method the customer really paid. The order stays
  * `outForDelivery` ("Teslim Edildi — Mutabakat Bekliyor") until the POS
- * settlement; the courier's copy of the customer phone is removed now.
+ * settlement; the courier's copy loses the customer's personal data now
+ * (KVKK — see [COURIER_PII_FIELDS]).
  */
 export const courierReportDelivered = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request) => {
   const data = (request.data ?? {}) as Record<string, unknown>;
@@ -527,7 +528,7 @@ export const courierReportDelivered = onCall({ enforceAppCheck: shouldEnforceApp
     }, { merge: true });
     if (projectionSnap.exists) {
       const projection = { ...projectionSnap.data()! };
-      delete projection.customerPhone;
+      for (const field of COURIER_PII_FIELDS) delete projection[field];
       tx.set(projectionRef, {
         ...projection,
         status: "deliveredAwaitingSettlement",
@@ -551,9 +552,18 @@ export const courierReportDelivered = onCall({ enforceAppCheck: shouldEnforceApp
 export type CourierProjectionStatus = "reserved" | "assigned" | "departed" | "deliveredAwaitingSettlement";
 
 /**
+ * ADR-085 stage 2 (KVKK) — what the courier needs only until the door: the
+ * customer's name and phone, the open address and the courier note. All
+ * leave the courier's copy at "Teslim Ettim"; what stays (order number,
+ * neighborhood, amount, payment method, times) identifies no one, so the
+ * courier's history never shows personal data.
+ */
+export const COURIER_PII_FIELDS = ["customerName", "customerPhone", "addressLine", "courierNote"] as const;
+
+/**
  * The courier's own copy of an order — `null` when no courier holds it any
- * more (closed/cancelled, or unassigned). Pure, so its KVKK rule (no phone
- * once delivered) is unit-testable.
+ * more (closed/cancelled, or unassigned). Pure, so its KVKK rule (no
+ * [COURIER_PII_FIELDS] once delivered) is unit-testable.
  */
 export function buildCourierAssignedOrderProjection(
   orderId: string,
@@ -585,11 +595,15 @@ export function buildCourierAssignedOrderProjection(
     orderNumber: String(order.orderNumber ?? orderId),
     courierId,
     courierAuthUid,
-    customerName: nonEmpty(order.contactFirstName, order.contactLastName).join(" "),
-    ...(delivered ? {} : { customerPhone: (order.contactPhone as string | undefined) ?? null }),
+    ...(delivered
+      ? {}
+      : {
+        customerName: nonEmpty(order.contactFirstName, order.contactLastName).join(" "),
+        customerPhone: (order.contactPhone as string | undefined) ?? null,
+        addressLine: poolAddressLine(address),
+        courierNote: (order.customerNote as string | undefined) ?? "",
+      }),
     neighborhoodName: (address?.neighborhoodName as string | undefined) ?? "",
-    addressLine: poolAddressLine(address),
-    courierNote: (order.customerNote as string | undefined) ?? "",
     amountDueMinorUnits: orderAmountDueMinorUnits(order),
     plannedPaymentMethodId: (order.paymentMethodSnapshot?.paymentMethodId as string | undefined) ?? null,
     reportedPaymentMethodId: (order.courierReportedPaymentMethodId as string | undefined) ?? null,
