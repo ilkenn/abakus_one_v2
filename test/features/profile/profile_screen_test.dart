@@ -360,6 +360,41 @@ void main() {
     },
   );
 
+  testWidgets(
+    'ADR-085: "Şifremi Değiştir" yalnizca personelde gorunur ve sifre '
+    'degistirme penceresini acar',
+    (WidgetTester tester) async {
+      await pumpProfileScreen(tester);
+      expect(
+          find.byKey(const Key('profileChangePasswordButton')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'ADR-085: personel "Şifremi Değiştir"e dokununca mevcut/yeni/tekrar '
+    'alanlari olan pencere acilir',
+    (WidgetTester tester) async {
+      await pumpProfileScreen(
+        tester,
+        actorSession: const ActorSession(
+          actorId: 'courier-1',
+          roles: {StaffRole.courier},
+          activeRole: StaffRole.courier,
+        ),
+      );
+
+      final button = find.byKey(const Key('profileChangePasswordButton'));
+      await tester.ensureVisible(button);
+      await tester.pumpAndSettle();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('currentPasswordField')), findsOneWidget);
+      expect(find.byKey(const Key('newPasswordField')), findsOneWidget);
+      expect(find.byKey(const Key('repeatPasswordField')), findsOneWidget);
+    },
+  );
+
   group('P.1 — premium hero + hizli erisim', () {
     testWidgets(
         'P.4.3B — kimlik dogrulanmis oturumda hero gercek musteri adini/'

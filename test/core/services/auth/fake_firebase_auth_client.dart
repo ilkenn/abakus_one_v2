@@ -53,6 +53,41 @@ class FakeFirebaseAuthClient implements FirebaseAuthClient {
     );
   }
 
+  /// ADR-085 (revision) — staff password accounts, keyed by sign-in e-mail.
+  final Map<String, String> passwordsByEmail = {};
+
+  @override
+  Future<FirebaseAuthResult> signInWithPassword({
+    required String email,
+    required String password,
+  }) async {
+    if (passwordsByEmail[email] != password) {
+      throw const FirebaseAuthClientException(
+          'invalid-credential', 'Wrong phone number or password.');
+    }
+    final digits = email.split('@').first;
+    return FirebaseAuthResult(
+      uid: 'fake-phone-uid-+$digits',
+      phoneNumber: '+$digits',
+    );
+  }
+
+  @override
+  Future<void> changePassword({
+    required String email,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    if (passwordsByEmail[email] != currentPassword) {
+      throw const FirebaseAuthClientException(
+          'invalid-credential', 'Wrong current password.');
+    }
+    if (newPassword.length < 8) {
+      throw const FirebaseAuthClientException('weak-password', 'Too short.');
+    }
+    passwordsByEmail[email] = newPassword;
+  }
+
   @override
   Future<void> signOut() async => signOutCalled = true;
 }

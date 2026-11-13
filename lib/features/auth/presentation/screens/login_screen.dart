@@ -1,9 +1,7 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../../../core/config/app_environment_config.dart';
 import '../../../../core/router/app_route_guard.dart';
 import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -11,13 +9,15 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../data/dev_login_config.dart';
+import '../../domain/models/password_auth_result.dart';
 import '../../domain/phone_number.dart';
 import '../providers/auth_provider.dart';
 import '../providers/dev_login_provider.dart';
 
-/// MVP customer authentication is phone number + OTP only — no email, no
-/// password. See `docs/master_spec_migration.md` for the Authentication
-/// phase's design decisions.
+/// One sign-in screen for everyone (ADR-085): customers sign in with phone
+/// number + SMS code (the default); staff can switch to "Şifre ile giriş"
+/// and use the password a manager set in the panel. Both reach the same
+/// account. The screen never reveals whether a number belongs to staff.
 ///
 /// The interactive Hero Abacus (`shared/widgets/hero/hero_abacus.dart`) has
 /// been removed from this screen — it remains a valid, tested, reusable
@@ -41,6 +41,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _phoneController;
+  late final TextEditingController _passwordController;
+
+  /// ADR-085 — staff phone + password sign-in instead of the SMS code.
+  bool _passwordMode = false;
+  bool _obscurePassword = true;
 
   late final AnimationController _logoController;
   late final Animation<double> _logoFade;
@@ -56,6 +61,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   void initState() {
     super.initState();
     _phoneController = TextEditingController();
+    _passwordController = TextEditingController();
 
     _logoController = AnimationController(
       vsync: this,
@@ -84,6 +90,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   @override
   void dispose() {
     _phoneController.dispose();
+    _passwordController.dispose();
     _logoController.dispose();
     super.dispose();
   }
@@ -103,6 +110,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     );
   }
 
+  Future<void> _submitPassword() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final result = await ref.read(authProvider.notifier).signInWithPassword(
+          _phoneController.text,
+          _passwordController.text,
+        );
+    if (!mounted || result != PasswordSignInResult.success) return;
+    _passwordController.clear();
+    final sanitizedReturnTo = AppRouteGuard.sanitizeReturnTo(widget.returnTo);
+    context.go(sanitizedReturnTo ?? AppRoutes.main);
+  }
+
+  void _togglePasswordMode() {
+    ref.read(authProvider.notifier).clearError();
+    setState(() {
+      _passwordMode = !_passwordMode;
+      _passwordController.clear();
+    });
+  }
+
   void _continueAsGuest() {
     ref.read(authProvider.notifier).loginAsGuest();
     context.go(AppRoutes.main);
@@ -117,19 +145,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     final sanitizedReturnTo = AppRouteGuard.sanitizeReturnTo(widget.returnTo);
     context.go(sanitizedReturnTo ?? AppRoutes.main);
   }
-
-  /// PC Yönetici İnceleme Modu — a debug-only corner shortcut onto the real
-  /// staff/admin entry point (`AppRoutes.admin` -> `AdminShellScreen`,
-  /// which already shows `StaffSignInScreen` internally whenever there is
-  /// no active `actorSessionProvider` session — reused as-is, never a
-  /// direct cross-feature import of that screen from here, which this
-  /// codebase's own layering rules forbid). Same defense-in-depth gate as
-  /// `StaffSignInScreen`'s own "Dev Admin ile Gir" shortcut: `kDebugMode`
-  /// (never compiled into a release binary) AND `AppEnvironmentConfig
-  /// .current.allowsDebugTooling` (already `false` for staging/production
-  /// even in a debug build pointed at the wrong project).
-  static bool get _staffEntryShortcutAvailable =>
-      kDebugMode && AppEnvironmentConfig.current.allowsDebugTooling;
 
   @override
   Widget build(BuildContext context) {
@@ -179,7 +194,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                       ),
                       const SizedBox(height: AppSpacing.xs),
                       Text(
-                        'Giriş yapmak için telefon numaranı gir, sana bir kod gönderelim.',
+                        _passwordMode
+                            ? 'Personel girişi: telefon numaranı ve şifreni gir.'
+                            : 'Giriş yapmak için telefon numaranı gir, sana bir kod gönderelim.',
                         style: AppTypography.bodyMedium.copyWith(
                           color: AppColors.textSecondary,
                         ),
@@ -231,6 +248,55 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                           return null;
                         },
                       ),
+                      if (_passwordMode) ...[
+                        const SizedBox(height: AppSpacing.md),
+                        TextFormField(
+                          key: const Key('loginPasswordField'),
+                          controller: _passwordController,
+                          obscureText: _obscurePassword,
+                          autofillHints: const [AutofillHints.password],
+                          style: AppTypography.bodyLarge,
+                          decoration: InputDecoration(
+                            labelText: 'Şifre',
+                            prefixIcon: const Icon(Icons.lock_outline_rounded),
+                            suffixIcon: IconButton(
+                              tooltip: _obscurePassword
+                                  ? 'Şifreyi göster'
+                                  : 'Şifreyi gizle',
+                              onPressed: () => setState(
+                                () => _obscurePassword = !_obscurePassword,
+                              ),
+                              icon: Icon(
+                                _obscurePassword
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                              ),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.xl,
+                              vertical: AppSpacing.lg,
+                            ),
+                            border: const OutlineInputBorder(
+                              borderRadius: AppRadius.kExtraLarge,
+                              borderSide: BorderSide(color: AppColors.border),
+                            ),
+                            enabledBorder: const OutlineInputBorder(
+                              borderRadius: AppRadius.kExtraLarge,
+                              borderSide: BorderSide(color: AppColors.border),
+                            ),
+                            focusedBorder: const OutlineInputBorder(
+                              borderRadius: AppRadius.kExtraLarge,
+                              borderSide: BorderSide(
+                                color: AppColors.primary,
+                                width: 1.5,
+                              ),
+                            ),
+                          ),
+                          validator: (value) => (value ?? '').isEmpty
+                              ? 'Lütfen şifrenizi giriniz'
+                              : null,
+                        ),
+                      ],
                       if (authState.error != null) ...[
                         const SizedBox(height: AppSpacing.sm),
                         Text(
@@ -243,7 +309,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                       ],
                       const SizedBox(height: AppSpacing.xl),
                       ElevatedButton(
-                        onPressed: authState.isLoading ? null : _submit,
+                        onPressed: authState.isLoading
+                            ? null
+                            : (_passwordMode ? _submitPassword : _submit),
                         style: ElevatedButton.styleFrom(
                           minimumSize: const Size.fromHeight(56),
                           shape: const RoundedRectangleBorder(
@@ -259,7 +327,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                                   color: Colors.white,
                                 ),
                               )
-                            : const Text('Devam Et'),
+                            : Text(_passwordMode ? 'Giriş Yap' : 'Devam Et'),
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      TextButton(
+                        key: const Key('loginModeToggle'),
+                        onPressed:
+                            authState.isLoading ? null : _togglePasswordMode,
+                        child: Text(
+                          _passwordMode
+                              ? 'SMS kodu ile giriş'
+                              : 'Şifre ile giriş',
+                        ),
                       ),
                       const SizedBox(height: AppSpacing.md),
                       OutlinedButton(
@@ -290,25 +369,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 ),
               ),
             ),
-            // Painted (and hit-tested) LAST so it sits above the scrollable
-            // form beneath it — a Stack child earlier in this list would
-            // have its taps swallowed by the form's own scroll gesture
-            // detector, even where nothing is visibly drawn over it.
-            if (_staffEntryShortcutAvailable)
-              Positioned(
-                top: AppSpacing.sm,
-                right: AppSpacing.sm,
-                child: Tooltip(
-                  message: 'Personel / POS Girişi (Yalnızca Development)',
-                  child: IconButton(
-                    onPressed: () => context.push(AppRoutes.admin),
-                    icon: const Icon(
-                      Icons.admin_panel_settings_outlined,
-                      color: AppColors.warning,
-                    ),
-                  ),
-                ),
-              ),
           ],
         ),
       ),

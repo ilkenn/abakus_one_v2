@@ -3,13 +3,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:abakus_one_v2/core/router/app_routes.dart';
+import 'package:abakus_one_v2/features/auth/data/repositories/auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/repositories/development_local_auth_repository.dart';
+import 'package:abakus_one_v2/features/auth/data/repositories/firebase_auth_repository.dart';
 import 'package:abakus_one_v2/features/auth/data/session_storage.dart';
 import 'package:abakus_one_v2/features/auth/domain/models/auth_session.dart';
 import 'package:abakus_one_v2/features/auth/presentation/providers/auth_provider.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/login_screen.dart';
 import 'package:abakus_one_v2/features/auth/presentation/screens/otp_screen.dart';
 import 'package:abakus_one_v2/features/navigation/presentation/screens/main_navigation_screen.dart';
+
+import '../../core/services/auth/fake_firebase_auth_client.dart';
 
 class _FakeSessionStorage implements SessionStorage {
   AuthSession? stored;
@@ -54,14 +58,22 @@ GoRouter _testRouter() {
   );
 }
 
-Future<void> _pumpLogin(WidgetTester tester) async {
+AuthRepository _firebaseRepository(FakeFirebaseAuthClient client) =>
+    FirebaseAuthRepository(
+      client: client,
+      sessionStorage: _FakeSessionStorage(),
+    );
+
+Future<void> _pumpLogin(WidgetTester tester,
+    {AuthRepository? repository}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         authRepositoryProvider.overrideWithValue(
-          DevelopmentLocalAuthRepository(
-            sessionStorage: _FakeSessionStorage(),
-          ),
+          repository ??
+              DevelopmentLocalAuthRepository(
+                sessionStorage: _FakeSessionStorage(),
+              ),
         ),
       ],
       child: MaterialApp.router(routerConfig: _testRouter()),
@@ -116,23 +128,80 @@ void main() {
   );
 
   testWidgets(
-    'PC Yönetici İnceleme Modu: the debug-only staff-entry shortcut is '
-    'visible (flutter test always runs debug + AppEnvironment.development) '
-    'and navigates to AppRoutes.admin, never touching the customer OTP flow',
+    'ADR-085: the debug-only staff-entry shortcut is gone — staff use '
+    '"Şifre ile giriş" on this same screen',
     (tester) async {
       await _pumpLogin(tester);
 
-      expect(
-        find.byTooltip('Personel / POS Girişi (Yalnızca Development)'),
-        findsOneWidget,
-      );
+      expect(find.byIcon(Icons.admin_panel_settings_outlined), findsNothing);
+      expect(find.text('Şifre ile giriş'), findsOneWidget);
+    },
+  );
 
-      await tester.tap(find.byIcon(Icons.admin_panel_settings_outlined));
+  testWidgets(
+    'ADR-085: "Şifre ile giriş" shows the password field and "Giriş Yap"; '
+    'switching back restores the SMS flow',
+    (tester) async {
+      await _pumpLogin(tester);
+      expect(find.byKey(const Key('loginPasswordField')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('loginModeToggle')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('loginPasswordField')), findsOneWidget);
+      expect(find.text('Giriş Yap'), findsOneWidget);
+      expect(find.text('SMS kodu ile giriş'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('loginModeToggle')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('loginPasswordField')), findsNothing);
+      expect(find.text('Devam Et'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'ADR-085: a correct phone + password signs in and opens the app',
+    (tester) async {
+      final client = FakeFirebaseAuthClient()
+        ..passwordsByEmail['905321234567@staff-login.abakus.invalid'] =
+            'dogru-sifre-123';
+      await _pumpLogin(tester, repository: _firebaseRepository(client));
+
+      await tester.tap(find.byKey(const Key('loginModeToggle')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField).first, '5321234567');
+      await tester.enterText(
+          find.byKey(const Key('loginPasswordField')), 'dogru-sifre-123');
+      await tester.ensureVisible(find.text('Giriş Yap'));
+      await tester.tap(find.text('Giriş Yap'));
       await tester.pumpAndSettle();
 
-      expect(find.text('ADMIN_SHELL_STUB'), findsOneWidget);
-      expect(find.byType(LoginScreen), findsNothing);
-      expect(find.byType(OtpScreen), findsNothing);
+      expect(find.byType(MainNavigationScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'ADR-085: a wrong password and an unknown number get the same message, '
+    'so the screen never reveals who is staff',
+    (tester) async {
+      final client = FakeFirebaseAuthClient()
+        ..passwordsByEmail['905321234567@staff-login.abakus.invalid'] =
+            'dogru-sifre-123';
+      await _pumpLogin(tester, repository: _firebaseRepository(client));
+      await tester.tap(find.byKey(const Key('loginModeToggle')));
+      await tester.pumpAndSettle();
+
+      for (final phone in ['5321234567', '5329999999']) {
+        await tester.enterText(find.byType(TextFormField).first, phone);
+        await tester.enterText(
+            find.byKey(const Key('loginPasswordField')), 'yanlis-sifre');
+        await tester.ensureVisible(find.text('Giriş Yap'));
+        await tester.tap(find.text('Giriş Yap'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Telefon numarası veya şifre hatalı.'), findsOneWidget,
+            reason: phone);
+        expect(find.byType(LoginScreen), findsOneWidget);
+      }
     },
   );
 }

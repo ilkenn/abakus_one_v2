@@ -1,5 +1,6 @@
 import '../../domain/models/auth_session.dart';
 import '../../domain/models/otp_challenge.dart';
+import '../../domain/staff_login_email.dart';
 import '../session_storage.dart';
 import 'auth_repository.dart';
 import 'firebase_auth_client.dart';
@@ -127,6 +128,64 @@ class FirebaseAuthRepository implements AuthRepository {
           // without re-requesting a code.
           return OtpVerificationResult.invalidCode;
       }
+    }
+  }
+
+  /// Firebase error codes meaning "the service could not be reached", as
+  /// opposed to "these credentials are wrong".
+  static const Set<String> _unavailableCodes = {
+    'network-request-failed',
+    'too-many-requests',
+    'internal-error',
+  };
+
+  @override
+  Future<PasswordSignInResult> signInWithPassword({
+    required String phoneNumber,
+    required String password,
+  }) async {
+    try {
+      final result = await _client.signInWithPassword(
+        email: staffLoginEmailForPhone(phoneNumber),
+        password: password,
+      );
+      final now = DateTime.now();
+      await saveSession(AuthSession(
+        uid: result.uid,
+        phoneNumber: result.phoneNumber ?? phoneNumber,
+        createdAt: now,
+        expiresAt: now.add(sessionValidity),
+      ));
+      return PasswordSignInResult.success;
+    } on FirebaseAuthClientException catch (error) {
+      if (_unavailableCodes.contains(error.code)) {
+        throw const AuthServiceUnavailableException();
+      }
+      return PasswordSignInResult.invalidCredentials;
+    }
+  }
+
+  @override
+  Future<PasswordChangeResult> changeOwnPassword({
+    required String phoneNumber,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _client.changePassword(
+        email: staffLoginEmailForPhone(phoneNumber),
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+      return PasswordChangeResult.success;
+    } on FirebaseAuthClientException catch (error) {
+      if (error.code == 'weak-password') {
+        return PasswordChangeResult.weakPassword;
+      }
+      if (_unavailableCodes.contains(error.code)) {
+        throw const AuthServiceUnavailableException();
+      }
+      return PasswordChangeResult.wrongCurrentPassword;
     }
   }
 }

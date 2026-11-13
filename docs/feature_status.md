@@ -11922,10 +11922,24 @@ The phase A invite code is removed. Revised order:
 | Step | Scope | Status |
 |---|---|---|
 | 1 | Server: `createStaffAccount`, `setStaffPassword`, `updateStaffMember` (scoped, audited) | Done (2026-11-13), emulator-tested |
-| 2 | App: "Şifre ile giriş" on the sign-in screen, phone + password on Windows, own password change in the profile | Not started |
+| 2 | App: "Şifre ile giriş" on the sign-in screen, phone + password on Windows, own password change in the profile | Done (2026-11-13), Visual Review Bekleniyor |
 | 3 | Staff screen: "Personel Ekle" form, change password/role/status from the list | Not started |
 | 4 | Phase C: role isolation (cashier sees POS, courier only Kurye Ekranım) + per-role tests | Not started |
 | 5 | Deploy to dev, move test accounts to phone + password, new APK | Not started |
 
 Step 1 tests: `functions/src/test/staffAccounts.test.ts` adds 8 tests. Together with the membership and
 directory tests, 37 of 37 pass.
+
+Step 2 details:
+
+- `LoginScreen` gets a "Şifre ile giriş" / "SMS kodu ile giriş" toggle. A wrong password and an unknown
+  number show the same message. The debug-only staff shortcut (shield icon) is removed.
+- New `AuthNotifier.signInWithPassword` and `changeOwnPassword`, `AuthRepository.signInWithPassword`
+  and `changeOwnPassword`. The hidden e-mail mapping lives in `lib/features/auth/domain/staff_login_email.dart`
+  and must stay identical to `functions/src/staffAccounts.ts`.
+- `StaffSignInScreen` (Windows POS) is now a single phone + password form. The SMS tab (not available
+  on Windows) and the emulator-only "Dev Admin" button are removed. "İlk yönetici hesabını oluştur"
+  remains and uses the phone-derived e-mail.
+- Profile: "Şifremi Değiştir" (staff only) opens `ProfileChangePasswordSheet`.
+- Tests: the login, sign-in screen, notifier and profile tests are updated or added. The full suite passes:
+  4191 passed, 12 skipped.

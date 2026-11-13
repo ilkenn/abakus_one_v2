@@ -14,6 +14,7 @@ import '../widgets/profile_visit_pass_card.dart';
 import '../widgets/profile_customer_photos_card.dart';
 import '../widgets/profile_support_section.dart';
 import '../widgets/profile_business_mode_card.dart';
+import '../widgets/profile_change_password_sheet.dart';
 import '../screens/addresses_screen.dart';
 import '../../../orders/presentation/screens/orders_screen.dart';
 import '../../../notifications/presentation/screens/notification_settings_screen.dart';
@@ -192,6 +193,15 @@ class ProfileScreen extends ConsumerWidget {
               if (isAuthorizedActor) ...[
                 const SizedBox(height: AppSpacing.xxl),
                 const ProfileBusinessModeCard(),
+                const SizedBox(height: AppSpacing.sm),
+                Center(
+                  child: TextButton.icon(
+                    key: const Key('profileChangePasswordButton'),
+                    onPressed: () => ProfileChangePasswordSheet.show(context),
+                    icon: const Icon(Icons.password_rounded),
+                    label: const Text('Şifremi Değiştir'),
+                  ),
+                ),
               ],
               if (isAuthenticated) ...[
                 const SizedBox(height: AppSpacing.xxxl),

@@ -46,4 +46,22 @@ class ProductionUnavailableAuthRepository implements AuthRepository {
   }) async {
     throw const AuthServiceUnavailableException();
   }
+
+  /// Staff password accounts exist only in a real Firebase project.
+  @override
+  Future<PasswordSignInResult> signInWithPassword({
+    required String phoneNumber,
+    required String password,
+  }) async {
+    throw const AuthServiceUnavailableException();
+  }
+
+  @override
+  Future<PasswordChangeResult> changeOwnPassword({
+    required String phoneNumber,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    throw const AuthServiceUnavailableException();
+  }
 }

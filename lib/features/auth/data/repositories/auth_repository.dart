@@ -1,5 +1,8 @@
 import '../../domain/models/auth_session.dart';
 import '../../domain/models/otp_challenge.dart';
+import '../../domain/models/password_auth_result.dart';
+
+export '../../domain/models/password_auth_result.dart';
 
 /// Everything the app needs from an authentication backend, behind one
 /// seam — mirrors the existing `OrdersRepository` pattern in
@@ -40,6 +43,23 @@ abstract interface class AuthRepository {
   Future<OtpVerificationResult> verifyOtp({
     required String phoneNumber,
     required String code,
+  });
+
+  /// ADR-085 (revision) — a staff member's phone + password sign-in
+  /// ([phoneNumber] already normalized). On success the session is saved
+  /// exactly like after an SMS sign-in: it is the same account. Throws
+  /// [AuthServiceUnavailableException] when the service cannot be reached.
+  Future<PasswordSignInResult> signInWithPassword({
+    required String phoneNumber,
+    required String password,
+  });
+
+  /// The signed-in staff member changes their own password. Throws
+  /// [AuthServiceUnavailableException] when the service cannot be reached.
+  Future<PasswordChangeResult> changeOwnPassword({
+    required String phoneNumber,
+    required String currentPassword,
+    required String newPassword,
   });
 }
 

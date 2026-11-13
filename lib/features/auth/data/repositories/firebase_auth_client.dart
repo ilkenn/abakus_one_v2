@@ -28,6 +28,23 @@ abstract interface class FirebaseAuthClient {
     required String smsCode,
   });
 
+  /// ADR-085 (revision) — signs in with a staff account's hidden sign-in
+  /// e-mail and password. Throws [FirebaseAuthClientException] on a wrong
+  /// password or unknown account (the caller never tells them apart).
+  Future<FirebaseAuthResult> signInWithPassword({
+    required String email,
+    required String password,
+  });
+
+  /// Changes the signed-in user's password after re-checking
+  /// [currentPassword] against [email]. Throws [FirebaseAuthClientException]
+  /// when the current password is wrong or the new one is rejected.
+  Future<void> changePassword({
+    required String email,
+    required String currentPassword,
+    required String newPassword,
+  });
+
   Future<void> signOut();
 }
 
@@ -152,6 +169,57 @@ class DefaultFirebaseAuthClient implements FirebaseAuthClient {
         );
       }
       return FirebaseAuthResult(uid: user.uid, phoneNumber: user.phoneNumber);
+    } on fb.FirebaseAuthException catch (error) {
+      throw FirebaseAuthClientException(
+          error.code, error.message ?? error.code);
+    }
+  }
+
+  @override
+  Future<FirebaseAuthResult> signInWithPassword({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final userCredential = await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final user = userCredential.user;
+      if (user == null) {
+        throw const FirebaseAuthClientException(
+          'user-not-found',
+          'Sign-in did not return a user.',
+        );
+      }
+      return FirebaseAuthResult(uid: user.uid, phoneNumber: user.phoneNumber);
+    } on fb.FirebaseAuthException catch (error) {
+      throw FirebaseAuthClientException(
+          error.code, error.message ?? error.code);
+    }
+  }
+
+  @override
+  Future<void> changePassword({
+    required String email,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw const FirebaseAuthClientException(
+        'no-current-user',
+        'Nobody is signed in.',
+      );
+    }
+    try {
+      await user.reauthenticateWithCredential(
+        fb.EmailAuthProvider.credential(
+          email: email,
+          password: currentPassword,
+        ),
+      );
+      await user.updatePassword(newPassword);
     } on fb.FirebaseAuthException catch (error) {
       throw FirebaseAuthClientException(
           error.code, error.message ?? error.code);

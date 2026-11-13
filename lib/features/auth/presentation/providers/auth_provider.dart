@@ -210,6 +210,88 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
+  /// Clears a shown error, e.g. when the sign-in screen switches between
+  /// SMS and password mode.
+  void clearError() {
+    state = state.copyWith(clearError: true);
+  }
+
+  /// ADR-085 (revision) — staff sign in with phone number + the password a
+  /// manager set in the panel. Lands on the same customer session an SMS
+  /// sign-in would; the staff role is then discovered in the background.
+  /// One message for every wrong-credential case: the screen never reveals
+  /// whether a number belongs to staff.
+  Future<PasswordSignInResult> signInWithPassword(
+    String rawLocalInput,
+    String password,
+  ) async {
+    final normalized = TurkishPhoneNumber.normalize(rawLocalInput);
+    if (normalized == null) {
+      state =
+          state.copyWith(error: 'Lütfen geçerli bir telefon numarası girin.');
+      return PasswordSignInResult.invalidCredentials;
+    }
+    if (password.isEmpty) {
+      state = state.copyWith(error: 'Lütfen şifrenizi girin.');
+      return PasswordSignInResult.invalidCredentials;
+    }
+
+    state = state.copyWith(isLoading: true, clearError: true);
+    try {
+      final result = await _repository.signInWithPassword(
+        phoneNumber: normalized,
+        password: password,
+      );
+      if (result != PasswordSignInResult.success) {
+        state = state.copyWith(
+          isLoading: false,
+          error: 'Telefon numarası veya şifre hatalı.',
+        );
+        return result;
+      }
+      final session = await _repository.loadSession();
+      if (session != null && await _isBlockedByDeletionRequest(session.uid)) {
+        await _repository.clearSession();
+        state = state.copyWith(
+          isLoading: false,
+          error: 'Bu hesap için silme talebi bulunmaktadır. Giriş engellendi.',
+        );
+        return PasswordSignInResult.accountBlocked;
+      }
+      state = state.copyWith(
+        isLoading: false,
+        isAuthenticated: true,
+        session: session,
+      );
+      return PasswordSignInResult.success;
+    } on AuthServiceUnavailableException {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Giriş hizmeti şu anda kullanılamıyor.',
+      );
+      return PasswordSignInResult.invalidCredentials;
+    }
+  }
+
+  /// The signed-in staff member changes their own password (profile).
+  /// Never touches [state]: the profile screen shows the outcome itself.
+  /// Throws [AuthServiceUnavailableException] when the service is down.
+  Future<PasswordChangeResult> changeOwnPassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final phoneNumber = state.session?.phoneNumber;
+    if (phoneNumber == null) {
+      throw const AuthServiceUnavailableException();
+    }
+    if (newPassword.length < 8) return PasswordChangeResult.weakPassword;
+    return _repository.changeOwnPassword(
+      phoneNumber: phoneNumber,
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+  }
+
   /// Guest sessions are never persisted (see `docs/master_spec_migration.md`)
   /// — they last only as long as the app process does, so no
   /// `AuthSession`/secure-storage entry is ever created for one.
