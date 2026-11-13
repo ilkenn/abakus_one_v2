@@ -21482,3 +21482,9 @@ for Windows) → E (device approval only at terminal setup). Each phase is recor
 - Data model: new `staffInvites/{organizationId}_{phoneE164}` collection; `memberships` unchanged in shape.
 - Dev/test accounts move to phone numbers; the dev project uses Firebase test phone numbers (no real SMS).
 - `registerStaffMember` (by e-mail) stays for now and is retired in phase D.
+
+**Update 2026-11-13 — who may invite (product owner, option B):** an admin/owner (`manageStaffAccounts`)
+can invite any role in the organization. A manager can also invite, but only the roles below the
+manager tier (`staff`, `cashier`, `packingLead`, `courier`) and only into branches in their own
+`branchAccess` (at least one). `manager`, `admin` and `tenantOwner` remain admin/owner-only. A manager
+lists, replaces and revokes only invites inside that same scope.

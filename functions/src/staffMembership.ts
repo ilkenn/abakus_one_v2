@@ -606,10 +606,73 @@ async function claimPendingInvitesForPhone(uid: string, verifiedPhone: string): 
 }
 
 /**
+ * Roles a manager may invite (product owner, 2026-11-13, ADR-085): the
+ * roles below the manager tier. `manager`, `admin` and `tenantOwner` stay
+ * with admins/owners (`manageStaffAccounts`).
+ */
+const BRANCH_INVITABLE_ROLES: ReadonlySet<MembershipRole> = new Set([
+  "staff",
+  "cashier",
+  "packingLead",
+  "courier",
+]);
+
+type InviteScope =
+  | { kind: "organization" }
+  | { kind: "branch"; branches: ReadonlySet<string> };
+
+/**
+ * Who may manage invites, and how far. An admin/owner
+ * (`manageStaffAccounts`) manages every invite of the organization. A
+ * manager (`manageStaffRoles` + `manageStaffBranchAccess`) manages only
+ * invites whose roles are all branch-invitable and whose branches are all
+ * in the manager's own `branchAccess` claim. Anyone else is refused.
+ */
+async function resolveInviteScope(request: CallableRequest, organizationId: string): Promise<InviteScope> {
+  try {
+    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
+    return { kind: "organization" };
+  } catch (error) {
+    if (!(error instanceof HttpsError) || error.code !== "permission-denied") throw error;
+  }
+  await requireStaffPermission(request, organizationId, "manageStaffRoles");
+  await requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
+  const byOrg = request.auth?.token?.branchAccess as Record<string, unknown> | undefined;
+  const own = byOrg?.[organizationId];
+  const branches = new Set(Array.isArray(own) ? own.filter((b): b is string => typeof b === "string") : []);
+  return { kind: "branch", branches };
+}
+
+function isInviteWithinBranchScope(
+  scope: { kind: "branch"; branches: ReadonlySet<string> },
+  invite: { roles: MembershipRole[]; branchAccess: string[] },
+): boolean {
+  return (
+    invite.branchAccess.length > 0 &&
+    invite.roles.every((role) => BRANCH_INVITABLE_ROLES.has(role)) &&
+    invite.branchAccess.every((branchId) => scope.branches.has(branchId))
+  );
+}
+
+function assertInviteWithinBranchScope(
+  scope: { kind: "branch"; branches: ReadonlySet<string> },
+  invite: { roles: MembershipRole[]; branchAccess: string[] },
+): void {
+  if (!isInviteWithinBranchScope(scope, invite)) {
+    throw new HttpsError(
+      "permission-denied",
+      "A manager can invite only cashier/courier-level roles, and only to their own branches.",
+    );
+  }
+}
+
+/**
  * Invites [phoneNumber] into [organizationId] with [roles] and
- * [branchAccess]. Requires `manageStaffAccounts`, plus the same role-grant
- * permission `assignStaffRole` requires for every invited role, plus
- * `manageStaffBranchAccess` when any branch is given. Nobody can invite
+ * [branchAccess]. An admin/owner (`manageStaffAccounts`) can invite any
+ * role, subject to the role-grant permission `assignStaffRole` requires
+ * for each role and `manageStaffBranchAccess` for branches. A manager can
+ * invite only branch-invitable roles into their own branches (at least
+ * one branch required) — see [resolveInviteScope]. Nobody can invite
  * their own phone number (no self-promotion). Re-inviting a number with a
  * pending invite replaces its roles/branches; inviting a number whose
  * invite was claimed or revoked opens a fresh one. If an account with that
@@ -636,12 +699,19 @@ export const inviteStaffByPhone = onCall(
       throw new HttpsError("permission-denied", "A staff member cannot invite their own phone number.");
     }
 
-    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
-    for (const permission of new Set(roles.map(roleGrantPermission))) {
-      await requireStaffPermission(request, organizationId, permission);
-    }
-    if (branchAccess.length > 0) {
-      await requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
+    const scope = await resolveInviteScope(request, organizationId);
+    if (scope.kind === "organization") {
+      for (const permission of new Set(roles.map(roleGrantPermission))) {
+        await requireStaffPermission(request, organizationId, permission);
+      }
+      if (branchAccess.length > 0) {
+        await requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
+      }
+    } else {
+      if (branchAccess.length === 0) {
+        throw new HttpsError("permission-denied", "A manager's invite must name at least one of their own branches.");
+      }
+      assertInviteWithinBranchScope(scope, { roles, branchAccess });
     }
 
     const db = getFirestore();
@@ -666,6 +736,10 @@ export const inviteStaffByPhone = onCall(
     const now = new Date();
     const previous = await ref.get();
     const previousPending = previous.exists && (previous.data() as StaffInviteDoc).status === "pending";
+    if (previousPending && scope.kind === "branch") {
+      // A manager may replace only a pending invite they could have sent.
+      assertInviteWithinBranchScope(scope, previous.data() as StaffInviteDoc);
+    }
     const doc: StaffInviteDoc = {
       organizationId,
       phoneNumber,
@@ -688,7 +762,11 @@ export const inviteStaffByPhone = onCall(
   },
 );
 
-/** Cancels a pending invite (`manageStaffAccounts`). A no-op unless it is pending. */
+/**
+ * Cancels a pending invite. An admin/owner can cancel any; a manager only
+ * one inside their own scope (branch-invitable roles, their branches). A
+ * no-op unless it is pending.
+ */
 export const revokeStaffInvite = onCall(
   { enforceAppCheck: shouldEnforceAppCheck() },
   async (request: CallableRequest) => {
@@ -696,34 +774,42 @@ export const revokeStaffInvite = onCall(
     const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
     const phoneNumber = requirePhoneNumber(data.phoneNumber);
 
-    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
+    const scope = await resolveInviteScope(request, organizationId);
 
     const ref = getFirestore().collection("staffInvites").doc(inviteId(organizationId, phoneNumber));
     const snap = await ref.get();
     if (!snap.exists || (snap.data() as StaffInviteDoc).status !== "pending") {
       return { organizationId, phoneNumber, revoked: false };
     }
+    if (scope.kind === "branch") {
+      assertInviteWithinBranchScope(scope, snap.data() as StaffInviteDoc);
+    }
     await ref.update({ status: "revoked", updatedAt: new Date() });
     return { organizationId, phoneNumber, revoked: true };
   },
 );
 
-/** Lists the organization's pending invites (`manageStaffAccounts`). */
+/**
+ * Lists the organization's pending invites: all of them for an
+ * admin/owner, only those inside their own scope for a manager.
+ */
 export const listStaffInvites = onCall(
   { enforceAppCheck: shouldEnforceAppCheck() },
   async (request: CallableRequest) => {
     const data = (request.data ?? {}) as Record<string, unknown>;
     const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
 
-    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
+    const scope = await resolveInviteScope(request, organizationId);
 
     const snap = await getFirestore()
       .collection("staffInvites")
       .where("organizationId", "==", organizationId)
       .where("status", "==", "pending")
       .get();
-    const invites = snap.docs.map((d) => {
-      const invite = d.data() as StaffInviteDoc;
+    const visible = snap.docs
+      .map((d) => d.data() as StaffInviteDoc)
+      .filter((invite) => scope.kind === "organization" || isInviteWithinBranchScope(scope, invite));
+    const invites = visible.map((invite) => {
       return {
         phoneNumber: invite.phoneNumber,
         roles: invite.roles,

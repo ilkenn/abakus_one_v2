@@ -11891,8 +11891,8 @@ Phase A details:
   resyncs claims, and returns `claimedInvites`.
 - New collection `staffInvites/{organizationId}_{phoneE164}`. It is Cloud-Function-only: the rule
   `allow read, write: if false` is in `firestore.rules`.
-- Inviting requires `manageStaffAccounts`, which today means admin or owner only; a manager cannot
-  invite. It also requires the role-grant permission for every invited role, and
-  `manageStaffBranchAccess` when branches are given. Self-invites are refused.
-- Tests: `functions/src/test/staffInvites.test.ts`, 7 emulator tests. Together with
-  `staffMembership.test.ts`, 34 of 34 pass.
+- Who may invite: an admin or owner can invite any role. A manager can invite only `staff`,
+  `cashier`, `packingLead` and `courier`, and only into their own branches (ADR-085 update, option B).
+  Self-invites are refused.
+- Tests: `functions/src/test/staffInvites.test.ts`, 9 emulator tests. Together with
+  `staffMembership.test.ts`, 36 of 36 pass.

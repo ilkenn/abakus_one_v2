@@ -192,16 +192,67 @@ test("inviteStaffByPhone: nobody can invite their own phone number", async () =>
   assert.strictEqual(inviteDoc.exists, false);
 });
 
-test("inviteStaffByPhone: a manager cannot invite (manageStaffAccounts is admin-only) and a non-member is refused", async () => {
+test("inviteStaffByPhone: a manager invites cashier/courier-level roles into their own branch", async () => {
   const { organizationId, branchId } = await seedTenant();
   await bootstrapPhoneAdmin(organizationId);
   const manager = await seededPhoneMember(organizationId, ["manager"], [branchId]);
-  const outsider = await signInWithPhone(nextPhone());
+  const phone = nextPhone();
 
-  const byManager = await callCallable(INVITE_URL, { organizationId, phoneNumber: nextPhone(), roles: ["courier"] }, manager.idToken);
-  assert.strictEqual(byManager.httpStatus, 403, JSON.stringify(byManager.body));
-  const byOutsider = await callCallable(INVITE_URL, { organizationId, phoneNumber: nextPhone(), roles: ["courier"] }, outsider.idToken);
-  assert.strictEqual(byOutsider.httpStatus, 403, JSON.stringify(byOutsider.body));
+  const invite = await callCallable(INVITE_URL, { organizationId, phoneNumber: phone, roles: ["cashier", "courier"], branchAccess: [branchId] }, manager.idToken);
+  assert.strictEqual(invite.httpStatus, 200, JSON.stringify(invite.body));
+
+  const list = await callCallable(LIST_INVITES_URL, { organizationId }, manager.idToken);
+  assert.strictEqual(list.httpStatus, 200, JSON.stringify(list.body));
+  assert.deepStrictEqual((list.body.result?.invites as { phoneNumber: string }[]).map((i) => i.phoneNumber), [phone]);
+
+  const revoke = await callCallable(REVOKE_INVITE_URL, { organizationId, phoneNumber: phone }, manager.idToken);
+  assert.strictEqual(revoke.body.result?.revoked, true);
+});
+
+test("inviteStaffByPhone: a manager cannot invite manager/admin/owner roles, to another branch, or without a branch", async () => {
+  const { organizationId, branchId, restaurantId } = await seedTenant();
+  const otherBranchId = nextId("branch");
+  await admin.firestore().collection("branches").doc(otherBranchId).set({
+    restaurantId, organizationId, name: "Diğer Şube", status: "active", emergencyStopped: false,
+  });
+  await bootstrapPhoneAdmin(organizationId);
+  const manager = await seededPhoneMember(organizationId, ["manager"], [branchId]);
+
+  const cases: Record<string, unknown>[] = [
+    { organizationId, phoneNumber: nextPhone(), roles: ["manager"], branchAccess: [branchId] },
+    { organizationId, phoneNumber: nextPhone(), roles: ["admin"], branchAccess: [branchId] },
+    { organizationId, phoneNumber: nextPhone(), roles: ["tenantOwner"], branchAccess: [branchId] },
+    { organizationId, phoneNumber: nextPhone(), roles: ["courier"], branchAccess: [otherBranchId] },
+    { organizationId, phoneNumber: nextPhone(), roles: ["courier"] },
+  ];
+  for (const data of cases) {
+    const result = await callCallable(INVITE_URL, data, manager.idToken);
+    assert.strictEqual(result.httpStatus, 403, `${JSON.stringify(data)} -> ${JSON.stringify(result.body)}`);
+  }
+});
+
+test("inviteStaffByPhone: a manager can neither see, replace nor revoke an admin's out-of-scope invite; cashiers and non-members are refused", async () => {
+  const { organizationId, branchId } = await seedTenant();
+  const adminCaller = await bootstrapPhoneAdmin(organizationId);
+  const manager = await seededPhoneMember(organizationId, ["manager"], [branchId]);
+  const cashier = await seededPhoneMember(organizationId, ["cashier"], [branchId]);
+  const outsider = await signInWithPhone(nextPhone());
+  const managerInvitePhone = nextPhone();
+
+  const byAdmin = await callCallable(INVITE_URL, { organizationId, phoneNumber: managerInvitePhone, roles: ["manager"], branchAccess: [branchId] }, adminCaller.idToken);
+  assert.strictEqual(byAdmin.httpStatus, 200, JSON.stringify(byAdmin.body));
+
+  const list = await callCallable(LIST_INVITES_URL, { organizationId }, manager.idToken);
+  assert.deepStrictEqual(list.body.result?.invites, []);
+  const replace = await callCallable(INVITE_URL, { organizationId, phoneNumber: managerInvitePhone, roles: ["courier"], branchAccess: [branchId] }, manager.idToken);
+  assert.strictEqual(replace.httpStatus, 403, JSON.stringify(replace.body));
+  const revoke = await callCallable(REVOKE_INVITE_URL, { organizationId, phoneNumber: managerInvitePhone }, manager.idToken);
+  assert.strictEqual(revoke.httpStatus, 403, JSON.stringify(revoke.body));
+
+  for (const caller of [cashier.idToken, outsider.idToken]) {
+    const result = await callCallable(INVITE_URL, { organizationId, phoneNumber: nextPhone(), roles: ["courier"], branchAccess: [branchId] }, caller);
+    assert.strictEqual(result.httpStatus, 403, JSON.stringify(result.body));
+  }
 });
 
 test("inviteStaffByPhone: rejects a malformed number, an empty or unknown role, and a branch of another organization", async () => {
