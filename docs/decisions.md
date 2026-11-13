@@ -21488,3 +21488,40 @@ can invite any role in the organization. A manager can also invite, but only the
 manager tier (`staff`, `cashier`, `packingLead`, `courier`) and only into branches in their own
 `branchAccess` (at least one). `manager`, `admin` and `tenantOwner` remain admin/owner-only. A manager
 lists, replaces and revokes only invites inside that same scope.
+
+**Revision 2026-11-13 — staff created from the panel, phone + password sign-in (product owner approved all
+three points; supersedes decisions 2 and 5 above and the invite update):**
+
+- **No invites.** "Personel Ekle" creates an active staff account in one step: first and last name, phone
+  number, password, roles and branches (`createStaffAccount`). The invite callables and `staffInvites` are
+  removed.
+- **One account per person.** Firebase Auth has no phone+password provider. A staff account therefore
+  carries the phone number together with a hidden sign-in e-mail derived from it,
+  `<digits>@staff-login.abakus.invalid` (`.invalid` can never receive mail), and the password. The
+  person's SMS sign-in and password sign-in reach the same uid. If a customer account with that number
+  exists, the e-mail and password are added to it, so the customer history is kept.
+- **Phone + password everywhere.** Phone and Windows POS. The sign-in screen offers "Şifre ile giriş"
+  next to the default SMS sign-in and never reveals whether a number is staff. A staff member signed in
+  on the phone lands in the customer app; background discovery (phase B) shows "Yönetim Paneline Geç",
+  with no device approval. The Windows QR pairing (decision 5) is dropped. Device trust stays per
+  terminal (decision 6).
+- **Who manages whom** (`createStaffAccount`, `setStaffPassword`, `updateStaffMember`):
+  - a manager manages only `staff`, `cashier`, `packingLead` and `courier` accounts, and only in their
+    own branches, before and after a change;
+  - an admin or owner manages everyone in the organization, managers included, except accounts holding
+    `admin` or `tenantOwner`;
+  - granting `admin` needs `manageStaffAdminRole`; `tenantOwner` is never granted from the panel;
+  - nobody manages their own account there.
+- **Passwords.**
+  - At least 8 characters.
+  - A password set by someone else ends every open session of that account (refresh tokens revoked,
+    staff claims stamped stale).
+  - Staff change their own password from the profile.
+- **Audit.** Every panel mutation writes an `auditEvents` record in the same transaction as the
+  membership change. Passwords never reach Firestore or logs.
+- **Data model.** `memberships` gains optional `firstName`, `lastName` and `phoneNumber` (display only);
+  `listStaffMembersForOrganization` returns them.
+- **Known gap, not changed here.** The older `assignStaffRole` lets any `manageStaffRoles` holder (a
+  manager) grant any non-admin role, including `manager` and `tenantOwner`, to anyone in the
+  organization, with no branch scope. The new `updateStaffMember` is scoped. Retiring or scoping
+  `assignStaffRole` needs a separate decision.

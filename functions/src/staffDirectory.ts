@@ -27,6 +27,10 @@ export interface StaffDirectoryEntry {
   roles: string[];
   branchAccess: string[];
   status: string;
+  /** ADR-085 (revised): set for accounts created from the panel. */
+  firstName: string | null;
+  lastName: string | null;
+  phoneNumber: string | null;
 }
 
 function invalid(message: string): never {
@@ -65,8 +69,14 @@ export const listStaffMembersForOrganization = onCall(async (request: CallableRe
   const db = getFirestore();
   const snapshot = await db.collection("memberships").where("organizationId", "==", organizationId).get();
   const members: StaffDirectoryEntry[] = snapshot.docs.map((doc) => {
-    const record = doc.data() as { uid: string; roles: string[]; branchAccess: string[]; status: string };
-    return { uid: record.uid, roles: record.roles, branchAccess: record.branchAccess, status: record.status };
+    const record = doc.data() as {
+      uid: string; roles: string[]; branchAccess: string[]; status: string;
+      firstName?: string; lastName?: string; phoneNumber?: string;
+    };
+    return {
+      uid: record.uid, roles: record.roles, branchAccess: record.branchAccess, status: record.status,
+      firstName: record.firstName ?? null, lastName: record.lastName ?? null, phoneNumber: record.phoneNumber ?? null,
+    };
   });
 
   return { members };

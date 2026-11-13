@@ -11913,3 +11913,19 @@ Phase B details:
   to the first visible item.
 - Tests: `test/features/admin/presentation/providers/staff_session_discovery_test.dart`, 7 tests. The full
   suite passes: 4187 passed, 12 skipped.
+
+#### Revision (2026-11-13): panel-created staff, phone + password sign-in
+
+The product owner replaced invites with "Personel Ekle" plus phone + password sign-in (ADR-085 revision).
+The phase A invite code is removed. Revised order:
+
+| Step | Scope | Status |
+|---|---|---|
+| 1 | Server: `createStaffAccount`, `setStaffPassword`, `updateStaffMember` (scoped, audited) | Done (2026-11-13), emulator-tested |
+| 2 | App: "Şifre ile giriş" on the sign-in screen, phone + password on Windows, own password change in the profile | Not started |
+| 3 | Staff screen: "Personel Ekle" form, change password/role/status from the list | Not started |
+| 4 | Phase C: role isolation (cashier sees POS, courier only Kurye Ekranım) + per-role tests | Not started |
+| 5 | Deploy to dev, move test accounts to phone + password, new APK | Not started |
+
+Step 1 tests: `functions/src/test/staffAccounts.test.ts` adds 8 tests. Together with the membership and
+directory tests, 37 of 37 pass.

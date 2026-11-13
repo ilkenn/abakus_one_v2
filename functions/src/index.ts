@@ -33,10 +33,8 @@ export {
   grantStaffBranchAccess,
   revokeStaffBranchAccess,
   setStaffMemberStatus,
-  inviteStaffByPhone,
-  revokeStaffInvite,
-  listStaffInvites,
 } from "./staffMembership";
+export { createStaffAccount, setStaffPassword, updateStaffMember } from "./staffAccounts";
 export { setStaffPermissionOverride } from "./staffPermissionOverrides";
 export { listStaffMembersForOrganization } from "./staffDirectory";
 export {
