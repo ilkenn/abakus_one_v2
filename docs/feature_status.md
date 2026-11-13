@@ -11870,3 +11870,29 @@ to ADR-083.
 
   Manager and courier sign-in plus claim sync were verified against the real project. 32 callables
   needed the public invoker binding (ADR-083 follow-up).
+
+### Tek giriş: Telefon + SMS (ADR-085) — 2026-11-13
+
+| Phase | Scope | Status |
+|---|---|---|
+| A | Server: staff invited by phone number; invite binds on first SMS sign-in | Done (2026-11-13) — emulator-tested, not yet deployed to dev |
+| B | App: background staff discovery after SMS sign-in, "Yönetim Paneline Geç", role landing | Not started |
+| C | Role isolation audit + per-role menu tests | Not started |
+| D | Remove e-mail/password staff sign-in; QR pairing for the Windows POS | Not started |
+| E | Device approval only at POS/KDS terminal setup | Not started |
+
+Phase A details:
+
+- New callables in `functions/src/staffMembership.ts`:
+  - `inviteStaffByPhone`;
+  - `revokeStaffInvite`;
+  - `listStaffInvites`.
+- `syncOwnStaffClaims` now binds pending invites for the caller's verified `phone_number` before it
+  resyncs claims, and returns `claimedInvites`.
+- New collection `staffInvites/{organizationId}_{phoneE164}`. It is Cloud-Function-only: the rule
+  `allow read, write: if false` is in `firestore.rules`.
+- Inviting requires `manageStaffAccounts`, which today means admin or owner only; a manager cannot
+  invite. It also requires the role-grant permission for every invited role, and
+  `manageStaffBranchAccess` when branches are given. Self-invites are refused.
+- Tests: `functions/src/test/staffInvites.test.ts`, 7 emulator tests. Together with
+  `staffMembership.test.ts`, 34 of 34 pass.

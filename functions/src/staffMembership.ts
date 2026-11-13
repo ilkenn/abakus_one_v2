@@ -210,8 +210,17 @@ export const syncOwnStaffClaims = onCall(
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Sign-in is required.");
     }
+    // ADR-085 — bind any pending phone invite first, so the very same sync
+    // already carries the invited roles. The phone number comes only from
+    // the verified ID token (Firebase sets `phone_number` after a real SMS
+    // verification), never from `request.data`.
+    const verifiedPhone = request.auth.token?.phone_number;
+    let claimedInvites = 0;
+    if (typeof verifiedPhone === "string" && verifiedPhone.length > 0) {
+      claimedInvites = await claimPendingInvitesForPhone(request.auth.uid, verifiedPhone);
+    }
     await resyncClaimsForUid(request.auth.uid);
-    return { synced: true };
+    return { synced: true, claimedInvites };
   },
 );
 
@@ -480,5 +489,248 @@ export const setStaffMemberStatus = onCall(
     }
 
     return { organizationId, targetUid, status, updated: true };
+  },
+);
+
+// =======================================================================
+// ADR-085 — staff invited by phone number.
+//
+// A manager invites a phone number with roles and branches. The invite
+// sits in `staffInvites/{organizationId}_{phoneE164}` (Cloud-Function-only,
+// `allow read, write: if false`) until that number signs in with SMS; then
+// `syncOwnStaffClaims` binds it to the account. If an account with that
+// number already exists, the invite binds immediately.
+// =======================================================================
+
+export type StaffInviteStatus = "pending" | "claimed" | "revoked";
+
+interface StaffInviteDoc {
+  organizationId: string;
+  phoneNumber: string;
+  roles: MembershipRole[];
+  branchAccess: string[];
+  status: StaffInviteStatus;
+  invitedByUid: string;
+  createdAt: Date | FirebaseFirestore.Timestamp;
+  updatedAt: Date | FirebaseFirestore.Timestamp;
+  claimedByUid?: string;
+  claimedAt?: Date | FirebaseFirestore.Timestamp;
+}
+
+/** E.164: a plus sign, a non-zero country digit, 8 to 15 digits in total. */
+const E164_PATTERN = /^\+[1-9]\d{7,14}$/;
+
+function requirePhoneNumber(value: unknown): string {
+  const phone = requireNonEmptyString(value, "phoneNumber");
+  if (!E164_PATTERN.test(phone)) invalid("phoneNumber must be in E.164 form, e.g. +905551234567.");
+  return phone;
+}
+
+function requireStringArray(value: unknown, field: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string" || v.length === 0)) {
+    invalid(`${field} must be a list of non-empty strings.`);
+  }
+  return [...new Set(value as string[])];
+}
+
+function inviteId(organizationId: string, phoneNumber: string): string {
+  return `${organizationId}_${phoneNumber}`;
+}
+
+/**
+ * Binds one pending invite to [uid] inside a transaction (so two
+ * concurrent syncs never double-apply it). A new membership is created
+ * `active` with the invited roles/branches. An existing membership keeps
+ * its status and gains the invited roles/branches (union); an `archived`
+ * membership is terminal, so the invite is left pending and nothing
+ * changes. Returns whether the invite was bound. The caller resyncs claims.
+ */
+async function claimInvite(
+  db: FirebaseFirestore.Firestore,
+  inviteRef: FirebaseFirestore.DocumentReference,
+  uid: string,
+): Promise<boolean> {
+  return db.runTransaction(async (tx) => {
+    const inviteSnap = await tx.get(inviteRef);
+    if (!inviteSnap.exists) return false;
+    const invite = inviteSnap.data() as StaffInviteDoc;
+    if (invite.status !== "pending") return false;
+
+    const membershipRef = db.collection("memberships").doc(membershipId(invite.organizationId, uid));
+    const membershipSnap = await tx.get(membershipRef);
+    const now = new Date();
+
+    if (!membershipSnap.exists) {
+      const doc: MembershipDoc = {
+        organizationId: invite.organizationId,
+        uid,
+        roles: invite.roles,
+        branchAccess: invite.branchAccess,
+        restaurantAccess: [],
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+      };
+      tx.set(membershipRef, doc);
+    } else {
+      const existing = membershipSnap.data() as MembershipDoc;
+      if (existing.status === "archived") return false;
+      tx.update(membershipRef, {
+        roles: [...new Set([...existing.roles, ...invite.roles])],
+        branchAccess: [...new Set([...existing.branchAccess, ...invite.branchAccess])],
+        updatedAt: now,
+        version: (existing.version ?? 1) + 1,
+      });
+    }
+
+    tx.update(inviteRef, { status: "claimed", claimedByUid: uid, claimedAt: now, updatedAt: now });
+    return true;
+  });
+}
+
+/** Binds every pending invite for [verifiedPhone] (across organizations) to [uid]. */
+async function claimPendingInvitesForPhone(uid: string, verifiedPhone: string): Promise<number> {
+  const db = getFirestore();
+  const pending = await db
+    .collection("staffInvites")
+    .where("phoneNumber", "==", verifiedPhone)
+    .where("status", "==", "pending")
+    .get();
+  let claimed = 0;
+  for (const doc of pending.docs) {
+    if (await claimInvite(db, doc.ref, uid)) claimed += 1;
+  }
+  return claimed;
+}
+
+/**
+ * Invites [phoneNumber] into [organizationId] with [roles] and
+ * [branchAccess]. Requires `manageStaffAccounts`, plus the same role-grant
+ * permission `assignStaffRole` requires for every invited role, plus
+ * `manageStaffBranchAccess` when any branch is given. Nobody can invite
+ * their own phone number (no self-promotion). Re-inviting a number with a
+ * pending invite replaces its roles/branches; inviting a number whose
+ * invite was claimed or revoked opens a fresh one. If an account with that
+ * number already exists, the invite binds at once and that account's
+ * claims are resynced.
+ */
+export const inviteStaffByPhone = onCall(
+  { enforceAppCheck: shouldEnforceAppCheck() },
+  async (request: CallableRequest) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign-in is required.");
+    }
+    const data = (request.data ?? {}) as Record<string, unknown>;
+    const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
+    const phoneNumber = requirePhoneNumber(data.phoneNumber);
+    const roles = requireStringArray(data.roles, "roles") as MembershipRole[];
+    const branchAccess = requireStringArray(data.branchAccess, "branchAccess");
+    if (roles.length === 0) invalid("roles must contain at least one role.");
+    for (const role of roles) {
+      if (!VALID_ROLES.includes(role)) invalid(`role must be one of: ${VALID_ROLES.join(", ")}.`);
+    }
+
+    if (request.auth.token?.phone_number === phoneNumber) {
+      throw new HttpsError("permission-denied", "A staff member cannot invite their own phone number.");
+    }
+
+    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
+    for (const permission of new Set(roles.map(roleGrantPermission))) {
+      await requireStaffPermission(request, organizationId, permission);
+    }
+    if (branchAccess.length > 0) {
+      await requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
+    }
+
+    const db = getFirestore();
+    for (const branchId of branchAccess) {
+      const branch = await db.collection("branches").doc(branchId).get();
+      if (!branch.exists || branch.data()?.organizationId !== organizationId) {
+        invalid(`Branch "${branchId}" does not belong to this organization.`);
+      }
+    }
+
+    let existingUid: string | null = null;
+    try {
+      existingUid = (await getAuth().getUserByPhoneNumber(phoneNumber)).uid;
+    } catch {
+      // No account with this number yet: the invite waits for its first SMS sign-in.
+    }
+    if (existingUid === request.auth.uid) {
+      throw new HttpsError("permission-denied", "A staff member cannot invite their own phone number.");
+    }
+
+    const ref = db.collection("staffInvites").doc(inviteId(organizationId, phoneNumber));
+    const now = new Date();
+    const previous = await ref.get();
+    const previousPending = previous.exists && (previous.data() as StaffInviteDoc).status === "pending";
+    const doc: StaffInviteDoc = {
+      organizationId,
+      phoneNumber,
+      roles,
+      branchAccess,
+      status: "pending",
+      invitedByUid: request.auth.uid,
+      createdAt: previousPending ? (previous.data() as StaffInviteDoc).createdAt : now,
+      updatedAt: now,
+    };
+    await ref.set(doc);
+
+    let claimed = false;
+    if (existingUid) {
+      claimed = await claimInvite(db, ref, existingUid);
+      if (claimed) await resyncClaimsForUid(existingUid);
+    }
+
+    return { organizationId, phoneNumber, status: claimed ? "claimed" : "pending" };
+  },
+);
+
+/** Cancels a pending invite (`manageStaffAccounts`). A no-op unless it is pending. */
+export const revokeStaffInvite = onCall(
+  { enforceAppCheck: shouldEnforceAppCheck() },
+  async (request: CallableRequest) => {
+    const data = (request.data ?? {}) as Record<string, unknown>;
+    const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
+    const phoneNumber = requirePhoneNumber(data.phoneNumber);
+
+    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
+
+    const ref = getFirestore().collection("staffInvites").doc(inviteId(organizationId, phoneNumber));
+    const snap = await ref.get();
+    if (!snap.exists || (snap.data() as StaffInviteDoc).status !== "pending") {
+      return { organizationId, phoneNumber, revoked: false };
+    }
+    await ref.update({ status: "revoked", updatedAt: new Date() });
+    return { organizationId, phoneNumber, revoked: true };
+  },
+);
+
+/** Lists the organization's pending invites (`manageStaffAccounts`). */
+export const listStaffInvites = onCall(
+  { enforceAppCheck: shouldEnforceAppCheck() },
+  async (request: CallableRequest) => {
+    const data = (request.data ?? {}) as Record<string, unknown>;
+    const organizationId = requireNonEmptyString(data.organizationId, "organizationId");
+
+    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
+
+    const snap = await getFirestore()
+      .collection("staffInvites")
+      .where("organizationId", "==", organizationId)
+      .where("status", "==", "pending")
+      .get();
+    const invites = snap.docs.map((d) => {
+      const invite = d.data() as StaffInviteDoc;
+      return {
+        phoneNumber: invite.phoneNumber,
+        roles: invite.roles,
+        branchAccess: invite.branchAccess,
+        invitedByUid: invite.invitedByUid,
+      };
+    });
+    return { organizationId, invites };
   },
 );

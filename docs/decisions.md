@@ -21412,3 +21412,73 @@ command (`flutter run --flavor development`) had the same problem.
   - Faz 4 test rules on the three Kadıköy neighborhoods;
   - the branch default district.
 - `docs/courier_pool_device_test.md` §2–3 describe the whole sequence.
+
+## ADR-085 — One sign-in for everyone: phone + SMS OTP; staff roles bound by phone invite; device trust per terminal, never per person (2026-11-13)
+
+- Tarih: 2026-11-13
+- Durum: Accepted (product owner approved all three decisions explicitly, 2026-11-13)
+- Amends: ADR-030 (Trusted Device Model) — scope narrowed, not removed; BR-DEVICE-001
+
+### Context
+
+Staff signed in through a separate e-mail/password screen ("Yönetici / Personel Girişi"), reachable on
+a phone only through a debug-build shortcut. Staff were registered by e-mail (`registerStaffMember` →
+`getUserByEmail`). Customers already sign in with real Firebase phone + SMS OTP. A staff member's role
+was only discovered after the separate staff sign-in, never after the customer sign-in, even though both
+are the same Firebase project. The real-device test (2026-11-13) showed the cost: test accounts that
+exist only in the emulator, a POS that asks a person for device approval, and no staff path in a release
+phone build.
+
+Two facts constrain the target design (verified in source):
+
+- `firebase_auth`'s `verifyPhoneNumber` is not implemented on Windows desktop
+  (`lib/features/auth/data/repositories/firebase_auth_client.dart`). A Windows POS cannot do SMS sign-in.
+- Device trust (ADR-030) is enforced server-side by `requireActiveDeviceSession` in the cash, payment,
+  fiscal, refund and settlement callables. Removing it would let a stolen cashier login move money from
+  any device.
+
+### Decision
+
+1. **One identity: the phone number.** Everyone — customer, cashier, manager, courier — signs in on the
+   same screen with phone + SMS OTP. The staff e-mail/password screen, the login-screen shield shortcut
+   and the "Dev Admin" button are removed from the phone app.
+2. **Staff are invited by phone number.** A manager enters the phone number, the roles and the branches
+   (`inviteStaffByPhone`). The invite is stored in `staffInvites` (Cloud-Function-only collection). The
+   first time that number signs in with SMS, `syncOwnStaffClaims` binds the invite to the account,
+   creating or extending the `memberships` record. Binding uses only the phone number Firebase verified
+   (`request.auth.token.phone_number`), never a client-supplied number. If an account with that number
+   already exists, the invite binds immediately. The existing role rules still apply to an invite:
+   `manageStaffAdminRole` for `admin`, `manageStaffRoles` otherwise, `manageStaffBranchAccess` for
+   branches, and no self-invite.
+3. **Customer sign-in discovers staff roles.** After the SMS sign-in the app syncs staff claims in the
+   background. If the account has roles, the profile shows "Yönetim Paneline Geç"; one tap opens the
+   panel of that role (courier → courier screens, cashier → POS, manager/owner → management panel). No
+   second approval, no device prompt for a person. Customers without a role see nothing.
+4. **Strict role isolation.** The panel shows only the screens of the user's role; out-of-role screens
+   are not shown and offer no access request. Server-side permission checks stay as they are.
+5. **Windows POS signs in by QR pairing.** The POS shows a short-lived QR code; a staff member already
+   signed in on their phone scans it and the POS opens with that person's account. No password, no PIN.
+6. **Device trust belongs to the terminal, not the person.** A POS or KDS computer is approved once, when
+   it is set up (ADR-030's registration, unchanged server-side). After that, any authorized staff member
+   signing in on it is never asked for approval. Personal phones (courier, manager) never need device
+   approval.
+
+### Alternatives considered
+
+- **Remove device trust entirely** — rejected: it is the only control stopping cash/fiscal operations
+  from an arbitrary device with a stolen login (ADR-030).
+- **Staff PIN on the POS** — rejected by the product owner in favour of QR pairing (keeps one identity).
+- **Keep e-mail/password on Windows only** — rejected: two identities to manage.
+
+### Implementation order
+
+A (server: phone invites + claim on sign-in) → B (app: background staff discovery after SMS sign-in,
+role landing) → C (role isolation audit + tests) → D (remove e-mail/password staff sign-in; QR pairing
+for Windows) → E (device approval only at terminal setup). Each phase is recorded in
+`docs/feature_status.md` as it lands.
+
+### Consequences
+
+- Data model: new `staffInvites/{organizationId}_{phoneE164}` collection; `memberships` unchanged in shape.
+- Dev/test accounts move to phone numbers; the dev project uses Firebase test phone numbers (no real SMS).
+- `registerStaffMember` (by e-mail) stays for now and is retired in phase D.

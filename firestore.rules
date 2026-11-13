@@ -337,6 +337,12 @@ service cloud.firestore {
                               // cannot promote roles."
     }
 
+    // ADR-085 - pending staff phone invites. Cloud Function only: a phone
+    // number must never learn of, or forge, its own invite.
+    match /staffInvites/{inviteId} {
+      allow read, write: if false;
+    }
+
     match /staffMembers/{staffMemberId} {
       allow read: if canReadOrg(resource.data.organizationId);
       allow write: if false; // Cloud Function only.
