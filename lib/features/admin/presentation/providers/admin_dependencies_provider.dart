@@ -10,6 +10,7 @@ import '../../../auth/data/repositories/firebase_auth_client.dart';
 import '../../../../core/services/logging/log_level.dart';
 import '../../../../core/services/logging/logging_provider.dart';
 import '../../data/firebase_staff_member_repository.dart';
+import '../../data/staff_account_gateway.dart';
 import '../../../courier/presentation/providers/courier_core_dependencies_provider.dart';
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
 import '../../../pos/presentation/providers/kds_dependencies_provider.dart';
@@ -76,6 +77,16 @@ final staffMemberRepositoryProvider = Provider<StaffMemberRepository>((ref) {
     return const ProductionUnavailableStaffMemberRepository();
   }
   return InMemoryStaffMemberRepository();
+});
+
+/// ADR-085 (revision) — "Personel Ekle", staff password and access
+/// changes. Same Firebase-ready gate as [staffMemberRepositoryProvider],
+/// with an honest "unavailable" fallback instead of an in-memory stand-in.
+final staffAccountGatewayProvider = Provider<StaffAccountGateway>((ref) {
+  if (ref.watch(firebaseReadyProvider)) {
+    return FirebaseStaffAccountGateway();
+  }
+  return const UnavailableStaffAccountGateway();
 });
 
 final staffRoleChangeEventRepositoryProvider =

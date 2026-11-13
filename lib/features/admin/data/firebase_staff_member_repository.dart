@@ -114,10 +114,20 @@ class FirebaseStaffMemberRepository implements StaffMemberRepository {
       for (final r in (raw['roles'] as List))
         if (_roleFromName(r as String) case final role?) role,
     };
+    // ADR-085 (revision) — panel-created accounts carry a real name and
+    // phone number; older memberships still fall back to the uid.
+    final firstName = raw['firstName'] as String?;
+    final lastName = raw['lastName'] as String?;
+    final fullName = [firstName, lastName]
+        .whereType<String>()
+        .where((part) => part.isNotEmpty)
+        .join(' ');
     final member = StaffMember(
       id: uid,
-      displayName: _cache[uid]?.displayName ?? uid,
+      displayName:
+          fullName.isNotEmpty ? fullName : (_cache[uid]?.displayName ?? uid),
       authUid: uid,
+      phoneNumber: raw['phoneNumber'] as String?,
       roles: roles,
       branchAccess: Set<String>.from(raw['branchAccess'] as List),
       organizationAccess: {_organizationId()},

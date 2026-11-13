@@ -11923,7 +11923,7 @@ The phase A invite code is removed. Revised order:
 |---|---|---|
 | 1 | Server: `createStaffAccount`, `setStaffPassword`, `updateStaffMember` (scoped, audited) | Done (2026-11-13), emulator-tested |
 | 2 | App: "Şifre ile giriş" on the sign-in screen, phone + password on Windows, own password change in the profile | Done (2026-11-13), Visual Review Bekleniyor |
-| 3 | Staff screen: "Personel Ekle" form, change password/role/status from the list | Not started |
+| 3 | Staff screen: "Personel Ekle" form, change password/role/status from the list | Done (2026-11-13), Visual Review Bekleniyor |
 | 4 | Phase C: role isolation (cashier sees POS, courier only Kurye Ekranım) + per-role tests | Not started |
 | 5 | Deploy to dev, move test accounts to phone + password, new APK | Not started |
 
@@ -11943,3 +11943,19 @@ Step 2 details:
 - Profile: "Şifremi Değiştir" (staff only) opens `ProfileChangePasswordSheet`.
 - Tests: the login, sign-in screen, notifier and profile tests are updated or added. The full suite passes:
   4191 passed, 12 skipped.
+
+Step 3 details:
+
+- `StaffManagementScreen`: "Personel Ekle" (`StaffAccountCreateSheet`) collects first name, last name,
+  phone, password (at least 8 characters), roles and branch. Each row has "Şifre Değiştir", "Rolleri
+  Değiştir" and "Pasife Al" / "Aktifleştir". The screen has explicit loading, empty and error states.
+  A tap still opens `StaffDetailScreen`.
+- `StaffAccountGateway` / `staffAccountGatewayProvider` call the three new callables (REST bridge on
+  Windows). Refusals reach the screen only as Turkish messages.
+- Role choices are a form convenience: a manager sees only the lower roles; an admin or owner also sees
+  manager and admin. The server enforces the real rule.
+- `StaffMember.phoneNumber` is new. The directory maps first and last name to `displayName`; older
+  memberships keep the uid.
+- Known overlap: `StaffDetailScreen` still changes roles and status through the older, unscoped callables
+  (`assignStaffRole` etc.; see the ADR-085 revision's "known gap").
+- Tests: `staff_management_screen_test.dart` is rewritten with 7 tests.

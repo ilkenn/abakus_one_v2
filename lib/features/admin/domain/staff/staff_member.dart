@@ -24,6 +24,7 @@ class StaffMember {
     this.status = StaffMemberStatus.active,
     this.sessionsRevokedAt,
     this.authUid,
+    this.phoneNumber,
     required this.createdAt,
     required this.revision,
   });
@@ -39,6 +40,10 @@ class StaffMember {
   /// implicit "any credential works" fallback.
   final String? authUid;
   final Set<StaffRole> roles;
+
+  /// ADR-085 (revision) — the phone number a panel-created account signs in
+  /// with (E.164). `null` for older accounts. Display only.
+  final String? phoneNumber;
 
   /// **Faz R.3C.2 — profile/display metadata only, no longer
   /// authorization-critical.** `ActorSession.branchAccess` (what
@@ -95,6 +100,7 @@ class StaffMember {
           ? null
           : (sessionsRevokedAt ?? this.sessionsRevokedAt),
       authUid: authUid ?? this.authUid,
+      phoneNumber: phoneNumber,
       createdAt: createdAt,
       revision: revision,
     );

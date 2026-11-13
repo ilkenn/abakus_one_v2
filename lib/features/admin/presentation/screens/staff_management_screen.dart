@@ -5,19 +5,27 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
+import '../../../../shared/widgets/feedback/empty_view.dart';
+import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../navigation/presentation/providers/current_branch_provider.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
-import '../../application/use_cases/register_staff_member.dart';
+import '../../../pos/domain/authorization/staff_role.dart';
+import '../../../pos/presentation/providers/actor_session_provider.dart';
+import '../../data/staff_account_gateway.dart';
 import '../../domain/staff/staff_member.dart';
 import '../../domain/staff/staff_member_status.dart';
 import '../providers/admin_dependencies_provider.dart';
+import '../widgets/staff_account_forms.dart';
 import 'staff_detail_screen.dart';
 
-/// Staff roster — Phase 6C (`docs/decisions.md` ADR-023). Lists every
-/// `StaffMember`; a tap opens `StaffDetailScreen` for roles/branch
-/// access/status/session management. New members register with **no
-/// roles at all** (`RegisterStaffMember`'s own documented rule) — a role
-/// must be granted separately, from the detail screen.
+/// Staff roster — Phase 6C (ADR-023), reworked for ADR-085 (revision,
+/// 2026-11-13): "Personel Ekle" creates an active account in one step
+/// (name, phone, password, roles, branch), and each row offers "Şifre
+/// Değiştir", "Rolleri Değiştir" and "Pasife Al" / "Aktifleştir". Who may
+/// manage whom is decided by the server (`functions/src/staffAccounts.ts`);
+/// a refused action shows its Turkish reason here. A tap still opens
+/// [StaffDetailScreen].
 class StaffManagementScreen extends ConsumerStatefulWidget {
   const StaffManagementScreen({
     super.key,
@@ -35,7 +43,8 @@ class StaffManagementScreen extends ConsumerStatefulWidget {
 
 class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
   List<StaffMember>? _members;
-  String? _error;
+  bool _loadFailed = false;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -44,88 +53,225 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
   }
 
   Future<void> _load() async {
-    final members = await ref.read(staffMemberRepositoryProvider).findAll();
-    if (!mounted) return;
-    setState(() => _members = members);
+    setState(() => _loadFailed = false);
+    try {
+      final members = await ref.read(staffMemberRepositoryProvider).findAll();
+      if (!mounted) return;
+      setState(() => _members = members);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadFailed = true);
+    }
   }
 
-  Future<void> _register() async {
-    final policy = widget.authorizationPolicy;
-    if (policy == null) {
-      setState(() => _error = 'Yetki politikası tanımlı değil.');
-      return;
-    }
-    final nameController = TextEditingController();
-    final emailController = TextEditingController();
-    // AP-2 Stage B — email is now required: the real backend links a new
-    // membership to an EXISTING Firebase Auth account found by email
-    // (`registerStaffMember`'s own `getUserByEmail` lookup) — that account
-    // must already have been created out-of-band (e.g. via Firebase
-    // Console/Admin SDK) before this dialog can register it here.
-    final result = await showDialog<({String name, String email})>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Yeni Personel'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Ad Soyad'),
-              autofocus: true,
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            TextField(
-              controller: emailController,
-              decoration: const InputDecoration(
-                labelText: 'E-posta (mevcut Firebase Auth hesabı)',
-              ),
-              keyboardType: TextInputType.emailAddress,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('İptal'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop((
-              name: nameController.text,
-              email: emailController.text,
-            )),
-            child: const Text('Oluştur'),
-          ),
-        ],
-      ),
-    );
-    if (result == null ||
-        result.name.trim().isEmpty ||
-        result.email.trim().isEmpty) {
-      return;
-    }
-
-    try {
-      await RegisterStaffMember(
-        authorizationPolicy: policy,
-        repository: ref.read(staffMemberRepositoryProvider),
-        auditRepository: ref.read(adminAuditEntryRepositoryProvider),
-      )(
-        displayName: result.name.trim(),
-        email: result.email.trim(),
-        performedByStaffId: widget.performedByStaffId,
-        createdAt: DateTime.now(),
+  List<StaffRole> get _assignableRoles => assignableStaffRoles(
+        ref.read(actorSessionProvider)?.roles ?? const {},
       );
-      setState(() => _error = null);
+
+  void _showMessage(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: isError ? AppColors.error : null,
+    ));
+  }
+
+  /// Runs one staff-account command with a busy state, then reloads.
+  Future<void> _run(
+    Future<void> Function(StaffAccountGateway gateway, String organizationId)
+        action, {
+    required String success,
+  }) async {
+    setState(() => _busy = true);
+    try {
+      await action(
+        ref.read(staffAccountGatewayProvider),
+        ref.read(currentOrganizationIdProvider),
+      );
+      if (!mounted) return;
+      _showMessage(success);
       await _load();
-    } catch (e) {
-      setState(() => _error = e.toString());
+    } on StaffAccountException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message, isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _addStaff() async {
+    final session = ref.read(actorSessionProvider);
+    final currentBranch = ref.read(currentBranchIdProvider);
+    final branchIds = {...?session?.branchAccess, currentBranch}.toList()
+      ..sort();
+    final input = await StaffAccountCreateSheet.show(
+      context,
+      assignableRoles: _assignableRoles,
+      branchIds: branchIds,
+      initialBranchId: currentBranch,
+    );
+    if (input == null || !mounted) return;
+    await _run(
+      (gateway, organizationId) => gateway.createStaffAccount(
+        organizationId: organizationId,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        phoneNumber: input.phoneNumber,
+        password: input.password,
+        roles: input.roles,
+        branchAccess: {input.branchId},
+      ),
+      success: '${input.firstName} ${input.lastName} eklendi.',
+    );
+  }
+
+  Future<void> _changePassword(StaffMember member) async {
+    final password =
+        await showStaffPasswordDialog(context, memberName: member.displayName);
+    if (password == null || !mounted) return;
+    await _run(
+      (gateway, organizationId) => gateway.setStaffPassword(
+        organizationId: organizationId,
+        targetUid: member.authUid ?? member.id,
+        password: password,
+      ),
+      success: 'Şifre değiştirildi.',
+    );
+  }
+
+  Future<void> _changeRoles(StaffMember member) async {
+    final roles = await showStaffRolesDialog(
+      context,
+      memberName: member.displayName,
+      current: member.roles,
+      assignableRoles: _assignableRoles,
+    );
+    if (roles == null || !mounted) return;
+    await _run(
+      (gateway, organizationId) => gateway.updateStaffMember(
+        organizationId: organizationId,
+        targetUid: member.authUid ?? member.id,
+        roles: roles,
+      ),
+      success: 'Roller güncellendi.',
+    );
+  }
+
+  Future<void> _toggleActive(StaffMember member) async {
+    final activate = !member.isActive;
+    await _run(
+      (gateway, organizationId) => gateway.updateStaffMember(
+        organizationId: organizationId,
+        targetUid: member.authUid ?? member.id,
+        active: activate,
+      ),
+      success: activate
+          ? '${member.displayName} aktifleştirildi.'
+          : '${member.displayName} pasife alındı.',
+    );
+  }
+
+  String _subtitle(StaffMember member) {
+    final roles = member.roles.isEmpty
+        ? 'Rol atanmadı'
+        : member.roles.map(staffRoleLabel).join(', ');
+    final status =
+        member.status == StaffMemberStatus.active ? 'Aktif' : 'Pasif';
+    final phone = member.phoneNumber;
+    return [if (phone != null) phone, roles, status].join(' · ');
+  }
+
+  Widget _body() {
+    final members = _members;
+    if (_loadFailed) {
+      return ErrorView(
+        message: 'Personel listesi yüklenemedi.',
+        retryLabel: 'Tekrar Dene',
+        onRetry: _load,
+      );
+    }
+    if (members == null) {
+      return const LoadingView(message: 'Personel listesi yükleniyor...');
+    }
+    if (members.isEmpty) {
+      return EmptyView(
+        icon: Icons.badge_outlined,
+        message: 'Henüz personel yok.',
+        actionLabel: 'Personel Ekle',
+        onAction: _busy ? null : _addStaff,
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      children: [
+        for (final member in members)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+            child: AppCard(
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: Icon(
+                  Icons.badge_outlined,
+                  color: member.isActive
+                      ? AppColors.primary
+                      : AppColors.textSecondary,
+                ),
+                title: Text(member.displayName, style: AppTypography.bodyLarge),
+                subtitle: Text(
+                  _subtitle(member),
+                  style: AppTypography.bodySmall
+                      .copyWith(color: AppColors.textSecondary),
+                ),
+                trailing: PopupMenuButton<String>(
+                  key: Key('staffActions-${member.id}'),
+                  enabled: !_busy,
+                  tooltip: 'İşlemler',
+                  onSelected: (action) {
+                    switch (action) {
+                      case 'password':
+                        _changePassword(member);
+                      case 'roles':
+                        _changeRoles(member);
+                      case 'status':
+                        _toggleActive(member);
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                      value: 'password',
+                      child: Text('Şifre Değiştir'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'roles',
+                      child: Text('Rolleri Değiştir'),
+                    ),
+                    PopupMenuItem(
+                      value: 'status',
+                      child:
+                          Text(member.isActive ? 'Pasife Al' : 'Aktifleştir'),
+                    ),
+                  ],
+                ),
+                onTap: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => StaffDetailScreen(
+                        staffMemberId: member.id,
+                        authorizationPolicy: widget.authorizationPolicy,
+                        performedByStaffId: widget.performedByStaffId,
+                      ),
+                    ),
+                  );
+                  await _load();
+                },
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final members = _members;
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -136,65 +282,12 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.person_add_outlined),
-            onPressed: _register,
-            tooltip: 'Yeni Personel',
+            onPressed: _busy ? null : _addStaff,
+            tooltip: 'Personel Ekle',
           ),
         ],
       ),
-      body: SafeArea(
-        child: members == null
-            ? const LoadingView(message: 'Personel listesi yükleniyor...')
-            : ListView(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                children: [
-                  if (_error != null) ...[
-                    Text(_error!,
-                        style: AppTypography.bodySmall
-                            .copyWith(color: AppColors.error)),
-                    const SizedBox(height: AppSpacing.sm),
-                  ],
-                  for (final member in members)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                      child: AppCard(
-                        padding: EdgeInsets.zero,
-                        child: ListTile(
-                          leading: Icon(
-                            Icons.badge_outlined,
-                            color: member.status == StaffMemberStatus.active
-                                ? AppColors.primary
-                                : AppColors.textSecondary,
-                          ),
-                          title: Text(member.displayName,
-                              style: AppTypography.bodyLarge),
-                          subtitle: Text(
-                            member.roles.isEmpty
-                                ? 'Rol atanmadı · ${member.status.name}'
-                                : '${member.roles.map((r) => r.name).join(', ')} '
-                                    '· ${member.status.name}',
-                            style: AppTypography.bodySmall
-                                .copyWith(color: AppColors.textSecondary),
-                          ),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () async {
-                            await Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => StaffDetailScreen(
-                                  staffMemberId: member.id,
-                                  authorizationPolicy:
-                                      widget.authorizationPolicy,
-                                  performedByStaffId: widget.performedByStaffId,
-                                ),
-                              ),
-                            );
-                            await _load();
-                          },
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-      ),
+      body: SafeArea(child: _body()),
     );
   }
 }
