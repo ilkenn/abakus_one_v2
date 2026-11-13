@@ -27,6 +27,9 @@ enum ApprovalActionType {
   // Approval Inbox would have thrown `ArgumentError` on any real stock
   // -count approval request before this addition.
   stockCountAdjustment,
+  // ADR-085 stage 1 — a staff account a manager added, waiting for an
+  // admin/owner (`functions/src/staffAccounts.ts`).
+  staffActivation,
 }
 
 enum ApprovalStatus {
@@ -60,6 +63,8 @@ ApprovalActionType approvalActionTypeFromWire(String value) {
       return ApprovalActionType.cashReconciliation;
     case 'stockCountAdjustment':
       return ApprovalActionType.stockCountAdjustment;
+    case 'staffActivation':
+      return ApprovalActionType.staffActivation;
     default:
       throw ArgumentError('Unknown approval action type: $value');
   }

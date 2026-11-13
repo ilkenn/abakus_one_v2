@@ -2,8 +2,16 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import type { CallableRequest } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
+import { createHash } from "crypto";
 import type { UserRecord } from "firebase-admin/auth";
-import { requireStaffPermission } from "./staffAuthorization";
+import { createApprovalRequest } from "./remoteApproval";
+import type { ActionHandlerParams, ActionHandlerResult } from "./remoteApproval";
+import {
+  assertOrganizationScope,
+  assertTargetNotProtected,
+  assertWithinScope,
+  resolveStaffScope,
+} from "./staffScope";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { writeAuditEvent } from "./auditEvents";
 import { generateCorrelationId } from "./correlationId";
@@ -44,17 +52,6 @@ import type { MembershipDoc, MembershipRole, MembershipStatus } from "./staffMem
  * the membership change. A password never reaches Firestore or a log.
  */
 
-/** Roles a manager may manage: those below the manager tier. */
-const BRANCH_MANAGEABLE_ROLES: ReadonlySet<MembershipRole> = new Set([
-  "staff",
-  "cashier",
-  "packingLead",
-  "courier",
-]);
-
-/** Roles whose holders are off-limits to every scope (no peer/superior). */
-const PROTECTED_ROLES: ReadonlySet<MembershipRole> = new Set(["admin", "tenantOwner"]);
-
 const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 128;
 const MAX_NAME_LENGTH = 60;
@@ -70,15 +67,6 @@ const E164_PATTERN = /^\+[1-9]\d{7,14}$/;
  */
 export function staffLoginEmailForPhone(phoneNumber: string): string {
   return `${phoneNumber.replace(/^\+/, "")}@staff-login.abakus.invalid`;
-}
-
-type StaffScope =
-  | { kind: "organization"; canGrantAdmin: boolean }
-  | { kind: "branch"; branches: ReadonlySet<string> };
-
-interface AccessShape {
-  roles: MembershipRole[];
-  branchAccess: string[];
 }
 
 function invalid(message: string): never {
@@ -130,59 +118,6 @@ function requireBranches(value: unknown): string[] {
     invalid("branchAccess must be a list of non-empty strings.");
   }
   return [...new Set(value as string[])];
-}
-
-async function holdsPermission(
-  request: CallableRequest,
-  organizationId: string,
-  permission: Parameters<typeof requireStaffPermission>[2],
-): Promise<boolean> {
-  try {
-    await requireStaffPermission(request, organizationId, permission);
-    return true;
-  } catch (error) {
-    if (error instanceof HttpsError && error.code === "permission-denied") return false;
-    throw error;
-  }
-}
-
-/** See the module comment. Throws `permission-denied` for anyone else. */
-async function resolveStaffScope(request: CallableRequest, organizationId: string): Promise<StaffScope> {
-  if (await holdsPermission(request, organizationId, "manageStaffAccounts")) {
-    return {
-      kind: "organization",
-      canGrantAdmin: await holdsPermission(request, organizationId, "manageStaffAdminRole"),
-    };
-  }
-  await requireStaffPermission(request, organizationId, "manageStaffRoles");
-  await requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
-  const byOrg = request.auth?.token?.branchAccess as Record<string, unknown> | undefined;
-  const own = byOrg?.[organizationId];
-  const branches = new Set(Array.isArray(own) ? own.filter((b): b is string => typeof b === "string") : []);
-  return { kind: "branch", branches };
-}
-
-/** Whether [scope] may hold an account shaped like [access] (checked before AND after a change). */
-function assertWithinScope(scope: StaffScope, access: AccessShape): void {
-  if (scope.kind === "organization") {
-    if (access.roles.includes("tenantOwner")) denied("The owner role cannot be managed from the panel.");
-    if (access.roles.includes("admin") && !scope.canGrantAdmin) denied("Granting the admin role requires manageStaffAdminRole.");
-    return;
-  }
-  const ok =
-    access.branchAccess.length > 0 &&
-    access.roles.every((role) => BRANCH_MANAGEABLE_ROLES.has(role)) &&
-    access.branchAccess.every((branchId) => scope.branches.has(branchId));
-  if (!ok) {
-    denied("A manager can manage only cashier/courier-level staff, and only in their own branches.");
-  }
-}
-
-/** An existing account is off-limits if it holds a protected role (no peer/superior), for every scope. */
-function assertTargetNotProtected(access: AccessShape): void {
-  if (access.roles.some((role) => PROTECTED_ROLES.has(role))) {
-    denied("Admin and owner accounts cannot be managed by another staff member.");
-  }
 }
 
 async function assertBranchesBelongToOrganization(organizationId: string, branchAccess: string[]): Promise<void> {
@@ -254,6 +189,9 @@ export const createStaffAccount = onCall(
       uid = (await getAuth().createUser({ phoneNumber, email, password, displayName })).uid;
     }
 
+    // ADR-085 stage 1 — an admin/owner's account is active at once; a
+    // manager's waits for an admin/owner in the Onay Kutusu.
+    const status: MembershipStatus = scope.kind === "organization" ? "active" : "pendingApproval";
     const now = new Date();
     const ref = db.collection("memberships").doc(membershipId(organizationId, uid));
     const doc: MembershipDoc = {
@@ -262,7 +200,7 @@ export const createStaffAccount = onCall(
       roles,
       branchAccess,
       restaurantAccess: [],
-      status: "active",
+      status,
       createdAt: now,
       updatedAt: now,
       version: 1,
@@ -283,7 +221,7 @@ export const createStaffAccount = onCall(
         organizationId,
         type: "staff.accountCreated",
         targetRef: ref.path,
-        newValue: { roles, branchAccess, status: "active", reusedExistingAccount: existing !== null },
+        newValue: { roles, branchAccess, status, reusedExistingAccount: existing !== null },
         actorType: "staff",
         actorUid: request.auth!.uid,
         actorRoles: callerRoles(request, organizationId),
@@ -293,7 +231,20 @@ export const createStaffAccount = onCall(
     });
     await resyncClaimsForUid(uid);
 
-    return { organizationId, uid, reusedExistingAccount: existing !== null };
+    let approvalRequestId: string | null = null;
+    if (status === "pendingApproval") {
+      approvalRequestId = (await createApprovalRequest({
+        organizationId,
+        branchId: branchAccess[0],
+        actionType: "staffActivation",
+        requestedByActorUid: request.auth.uid,
+        targetAggregateRef: ref.path,
+        targetAggregateVersion: 1,
+        payloadHash: createHash("sha256").update(JSON.stringify({ roles, branchAccess, phoneNumber })).digest("hex"),
+      })).requestId;
+    }
+
+    return { organizationId, uid, status, approvalRequestId, reusedExistingAccount: existing !== null };
   },
 );
 
@@ -381,6 +332,8 @@ export const updateStaffMember = onCall(
     const branchAccess = data.branchAccess === undefined ? doc.branchAccess : requireBranches(data.branchAccess);
     let status = doc.status;
     if (data.status !== undefined) {
+      // ADR-085 stage 1 — only an admin/owner changes whether staff are active.
+      assertOrganizationScope(scope);
       if (!EDITABLE_STATUSES.includes(data.status as MembershipStatus)) {
         invalid(`status must be one of: ${EDITABLE_STATUSES.join(", ")}.`);
       }
@@ -426,3 +379,33 @@ export const updateStaffMember = onCall(
     return { organizationId, targetUid, roles, branchAccess, status };
   },
 );
+
+/**
+ * ADR-085 stage 1 — the Onay Kutusu handlers for a manager-added account
+ * (`staffActivation`). Approval activates the membership (the person's next
+ * sign-in syncs the claims); rejection removes the pending membership, so
+ * the number can be added again later. Both re-check, inside the approval
+ * transaction, that the membership is still waiting.
+ */
+async function loadPendingMembership(params: ActionHandlerParams) {
+  const ref = params.db.doc(params.request.targetAggregateRef);
+  const snap = await params.tx.get(ref);
+  if (!snap.exists) throw new HttpsError("not-found", "The staff account no longer exists.");
+  const doc = snap.data() as MembershipDoc;
+  if (doc.status !== "pendingApproval") {
+    throw new HttpsError("failed-precondition", `The staff account is already "${doc.status}".`);
+  }
+  return { ref, doc };
+}
+
+export async function applyStaffActivation(params: ActionHandlerParams): Promise<ActionHandlerResult> {
+  const { ref, doc } = await loadPendingMembership(params);
+  params.tx.update(ref, { status: "active", updatedAt: params.now.toDate(), version: (doc.version ?? 1) + 1 });
+  return { newValue: { status: "active" } };
+}
+
+export async function applyStaffActivationRejected(params: ActionHandlerParams): Promise<ActionHandlerResult> {
+  const { ref } = await loadPendingMembership(params);
+  params.tx.delete(ref);
+  return { newValue: { status: "rejected" } };
+}

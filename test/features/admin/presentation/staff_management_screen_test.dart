@@ -35,8 +35,12 @@ class _FakeStaffAccountGateway implements StaffAccountGateway {
     }
   }
 
+  /// What the server would answer: a manager's new account waits for an
+  /// admin/owner (ADR-085 stage 1).
+  bool pendingOnCreate = false;
+
   @override
-  Future<void> createStaffAccount({
+  Future<bool> createStaffAccount({
     required String organizationId,
     required String firstName,
     required String lastName,
@@ -57,9 +61,13 @@ class _FakeStaffAccountGateway implements StaffAccountGateway {
       phoneNumber: phoneNumber,
       roles: roles,
       branchAccess: branchAccess,
+      status: pendingOnCreate
+          ? StaffMemberStatus.pendingApproval
+          : StaffMemberStatus.active,
       createdAt: DateTime(2026, 11, 13),
       revision: 1,
     ));
+    return pendingOnCreate;
   }
 
   @override
@@ -97,6 +105,13 @@ const _manager = ActorSession(
   actorId: 'manager-1',
   roles: {StaffRole.manager},
   activeRole: StaffRole.manager,
+  branchAccess: {'branch-1'},
+);
+
+const _admin = ActorSession(
+  actorId: 'admin-1',
+  roles: {StaffRole.admin},
+  activeRole: StaffRole.admin,
   branchAccess: {'branch-1'},
 );
 
@@ -156,7 +171,7 @@ void main() {
   testWidgets(
       '"Personel Ekle" creates an active account with name, phone, password, '
       'role and branch, and lists it', (tester) async {
-    await pumpScreen(tester);
+    await pumpScreen(tester, session: _admin);
     await addStaff(tester);
 
     expect(gateway.calls, ['create:+905321234567']);
@@ -205,9 +220,30 @@ void main() {
     expect(find.text('Ayşe Yılmaz'), findsNothing);
   });
 
-  testWidgets('a row changes the password and suspends the member',
-      (tester) async {
+  testWidgets(
+      'ADR-085 stage 1: an account a manager adds waits for an admin/owner, '
+      'and the manager is never offered "Pasife Al"', (tester) async {
     await pumpScreen(tester);
+    gateway.pendingOnCreate = true;
+    await addStaff(tester);
+
+    expect(
+        find.text(
+            'Ayşe Yılmaz eklendi. Yönetici onayından sonra aktif olacak.'),
+        findsOneWidget);
+    expect(find.textContaining('Kasiyer · Yönetici Onayı Bekliyor'),
+        findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('staffActions-uid-+905321234567')));
+    await tester.pumpAndSettle();
+    expect(find.text('Şifre Değiştir'), findsOneWidget);
+    expect(find.text('Pasife Al'), findsNothing);
+    expect(find.text('Aktifleştir'), findsNothing);
+  });
+
+  testWidgets('an admin changes a password and suspends the member',
+      (tester) async {
+    await pumpScreen(tester, session: _admin);
     await addStaff(tester);
 
     await tester.tap(find.byKey(const Key('staffActions-uid-+905321234567')));

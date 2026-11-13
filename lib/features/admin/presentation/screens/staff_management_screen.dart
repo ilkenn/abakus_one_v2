@@ -75,15 +75,21 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
     ));
   }
 
+  /// ADR-085 stage 1 — only an admin/owner changes whether staff are active.
+  bool get _canChangeActive {
+    final roles = ref.read(actorSessionProvider)?.roles ?? const {};
+    return effectiveVisibilityRoles(roles).contains(StaffRole.admin);
+  }
+
   /// Runs one staff-account command with a busy state, then reloads.
+  /// [action] returns the success message to show.
   Future<void> _run(
-    Future<void> Function(StaffAccountGateway gateway, String organizationId)
-        action, {
-    required String success,
-  }) async {
+    Future<String> Function(StaffAccountGateway gateway, String organizationId)
+        action,
+  ) async {
     setState(() => _busy = true);
     try {
-      await action(
+      final success = await action(
         ref.read(staffAccountGatewayProvider),
         ref.read(currentOrganizationIdProvider),
       );
@@ -110,8 +116,8 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
       initialBranchId: currentBranch,
     );
     if (input == null || !mounted) return;
-    await _run(
-      (gateway, organizationId) => gateway.createStaffAccount(
+    await _run((gateway, organizationId) async {
+      final pending = await gateway.createStaffAccount(
         organizationId: organizationId,
         firstName: input.firstName,
         lastName: input.lastName,
@@ -119,23 +125,26 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
         password: input.password,
         roles: input.roles,
         branchAccess: {input.branchId},
-      ),
-      success: '${input.firstName} ${input.lastName} eklendi.',
-    );
+      );
+      final name = '${input.firstName} ${input.lastName}';
+      return pending
+          ? '$name eklendi. Yönetici onayından sonra aktif olacak.'
+          : '$name eklendi.';
+    });
   }
 
   Future<void> _changePassword(StaffMember member) async {
     final password =
         await showStaffPasswordDialog(context, memberName: member.displayName);
     if (password == null || !mounted) return;
-    await _run(
-      (gateway, organizationId) => gateway.setStaffPassword(
+    await _run((gateway, organizationId) async {
+      await gateway.setStaffPassword(
         organizationId: organizationId,
         targetUid: member.authUid ?? member.id,
         password: password,
-      ),
-      success: 'Şifre değiştirildi.',
-    );
+      );
+      return 'Şifre değiştirildi.';
+    });
   }
 
   Future<void> _changeRoles(StaffMember member) async {
@@ -146,36 +155,39 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
       assignableRoles: _assignableRoles,
     );
     if (roles == null || !mounted) return;
-    await _run(
-      (gateway, organizationId) => gateway.updateStaffMember(
+    await _run((gateway, organizationId) async {
+      await gateway.updateStaffMember(
         organizationId: organizationId,
         targetUid: member.authUid ?? member.id,
         roles: roles,
-      ),
-      success: 'Roller güncellendi.',
-    );
+      );
+      return 'Roller güncellendi.';
+    });
   }
 
   Future<void> _toggleActive(StaffMember member) async {
     final activate = !member.isActive;
-    await _run(
-      (gateway, organizationId) => gateway.updateStaffMember(
+    await _run((gateway, organizationId) async {
+      await gateway.updateStaffMember(
         organizationId: organizationId,
         targetUid: member.authUid ?? member.id,
         active: activate,
-      ),
-      success: activate
+      );
+      return activate
           ? '${member.displayName} aktifleştirildi.'
-          : '${member.displayName} pasife alındı.',
-    );
+          : '${member.displayName} pasife alındı.';
+    });
   }
 
   String _subtitle(StaffMember member) {
     final roles = member.roles.isEmpty
         ? 'Rol atanmadı'
         : member.roles.map(staffRoleLabel).join(', ');
-    final status =
-        member.status == StaffMemberStatus.active ? 'Aktif' : 'Pasif';
+    final status = switch (member.status) {
+      StaffMemberStatus.active => 'Aktif',
+      StaffMemberStatus.pendingApproval => 'Yönetici Onayı Bekliyor',
+      StaffMemberStatus.suspended || StaffMemberStatus.archived => 'Pasif',
+    };
     final phone = member.phoneNumber;
     return [if (phone != null) phone, roles, status].join(' · ');
   }
@@ -244,11 +256,12 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
                       value: 'roles',
                       child: Text('Rolleri Değiştir'),
                     ),
-                    PopupMenuItem(
-                      value: 'status',
-                      child:
-                          Text(member.isActive ? 'Pasife Al' : 'Aktifleştir'),
-                    ),
+                    if (_canChangeActive)
+                      PopupMenuItem(
+                        value: 'status',
+                        child:
+                            Text(member.isActive ? 'Pasife Al' : 'Aktifleştir'),
+                      ),
                   ],
                 ),
                 onTap: () async {

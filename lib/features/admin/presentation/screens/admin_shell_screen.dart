@@ -115,13 +115,15 @@ class AdminShellScreen extends ConsumerStatefulWidget {
   final String? initialNavItemId;
 
   /// ADR-085 — the screen a role opens on when the panel is entered without
-  /// an explicit `?nav=` destination ("Yönetim Paneline Geç"): counter roles
-  /// open the POS; managers and owners open the overview (the first visible
+  /// an explicit `?nav=` destination ("Yönetim Paneline Geç"): staff and
+  /// cashiers open the POS, the packing lead the kitchen (KDS); managers and
+  /// owners open the overview (the first visible
   /// item). Couriers never reach this: they get [CourierWorkScreen] above.
   /// A landing the role cannot see falls back to the first visible item.
   static String? roleLandingNavItemId(StaffRole activeRole) =>
       switch (activeRole) {
-        StaffRole.staff || StaffRole.cashier || StaffRole.packingLead => 'pos',
+        StaffRole.staff || StaffRole.cashier => 'pos',
+        StaffRole.packingLead => 'kitchen',
         _ => null,
       };
 
@@ -192,13 +194,20 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'kitchen',
             label: 'Mutfak / KDS',
             icon: Icons.soup_kitchen_outlined,
+            // ADR-085 — the packing lead works in the kitchen.
             visibleToRoles: const {
               StaffRole.staff,
+              StaffRole.packingLead,
               StaffRole.manager,
               StaffRole.admin
             },
             builder: (context, ref) => RoleGate.forRoles(
-              const {StaffRole.staff, StaffRole.manager, StaffRole.admin},
+              const {
+                StaffRole.staff,
+                StaffRole.packingLead,
+                StaffRole.manager,
+                StaffRole.admin,
+              },
               child: KitchenDisplayBoardScreen(
                 branchId: branchId,
                 authorizationPolicy: ref.read(posAuthorizationPolicyProvider),
@@ -247,15 +256,27 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'delivery-dispatch',
             label: 'Teslimat Dağıtımı',
             icon: Icons.pedal_bike_outlined,
-            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
-            builder: (context, ref) => ModuleEntitlementGate(
-              module: EntitlementModule.courier,
-              scopeType: EntitlementScopeType.branch,
-              scopeId: branchId,
-              actorStaffId: actorId,
-              child: DeliveryOrderDispatchScreen(
-                organizationId: 'org-1',
-                branchId: branchId,
+            // ADR-085 — the packing lead hands packages to couriers.
+            visibleToRoles: const {
+              StaffRole.packingLead,
+              StaffRole.manager,
+              StaffRole.admin,
+            },
+            builder: (context, ref) => RoleGate.forRoles(
+              const {
+                StaffRole.packingLead,
+                StaffRole.manager,
+                StaffRole.admin,
+              },
+              child: ModuleEntitlementGate(
+                module: EntitlementModule.courier,
+                scopeType: EntitlementScopeType.branch,
+                scopeId: branchId,
+                actorStaffId: actorId,
+                child: DeliveryOrderDispatchScreen(
+                  organizationId: 'org-1',
+                  branchId: branchId,
+                ),
               ),
             ),
           ),
@@ -299,11 +320,10 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
             id: 'pos',
             label: 'POS',
             icon: Icons.point_of_sale_outlined,
-            // ADR-085 phase C — the counter roles work in the POS.
+            // ADR-085 phase C — cashiers work in the POS.
             visibleToRoles: const {
               StaffRole.staff,
               StaffRole.cashier,
-              StaffRole.packingLead,
               StaffRole.manager,
               StaffRole.admin
             },
@@ -311,7 +331,6 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
               const {
                 StaffRole.staff,
                 StaffRole.cashier,
-                StaffRole.packingLead,
                 StaffRole.manager,
                 StaffRole.admin,
               },

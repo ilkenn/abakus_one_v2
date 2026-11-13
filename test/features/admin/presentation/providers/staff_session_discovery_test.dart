@@ -138,15 +138,13 @@ void main() {
   });
 
   group('AdminShellScreen.roleLandingNavItemId', () {
-    test('counter roles open the POS', () {
-      for (final role in [
-        StaffRole.staff,
-        StaffRole.cashier,
-        StaffRole.packingLead,
-      ]) {
+    test('staff and cashiers open the POS, the packing lead the kitchen', () {
+      for (final role in [StaffRole.staff, StaffRole.cashier]) {
         expect(AdminShellScreen.roleLandingNavItemId(role), 'pos',
             reason: role.name);
       }
+      expect(AdminShellScreen.roleLandingNavItemId(StaffRole.packingLead),
+          'kitchen');
     });
 
     test('managers and owners open the default overview', () {

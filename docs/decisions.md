@@ -21525,3 +21525,35 @@ three points; supersedes decisions 2 and 5 above and the invite update):**
   manager) grant any non-admin role, including `manager` and `tenantOwner`, to anyone in the
   organization, with no branch scope. The new `updateStaffMember` is scoped. Retiring or scoping
   `assignStaffRole` needs a separate decision.
+
+**Update 2026-11-13 — staff package, stage 0 (product owner approved):**
+
+- **Old callables now follow the panel rule.** `assignStaffRole`, `revokeStaffRole`, `grantStaffBranchAccess`,
+  `revokeStaffBranchAccess` and `setStaffMemberStatus` (used by `StaffDetailScreen`) now apply the same rule as
+  the panel (`functions/src/staffScope.ts`, shared with `staffAccounts.ts`):
+  - the caller's scope must cover the account both before and after the change;
+  - admin and owner accounts are off-limits to other staff;
+  - nobody can target their own account;
+  - changing whether an account is active is admin/owner only.
+
+  This closes the "known gap" recorded in the revision above.
+- **Packing lead menu.** `packingLead` sees only Mutfak / KDS and Teslimat Dağıtımı and lands on the
+  kitchen. It no longer sees the POS.
+
+**Update 2026-11-13 — staff package, stage 1 (product owner approved):**
+
+- **Managers cannot change whether staff are active.** `updateStaffMember` (status) and
+  `setStaffMemberStatus` require an admin/owner. A manager still changes roles and passwords within their
+  branch scope.
+- **Manager-added staff wait for approval.** An account a manager adds is created with the new membership
+  status `pendingApproval`, which yields no claims, and a `staffActivation` request goes to the Onay Kutusu
+  (`remoteApproval.ts`).
+  - Only an admin/owner can answer it (`manageStaffAccounts`; not branch-scoped, like device activation),
+    and never the requester.
+  - Approval sets the membership to `active`; the person's next sign-in syncs the claims.
+  - Rejection deletes the pending membership, so the number can be added again. The Firebase account
+    itself remains, with no role.
+  - An account an admin/owner adds is active at once.
+- **Platform Owner.** A Platform Owner answers these requests only through an org admin/owner membership.
+  The approval engine does not let the separate platform identity answer tenant requests (existing
+  documented limitation, ADR-031). The dev Platform Owner holds an org admin role, so it can.

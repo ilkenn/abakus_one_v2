@@ -68,6 +68,8 @@ class SetStaffMemberStatus {
         StaffMemberStatus.active => AdminAuditEventType.staffMemberReinstated,
         StaffMemberStatus.suspended => AdminAuditEventType.staffMemberSuspended,
         StaffMemberStatus.archived => AdminAuditEventType.staffMemberArchived,
+        StaffMemberStatus.pendingApproval => throw ArgumentError(
+            'pendingApproval is set by the server only (ADR-085).'),
       },
       description: 'Staff member status changed to "${newStatus.name}"',
       targetEntityId: staffMemberId,

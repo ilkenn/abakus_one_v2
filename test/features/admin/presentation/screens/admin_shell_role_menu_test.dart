@@ -24,8 +24,8 @@ void main() {
     expect(menu({StaffRole.cashier}), ['pos']);
   });
 
-  test('a packing lead sees only the POS', () {
-    expect(menu({StaffRole.packingLead}), ['pos']);
+  test('a packing lead sees only the kitchen (KDS) and delivery dispatch', () {
+    expect(menu({StaffRole.packingLead}), ['kitchen', 'delivery-dispatch']);
   });
 
   test('a courier gets no panel menu at all (Kurye Ekranım instead)', () {

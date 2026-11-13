@@ -19,7 +19,9 @@ class StaffAccountException implements Exception {
 /// Each maps to one callable in `functions/src/staffAccounts.ts`, which
 /// enforces who may manage whom; this client never decides that.
 abstract interface class StaffAccountGateway {
-  Future<void> createStaffAccount({
+  /// Returns `true` when the account waits for an admin/owner's approval
+  /// (a manager added it — ADR-085 stage 1), `false` when it is active.
+  Future<bool> createStaffAccount({
     required String organizationId,
     required String firstName,
     required String lastName,
@@ -72,27 +74,30 @@ class FirebaseStaffAccountGateway implements StaffAccountGateway {
     }
   }
 
-  Future<void> _call(String name, Map<String, dynamic> data) async {
+  Future<Map<String, dynamic>> _call(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
     final useRest = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
     if (useRest) {
       try {
-        await _restClient.call(name, data);
-        return;
+        return await _restClient.call(name, data);
       } on RestCallableException catch (error) {
         throw StaffAccountException(messageFor(error.code));
       }
     }
     try {
-      await functions.FirebaseFunctions.instance
+      final result = await functions.FirebaseFunctions.instance
           .httpsCallable(name)
           .call<Map<String, dynamic>>(data);
+      return result.data;
     } on functions.FirebaseFunctionsException catch (error) {
       throw StaffAccountException(messageFor(error.code));
     }
   }
 
   @override
-  Future<void> createStaffAccount({
+  Future<bool> createStaffAccount({
     required String organizationId,
     required String firstName,
     required String lastName,
@@ -100,28 +105,31 @@ class FirebaseStaffAccountGateway implements StaffAccountGateway {
     required String password,
     required Set<StaffRole> roles,
     required Set<String> branchAccess,
-  }) =>
-      _call('createStaffAccount', {
-        'organizationId': organizationId,
-        'firstName': firstName,
-        'lastName': lastName,
-        'phoneNumber': phoneNumber,
-        'password': password,
-        'roles': [for (final role in roles) role.name],
-        'branchAccess': branchAccess.toList(),
-      });
+  }) async {
+    final result = await _call('createStaffAccount', {
+      'organizationId': organizationId,
+      'firstName': firstName,
+      'lastName': lastName,
+      'phoneNumber': phoneNumber,
+      'password': password,
+      'roles': [for (final role in roles) role.name],
+      'branchAccess': branchAccess.toList(),
+    });
+    return result['status'] == 'pendingApproval';
+  }
 
   @override
   Future<void> setStaffPassword({
     required String organizationId,
     required String targetUid,
     required String password,
-  }) =>
-      _call('setStaffPassword', {
-        'organizationId': organizationId,
-        'targetUid': targetUid,
-        'password': password,
-      });
+  }) async {
+    await _call('setStaffPassword', {
+      'organizationId': organizationId,
+      'targetUid': targetUid,
+      'password': password,
+    });
+  }
 
   @override
   Future<void> updateStaffMember({
@@ -129,13 +137,14 @@ class FirebaseStaffAccountGateway implements StaffAccountGateway {
     required String targetUid,
     Set<StaffRole>? roles,
     bool? active,
-  }) =>
-      _call('updateStaffMember', {
-        'organizationId': organizationId,
-        'targetUid': targetUid,
-        if (roles != null) 'roles': [for (final role in roles) role.name],
-        if (active != null) 'status': active ? 'active' : 'suspended',
-      });
+  }) async {
+    await _call('updateStaffMember', {
+      'organizationId': organizationId,
+      'targetUid': targetUid,
+      if (roles != null) 'roles': [for (final role in roles) role.name],
+      if (active != null) 'status': active ? 'active' : 'suspended',
+    });
+  }
 }
 
 /// Selected whenever Firebase isn't ready — every command fails honestly.
@@ -147,7 +156,7 @@ class UnavailableStaffAccountGateway implements StaffAccountGateway {
   );
 
   @override
-  Future<void> createStaffAccount({
+  Future<bool> createStaffAccount({
     required String organizationId,
     required String firstName,
     required String lastName,

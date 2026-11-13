@@ -41,6 +41,8 @@ const _actionTypeLabels = {
   ApprovalActionType.cashReconciliation: 'Kasa Sayım Onayı',
   // AP-5 Sprint 6.
   ApprovalActionType.stockCountAdjustment: 'Stok Sayım Düzeltmesi',
+  // ADR-085 stage 1.
+  ApprovalActionType.staffActivation: 'Personel Onayı (Müdürün Eklediği)',
 };
 
 const _eligibleResponderRoles = {
@@ -151,11 +153,28 @@ class _EligibleApprovalsTab extends ConsumerWidget {
             message: 'Bekleyen ya da geçmiş onay talebi yok.',
           );
         }
-        final actorId = ref.watch(actorSessionProvider)?.actorId;
+        final session = ref.watch(actorSessionProvider);
+        final actorId = session?.actorId;
+        // ADR-085 stage 1 — only an admin/owner answers a staff activation
+        // (the server refuses anyone else), so nobody else is shown one.
+        final isAdminTier = session != null &&
+            effectiveVisibilityRoles(session.roles).contains(StaffRole.admin);
+        final visible = [
+          for (final request in requests)
+            if (request.actionType != ApprovalActionType.staffActivation ||
+                isAdminTier)
+              request,
+        ];
+        if (visible.isEmpty) {
+          return const EmptyView(
+            icon: Icons.inbox_outlined,
+            message: 'Bekleyen ya da geçmiş onay talebi yok.',
+          );
+        }
         return ListView(
           padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
-            for (final request in requests)
+            for (final request in visible)
               _ApprovalCard(
                 request: request,
                 isSelfRequest: request.requestedByActorUid == actorId,

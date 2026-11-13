@@ -11998,3 +11998,38 @@ Step 5 details (dev project `abakus-one-dev`):
 - Verified against the real project: the Müdür and the Yönetici sign in with phone-derived credentials,
   `syncOwnStaffClaims` returns 200 and `listBranchDeliveryZones` returns 200.
 - `docs/courier_pool_device_test.md` §2–4 are updated to phone + password and the profile APK.
+
+### Personel & kurye paketi (2026-11-13, product owner approved, order 0 → 5)
+
+| Stage | Scope | Status |
+|---|---|---|
+| 0 | Packing lead menu (KDS + Teslimat Dağıtımı); old role/status callables bound to the panel rule | Done (2026-11-13) |
+| 1 | Managers cannot deactivate staff; manager-added staff wait for admin/owner approval (Onay Kutusu) | Done (2026-11-13), Visual Review Bekleniyor |
+| 2 | KVKK: customer data removed from the courier projection at "Teslim Ettim"; screenshot block on staff/courier/POS screens (owner and customer app exempt) | Not started |
+| 3 | Panel top bar: no DEMO badge, name + role, admin/owner role preview | Not started |
+| 4 | Courier: "Konuma Git", smart call (own orders: customer; Trendyol/Getir: configurable switchboard + DTMF order code) | Not started |
+| 5 | Courier pay rates (per courier, effective-dated), earnings view, manager-approved shifts — data model draft first | Not started |
+
+Stage 0 details:
+
+- New `functions/src/staffScope.ts` holds the one "who may manage whom" rule, used by `staffAccounts.ts` and
+  by the old per-field callables in `staffMembership.ts`.
+- `packingLead` sees only Mutfak / KDS and Teslimat Dağıtımı and lands on the kitchen.
+- Tests: 2 new emulator tests pin the old callables to the rule.
+
+Stage 1 details:
+
+- Server:
+  - membership status `pendingApproval`;
+  - `createStaffAccount` by a manager creates the account pending and opens a `staffActivation` approval;
+  - approval and rejection handlers are in `staffAccounts.ts`;
+  - status changes are admin/owner only.
+- App:
+  - the Onay Kutusu shows "Personel Onayı (Müdürün Eklediği)" to admin/owner only;
+  - the staff list shows "Yönetici Onayı Bekliyor";
+  - a manager is not offered "Pasife Al" / "Aktifleştir";
+  - after "Personel Ekle", a manager is told the account becomes active after an admin approves it.
+- Tests:
+  - emulator: approval activates (claims appear after sync), the requester cannot approve, rejection
+    removes the account and allows a re-add, and a manager cannot change status;
+  - widget: a manager-added account shows as pending and the manager has no status action.

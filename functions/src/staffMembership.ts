@@ -4,6 +4,12 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { requireStaffPermission } from "./staffAuthorization";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
+import {
+  assertOrganizationScope,
+  assertTargetNotProtected,
+  assertWithinScope,
+  resolveStaffScope,
+} from "./staffScope";
 
 /**
  * Faz R.3A — the scoped Firestore-backed staff/membership foundation.
@@ -52,7 +58,9 @@ export type MembershipRole =
   | "admin"
   | "tenantOwner"
   | "courier";
-export type MembershipStatus = "active" | "suspended" | "archived";
+// ADR-085 stage 1 — "pendingApproval": added by a manager, waiting for an
+// admin/owner in the Onay Kutusu. Like "suspended", it yields no claims.
+export type MembershipStatus = "active" | "suspended" | "archived" | "pendingApproval";
 
 export interface MembershipDoc {
   organizationId: string;
@@ -322,8 +330,53 @@ export const registerStaffMember = onCall(
   },
 );
 
-function roleGrantPermission(role: MembershipRole): "manageStaffAdminRole" | "manageStaffRoles" {
-  return role === "admin" ? "manageStaffAdminRole" : "manageStaffRoles";
+/**
+ * ADR-085 stage 0 — the older per-field staff callables below follow the
+ * same "who may manage whom" rule as the panel (`staffScope.ts`): the
+ * caller's scope must cover the account both as it is and as it would
+ * become, admin/owner accounts are off-limits, and nobody targets their
+ * own account. Previously any `manageStaffRoles` holder (a manager) could
+ * grant any non-admin role — `manager` and `tenantOwner` included — to
+ * anyone in the organization.
+ */
+async function authorizeAccessChange(
+  request: CallableRequest,
+  organizationId: string,
+  current: MembershipDoc,
+  next: { roles: MembershipRole[]; branchAccess: string[] },
+): Promise<void> {
+  const scope = await resolveStaffScope(request, organizationId);
+  assertTargetNotProtected(current);
+  assertWithinScope(scope, current);
+  assertWithinScope(scope, next);
+}
+
+function rejectSelfTarget(request: CallableRequest, targetUid: string): void {
+  if (request.auth && targetUid === request.auth.uid) {
+    throw new HttpsError("permission-denied", "A staff member cannot change their own access.");
+  }
+}
+
+/**
+ * Branch access is the one thing an admin/owner may set on their OWN
+ * membership: an admin starts with no branch access at all
+ * (`bootstrapFirstAdminAccount`), and granting it to themselves is how
+ * they reach a branch. Anyone else, and any self-change of roles or
+ * status, is refused.
+ */
+async function authorizeBranchChange(
+  request: CallableRequest,
+  organizationId: string,
+  targetUid: string,
+  current: MembershipDoc,
+  branchAccess: string[],
+): Promise<void> {
+  if (request.auth && targetUid === request.auth.uid) {
+    const scope = await resolveStaffScope(request, organizationId);
+    if (scope.kind !== "organization") rejectSelfTarget(request, targetUid);
+    return;
+  }
+  await authorizeAccessChange(request, organizationId, current, { roles: current.roles, branchAccess });
 }
 
 async function loadMembershipOrThrow(
@@ -360,12 +413,11 @@ export const assignStaffRole = onCall(
       throw new HttpsError("permission-denied", "A staff member cannot grant themselves a role.");
     }
 
-    await requireStaffPermission(request, organizationId, roleGrantPermission(role));
-
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
     const doc = (await ref.get()).data() as MembershipDoc;
     const roles = doc.roles.includes(role) ? doc.roles : [...doc.roles, role];
+    await authorizeAccessChange(request, organizationId, doc, { roles, branchAccess: doc.branchAccess });
     await ref.update({ roles, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
 
@@ -387,15 +439,14 @@ export const revokeStaffRole = onCall(
       throw new HttpsError("permission-denied", "A staff member cannot revoke their own role.");
     }
 
-    await requireStaffPermission(request, organizationId, roleGrantPermission(role));
-
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
     const doc = (await ref.get()).data() as MembershipDoc;
+    const roles = doc.roles.filter((r) => r !== role);
+    await authorizeAccessChange(request, organizationId, doc, { roles, branchAccess: doc.branchAccess });
     if (!doc.roles.includes(role)) {
       return { organizationId, targetUid, role, revoked: false };
     }
-    const roles = doc.roles.filter((r) => r !== role);
     await ref.update({ roles, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
     await markClaimsRevoked(targetUid);
@@ -413,14 +464,13 @@ export const grantStaffBranchAccess = onCall(
     const targetUid = requireNonEmptyString(data.targetUid, "targetUid");
     const branchId = requireNonEmptyString(data.branchId, "branchId");
 
-    await requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
-
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
     const doc = (await ref.get()).data() as MembershipDoc;
     const branchAccess = doc.branchAccess.includes(branchId)
       ? doc.branchAccess
       : [...doc.branchAccess, branchId];
+    await authorizeBranchChange(request, organizationId, targetUid, doc, branchAccess);
     await ref.update({ branchAccess, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
 
@@ -437,15 +487,14 @@ export const revokeStaffBranchAccess = onCall(
     const targetUid = requireNonEmptyString(data.targetUid, "targetUid");
     const branchId = requireNonEmptyString(data.branchId, "branchId");
 
-    await requireStaffPermission(request, organizationId, "manageStaffBranchAccess");
-
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
     const doc = (await ref.get()).data() as MembershipDoc;
+    const branchAccess = doc.branchAccess.filter((b) => b !== branchId);
+    await authorizeBranchChange(request, organizationId, targetUid, doc, branchAccess);
     if (!doc.branchAccess.includes(branchId)) {
       return { organizationId, targetUid, branchId, revoked: false };
     }
-    const branchAccess = doc.branchAccess.filter((b) => b !== branchId);
     await ref.update({ branchAccess, updatedAt: new Date(), version: (doc.version ?? 1) + 1 });
     await resyncClaimsForUid(targetUid);
     await markClaimsRevoked(targetUid);
@@ -471,11 +520,14 @@ export const setStaffMemberStatus = onCall(
       invalid(`status must be one of: ${VALID_STATUSES.join(", ")}.`);
     }
 
-    await requireStaffPermission(request, organizationId, "manageStaffAccounts");
+    rejectSelfTarget(request, targetUid);
+    const scope = await resolveStaffScope(request, organizationId);
+    assertOrganizationScope(scope);
 
     const db = getFirestore();
     const ref = await loadMembershipOrThrow(db, organizationId, targetUid);
     const doc = (await ref.get()).data() as MembershipDoc;
+    assertTargetNotProtected(doc);
     if (doc.status === "archived") {
       throw new HttpsError("failed-precondition", "This membership is archived — its status can no longer change.");
     }

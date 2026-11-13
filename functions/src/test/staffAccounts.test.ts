@@ -289,23 +289,27 @@ test("setStaffPassword: managers only their own branch's lower roles; nobody tou
   }
 });
 
-test("updateStaffMember: a manager suspends their courier (access ends at once) but cannot promote anyone to manager", async () => {
+test("updateStaffMember: a manager changes a courier's roles but never their status, nor promotes them; an admin suspends (access ends at once)", async () => {
   const { organizationId, branchId } = await seedTenant();
-  await bootstrapAdmin(organizationId);
+  const adminCaller = await bootstrapAdmin(organizationId);
   const manager = await seededMember(organizationId, ["manager"], [branchId]);
   const courier = await seededMember(organizationId, ["courier"], [branchId]);
 
   const promote = await callCallable(UPDATE_URL, { organizationId, targetUid: courier.uid, roles: ["manager"] }, manager.idToken);
   assert.strictEqual(promote.httpStatus, 403, JSON.stringify(promote.body));
+  const suspendByManager = await callCallable(UPDATE_URL, { organizationId, targetUid: courier.uid, status: "suspended" }, manager.idToken);
+  assert.strictEqual(suspendByManager.httpStatus, 403, JSON.stringify(suspendByManager.body));
+  const roles = await callCallable(UPDATE_URL, { organizationId, targetUid: courier.uid, roles: ["cashier", "courier"] }, manager.idToken);
+  assert.strictEqual(roles.httpStatus, 200, JSON.stringify(roles.body));
 
-  const suspend = await callCallable(UPDATE_URL, { organizationId, targetUid: courier.uid, status: "suspended" }, manager.idToken);
+  const suspend = await callCallable(UPDATE_URL, { organizationId, targetUid: courier.uid, status: "suspended" }, adminCaller.idToken);
   assert.strictEqual(suspend.httpStatus, 200, JSON.stringify(suspend.body));
   const user = await admin.auth().getUser(courier.uid);
   assert.deepStrictEqual(user.customClaims?.roles, {});
   const revocation = await admin.firestore().collection("authClaimsRevocations").doc(courier.uid).get();
   assert.ok(revocation.exists, "suspension must stamp the staff claims stale");
 
-  const reactivate = await callCallable(UPDATE_URL, { organizationId, targetUid: courier.uid, status: "active", roles: ["cashier", "courier"] }, manager.idToken);
+  const reactivate = await callCallable(UPDATE_URL, { organizationId, targetUid: courier.uid, status: "active" }, adminCaller.idToken);
   assert.strictEqual(reactivate.httpStatus, 200, JSON.stringify(reactivate.body));
   const membership = await admin.firestore().collection("memberships").doc(`${organizationId}_${courier.uid}`).get();
   assert.deepStrictEqual(membership.data()?.roles, ["cashier", "courier"]);
@@ -324,4 +328,104 @@ test("updateStaffMember: an admin changes a manager's roles but never another ad
   assert.strictEqual(touchAdmin.httpStatus, 403, JSON.stringify(touchAdmin.body));
   const owner = await callCallable(UPDATE_URL, { organizationId, targetUid: manager.uid, roles: ["tenantOwner"] }, adminCaller.idToken);
   assert.strictEqual(owner.httpStatus, 403, JSON.stringify(owner.body));
+});
+
+// =======================================================================
+// ADR-085 stage 0 — the older per-field callables follow the same rule.
+// =======================================================================
+
+const ASSIGN_ROLE_URL = fn("assignStaffRole");
+const REVOKE_ROLE_URL = fn("revokeStaffRole");
+const GRANT_BRANCH_URL = fn("grantStaffBranchAccess");
+const SET_STATUS_URL = fn("setStaffMemberStatus");
+
+test("assignStaffRole: a manager can no longer grant manager/owner roles, nor touch another branch's staff", async () => {
+  const { organizationId, restaurantId, branchId } = await seedTenant();
+  const otherBranchId = await seedBranch(organizationId, restaurantId);
+  await bootstrapAdmin(organizationId);
+  const manager = await seededMember(organizationId, ["manager"], [branchId]);
+  const ownCourier = await seededMember(organizationId, ["courier"], [branchId]);
+  const otherCourier = await seededMember(organizationId, ["courier"], [otherBranchId]);
+
+  const cases: [Record<string, unknown>, number][] = [
+    [{ targetUid: ownCourier.uid, role: "cashier" }, 200],
+    [{ targetUid: ownCourier.uid, role: "manager" }, 403],
+    [{ targetUid: ownCourier.uid, role: "tenantOwner" }, 403],
+    [{ targetUid: ownCourier.uid, role: "admin" }, 403],
+    [{ targetUid: otherCourier.uid, role: "cashier" }, 403],
+  ];
+  for (const [data, expected] of cases) {
+    const result = await callCallable(ASSIGN_ROLE_URL, { organizationId, ...data }, manager.idToken);
+    assert.strictEqual(result.httpStatus, expected, `${JSON.stringify(data)} -> ${JSON.stringify(result.body)}`);
+  }
+  const otherBranch = await callCallable(GRANT_BRANCH_URL, { organizationId, targetUid: ownCourier.uid, branchId: otherBranchId }, manager.idToken);
+  assert.strictEqual(otherBranch.httpStatus, 403, JSON.stringify(otherBranch.body));
+});
+
+test("revokeStaffRole / setStaffMemberStatus: no peer or superior, and status is admin/owner only", async () => {
+  const { organizationId, branchId } = await seedTenant();
+  const adminCaller = await bootstrapAdmin(organizationId);
+  const otherAdmin = await seededMember(organizationId, ["admin"], [branchId]);
+  const manager = await seededMember(organizationId, ["manager"], [branchId]);
+  const courier = await seededMember(organizationId, ["courier"], [branchId]);
+
+  const revokeAdmin = await callCallable(REVOKE_ROLE_URL, { organizationId, targetUid: otherAdmin.uid, role: "admin" }, adminCaller.idToken);
+  assert.strictEqual(revokeAdmin.httpStatus, 403, JSON.stringify(revokeAdmin.body));
+  const suspendAdmin = await callCallable(SET_STATUS_URL, { organizationId, targetUid: otherAdmin.uid, status: "suspended" }, adminCaller.idToken);
+  assert.strictEqual(suspendAdmin.httpStatus, 403, JSON.stringify(suspendAdmin.body));
+  const byManager = await callCallable(SET_STATUS_URL, { organizationId, targetUid: courier.uid, status: "suspended" }, manager.idToken);
+  assert.strictEqual(byManager.httpStatus, 403, JSON.stringify(byManager.body));
+  const byAdmin = await callCallable(SET_STATUS_URL, { organizationId, targetUid: courier.uid, status: "suspended" }, adminCaller.idToken);
+  assert.strictEqual(byAdmin.httpStatus, 200, JSON.stringify(byAdmin.body));
+});
+
+// =======================================================================
+// ADR-085 stage 1 — an account a manager adds waits for an admin/owner.
+// =======================================================================
+
+const RESPOND_URL = fn("respondToApprovalRequest");
+
+async function managerAddsCourier() {
+  const { organizationId, branchId } = await seedTenant();
+  const adminCaller = await bootstrapAdmin(organizationId);
+  const manager = await seededMember(organizationId, ["manager"], [branchId]);
+  const input = createInput(organizationId, { roles: ["courier"], branchAccess: [branchId] });
+  const created = await callCallable(CREATE_URL, input, manager.idToken);
+  assert.strictEqual(created.httpStatus, 200, JSON.stringify(created.body));
+  return { organizationId, adminCaller, manager, input, created: created.body.result! };
+}
+
+test("createStaffAccount by a manager: the account waits in the Onay Kutusu and carries no role until approved", async () => {
+  const { organizationId, adminCaller, manager, input, created } = await managerAddsCourier();
+  assert.strictEqual(created.status, "pendingApproval");
+  const requestId = created.approvalRequestId as string;
+  const approval = await admin.firestore().collection("remoteApprovalRequests").doc(requestId).get();
+  assert.strictEqual(approval.data()?.actionType, "staffActivation");
+
+  const signIn = await signInWithPassword(input.phoneNumber as string, PASSWORD);
+  await callCallable(SYNC_CLAIMS_URL, {}, signIn.idToken);
+  assert.deepStrictEqual(claimsOf(await freshToken(signIn.refreshToken!)).roles, {});
+
+  const byManager = await callCallable(RESPOND_URL, { requestId, decision: "approved" }, manager.idToken);
+  assert.strictEqual(byManager.httpStatus, 403, "the requesting manager can never approve");
+
+  const byAdmin = await callCallable(RESPOND_URL, { requestId, decision: "approved" }, adminCaller.idToken);
+  assert.strictEqual(byAdmin.httpStatus, 200, JSON.stringify(byAdmin.body));
+  const membership = await admin.firestore().collection("memberships").doc(`${organizationId}_${created.uid}`).get();
+  assert.strictEqual(membership.data()?.status, "active");
+  await callCallable(SYNC_CLAIMS_URL, {}, signIn.idToken);
+  assert.deepStrictEqual(claimsOf(await freshToken(signIn.refreshToken!)).roles, { [organizationId]: ["courier"] });
+});
+
+test("createStaffAccount by a manager: rejection removes the pending account, so the number can be added again", async () => {
+  const { organizationId, adminCaller, manager, input, created } = await managerAddsCourier();
+
+  const reject = await callCallable(RESPOND_URL, { requestId: created.approvalRequestId, decision: "rejected" }, adminCaller.idToken);
+  assert.strictEqual(reject.httpStatus, 200, JSON.stringify(reject.body));
+  const membership = await admin.firestore().collection("memberships").doc(`${organizationId}_${created.uid}`).get();
+  assert.strictEqual(membership.exists, false);
+
+  const again = await callCallable(CREATE_URL, { ...input, password: "baska-sifre-456" }, manager.idToken);
+  assert.strictEqual(again.httpStatus, 200, JSON.stringify(again.body));
+  assert.strictEqual(again.body.result?.status, "pendingApproval");
 });

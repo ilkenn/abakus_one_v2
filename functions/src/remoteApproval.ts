@@ -25,6 +25,7 @@ import {
   applyCashReconciliationRejected,
 } from "./cashRegisterEngine";
 import { applyStockCountAdjustment, applyStockCountAdjustmentRejected } from "./stockCountEngine";
+import { applyStaffActivation, applyStaffActivationRejected } from "./staffAccounts";
 
 /**
  * AP-2 Stage B — the generic, server-authoritative remote approval engine
@@ -82,7 +83,10 @@ export type ApprovalActionType =
   // is touched (`submitStockCount.ts`). Has a REJECTION_HANDLERS entry
   // (rejecting is a real state change — `stockCounts` -> `rejected` — not
   // a no-op, same reasoning as the cash register actions above).
-  | "stockCountAdjustment";
+  | "stockCountAdjustment"
+  // ADR-085 stage 1 — a staff account a manager added waits for an
+  // admin/owner. Rejection removes the pending membership (REJECTION_HANDLERS).
+  | "staffActivation";
 
 const APPROVAL_TIMEOUT_MINUTES = 24 * 60;
 const ESCALATION_TIMEOUT_MINUTES = 24 * 60;
@@ -146,6 +150,7 @@ const ACTION_HANDLERS: Readonly<Record<ApprovalActionType, ActionHandler>> = {
   cashAdjustment: applyCashAdjustment,
   cashReconciliation: applyCashReconciliationApproved,
   stockCountAdjustment: applyStockCountAdjustment,
+  staffActivation: applyStaffActivation,
 };
 
 /**
@@ -173,6 +178,7 @@ const REJECTION_HANDLERS: Readonly<Partial<Record<ApprovalActionType, ActionHand
   cashReconciliation: applyCashReconciliationRejected,
   paymentRefund: applyPaymentRefundRejected,
   stockCountAdjustment: applyStockCountAdjustmentRejected,
+  staffActivation: applyStaffActivationRejected,
 };
 
 /** The staff permission required to RESPOND to (approve/reject) each action type — never a bare role-tier check. */
@@ -187,6 +193,9 @@ const RESPONSE_PERMISSION_BY_ACTION: Readonly<Record<ApprovalActionType, StaffPe
   cashAdjustment: "approveCashReconciliation",
   cashReconciliation: "approveCashReconciliation",
   stockCountAdjustment: "approveStockCountAdjustment",
+  // Admin/owner only (organization-wide, like device activation: an admin
+  // starts with no branch access, so the response is not branch-scoped).
+  staffActivation: "manageStaffAccounts",
 };
 
 /**
