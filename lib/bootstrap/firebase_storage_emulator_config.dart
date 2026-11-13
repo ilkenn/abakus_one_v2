@@ -1,4 +1,5 @@
 import 'app_environment.dart';
+import 'firebase_emulator_switch.dart';
 
 /// Where the local Firebase Storage Emulator listens, and which
 /// [AppEnvironment] is allowed to connect to it — Phase 9
@@ -27,6 +28,6 @@ abstract final class FirebaseStorageEmulatorConfig {
   /// Only ever `true` for [AppEnvironment.development] — same reasoning
   /// as `FirebaseFirestoreEmulatorConfig.shouldUseEmulator`.
   static bool shouldUseEmulator(AppEnvironment environment) {
-    return environment == AppEnvironment.development;
+    return FirebaseEmulatorSwitch.shouldUseEmulator(environment);
   }
 }

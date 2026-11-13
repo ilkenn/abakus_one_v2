@@ -1,4 +1,5 @@
 import 'app_environment.dart';
+import 'firebase_emulator_switch.dart';
 
 /// Where the local Cloud Functions Emulator listens, and which
 /// [AppEnvironment] is allowed to connect to it — Phase 9
@@ -32,6 +33,6 @@ abstract final class FirebaseFunctionsEmulatorConfig {
   /// functions deployed to staging/production are the only ones ever
   /// reachable from those environments.
   static bool shouldUseEmulator(AppEnvironment environment) {
-    return environment == AppEnvironment.development;
+    return FirebaseEmulatorSwitch.shouldUseEmulator(environment);
   }
 }

@@ -1,4 +1,5 @@
 import 'app_environment.dart';
+import 'firebase_emulator_switch.dart';
 
 /// Where the local Firestore Emulator listens, and which [AppEnvironment]
 /// is allowed to connect to it — Phase 9 (`docs/decisions.md` ADR-026),
@@ -32,6 +33,6 @@ abstract final class FirebaseFirestoreEmulatorConfig {
   /// class of mistake `FirebaseAuthEmulatorConfig.shouldUseEmulator`
   /// already exists to prevent for Auth.
   static bool shouldUseEmulator(AppEnvironment environment) {
-    return environment == AppEnvironment.development;
+    return FirebaseEmulatorSwitch.shouldUseEmulator(environment);
   }
 }

@@ -1,4 +1,5 @@
 import 'app_environment.dart';
+import 'firebase_emulator_switch.dart';
 
 /// Where the local Firebase Auth Emulator listens, and which
 /// [AppEnvironment] is allowed to connect to it.
@@ -53,6 +54,6 @@ abstract final class FirebaseAuthEmulatorConfig {
   /// gate already exists to prevent for the mock repository, applied here
   /// to the emulator instead.
   static bool shouldUseEmulator(AppEnvironment environment) {
-    return environment == AppEnvironment.development;
+    return FirebaseEmulatorSwitch.shouldUseEmulator(environment);
   }
 }
