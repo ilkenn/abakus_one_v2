@@ -11820,8 +11820,11 @@ to ADR-083.
 - **Dev deploy** (ADR-083):
   - Done: rules and indexes are deployed. That deploy enabled the Firestore API and created `(default)`
     in `nam5`.
-  - Not done: Functions are **not deployed**. The project has no default Storage bucket, which the
-    photo upload trigger needs; this needs a console action by the product owner.
+  - Done (2026-11-13): Functions are **deployed** to `abakus-one-dev`: 200 functions (v2,
+    `us-central1`), including the four Faz 4 callables. This followed the product owner creating the
+    default Storage bucket, then `--force` for the photo-upload retry policy (no existing functions to
+    delete), then a re-run after transient first-deploy errors (Eventarc permission propagation, the
+    per-minute quota). See ADR-083.
   - `functions/.env.abakus-one-dev` added (`ENFORCE_APP_CHECK=false`, same as staging).
 - Tests:
   - functions:
@@ -11837,7 +11840,7 @@ to ADR-083.
   - Flutter: 23 new, 4176 passed (12 skipped, unchanged); analyzer shows only the known
     `app_constants.dart:21` info.
 - Not done / follow-up:
-  - Functions deploy to dev, waiting on the Storage bucket;
+  - the real-device test against `abakus-one-dev` (product owner);
   - a manager PIN step-up for the below-minimum override (today a manager-tier sign-in is required);
   - showing the ETA in the customer app;
   - the 5 failing functions tests (see above).

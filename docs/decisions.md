@@ -21343,5 +21343,20 @@ The earlier rules deploy had also enabled the Firestore API and created the `(de
 
 - Until the bucket exists, no function is deployed to `abakus-one-dev`. The real-device test (Faz 3c)
   waits on it.
+- **Update 2026-11-13: deployed.** The product owner created the default bucket
+  (`gs://abakus-one-dev.firebasestorage.app`), and the approved deploy was re-run. It needed two more
+  steps:
+  - `--force`. A non-interactive deploy refuses to add the `finalizeCustomerPhotoUpload` retry policy
+    without it. `--force` also deletes functions that are missing from source without asking; the
+    project had no functions yet, so nothing was deleted. The retry policy is intended (the function
+    is idempotent, see its doc comment).
+  - A second run a few minutes later. The first 2nd-gen deploy created 163 functions, and 37 failed for
+    two transient reasons: Eventarc service-agent permissions were still propagating (all Firestore and
+    Storage triggers), and the per-minute Cloud Functions mutation quota was exceeded. The re-run
+    created only the missing ones and ended with "Deploy complete!".
+  - Result: `firebase functions:list` shows 200 functions on `abakus-one-dev` (v2, `us-central1`,
+    nodejs22), including the four Faz 4 callables.
+  - For staging and production, expect the same first-deploy behavior: budget a re-run, and use
+    `--force` only after checking which deployed functions it would delete.
 - The Firestore database is in `nam5`. That is fine for dev, since the functions run in `us-central1`.
   For staging and production, choose the region deliberately before the first deploy.
