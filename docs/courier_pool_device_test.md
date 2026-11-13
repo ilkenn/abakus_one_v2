@@ -73,21 +73,24 @@ A `development` build uses the local emulator unless it is built with
 
 - **POS:** Windows,
   `flutter run -d windows --dart-define=ENVIRONMENT=development --dart-define=FIREBASE_USE_EMULATOR=false`.
-  Sign in with `mudur.test@` and register the device (approval flow; the approver is a second
-  manager-tier account, e.g. `sahip.test@`).
+  At Personel Girişi, sign in with the Müdür's phone number and password and register the device. A
+  second manager-tier account approves the registration, for example the Yönetici (555 000 00 01)
+  from a phone.
 - **Phones** (Android; iOS only if prerequisites 0.4–0.5 are done): install the development APK,
   built with
-  `flutter build apk --debug --flavor development --dart-define=ENVIRONMENT=development --dart-define=FIREBASE_USE_EMULATOR=false`
-  (output: `build/app/outputs/flutter-apk/app-development-debug.apk`).
-  Sign in at Personel Girişi with `kurye.dukkan@` / `kurye.dis1@` / `kurye.dis2@` and allow
-  notifications when asked.
-- **Cashier phone** (to see the staff push): sign in with `kasiyer.test@`.
+  `flutter build apk --profile --flavor development --split-per-abi --target-platform android-arm64 --dart-define=ENVIRONMENT=development --dart-define=FIREBASE_USE_EMULATOR=false`
+  (output: `build/app/outputs/flutter-apk/app-arm64-v8a-development-profile.apk`). A debug build is no
+  longer needed: staff sign-in works in every build.
+  - On the sign-in screen, tap "Şifre ile giriş" and use a courier's number (555 000 00 04 / 05 / 06)
+    with its password.
+  - Then go to Profil → "Yönetim Paneline Geç". Allow notifications when asked.
+- **Cashier phone** (to see the staff push): Kasiyer, 555 000 00 03.
 
 ## 4. Scenario
 
 | # | Action | Expected |
 |---|---|---|
-| 4.1 | POS → Kurye Dağıtımı → Kurye Ayarları → Kuryeler: create (quick add) or edit three couriers. Link `kurye.dukkan@` as Dükkan Kuryesi, and `kurye.dis1@` / `kurye.dis2@` as Dış Kurye with district "Kadıköy". | Each roster row shows "Giriş: …". A cashier account trying to link is refused with "yalnızca müdür ve üstü". |
+| 4.1 | POS → Kurye Dağıtımı → Kurye Ayarları → Kuryeler: create (quick add) or edit three couriers. Link Dükkan Kuryesi (555 000 00 04) as Dükkan Kuryesi, and Dış Kurye 1 / 2 (555 000 00 05 / 06) as Dış Kurye with district "Kadıköy". | Each roster row shows "Giriş: …". A cashier account trying to link is refused with "yalnızca müdür ve üstü". |
 | 4.2 | Courier phones: open Kurye Ekranım. | The dükkan courier sees only "Görevlerim". The dış couriers also see "Havuz" and "Taleplerim". |
 | 4.3 | POS: new Paket Servis order in Caferağa, cash. On the dispatch board, tap "Havuza Gönder". | The row shows "Havuzda · talep bekleniyor". |
 | 4.4 | Dış Kurye 1 and 2: Havuz → the package (neighborhood, address and amount only, **no name or phone**) → "Talep Oluştur". | POS: the "Havuz Talepleri" badge shows 2 and the alert sounds twice. **Cashier phone: push "Yeni kurye talebi"** (in the foreground too, as a system notification). Tapping it opens Admin → Teslimat Dağıtımı. |

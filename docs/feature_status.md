@@ -11925,7 +11925,7 @@ The phase A invite code is removed. Revised order:
 | 2 | App: "Şifre ile giriş" on the sign-in screen, phone + password on Windows, own password change in the profile | Done (2026-11-13), Visual Review Bekleniyor |
 | 3 | Staff screen: "Personel Ekle" form, change password/role/status from the list | Done (2026-11-13), Visual Review Bekleniyor |
 | 4 | Phase C: role isolation (cashier sees POS, courier only Kurye Ekranım) + per-role tests | Done (2026-11-13), Visual Review Bekleniyor |
-| 5 | Deploy to dev, move test accounts to phone + password, new APK | Not started |
+| 5 | Deploy to dev, move test accounts to phone + password, new APK | Done (2026-11-13) |
 
 Step 1 tests: `functions/src/test/staffAccounts.test.ts` adds 8 tests. Together with the membership and
 directory tests, 37 of 37 pass.
@@ -11984,3 +11984,17 @@ Step 4 (phase C) details:
   roles. This is not specified by the product owner and needs confirmation.
 - Tests: new `admin_shell_role_menu_test.dart` (10 tests pin the menu per role). Three existing tests that
   relied on the old owner gap were updated. The full suite passes: 4205 passed, 12 skipped.
+
+Step 5 details (dev project `abakus-one-dev`):
+
+- Deployed `createStaffAccount`, `setStaffPassword`, `updateStaffMember` (new), `listStaffMembersForOrganization`
+  and `syncOwnStaffClaims` (updated), and the Firestore rules. All of them answer in JSON.
+- Deleted the three invite functions (`inviteStaffByPhone`, `revokeStaffInvite`, `listStaffInvites`); they
+  now return 404.
+- `seed_courier_pool_device_test.mjs`: the staff test accounts now use dev test numbers
+  +90 555 000 00 01–06 (Yönetici, Müdür, Kasiyer, three couriers).
+  - The earlier e-mail accounts were moved in place: same uid, same password.
+  - `sahip.test@` keeps its e-mail sign-in for the Platform Konsolu.
+- Verified against the real project: the Müdür and the Yönetici sign in with phone-derived credentials,
+  `syncOwnStaffClaims` returns 200 and `listBranchDeliveryZones` returns 200.
+- `docs/courier_pool_device_test.md` §2–4 are updated to phone + password and the profile APK.
